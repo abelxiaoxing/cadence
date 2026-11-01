@@ -261,7 +261,8 @@ export const STARTUP_STAGES = [
 ] as const;
 export type StartupStage = (typeof STARTUP_STAGES)[number];
 /** `quarantined`: an owner registration was acquired first and stays fenced
- * for informed recovery; otherwise nothing was registered. */
+ * until the process exits and the next start recovers it; otherwise nothing
+ * was registered. */
 export class StartupRefusal extends ContractError {
   constructor(
     code: ErrorCode,

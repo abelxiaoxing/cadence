@@ -19,6 +19,9 @@ export interface OwnerLifecyclePorts {
   quiesce(): void;
   flush(): Promise<PersistenceResult>;
   closeListener(): Promise<void>;
+  /** Called once, after stop requests were sent, when the owner quarantines.
+   * The host then lets original work settle and restarts itself. */
+  faulted?(): void;
 }
 function committed(result: PersistenceResult): boolean {
   if (result.status !== "committed") return false;
@@ -280,6 +283,19 @@ export class ServiceOwner {
     this.closeAdmission();
     this.persistPhase("quarantined");
     this.requestStops();
+    if (!this.faultReported) {
+      this.faultReported = true;
+      try {
+        this.ports.faulted?.();
+      } catch {
+        /* the fence above already holds */
+      }
+    }
+  }
+  private faultReported = false;
+  /** Resolves once every registered original has settled. */
+  async idle(): Promise<void> {
+    while (this.activities.size) await this.drainActivities();
   }
   private requestStops(): Promise<void>[] {
     try {

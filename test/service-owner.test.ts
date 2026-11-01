@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   renameSync,
+  rmSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -24,16 +25,13 @@ import {
   type OwnerLease,
   ServiceCoordination,
 } from "../src/service/coordination.ts";
+import { bootId, processStart } from "../src/service/liveness.ts";
 import {
   type OwnerLifecyclePorts,
   ServiceOwner,
 } from "../src/service/owner.ts";
 import type { PersistenceResult } from "../src/service/ports.ts";
-import {
-  inspectRecovery,
-  type RecoveryHistoryFacts,
-  resolveRecovery,
-} from "../src/service/recovery.ts";
+import { healProject, RegistryHealer } from "../src/service/self-heal.ts";
 import {
   type CheckNativeSettlement,
   decodeCommittedBatch,
@@ -238,7 +236,9 @@ describe("service coordination: actual isolated filesystem", () => {
     const { c, dir, root } = fixture();
     writeFileSync(join(root, "legacy.sqlite"), "unchanged");
     expect(c.inspect()).toEqual({ status: "absent" });
-    await expect(inspectRecovery(c)).rejects.toThrow();
+    expect(await healProject(c, { inspect: true })).toEqual({
+      status: "clean",
+    });
     expect(existsSync(join(dir, "state"))).toBe(false);
     expect(existsSync(join(root, ".cadence"))).toBe(false);
     expect(readFileSync(join(root, "legacy.sqlite"), "utf8")).toBe("unchanged");
@@ -602,93 +602,62 @@ describe("native second-process owners (original close handles)", () => {
       await Promise.all([a.finish(), b.finish()]);
     }
   }, 15000);
-  it("a valid-looking old short registry lock is not reclaimed from age or a known dead PID", async () => {
+  it("a short registry lock is reclaimed only when its holder is proven dead", async () => {
     const { c, root, state } = fixture();
     const child = await childOwner(root, state);
     child.child.send("start");
     expect((await child.next()).type).toBe("acquired");
     const pid = child.child.pid;
-    await child.finish(); // Original native close proves this fixture PID exited.
     const path = registryLock(c);
-    writeFileSync(
-      path,
-      JSON.stringify({
-        schema: "cadence-service-registry-lock/1",
-        token: randomUUID(),
-        pid,
-        host: hostname(),
-      }),
-      { mode: 0o600 },
-    );
+    const lock = (holder: number, marks = {}) =>
+      writeFileSync(
+        path,
+        JSON.stringify({
+          schema: "cadence-service-registry-lock/1",
+          token: randomUUID(),
+          pid: holder,
+          host: hostname(),
+          ...marks,
+        }),
+        { mode: 0o600 },
+      );
+    // Age alone proves nothing: a live, identified holder keeps its lock.
+    lock(pid as number, {
+      boot: bootId(),
+      started: processStart(pid as number),
+    });
     utimesSync(path, new Date(0), new Date(0));
-    const before = bytes(path);
+    expect(await new RegistryHealer(c).heal()).toEqual({ status: "live" });
+    expect(existsSync(path)).toBe(true);
+    rmSync(path);
+    await child.finish(); // Original native close proves this fixture PID exited.
+    lock(pid as number);
     expect(c.inspect().status).toBe("unavailable");
     expect(() => c.acquire(config())).toThrow();
-    await expect(inspectRecovery(c)).rejects.toThrow("quarantine");
-    expect(bytes(path)).toEqual(before);
+    expect(await new RegistryHealer(c).heal()).toMatchObject({
+      status: "healed",
+      event: { scope: "registry", actions: ["released-locks"] },
+    });
+    expect(existsSync(path)).toBe(false);
     expect(existsSync(c.store.lockPath)).toBe(false);
   }, 15000);
-  it("abrupt original exit never replays/reclaims; recovery facts are independent and exact", async () => {
+  it("abrupt original exit never replays; a live owner is never reclaimed, a dead one is", async () => {
     const { root, state, c } = fixture();
     const child = await childOwner(root, state);
     child.child.send("start");
     const acquired = await child.next();
     expect(acquired.type).toBe("acquired");
-    const live = await inspectRecovery(c);
-    expect(live.owner).toBe("live");
-    // A body boolean is deliberately not local interactive authority.
-    await expect(
-      resolveRecovery(
-        c,
-        {
-          informedLocalConfirmation: true,
-          acknowledgeEscapedProcesses: true,
-          expected: live,
-        } as any,
-        undefined as any,
-      ),
-    ).rejects.toThrow("forbidden");
-    await child.finish(true);
     const before = bytes(c.store.lockPath);
+    expect(await healProject(c)).toEqual({ status: "live" });
+    expect(bytes(c.store.lockPath)).toEqual(before);
+    await child.finish(true);
     const restarted = new ServiceCoordination(root, state);
     expect(() => restarted.acquire(config())).toThrow("conflict");
-    const facts: RecoveryHistoryFacts = {
-      digest: "b".repeat(64),
-      processes: "unknown",
-      credentials: "unknown",
-      storage: "unknown",
-    };
-    const history = { inspect: async () => ({ ...facts }) };
-    const observed = await inspectRecovery(restarted, history);
-    expect(observed.owner).toBe("absent");
-    for (const settled of [false, true]) {
-      if (settled) {
-        facts.processes = "externally-resolved";
-        facts.credentials = "independently-resolved";
-        facts.storage = "independently-resolved";
-      }
-      const expected = await inspectRecovery(restarted, history);
-      await expect(
-        resolveRecovery(
-          restarted,
-          {
-            informedLocalConfirmation: true,
-            acknowledgeEscapedProcesses: true,
-            expected,
-          } as any,
-          history as any,
-        ),
-      ).rejects.toThrow("forbidden");
-    }
-    const fresh = await inspectRecovery(restarted, history);
-    writeFileSync(
-      c.path("registration.json"),
-      `${bytes(c.path("registration.json")).toString()} `,
-    );
-    expect(
-      (await inspectRecovery(restarted, history)).coordinationDigest,
-    ).not.toBe(fresh.coordinationDigest);
-    expect(bytes(c.store.lockPath)).toEqual(before);
+    expect(await healProject(restarted)).toMatchObject({
+      status: "healed",
+      event: { cause: "crash", actions: ["released-locks"] },
+    });
+    restarted.acquire(config()).release();
     expect(existsSync(join(root, ".cadence"))).toBe(false);
   }, 15000);
 });

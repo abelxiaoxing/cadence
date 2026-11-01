@@ -23,8 +23,7 @@ Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and deta
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
 Commands without `--workspace` address the unified workbench, which has no execution cwd and never creates `~/cadence`.
-Use `cadence workbench start|status|diagnose|stop|token-link|token-rotate|recover inspect|recover resolve` to name that target explicitly.
-`recover` without `--workspace` also addresses account/workbench state, never the current directory; project-owner recovery requires an explicit `--workspace`.
+Use `cadence workbench start|status|diagnose|stop|token-link|token-rotate` to name that target explicitly; `cadence doctor` covers the account, the workbench and every registered project (see [Automatic recovery](#automatic-recovery)).
 Its start accepts `--foreground`, `--state-home`, `--agent-dir`, `--server-config` and a private `--config` containing an `HttpPolicy` object (the schema used below for project HTTP policy).
 The configuration's port/token come from the `.env`; a selected HTTP policy is retained across orderly restarts.
 A project root containing the private state home is refused, with no alternate directory creation; native `/cadence` also requires a real project selection.
@@ -60,7 +59,7 @@ The private account state stores bounded project references and opening receipts
 Private coordination/Pi credential directories and foreign-owned project selections are refused.
 Direct project entry links remain available as a compatibility route; that route alone still uses separate loopback project entries.
 Git subdirectories and aliases resolve to the same checkout, while overlapping parent/child owners still refuse.
-An unknown, quarantined or inaccessible selection is never treated as a new project or recovered by choosing another state home.
+An unknown or inaccessible selection is never treated as a new project or recovered by choosing another state home.
 
 When run as root, Git observation requires a repository Git recognizes as root-owned: Cadence clears `safe.directory` exceptions per command, removes inherited `SUDO_UID` and disables fsmonitor.
 A foreign-owned repository refuses even if a global `safe.directory=*` would allow it; selecting a path is not consent to execute its configured clean/process filters.
@@ -94,11 +93,12 @@ A reinstall without `--workspace` explicitly selects the unified entry after ord
 A plain `restart` retains the definition's existing target, including an older explicit project service, rather than silently migrating it.
 The `.env` [port and token](#port-and-token) select the endpoint (17423 by default) and the token; an occupied endpoint fails instead of falling back.
 Install and restart print the private entry link once the owner answers; the JSON result on stdout never carries the token.
-A successful manager start request is not owner readiness: an unready owner reports `quarantined` or `unconfirmed`, retains the separate `managerStatus`, exits nonzero and names the recovery inspection command.
-Status also retains the manager's `active`/`activating`/`failed` observation separately when the workbench itself is quarantined.
+A successful manager start request is not owner readiness: an unready owner reports `quarantined` or `unconfirmed`, retains the separate `managerStatus`, exits nonzero and names `cadence doctor`.
+Status also retains the manager's `active`/`activating`/`failed` observation separately.
+A definition whose project directory was removed gets a readable refusal (exit78, so the unit does not restart in a loop); `cadence server install` switches it to the workbench.
 `restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
 `stop` joins the workbench's accepted openings and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
-If one associated owner refuses or has a changed epoch, Stop still reaches the other known owners serially, while the workbench remains fenced rather than reporting a successful Stop.
+An associated owner that is not running (or whose directory is gone) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still stops.
 Project-specific `stop --workspace <path>` remains scoped to that owner.
 The generated registration stays for the next boot or login.
 `uninstall` stops it orderly and deletes only what Cadence generated; workspace, state home, history, linger and Pi sources stay.
@@ -107,7 +107,7 @@ A definition Cadence did not generate is left unchanged (`foreign`), and `status
 
 Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
 Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
-Missing or unusable Pi sources refuse before an owner registers; a new owner without the SDK quarantines.
+Missing or unusable Pi sources refuse before an owner registers; an owner that cannot load the SDK refuses at stage `pi-runtime` and exits.
 The no-project workbench starts without either an SDK runtime or Pi authentication; missing sources are reported only when a project is explicitly opened.
 For an explicit single-project definition, the older guards remain: no SDK means no definition, and missing `auth.json` means registered but waiting for Pi login.
 
@@ -152,7 +152,7 @@ It refuses without any effect when that token was edited since the start, so a p
 A stopped workspace selected earlier with a generated, environment or file token, or another port, is reselected to the file at its next `start --server-config`.
 Under the new owner reservation Cadence retires the previous token with a new access generation and replaces the selected port and token source; the history and every other selected setting stay.
 A different agent directory, host or proxy still conflicts, and a running owner refuses until it has stopped.
-An interrupted replacement keeps the reservation as a fence and is never repaired automatically, like any interrupted start.
+An interrupted replacement is recovered by the next start like any interrupted start.
 
 ### Linux systemd system/root unit (no linger)
 
@@ -180,7 +180,7 @@ An old but inactive unit does not own a subsequently detached owner: install, re
 An unconfirmed or quarantined Stop, changed generated file, changed HOME/XDG state selection, a mask or a foreign unit prevents replacement/adoption.
 `restart`, `stop` and `uninstall` await the authenticated original owner Stop before invoking systemctl, so manager timeouts are never used as proof of settlement.
 Restart keeps disablement and does not unmask anything; uninstall removes only the generated definition, never data or linger.
-Direct systemctl shutdown still has the unit's ExecStop and timeout behavior described below; it is not an alternative recovery mechanism.
+Direct systemctl shutdown still has the unit's ExecStop and timeout behavior described below.
 
 ### Independent named Linux services
 
@@ -196,7 +196,7 @@ A named service uses `~/.pi/agent/cadence/servers/<name>.env` under its effectiv
 A new named configuration requires `--port`; existing port/token lines are preserved, and a conflicting `--port` refuses instead of rewriting them.
 Edit the selected named file explicitly and restart that same `--name` to change its port.
 An occupied port still refuses rather than silently falling back; use `project open` when an automatically selected detached port is preferable.
-All projects still share one coordination state home for their account, retaining canonical overlap checks and uncertain fences.
+All projects still share one coordination state home for their account, retaining canonical overlap checks.
 
 ### Linux systemd user unit
 
@@ -212,10 +212,11 @@ It carries `ConditionPathExists=` for the CLI; explicit single-project definitio
 `restart` stops an active unit with its loaded definition, rewrites the file and starts it, without enabling a disabled unit; a masked unit is never enabled or started.
 `ExecStop` is the authenticated orderly Stop, so admitted work is stopped, not detached; `stop` and `uninstall` (`disable --now`) use it too.
 `KillMode=mixed` sends systemd's SIGTERM only to the management client.
-An owner still settling after `TimeoutStopSec=90` (for example a quarantined one) is SIGKILLed, which is not orderly Stop and can leave recovery fences.
+An owner still settling after `TimeoutStopSec=90` is SIGKILLed, which is not orderly Stop; the next start recovers what it leaves.
 `Restart=on-failure` is bounded to three starts in five minutes.
 Deterministic foreground startup refusals exit78 (`EX_CONFIG`), and newly generated units use `RestartPreventExitStatus=78` so these refusals do not loop.
-Ordinary unexpected process failures retain the bounded restart policy; a restart never removes fences.
+Ordinary unexpected process failures retain the bounded restart policy, and every restart first recovers what the failed owner left.
+An owner that hits a runtime fault stops its own workers and exits 75; its unit restarts it after `RestartSec=10`.
 Existing generated units get this setting on the next successful explicit install/restart, not by package installation or recovery.
 Without linger, user units start at login and stop at logout through the same Stop.
 Linger starts the user manager, with every enabled user unit, at boot and keeps it running after logout.
@@ -229,9 +230,9 @@ It bakes the same PATH, LANG/LC_ALL, XDG_STATE_HOME and PI_CODING_AGENT_DIR as t
 For an explicit single-project service, missing `auth.json` leaves the agent written but not loaded; the project-less workbench can start without Pi login.
 Because launchd stops a job only by signaling it, `restart`, `stop`, `uninstall` and a reinstall first stop the owner through the authenticated orderly Stop, and change nothing when that Stop is `unconfirmed`, `quarantined` or `unavailable`.
 Only then does Cadence unload (`bootout`) or replace the agent; `stop` leaves it loaded, and the finished job starts again at the next login.
-There is no `KeepAlive`: launchd has no start limit, and a restart never clears fences, so a failed owner stays down until `cadence server restart`.
+There is no `KeepAlive`: a failed owner stays down until the next login or `cadence server restart`, which recovers it; an owner that faults at runtime starts its own replacement.
 `restart` keeps a `launchctl disable` and reports `disabled` without loading.
-At logout or shutdown launchd signals the job, which is not orderly Stop and can leave recovery fences; run `cadence server stop` first while work is running.
+At logout or shutdown launchd signals the job, which is not orderly Stop: running work is interrupted, and the next start recovers the owner automatically.
 
 ### Windows login Run entry
 
@@ -242,7 +243,7 @@ It bakes only a custom PI_CODING_AGENT_DIR, because the login environment alread
 For an explicit single-project service, missing `auth.json` leaves the entry registered but starts nothing; the project-less workbench can start without Pi login.
 Nothing supervises the detached owner, so a failed owner is not restarted, and every `restart`, `stop`, `uninstall` and reinstall first runs the authenticated orderly Stop and changes nothing unless it is confirmed; Cadence never kills a process.
 A `Cadence` Run value without Cadence's launcher is `foreign` and left unchanged; registry values are only tested for presence, because `reg.exe` prints them in the console code page.
-At sign-out or shutdown Windows ends the owner without orderly Stop, which can leave recovery fences; run `cadence server stop` first while work is running.
+At sign-out or shutdown Windows ends the owner without orderly Stop: running work is interrupted, and the next start recovers the owner automatically.
 
 ## Status, departure and Stop
 
@@ -255,10 +256,10 @@ At sign-out or shutdown Windows ends the owner without orderly Stop, which can l
   Checks, native process outcomes and human review remain separate facts.
 - `unconfirmed` means startup/Stop acknowledgment or settlement was not established within its reporting bound.
   It is not permission to restart, kill a guessed PID or remove a lock.
-  `quarantined` preserves uncertain process/auth/storage work and prevents unsafe writers.
+  `quarantined` means the owner could not settle some process/auth/storage work: it refuses new work, lets the original work settle, stops its own workers and restarts itself (recovered automatically).
 - A host that refuses during `start` reports `{"status":"refused","error":<code>,"stage":<stage>}` and exits without registering an owner.
   Stages are `package` (installed web assets or Agent profiles), `pi-agent-directory`, `pi-auth`, `pi-models` and `service`; stderr names the selected Pi source to fix.
-  `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it keeps its fences for informed recovery.
+  `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it exits, and the next start recovers its registration.
   Reports carry fixed codes and stages only, never paths, configuration bytes or OS error text.
 - The selected Pi agent directory must be a real directory (not a symlink) owned by you; `auth.json` and `models.json` must be your own single-link regular files.
   Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
@@ -271,17 +272,17 @@ At sign-out or shutdown Windows ends the owner without orderly Stop, which can l
   The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
   Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then choose the owner model again.
 - A foreground owner can be managed from another terminal.
-  Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route and can leave recovery fences.
-  A recovered `stopped` registration means acknowledged fence release, not retroactive native closure certification.
+  Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route: running work is interrupted, and the next start recovers the owner automatically.
+  A recovered `stopped` registration records that the old owner was proven gone, not that its interrupted work completed.
 
-`diagnose` reports fixed pending/recording facts and `proxyAuth: direct|validated-proxy` when the owner is reachable; a blocked global registry instead reports its fixed lock reason and local recovery hint.
+`diagnose` reports fixed pending/recording facts and `proxyAuth: direct|validated-proxy` when the owner is reachable; a busy global registry instead reports its fixed lock reason and names `cadence doctor`.
 No normal status/diagnosis prints access secrets, provider credentials or outbound proxy URLs.
 Keep the explicitly revealed token link private.
 Browser entry redirects to a token-free URL and uses an HttpOnly cookie; that does not retract a link already copied into history, a clipboard or external logs.
 File/generated token rotation invalidates old access and pending confirmations, not admitted work.
 Environment-token replacement requires explicit Stop/restart with changed environment.
 Inbound remote access still requires the selected same-host HTTPS reverse-proxy policy; outbound proxy routing below is independent.
-Browser access, even with a valid token, cannot perform local management/recovery or arbitrary manual shell checks.
+Browser access, even with a valid token, cannot perform local management, `cadence doctor --fix` or arbitrary manual shell checks.
 The native client's local capability uses an owned direct loopback dispatcher, never the Pi process's provider proxy.
 Detach joins that client's original dispatcher closure without changing the parent's global dispatcher or canceling service work.
 
@@ -309,121 +310,54 @@ Checks inherit the owner's frozen ordinary launch environment (including the can
 Resolved model auth is never merged into checks.
 Local fabricated-provider plain/gzip routing tests are not paid-provider, all-adapter, Node22 or other-platform qualification.
 
-## Informed local recovery
+## Automatic recovery
 
-```sh
-# Account/workbench recovery (no cwd or project required):
-cadence workbench recover inspect
-cadence workbench recover resolve
-# A specific project owner:
-cadence recover inspect --workspace /absolute/project
-cadence recover resolve --workspace /absolute/project
+Cadence is built for unclean endings: power loss, shutdown or logout while it runs, a crash, `kill -9`, or a supervisor's forced stop.
+The next start (`cadence start`, `cadence project open`, the workbench, the background service, or native `/cadence`) recovers by itself and prints one line, for example:
+
+```text
+Cadence recovered project /home/me/app automatically: the machine restarted while Cadence was running; released its locks, continued its history after the last complete entry.
 ```
 
-Inspection is readonly and handles the global registry lock before the selected workbench or project-owner recovery.
-Use the same account and state home as the service; workbench recovery also accepts `--server-config <path>` for a named or custom configuration.
-A recovery refusal reports a fixed code/stage or `blocked-preserve-state`, never raw state/configuration bytes.
-Do not delete state files or move to a different state home to bypass a refusal.
+The WebUI shows the same recovery once at the top of the page.
+Nothing is asked of you unless Cadence cannot prove the old process is gone.
 
-### Residual global registry lock
+What a start does, in order:
 
-`status` and `diagnose` report `reason: "registry-locked"` and the lock holder observation (`live`, `absent`, `ambiguous` or `unreadable`).
-Project Open reports `registry-locked` instead of an opaque `unavailable`; the folder picker explains the local recovery command.
-This lock is shared by every project in the selected state home, so trying a different project does not bypass it.
-Use the same account and `--state-home` as the owner; omit that flag only when it uses the default state home:
+- It proves the previous owner gone: new locks record the machine's boot identity and the process's start identity, so a restart of the machine, an absent process or a reused process ID is certain.
+- It stops worker processes the dead owner left running on the same boot, by their exact recorded identity; after a machine restart none can remain.
+- It releases the dead owner's registration and locks, and every other dead reservation in the account (including one whose project directory was removed).
+- It continues the history after the last complete entry (a batch cut short by the crash stays where it is, untouched).
+- Private files that a crash left half-written are moved to `<state-home>/cadence-assistant-v1/recovery-archive-v1/` and the affected part starts afresh; archived files are deleted after 30 days (or sooner beyond 2 GiB).
 
-```sh
-cadence recover inspect --workspace /absolute/project --state-home /absolute/state-home
-cadence recover resolve --workspace /absolute/project --state-home /absolute/state-home
-```
+Work that was running is marked interrupted (its outcome stays unknown and is never guessed); nothing is replayed, and worktrees and partial edits are kept.
+Start an interrupted run or message again when you want it.
 
-With a registry lock present, inspection reports `scope: "global-registry"`, the exact lock-incarnation digest, holder PID/host, reservation count and any previous resolver's liveness.
-A project with no selected owner can be used to address this global operation; explicit `--workspace` must still name an existing suitable directory.
-Alternatively, `cadence workbench recover inspect|resolve --state-home <path>` addresses the same global lock without any project directory or workbench registration, including from outside a project or when every old project directory is gone.
-Resolve requires the same four fresh local-terminal acknowledgments described below, with the displayed lock-incarnation digest instead of a service epoch.
-The holder must be on this host and its PID probe must specifically report absence; age, a remote host, permission denial or a reused live PID never authorizes release.
+An owner that hits a fault while running (for example a worker that will not exit, or a history write that failed) stops accepting work, lets its work settle, stops its own workers and restarts itself; the restart recovers as above.
+It restarts itself at most three times in a row.
 
-Recovery validates the registry and checks that unreserved project selections have no remaining owner/checkout fences.
-A normally stopped project whose working directory was later removed is checked through its retained private metadata; recovery neither requires nor reconstructs that directory.
-A still-reserved project whose working directory was removed also remains a valid retained reservation: canonical existing ancestors and overlap/endpoint constraints are checked without requiring the missing tail.
-Its reservation, owner/checkout locks and history remain fenced and unchanged; releasing the global lock only restores access to independent projects.
-Dangling/rebound aliases, permission errors and corrupt entries are not treated as absent directories.
-An interrupted reservation remains reserved even when its project initialization is incomplete: unrelated projects can reopen, but that project's uncertain resources are not repaired.
-An older release interrupted after removing a reservation but before releasing its project locks is unsafe and remains blocked, as do corrupt/partial registry bytes, linked files and changed resources.
-Inspection reports `blocked-preserve-state` when it cannot establish those conditions; preserve that state for manual diagnosis rather than deleting locks.
-
-Before releasing only `registry.lock`, the resolver exclusively creates, flushes and closes a private receipt under `service-registry-v1/recovery-v1/<lock-incarnation>/<attempt>.json`, retaining the original lock bytes and acknowledged digest.
-It then rechecks the lock incarnation, registry, unreserved project selections, receipt and terminal authority.
-Concurrent resolvers cannot release a successor lock.
-If a resolver dies after the receipt but before release, a new inspection and fresh terminal confirmation may append the next attempt after that resolver's same-host PID is absent; neither receipt nor lock is silently reclaimed.
-Torn or unsafe receipts remain preserved and refused.
-Inspection is bounded to 1024 namespace entries and 128 attempts for one lock incarnation; it never evicts evidence to make space.
-
-All project reservations, owner locks, checkout locks, capabilities, history and unknown outcomes remain unchanged.
-No Open/Start is replayed, no process is signaled, and no service is installed or started by recovery.
-After success, explicitly open the desired project again.
-If its own owner is still fenced, run `recover inspect` again and follow project-owner recovery separately; restoring global registry access does not certify or release that owner's work.
-
-### Workbench recovery
-
-After a crash or failed Stop, an `alive`, `stopping` or `quarantined` registration may outlive its gateway process.
-Do not keep restarting it or delete `workbenches-v1`; inspect the exact selection instead:
+### cadence doctor
 
 ```sh
-cadence workbench recover inspect --server-config /absolute/cadence.env --state-home /absolute/state-home
-cadence workbench recover resolve --server-config /absolute/cadence.env --state-home /absolute/state-home
+cadence doctor                      # readonly: what is left over and what recovered recently
+cadence doctor --fix                # also handle the cases below, after one confirmation
+cadence doctor --fix --yes          # the same without the prompt, for scripts
+cadence doctor --workspace /absolute/project --state-home /absolute/state-home
 ```
 
-If the first inspection reports `scope: "global-registry"`, resolve that lock first, then inspect again for `scope: "workbench"`.
-Prevent the supervisor from repeatedly launching the old process while recovering; use its original account/scope and inspect processes externally.
-A live owner, a known remote host, permission-denied PID probe, changed bytes/incarnations, linked or partial state, or a live/ambiguous resolver refuses release.
-PID absence alone never grants recovery; the same four fresh terminal acknowledgments bind the exact workbench epoch and selected resources.
+`cadence recover inspect|resolve` remain as aliases of `doctor` and `doctor --fix`.
+Use the same account and state home as the service.
 
-New registrations record their hostname.
-Older registrations did not: inspection explicitly reports `legacyHost: true`, `host: null` and `local-host-confirmation-required`, not proven same-host absence.
-Resolve then additionally requires typing `local-host` after independently establishing that this state originated on this host and was not copied/shared from another host.
-If that provenance cannot be established, do not confirm; preserve the state for manual diagnosis.
-This attestation cannot override a recorded foreign hostname or a live/ambiguous local PID.
-No `--yes`, piped or pasted answers, browser recovery or implicit takeover is supported.
+Only these cases wait for you, each named with one sentence and the next step:
 
-Before release, an exclusive immutable receipt under `workbenches-v1/<configuration-hash>/recovery-v1/<lock-incarnation>/<attempt>.json` is flushed and closed.
-The resolver then rechecks the resources, receipt, owner absence and fresh terminal authority, marks only the gateway registration stopped and releases only its exact gateway lock.
-Concurrent resolvers cannot release a successor lock; a resolver that crashed after its receipt can be superseded only after its same-host PID is absent and another fresh confirmation.
-A stopped registration is eligible only when its pinned recovery receipt belongs to that exact lock incarnation; an interrupted new startup cannot borrow the predecessor's dead PID to release its new fence.
-Partial/corrupt receipts remain preserved; there are at most128attempts per lock incarnation, with no evidence eviction.
+- **Running but not responding**: the owner process exists and is Cadence's own (its start identity matches) but does not answer.
+  `--fix` stops it (TERM, then KILL) and recovers.
+  An interactive `cadence start` asks the same question.
+- **Another machine**: the state names a different host (a shared or copied state home).
+  Cadence cannot observe that process; `--fix` takes the state over without touching any process.
+  Confirm only if that machine no longer runs Cadence with this state.
+- **Unidentifiable process**: a process with the recorded ID exists and Cadence cannot tell whether it is the old owner (older locks on some platforms).
+  If no Cadence is running, `--fix` takes the state over.
+- **Workers that did not stop**: leftover workers ignored TERM and KILL; stop them yourself (or restart the machine) and start again.
 
-Recovery also acknowledges and retires the gateway's **exact old project associations**, recorded by their reference-file incarnations in that receipt.
-It does not delete those recent-project references or settle/stop their owners: all project registrations, reservations, locks, opening receipts and history remain unchanged, including unknown outcomes and unfinished Open operations.
-This prevents a deleted old project from immediately quarantining the recovered workbench again on its next Stop.
-Old references require a new explicit **Open** before proxy access or whole-workbench Stop associates them again; merely restarting, viewing the recent list or recovering never replays an Open.
-After recovery, explicitly start/restart the workbench.
-Separately inspect/recover any still-fenced project owner before opening it.
-The receipt is operator acknowledgment, not proof of native process closure or credential/storage correctness.
-
-### Project-owner recovery
-
-With no registry lock present, inspection displays the epoch, exact coordination/history digests, owner PID/host observation and independent process/credential/storage uncertainty.
-Those digests identify preserved resources, not successful work or credential validity.
-A journal with no unmatched intent does not prove every escaped descendant or external credential writer stopped.
-
-Before resolve, independently inspect and stop old processes externally, inspect the selected Pi credential file and SDK locks, and inspect retained storage/history.
-Cadence does not signal arbitrary processes, reclaim SDK locks, repair credentials, truncate damaged history, migrate old formats or delete old resources.
-Resolve requires a native local TTY, four fresh typed responses within120seconds and the same unchanged resources: separate process/escaped-descendant, credential/writeback and storage acknowledgments, then the exact displayed epoch.
-There is no `--yes`, piped-input confirmation, browser body boolean, HTTP recovery endpoint or pasted multiline authorization.
-An SSH terminal executes locally on the owner host; this is an operator interaction boundary, not proof of a physical human's identity.
-
-Only a same-host owner whose PID probe specifically reports absence is eligible; live, remote, ambiguous, refreshed or partial resources refuse.
-Absence alone never clears anything.
-The original durable append/flush/close of a new fenced recovery fact completes first.
-Then exact registration and registry state are updated, and the exact capability, owner lock and associated v1 lock are released in order, rechecking remaining resources, history and local authority before every effect.
-Other workspace reservations remain untouched.
-The v1 lock is last.
-An unrelated legacy lock is never eligible.
-
-Recovery preserves old unknown outcomes and damaged bytes.
-Its result is **operator acknowledgment, not certification**; restart chooses a new epoch and never replays queues/auth work.
-New work requires fresh plan/action consent.
-Failure/crash between append and release can leave a durable bridge and partial fences.
-A refused command is not proof of no effects.
-Reinspect and preserve that state; reading/restart does not repair it, and automatic retry/reset is not a safe resolution.
-Recognized old history formats stay readonly and are not migrated to enable recovery.
+Doctor never deletes a project, its history or anything outside Cadence's private state; damaged private files go to the archive, and the doctor report names it.

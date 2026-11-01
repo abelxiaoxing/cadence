@@ -23,6 +23,7 @@ import {
   retryWindowsFileOperation,
   safeDirectory,
 } from "../workspace.ts";
+import { selfMark } from "./liveness.ts";
 export interface CheckoutLock {
   schema: "cadence-assistant-lock/1";
   token: string;
@@ -30,6 +31,9 @@ export interface CheckoutLock {
   host: string;
   runId: string;
   root: string;
+  /** Liveness marks (absent in locks written by older releases). */
+  boot?: string | null;
+  started?: string | null;
 }
 export class CheckoutStore {
   readonly root: string;
@@ -100,6 +104,7 @@ export class CheckoutStore {
   acquire(): CheckoutLock {
     this.inspectPrivate();
     safeDirectory(this.privateRoot, true);
+    const mark = selfMark();
     const lock: CheckoutLock = {
       schema: "cadence-assistant-lock/1",
       token: randomUUID(),
@@ -107,6 +112,8 @@ export class CheckoutStore {
       pid: process.pid,
       host: hostname(),
       root: this.root,
+      boot: mark.boot,
+      started: mark.started,
     };
     let fd: number;
     try {

@@ -37,6 +37,12 @@ import {
   type RegistryLockDiagnostic,
   ServiceCoordination,
 } from "./coordination.ts";
+import {
+  doctor,
+  healAccount,
+  healProjectForStart,
+  missingWorkspace,
+} from "./doctor.ts";
 import { gatewayMain } from "./gateway-cli.ts";
 import { GatewayStore } from "./gateway-store.ts";
 import {
@@ -54,7 +60,6 @@ import {
   stopLoginRun,
 } from "./login-run.ts";
 import { encoded } from "./private-files.ts";
-import { localRecovery } from "./recovery-cli.ts";
 import {
   decodeHostInput,
   decodeStartupReport,
@@ -202,8 +207,7 @@ export async function serviceStatus(
     return {
       status: "unavailable",
       ...registryLock,
-      recovery:
-        "cadence recover inspect --workspace <project> [--state-home <state-home>]",
+      recovery: "cadence doctor",
     };
   const observed = c.inspect();
   if (observed.status === "absent" || observed.status === "stopped")
@@ -303,8 +307,21 @@ export function observedServerResult<T extends AutostartResult>(
 function serverConfigHint(error: ServerConfigRefusal): string {
   return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.\n`;
 }
-function registryGuidance(workspace: string, stateHome: string): string {
-  return `The shared registry lock blocks project access in this state home. No automatic lock deletion. Inspect locally: cadence recover inspect --workspace ${JSON.stringify(workspace)} --state-home ${JSON.stringify(stateHome)}; eligible dead locks require cadence recover resolve in a local terminal.\n`;
+function registryGuidance(_workspace: string, stateHome: string): string {
+  return `Another Cadence process is updating the shared project registry right now. Try again in a moment; if this persists: cadence doctor --state-home ${JSON.stringify(stateHome)}\n`;
+}
+/** Answers on the owner's authenticated status route, retried briefly so a
+ * busy owner is not mistaken for a stuck one. */
+export async function ownerResponsive(c: ControlTarget): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await nativeCall(c, "status");
+      return true;
+    } catch {
+      await pause(500);
+    }
+  }
+  return false;
 }
 /** One fixed hint per refused startup stage, naming only the selected sources. */
 function startupGuidance(result: unknown, input: HostInput): string {
@@ -317,7 +334,7 @@ function startupGuidance(result: unknown, input: HostInput): string {
   if (report.error === "registry-locked")
     return registryGuidance(input.workspace, input.stateHome);
   const agent = input.config.agentDir;
-  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}\n`;
+  const inspect = `Details: cadence doctor --workspace ${JSON.stringify(input.workspace)}\n`;
   switch (report.stage) {
     case "package":
       return "Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.\n";
@@ -328,11 +345,13 @@ function startupGuidance(result: unknown, input: HostInput): string {
     case "pi-models":
       return `${join(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
     case "pi-runtime":
-      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.\n${inspect}`;
+      return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.\n${inspect}`;
     default:
-      return report.status === "quarantined"
-        ? `The owner registered, then refused; it stays quarantined.\n${inspect}`
-        : "";
+      return report.error === "recording-exhausted"
+        ? `The disk is too full for Cadence's history. Free some space and start again.\n`
+        : report.status === "quarantined"
+          ? `The owner registered, then refused to start. Start again; the next start recovers its registration automatically.\n${inspect}`
+          : "";
   }
 }
 export async function startService(
@@ -343,6 +362,16 @@ export async function startService(
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env); // validate route before any child/SDK import
   const c = new ServiceCoordination(options.workspace, options.stateHome);
+  // Whatever a dead predecessor left behind is reclaimed before observing.
+  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  if (blocked) {
+    process.stderr.write(blocked);
+    return {
+      status: "refused",
+      error: "quarantine",
+      stage: "service",
+    } satisfies StartupReport;
+  }
   if (c.registryLockDiagnostic()) {
     process.stderr.write(registryGuidance(c.store.root, c.stateHome));
     return {
@@ -409,7 +438,12 @@ export async function launchHost(
     ],
     {
       cwd,
-      env,
+      // A foreground owner under systemd is restarted by its unit after a
+      // fault; any other owner starts its own replacement.
+      env:
+        foreground && process.env.INVOCATION_ID
+          ? { ...env, CADENCE_SUPERVISED: "systemd" }
+          : env,
       detached: !foreground,
       windowsHide: true,
       stdio: ["pipe", "pipe", "ignore"],
@@ -678,7 +712,7 @@ function serverStatusGuidance(
     result.workspace === null &&
     ["quarantined", "unconfirmed", "unavailable"].includes(result.status)
   )
-    return `Cadence workbench is not ready (${result.status}); no successful startup or Stop is inferred.\nInspect locally: ${cli} workbench recover inspect --server-config ${JSON.stringify(serviceConfigPath(s))}\nUse the definition's same account and state home; eligible recovery requires recover resolve in a local terminal. Preserve locks and history.\n`;
+    return `Cadence workbench is not ready (${result.status}).\nDetails and repair: ${cli} doctor${s.platform === "linux" ? "" : ""} --fix\n`;
   if (result.workspace === null && result.status === "started")
     return `Cadence unified workbench: ${link ?? result.endpoint ?? result.service ?? "unconfirmed"}\nNo default workspace was created. Projects are opened explicitly.\nManage: ${cli} server status|restart|stop|uninstall\n`;
   const flags = `${s.scope === "system" ? " --system" : s.platform === "linux" ? " --user" : ""}${serviceName(s) ? ` --name ${serviceName(s)}` : ""}`;
@@ -735,7 +769,7 @@ function serverStatusGuidance(
       return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project\n`;
     case "unconfirmed":
     case "quarantined":
-      return `Cadence owner reports ${result.status}; successful startup or orderly Stop is not confirmed.\nInspect: ${cli} diagnose --workspace ${workspace}\nLocal recovery: ${cli} recover inspect --workspace ${workspace}\nPreserve uncertain state; recovery requires separate fresh terminal confirmation.\n`;
+      return `Cadence owner reports ${result.status}; it did not confirm a successful start or stop.\nDetails and repair: ${cli} doctor --workspace ${workspace} --fix\n`;
     case "failed":
       return `Could not register or start Cadence's service; ${managerDetail(s)}.\n${lingerGuidance(result.linger)}`;
     default:
@@ -833,6 +867,11 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       );
     throw error;
   }
+  // A definition whose project directory was removed: say so, plainly.
+  const vanished =
+    typeof result.workspace === "string"
+      ? missingWorkspace(result.workspace)
+      : null;
   let link: string | undefined;
   if (result.status === "started" && result.workspace !== undefined) {
     const workspace = result.workspace;
@@ -847,6 +886,7 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   if (
     action === "status" &&
     result.workspace !== undefined &&
+    !vanished &&
     ["active", "activating", "failed"].includes(result.status)
   ) {
     const target =
@@ -865,7 +905,8 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       };
     }
   }
-  process.stderr.write(serverGuidance(s, action, result, link));
+  if (vanished) result = { ...result, service: "workspace-missing" };
+  process.stderr.write(vanished ?? serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (
     [
@@ -910,6 +951,9 @@ export async function openProjectDirectory(
     throw new ContractError("forbidden");
   effectiveWorkspace(workspace, stateHome);
   const c = new ServiceCoordination(workspace, stateHome);
+  // A registry lock left by a dead process is released before deciding
+  // whether this is a new selection.
+  await healAccount(new ServiceCoordination(null, stateHome));
   if (c.registryLockDiagnostic())
     throw new ProjectOpenRefusal(true, "registry-locked");
   const kept = readHostConfig(c);
@@ -972,8 +1016,18 @@ async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   if (privateWorkspace(options.workspace, options.stateHome))
     throw new ContractError("forbidden");
   if (create) mkdirSync(options.workspace, { recursive: true });
+  const missing = missingWorkspace(options.workspace);
+  if (missing) {
+    process.stderr.write(missing);
+    process.stdout.write(
+      `${JSON.stringify({ status: "refused", reason: "workspace-missing" })}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
+  await healAccount(new ServiceCoordination(null, options.stateHome));
   const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   // Port 0 is requested only for a genuinely new selection. An existing owner
   // keeps its exact persisted port/cwd/config; an inconclusive read is not new.
@@ -1001,6 +1055,74 @@ async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   if (failedStatus(result)) process.exitCode = 1;
 }
 
+/** One readable sentence for a refusal code, plus where to look next. */
+function refusalHint(code: string): string {
+  switch (code) {
+    case "invalid":
+      return "Cadence did not understand the command or one of its paths (see cadence --help).\n";
+    case "registry-locked":
+      return "Another Cadence process is updating the shared project registry. Try again in a moment, or run: cadence doctor\n";
+    case "quarantine":
+    case "conflict":
+      return "Cadence could not take over this project right now. See what is holding it: cadence doctor\n";
+    case "recording-exhausted":
+      return "The disk is too full for Cadence's history. Free some space and try again.\n";
+    case "unsupported-context":
+      return "Run Cadence's management command with Node.js 22.19 or newer (not Bun), without NODE_OPTIONS.\n";
+    default:
+      return "Cadence could not complete the command. Details: cadence doctor\n";
+  }
+}
+/** `cadence doctor [--fix] [--yes]`; `recover inspect|resolve` are aliases. */
+export async function doctorMain(
+  command: string,
+  argv: string[],
+): Promise<void> {
+  let fix = false,
+    yes = false;
+  if (command === "recover") {
+    const mode = argv.shift();
+    if (mode !== "inspect" && mode !== "resolve")
+      throw new ContractError("invalid");
+    fix = mode === "resolve";
+  }
+  const options: {
+    stateHome?: string;
+    serverConfig?: string;
+    workspace?: string;
+  } = {};
+  const seen = new Set<string>();
+  while (argv.length) {
+    const flag = argv.shift() as string;
+    if (seen.has(flag)) throw new ContractError("invalid");
+    seen.add(flag);
+    if (flag === "--fix") fix = true;
+    else if (flag === "--yes") yes = true;
+    else if (
+      ["--workspace", "--state-home", "--server-config"].includes(flag) &&
+      argv[0]
+    ) {
+      const value = resolve(argv.shift() as string);
+      if (flag === "--workspace") options.workspace = value;
+      else if (flag === "--state-home") options.stateHome = value;
+      else options.serverConfig = value;
+    } else throw new ContractError("invalid");
+  }
+  const result = await doctor({
+    ...options,
+    fix,
+    yes,
+    probeProject: async (root, stateHome) => {
+      try {
+        return await ownerResponsive(new ServiceCoordination(root, stateHome));
+      } catch {
+        return false;
+      }
+    },
+    probeWorkbench: (store) => ownerResponsive(store),
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
 export async function managementMain(
   argv: string[],
   hostUrl: URL,
@@ -1008,12 +1130,14 @@ export async function managementMain(
   const foregroundStart =
     argv.includes("--foreground") &&
     (argv[0] === "start" || (argv[0] === "workbench" && argv[1] === "start"));
-  const recoveryCommand =
-    argv[0] === "recover" || (argv[0] === "workbench" && argv[1] === "recover");
   try {
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
     const command = argv.shift();
+    if (command === "doctor" || command === "recover") {
+      await doctorMain(command, argv);
+      return;
+    }
     if (command === "workbench") {
       await gatewayMain(argv, hostUrl);
       return;
@@ -1026,7 +1150,6 @@ export async function managementMain(
         "stop",
         "token-link",
         "token-rotate",
-        "recover",
       ].includes(command ?? "") &&
       !argv.includes("--workspace")
     ) {
@@ -1035,7 +1158,7 @@ export async function managementMain(
     }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands (including recover) address the unified workbench, never cwd; no default project directory is created. Project recovery requires explicit --workspace PATH. Recovery checks the account-wide registry lock first.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--server-config PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
       );
       return;
     }
@@ -1047,7 +1170,6 @@ export async function managementMain(
       await serverMain(argv, hostUrl);
       return;
     }
-    let recovery: "inspect" | "resolve" | undefined;
     if (
       ![
         "start",
@@ -1056,16 +1178,9 @@ export async function managementMain(
         "diagnose",
         "token-link",
         "token-rotate",
-        "recover",
       ].includes(command ?? "")
     )
       throw new ContractError("invalid");
-    if (command === "recover") {
-      const selected = argv.shift();
-      if (selected !== "inspect" && selected !== "resolve")
-        throw new ContractError("invalid");
-      recovery = selected;
-    }
     const options: StartOptions = { workspace: process.cwd() };
     let foreground = false,
       reveal = false;
@@ -1097,15 +1212,28 @@ export async function managementMain(
         options.host = value;
       else throw new ContractError("invalid");
     }
+    const missing = missingWorkspace(resolve(options.workspace));
+    if (missing) {
+      process.stderr.write(missing);
+      // Release whatever the vanished project's owner left behind, so it
+      // blocks nothing else (its history stays in Cadence's private state).
+      await healAccount(new ServiceCoordination(null, options.stateHome)).catch(
+        () => undefined,
+      );
+      process.stdout.write(
+        `${JSON.stringify({ status: command === "start" ? "refused" : "absent", reason: "workspace-missing" })}\n`,
+      );
+      // A unit pointing at a removed directory must not restart in a loop.
+      process.exitCode = foreground ? 78 : 1;
+      return;
+    }
     effectiveWorkspace(options.workspace, options.stateHome);
     let result: unknown;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
     else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
-      if (command === "recover" && recovery)
-        result = await localRecovery(c, recovery);
-      else if (command === "status" || command === "diagnose")
+      if (command === "status" || command === "diagnose")
         result = await serviceStatus(c, command === "diagnose");
       else if (command === "stop") result = await stopService(c);
       else if (command === "token-link") {
@@ -1120,18 +1248,9 @@ export async function managementMain(
     if (failedStatus(result))
       process.exitCode = managementExitCode(result, foreground);
   } catch (error) {
+    const code = error instanceof ContractError ? error.code : "unavailable";
     process.stderr.write(
-      `${JSON.stringify({
-        error: "service-refused",
-        ...(recoveryCommand
-          ? {
-              code: error instanceof ContractError ? error.code : "unavailable",
-              stage: "recovery",
-              notice:
-                "Use workbench recover for account/workbench state or explicit --workspace for an existing project; preserve state on refusal.",
-            }
-          : {}),
-      })}\n`,
+      `${refusalHint(code)}${JSON.stringify({ error: "service-refused", code })}\n`,
     );
     process.exitCode =
       foregroundStart &&

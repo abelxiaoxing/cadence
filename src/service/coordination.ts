@@ -20,6 +20,12 @@ import {
   text,
 } from "./contracts/core.ts";
 import {
+  decodeMarkFields,
+  holderState,
+  selfMark,
+  stampTime,
+} from "./liveness.ts";
+import {
   DirectoryWalks,
   encoded,
   type FileSnapshot,
@@ -120,7 +126,7 @@ function reservation(r: Registration): Reservation {
   } = r;
   return row;
 }
-function decodeRegistration(value: unknown): Registration {
+export function decodeRegistration(value: unknown): Registration {
   const o = closed(value, registrationKeys);
   const row = Object.fromEntries(reservationKeys.map((k) => [k, o[k]]));
   return {
@@ -156,30 +162,34 @@ interface RegistryLock {
   token: string;
   pid: number;
   host: string;
+  boot: string | null;
+  started: string | null;
 }
-function decodeRegistryLock(snapshot: FileSnapshot): RegistryLock {
-  const o = closed(json(snapshot), ["schema", "token", "pid", "host"]);
+/** Older locks lack the liveness marks; new ones carry both. */
+export function markedKeys(value: unknown, keys: string[]): string[] {
+  const has = (key: string) =>
+    !!value && typeof value === "object" && Object.hasOwn(value, key);
+  return [
+    ...keys,
+    ...(has("boot") ? ["boot"] : []),
+    ...(has("started") ? ["started"] : []),
+  ];
+}
+export function decodeRegistryLock(snapshot: FileSnapshot): RegistryLock {
+  const raw = json(snapshot);
+  const o = closed(raw, markedKeys(raw, ["schema", "token", "pid", "host"]));
   return {
     schema: literal(o.schema, "cadence-service-registry-lock/1"),
     token: decodeId(o.token),
     // kill(0)/negative process-group probes must never be possible.
     pid: integer(o.pid, 1, 2147483647),
     host: text(o.host, 255, true),
+    ...decodeMarkFields(o),
   };
 }
 export interface RegistryLockDiagnostic {
   reason: "registry-locked";
   owner: "live" | "absent" | "ambiguous" | "unreadable";
-}
-export interface RegistryRecoveryInspection {
-  scope: "global-registry";
-  epoch: string; // exact lock incarnation, not a service epoch
-  coordinationDigest: string;
-  owner: "live" | "absent" | "ambiguous";
-  process: { pid: number; host: string };
-  reservations: number;
-  previousResolver: "live" | "absent" | "ambiguous" | null;
-  resolution: "local-interactive-only";
 }
 const registryNames = [
   "format.json",
@@ -187,7 +197,7 @@ const registryNames = [
   "registry.lock",
   "recovery-v1",
 ];
-interface RegistryView {
+export interface RegistryView {
   format: FileSnapshot;
   snapshot: FileSnapshot;
   value: Registry;
@@ -201,39 +211,6 @@ interface Selected {
   capability?: FileSnapshot;
   checkout?: FileSnapshot;
   value?: Registration;
-}
-export function recoveryOwnerStatus(
-  pid: number,
-  host: string,
-): "live" | "absent" | "ambiguous" {
-  if (host !== hostname()) return "ambiguous";
-  try {
-    process.kill(pid, 0);
-    return "live";
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ESRCH"
-      ? "absent"
-      : "ambiguous";
-  }
-}
-function recoveryDigest(registry: RegistryView, selected: Selected): string {
-  return hash(
-    encoded([
-      registry.format.identity,
-      registry.format.stamp,
-      registry.snapshot.identity,
-      registry.snapshot.stamp,
-      selected.capability?.stamp ?? null, // incarnation only; never a secret-derived capability digest
-      ...[
-        selected.manifest,
-        selected.config,
-        selected.hostConfig,
-        selected.registration,
-        selected.owner,
-        selected.checkout,
-      ].map((value) => (value ? [value.identity, value.stamp] : null)),
-    ]),
-  );
 }
 export type CoordinationStatus =
   | { status: "absent" | "unavailable" }
@@ -408,13 +385,11 @@ export class ServiceCoordination {
       throw new ContractError("quarantine");
     if (value && value.phase !== "stopped") {
       if (!owner || !checkout || !capability) refused();
-      const lock = closed(json(owner), [
-        "schema",
-        "epoch",
-        "token",
-        "pid",
-        "host",
-      ]);
+      const raw = json(owner);
+      const lock = closed(
+        raw,
+        markedKeys(raw, ["schema", "epoch", "token", "pid", "host"]),
+      );
       literal(lock.schema, "cadence-service-owner-lock/1");
       literal(lock.epoch, value.epoch);
       literal(lock.token, value.ownerToken);
@@ -496,6 +471,20 @@ export class ServiceCoordination {
       }),
     );
   }
+  /** Validated registry, or undefined before the first reservation. */
+  registryView(): RegistryView | undefined {
+    return this.registry();
+  }
+  /** The short exclusive registry section, for self-healing reclaims. */
+  mutateRegistry<T>(
+    operation: (
+      view: RegistryView,
+      mutate: () => void,
+      assertHeld: () => void,
+    ) => T,
+  ): T {
+    return this.withRegistry(operation);
+  }
   private withRegistry<T>(
     operation: (
       view: RegistryView,
@@ -508,6 +497,7 @@ export class ServiceCoordination {
     const lockPath = this.registryPath("registry.lock");
     let lock: FileSnapshot;
     try {
+      const mark = selfMark();
       lock = this.files.create(
         lockPath,
         encoded({
@@ -515,6 +505,8 @@ export class ServiceCoordination {
           token: randomUUID(),
           pid: process.pid,
           host: hostname(),
+          boot: mark.boot,
+          started: mark.started,
         }),
       );
     } catch (error) {
@@ -648,6 +640,7 @@ export class ServiceCoordination {
       const checkout = this.store.acquire();
       const checkoutFile = this.files.read(this.store.lockPath, 8192);
       if (!checkoutFile) refused();
+      const mark = selfMark();
       const owner = this.files.create(
         this.path("owner.lock"),
         encoded({
@@ -656,6 +649,8 @@ export class ServiceCoordination {
           token: row.ownerToken,
           pid: row.pid,
           host: row.host,
+          boot: mark.boot,
+          started: mark.started,
         }),
       );
       const capability = this.files.create(
@@ -758,322 +753,19 @@ export class ServiceCoordination {
       const lock = this.files.read(this.registryPath("registry.lock"));
       if (!lock) return undefined;
       const value = decodeRegistryLock(lock);
+      const holder = holderState(value, stampTime(lock.stamp)).state;
       return {
         reason: "registry-locked",
-        owner: recoveryOwnerStatus(value.pid, value.host),
+        owner:
+          holder === "live"
+            ? "live"
+            : holder === "dead"
+              ? "absent"
+              : "ambiguous",
       };
     } catch {
       return { reason: "registry-locked", owner: "unreadable" };
     }
-  }
-  private registryRecoveryState() {
-    const lock = this.files.read(this.registryPath("registry.lock"));
-    if (!lock) throw new ContractError("conflict");
-    const value = decodeRegistryLock(lock);
-    names(this.registryDirectory, registryNames);
-    const format = this.files.read(this.registryPath("format.json"));
-    const roots = this.files.read(
-      this.registryPath("roots.json"),
-      REGISTRY_BYTES,
-    );
-    // A crash immediately after exclusive creation may precede initialization.
-    const registry = !format && !roots ? undefined : this.registry();
-    const entries = registry?.value.entries ?? [];
-    const protectedRoots = new Set(entries.map((row) => hash(row.root)));
-    const proofs: unknown[] = [];
-    // Older releases removed a reservation BEFORE the checkout fence. A dead
-    // short-lock PID cannot make those unreserved, partially released projects
-    // safe. Verify every unreserved service selection; never repair it here.
-    const directory = opendirSync(this.files.namespace);
-    try {
-      let count = 0;
-      for (
-        let entry = directory.readSync();
-        entry;
-        entry = directory.readSync()
-      ) {
-        if (++count > 1024) throw new ContractError("capacity");
-        if (
-          !/^[a-f0-9]{64}$/.test(entry.name) ||
-          protectedRoots.has(entry.name)
-        )
-          continue;
-        const service = join(this.files.namespace, entry.name, "service-v1");
-        if (!this.files.directory(service)) continue;
-        const manifest = this.files.read(join(service, "format.json"));
-        if (!manifest) refused();
-        const f = closed(json(manifest), [
-          "schema",
-          "root",
-          "stateHome",
-          "configIdentity",
-        ]);
-        const root = pathValue(f.root);
-        if (hash(root) !== entry.name) refused();
-        // Retained stopped metadata remains checkable even when the consumer
-        // deleted/moved that old working directory. Never resolve/recreate it.
-        const selected = this.selected(service, root, true);
-        if (!selected) throw new ContractError("quarantine");
-        proofs.push([
-          entry.name,
-          ...[
-            selected.manifest,
-            selected.config,
-            selected.hostConfig,
-            selected.registration,
-          ].map((file) => (file ? [file.identity, file.stamp] : null)),
-        ]);
-      }
-    } finally {
-      directory.closeSync();
-    }
-    proofs.sort((a, b) =>
-      JSON.stringify(a).localeCompare(JSON.stringify(b), "en"),
-    );
-    const stateDigest = hash(
-      encoded([
-        lock.identity,
-        lock.stamp,
-        format ? [format.identity, format.stamp] : null,
-        roots ? [roots.identity, roots.stamp] : null,
-        proofs,
-      ]),
-    );
-    const epoch = hash(encoded([lock.identity, lock.stamp]));
-    const archive = this.registryPath(join("recovery-v1", epoch));
-    const attempts: FileSnapshot[] = [];
-    let previousResolver: RegistryRecoveryInspection["previousResolver"] = null;
-    if (this.files.directory(archive)) {
-      // Immutable, exclusive attempts serialize resolvers. If one crashes before
-      // release, a fresh confirmation may append the next attempt ONLY after its
-      // PID is absent. No stale secondary lock needs deletion or takeover.
-      names(
-        archive,
-        Array.from({ length: 128 }, (_, n) => `${n}.json`),
-      );
-      for (let n = 0; n < 128; n++) {
-        const attempt = this.files.read(join(archive, `${n}.json`), 32768);
-        if (!attempt) {
-          names(
-            archive,
-            attempts.map((_, i) => `${i}.json`),
-          );
-          break;
-        }
-        const o = closed(json(attempt, 32768), [
-          "schema",
-          "lock",
-          "pid",
-          "host",
-          "digest",
-        ]);
-        literal(o.schema, "cadence-registry-recovery/1");
-        literal(o.lock, lock.bytes.toString("utf8"));
-        decodeHash(o.digest);
-        previousResolver = recoveryOwnerStatus(
-          integer(o.pid, 1, 2147483647),
-          text(o.host, 255, true),
-        );
-        attempts.push(attempt);
-      }
-    }
-    const inspection: RegistryRecoveryInspection = {
-      scope: "global-registry",
-      epoch,
-      coordinationDigest: hash(
-        encoded([stateDigest, attempts.map((a) => [a.identity, a.stamp])]),
-      ),
-      owner: recoveryOwnerStatus(value.pid, value.host),
-      process: { pid: value.pid, host: value.host },
-      reservations: entries.length,
-      previousResolver,
-      resolution: "local-interactive-only",
-    };
-    return { lock, archive, attempts, stateDigest, inspection };
-  }
-  inspectRegistryRecovery(): RegistryRecoveryInspection {
-    return this.registryRecoveryState().inspection;
-  }
-  /** Local native management only. Retire just the proven dead short lock after
-   * durable evidence; reservations, owner/checkout locks and history stay intact. */
-  resolveRegistryRecovery(
-    expected: RegistryRecoveryInspection,
-    assertAuthority: () => void,
-  ) {
-    assertAuthority();
-    const state = this.registryRecoveryState();
-    if (encoded(state.inspection) !== encoded(expected))
-      throw new ContractError("conflict");
-    if (
-      expected.owner !== "absent" ||
-      (expected.previousResolver !== null &&
-        expected.previousResolver !== "absent")
-    )
-      throw new ContractError("quarantine");
-    if (state.attempts.length >= 128) throw new ContractError("capacity");
-    assertAuthority();
-    const receiptPath = join(state.archive, `${state.attempts.length}.json`);
-    const receipt = this.files.create(
-      receiptPath,
-      encoded({
-        schema: "cadence-registry-recovery/1",
-        lock: state.lock.bytes.toString("utf8"),
-        pid: process.pid,
-        host: hostname(),
-        digest: expected.coordinationDigest,
-      }),
-      32768,
-    );
-    // create fsyncs/closes the original receipt before any release effect.
-    assertAuthority();
-    const current = this.registryRecoveryState();
-    if (
-      current.stateDigest !== state.stateDigest ||
-      current.inspection.owner !== "absent" ||
-      current.attempts.length !== state.attempts.length + 1
-    )
-      throw new ContractError("conflict");
-    for (const [n, attempt] of state.attempts.entries())
-      this.files.assert(join(state.archive, `${n}.json`), attempt, 32768);
-    this.files.assert(receiptPath, receipt, 32768);
-    assertAuthority();
-    this.files.remove(this.registryPath("registry.lock"), state.lock);
-    return {
-      status: "resolved",
-      scope: "global-registry",
-      recoveryId: expected.epoch,
-      notice: "registry-only-project-fences-preserved",
-    } as const;
-  }
-  /** Capture exact private resources BEFORE the append/confirmation awaits. The
-   * closure is internal local management authority, never a wire capability.
-   * A durable bridge must be verified by the caller before EVERY release effect. */
-  prepareRecoveryRelease(
-    expected: string,
-    assertAuthority: () => void,
-  ): (assertDurable: () => void) => void {
-    assertAuthority();
-    if (this.recoverySnapshot().digest !== expected)
-      throw new ContractError("conflict");
-    const selected = this.selected();
-    if (
-      !selected?.value ||
-      !selected.registration ||
-      !selected.owner ||
-      !selected.checkout ||
-      !selected.capability
-    )
-      throw new ContractError("quarantine");
-    const r = selected.value;
-    const absent = () => {
-      assertAuthority();
-      if (recoveryOwnerStatus(r.pid, r.host) !== "absent")
-        throw new ContractError("quarantine");
-    };
-    absent();
-    let used = false;
-    return (assertDurable) => {
-      if (used) throw new ContractError("consumed-grant");
-      used = true;
-      this.withRegistry((view, mutate, assertHeld) => {
-        let registry = view.snapshot;
-        let registration = selected.registration;
-        let capability = selected.capability;
-        let owner = selected.owner;
-        let checkout = selected.checkout;
-        if (!registration || !capability || !owner || !checkout)
-          throw new ContractError("conflict");
-        if (recoveryDigest(view, selected) !== expected)
-          throw new ContractError("conflict");
-        const assert = () => {
-          absent();
-          assertHeld();
-          this.assertNamespace();
-          this.files.assert(
-            this.registryPath("roots.json"),
-            registry,
-            REGISTRY_BYTES,
-          );
-          for (const [name, snapshot] of [
-            ["format.json", selected.manifest],
-            ["config.json", selected.config],
-            ["host-config.json", selected.hostConfig],
-            ["registration.json", registration],
-            ["local-capability.json", capability],
-            ["owner.lock", owner],
-          ] as const)
-            this.files.assert(this.path(name), snapshot);
-          this.files.assert(this.store.lockPath, checkout, 8192);
-          assertDurable();
-        };
-        assert();
-        const matching = view.value.entries.filter(
-          (row) => row.epoch === r.epoch,
-        );
-        if (
-          matching.length !== 1 ||
-          encoded(matching[0]) !== encoded(reservation(r))
-        )
-          throw new ContractError("conflict");
-        mutate(); // every subsequent partial failure retains the registry fence
-        registration = this.files.replace(
-          this.path("registration.json"),
-          registration,
-          encoded({ ...r, phase: "stopped" }),
-        );
-        assert();
-        registry = this.files.replace(
-          this.registryPath("roots.json"),
-          registry,
-          encoded({
-            ...view.value,
-            entries: view.value.entries.filter((row) => row.epoch !== r.epoch),
-          }),
-          REGISTRY_BYTES,
-        );
-        assert();
-        this.files.remove(this.path("local-capability.json"), capability);
-        capability = undefined;
-        assert();
-        this.files.remove(this.path("owner.lock"), owner);
-        owner = undefined;
-        assert();
-        // Only the exact v1 lock tied to THIS registration, never a legacy lock.
-        this.files.remove(this.store.lockPath, checkout, 8192);
-        checkout = undefined;
-        assert();
-      });
-    };
-  }
-  /** Private recovery identity only. Does not read/scan task records or logs.
-   * W3 independently supplies the affected-history digest; capability bytes and
-   * their hashes are deliberately absent from this recovery projection. */
-  recoverySnapshot(): { registration: Registration; digest: string } {
-    if (this.files.read(this.registryPath("registry.lock")))
-      throw new ContractError("quarantine");
-    const registry = this.registry();
-    const selected = this.selected();
-    if (
-      !registry ||
-      !selected?.value ||
-      !selected.registration ||
-      !selected.owner ||
-      !selected.checkout
-    )
-      refused();
-    const value = selected.value;
-    const matching = registry.value.entries.filter(
-      (row) => row.epoch === value.epoch,
-    );
-    if (
-      matching.length !== 1 ||
-      encoded(matching[0]) !== encoded(reservation(value))
-    )
-      refused();
-    return {
-      registration: { ...selected.value },
-      digest: recoveryDigest(registry, selected),
-    };
   }
 }
 

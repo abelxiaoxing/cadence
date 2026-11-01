@@ -17,7 +17,7 @@ import { HttpServiceTransport } from "./service-http-client.ts";
 import { effectiveWorkspace } from "./workspace.ts";
 
 export const MANAGEMENT_GUIDANCE =
-  "Cadence owner absent, unavailable or incompatible. Explicitly run cadence-service status --workspace <path>, cadence-service diagnose --workspace <path>, or cadence-service start --workspace <path>. Stop older Cadence sessions first. For retained fences use cadence-service recover inspect; resolve requires a local terminal and separate process, credential and storage acknowledgments. Never treat unavailable/quarantined as stopped. No service was started and no embedded executor is available.";
+  "Cadence owner absent, unavailable or incompatible. Start it with cadence start --workspace <path> (it recovers automatically from an unclean shutdown), or see what is wrong with cadence doctor --workspace <path>. Stop older Cadence sessions first. No service was started and no embedded executor is available.";
 
 const UNIT = "cadence.service";
 const LABEL = "com.abelxiaoxing.cadence";

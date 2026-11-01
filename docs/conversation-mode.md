@@ -90,7 +90,7 @@ Automatic review is never recorded as human review.
 
 To request orderly closure, ask Cadence to cancel in Pi, or use **Cancel workflow — request stop** in the browser (the browser coordinator cannot cancel).
 A pending or unknown cancellation is not reported as stopped.
-Failures, timeouts and unknown process/auth/storage outcomes remain distinct; unknown resources retain fences for explicit informed recovery.
+Failures, timeouts and unknown process/auth/storage outcomes remain distinct; an owner that cannot settle unknown work restarts itself and recovers automatically.
 
 ## Service and compatibility
 

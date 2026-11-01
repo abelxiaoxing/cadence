@@ -88,8 +88,8 @@ export const zh = {
   implementation: "实施",
   git: "Git",
 
-  "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.":
-    "共享注册表锁正在阻止项目打开。请在服务所在主机运行 cadence recover inspect --workspace <project>，使用相同的 --state-home；符合恢复条件时，在本机终端运行 recover resolve。请勿手动删除锁文件。",
+  "Another Cadence process is updating the project registry. Try again in a moment; if this persists, run cadence doctor on the service host.":
+    "另一个 Cadence 进程正在更新项目注册表，请稍后再试；如果一直这样，请在服务所在主机运行 cadence doctor。",
   "Start a conversation from the sidebar.": "从左侧开启一段新对话。",
   "Conversations are kept with each project. Open a working folder to see its history.":
     "历史对话按项目保存。打开工作文件夹后，即可查看它的历史对话。",
@@ -115,6 +115,35 @@ export const zh = {
   "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.":
     "所选项目不可用，请明确选择项目；未重建任何目录。",
   "No projects associated yet.": "尚未关联任何项目。",
+  "The machine restarted while Cadence was running. Cadence recovered automatically.":
+    "Cadence 运行期间机器重启过，已自动恢复。",
+  "Cadence ended unexpectedly last time. It recovered automatically.":
+    "Cadence 上次意外退出，已自动恢复。",
+  "Cadence ran into a problem and restarted itself.":
+    "Cadence 遇到问题，已自动重启。",
+  "Cadence repaired some incomplete files automatically.":
+    "Cadence 已自动修复部分不完整的文件。",
+  "Work that was running is marked as interrupted; start it again when you are ready.":
+    "当时正在运行的工作已标记为“已中断”，需要时可重新开始。",
+  "Released the previous run's locks.": "已释放上次运行留下的锁。",
+  "Stopped {count} leftover worker processes.":
+    "已停止 {count} 个残留的工作进程。",
+  "Stopped the unresponsive previous process.": "已停止无响应的旧进程。",
+  "History continues after the last complete entry.":
+    "历史记录从最后一条完整记录之后继续。",
+  "Unreadable history was archived and a new one was started.":
+    "无法读取的历史记录已归档，并已新建历史记录。",
+  "Damaged state was archived; it started afresh.":
+    "损坏的状态已归档，已重新开始。",
+  "Rebuilt the project registry.": "已重建项目注册表。",
+  "Set aside interrupted temporary files.": "已移走中断时留下的临时文件。",
+  "Archived files are kept for 30 days; cadence doctor shows where.":
+    "归档文件保留 30 天，可用 cadence doctor 查看位置。",
+  "Project {name}": "项目 {name}",
+  Workbench: "工作台",
+  "Project registry": "项目注册表",
+  "Hide details": "收起详情",
+  Dismiss: "知道了",
   "Chat ready": "可以开始对话",
   "Conversation capture limit exceeded.": "对话记录已达到容量上限。",
   "Start a new conversation; incomplete context is not replayed.":

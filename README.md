@@ -89,12 +89,15 @@ cadence server status
 cadence server restart     # after an upgrade or a .env / models.json change
 cadence server stop        # stays registered and starts again at the next boot or login
 cadence server uninstall   # run before npm uninstall -g
+cadence doctor             # what is left over or recently recovered; --fix for the rest
 ```
+
+A power loss, shutdown or crash needs no cleanup: the next start recovers automatically, marks interrupted work as interrupted and says what it did.
 
 Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`.
 Restart, stop and uninstall stop running work in order rather than leaving it detached.
 Uninstall removes only the service definition; projects, history and Pi settings stay.
-Linux root and named services, remote HTTPS access and recovery are covered in [service management](docs/service-management.md) and [remote access](docs/remote-access.md).
+Linux root and named services, remote HTTPS access and automatic recovery are covered in [service management](docs/service-management.md) and [remote access](docs/remote-access.md).
 
 ## Development
 

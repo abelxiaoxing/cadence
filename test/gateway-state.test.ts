@@ -36,10 +36,10 @@ it("whole-workbench Stop serially attempts every associated owner even after one
       throw new Error("unknown first owner closure");
     }
   });
-  const refusal = expect(original).rejects.toThrow();
   expect(attempts).toEqual(["first"]);
   release();
-  await refusal;
+  // The unconfirmed owner is reported; it keeps its own recoverable state.
+  expect(await original).toEqual([projects[0]]);
   expect(attempts).toEqual(["first", "second", "third"]);
 });
 

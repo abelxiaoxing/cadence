@@ -5539,7 +5539,7 @@ class HttpAuthentication {
 import { spawn } from "node:child_process";
 import { request } from "node:http";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname10, join as join12, resolve as resolve5 } from "node:path";
+import { dirname as dirname8, join as join13, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/sdk-network.ts
@@ -5680,7 +5680,7 @@ function sdkNetworkEnvironment(ambient, scoped) {
 // src/service/coordination.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 import { opendirSync } from "node:fs";
-import { hostname as hostname2 } from "node:os";
+import { hostname as hostname3 } from "node:os";
 import { dirname as dirname6, isAbsolute as isAbsolute4, join as join7, relative as relative3, sep as sep3 } from "node:path";
 
 // src/service/checkout-lock.ts
@@ -5694,8 +5694,187 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import { hostname } from "node:os";
+import { hostname as hostname2 } from "node:os";
 import { dirname as dirname5, join as join6 } from "node:path";
+
+// src/service/liveness.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { hostname, uptime } from "node:os";
+var LEGACY_BOOT_MARGIN_MS = 10 * 60 * 1000;
+var REUSE_SLACK_MS = 5000;
+var LINUX_TICKS_PER_SECOND = 100;
+var cachedBoot;
+function bootId() {
+  if (cachedBoot !== undefined)
+    return cachedBoot;
+  cachedBoot = null;
+  try {
+    if (process.platform === "linux") {
+      const id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      if (/^[0-9a-f-]{36}$/.test(id))
+        cachedBoot = id;
+    } else if (process.platform === "darwin") {
+      const r = spawnSync2("sysctl", ["-n", "kern.bootsessionuuid"], {
+        encoding: "utf8",
+        timeout: 2000
+      });
+      const id = r.status === 0 ? r.stdout.trim() : "";
+      if (/^[0-9A-Fa-f-]{36}$/.test(id))
+        cachedBoot = id;
+    }
+  } catch {
+    cachedBoot = null;
+  }
+  return cachedBoot;
+}
+function bootTime() {
+  if (process.platform === "linux")
+    try {
+      const line = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
+      if (line)
+        return Number(line[1]) * 1000;
+    } catch {}
+  return Date.now() - uptime() * 1000;
+}
+function linuxStat(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).trim().split(" ");
+  } catch {
+    return null;
+  }
+}
+function processStart(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1)
+    return null;
+  if (process.platform === "linux") {
+    const fields2 = linuxStat(pid);
+    const ticks = fields2?.[19];
+    return ticks && /^\d+$/.test(ticks) ? `ticks:${ticks}` : null;
+  }
+  if (process.platform === "darwin") {
+    const r = spawnSync2("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 2000,
+      env: { ...process.env, LC_ALL: "C" }
+    });
+    const value = r.status === 0 ? r.stdout.trim() : "";
+    return value ? `lstart:${value}` : null;
+  }
+  return null;
+}
+function processStartMs(pid) {
+  if (process.platform === "linux") {
+    const ticks = linuxStat(pid)?.[19];
+    return ticks && /^\d+$/.test(ticks) ? bootTime() + Number(ticks) * 1000 / LINUX_TICKS_PER_SECOND : null;
+  }
+  const start = processStart(pid);
+  if (start?.startsWith("lstart:")) {
+    const ms = Date.parse(start.slice("lstart:".length));
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+var cachedSelf;
+function selfMark() {
+  cachedSelf ??= processStart(process.pid);
+  return {
+    pid: process.pid,
+    host: hostname(),
+    boot: bootId(),
+    started: cachedSelf
+  };
+}
+function probe(pid) {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code2 = error instanceof Error && "code" in error ? error.code : undefined;
+    return code2 === "ESRCH" || code2 === "EPERM" ? "absent" : "error";
+  }
+}
+function holderState(mark, writtenAt) {
+  if (mark.host !== hostname())
+    return { state: "foreign", reboot: false };
+  const boot = bootId();
+  if (mark.boot && boot && mark.boot !== boot)
+    return { state: "dead", reboot: true };
+  const legacyEarlierBoot = !mark.boot && writtenAt !== undefined && writtenAt < bootTime() - LEGACY_BOOT_MARGIN_MS;
+  if (mark.pid === process.pid) {
+    const self = selfMark().started;
+    if (mark.started && self)
+      return mark.started === self ? live() : dead(legacyEarlierBoot);
+    const ownStart = Date.now() - process.uptime() * 1000;
+    return writtenAt !== undefined && writtenAt < ownStart - REUSE_SLACK_MS ? dead(legacyEarlierBoot) : live();
+  }
+  const seen = probe(mark.pid);
+  if (seen === "absent")
+    return { state: "dead", reboot: legacyEarlierBoot };
+  if (seen === "error")
+    return { state: "unknown", reboot: false };
+  if (mark.started) {
+    const now = processStart(mark.pid);
+    if (now)
+      return now === mark.started ? live() : dead(legacyEarlierBoot);
+    return probe(mark.pid) === "absent" ? dead(legacyEarlierBoot) : { state: "unknown", reboot: false };
+  }
+  const startedAt = processStartMs(mark.pid);
+  if (startedAt !== null && writtenAt !== undefined)
+    return startedAt > writtenAt + REUSE_SLACK_MS ? dead(legacyEarlierBoot) : live();
+  if (legacyEarlierBoot)
+    return dead(true);
+  return startedAt === null ? { state: "unknown", reboot: false } : live();
+}
+function live() {
+  return { state: "live", reboot: false };
+}
+function dead(reboot) {
+  return { state: "dead", reboot };
+}
+function stampTime(stamp2) {
+  const value = Number(stamp2.slice(stamp2.lastIndexOf(":") + 1));
+  return Number.isFinite(value) ? value : undefined;
+}
+function decodeMarkFields(o) {
+  const field = (value) => typeof value === "string" && value.length <= 128 ? value : null;
+  return { boot: field(o.boot), started: field(o.started) };
+}
+async function stopProcessGroup(pgid, waitMs = 5000) {
+  const gone = () => {
+    try {
+      process.kill(process.platform === "win32" ? pgid : -pgid, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  };
+  const send = (signal) => {
+    try {
+      if (process.platform === "win32")
+        process.kill(pgid, signal);
+      else
+        process.kill(-pgid, signal);
+    } catch {}
+  };
+  if (gone())
+    return true;
+  send("SIGTERM");
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve3) => setTimeout(resolve3, 100));
+    if (gone())
+      return true;
+    if (Date.now() > deadline - waitMs / 2)
+      send("SIGKILL");
+  }
+  send("SIGKILL");
+  await new Promise((resolve3) => setTimeout(resolve3, 200));
+  return gone();
+}
+
+// src/service/checkout-lock.ts
 class CheckoutStore {
   root;
   privateRoot;
@@ -5746,13 +5925,16 @@ class CheckoutStore {
   acquire() {
     this.inspectPrivate();
     safeDirectory(this.privateRoot, true);
+    const mark = selfMark();
     const lock = {
       schema: "cadence-assistant-lock/1",
       token: randomUUID3(),
       runId: randomUUID3(),
       pid: process.pid,
-      host: hostname(),
-      root: this.root
+      host: hostname2(),
+      root: this.root,
+      boot: mark.boot,
+      started: mark.started
     };
     let fd;
     try {
@@ -5773,7 +5955,7 @@ class CheckoutStore {
       throw new Error("Coordination lock changed");
   }
   release(lock) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
+    if (lock.pid !== process.pid || lock.host !== hostname2())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
     retryWindowsFileOperation(() => unlinkSync2(this.lockPath), () => this.assertOwner(lock));
@@ -5870,13 +6052,23 @@ function names(path, allowed) {
     dir.closeSync();
   }
 }
+function markedKeys(value, keys2) {
+  const has = (key) => !!value && typeof value === "object" && Object.hasOwn(value, key);
+  return [
+    ...keys2,
+    ...has("boot") ? ["boot"] : [],
+    ...has("started") ? ["started"] : []
+  ];
+}
 function decodeRegistryLock(snapshot) {
-  const o = closed(json(snapshot), ["schema", "token", "pid", "host"]);
+  const raw = json(snapshot);
+  const o = closed(raw, markedKeys(raw, ["schema", "token", "pid", "host"]));
   return {
     schema: literal(o.schema, "cadence-service-registry-lock/1"),
     token: decodeId(o.token),
     pid: integer(o.pid, 1, 2147483647),
-    host: text(o.host, 255, true)
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
   };
 }
 var registryNames = [
@@ -5885,33 +6077,6 @@ var registryNames = [
   "registry.lock",
   "recovery-v1"
 ];
-function recoveryOwnerStatus(pid, host) {
-  if (host !== hostname2())
-    return "ambiguous";
-  try {
-    process.kill(pid, 0);
-    return "live";
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ESRCH" ? "absent" : "ambiguous";
-  }
-}
-function recoveryDigest(registry, selected) {
-  return hash2(encoded([
-    registry.format.identity,
-    registry.format.stamp,
-    registry.snapshot.identity,
-    registry.snapshot.stamp,
-    selected.capability?.stamp ?? null,
-    ...[
-      selected.manifest,
-      selected.config,
-      selected.hostConfig,
-      selected.registration,
-      selected.owner,
-      selected.checkout
-    ].map((value) => value ? [value.identity, value.stamp] : null)
-  ]));
-}
 
 class ServiceCoordination {
   project;
@@ -6022,13 +6187,8 @@ class ServiceCoordination {
     if (value && value.phase !== "stopped") {
       if (!owner || !checkout || !capability)
         refused();
-      const lock = closed(json(owner), [
-        "schema",
-        "epoch",
-        "token",
-        "pid",
-        "host"
-      ]);
+      const raw = json(owner);
+      const lock = closed(raw, markedKeys(raw, ["schema", "epoch", "token", "pid", "host"]));
       literal(lock.schema, "cadence-service-owner-lock/1");
       literal(lock.epoch, value.epoch);
       literal(lock.token, value.ownerToken);
@@ -6096,17 +6256,26 @@ class ServiceCoordination {
       configIdentity: saved.identity
     }));
   }
+  registryView() {
+    return this.registry();
+  }
+  mutateRegistry(operation) {
+    return this.withRegistry(operation);
+  }
   withRegistry(operation) {
     this.files.directory(this.registryDirectory, true);
     names(this.registryDirectory, registryNames);
     const lockPath = this.registryPath("registry.lock");
     let lock;
     try {
+      const mark = selfMark();
       lock = this.files.create(lockPath, encoded({
         schema: "cadence-service-registry-lock/1",
         token: randomUUID4(),
         pid: process.pid,
-        host: hostname2()
+        host: hostname3(),
+        boot: mark.boot,
+        started: mark.started
       }));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "EEXIST")
@@ -6172,7 +6341,7 @@ class ServiceCoordination {
         endpoint: bound,
         epoch: randomUUID4(),
         pid: process.pid,
-        host: hostname2(),
+        host: hostname3(),
         ownerToken: randomUUID4()
       };
       mutate();
@@ -6197,12 +6366,15 @@ class ServiceCoordination {
       const checkoutFile = this.files.read(this.store.lockPath, 8192);
       if (!checkoutFile)
         refused();
+      const mark = selfMark();
       const owner = this.files.create(this.path("owner.lock"), encoded({
         schema: "cadence-service-owner-lock/1",
         epoch: row.epoch,
         token: row.ownerToken,
         pid: row.pid,
-        host: row.host
+        host: row.host,
+        boot: mark.boot,
+        started: mark.started
       }));
       const capability = this.files.create(this.path("local-capability.json"), encoded({
         schema: "cadence-service-local-capability/1",
@@ -6275,233 +6447,14 @@ class ServiceCoordination {
       if (!lock)
         return;
       const value = decodeRegistryLock(lock);
+      const holder = holderState(value, stampTime(lock.stamp)).state;
       return {
         reason: "registry-locked",
-        owner: recoveryOwnerStatus(value.pid, value.host)
+        owner: holder === "live" ? "live" : holder === "dead" ? "absent" : "ambiguous"
       };
     } catch {
       return { reason: "registry-locked", owner: "unreadable" };
     }
-  }
-  registryRecoveryState() {
-    const lock = this.files.read(this.registryPath("registry.lock"));
-    if (!lock)
-      throw new ContractError("conflict");
-    const value = decodeRegistryLock(lock);
-    names(this.registryDirectory, registryNames);
-    const format = this.files.read(this.registryPath("format.json"));
-    const roots = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
-    const registry = !format && !roots ? undefined : this.registry();
-    const entries = registry?.value.entries ?? [];
-    const protectedRoots = new Set(entries.map((row) => hash2(row.root)));
-    const proofs = [];
-    const directory = opendirSync(this.files.namespace);
-    try {
-      let count = 0;
-      for (let entry = directory.readSync();entry; entry = directory.readSync()) {
-        if (++count > 1024)
-          throw new ContractError("capacity");
-        if (!/^[a-f0-9]{64}$/.test(entry.name) || protectedRoots.has(entry.name))
-          continue;
-        const service = join7(this.files.namespace, entry.name, "service-v1");
-        if (!this.files.directory(service))
-          continue;
-        const manifest = this.files.read(join7(service, "format.json"));
-        if (!manifest)
-          refused();
-        const f = closed(json(manifest), [
-          "schema",
-          "root",
-          "stateHome",
-          "configIdentity"
-        ]);
-        const root = pathValue(f.root);
-        if (hash2(root) !== entry.name)
-          refused();
-        const selected = this.selected(service, root, true);
-        if (!selected)
-          throw new ContractError("quarantine");
-        proofs.push([
-          entry.name,
-          ...[
-            selected.manifest,
-            selected.config,
-            selected.hostConfig,
-            selected.registration
-          ].map((file) => file ? [file.identity, file.stamp] : null)
-        ]);
-      }
-    } finally {
-      directory.closeSync();
-    }
-    proofs.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
-    const stateDigest = hash2(encoded([
-      lock.identity,
-      lock.stamp,
-      format ? [format.identity, format.stamp] : null,
-      roots ? [roots.identity, roots.stamp] : null,
-      proofs
-    ]));
-    const epoch = hash2(encoded([lock.identity, lock.stamp]));
-    const archive = this.registryPath(join7("recovery-v1", epoch));
-    const attempts = [];
-    let previousResolver = null;
-    if (this.files.directory(archive)) {
-      names(archive, Array.from({ length: 128 }, (_, n) => `${n}.json`));
-      for (let n = 0;n < 128; n++) {
-        const attempt = this.files.read(join7(archive, `${n}.json`), 32768);
-        if (!attempt) {
-          names(archive, attempts.map((_, i) => `${i}.json`));
-          break;
-        }
-        const o = closed(json(attempt, 32768), [
-          "schema",
-          "lock",
-          "pid",
-          "host",
-          "digest"
-        ]);
-        literal(o.schema, "cadence-registry-recovery/1");
-        literal(o.lock, lock.bytes.toString("utf8"));
-        decodeHash(o.digest);
-        previousResolver = recoveryOwnerStatus(integer(o.pid, 1, 2147483647), text(o.host, 255, true));
-        attempts.push(attempt);
-      }
-    }
-    const inspection = {
-      scope: "global-registry",
-      epoch,
-      coordinationDigest: hash2(encoded([stateDigest, attempts.map((a) => [a.identity, a.stamp])])),
-      owner: recoveryOwnerStatus(value.pid, value.host),
-      process: { pid: value.pid, host: value.host },
-      reservations: entries.length,
-      previousResolver,
-      resolution: "local-interactive-only"
-    };
-    return { lock, archive, attempts, stateDigest, inspection };
-  }
-  inspectRegistryRecovery() {
-    return this.registryRecoveryState().inspection;
-  }
-  resolveRegistryRecovery(expected, assertAuthority) {
-    assertAuthority();
-    const state = this.registryRecoveryState();
-    if (encoded(state.inspection) !== encoded(expected))
-      throw new ContractError("conflict");
-    if (expected.owner !== "absent" || expected.previousResolver !== null && expected.previousResolver !== "absent")
-      throw new ContractError("quarantine");
-    if (state.attempts.length >= 128)
-      throw new ContractError("capacity");
-    assertAuthority();
-    const receiptPath = join7(state.archive, `${state.attempts.length}.json`);
-    const receipt = this.files.create(receiptPath, encoded({
-      schema: "cadence-registry-recovery/1",
-      lock: state.lock.bytes.toString("utf8"),
-      pid: process.pid,
-      host: hostname2(),
-      digest: expected.coordinationDigest
-    }), 32768);
-    assertAuthority();
-    const current = this.registryRecoveryState();
-    if (current.stateDigest !== state.stateDigest || current.inspection.owner !== "absent" || current.attempts.length !== state.attempts.length + 1)
-      throw new ContractError("conflict");
-    for (const [n, attempt] of state.attempts.entries())
-      this.files.assert(join7(state.archive, `${n}.json`), attempt, 32768);
-    this.files.assert(receiptPath, receipt, 32768);
-    assertAuthority();
-    this.files.remove(this.registryPath("registry.lock"), state.lock);
-    return {
-      status: "resolved",
-      scope: "global-registry",
-      recoveryId: expected.epoch,
-      notice: "registry-only-project-fences-preserved"
-    };
-  }
-  prepareRecoveryRelease(expected, assertAuthority) {
-    assertAuthority();
-    if (this.recoverySnapshot().digest !== expected)
-      throw new ContractError("conflict");
-    const selected = this.selected();
-    if (!selected?.value || !selected.registration || !selected.owner || !selected.checkout || !selected.capability)
-      throw new ContractError("quarantine");
-    const r = selected.value;
-    const absent2 = () => {
-      assertAuthority();
-      if (recoveryOwnerStatus(r.pid, r.host) !== "absent")
-        throw new ContractError("quarantine");
-    };
-    absent2();
-    let used = false;
-    return (assertDurable) => {
-      if (used)
-        throw new ContractError("consumed-grant");
-      used = true;
-      this.withRegistry((view, mutate, assertHeld) => {
-        let registry = view.snapshot;
-        let registration = selected.registration;
-        let capability = selected.capability;
-        let owner = selected.owner;
-        let checkout = selected.checkout;
-        if (!registration || !capability || !owner || !checkout)
-          throw new ContractError("conflict");
-        if (recoveryDigest(view, selected) !== expected)
-          throw new ContractError("conflict");
-        const assert = () => {
-          absent2();
-          assertHeld();
-          this.assertNamespace();
-          this.files.assert(this.registryPath("roots.json"), registry, REGISTRY_BYTES);
-          for (const [name, snapshot] of [
-            ["format.json", selected.manifest],
-            ["config.json", selected.config],
-            ["host-config.json", selected.hostConfig],
-            ["registration.json", registration],
-            ["local-capability.json", capability],
-            ["owner.lock", owner]
-          ])
-            this.files.assert(this.path(name), snapshot);
-          this.files.assert(this.store.lockPath, checkout, 8192);
-          assertDurable();
-        };
-        assert();
-        const matching = view.value.entries.filter((row) => row.epoch === r.epoch);
-        if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(r)))
-          throw new ContractError("conflict");
-        mutate();
-        registration = this.files.replace(this.path("registration.json"), registration, encoded({ ...r, phase: "stopped" }));
-        assert();
-        registry = this.files.replace(this.registryPath("roots.json"), registry, encoded({
-          ...view.value,
-          entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
-        }), REGISTRY_BYTES);
-        assert();
-        this.files.remove(this.path("local-capability.json"), capability);
-        capability = undefined;
-        assert();
-        this.files.remove(this.path("owner.lock"), owner);
-        owner = undefined;
-        assert();
-        this.files.remove(this.store.lockPath, checkout, 8192);
-        checkout = undefined;
-        assert();
-      });
-    };
-  }
-  recoverySnapshot() {
-    if (this.files.read(this.registryPath("registry.lock")))
-      throw new ContractError("quarantine");
-    const registry = this.registry();
-    const selected = this.selected();
-    if (!registry || !selected?.value || !selected.registration || !selected.owner || !selected.checkout)
-      refused();
-    const value = selected.value;
-    const matching = registry.value.entries.filter((row) => row.epoch === value.epoch);
-    if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(value)))
-      refused();
-    return {
-      registration: { ...selected.value },
-      digest: recoveryDigest(registry, selected)
-    };
   }
 }
 
@@ -6519,7 +6472,7 @@ class OwnerLease {
     return { ...this.selected.value };
   }
   assert() {
-    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
+    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname3())
       throw new ContractError("conflict");
     const c = this.coordination, walks = new DirectoryWalks;
     c.assertNamespace(walks);
@@ -6566,10 +6519,14 @@ class OwnerLease {
   }
 }
 
+// src/service/doctor.ts
+import { createInterface } from "node:readline";
+import { isatty } from "node:tty";
+
 // src/service/gateway-store.ts
 import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
 import { opendirSync as opendirSync2 } from "node:fs";
-import { hostname as hostname3 } from "node:os";
+import { hostname as hostname4 } from "node:os";
 import { join as join8, resolve as resolve3 } from "node:path";
 
 // src/service/contracts/gateway.ts
@@ -6582,6 +6539,23 @@ function decodeProjectEntry(value) {
     epoch: decodeId(o.epoch)
   };
 }
+var RECOVERY_SCOPES = ["registry", "workbench", "project"];
+var RECOVERY_CAUSES = [
+  "reboot",
+  "crash",
+  "restart",
+  "storage"
+];
+var RECOVERY_ACTIONS = [
+  "released-locks",
+  "stopped-workers",
+  "stopped-owner",
+  "continued-history",
+  "archived-history",
+  "archived-state",
+  "rebuilt-registry",
+  "removed-temporaries"
+];
 
 // src/service/gateway-store.ts
 function decodeGatewayInput(value) {
@@ -6713,7 +6687,14 @@ class GatewayStore {
       throw new ContractError("quarantine");
     if (previous?.recovery)
       this.associatedProjects();
-    this.lock = this.files.create(this.path("gateway.lock"), encoded({ epoch: randomUUID5() }));
+    const mark = selfMark();
+    this.lock = this.files.create(this.path("gateway.lock"), encoded({
+      epoch: randomUUID5(),
+      pid: process.pid,
+      host: hostname4(),
+      boot: mark.boot,
+      started: mark.started
+    }));
     const source = { serverConfig: this.serverConfig, token };
     if (!previous)
       AccessMaterial.initialize(this.files, this.directory, source);
@@ -6732,7 +6713,7 @@ class GatewayStore {
       capability: randomBytes3(32).toString("base64url"),
       selection: hash2(inputBytes),
       pid: process.pid,
-      host: hostname3(),
+      host: hostname4(),
       ...previous?.recovery ? { recovery: previous.recovery } : {},
       phase: "alive"
     };
@@ -6807,42 +6788,4312 @@ class GatewayStore {
   }
 }
 
-// src/history/recovery.ts
-import { createHash as createHash8, randomUUID as randomUUID7 } from "node:crypto";
-import { lstatSync as lstatSync8, opendirSync as opendirSync4 } from "node:fs";
-import { join as join10, relative as relative4 } from "node:path";
-
-// src/service/recovery.ts
-async function inspectRecovery(coordination, history) {
-  const selected = coordination.recoverySnapshot();
-  const facts = history ? await history.inspect(selected.registration.epoch) : null;
-  if (facts)
-    decodeHash(facts.digest);
-  if (coordination.recoverySnapshot().digest !== selected.digest)
-    throw new ContractError("conflict");
+// src/service/recovery-log.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
+import {
+  lstatSync as lstatSync6,
+  opendirSync as opendirSync3,
+  renameSync as renameSync2,
+  rmSync
+} from "node:fs";
+import { basename, join as join9, relative as relative4 } from "node:path";
+var RECOVERY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+var RECOVERY_EVENTS = 50;
+var RECOVERY_ARCHIVE_MS = 30 * 24 * 60 * 60 * 1000;
+var RECOVERY_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+var EVENT_BYTES = 16 * 1024;
+var RECOVERY_MERGE_MS = 2 * 60 * 1000;
+function decodeRecoveryEvent(value) {
+  const o = closed(value, [
+    "schema",
+    "id",
+    "at",
+    "scope",
+    "path",
+    "cause",
+    "actions",
+    "workers",
+    "archive"
+  ]);
+  const archive = o.archive === null ? null : text(o.archive, 128, true);
+  if (archive !== null && !/^[0-9]{13}-[0-9a-f-]{36}$/.test(archive))
+    throw new ContractError("corrupt-selected");
   return {
-    epoch: selected.registration.epoch,
-    coordinationDigest: selected.digest,
-    history: facts,
-    owner: recoveryOwnerStatus(selected.registration.pid, selected.registration.host),
-    resolution: "local-interactive-only"
+    schema: literal(o.schema, "cadence-recovery-event/1"),
+    id: decodeId(o.id),
+    at: integer(o.at, 0),
+    scope: oneOf(o.scope, RECOVERY_SCOPES),
+    path: o.path === null ? null : text(o.path, 4096, true),
+    cause: oneOf(o.cause, RECOVERY_CAUSES),
+    actions: list(o.actions, RECOVERY_ACTIONS.length, (a) => oneOf(a, RECOVERY_ACTIONS)),
+    workers: integer(o.workers, 0, 1e6),
+    archive
+  };
+}
+function entries(path, maximum = 4096) {
+  const out = [];
+  let dir;
+  try {
+    dir = opendirSync3(path);
+  } catch {
+    return out;
+  }
+  try {
+    for (let e = dir.readSync();e && out.length < maximum; e = dir.readSync())
+      out.push(e.name);
+  } finally {
+    dir.closeSync();
+  }
+  return out.sort();
+}
+function size(path, limit = { left: 1e5 }) {
+  let st;
+  try {
+    st = lstatSync6(path);
+  } catch {
+    return 0;
+  }
+  if (--limit.left < 0)
+    return st.size;
+  if (!st.isDirectory())
+    return st.size;
+  let total = 0;
+  for (const name of entries(path, 1e5))
+    total += size(join9(path, name), limit);
+  return total;
+}
+
+class RecoveryLog {
+  files;
+  logDirectory;
+  archiveDirectory;
+  constructor(files) {
+    this.files = files;
+    this.logDirectory = join9(files.namespace, "recovery-log-v1");
+    this.archiveDirectory = join9(files.namespace, "recovery-archive-v1");
+  }
+  archive() {
+    const name = `${Date.now()}-${randomUUID6()}`;
+    const directory = join9(this.archiveDirectory, name);
+    let used = false;
+    return {
+      name,
+      keep: (path, as) => {
+        const rel = relative4(this.files.namespace, path);
+        if (!rel || rel.startsWith(".."))
+          throw new ContractError("forbidden");
+        this.files.directory(directory, true);
+        const target = join9(directory, as ?? rel.split(/[\\/]/).join("--"));
+        retryWindowsFileOperation(() => renameSync2(path, target));
+        used = true;
+      },
+      used: () => used
+    };
+  }
+  record(event) {
+    try {
+      const latest = this.latestFile();
+      if (latest && latest.value.scope === event.scope && latest.value.path === event.path && Date.now() - latest.value.at < RECOVERY_MERGE_MS) {
+        const merged = {
+          ...latest.value,
+          actions: [...new Set([...latest.value.actions, ...event.actions])],
+          workers: latest.value.workers + event.workers,
+          archive: latest.value.archive ?? event.archive
+        };
+        this.files.replace(latest.path, latest.snapshot, encoded(decodeRecoveryEvent(merged)), EVENT_BYTES);
+        return merged;
+      }
+    } catch {}
+    const value = {
+      schema: "cadence-recovery-event/1",
+      id: randomUUID6(),
+      at: Date.now(),
+      ...event
+    };
+    decodeRecoveryEvent(value);
+    try {
+      this.files.create(join9(this.logDirectory, `${value.at}-${value.id}.json`), encoded(value), EVENT_BYTES);
+      this.prune();
+    } catch {}
+    return value;
+  }
+  latestFile() {
+    for (const name of entries(this.logDirectory).reverse()) {
+      if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
+        continue;
+      const path = join9(this.logDirectory, name);
+      const snapshot = this.files.read(path, EVENT_BYTES);
+      if (!snapshot)
+        return;
+      return {
+        path,
+        snapshot,
+        value: decodeRecoveryEvent(json(snapshot, EVENT_BYTES))
+      };
+    }
+    return;
+  }
+  events(limit = 20) {
+    const out = [];
+    for (const name of entries(this.logDirectory).reverse()) {
+      if (out.length >= limit)
+        break;
+      if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
+        continue;
+      try {
+        const file = this.files.read(join9(this.logDirectory, name), EVENT_BYTES);
+        if (file)
+          out.push(decodeRecoveryEvent(json(file, EVENT_BYTES)));
+      } catch {}
+    }
+    return out;
+  }
+  prune(now = Date.now()) {
+    const names2 = entries(this.logDirectory);
+    for (const name of names2.slice(0, Math.max(0, names2.length - RECOVERY_EVENTS)))
+      rmSync(join9(this.logDirectory, name), { force: true });
+    const archived = entries(this.archiveDirectory).filter((name) => /^[0-9]{13}-[0-9a-f-]{36}$/.test(name));
+    const kept = [];
+    for (const name of archived) {
+      const path = join9(this.archiveDirectory, name);
+      if (now - Number(name.slice(0, 13)) > RECOVERY_ARCHIVE_MS)
+        rmSync(path, { recursive: true, force: true });
+      else
+        kept.push({ name, bytes: size(path) });
+    }
+    let total = kept.reduce((sum, entry) => sum + entry.bytes, 0);
+    for (const entry of kept) {
+      if (total <= RECOVERY_ARCHIVE_BYTES)
+        break;
+      rmSync(join9(this.archiveDirectory, entry.name), {
+        recursive: true,
+        force: true
+      });
+      total -= entry.bytes;
+    }
+  }
+  notices(limit = 10, now = Date.now()) {
+    return this.events(limit).filter((e) => now - e.at < RECOVERY_NOTICE_MS).map((e) => ({
+      id: e.id,
+      at: e.at,
+      scope: e.scope,
+      path: e.path,
+      cause: e.cause,
+      actions: e.actions,
+      workers: e.workers,
+      archived: e.archive !== null
+    }));
+  }
+  usage() {
+    const names2 = entries(this.archiveDirectory);
+    return {
+      entries: names2.length,
+      bytes: names2.reduce((sum, name) => sum + size(join9(this.archiveDirectory, name)), 0)
+    };
+  }
+}
+function strayTemporaries(directory) {
+  return entries(directory).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join9(directory, name));
+}
+
+// src/service/self-heal.ts
+import { createHash as createHash5, randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { hostname as hostname5 } from "node:os";
+import { join as join11 } from "node:path";
+
+// src/service/process-ledger.ts
+import { rmSync as rmSync2 } from "node:fs";
+import { join as join10 } from "node:path";
+var LEDGER_BYTES = 64 * 1024;
+var LEDGER_WORKERS = 512;
+function decode2(value) {
+  const o = closed(value, ["schema", "epoch", "boot", "restart", "workers"]);
+  return {
+    schema: literal(o.schema, "cadence-process-ledger/1"),
+    epoch: decodeId(o.epoch),
+    boot: o.boot === null ? null : text(o.boot, 128, true),
+    restart: o.restart === true,
+    workers: list(o.workers, LEDGER_WORKERS, (w) => {
+      const row = closed(w, ["pid", "started"]);
+      return {
+        pid: integer(row.pid, 1, 2147483647),
+        started: row.started === null ? null : text(row.started, 128, true)
+      };
+    })
   };
 }
 
-// src/history/files.ts
-import { createHash as createHash7, randomBytes as randomBytes4, randomUUID as randomUUID6 } from "node:crypto";
+class ProcessLedger {
+  files;
+  directory;
+  constructor(files) {
+    this.files = files;
+    this.directory = join10(files.namespace, "process-ledger-v1");
+  }
+  path(epoch) {
+    return join10(this.directory, `${decodeId(epoch)}.json`);
+  }
+  file(epoch) {
+    try {
+      const snapshot = this.files.read(this.path(epoch), LEDGER_BYTES);
+      return snapshot ? decode2(json(snapshot, LEDGER_BYTES)) : null;
+    } catch {
+      return null;
+    }
+  }
+  read(epoch) {
+    const file = this.file(epoch);
+    return file ? file.workers.map((w) => ({ ...w, boot: file.boot })) : [];
+  }
+  restartRequested(epoch) {
+    return this.file(epoch)?.restart === true;
+  }
+  remove(epoch) {
+    try {
+      rmSync2(this.path(epoch), { force: true });
+    } catch {}
+  }
+  open(epoch) {
+    return new LiveLedger(this, epoch);
+  }
+}
+
+class LiveLedger {
+  ledger;
+  epoch;
+  snapshot;
+  value;
+  constructor(ledger, epoch) {
+    this.ledger = ledger;
+    this.epoch = epoch;
+    this.value = {
+      schema: "cadence-process-ledger/1",
+      epoch: decodeId(epoch),
+      boot: bootId(),
+      restart: false,
+      workers: []
+    };
+    this.write();
+  }
+  write() {
+    try {
+      const path = this.ledger.path(this.epoch);
+      const bytes = encoded(this.value);
+      this.snapshot = this.snapshot ? this.ledger.files.replace(path, this.snapshot, bytes, LEDGER_BYTES) : this.ledger.files.create(path, bytes, LEDGER_BYTES);
+    } catch {
+      this.snapshot = undefined;
+      try {
+        const path = this.ledger.path(this.epoch);
+        const current = this.ledger.files.read(path, LEDGER_BYTES);
+        this.snapshot = current ? this.ledger.files.replace(path, current, encoded(this.value), LEDGER_BYTES) : this.ledger.files.create(path, encoded(this.value), LEDGER_BYTES);
+      } catch {
+        this.snapshot = undefined;
+      }
+    }
+  }
+  get workers() {
+    return this.value.workers;
+  }
+  add(pid) {
+    if (this.value.workers.length >= LEDGER_WORKERS)
+      return;
+    this.value.workers = [
+      ...this.value.workers.filter((w) => w.pid !== pid),
+      { pid, started: processStart(pid) }
+    ];
+    this.write();
+  }
+  remove(pid) {
+    const before = this.value.workers.length;
+    this.value.workers = this.value.workers.filter((w) => w.pid !== pid);
+    if (this.value.workers.length !== before)
+      this.write();
+  }
+  requestRestart() {
+    this.value.restart = true;
+    this.write();
+  }
+  close() {
+    this.ledger.remove(this.epoch);
+    this.snapshot = undefined;
+  }
+}
+
+// src/service/self-heal.ts
+function attempt(read) {
+  try {
+    return read();
+  } catch {
+    return null;
+  }
+}
+function readFile(files, path, decode3, maximum) {
+  let snapshot;
+  try {
+    snapshot = files.read(path, maximum);
+  } catch {
+    return "unreadable";
+  }
+  if (!snapshot)
+    return;
+  const bytes = snapshot;
+  return {
+    path,
+    snapshot: bytes,
+    value: attempt(() => decode3(json(bytes, maximum)))
+  };
+}
+function decodeOwnerLock(value) {
+  const o = closed(value, markedKeys(value, ["schema", "epoch", "token", "pid", "host"]));
+  if (o.schema !== "cadence-service-owner-lock/1")
+    throw new ContractError("corrupt-selected");
+  return {
+    epoch: decodeId(o.epoch),
+    pid: integer(o.pid, 1, 2147483647),
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
+  };
+}
+function decodeCheckoutLock(value) {
+  if (!value || typeof value !== "object")
+    throw new ContractError("corrupt-selected");
+  const o = value;
+  if (o.schema !== "cadence-assistant-lock/1")
+    throw new ContractError("corrupt-selected");
+  return {
+    epoch: null,
+    pid: integer(o.pid, 1, 2147483647),
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
+  };
+}
+function decodeRegistrationLenient(value) {
+  const o = value;
+  if (o?.schema !== "cadence-service-registration/1" || !["idle", "stopping", "quarantined", "stopped"].includes(o.phase))
+    throw new ContractError("corrupt-selected");
+  integer(o.pid, 1, 2147483647);
+  text(o.host, 255, true);
+  decodeId(o.epoch);
+  return o;
+}
+function combine(holders) {
+  const order = ["foreign", "unknown", "live", "dead"];
+  const worst = order.find((state) => holders.some((h) => h.state === state)) ?? "dead";
+  return {
+    state: worst,
+    worst,
+    reboot: holders.length > 0 && holders.every((h) => h.reboot)
+  };
+}
+async function stopWorkers(ledger, epoch, reboot, inspect) {
+  if (!epoch || reboot)
+    return { stopped: 0, running: 0 };
+  let stopped = 0, running = 0;
+  for (const worker of ledger.read(epoch)) {
+    const holder = holderState({ ...worker, host: hostname5() });
+    if (holder.state !== "live")
+      continue;
+    if (!worker.started) {
+      running++;
+      continue;
+    }
+    if (inspect) {
+      stopped++;
+      continue;
+    }
+    if (await stopProcessGroup(worker.pid))
+      stopped++;
+    else
+      running++;
+  }
+  return { stopped, running };
+}
+async function stopOwnerProcess(pid) {
+  if (pid === process.pid)
+    return false;
+  const gone = () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  };
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return gone();
+  }
+  for (let n = 0;n < 50; n++) {
+    await new Promise((resolve4) => setTimeout(resolve4, 100));
+    if (gone())
+      return true;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+  for (let n = 0;n < 20; n++) {
+    await new Promise((resolve4) => setTimeout(resolve4, 100));
+    if (gone())
+      return true;
+  }
+  return false;
+}
+
+class RegistryHealer {
+  c;
+  log;
+  ledger;
+  constructor(c) {
+    this.c = c;
+    this.log = new RecoveryLog(c.files);
+    this.ledger = new ProcessLedger(c.files);
+  }
+  path(name) {
+    return join11(this.c.registryDirectory, name);
+  }
+  async heal(options = {}) {
+    const lockPath = this.path("registry.lock");
+    let lock;
+    try {
+      lock = this.c.files.read(lockPath);
+    } catch {
+      lock = undefined;
+      const age = (() => {
+        try {
+          return Date.now() - lstatSync7(lockPath).mtimeMs;
+        } catch {
+          return 0;
+        }
+      })();
+      if (age > 60000) {
+        if (options.inspect)
+          return { status: "reclaimable", cause: "storage", workers: 0 };
+        const archive2 = this.log.archive();
+        archive2.keep(lockPath);
+        return {
+          status: "healed",
+          event: this.log.record({
+            scope: "registry",
+            path: null,
+            cause: "storage",
+            actions: ["released-locks"],
+            workers: 0,
+            archive: archive2.name
+          })
+        };
+      }
+    }
+    const actions = new Set;
+    let cause = "storage";
+    let archive;
+    if (lock) {
+      const mark = attempt(() => decodeRegistryLock(lock));
+      const writtenAt = stampTime(lock.stamp) ?? Date.now();
+      let holder;
+      if (mark)
+        holder = holderState(mark, writtenAt);
+      else
+        holder = {
+          state: Date.now() - writtenAt > 60000 ? "dead" : "unknown",
+          reboot: false
+        };
+      if (holder.state === "foreign" && !options.takeOver)
+        return {
+          status: "blocked",
+          reason: "foreign-host",
+          pid: mark?.pid ?? null
+        };
+      if (holder.state === "live") {
+        await new Promise((resolve4) => setTimeout(resolve4, 250));
+        if (!this.c.files.read(lockPath))
+          return { status: "clean" };
+        return { status: "live" };
+      }
+      if (holder.state === "unknown" && !options.takeOver)
+        return {
+          status: "blocked",
+          reason: "holder-unknown",
+          pid: mark?.pid ?? null
+        };
+      cause = holder.reboot ? "reboot" : "crash";
+      if (options.inspect)
+        return { status: "reclaimable", cause, workers: 0 };
+      this.c.files.remove(lockPath, lock);
+      actions.add("released-locks");
+    }
+    if (options.inspect) {
+      if (!this.valid())
+        return { status: "reclaimable", cause, workers: 0 };
+      return { status: "clean" };
+    }
+    const temporaries = strayTemporaries(this.c.registryDirectory);
+    if (temporaries.length) {
+      archive ??= this.log.archive();
+      for (const path of temporaries)
+        archive.keep(path);
+      actions.add("removed-temporaries");
+    }
+    if (!this.valid()) {
+      archive ??= this.log.archive();
+      this.rebuild(archive);
+      actions.add("rebuilt-registry");
+    }
+    if (!actions.size)
+      return { status: "clean" };
+    return {
+      status: "healed",
+      event: this.log.record({
+        scope: "registry",
+        path: null,
+        cause,
+        actions: [...actions],
+        workers: 0,
+        archive: archive?.used() ? archive.name : null
+      })
+    };
+  }
+  valid() {
+    try {
+      if (!this.c.files.read(this.path("format.json")) && !this.c.files.read(this.path("roots.json"), 1024 * 1024))
+        return true;
+      this.c.registryView();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  rebuild(archive) {
+    const lockPath = this.path("registry.lock");
+    const lock = this.c.files.create(lockPath, encoded({
+      schema: "cadence-service-registry-lock/1",
+      token: randomUUID7(),
+      pid: process.pid,
+      host: hostname5()
+    }));
+    try {
+      for (const name of ["format.json", "roots.json"]) {
+        try {
+          if (this.c.files.read(this.path(name), 1024 * 1024))
+            archive.keep(this.path(name));
+        } catch {
+          archive.keep(this.path(name));
+        }
+      }
+      const entries2 = [];
+      for (const row of liveReservations(this.c))
+        entries2.push(row);
+      this.c.files.create(this.path("format.json"), encoded({
+        schema: "cadence-service-registry-format/1",
+        stateHome: this.c.stateHome
+      }));
+      this.c.files.create(this.path("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: entries2 }), 1024 * 1024);
+    } finally {
+      this.c.files.remove(lockPath, lock);
+    }
+  }
+  async sweep(options = {}) {
+    let rows;
+    try {
+      rows = this.c.registryView()?.value.entries ?? [];
+    } catch {
+      return [];
+    }
+    const out = [];
+    for (const row of rows)
+      out.push(await healProjectAt(this.c, row.root, {
+        ...options,
+        responsive: undefined
+      }));
+    return out;
+  }
+}
+function liveReservations(c) {
+  const out = [];
+  const dir = opendirSync4(c.files.namespace);
+  try {
+    for (let e = dir.readSync();e; e = dir.readSync()) {
+      if (!/^[a-f0-9]{64}$/.test(e.name))
+        continue;
+      const service = join11(c.files.namespace, e.name, "service-v1");
+      const registration2 = readFile(c.files, join11(service, "registration.json"), decodeRegistrationLenient);
+      if (!registration2 || registration2 === "unreadable")
+        continue;
+      const r = registration2.value;
+      if (!r || r.phase === "stopped")
+        continue;
+      const owner = readFile(c.files, join11(service, "owner.lock"), decodeOwnerLock);
+      const mark = owner && owner !== "unreadable" && owner.value ? owner.value : r;
+      if (holderState(mark, stampTime(registration2.snapshot.stamp)).state !== "live")
+        continue;
+      out.push({
+        root: r.root,
+        stateHome: r.stateHome,
+        configIdentity: r.configIdentity,
+        endpoint: r.endpoint,
+        epoch: r.epoch,
+        pid: r.pid,
+        host: r.host,
+        ownerToken: r.ownerToken
+      });
+    }
+  } finally {
+    dir.closeSync();
+  }
+  return out;
+}
+function projectFiles(c, root) {
+  const privateRoot = join11(c.files.namespace, createHash5("sha256").update(root).digest("hex"));
+  return {
+    root,
+    privateRoot,
+    service: join11(privateRoot, "service-v1"),
+    checkoutPath: join11(privateRoot, "checkout.lock")
+  };
+}
+function snapshotProject(c, p) {
+  const s = { temporaries: [] };
+  s.registration = readFile(c.files, join11(p.service, "registration.json"), decodeRegistrationLenient);
+  s.owner = readFile(c.files, join11(p.service, "owner.lock"), decodeOwnerLock);
+  try {
+    s.capability = c.files.read(join11(p.service, "local-capability.json"));
+  } catch {
+    s.capability = "unreadable";
+  }
+  s.checkout = readFile(c.files, p.checkoutPath, decodeCheckoutLock, 8192);
+  try {
+    const view = c.registryView();
+    const row = view?.value.entries.find((r) => r.root === p.root);
+    if (row) {
+      s.row = row;
+      s.rowWrittenAt = stampTime(view?.snapshot.stamp ?? "");
+    }
+  } catch {}
+  s.temporaries = [
+    ...strayTemporaries(p.service),
+    ...strayTemporaries(join11(p.service, "history-v2"))
+  ];
+  return s;
+}
+function active(s) {
+  const registration2 = s.registration && s.registration !== "unreadable" ? s.registration.value : null;
+  return !!(s.row || s.owner || s.checkout || s.capability || s.registration === "unreadable" || s.registration && registration2?.phase !== "stopped");
+}
+function holders(s) {
+  const found = [];
+  let epoch = null, pid = null;
+  const consider = (mark, at) => {
+    if (!mark)
+      return;
+    pid ??= mark.pid;
+    found.push(holderState(mark, at));
+  };
+  if (s.owner && s.owner !== "unreadable" && s.owner.value) {
+    epoch = s.owner.value.epoch;
+    consider(s.owner.value, stampTime(s.owner.snapshot.stamp));
+  }
+  if (s.registration && s.registration !== "unreadable" && s.registration.value) {
+    const r = s.registration.value;
+    if (r.phase !== "stopped") {
+      epoch ??= r.epoch;
+      consider(r, stampTime(s.registration.snapshot.stamp));
+    }
+  }
+  if (s.row) {
+    epoch ??= s.row.epoch;
+    consider(s.row, s.rowWrittenAt);
+  }
+  if (s.checkout && s.checkout !== "unreadable" && s.checkout.value)
+    consider(s.checkout.value, stampTime(s.checkout.snapshot.stamp));
+  return { holder: combine(found), epoch, pid };
+}
+async function healProjectAt(c, root, options = {}) {
+  const p = projectFiles(c, root);
+  const log = new RecoveryLog(c.files), ledger = new ProcessLedger(c.files);
+  let s = snapshotProject(c, p);
+  if (!active(s) && !s.temporaries.length)
+    return { status: "clean" };
+  let { holder, epoch, pid } = holders(s);
+  let stoppedOwner = false;
+  const takenOver = !!options.takeOver && (holder.state === "foreign" || holder.state === "unknown");
+  if (active(s) && !takenOver) {
+    if (holder.state === "foreign")
+      return { status: "blocked", reason: "foreign-host", pid };
+    if (holder.state === "unknown")
+      return options.responsive && await options.responsive() ? { status: "live" } : { status: "blocked", reason: "holder-unknown", pid };
+    if (holder.state === "live") {
+      if (!options.responsive || await options.responsive())
+        return { status: "live" };
+      const mark = s.owner && s.owner !== "unreadable" ? s.owner.value : null;
+      const ours = !!mark?.started;
+      if (!options.stopUnresponsive || !ours || options.inspect || pid === null)
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      if (!await stopOwnerProcess(pid))
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      stoppedOwner = true;
+      s = snapshotProject(c, p);
+      ({ holder, epoch, pid } = holders(s));
+      if (holder.state !== "dead")
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+    }
+  }
+  const workers = takenOver ? { stopped: 0, running: 0 } : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
+  if (workers.running)
+    return { status: "blocked", reason: "workers-running", pid };
+  const restarted = epoch ? ledger.restartRequested(epoch) : false;
+  const cause = !active(s) ? "storage" : holder.reboot ? "reboot" : restarted ? "restart" : "crash";
+  if (options.inspect)
+    return { status: "reclaimable", cause, workers: workers.stopped };
+  const actions = new Set;
+  if (stoppedOwner)
+    actions.add("stopped-owner");
+  if (workers.stopped)
+    actions.add("stopped-workers");
+  const archive = log.archive();
+  if (active(s)) {
+    reclaim(c, p, s, archive);
+    actions.add("released-locks");
+  }
+  for (const path of snapshotProject(c, p).temporaries) {
+    archive.keep(path);
+    actions.add("removed-temporaries");
+  }
+  if (active(s) && metadataDamaged(c, p)) {
+    archive.keep(p.service, "service-v1");
+    actions.add("archived-state");
+  }
+  if (epoch)
+    ledger.remove(epoch);
+  return {
+    status: "healed",
+    event: log.record({
+      scope: "project",
+      path: root,
+      cause: actions.has("archived-state") && !active(s) ? "storage" : cause,
+      actions: [...actions],
+      workers: workers.stopped,
+      archive: archive.used() ? archive.name : null
+    })
+  };
+}
+function metadataDamaged(c, p) {
+  try {
+    if (!c.files.directory(p.service))
+      return false;
+  } catch {
+    return false;
+  }
+  try {
+    const format = c.files.read(join11(p.service, "format.json"));
+    const config = c.files.read(join11(p.service, "config.json"));
+    if (!format || !config)
+      return true;
+    const f = closed(json(format), [
+      "schema",
+      "root",
+      "stateHome",
+      "configIdentity"
+    ]);
+    if (f.schema !== "cadence-service-format/1" || f.root !== p.root || f.stateHome !== c.stateHome || f.configIdentity !== config.identity)
+      return true;
+    const selected = decodeOwnerConfig(json(config));
+    const host = c.files.read(join11(p.service, "host-config.json"));
+    if (host && host.identity !== selected.policyIdentity)
+      return true;
+    const registration2 = c.files.read(join11(p.service, "registration.json"));
+    if (registration2) {
+      const r = decodeRegistration(json(registration2));
+      if (r.root !== p.root || r.stateHome !== c.stateHome || r.configIdentity !== config.identity)
+        return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+function reclaim(c, p, expected, archive) {
+  c.mutateRegistry((view, mutate) => {
+    const s = snapshotProject(c, p);
+    const same2 = (a, b) => {
+      const id = (x) => x === undefined ? "absent" : x === "unreadable" ? "unreadable" : ("snapshot" in x) ? `${x.snapshot.identity}:${x.snapshot.stamp}` : `${x.identity}:${x.stamp}`;
+      return id(a) === id(b);
+    };
+    if (!same2(s.registration, expected.registration) || !same2(s.owner, expected.owner) || !same2(s.capability, expected.capability) || !same2(s.checkout, expected.checkout) || encoded(s.row ?? null) !== encoded(expected.row ?? null))
+      throw new ContractError("conflict");
+    mutate();
+    const registration2 = s.registration;
+    if (registration2 === "unreadable")
+      archive.keep(join11(p.service, "registration.json"));
+    else if (registration2) {
+      if (!registration2.value)
+        archive.keep(registration2.path);
+      else if (registration2.value.phase !== "stopped")
+        c.files.replace(registration2.path, registration2.snapshot, encoded({ ...registration2.value, phase: "stopped" }));
+    }
+    if (s.row)
+      c.files.replace(join11(c.registryDirectory, "roots.json"), view.snapshot, encoded({
+        ...view.value,
+        entries: view.value.entries.filter((row) => row.root !== p.root)
+      }), 1024 * 1024);
+    const drop = (path, value, maximum) => {
+      if (value === undefined)
+        return;
+      if (value === "unreadable") {
+        archive.keep(path);
+        return;
+      }
+      c.files.remove(path, "snapshot" in value ? value.snapshot : value, maximum);
+    };
+    drop(join11(p.service, "local-capability.json"), s.capability);
+    drop(join11(p.service, "owner.lock"), s.owner);
+    drop(p.checkoutPath, s.checkout, 8192);
+  });
+}
+async function healProject(c, options = {}) {
+  const registry = await new RegistryHealer(c).heal({
+    inspect: options.inspect
+  });
+  if (registry.status === "blocked")
+    return registry;
+  return healProjectAt(c, c.store.root, options);
+}
+async function healWorkbench(store, options = {}) {
+  const log = new RecoveryLog(store.files);
+  const lockPath = store.path("gateway.lock"), registrationPath = store.path("gateway.json");
+  if (!store.files.directory(store.directory))
+    return { status: "clean" };
+  const lock = readFile(store.files, lockPath, decodeGatewayLock);
+  const registration2 = readFile(store.files, registrationPath, decodeGatewayRegistration);
+  const temporaries = [
+    ...strayTemporaries(store.directory),
+    ...strayTemporaries(store.path("projects"))
+  ];
+  const value = registration2 && registration2 !== "unreadable" ? registration2.value : null;
+  const activeNow = !!(lock || registration2 === "unreadable" || registration2 && value?.phase !== "stopped");
+  let input = null;
+  try {
+    input = store.read();
+  } catch {
+    input = null;
+  }
+  const damaged = !input && !!(registration2 || lock);
+  if (!activeNow && !temporaries.length && !damaged)
+    return { status: "clean" };
+  const found = [];
+  let pid = null;
+  if (lock && lock !== "unreadable" && lock.value?.pid) {
+    pid = lock.value.pid;
+    found.push(holderState(lock.value, stampTime(lock.snapshot.stamp)));
+  }
+  if (value && value.phase !== "stopped") {
+    pid ??= value.pid;
+    found.push(holderState({ pid: value.pid, host: value.host ?? hostname5() }, registration2 && registration2 !== "unreadable" ? stampTime(registration2.snapshot.stamp) : undefined));
+  }
+  if (!found.length && lock && lock !== "unreadable")
+    found.push({
+      state: Date.now() - (stampTime(lock.snapshot.stamp) ?? Date.now()) > 60000 ? "dead" : "unknown",
+      reboot: false
+    });
+  const holder = combine(found);
+  const takenOver = !!options.takeOver && (holder.state === "foreign" || holder.state === "unknown");
+  if (activeNow && !takenOver) {
+    if (holder.state === "foreign")
+      return { status: "blocked", reason: "foreign-host", pid };
+    if (holder.state === "unknown")
+      return options.responsive && await options.responsive() ? { status: "live" } : { status: "blocked", reason: "holder-unknown", pid };
+    if (holder.state === "live") {
+      if (!options.responsive || await options.responsive())
+        return { status: "live" };
+      const ours = !!(lock && lock !== "unreadable" && lock.value?.started);
+      if (!options.stopUnresponsive || !ours || options.inspect || pid === null)
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      if (!await stopOwnerProcess(pid))
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      return healWorkbench(store, { ...options, stopUnresponsive: false });
+    }
+  }
+  const cause = !activeNow || damaged ? "storage" : holder.reboot ? "reboot" : "crash";
+  if (options.inspect)
+    return { status: "reclaimable", cause, workers: 0 };
+  const actions = new Set;
+  const archive = log.archive();
+  for (const path of temporaries) {
+    archive.keep(path);
+    actions.add("removed-temporaries");
+  }
+  if (damaged) {
+    archive.keep(store.directory, "workbench");
+    actions.add("archived-state");
+  } else if (activeNow) {
+    if (value && registration2 && registration2 !== "unreadable" && value.phase !== "stopped")
+      store.files.replace(registrationPath, registration2.snapshot, encoded({ ...value, phase: "stopped" }));
+    if (lock === "unreadable")
+      archive.keep(lockPath);
+    else if (lock)
+      store.files.remove(lockPath, lock.snapshot);
+    actions.add("released-locks");
+  }
+  return {
+    status: "healed",
+    event: log.record({
+      scope: "workbench",
+      path: null,
+      cause,
+      actions: [...actions],
+      workers: 0,
+      archive: archive.used() ? archive.name : null
+    })
+  };
+}
+function decodeGatewayLock(value) {
+  const o = closed(value, markedKeys(value, value && typeof value === "object" && Object.hasOwn(value, "pid") ? ["epoch", "pid", "host"] : ["epoch"]));
+  return {
+    epoch: decodeId(o.epoch),
+    ...o.pid !== undefined ? { pid: integer(o.pid, 1, 2147483647), host: text(o.host, 255, true) } : {},
+    ...decodeMarkFields(o)
+  };
+}
+function decodeGatewayRegistration(value) {
+  const o = value;
+  if (!o || typeof o !== "object" || !["alive", "stopping", "stopped", "quarantined"].includes(o.phase))
+    throw new ContractError("corrupt-selected");
+  integer(o.pid, 1, 2147483647);
+  return o;
+}
+
+// src/service/doctor.ts
+var CAUSES = {
+  reboot: "the machine restarted while Cadence was running",
+  crash: "the Cadence process ended without its orderly stop",
+  restart: "Cadence restarted itself after a runtime fault",
+  storage: "some private files were incomplete or damaged"
+};
+var ACTIONS = {
+  "released-locks": "released its locks",
+  "stopped-workers": "stopped leftover worker processes",
+  "stopped-owner": "stopped the unresponsive owner",
+  "continued-history": "continued its history after the last complete entry",
+  "archived-history": "archived unreadable history and started a new one",
+  "archived-state": "archived damaged state and started afresh",
+  "rebuilt-registry": "rebuilt the project registry",
+  "removed-temporaries": "set aside interrupted temporary files"
+};
+function scopeLabel(e) {
+  return e.scope === "project" ? `project ${e.path}` : e.scope === "workbench" ? "the workbench" : "the project registry";
+}
+function describeEvent(e, archive) {
+  const actions = e.actions.map((a) => a === "stopped-workers" && e.workers ? `stopped ${e.workers} leftover worker process${e.workers === 1 ? "" : "es"}` : ACTIONS[a]);
+  const kept = e.archive && archive ? ` Damaged files are kept for 30 days in ${archive}/${e.archive}.` : "";
+  return `Cadence recovered ${scopeLabel(e)} automatically: ${CAUSES[e.cause]}; ${actions.join(", ")}.${kept}`;
+}
+function describeBlock(outcome, target) {
+  const pid = outcome.pid === null ? "" : ` (PID ${outcome.pid})`;
+  switch (outcome.reason) {
+    case "owner-unresponsive":
+      return `Cadence for ${target} is running${pid} but not responding.
+Stop it and recover: cadence doctor --fix
+`;
+    case "workers-running":
+      return `Leftover Cadence worker processes for ${target} did not stop.
+Stop them (or restart the machine), then start again; cadence doctor shows the details.
+`;
+    case "foreign-host":
+      return `Cadence state for ${target} was registered on another machine${pid}; it cannot be observed from here.
+If that machine no longer runs Cadence with this state, take it over: cadence doctor --fix
+`;
+    default:
+      return `A process${pid} may still be the previous Cadence for ${target}, and Cadence cannot tell.
+If no Cadence is running, recover: cadence doctor --fix
+`;
+  }
+}
+async function confirm(question) {
+  if (!isatty(0) || !isatty(2))
+    return false;
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const answer = await new Promise((resolve4) => rl.question(`${question} [y/N] `, resolve4));
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
+  }
+}
+async function healAccount(c, options = {}) {
+  const healer = new RegistryHealer(c);
+  const registry = await healer.heal(options);
+  if (registry.status === "blocked" || registry.status === "live")
+    return { registry, projects: [] };
+  return {
+    registry,
+    projects: await healer.sweep({
+      inspect: options.inspect,
+      takeOver: false
+    })
+  };
+}
+function report(outcomes2, log) {
+  for (const outcome of outcomes2)
+    if (outcome.status === "healed")
+      process.stderr.write(`${describeEvent(outcome.event, log.archiveDirectory)}
+`);
+}
+async function healProjectForStart(c, responsive) {
+  const log = new RecoveryLog(c.files);
+  const account = await healAccount(c);
+  report([account.registry, ...account.projects], log);
+  if (account.registry.status === "blocked")
+    return describeBlock(account.registry, "the project registry");
+  let own = await healProjectAt(c, c.store.root, { responsive });
+  if (own.status === "blocked" && own.reason === "owner-unresponsive" && await confirm(`Cadence for ${c.store.root}${own.pid === null ? "" : ` (PID ${own.pid})`} is running but not responding. Stop it and recover?`))
+    own = await healProjectAt(c, c.store.root, {
+      responsive,
+      stopUnresponsive: true
+    });
+  report([own], log);
+  return own.status === "blocked" ? describeBlock(own, c.store.root) : null;
+}
+
+// src/service/runtime.ts
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname7, isAbsolute as isAbsolute5, join as join12, resolve as resolve4 } from "node:path";
+var STARTUP_INPUT_BYTES = 16 * 1024;
+function absolute(value) {
+  const result = text(value, 4096, true);
+  if (!isAbsolute5(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function decodeHostConfig(value) {
+  const o = closed(value, [
+    "schema",
+    "http",
+    "cwd",
+    "agentDir",
+    "tokenSource",
+    "tokenFile"
+  ]);
+  const tokenSource = oneOf(o.tokenSource, [
+    "generated",
+    "environment",
+    "file",
+    "config"
+  ]);
+  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
+    throw new ContractError("invalid");
+  return {
+    schema: literal(o.schema, "cadence-service-host/1"),
+    http: decodeHttpPolicy(o.http),
+    cwd: absolute(o.cwd),
+    agentDir: absolute(o.agentDir),
+    tokenSource,
+    tokenFile
+  };
+}
+function reselectable(old, next) {
+  const kept = (c) => encoded({
+    ...c,
+    http: { ...c.http, port: 0 },
+    tokenSource: null,
+    tokenFile: null
+  });
+  return next.tokenSource === "config" && kept(old) === kept(next);
+}
+function readHostConfig(c) {
+  const owner = c.configuration();
+  if (!owner)
+    return;
+  const snapshot = c.files.read(c.path("host-config.json"));
+  if (!snapshot)
+    throw new ContractError("corrupt-selected");
+  const config = decodeHostConfig(json(snapshot));
+  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash2(encoded(config)))
+    throw new ContractError("conflict");
+  return config;
+}
+function hostEnvironment(ambient) {
+  let route;
+  const facts = networkSnapshot(ambient);
+  try {
+    if (facts.NODE_OPTIONS.present)
+      throw new Error;
+    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
+  } catch {
+    throw new ContractError("unsupported-context");
+  }
+  const result = Object.create(null);
+  for (const key of Object.keys(ambient)) {
+    const d = Object.getOwnPropertyDescriptor(ambient, key);
+    if (!d || !("value" in d) || typeof d.value !== "string")
+      throw new ContractError("invalid");
+    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
+      continue;
+    result[key] = d.value;
+  }
+  if (route.redactionLiterals.length) {
+    result.HTTP_PROXY = route.env.HTTP_PROXY;
+    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
+    result.NODE_USE_ENV_PROXY = "1";
+  }
+  result.PI_OFFLINE = "1";
+  result.NO_COLOR = "1";
+  if (!sameNetwork(facts, networkSnapshot(ambient)))
+    throw new ContractError("stale");
+  return result;
+}
+function selectStart(options, ambient) {
+  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
+  const old = readHostConfig(c);
+  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
+  if (env && (!("value" in env) || typeof env.value !== "string"))
+    throw new ContractError("invalid");
+  let fromFile;
+  if (options.config) {
+    const path = resolve4(options.config), f = new PrivateFiles(dirname7(path));
+    const bytes = f.read(path);
+    if (!bytes)
+      throw new ContractError("corrupt-selected");
+    fromFile = decodeHostConfig(json(bytes));
+  }
+  const base = old ?? fromFile ?? decodeHostConfig({
+    schema: "cadence-service-host/1",
+    cwd: workspace.cwd,
+    http: {
+      schema: "cadence-service-http/1",
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 17423,
+      proxy: null
+    },
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join12(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
+    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
+    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
+  });
+  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
+    throw new ContractError("conflict");
+  return {
+    workspace: workspace.root,
+    stateHome: c.stateHome,
+    config: selected,
+    environmentToken: env?.value ?? null
+  };
+}
+function decodeHostInput(value) {
+  const o = closed(value, [
+    "workspace",
+    "stateHome",
+    "config",
+    "environmentToken"
+  ]);
+  const config = decodeHostConfig(o.config);
+  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
+  if (config.tokenSource === "environment" !== (environmentToken !== null))
+    throw new ContractError("invalid");
+  return {
+    workspace: absolute(o.workspace),
+    stateHome: absolute(o.stateHome),
+    config,
+    environmentToken
+  };
+}
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+
+class StartupRefusal extends ContractError {
+  stage;
+  quarantined;
+  constructor(code2, stage, quarantined = false) {
+    super(code2);
+    this.stage = stage;
+    this.quarantined = quarantined;
+  }
+}
+function startupReport(error) {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service"
+  };
+}
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
+
+// src/service/cli.ts
+function nativeCall(c, operation, reveal = false, controlBody) {
+  const access = c.localAccess();
+  const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
+  const write2 = !["status", "diagnose"].includes(operation);
+  const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
+  return new Promise((resolve6, reject) => {
+    let timer;
+    const fail = () => {
+      clearTimeout(timer);
+      reject(new ContractError("unavailable"));
+    };
+    const req = request(url, {
+      method: write2 ? "POST" : "GET",
+      agent: false,
+      headers: {
+        "X-Cadence-Local": access.capability,
+        Connection: "close",
+        ...body ? {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body)
+        } : {}
+      }
+    }, (res) => {
+      let bytes = 0;
+      const chunks = [];
+      res.on("error", fail);
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > 16384) {
+          res.destroy();
+          fail();
+        } else
+          chunks.push(chunk);
+      });
+      res.on("end", () => {
+        try {
+          if (res.statusCode !== 200)
+            throw new ContractError("unavailable");
+          const reply = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), 16384), ["kind", "value"]);
+          if (reply.kind !== "ok")
+            throw new ContractError("unavailable");
+          if (["status", "diagnose", "stop"].includes(operation)) {
+            if (!reply.value || typeof reply.value !== "object" || !("epoch" in reply.value) || reply.value.epoch !== access.epoch)
+              throw new ContractError("stale");
+          }
+          clearTimeout(timer);
+          resolve6(reply.value);
+        } catch {
+          fail();
+        }
+      });
+    });
+    timer = setTimeout(() => {
+      fail();
+      req.destroy();
+    }, 2000);
+    req.on("error", fail);
+    req.on("close", fail);
+    req.end(body);
+  });
+}
+var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
+async function serviceStatus(c, diagnose = false) {
+  const registryLock = c.registryLockDiagnostic?.();
+  if (registryLock)
+    return {
+      status: "unavailable",
+      ...registryLock,
+      recovery: "cadence doctor"
+    };
+  const observed = c.inspect();
+  if (observed.status === "absent" || observed.status === "stopped")
+    return observed;
+  try {
+    return await nativeCall(c, diagnose ? "diagnose" : "status");
+  } catch {
+    return {
+      status: observed.status === "quarantined" ? "quarantined" : "unavailable"
+    };
+  }
+}
+async function stopService(c) {
+  let epoch;
+  try {
+    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
+    if (reply.status !== "accepted")
+      throw new ContractError("unavailable");
+    epoch = decodeId(reply.epoch);
+  } catch {
+    return { status: "unconfirmed" };
+  }
+  const deadline = performance.now() + LIMITS.stopWaitMs;
+  while (performance.now() < deadline) {
+    let observed;
+    try {
+      observed = c.inspect();
+    } catch {
+      observed = { status: "unavailable" };
+    }
+    if ("epoch" in observed && observed.epoch === epoch && observed.status === "stopped")
+      return { status: "stopped", epoch };
+    if (observed.status === "quarantined")
+      return { status: "quarantined", epoch };
+    if ("epoch" in observed && observed.epoch !== null && observed.epoch !== epoch)
+      return { status: "unconfirmed", epoch };
+    await pause(25);
+  }
+  return { status: "unconfirmed", epoch };
+}
+function failedStatus(result) {
+  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
+}
+function managementExitCode(result, foreground = false) {
+  if (foreground) {
+    try {
+      decodeStartupReport(result);
+      return 78;
+    } catch {}
+  }
+  return 1;
+}
+function serverConfigHint(error) {
+  return `Cadence changed nothing: ${error.path} ${error.reason}.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+`;
+}
+function registryGuidance(_workspace, stateHome) {
+  return `Another Cadence process is updating the shared project registry right now. Try again in a moment; if this persists: cadence doctor --state-home ${JSON.stringify(stateHome)}
+`;
+}
+async function ownerResponsive(c) {
+  for (let attempt2 = 0;attempt2 < 3; attempt2++) {
+    try {
+      await nativeCall(c, "status");
+      return true;
+    } catch {
+      await pause(500);
+    }
+  }
+  return false;
+}
+function startupGuidance(result, input) {
+  let report2;
+  try {
+    report2 = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  if (report2.error === "registry-locked")
+    return registryGuidance(input.workspace, input.stateHome);
+  const agent = input.config.agentDir;
+  const inspect = `Details: cadence doctor --workspace ${JSON.stringify(input.workspace)}
+`;
+  switch (report2.stage) {
+    case "package":
+      return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
+`;
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
+`;
+    case "pi-auth":
+      return `${join13(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+`;
+    case "pi-models":
+      return `${join13(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.
+${inspect}`;
+    default:
+      return report2.error === "recording-exhausted" ? `The disk is too full for Cadence's history. Free some space and start again.
+` : report2.status === "quarantined" ? `The owner registered, then refused to start. Start again; the next start recovers its registration automatically.
+${inspect}` : "";
+  }
+}
+async function startService(options, foreground, hostUrl) {
+  const network = networkSnapshot(process.env);
+  const env = hostEnvironment(process.env);
+  const c = new ServiceCoordination(options.workspace, options.stateHome);
+  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  if (blocked) {
+    process.stderr.write(blocked);
+    return {
+      status: "refused",
+      error: "quarantine",
+      stage: "service"
+    };
+  }
+  if (c.registryLockDiagnostic()) {
+    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+    return {
+      status: "refused",
+      error: "registry-locked",
+      stage: "service"
+    };
+  }
+  let input;
+  try {
+    input = decodeHostInput(selectStart(options, process.env));
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      process.stderr.write(serverConfigHint(error));
+    throw error;
+  }
+  const serialized = `${JSON.stringify(input)}
+`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
+  const existing = await serviceStatus(c);
+  if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive") {
+    const running = readHostConfig(c);
+    if (running && encoded(running) !== encoded(input.config))
+      throw new ContractError("conflict");
+    return existing;
+  }
+  return launchHost(input, c, foreground, hostUrl, input.config.cwd, env, network);
+}
+async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
+  const serialized = `${JSON.stringify(input)}
+`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
+  if (!sameNetwork(network, networkSnapshot(process.env)))
+    throw new ContractError("stale");
+  const child = spawn(process.execPath, [
+    ...env.NODE_USE_ENV_PROXY === "1" ? ["--use-env-proxy"] : [],
+    fileURLToPath2(hostUrl)
+  ], {
+    cwd,
+    env: foreground && process.env.INVOCATION_ID ? { ...env, CADENCE_SUPERVISED: "systemd" } : env,
+    detached: !foreground,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "ignore"]
+  });
+  let completed = false;
+  const closure = new Promise((resolve6) => child.once("close", (code2, signal) => {
+    completed = true;
+    if (foreground && (code2 !== 0 || signal !== null))
+      process.exitCode = 1;
+    resolve6();
+  }));
+  const startup = new Promise((resolve6) => {
+    let bytes = "", resolved = false;
+    const finish = (value) => {
+      if (!resolved) {
+        resolved = true;
+        resolve6(value);
+      }
+    };
+    child.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdin.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdout.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdout.on("data", (chunk) => {
+      if (Buffer.byteLength(bytes) + chunk.length > 4096) {
+        finish({ status: "unconfirmed" });
+        return;
+      }
+      bytes += chunk.toString("utf8");
+      if (!bytes.endsWith(`
+`))
+        return;
+      try {
+        const line = parseWireJson(bytes, 4096);
+        if (line && typeof line === "object" && "status" in line && line.status !== "ready") {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
+        if (ready.status !== "ready")
+          throw new ContractError("unavailable");
+        const epoch = decodeId(ready.epoch);
+        nativeCall(c, "status").then((reply) => {
+          if (!reply || typeof reply !== "object" || !("epoch" in reply) || reply.epoch !== epoch)
+            throw new ContractError("stale");
+          finish(reply);
+        }).catch(() => finish({ status: "unconfirmed" }));
+      } catch {
+        finish({ status: "unconfirmed" });
+      }
+    });
+    child.once("close", () => finish({ status: "unconfirmed" }));
+  });
+  child.stdin.end(serialized);
+  let timer;
+  const result = await Promise.race([
+    startup,
+    new Promise((resolve6) => {
+      timer = setTimeout(() => resolve6({ status: "unconfirmed" }), LIMITS.startWaitMs);
+    })
+  ]);
+  clearTimeout(timer);
+  const guidance = "kind" in input ? "" : startupGuidance(result, input);
+  if (guidance)
+    process.stderr.write(guidance);
+  child.stdout.destroy();
+  child.stdin.destroy();
+  if (!foreground)
+    child.unref();
+  else if (!completed) {
+    if (failedStatus(result))
+      process.exitCode = 1;
+    process.stdout.write(`${JSON.stringify(result)}
+`);
+    await closure;
+    if (failedStatus(result))
+      process.exitCode = managementExitCode(result, true);
+    return null;
+  }
+  return result;
+}
+async function privateLink(workspace, stateHome, config) {
+  try {
+    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir3()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
+    return text(value.link, 4096, true);
+  } catch {
+    return;
+  }
+}
+class ProjectOpenRefusal extends ContractError {
+  noOwner;
+  constructor(noOwner, code2 = "unavailable") {
+    super(code2);
+    this.noOwner = noOwner;
+  }
+}
+async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
+  if (privateWorkspace(workspace, stateHome))
+    throw new ContractError("forbidden");
+  effectiveWorkspace(workspace, stateHome);
+  const c = new ServiceCoordination(workspace, stateHome);
+  await healAccount(new ServiceCoordination(null, stateHome));
+  if (c.registryLockDiagnostic())
+    throw new ProjectOpenRefusal(true, "registry-locked");
+  const kept = readHostConfig(c);
+  const options = {
+    workspace,
+    stateHome,
+    ...!kept ? { port: 0, agentDir } : {}
+  };
+  const result = await startService(options, false, hostUrl);
+  if (!result || typeof result !== "object" || !("status" in result) || result.status !== "alive")
+    throw new ProjectOpenRefusal(!!result && typeof result === "object" && "status" in result && result.status === "refused" && (("error" in result) && result.error === "registry-locked" || c.inspect().status === "absent"), result && typeof result === "object" && "error" in result && result.error === "registry-locked" ? "registry-locked" : "unavailable");
+  const link = await privateLink(c.store.root, stateHome);
+  if (!link)
+    throw new ContractError("unavailable");
+  return { path: c.store.root, link };
+}
+
+// src/service/http.ts
+import { createHash as createHash6, randomUUID as randomUUID8 } from "node:crypto";
+import {
+  createServer
+} from "node:http";
+import { WebSocketServer } from "ws";
+
+// src/service/workbench-send-refusal.ts
+class UnacceptedConversationCommand extends ContractError {
+}
+
+// src/service/http.ts
+function refusal(code2 = "invalid", uncertain = false) {
+  return {
+    kind: "error",
+    error: publicError(code2, uncertain ? "uncertain" : "none")
+  };
+}
+function fixedHeaders(response) {
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+}
+function send(response, status, value) {
+  if (response.destroyed || response.writableEnded)
+    return;
+  response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.end(canonicalJson(value, LIMITS.controlBytes));
+}
+function unavailable() {
+  throw new ContractError("unavailable");
+}
+
+class ServiceHttpServer {
+  server;
+  policy;
+  origin = "";
+  accepting = false;
+  stopped = false;
+  closePromise;
+  sockets = new Set;
+  serving = new Set;
+  requests = new Set;
+  attachments = new Map;
+  viewers = new Set;
+  bodies = 0;
+  reads = 0;
+  exports = 0;
+  searches = 0;
+  assets = new Map;
+  wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: LIMITS.wsClientFrameBytes,
+    perMessageDeflate: false,
+    clientTracking: false
+  });
+  unRevoke;
+  configuration;
+  get options() {
+    if (!this.configuration)
+      unavailable();
+    return this.configuration;
+  }
+  heartbeat;
+  constructor(options) {
+    this.policy = decodeHttpPolicy(options.policy);
+    let total = 0;
+    for (const asset of options.assets ?? []) {
+      total += asset.bytes.byteLength;
+      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
+        throw new ContractError("invalid");
+      this.assets.set(asset.path, {
+        ...asset,
+        bytes: Uint8Array.from(asset.bytes),
+        etag: `"${createHash6("sha256").update(asset.bytes).digest("hex")}"`
+      });
+    }
+    this.server = createServer({
+      maxHeaderSize: LIMITS.headerBytes,
+      headersTimeout: 1e4,
+      requestTimeout: 30000,
+      keepAliveTimeout: 5000
+    }, (req, res) => {
+      this.handle(req, res);
+    });
+    this.server.maxConnections = 64;
+    this.server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.on("error", () => socket.destroy());
+      socket.on("close", () => this.sockets.delete(socket));
+    });
+    this.server.on("clientError", (_error, socket) => {
+      socket.end(`HTTP/1.1 400 Bad Request\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`);
+    });
+    this.server.on("checkContinue", (_req, res) => {
+      fixedHeaders(res);
+      send(res, 400, refusal());
+    });
+    this.server.on("upgrade", (req, socket, head) => {
+      if (this.serving.has(req.socket)) {
+        socket.destroy();
+        return;
+      }
+      try {
+        if (!this.accepting)
+          unavailable();
+        const boundary = requestBoundary(req, this.policy, this.origin);
+        assertRequestTarget(req.url ?? "");
+        const url = new URL(req.url ?? "", this.origin);
+        if (req.method !== "GET" || url.pathname !== WS_PATH || req.url !== `${WS_PATH}?attachment=${url.searchParams.get("attachment")}`)
+          throw new ContractError("invalid");
+        const id = decodeId(url.searchParams.get("attachment"));
+        const caller = this.options.auth.authenticate(boundary, id, false, true);
+        const attachment = this.attachment(caller);
+        if (attachment.socket || this.viewers.size >= LIMITS.viewers)
+          throw new ContractError("capacity");
+        if (!this.options.adapters.projection || !this.options.adapters.live)
+          unavailable();
+        this.wss.handleUpgrade(req, socket, head, (ws) => this.openViewer(ws, attachment));
+      } catch (error) {
+        const status = errorStatus(error instanceof ContractError ? error.code : "unavailable");
+        socket.end(`HTTP/1.1 ${status} Refused\r
+Connection: close\r
+Cache-Control: no-store\r
+Referrer-Policy: no-referrer\r
+Content-Length: 0\r
+\r
+`);
+      }
+    });
+    if (options.auth || options.adapters) {
+      if (!options.auth || !options.adapters)
+        throw new ContractError("invalid");
+      this.configure({
+        auth: options.auth,
+        adapters: options.adapters,
+        management: options.management,
+        build: options.build
+      });
+    }
+  }
+  configure(options) {
+    if (this.configuration || this.accepting || this.stopped)
+      throw new ContractError("conflict");
+    this.configuration = {
+      ...options,
+      ...options.build ? { build: decodeServiceBuild(options.build) } : {}
+    };
+    this.unRevoke = options.auth.material.onRevoke(() => {
+      options.adapters.attachments?.revokeGrants();
+      for (const attachment of [...this.attachments.values()])
+        this.detach(attachment);
+      for (const request2 of this.requests)
+        request2.abort();
+    });
+  }
+  async listen() {
+    if (this.origin || this.stopped)
+      throw new ContractError("conflict");
+    await new Promise((resolve6, reject) => {
+      const failed = () => {
+        this.server.off("listening", ready);
+        reject(new ContractError("unavailable"));
+      };
+      const ready = () => {
+        this.server.off("error", failed);
+        resolve6();
+      };
+      this.server.once("error", failed);
+      this.server.once("listening", ready);
+      this.server.listen({
+        host: this.policy.host,
+        port: this.policy.port,
+        exclusive: true
+      });
+    });
+    this.server.on("error", () => this.quiesce());
+    const address = this.server.address();
+    if (!address || typeof address === "string")
+      unavailable();
+    this.origin = localOrigin(this.policy, address.port);
+    return this.origin;
+  }
+  admit() {
+    if (!this.origin || this.stopped || !this.options.auth.material.available)
+      unavailable();
+    this.accepting = true;
+    this.heartbeat ??= setInterval(() => this.tick(), LIMITS.heartbeatMs);
+  }
+  quiesce() {
+    this.accepting = false;
+    this.configuration?.adapters.attachments?.revokeGrants();
+  }
+  close() {
+    if (this.closePromise)
+      return this.closePromise;
+    let resolve6;
+    let reject;
+    this.closePromise = new Promise((yes, no) => {
+      resolve6 = yes;
+      reject = no;
+    });
+    this.closeTransport().then(resolve6, () => reject(new ContractError("unavailable")));
+    return this.closePromise;
+  }
+  async closeTransport() {
+    this.stopped = true;
+    this.quiesce();
+    clearInterval(this.heartbeat);
+    this.unRevoke?.();
+    for (const request2 of this.requests)
+      request2.abort();
+    for (const attachment of [...this.attachments.values()])
+      this.detach(attachment);
+    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve6) => {
+      if (socket.closed)
+        resolve6();
+      else {
+        socket.once("close", () => resolve6());
+        socket.destroy();
+      }
+    }));
+    const listener = new Promise((resolve6, reject) => {
+      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve6());
+    });
+    const upgrades = new Promise((resolve6) => this.wss.close(() => resolve6()));
+    await Promise.all([listener, upgrades, ...closedSockets]);
+  }
+  attachment(caller) {
+    this.options.auth.current(caller);
+    const attachment = this.attachments.get(caller.attachmentId);
+    if (!attachment || attachment.caller.authority !== caller.authority || attachment.caller.accessGeneration !== caller.accessGeneration)
+      throw new ContractError("stale");
+    attachment.lastSeen = Date.now();
+    return attachment;
+  }
+  detach(attachment) {
+    if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
+      return;
+    this.attachments.delete(attachment.caller.attachmentId);
+    this.options.adapters.attachments?.detach(attachment.caller.attachmentId);
+    if (attachment.socket) {
+      for (const viewer of this.viewers)
+        if (viewer.attachment === attachment)
+          this.closeViewer(viewer);
+    }
+  }
+  async body(req, signal) {
+    if (this.bodies >= LIMITS.admissionCount)
+      throw new ContractError("capacity");
+    this.bodies++;
+    try {
+      if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] !== undefined)
+        throw new ContractError("invalid");
+      const length = req.headers["content-length"];
+      if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
+        throw new ContractError("oversize");
+      const chunks = [];
+      let bytes = 0;
+      for await (const value of req.iterator({ destroyOnReturn: false })) {
+        if (signal.aborted)
+          throw new ContractError("unavailable");
+        const chunk = value;
+        bytes += chunk.length;
+        if (bytes > LIMITS.controlBytes)
+          throw new ContractError("oversize");
+        chunks.push(chunk);
+      }
+      try {
+        return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), LIMITS.controlBytes);
+      } catch (e) {
+        if (e instanceof ContractError)
+          throw e;
+        throw new ContractError("invalid");
+      }
+    } finally {
+      this.bodies--;
+    }
+  }
+  async handle(req, res) {
+    if (this.serving.has(req.socket)) {
+      req.socket.destroy();
+      return;
+    }
+    this.serving.add(req.socket);
+    res.once("close", () => this.serving.delete(req.socket));
+    fixedHeaders(res);
+    const abort = new AbortController;
+    let counted = false;
+    let dispatched = false;
+    let createdAttachment;
+    const abortRead = () => abort.abort();
+    res.once("close", abortRead);
+    const timer = setTimeout(() => {
+      abort.abort();
+      res.destroy();
+    }, LIMITS.downloadIdleMs);
+    const resetIdle = () => timer.refresh();
+    try {
+      const boundary = requestBoundary(req, this.policy, this.origin);
+      const target = req.url ?? "";
+      assertRequestTarget(target);
+      const url = new URL(target, this.origin);
+      if (url.searchParams.has("token")) {
+        if (req.method !== "GET" || !target.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
+          throw new ContractError("invalid");
+        if (!this.accepting)
+          unavailable();
+        res.setHeader("Set-Cookie", this.options.auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
+        return;
+      }
+      if (target === "/healthz" && req.method === "GET") {
+        send(res, 200, { status: "ok" });
+        return;
+      }
+      if (target === "/" && req.method === "GET") {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
+        return;
+      }
+      if (target.startsWith("/local/v1/admin/")) {
+        await this.manage(req, res, boundary, abort.signal);
+        return;
+      }
+      if (!this.accepting)
+        unavailable();
+      const route = readRoute(target, req.method ?? "");
+      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID8();
+      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
+      if (!route || !mutation(route.operation)) {
+        if (this.reads >= 32)
+          throw new ContractError("capacity");
+        this.reads++;
+        counted = true;
+      }
+      this.requests.add(abort);
+      if (!route) {
+        const asset = this.assets.get(target);
+        if (!asset || req.method !== "GET")
+          throw new ContractError("invalid");
+        this.options.auth.current(caller);
+        res.setHeader("Content-Type", asset.contentType);
+        if (target !== "/app") {
+          res.setHeader("Cache-Control", "private, no-cache");
+          res.setHeader("ETag", asset.etag);
+          if (boundary.headers.get("if-none-match") === asset.etag) {
+            res.statusCode = 304;
+            res.end();
+            return;
+          }
+        }
+        res.end(asset.bytes);
+        return;
+      }
+      let attachment;
+      if (route.operation === "session") {
+        attachment = this.attachments.get(attachmentId);
+        if (attachment)
+          this.attachment(caller);
+        else {
+          for (const value2 of this.attachments.values())
+            if (!value2.socket && Date.now() - value2.lastSeen > LIMITS.browserLifetimeMs)
+              this.detach(value2);
+          if (this.attachments.size >= LIMITS.viewers)
+            throw new ContractError("capacity");
+          attachment = { caller, lastSeen: Date.now() };
+          createdAttachment = attachment;
+          this.attachments.set(attachmentId, attachment);
+        }
+        res.setHeader("X-Cadence-Attachment", attachmentId);
+      } else if (route.source === "body")
+        attachment = this.attachment(caller);
+      const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
+      if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
+        throw new ContractError("invalid");
+      decodeHttpInput(route.operation, input);
+      this.options.auth.current(caller);
+      if (abort.signal.aborted || !this.accepting)
+        unavailable();
+      if (attachment && this.attachment(caller) !== attachment)
+        throw new ContractError("stale");
+      if (route.operation === "export" || route.operation === "download") {
+        await this.export(route.operation, input, caller, abort.signal, res, resetIdle);
+        return;
+      }
+      const rawBuild = boundary.headers.get("x-cadence-build");
+      const clientBuild = rawBuild === undefined ? null : decodeClientBuild(parseWireJson(rawBuild, 1024));
+      if (caller.authority === "browser" && clientBuild?.kind === "native")
+        throw new ContractError("forbidden");
+      if ([
+        "preflight",
+        "command",
+        "chooseModel",
+        "cancel",
+        "workbenchCommand"
+      ].includes(route.operation) && !compatibleBuild(this.options.build, clientBuild, route.operation === "cancel" || route.operation === "workbenchCommand" && decodeWorkbenchCommand(input).kind === "interrupt"))
+        throw new ContractError("unsupported-context");
+      dispatched = route.operation === "command" || route.operation === "cancel" || route.operation === "chooseModel" || route.operation === "workbenchCommand";
+      const value = await this.dispatch(route.operation, input, caller, abort.signal, clientBuild);
+      this.options.auth.current(caller);
+      if (abort.signal.aborted)
+        unavailable();
+      if (route.operation === "session")
+        this.attachment(caller);
+      const decoded2 = decodeHttpOutput(route.operation, value);
+      const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
+      send(res, status, decoded2);
+    } catch (e) {
+      if (createdAttachment)
+        this.detach(createdAttachment);
+      if (!res.headersSent)
+        res.removeHeader("X-Cadence-Attachment");
+      if (res.headersSent)
+        res.destroy();
+      else {
+        const code2 = e instanceof ContractError ? e.code : "unavailable";
+        res.setHeader("Connection", "close");
+        send(res, errorStatus(code2), refusal(code2, dispatched && !(e instanceof UnacceptedConversationCommand)));
+      }
+    } finally {
+      clearTimeout(timer);
+      res.off("close", abortRead);
+      this.requests.delete(abort);
+      if (counted)
+        this.reads--;
+    }
+  }
+  async manage(req, res, boundary, signal) {
+    const operation = req.url?.slice("/local/v1/admin/".length);
+    if (![
+      "status",
+      "diagnose",
+      "stop",
+      "token-link",
+      "token-rotate",
+      "detach-viewers"
+    ].includes(operation ?? ""))
+      throw new ContractError("invalid");
+    const write2 = operation !== "status" && operation !== "diagnose";
+    const caller = this.options.auth.authenticate(boundary, randomUUID8(), write2);
+    if (caller.authority !== "local")
+      throw new ContractError("forbidden");
+    if (req.method !== (write2 ? "POST" : "GET"))
+      throw new ContractError("invalid");
+    if (write2) {
+      const body = closed(await this.body(req, signal), operation === "token-link" ? ["reveal"] : operation === "detach-viewers" ? ["attachments"] : []);
+      if (operation === "detach-viewers") {
+        const ids = list(body.attachments, LIMITS.viewers, decodeId);
+        this.options.auth.current(caller);
+        if (signal.aborted)
+          unavailable();
+        for (const id of ids) {
+          const attachment = this.attachments.get(id);
+          if (attachment?.caller.authority === "browser")
+            this.detach(attachment);
+        }
+        send(res, 200, {
+          kind: "ok",
+          value: { status: "detached", epoch: this.options.auth.epoch }
+        });
+        return;
+      }
+      if (operation === "token-link" && body.reveal !== true)
+        throw new ContractError("forbidden");
+    } else if (req.headers["transfer-encoding"] || req.headers["content-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0")
+      throw new ContractError("invalid");
+    this.options.auth.current(caller);
+    if (signal.aborted || !this.options.management)
+      unavailable();
+    const value = this.options.management.invoke(operation);
+    send(res, 200, { kind: "ok", value });
+  }
+  async dispatch(operation, input, caller, signal, build2) {
+    const a = this.options.adapters, p = a.projection;
+    switch (operation) {
+      case "workbenchRead":
+        if (!a.workbench)
+          unavailable();
+        return {
+          kind: "ok",
+          value: a.workbench.read(decodeWorkbenchRead(input))
+        };
+      case "workbenchCommand": {
+        if (!a.workbench)
+          unavailable();
+        const command = decodeWorkbenchCommand(input);
+        if (command.kind === "workflow" && caller.authority !== "local")
+          throw new ContractError("forbidden");
+        return {
+          kind: "ok",
+          value: await a.workbench.command(command, caller)
+        };
+      }
+      case "current":
+        if (!a.current)
+          unavailable();
+        return {
+          kind: "ok",
+          value: await a.current.current(decodeCurrentRequest(input), signal)
+        };
+      case "currentChanges":
+        if (!a.current)
+          unavailable();
+        return {
+          kind: "ok",
+          value: await a.current.currentChanges(decodeCurrentChangesRequest(input), signal)
+        };
+      case "activeRuns":
+        if (!a.current)
+          unavailable();
+        return { kind: "ok", value: await a.current.activeRuns(signal) };
+      case "models":
+        if (!a.models)
+          unavailable();
+        return { kind: "ok", value: a.models.catalog() };
+      case "chooseModel":
+        if (!a.modelChoice)
+          unavailable();
+        return {
+          kind: "ok",
+          value: a.modelChoice.choose(decodeChooseModelRequest(input))
+        };
+      case "detach":
+        this.detach(this.attachment(caller));
+        return { kind: "ok", value: null };
+      case "preflight":
+      case "command":
+        return refusal("unsupported-context");
+      case "cancel":
+        return refusal("unsupported-context");
+      case "receipt":
+        return a.receipts ? decodeReceiptLookup(await a.receipts(decodeId(input))) : {
+          status: "inconclusive",
+          error: publicError("receipt-inconclusive", "uncertain")
+        };
+    }
+    if (!p)
+      unavailable();
+    let value;
+    switch (operation) {
+      case "session": {
+        const original = decodeSessionBootstrap(await p.session());
+        if (original.epoch !== this.options.auth.epoch || original.accessGeneration !== caller.accessGeneration)
+          throw new ContractError("stale");
+        value = decodeSessionBootstrap({
+          ...original,
+          ...this.options.build ? { build: this.options.build } : {},
+          authority: caller.authority,
+          csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
+          capabilities: {
+            actions: original.capabilities.actions && !!a.workbench && compatibleBuild(this.options.build, build2),
+            manualChecks: false,
+            history: original.capabilities.history
+          }
+        });
+        break;
+      }
+      case "workspace":
+        value = await p.workspace();
+        break;
+      case "tasks":
+      case "runs":
+      case "messages":
+      case "tools":
+      case "contents":
+      case "events":
+      case "checks":
+      case "changes":
+      case "reviews":
+        value = await p[operation](decodeListRequest(input));
+        break;
+      case "checkObligations":
+        value = await p.checkObligations(decodeId(input));
+        break;
+      case "entity":
+        value = await p.entity(decodeEntityReadRequest(input));
+        break;
+      case "graph":
+        value = await p.graph(decodeGraphReadRequest(input));
+        break;
+      case "snapshot":
+        value = await p.snapshot(decodeScope(input));
+        break;
+      case "detail":
+      case "search": {
+        const cursor = decodeCursor(input);
+        if (operation === "search" && this.searches >= LIMITS.searchReaders)
+          throw new ContractError("capacity");
+        if (operation === "search")
+          this.searches++;
+        try {
+          const valid = await p.validateCursor(cursor);
+          this.options.auth.current(caller);
+          if (signal.aborted)
+            unavailable();
+          if (valid.status === "refused")
+            return { kind: "error", error: valid.error };
+          value = await p[operation](cursor);
+        } finally {
+          if (operation === "search")
+            this.searches--;
+        }
+        break;
+      }
+      default:
+        throw new ContractError("invalid");
+    }
+    return { kind: "ok", value };
+  }
+  async export(operation, input, caller, signal, res, activity) {
+    const p = this.options.adapters.projection;
+    if (!p)
+      unavailable();
+    if (this.exports >= LIMITS.exportReaders)
+      throw new ContractError("capacity");
+    this.exports++;
+    const request2 = decodeExportRequest(input), tracker = new ExportTracker(request2);
+    try {
+      res.setHeader("Content-Type", operation === "download" && request2.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request2.format === "markdown" ? "md" : "ndjson"}"`);
+      let trailer;
+      const digest = createHash6("sha256");
+      const write2 = async (frame) => {
+        const data = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
+`);
+        for (let offset = 0;offset < data.length; offset += LIMITS.detailPageBytes) {
+          this.options.auth.current(caller);
+          if (signal.aborted || res.destroyed)
+            unavailable();
+          const chunk = data.subarray(offset, offset + LIMITS.detailPageBytes);
+          await new Promise((resolve6, reject) => {
+            const stop = () => {
+              res.destroy();
+              reject(new ContractError("unavailable"));
+            };
+            signal.addEventListener("abort", stop, { once: true });
+            res.write(chunk, (error) => {
+              signal.removeEventListener("abort", stop);
+              error ? reject(new ContractError("unavailable")) : resolve6();
+            });
+          });
+          activity();
+        }
+      };
+      for await (const value of p.export(request2, signal)) {
+        this.options.auth.current(caller);
+        if (signal.aborted)
+          unavailable();
+        const frame = tracker.receive(value);
+        if (frame.event.kind === "trailer")
+          trailer = frame;
+        else {
+          digest.update(encodeExportFrame(frame, request2.format));
+          await write2(frame);
+          this.options.auth.current(caller);
+          if (signal.aborted)
+            unavailable();
+        }
+      }
+      this.options.auth.current(caller);
+      if (signal.aborted || !trailer || trailer.event.kind !== "trailer" || trailer.event.sha256 !== digest.digest("hex"))
+        unavailable();
+      await write2(trailer);
+      res.end();
+    } finally {
+      this.exports--;
+    }
+  }
+  openViewer(socket, attachment) {
+    const viewer = {
+      socket,
+      attachment,
+      subscription: 0,
+      pending: [],
+      bytes: 0,
+      sentBytes: 0,
+      sentMessages: 0,
+      reading: false,
+      closed: false,
+      lastPing: Date.now(),
+      lastReconcile: Date.now()
+    };
+    attachment.socket = socket;
+    this.viewers.add(viewer);
+    socket.on("error", () => this.closeViewer(viewer));
+    socket.on("close", () => this.closeViewer(viewer));
+    socket.on("message", (data, binary) => {
+      try {
+        this.attachment(attachment.caller);
+        if (binary || Array.isArray(data))
+          throw new ContractError("invalid");
+        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+        if (bytes.byteLength > LIMITS.wsClientFrameBytes)
+          throw new ContractError("oversize");
+        const command = decodeSocketInput(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), LIMITS.wsClientFrameBytes));
+        viewer.lastPing = Date.now();
+        if (command.kind === "ping")
+          this.heartbeatViewer(viewer);
+        else if (viewer.reading)
+          this.closeViewer(viewer);
+        else
+          this.subscribe(viewer, command.scope);
+      } catch {
+        this.closeViewer(viewer);
+      }
+    });
+  }
+  closeViewer(viewer) {
+    if (viewer.closed)
+      return;
+    viewer.closed = true;
+    viewer.subscription++;
+    try {
+      viewer.unsubscribe?.();
+    } catch {}
+    viewer.pending = [];
+    viewer.bytes = 0;
+    this.viewers.delete(viewer);
+    viewer.socket.terminate();
+    this.detach(viewer.attachment);
+  }
+  sendViewer(viewer, output) {
+    try {
+      this.attachment(viewer.attachment.caller);
+      const data = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data);
+      if (viewer.closed || viewer.sentMessages + viewer.pending.length >= LIMITS.viewerMessages || viewer.sentBytes + viewer.bytes + bytes > LIMITS.viewerBytes || viewer.socket.bufferedAmount > LIMITS.viewerBytes)
+        throw new ContractError("capacity");
+      viewer.sentMessages++;
+      viewer.sentBytes += bytes;
+      viewer.socket.send(data, (error) => {
+        viewer.sentMessages--;
+        viewer.sentBytes -= bytes;
+        if (error)
+          this.closeViewer(viewer);
+      });
+      return true;
+    } catch {
+      this.closeViewer(viewer);
+      return false;
+    }
+  }
+  async subscribe(viewer, scope) {
+    const p = this.options.adapters.projection, live2 = this.options.adapters.live;
+    if (viewer.closed)
+      return;
+    if (!p || !live2) {
+      this.closeViewer(viewer);
+      return;
+    }
+    if (this.reads >= 32) {
+      this.closeViewer(viewer);
+      return;
+    }
+    this.reads++;
+    const generation = ++viewer.subscription;
+    viewer.reading = true;
+    viewer.scope = scope;
+    viewer.snapshot = undefined;
+    viewer.pending = [];
+    viewer.bytes = 0;
+    try {
+      viewer.unsubscribe?.();
+      viewer.unsubscribe = live2.subscribe(scope, (value) => {
+        if (viewer.closed || viewer.subscription !== generation)
+          return;
+        try {
+          this.attachment(viewer.attachment.caller);
+          const event = decodeLiveEvent(value);
+          const bytes = Buffer.byteLength(canonicalJson(event, LIMITS.pageBytes));
+          if (viewer.reading) {
+            if (viewer.pending.length + viewer.sentMessages >= LIMITS.viewerMessages || viewer.bytes + viewer.sentBytes + bytes > LIMITS.viewerBytes)
+              throw new ContractError("capacity");
+            viewer.pending.push(event);
+            viewer.bytes += bytes;
+          } else
+            this.deliver(viewer, event);
+        } catch {
+          this.closeViewer(viewer);
+        }
+      });
+      if (viewer.closed) {
+        viewer.unsubscribe();
+        return;
+      }
+      const snapshot = decodeSnapshot(await p.snapshot(scope));
+      if (viewer.closed || viewer.subscription !== generation)
+        return;
+      this.attachment(viewer.attachment.caller);
+      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
+        throw new ContractError("stale");
+      viewer.snapshot = snapshot;
+      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
+        return;
+      viewer.reading = false;
+      viewer.lastReconcile = Date.now();
+      for (const event of viewer.pending.splice(0)) {
+        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
+        this.deliver(viewer, event);
+        if (viewer.closed || viewer.subscription !== generation)
+          break;
+      }
+    } catch {
+      this.closeViewer(viewer);
+    } finally {
+      if (viewer.subscription === generation)
+        viewer.reading = false;
+      this.reads--;
+    }
+  }
+  deliver(viewer, event) {
+    const snapshot = viewer.snapshot;
+    if (!snapshot || viewer.closed)
+      return;
+    if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
+      this.resync(viewer);
+      return;
+    }
+    const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
+    if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
+      return;
+    if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
+      this.resync(viewer);
+      return;
+    }
+    if (this.sendViewer(viewer, { kind: "event", event }))
+      snapshot.committedSeq = event.committedSeq;
+  }
+  resync(viewer) {
+    if (!viewer.reading && viewer.scope) {
+      this.sendViewer(viewer, { kind: "resync" });
+      this.subscribe(viewer, viewer.scope);
+    }
+  }
+  heartbeatViewer(viewer) {
+    if (!viewer.scope || viewer.reading)
+      return;
+    try {
+      const event = decodeLiveEvent(this.options.adapters.live?.watermark(viewer.scope));
+      if (event.kind !== "heartbeat")
+        throw new ContractError("invalid");
+      this.deliver(viewer, event);
+    } catch {
+      this.closeViewer(viewer);
+    }
+  }
+  tick() {
+    for (const viewer of this.viewers) {
+      if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
+        this.closeViewer(viewer);
+      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
+        this.resync(viewer);
+      else
+        this.heartbeatViewer(viewer);
+    }
+  }
+}
+
+// src/service/workbench-files.ts
+import {
+  closeSync as closeSync4,
+  constants as constants3,
+  fstatSync as fstatSync3,
+  lstatSync as lstatSync8,
+  opendirSync as opendirSync5,
+  openSync as openSync4,
+  readSync as readSync3,
+  realpathSync as realpathSync4
+} from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname9, isAbsolute as isAbsolute6, join as join14, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
+
+// src/worker-redaction.mjs
+var marker = "[redacted]";
+var sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|headers|env)$/i;
+function own(value, name) {
+  if (!value || typeof value !== "object")
+    throw new ContractError;
+  const d = Object.getOwnPropertyDescriptor(value, name);
+  if (!d)
+    return;
+  if (!("value" in d))
+    throw new ContractError;
+  return d.value;
+}
+function ownArray(value, maximum = LIMITS.dataFrames) {
+  if (!Array.isArray(value))
+    throw new ContractError;
+  const length = own(value, "length");
+  if (!Number.isSafeInteger(length) || length > maximum)
+    throw new ContractError("oversize");
+  return Array.from({ length }, (_, index) => own(value, String(index)));
+}
+function sourceBytes(value) {
+  let bytes = 0;
+  for (let i = 0;i < value.length; i++) {
+    const code2 = value.charCodeAt(i);
+    if (code2 < 128)
+      bytes++;
+    else if (code2 < 2048)
+      bytes += 2;
+    else if (code2 >= 55296 && code2 <= 56319 && value.charCodeAt(i + 1) >= 56320 && value.charCodeAt(i + 1) <= 57343) {
+      bytes += 4;
+      i++;
+    } else if (code2 >= 55296 && code2 <= 57343)
+      throw new ContractError;
+    else
+      bytes += 3;
+  }
+  return bytes;
+}
+function measureData(value, maximum = LIMITS.workerQueueBytes) {
+  let bytes = 0;
+  let nodes = 0;
+  const seen = new Set;
+  function visit(v, depth) {
+    if (++nodes > LIMITS.dataFrames || depth > 64)
+      throw new ContractError("oversize");
+    if (typeof v === "string")
+      bytes += sourceBytes(v) * 6 + 2;
+    else if (v === null || typeof v === "boolean")
+      bytes += 5;
+    else if (typeof v === "number" && Number.isFinite(v))
+      bytes += 32;
+    else if (v && typeof v === "object") {
+      if (seen.has(v) || ![Object.prototype, Array.prototype, null].includes(Object.getPrototypeOf(v)))
+        throw new ContractError;
+      seen.add(v);
+      bytes += 2;
+      const names2 = Reflect.ownKeys(v);
+      if (names2.length > LIMITS.dataFrames)
+        throw new ContractError("oversize");
+      for (const key of names2) {
+        if (Array.isArray(v) && key === "length")
+          continue;
+        if (typeof key !== "string")
+          throw new ContractError;
+        bytes += sourceBytes(key) * 6 + 4;
+        visit(own(v, key), depth + 1);
+      }
+      seen.delete(v);
+    } else
+      throw new ContractError;
+    if (bytes > maximum)
+      throw new ContractError("oversize");
+  }
+  visit(value, 0);
+  return bytes;
+}
+
+class TextSanitizer {
+  constructor(secrets = []) {
+    if (secrets.some((s) => typeof s !== "string") || secrets.reduce((n, s) => n + utf8Bytes(s), 0) > LIMITS.workerRequestBytes * 2)
+      throw new ContractError("oversize");
+    this.secrets = [];
+    this.addSecrets(secrets);
+    this.pending = "";
+    this.heuristic = "";
+    this.escape = "";
+    this.skipping = false;
+    this.redacted = false;
+    this.ended = false;
+  }
+  addSecrets(secrets) {
+    if (this.ended || !Array.isArray(secrets))
+      throw new ContractError;
+    let incoming = 0;
+    for (const s of secrets) {
+      if (typeof s !== "string")
+        throw new ContractError;
+      incoming += utf8Bytes(s);
+      if (incoming > LIMITS.workerRequestBytes * 2)
+        throw new ContractError("oversize");
+    }
+    let bytes = this.secrets.reduce((n, s) => n + utf8Bytes(s), 0);
+    const added = new Set;
+    for (const s of secrets) {
+      if (!s || this.secrets.includes(s) || added.has(s))
+        continue;
+      bytes += utf8Bytes(s);
+      if (bytes > LIMITS.workerRequestBytes * 2)
+        throw new ContractError("oversize");
+      added.add(s);
+    }
+    this.secrets = this.secrets.concat([...added]).sort((a, b) => b.length - a.length);
+  }
+  get retainedBytes() {
+    return utf8Bytes(this.pending + this.heuristic + this.escape);
+  }
+  write(input, final = false) {
+    if (this.ended || typeof input !== "string")
+      throw new ContractError;
+    let plain = "";
+    for (const ch of input) {
+      if (this.escape) {
+        this.escape += ch;
+        if (this.escape.length > 8192)
+          throw new ContractError("oversize");
+        if (this.escape.startsWith("\x1B[") && this.escape.length > 2 && /[@-~]/.test(ch) || this.escape.startsWith("\x1B]") && (ch === "\x07" || this.escape.endsWith("\x1B\\")) || this.escape.length === 2 && !"[]".includes(ch))
+          this.escape = "";
+        this.redacted = true;
+      } else if (ch === "\x1B")
+        this.escape = ch;
+      else if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(ch))
+        this.redacted = true;
+      else
+        plain += ch;
+    }
+    this.pending += plain;
+    let literal2 = "";
+    let at = 0;
+    while (at < this.pending.length) {
+      const rest = this.pending.slice(at);
+      if (!final && this.secrets.some((s) => s.length > rest.length && s.startsWith(rest)))
+        break;
+      const match = this.secrets.find((s) => rest.startsWith(s));
+      if (match) {
+        literal2 += marker;
+        at += match.length;
+        this.redacted = true;
+      } else {
+        const code2 = this.pending.charCodeAt(at);
+        if (!final && at + 1 === this.pending.length && code2 >= 55296 && code2 <= 56319)
+          break;
+        const cp = this.pending.codePointAt(at);
+        if (cp >= 55296 && cp <= 57343)
+          throw new ContractError;
+        literal2 += String.fromCodePoint(cp);
+        at += cp > 65535 ? 2 : 1;
+      }
+    }
+    this.pending = this.pending.slice(at);
+    this.heuristic += literal2;
+    let output = "";
+    while (this.heuristic) {
+      if (this.skipping) {
+        const end = this.heuristic.search(/[\s,;"'<>]/);
+        if (end < 0) {
+          this.heuristic = "";
+          break;
+        }
+        this.heuristic = this.heuristic.slice(end);
+        this.skipping = false;
+      }
+      const match = /\b(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*)/i.exec(this.heuristic);
+      const url = /https?:\/\//i.exec(this.heuristic);
+      if (url && (!match || url.index < match.index)) {
+        output += this.heuristic.slice(0, url.index);
+        this.heuristic = this.heuristic.slice(url.index);
+        const start = url[0].length;
+        const end = this.heuristic.slice(start).search(/[/\s?#"'<>]/);
+        if (end < 0 && !final) {
+          if (utf8Bytes(this.heuristic) > 8192)
+            throw new ContractError("oversize");
+          break;
+        }
+        const size2 = end < 0 ? this.heuristic.length : start + end;
+        const authority = this.heuristic.slice(start, size2);
+        const pos = authority.lastIndexOf("@");
+        output += this.heuristic.slice(0, start) + (pos < 0 ? authority : `${marker}@${authority.slice(pos + 1)}`);
+        this.redacted ||= pos >= 0;
+        this.heuristic = this.heuristic.slice(size2);
+      } else if (match) {
+        output += this.heuristic.slice(0, match.index) + match[0] + marker;
+        this.heuristic = this.heuristic.slice(match.index + match[0].length);
+        this.skipping = true;
+        this.redacted = true;
+      } else {
+        const candidate = /(?:Bearer|api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*$/i.exec(this.heuristic);
+        const keep = final ? 0 : Math.max(64, candidate ? this.heuristic.length - candidate.index : 0);
+        if (keep > 8192)
+          throw new ContractError("oversize");
+        let take = Math.max(0, this.heuristic.length - keep);
+        const before = this.heuristic.charCodeAt(take - 1);
+        if (before >= 55296 && before <= 56319)
+          take--;
+        output += this.heuristic.slice(0, take);
+        this.heuristic = this.heuristic.slice(take);
+        break;
+      }
+    }
+    if (final) {
+      this.ended = true;
+      this.escape = "";
+    }
+    return output;
+  }
+  end() {
+    return this.write("", true);
+  }
+}
+function sanitizeText(value, secrets = []) {
+  const sanitizer = new TextSanitizer(secrets);
+  return sanitizer.write(value, true);
+}
+function sanitizeData(value, secrets = []) {
+  measureData(value);
+  function visit(v) {
+    if (typeof v === "string")
+      return sanitizeText(v, secrets);
+    if (v === null || typeof v !== "object")
+      return v;
+    if (Array.isArray(v))
+      return ownArray(v).map(visit);
+    const result = Object.create(null);
+    for (const key of Object.keys(v).sort()) {
+      const safeKey = sanitizeText(key, secrets);
+      if (Object.hasOwn(result, safeKey))
+        throw new ContractError;
+      result[safeKey] = sensitive.test(key) ? marker : visit(own(v, key));
+    }
+    return result;
+  }
+  return canonicalJson(visit(value), LIMITS.workerQueueBytes);
+}
+
+class DetailSanitizer {
+  constructor(encoding, secrets = [], partial = false) {
+    this.encoding = encoding;
+    this.secrets = secrets;
+    this.partial = partial;
+    this.limited = false;
+    this.text = new TextSanitizer(secrets);
+    this.stack = [];
+    this.root = "value";
+    this.inString = false;
+    this.escape = "";
+    this.key = "";
+    this.keyMode = false;
+    this.suppressed = false;
+    this.token = "";
+    this.redacted = false;
+  }
+  get retainedBytes() {
+    return this.text.retainedBytes + utf8Bytes(this.escape + this.key + this.token) + this.stack.reduce((sum, entry) => sum + utf8Bytes(entry.lastKey ?? "") + utf8Bytes(entry.lastOutputKey ?? ""), 0);
+  }
+  write(input, final = false) {
+    if (this.limited)
+      return "";
+    try {
+      return this.project(input, final);
+    } catch (error) {
+      if (!this.partial || error instanceof ContractError && error.code === "oversize")
+        throw error;
+      this.limited = true;
+      this.redacted = true;
+      return "[redacted: unsupported partial arguments]";
+    }
+  }
+  project(input, final = false) {
+    if (this.encoding === "utf8") {
+      const output2 = this.text.write(input, final);
+      this.redacted = this.text.redacted;
+      return output2;
+    }
+    let output = "";
+    const encoded2 = (s) => JSON.stringify(s).slice(1, -1);
+    const top = () => this.stack.at(-1);
+    const done = () => {
+      if (top()) {
+        top().expect = "comma";
+        top().sensitive = false;
+        top().count++;
+      } else
+        this.root = "done";
+    };
+    const begin = () => {
+      const parent = top();
+      if ((parent?.expect ?? this.root) !== "value")
+        throw new ContractError;
+      const hide = !!parent?.hide || !!parent?.sensitive;
+      if (parent?.sensitive && !parent.hide) {
+        output += JSON.stringify(marker);
+        this.redacted = true;
+      }
+      return hide;
+    };
+    const primitive = () => {
+      if (!/^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/.test(this.token)) {
+        if (!this.partial)
+          throw new ContractError;
+        if (!this.suppressed)
+          output += marker;
+        this.redacted = true;
+        this.limited = true;
+        this.token = "";
+        done();
+        return;
+      }
+      const value = JSON.parse(this.token);
+      if (typeof value === "number" && !Number.isFinite(value))
+        throw new ContractError;
+      if (!this.suppressed)
+        output += this.token;
+      this.token = "";
+      done();
+    };
+    for (const ch of input) {
+      if (this.inString) {
+        let decoded2 = ch;
+        if (this.escape) {
+          this.escape += ch;
+          if (this.escape === "\\u" || this.escape.startsWith("\\u") && this.escape.length < 6)
+            continue;
+          decoded2 = JSON.parse(`"${this.escape}"`);
+          this.escape = "";
+        } else if (ch === "\\") {
+          this.escape = ch;
+          continue;
+        } else if (ch === '"') {
+          if (this.keyMode) {
+            const parent2 = top();
+            if (!this.partial && parent2.lastKey !== undefined && this.key <= parent2.lastKey)
+              throw new ContractError;
+            parent2.lastKey = this.key;
+            parent2.sensitive = sensitive.test(this.key);
+            parent2.expect = "colon";
+            if (!parent2.hide) {
+              const safeKey = sanitizeText(this.key, this.secrets);
+              if (!this.partial && parent2.lastOutputKey !== undefined && safeKey <= parent2.lastOutputKey)
+                throw new ContractError;
+              parent2.lastOutputKey = safeKey;
+              this.redacted ||= safeKey !== this.key;
+              output += JSON.stringify(safeKey);
+            }
+            this.key = "";
+          } else {
+            if (!this.suppressed)
+              output += `${encoded2(this.text.end())}"`;
+            this.redacted ||= this.text.redacted;
+            done();
+          }
+          this.inString = false;
+          continue;
+        }
+        if (this.keyMode) {
+          this.key += decoded2;
+          if (utf8Bytes(this.key) > 8192)
+            throw new ContractError("oversize");
+        } else if (!this.suppressed)
+          output += encoded2(this.text.write(decoded2));
+        continue;
+      }
+      if (this.token && /[\s,\]}]/.test(ch))
+        primitive();
+      if (this.token) {
+        this.token += ch;
+        if (this.token.length > 128)
+          throw new ContractError("oversize");
+        continue;
+      }
+      if (/\s/.test(ch))
+        continue;
+      const parent = top();
+      if (ch === '"') {
+        this.keyMode = parent?.kind === "object" && parent.expect === "key";
+        this.suppressed = this.keyMode ? parent.hide : begin();
+        this.inString = true;
+        this.text = new TextSanitizer(this.secrets);
+        if (!this.keyMode && !this.suppressed)
+          output += '"';
+      } else if (ch === "{" || ch === "[") {
+        const hide = begin();
+        if (!hide)
+          output += ch;
+        if (this.stack.length >= 64)
+          throw new ContractError("oversize");
+        this.stack.push({
+          kind: ch === "{" ? "object" : "array",
+          expect: ch === "{" ? "key" : "value",
+          hide,
+          sensitive: false,
+          count: 0,
+          lastKey: undefined,
+          lastOutputKey: undefined
+        });
+      } else if (ch === "}" || ch === "]") {
+        if (!parent || ch === "}" !== (parent.kind === "object"))
+          throw new ContractError;
+        if (parent.expect !== "comma" && !(parent.count === 0 && parent.expect === (parent.kind === "object" ? "key" : "value")))
+          throw new ContractError;
+        if (!parent.hide)
+          output += ch;
+        this.stack.pop();
+        done();
+      } else if (ch === ":") {
+        if (parent?.expect !== "colon")
+          throw new ContractError;
+        parent.expect = "value";
+        if (!parent.hide)
+          output += ch;
+      } else if (ch === ",") {
+        if (parent?.expect !== "comma")
+          throw new ContractError;
+        parent.expect = parent.kind === "object" ? "key" : "value";
+        parent.count = Math.max(1, parent.count);
+        if (!parent.hide)
+          output += ch;
+      } else {
+        this.suppressed = begin();
+        this.token = ch;
+      }
+    }
+    if (final) {
+      if (this.token)
+        primitive();
+      if (this.partial) {
+        if (this.inString && !this.suppressed) {
+          output += this.keyMode ? JSON.stringify(sanitizeText(this.key, this.secrets)).slice(0, -1) : encoded2(this.text.end());
+        }
+        if (this.escape) {
+          output += marker;
+          this.redacted = true;
+          this.limited = true;
+        }
+      } else if (this.inString || this.escape || this.stack.length || this.root !== "done")
+        throw new ContractError;
+      this.redacted ||= this.text.redacted;
+    }
+    return output;
+  }
+  end() {
+    return this.write("", true);
+  }
+}
+
+// src/service/workbench-files.ts
+function inside(root, path) {
+  const r = relative5(root, path);
+  return r === "" || !isAbsolute6(r) && r !== ".." && !r.startsWith(`..${sep4}`);
+}
+var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
+
+class WorkbenchFiles {
+  secrets;
+  root;
+  excluded;
+  constructor(root, excluded, secrets) {
+    this.secrets = secrets;
+    this.root = realpathSync4(root);
+    this.excluded = excluded.flatMap((path) => [
+      resolve6(path),
+      canonicalAmbientRoot(path)
+    ]);
+  }
+  allowed(path) {
+    if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
+      throw new ContractError("forbidden");
+    const stat = lstatSync8(path);
+    if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
+      throw new ContractError("forbidden");
+  }
+  directory(path) {
+    if (!isAbsolute6(path) || !safeDirectory(path))
+      throw new ContractError("invalid");
+    const canonical = realpathSync4(path);
+    this.allowed(canonical);
+    return canonical;
+  }
+  selected(path) {
+    if (isAbsolute6(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
+      throw new ContractError("forbidden");
+    const target = resolve6(this.root, path);
+    if (!inside(this.root, target) || !safeDirectory(dirname9(target)))
+      throw new ContractError("forbidden");
+    this.allowed(target);
+    if (lstatSync8(target).isSymbolicLink())
+      throw new ContractError("forbidden");
+    return target;
+  }
+  browsed(path) {
+    const full = /^~(?:[\\/]|$)/.test(path) ? join14(homedir4(), path.slice(1)) : path || this.root;
+    try {
+      return this.directory(full);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Unsafe directory")
+        throw new ContractError("forbidden");
+      throw error;
+    }
+  }
+  list(path, directories = false) {
+    const selected = directories ? this.browsed(path) : this.selected(path);
+    if (!safeDirectory(selected) || sanitizeText(selected, this.secrets()) !== selected)
+      throw new ContractError("forbidden");
+    const entries2 = [], dir = opendirSync5(selected);
+    let limited = false, scanned = 0;
+    try {
+      for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+        if (++scanned > 2000) {
+          limited = true;
+          break;
+        }
+        if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
+          continue;
+        const absolute2 = join14(selected, entry.name);
+        try {
+          this.allowed(absolute2);
+        } catch {
+          continue;
+        }
+        const wire = directories ? absolute2 : relative5(this.root, absolute2).split(sep4).join("/");
+        if (sanitizeText(wire, this.secrets()) !== wire)
+          continue;
+        if (entries2.length >= 200) {
+          limited = true;
+          break;
+        }
+        entries2.push({
+          name: entry.name,
+          path: wire,
+          directory: entry.isDirectory()
+        });
+      }
+    } finally {
+      dir.closeSync();
+    }
+    entries2.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
+    const parent = dirname9(selected);
+    return {
+      kind: directories ? "directories" : "files",
+      path: directories ? selected : path,
+      parent: directories ? parent === selected ? null : parent : selected === this.root ? null : relative5(this.root, parent).split(sep4).join("/"),
+      entries: entries2,
+      limited
+    };
+  }
+  read(path) {
+    const selected = this.selected(path), before = lstatSync8(selected);
+    if (!before.isFile())
+      throw new ContractError("forbidden");
+    const fd = openSync4(selected, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+    try {
+      const opened = fstatSync3(fd);
+      if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
+        throw new ContractError("stale");
+      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
+      let at = 0;
+      while (at < buffer.length) {
+        const n = readSync3(fd, buffer, at, buffer.length - at, at);
+        if (!n)
+          break;
+        at += n;
+      }
+      const after = fstatSync3(fd), current = lstatSync8(selected);
+      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
+        throw new ContractError("stale");
+      const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
+      if (decoded2.includes("\x00"))
+        throw new ContractError("unsupported-context");
+      return {
+        kind: "file",
+        path,
+        text: new TextSanitizer(this.secrets()).write(decoded2, at === opened.size),
+        limited: at < opened.size
+      };
+    } finally {
+      closeSync4(fd);
+    }
+  }
+}
+
+// src/service/gateway.ts
+async function joinProjectStops(projects, stopProject) {
+  const unconfirmed = [];
+  for (const project of projects) {
+    try {
+      await stopProject(project);
+    } catch {
+      unconfirmed.push(project);
+    }
+  }
+  return unconfirmed;
+}
+async function createGateway(value, hostUrl, source) {
+  const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
+  const web = loadWebAssets(source?.webDirectory);
+  const build2 = {
+    contractHash: "663f71a44cd33f95377644cfc10c2cb657298f191b36d6ca05b810e849c54e68",
+    assets: {
+      sourceHash: web.manifest.sourceHash,
+      contractHash: web.manifest.contractHash,
+      buildId: web.manifest.buildId
+    }
+  };
+  const configured = readServerConfig(input.serverConfig).config;
+  if (configured.port !== input.policy.port)
+    throw new ContractError("conflict");
+  const registryHeal = await new RegistryHealer(new ServiceCoordination(null, input.stateHome)).heal();
+  if (registryHeal.status === "blocked")
+    throw new ContractError("registry-locked");
+  const healed = await healWorkbench(store, { responsive: async () => true });
+  if (healed.status === "blocked" || healed.status === "live")
+    throw new ContractError("quarantine");
+  const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
+  const connections = new Set, relays = new Set;
+  const opens = new Map;
+  const retirements = new Set;
+  const attachments = new Map;
+  const bindings = new Map;
+  const wss = new WebSocketServer2({
+    noServer: true,
+    clientTracking: false,
+    perMessageDeflate: false,
+    maxPayload: LIMITS.wsClientFrameBytes
+  });
+  let accepting = false, stopping;
+  let auth;
+  let pending = 0;
+  let opening = false;
+  const server = createServer2({
+    maxHeaderSize: LIMITS.headerBytes,
+    headersTimeout: 1e4,
+    requestTimeout: 30000,
+    keepAliveTimeout: 5000
+  }, (req, res) => {
+    handle(req, res);
+  });
+  server.maxConnections = 64;
+  server.on("connection", (socket) => {
+    connections.add(socket);
+    socket.on("error", () => socket.destroy());
+    socket.on("close", () => connections.delete(socket));
+  });
+  server.on("clientError", (_error, socket) => socket.end(`HTTP/1.1 400 Refused\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`));
+  server.on("checkContinue", (_req, res) => reply(res, 400, { kind: "error", error: publicError("invalid") }));
+  await new Promise((resolve7, reject) => {
+    server.once("error", reject);
+    server.listen(input.policy.port, input.policy.host, () => {
+      server.off("error", reject);
+      resolve7();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new ContractError("unavailable");
+  const endpoint2 = localOrigin(input.policy, address.port);
+  let acquired;
+  try {
+    acquired = store.acquire(endpoint2, configured.token, input);
+    auth = new HttpAuthentication(acquired.access, acquired.registration.epoch, acquired.registration.id, acquired.registration.capability);
+    acquired.access.onRevoke(() => {
+      for (const close of relays)
+        close();
+      bindings.clear();
+      const grouped = new Map;
+      for (const [id, project] of attachments)
+        grouped.set(project, [...grouped.get(project) ?? [], id]);
+      attachments.clear();
+      const original = (async () => {
+        for (const [id, ids] of grouped) {
+          const project = store.projects().find((p) => p.id === id);
+          if (!project)
+            throw new ContractError("unavailable");
+          const c = new ServiceCoordination(project.path, input.stateHome);
+          if (c.inspect().status === "stopped")
+            continue;
+          if (c.localAccess().epoch !== project.epoch)
+            throw new ContractError("stale");
+          for (let offset = 0;offset < ids.length; offset += LIMITS.viewers) {
+            const result = closed(await nativeCall(c, "detach-viewers", false, {
+              attachments: ids.slice(offset, offset + LIMITS.viewers)
+            }), ["status", "epoch"]);
+            if (result.status !== "detached" || result.epoch !== project.epoch)
+              throw new ContractError("unavailable");
+          }
+        }
+      })();
+      retirements.add(original);
+      original.then(() => retirements.delete(original), () => {});
+    });
+    accepting = true;
+  } catch (error) {
+    server.close();
+    throw error;
+  }
+  const files = new WorkbenchFiles(homedir5(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
+  const assert = () => {
+    store.assert();
+    if (!accepting)
+      throw new ContractError("quarantine");
+  };
+  async function open(path, id, epoch) {
+    assert();
+    if (epoch !== auth.epoch)
+      throw new ContractError("stale");
+    const identity = canonicalJson({ path, epoch }), previous = opens.get(id);
+    if (previous) {
+      if (previous.identity !== identity)
+        throw new ContractError("conflict");
+      return previous.result;
+    }
+    const intentPath = store.path(`commands/${id}.json`), kept = store.files.read(intentPath);
+    if (kept) {
+      if (kept.bytes.toString("utf8") !== identity)
+        throw new ContractError("conflict");
+      const settled = store.files.read(store.path(`commands/${id}.result.json`));
+      if (!settled)
+        throw new ContractError("receipt-inconclusive");
+      return decodeProjectEntry(json(settled));
+    }
+    if (opening)
+      throw new ContractError("capacity");
+    if (opens.size >= 128 || store.projects().length >= 128)
+      throw new ContractError("capacity");
+    const commands = store.path("commands");
+    if (store.files.directory(commands)) {
+      const dir = opendirSync6(commands);
+      let count = 0;
+      try {
+        while (dir.readSync())
+          if (++count >= 2048)
+            throw new ContractError("capacity");
+      } finally {
+        dir.closeSync();
+      }
+    }
+    const directory = files.directory(path);
+    effectiveWorkspace(directory, input.stateHome);
+    store.files.create(intentPath, identity);
+    opening = true;
+    const result = Promise.resolve().then(async () => {
+      const opened = await openProjectDirectory(directory, input.stateHome, input.agentDir, hostUrl);
+      const c = new ServiceCoordination(opened.path, input.stateHome), access = c.localAccess();
+      const project = {
+        id: hash2(c.store.root),
+        path: c.store.root,
+        cwd: readHostConfig(c)?.cwd ?? directory,
+        epoch: access.epoch
+      };
+      store.saveProject(project);
+      bindings.delete(project.id);
+      store.files.create(store.path(`commands/${id}.result.json`), encoded(project));
+      return project;
+    });
+    opens.set(id, { identity, result });
+    result.then(() => {
+      opens.delete(id);
+      opening = false;
+    }, () => {
+      opening = false;
+    });
+    return result;
+  }
+  function binding(id) {
+    let project = store.associatedProjects().find((p) => p.id === id);
+    if (!project)
+      throw new ContractError("unavailable");
+    const c = new ServiceCoordination(project.path, input.stateHome), local = c.localAccess();
+    if (c.store.root !== project.path)
+      throw new ContractError("stale");
+    if (local.epoch !== project.epoch) {
+      bindings.delete(id);
+      project = { ...project, epoch: local.epoch };
+      store.saveProject(project);
+    }
+    const previous = bindings.get(id);
+    if (previous)
+      return previous;
+    const result = (async () => {
+      const raw = closed(await nativeCall(c, "token-link", true), ["link"]), link = new URL(text(raw.link, 4096, true));
+      const secret = link.searchParams.get("token");
+      if (!secret)
+        throw new ContractError("unavailable");
+      const cookie = await new Promise((resolve7, reject) => {
+        const req = request2(`${local.endpoint}/?token=${encodeURIComponent(secret)}`, { agent: false }, (res) => {
+          const cookie2 = res.headers["set-cookie"];
+          res.resume();
+          if (res.statusCode !== 303 || cookie2?.length !== 1)
+            reject(new ContractError("unavailable"));
+          else
+            resolve7(cookie2[0].split(";")[0]);
+        });
+        req.setTimeout(2000, () => req.destroy(new Error));
+        req.on("error", () => reject(new ContractError("unavailable")));
+        req.end();
+      });
+      if (c.localAccess().epoch !== project.epoch)
+        throw new ContractError("stale");
+      return { project, endpoint: local.endpoint, cookie };
+    })();
+    bindings.set(id, result);
+    return result;
+  }
+  function stop() {
+    if (stopping)
+      return;
+    accepting = false;
+    store.phase("stopping");
+    stopping = (async () => {
+      await Promise.allSettled([...opens.values()].map((o) => o.result));
+      await Promise.allSettled([...retirements]);
+      const targets = store.associatedProjects();
+      await joinProjectStops(targets, async (p) => {
+        let c;
+        try {
+          c = new ServiceCoordination(p.path, input.stateHome);
+        } catch {
+          return;
+        }
+        const observed = await serviceStatus(c);
+        const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
+        if (status !== "alive")
+          return;
+        if (c.localAccess().epoch !== p.epoch)
+          return;
+        if ((await stopService(c)).status !== "stopped")
+          throw new ContractError("quarantine");
+      });
+      store.release();
+      for (const close of relays)
+        close();
+      wss.close();
+      server.close();
+      for (const socket of connections)
+        socket.end();
+    })().catch(() => {
+      try {
+        store.phase("quarantined");
+      } catch {}
+      server.close();
+      for (const socket of connections)
+        socket.destroy();
+    });
+  }
+  async function body(req, maximum = 16384) {
+    if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] || req.headers["transfer-encoding"])
+      throw new ContractError("invalid");
+    const chunks = [];
+    let count = 0;
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+      count += chunk.length;
+      if (count > maximum)
+        throw new ContractError("oversize");
+      chunks.push(chunk);
+    }
+    return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), maximum);
+  }
+  function reply(res, code2, value2) {
+    if (res.destroyed || res.writableEnded)
+      return;
+    fixedHeaders(res);
+    res.statusCode = code2;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(canonicalJson(value2));
+  }
+  function target(raw) {
+    const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
+    return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
+  }
+  async function handle(req, res) {
+    let effect = false;
+    if (++pending > 64) {
+      pending--;
+      reply(res, 429, { kind: "error", error: publicError("capacity") });
+      return;
+    }
+    fixedHeaders(res);
+    try {
+      const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+      assertRequestTarget(raw);
+      const url = new URL(raw, endpoint2);
+      if (raw === "/healthz" && req.method === "GET") {
+        reply(res, 200, { status: "ok" });
+        return;
+      }
+      store.assert();
+      if (url.searchParams.has("token")) {
+        if (req.method !== "GET" || !raw.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
+          throw new ContractError("invalid");
+        res.setHeader("Set-Cookie", auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
+        return;
+      }
+      if (raw === "/" && req.method === "GET") {
+        res.end(`Cadence workbench: open the private link. No default workspace is created.
+`);
+        return;
+      }
+      if (raw.startsWith("/local/v1/admin/")) {
+        const caller2 = auth.authenticate(boundary, randomUUID9(), req.method === "POST");
+        if (caller2.authority !== "local")
+          throw new ContractError("forbidden");
+        const operation = raw.slice("/local/v1/admin/".length);
+        if (["status", "diagnose"].includes(operation) && req.method === "GET") {
+          reply(res, 200, {
+            kind: "ok",
+            value: {
+              ...store.inspect(),
+              projects: store.projects().length
+            }
+          });
+          return;
+        }
+        if (req.method !== "POST")
+          throw new ContractError("invalid");
+        const value2 = await body(req);
+        if (operation === "token-link") {
+          const o = closed(value2, ["reveal"]);
+          if (o.reveal !== true)
+            throw new ContractError("forbidden");
+          reply(res, 200, {
+            kind: "ok",
+            value: {
+              link: acquired.access.tokenLink(input.policy.proxy?.origin ?? endpoint2)
+            }
+          });
+          return;
+        }
+        closed(value2, []);
+        if (operation === "stop") {
+          reply(res, 200, {
+            kind: "ok",
+            value: { status: "accepted", epoch: auth.epoch }
+          });
+          stop();
+          return;
+        }
+        if (operation === "token-rotate") {
+          acquired.access.rotate();
+          await Promise.all([...retirements]);
+          reply(res, 200, {
+            kind: "ok",
+            value: { status: "rotated", epoch: auth.epoch }
+          });
+          return;
+        }
+        throw new ContractError("invalid");
+      }
+      assert();
+      if (boundary.headers.has("x-cadence-local"))
+        throw new ContractError("forbidden");
+      const project = target(raw);
+      const caller = auth.authenticate(boundary, randomUUID9(), !project && req.method === "POST");
+      if (project) {
+        const route = readRoute(project.tail, req.method ?? "");
+        if (!route)
+          throw new ContractError("invalid");
+        const attachment = boundary.headers.get("x-cadence-attachment");
+        if (attachment && attachments.get(attachment) !== project.id || req.method === "POST" && !attachment)
+          throw new ContractError("stale");
+        if (route.operation === "session" && !attachment && attachments.size >= 2048)
+          throw new ContractError("capacity");
+        if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
+          throw new ContractError("forbidden");
+        if (req.headers["content-encoding"] || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes)
+          throw new ContractError("oversize");
+        let commandBody;
+        if (route.operation === "workbenchCommand") {
+          const command = decodeWorkbenchCommand(await body(req, LIMITS.controlBytes));
+          if (command.kind === "open-project")
+            throw new ContractError("forbidden");
+          commandBody = canonicalJson(command, LIMITS.controlBytes);
+        }
+        const b = await binding(project.id);
+        auth.current(caller);
+        assert();
+        const headers = {
+          Cookie: b.cookie,
+          Origin: b.endpoint
+        };
+        for (const key of [
+          "content-type",
+          "content-length",
+          "x-cadence-build",
+          "x-cadence-attachment",
+          "x-cadence-csrf"
+        ]) {
+          const value2 = boundary.headers.get(key);
+          if (value2 !== undefined)
+            headers[key] = value2;
+        }
+        if (commandBody !== undefined)
+          headers["content-length"] = String(Buffer.byteLength(commandBody));
+        await new Promise((resolve7) => {
+          const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers, agent: false }, (incoming) => {
+            try {
+              auth.current(caller);
+            } catch {
+              close();
+              return;
+            }
+            if (route.operation === "session" && incoming.statusCode === 200) {
+              try {
+                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), project.id);
+              } catch {
+                close();
+                return;
+              }
+            }
+            if (route.operation === "detach" && incoming.statusCode === 200 && attachment)
+              attachments.delete(attachment);
+            res.statusCode = incoming.statusCode ?? 502;
+            for (const key of [
+              "content-type",
+              "content-disposition",
+              "x-cadence-attachment"
+            ]) {
+              const value2 = incoming.headers[key];
+              if (value2 !== undefined)
+                res.setHeader(key, value2);
+            }
+            incoming.on("error", close);
+            incoming.pipe(res);
+            res.once("finish", done);
+          });
+          function done() {
+            relays.delete(close);
+            res.off("close", close);
+            res.off("finish", done);
+            resolve7();
+          }
+          function close() {
+            upstream.destroy();
+            res.destroy();
+            done();
+          }
+          relays.add(close);
+          res.once("close", close);
+          upstream.setTimeout(LIMITS.downloadIdleMs, close);
+          upstream.on("error", () => {
+            if (!res.headersSent)
+              reply(res, 502, {
+                kind: "error",
+                error: publicError("unavailable", req.method === "POST" ? "uncertain" : "none")
+              });
+            else
+              res.destroy();
+            done();
+          });
+          if (commandBody === undefined)
+            req.pipe(upstream);
+          else
+            upstream.end(commandBody);
+        });
+        return;
+      }
+      if (raw === "/workbench/v1" && req.method === "GET") {
+        reply(res, 200, {
+          kind: "workbench",
+          epoch: auth.epoch,
+          csrf: auth.csrf,
+          home: homedir5(),
+          projects: store.projects(),
+          recoveries: new RecoveryLog(store.files).notices(),
+          build: build2
+        });
+        return;
+      }
+      if (url.pathname === "/workbench/v1/directories" && req.method === "GET" && [...url.searchParams.keys()].join() === "path") {
+        reply(res, 200, files.list(text(url.searchParams.get("path"), 4096, true), true));
+        return;
+      }
+      if (raw === "/workbench/v1/open" && req.method === "POST") {
+        const clientBuild = decodeClientBuild(parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024));
+        if (clientBuild.kind !== "browser" || !compatibleBuild(build2, clientBuild))
+          throw new ContractError("unsupported-context");
+        const o = closed(await body(req), ["commandId", "path", "epoch"]);
+        const id = decodeId(o.commandId), path = text(o.path, 4096, true), epoch = decodeId(o.epoch);
+        auth.current(caller);
+        effect = true;
+        const project2 = await open(path, id, epoch);
+        auth.current(caller);
+        reply(res, 200, { kind: "project", project: project2 });
+        return;
+      }
+      const app = url.pathname === "/app" && (raw === "/app" || /^[a-f0-9]{64}$/.test(url.searchParams.get("project") ?? "") && [...url.searchParams.keys()].join() === "project");
+      const asset = assets.get(app ? "/app" : raw);
+      if (req.method !== "GET" || !asset)
+        throw new ContractError("invalid");
+      res.setHeader("Content-Type", asset.contentType);
+      res.end(asset.bytes);
+    } catch (error) {
+      const code2 = error instanceof ContractError ? error.code : "unavailable";
+      if (res.headersSent)
+        res.destroy();
+      else
+        reply(res, code2 === "unauthenticated" ? 401 : code2 === "forbidden" ? 403 : 400, {
+          kind: "error",
+          error: publicError(code2, effect ? "uncertain" : "none")
+        });
+    } finally {
+      pending--;
+    }
+  }
+  server.on("upgrade", (req, socket, head) => {
+    (async () => {
+      try {
+        assert();
+        const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+        assertRequestTarget(raw);
+        if (boundary.headers.has("x-cadence-local"))
+          throw new ContractError("forbidden");
+        const caller = auth.authenticate(boundary, randomUUID9(), false, true), t = target(raw);
+        if (req.method !== "GET" || !t)
+          throw new ContractError("invalid");
+        const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
+        if (attachments.get(attachment) !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
+          throw new ContractError("invalid");
+        const b = await binding(t.id);
+        auth.current(caller);
+        assert();
+        const upstream = new WebSocket(`${b.endpoint.replace("http:", "ws:")}${t.tail}`, {
+          headers: { Cookie: b.cookie, Origin: b.endpoint },
+          agent: false,
+          maxPayload: LIMITS.controlBytes,
+          handshakeTimeout: 5000,
+          perMessageDeflate: false
+        });
+        const abort = () => {
+          upstream.terminate();
+          socket.destroy();
+          relays.delete(abort);
+        };
+        relays.add(abort);
+        socket.once("close", abort);
+        upstream.once("error", abort);
+        upstream.once("close", abort);
+        upstream.once("open", () => {
+          try {
+            auth.current(caller);
+            assert();
+          } catch {
+            abort();
+            return;
+          }
+          wss.handleUpgrade(req, socket, head, (client) => {
+            const forward = (to, data, binary) => {
+              try {
+                auth.current(caller);
+                if (to.bufferedAmount > LIMITS.controlBytes)
+                  throw new Error;
+                to.send(data, { binary });
+              } catch {
+                abort();
+              }
+            };
+            client.on("message", (data, binary) => forward(upstream, data, binary));
+            upstream.on("message", (data, binary) => forward(client, data, binary));
+            client.on("error", abort);
+            client.on("close", abort);
+          });
+        });
+      } catch {
+        socket.end(`HTTP/1.1 403 Refused\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`);
+      }
+    })();
+  });
+  return { store, endpoint: endpoint2, epoch: acquired.registration.epoch, stop };
+}
+
+// src/service/host.ts
+import { spawn as spawn4 } from "node:child_process";
+import { lstatSync as lstatSync20, opendirSync as opendirSync14 } from "node:fs";
+import { join as join32 } from "node:path";
+import { fileURLToPath as fileURLToPath6 } from "node:url";
+
+// src/agent-registry.ts
+import { createHash as createHash7 } from "node:crypto";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+var AGENT_FILES = [
+  "design-explorer.md",
+  "implementation-worker.md",
+  "diagnosis-worker.md"
+];
+function loadAgentDefinitions() {
+  return AGENT_FILES.map((fileName) => {
+    const path = fileURLToPath3(new URL(`../agents/${fileName}`, import.meta.url));
+    const data = readBounded(path, 32768, true);
+    if (!data)
+      throw new Error("Missing package Agent");
+    return {
+      role: fileName.replace(/\.md$/, ""),
+      fileName,
+      path,
+      sha256: createHash7("sha256").update(data).digest("hex"),
+      bytes: data.length,
+      content: data.toString("utf8")
+    };
+  });
+}
+
+// src/cadence-preferences.ts
+import { realpathSync as realpathSync5 } from "node:fs";
+import { basename as basename2, dirname as dirname10, join as join15, resolve as resolve7 } from "node:path";
+function agentNamespace(agentDir) {
+  let at = resolve7(agentDir);
+  const missing2 = [];
+  for (;; ) {
+    try {
+      return join15(realpathSync5(at), ...missing2.reverse());
+    } catch {
+      const parent = dirname10(at);
+      if (parent === at)
+        return resolve7(agentDir);
+      missing2.push(basename2(at));
+      at = parent;
+    }
+  }
+}
+
+class CadencePreferences {
+  path;
+  files;
+  constructor(agentDir) {
+    const namespace = agentNamespace(agentDir);
+    this.path = join15(namespace, "cadence", "settings.json");
+    this.files = new PrivateFiles(namespace, false);
+  }
+  read() {
+    const saved = this.files.read(this.path);
+    if (!saved)
+      return null;
+    const o = closed(parseWireJson(saved.bytes.toString("utf8")), [
+      "schema",
+      "model"
+    ]);
+    if (o.schema !== "cadence-preferences/1")
+      throw new Error("Unsupported Cadence preferences");
+    return decodeModelSelector(o.model);
+  }
+  encode(model) {
+    return canonicalJson({
+      schema: "cadence-preferences/1",
+      model: decodeModelSelector(model)
+    });
+  }
+  save(model) {
+    const selected = decodeModelSelector(model);
+    const previous = this.files.read(this.path);
+    if (previous && canonicalJson(this.read()) === canonicalJson(selected))
+      return;
+    const bytes = this.encode(selected);
+    if (previous)
+      this.files.replace(this.path, previous, bytes);
+    else
+      this.files.create(this.path, bytes);
+  }
+  choose(model) {
+    const bytes = this.encode(model);
+    const previous = this.files.read(this.path);
+    if (previous?.bytes.toString("utf8") === bytes)
+      return;
+    if (previous)
+      this.files.replace(this.path, previous, bytes);
+    else
+      this.files.create(this.path, bytes);
+  }
+}
+
+// src/history/live.ts
+function scopedSnapshot(source, scope) {
+  if (scope.kind === "task" || source.scope.kind === "child")
+    return;
+  if (!source.runs.some((run) => scope.kind === "run" ? run.runId === scope.id && run.childRunId === null : run.childRunId === scope.id))
+    return;
+  return decodeSnapshot({
+    ...source,
+    scope,
+    runs: source.runs.filter((run) => scope.kind === "run" ? run.runId === scope.id : run.childRunId === scope.id),
+    horizon: {
+      ...source.horizon,
+      historicalRuns: { ...source.horizon.historicalRuns, scope }
+    }
+  });
+}
+
+class HistoryLive {
+  writer;
+  projection;
+  viewers = new Set;
+  rings = new Map;
+  pending = new Map;
+  scheduled = false;
+  closed = false;
+  detach;
+  detachSnapshots;
+  constructor(writer, projection) {
+    this.writer = writer;
+    this.projection = projection;
+    this.detachSnapshots = projection.observeSnapshots((snapshot) => {
+      for (const viewer of this.viewers)
+        if (viewer.keys === null && canonicalJson(viewer.scope) === canonicalJson(snapshot.scope)) {
+          viewer.keys = new Set(snapshot.keys);
+          viewer.seq = snapshot.committedSeq;
+        }
+    });
+    this.detach = writer.subscribeCommitted((notice) => {
+      if (this.closed)
+        return;
+      if (notice.gap)
+        for (const v of this.viewers)
+          this.enqueue(v, this.watermark(v.scope));
+      for (const id of notice.runs)
+        this.pending.set(`run/${id}`, { kind: "run", id });
+      for (const id of notice.tasks)
+        this.pending.set(`task/${id}`, { kind: "task", id });
+      for (const v of this.viewers)
+        this.pending.set(`${v.scope.kind}/${v.scope.id}`, v.scope);
+      if (this.pending.size > LIMITS.maxPageEntries) {
+        this.pending.clear();
+        for (const v of this.viewers)
+          this.enqueue(v, this.watermark(v.scope));
+      }
+      if (!this.scheduled) {
+        this.scheduled = true;
+        setImmediate(() => {
+          this.drain();
+        });
+      }
+    });
+  }
+  watermark = (input) => {
+    const scope = decodeScope(input), session = this.projection.environment.session();
+    return decodeLiveEvent({
+      kind: "heartbeat",
+      storeId: this.writer.files.format.storeId,
+      epoch: session.epoch,
+      scope,
+      committedSeq: this.writer.committedSeq
+    });
+  };
+  subscribe = (input, callback) => {
+    if (this.closed || this.viewers.size >= LIMITS.viewers)
+      throw new ContractError("capacity");
+    const scope = decodeScope(input), viewer = {
+      scope,
+      callback,
+      seq: this.writer.committedSeq,
+      closed: false,
+      queue: [],
+      bytes: 0,
+      scheduled: false,
+      keys: null
+    };
+    this.viewers.add(viewer);
+    return () => {
+      viewer.closed = true;
+      viewer.queue = [];
+      viewer.bytes = 0;
+      this.viewers.delete(viewer);
+    };
+  };
+  enqueue(v, event) {
+    if (v.closed)
+      return;
+    const bytes = Buffer.byteLength(canonicalJson(event));
+    if (v.queue.length >= LIMITS.viewerMessages || v.bytes + bytes > LIMITS.viewerBytes) {
+      v.queue = [this.watermark(v.scope)];
+      v.bytes = Buffer.byteLength(canonicalJson(v.queue[0]));
+    } else {
+      v.queue.push(event);
+      v.bytes += bytes;
+    }
+    if (v.scheduled)
+      return;
+    v.scheduled = true;
+    setImmediate(() => {
+      this.pump(v);
+    });
+  }
+  async pump(v) {
+    try {
+      while (!v.closed && v.queue.length) {
+        const event = v.queue.shift();
+        if (!event)
+          break;
+        v.bytes -= Buffer.byteLength(canonicalJson(event));
+        await v.callback(event);
+      }
+    } catch {
+      v.closed = true;
+      this.viewers.delete(v);
+      v.queue = [];
+      v.bytes = 0;
+    } finally {
+      v.scheduled = false;
+    }
+  }
+  async drain() {
+    const order = { task: 0, run: 1, child: 2 };
+    const scopes = [...this.pending.values()].sort((a, b) => order[a.kind] - order[b.kind]);
+    this.pending.clear();
+    const sources = [];
+    try {
+      for (const scope of scopes) {
+        if (this.closed)
+          return;
+        if (scope.kind !== "run" && ![...this.viewers].some((v) => canonicalJson(v.scope) === canonicalJson(scope)))
+          continue;
+        let snapshot;
+        for (let i = sources.length - 1;i >= 0 && !snapshot; i--)
+          snapshot = scopedSnapshot(sources[i], scope);
+        const reused = snapshot !== undefined;
+        try {
+          snapshot ??= await this.projection.snapshot(scope);
+        } catch {
+          for (const v of this.viewers)
+            if (v.scope.id === scope.id)
+              this.enqueue(v, this.watermark(v.scope));
+          continue;
+        }
+        if (!reused && sources.length < LIMITS.viewers && (scope.kind === "task" || scopes.some((s) => s.kind === "child" && snapshot.runs.some((r) => r.childRunId === s.id))))
+          sources.push(snapshot);
+        const key = `${scope.kind}/${scope.id}`, old = this.rings.get(key);
+        const update = (previousSeq, selected = scope, previousKeys) => decodeLiveEvent({
+          kind: "update",
+          storeId: snapshot.storeId,
+          epoch: snapshot.epoch,
+          scope: selected,
+          previousSeq,
+          committedSeq: snapshot.committedSeq,
+          context: snapshot.context,
+          runs: snapshot.runs.filter((r) => selected.kind !== "child" || r.childRunId === selected.id),
+          removed: [
+            ...previousKeys ?? new Set((old?.snapshot.runs ?? []).map((r) => r.childRunId ?? r.runId))
+          ].filter((id) => !snapshot.runs.some((r) => (r.childRunId ?? r.runId) === id))
+        });
+        if (old && old.snapshot.committedSeq === snapshot.committedSeq)
+          continue;
+        if (scope.kind === "run") {
+          const event = update(old?.snapshot.committedSeq ?? "0"), bytes = Buffer.byteLength(canonicalJson(event));
+          const ring = old ?? { events: [], bytes: 0, snapshot };
+          while (ring.events.length && (ring.events.length >= LIMITS.ringEvents || ring.bytes + bytes > LIMITS.ringBytes))
+            ring.bytes -= Buffer.byteLength(canonicalJson(ring.events.shift()));
+          ring.events.push(event);
+          ring.bytes += bytes;
+          ring.snapshot = snapshot;
+          this.rings.set(key, ring);
+          while (this.rings.size > LIMITS.maxPageEntries || [...this.rings.values()].reduce((n, r) => n + r.bytes, 0) > 32 * 1024 * 1024) {
+            const first = this.rings.keys().next().value;
+            if (first)
+              this.rings.delete(first);
+            else
+              break;
+          }
+        }
+        for (const v of this.viewers) {
+          const matches = v.scope.kind === scope.kind && v.scope.id === scope.id || scope.kind === "run" && v.scope.kind === "child" && snapshot.runs.some((r) => r.childRunId === v.scope.id);
+          if (!matches || BigInt(v.seq) >= BigInt(snapshot.committedSeq))
+            continue;
+          try {
+            if (!v.keys) {
+              this.enqueue(v, this.watermark(v.scope));
+              continue;
+            }
+            const event = update(v.seq, v.scope, v.keys);
+            v.keys = new Set(snapshot.runs.filter((r) => v.scope.kind !== "child" || r.childRunId === v.scope.id).map((r) => r.childRunId ?? r.runId));
+            v.seq = snapshot.committedSeq;
+            this.enqueue(v, event);
+          } catch {
+            this.enqueue(v, this.watermark(v.scope));
+          }
+        }
+      }
+    } catch {
+      for (const viewer of this.viewers) {
+        try {
+          this.enqueue(viewer, this.watermark(viewer.scope));
+        } catch {
+          viewer.closed = true;
+          this.viewers.delete(viewer);
+        }
+      }
+    } finally {
+      this.scheduled = false;
+      if (!this.closed && this.pending.size) {
+        this.scheduled = true;
+        setImmediate(() => {
+          this.drain();
+        });
+      }
+    }
+  }
+  replay(runId, after) {
+    const ring = this.rings.get(`run/${runId}`);
+    if (!ring)
+      return null;
+    if (after === ring.snapshot.committedSeq)
+      return [];
+    const at = ring.events.findIndex((e) => e.kind === "update" && e.previousSeq === after);
+    return at < 0 ? null : structuredClone(ring.events.slice(at));
+  }
+  close() {
+    this.closed = true;
+    this.detach();
+    this.detachSnapshots();
+    this.pending.clear();
+    this.rings.clear();
+    for (const v of this.viewers) {
+      v.closed = true;
+      v.queue = [];
+    }
+    this.viewers.clear();
+  }
+}
+
+// src/history/navigation.ts
+import { createHash as createHash11 } from "node:crypto";
+import { lstatSync as lstatSync12 } from "node:fs";
+import { dirname as dirname13, join as join18 } from "node:path";
+
+// src/history/index-tree.ts
+import { lstatSync as lstatSync10 } from "node:fs";
+import { join as join16 } from "node:path";
+
+// src/history/read-io.ts
+import { createHash as createHash8 } from "node:crypto";
 import {
   closeSync as closeSync5,
   constants as constants4,
   fstatSync as fstatSync4,
-  fsyncSync as fsyncSync3,
-  lstatSync as lstatSync7,
-  opendirSync as opendirSync3,
+  lstatSync as lstatSync9,
   openSync as openSync5,
+  readSync as readSync4
+} from "node:fs";
+import { dirname as dirname11 } from "node:path";
+function bad() {
+  throw new ContractError("corrupt-selected");
+}
+var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
+function selected(files, path, read, walks) {
+  if (!files.files.directory(dirname11(path), false, walks))
+    bad();
+  const before = lstatSync9(path);
+  if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
+    bad();
+  const fd = openSync5(path, constants4.O_RDONLY | (constants4.O_NOFOLLOW ?? 0));
+  try {
+    if (stamp2(fstatSync4(fd)) !== stamp2(before))
+      bad();
+    const result = read(fd, before.size, stamp2(before));
+    if (stamp2(fstatSync4(fd)) !== stamp2(before) || stamp2(lstatSync9(path)) !== stamp2(before))
+      bad();
+    return result;
+  } finally {
+    closeSync5(fd);
+  }
+}
+function assertIncarnation(files, path, expected) {
+  selected(files, path, (_fd, _size, current) => {
+    if (current !== expected)
+      bad();
+  });
+}
+function incarnation2(files, path, maximum) {
+  return selected(files, path, (_fd, size2, stamp3) => {
+    if (size2 > maximum)
+      bad();
+    return { size: size2, stamp: stamp3 };
+  });
+}
+function reproveAppend(files, path, expected, length, sha256, budget) {
+  const current = incarnation2(files, path, Number.MAX_SAFE_INTEGER), a = expected.split(":"), b = current.stamp.split(":");
+  if (current.stamp === expected)
+    return expected;
+  if (b.slice(0, 2).join(":") !== a.slice(0, 2).join(":") || b.slice(3, 6).join(":") !== a.slice(3, 6).join(":") || Number(b[2]) <= Number(a[2]))
+    bad();
+  const bytes = readRange(files, path, 0, length, budget);
+  if (createHash8("sha256").update(bytes).digest("hex") !== sha256)
+    bad();
+  assertIncarnation(files, path, current.stamp);
+  return current.stamp;
+}
+function statSize(files, path, maximum) {
+  return selected(files, path, (_fd, size2) => {
+    if (size2 > maximum)
+      bad();
+    return size2;
+  });
+}
+function readRange(files, path, offset, length, budget) {
+  budget.reserve(0);
+  return selected(files, path, (fd, size2) => {
+    if (offset < 0 || length < 0 || offset + length > size2)
+      bad();
+    budget.reserve(length);
+    const out = Buffer.alloc(length);
+    let n = 0;
+    while (n < length) {
+      budget.reserve(0);
+      const got = readSync4(fd, out, n, length - n, offset + n);
+      if (!got)
+        bad();
+      n += got;
+    }
+    return out;
+  }, budget.walks);
+}
+
+// src/history/index-tree.ts
+var MAX_NODE = 16 * 1024;
+var ACTIVE_KEY = "active";
+function chainHash(seq, previous, previousHash) {
+  return hash2(canonicalJson({ seq, previous, previousHash }));
+}
+function decodeNode(value) {
+  if (!value || typeof value !== "object" || !("kind" in value))
+    throw new ContractError("receipt-inconclusive");
+  if (value.kind === "leaf") {
+    const o2 = closed(value, ["kind", "entries"]);
+    if (!o2.entries || typeof o2.entries !== "object" || Array.isArray(o2.entries))
+      throw new ContractError("receipt-inconclusive");
+    const entries2 = {};
+    for (const [id, v] of Object.entries(o2.entries)) {
+      if (id !== ACTIVE_KEY)
+        decodeId(id.startsWith("roster:") ? id.slice(7) : id);
+      const h = closed(v, ["seq", "hash"]);
+      entries2[id] = { seq: decodeSequence(h.seq), hash: decodeHash(h.hash) };
+    }
+    if (Object.keys(entries2).length > 32)
+      throw new ContractError("receipt-inconclusive");
+    return { kind: "leaf", entries: entries2 };
+  }
+  const o = closed(value, ["kind", "children"]);
+  if (o.kind !== "branch" || !o.children || typeof o.children !== "object" || Array.isArray(o.children))
+    throw new ContractError("receipt-inconclusive");
+  const children = {};
+  for (const [key, v] of Object.entries(o.children)) {
+    if (!/^[0-9a-f]$/.test(key))
+      throw new ContractError("receipt-inconclusive");
+    children[key] = decodeHash(v);
+  }
+  return { kind: "branch", children };
+}
+
+class IndexTree {
+  files;
+  cache = new Map;
+  constructor(files) {
+    this.files = files;
+  }
+  path(id) {
+    return join16(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
+  }
+  load(id, budget, unit) {
+    decodeHash(id);
+    const remembered = unit?.get(id);
+    if (remembered)
+      return remembered;
+    const old = this.cache.get(id);
+    if (budget && old?.budget === budget)
+      return old.node;
+    try {
+      let bytes;
+      if (budget) {
+        const path = this.path(id);
+        budget.reserve(0);
+        const selected2 = lstatSync10(path).size;
+        if (selected2 > MAX_NODE)
+          throw new ContractError("receipt-inconclusive");
+        bytes = readRange(this.files, path, 0, selected2, budget);
+      } else {
+        const file = this.files.files.read(this.path(id), MAX_NODE);
+        if (!file)
+          throw new ContractError("receipt-inconclusive");
+        bytes = file.bytes;
+      }
+      if (hash2(bytes) !== id)
+        throw new ContractError("receipt-inconclusive");
+      const node = decodeNode(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+      if (this.cache.size >= 128) {
+        const first = this.cache.keys().next().value;
+        if (first)
+          this.cache.delete(first);
+      }
+      this.cache.set(id, { node, budget });
+      if (unit) {
+        if (unit.size >= 128) {
+          const first = unit.keys().next().value;
+          if (first)
+            unit.delete(first);
+        }
+        unit.set(id, node);
+      }
+      return node;
+    } catch {
+      throw new ContractError("receipt-inconclusive");
+    }
+  }
+  head(root, id, budget) {
+    return this.find(root, id, budget);
+  }
+  find(root, id, budget, unit) {
+    if (id !== ACTIVE_KEY)
+      decodeId(id.startsWith("roster:") ? id.slice(7) : id);
+    let selected2 = root, depth = 0;
+    const key = hash2(id);
+    while (selected2) {
+      if (depth > 64)
+        throw new ContractError("receipt-inconclusive");
+      const node = this.load(selected2, budget, unit);
+      if (node.kind === "leaf")
+        return node.entries[id];
+      selected2 = node.children[key[depth++]] ?? null;
+    }
+  }
+  heads(root, ids) {
+    const unit = new Map, heads = new Map;
+    for (const id of ids) {
+      const head = this.find(root, id, undefined, unit);
+      if (head)
+        heads.set(id, head);
+    }
+    return heads;
+  }
+  update(lease, root, updates, charge) {
+    if (!updates.size)
+      return root;
+    const put = (node) => {
+      const body = canonicalJson(node, MAX_NODE), id = hash2(body), path = this.path(id);
+      lease.assert();
+      const previous = this.files.files.read(path, MAX_NODE);
+      if (previous) {
+        if (previous.identity !== id)
+          throw new ContractError("corrupt-selected");
+        return id;
+      }
+      charge(Buffer.byteLength(body));
+      this.files.files.create(path, body, Buffer.byteLength(body));
+      return id;
+    };
+    const write2 = (old, changes, depth) => {
+      if (depth > 64)
+        throw new ContractError("capacity");
+      const node = old ? this.load(old) : { kind: "leaf", entries: {} };
+      if (node.kind === "leaf") {
+        const entries2 = { ...node.entries, ...Object.fromEntries(changes) };
+        if (Object.keys(entries2).length <= 32)
+          return put({ kind: "leaf", entries: entries2 });
+        const groups2 = new Map;
+        for (const [id, value] of Object.entries(entries2)) {
+          const digit = hash2(id)[depth];
+          if (!digit)
+            throw new ContractError("capacity");
+          const group = groups2.get(digit) ?? new Map;
+          group.set(id, value);
+          groups2.set(digit, group);
+        }
+        return put({
+          kind: "branch",
+          children: Object.fromEntries([...groups2].map(([digit, group]) => [
+            digit,
+            write2(null, group, depth + 1)
+          ]))
+        });
+      }
+      const children = { ...node.children }, groups = new Map;
+      for (const [id, value] of changes) {
+        const digit = hash2(id)[depth];
+        if (!digit)
+          throw new ContractError("capacity");
+        const group = groups.get(digit) ?? new Map;
+        group.set(id, value);
+        groups.set(digit, group);
+      }
+      for (const [digit, group] of groups)
+        children[digit] = write2(children[digit] ?? null, group, depth + 1);
+      return put({ kind: "branch", children });
+    };
+    return write2(root, updates, 0);
+  }
+}
+
+// src/history/files.ts
+import { createHash as createHash10, randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
+import {
+  closeSync as closeSync6,
+  constants as constants5,
+  fstatSync as fstatSync5,
+  fsyncSync as fsyncSync3,
+  lstatSync as lstatSync11,
+  opendirSync as opendirSync7,
+  openSync as openSync6,
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname as dirname8, join as join9 } from "node:path";
+import { dirname as dirname12, join as join17 } from "node:path";
 
 // src/history/admission.ts
 function decodeRunAdmission(value) {
@@ -6861,92 +11112,8 @@ function decodeRunAdmission(value) {
   return result;
 }
 
-// src/history/read-io.ts
-import { createHash as createHash5 } from "node:crypto";
-import {
-  closeSync as closeSync4,
-  constants as constants3,
-  fstatSync as fstatSync3,
-  lstatSync as lstatSync6,
-  openSync as openSync4,
-  readSync as readSync3
-} from "node:fs";
-import { dirname as dirname7 } from "node:path";
-function bad() {
-  throw new ContractError("corrupt-selected");
-}
-var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path, read, walks) {
-  if (!files.files.directory(dirname7(path), false, walks))
-    bad();
-  const before = lstatSync6(path);
-  if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
-    bad();
-  const fd = openSync4(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
-  try {
-    if (stamp2(fstatSync3(fd)) !== stamp2(before))
-      bad();
-    const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync6(path)) !== stamp2(before))
-      bad();
-    return result;
-  } finally {
-    closeSync4(fd);
-  }
-}
-function assertIncarnation(files, path, expected) {
-  selected(files, path, (_fd, _size, current) => {
-    if (current !== expected)
-      bad();
-  });
-}
-function incarnation2(files, path, maximum) {
-  return selected(files, path, (_fd, size, stamp3) => {
-    if (size > maximum)
-      bad();
-    return { size, stamp: stamp3 };
-  });
-}
-function reproveAppend(files, path, expected, length, sha256, budget) {
-  const current = incarnation2(files, path, Number.MAX_SAFE_INTEGER), a = expected.split(":"), b = current.stamp.split(":");
-  if (current.stamp === expected)
-    return expected;
-  if (b.slice(0, 2).join(":") !== a.slice(0, 2).join(":") || b.slice(3, 6).join(":") !== a.slice(3, 6).join(":") || Number(b[2]) <= Number(a[2]))
-    bad();
-  const bytes = readRange(files, path, 0, length, budget);
-  if (createHash5("sha256").update(bytes).digest("hex") !== sha256)
-    bad();
-  assertIncarnation(files, path, current.stamp);
-  return current.stamp;
-}
-function statSize(files, path, maximum) {
-  return selected(files, path, (_fd, size) => {
-    if (size > maximum)
-      bad();
-    return size;
-  });
-}
-function readRange(files, path, offset, length, budget) {
-  budget.reserve(0);
-  return selected(files, path, (fd, size) => {
-    if (offset < 0 || length < 0 || offset + length > size)
-      bad();
-    budget.reserve(length);
-    const out = Buffer.alloc(length);
-    let n = 0;
-    while (n < length) {
-      budget.reserve(0);
-      const got = readSync3(fd, out, n, length - n, offset + n);
-      if (!got)
-        bad();
-      n += got;
-    }
-    return out;
-  }, budget.walks);
-}
-
 // src/history/types.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 var RECORD_BYTES = LIMITS.controlBytes + 64 * 1024;
 var LEGACY_FORMAT = "cadence-history-store/2";
 var FORMAT = "cadence-history-store/3";
@@ -7312,7 +11479,7 @@ function batchArtifacts(rows) {
 }
 var decodedLines = new Map;
 var decodedBytes = 0;
-var lineKey = (text2) => createHash6("sha256").update(text2).digest("hex");
+var lineKey = (text2) => createHash9("sha256").update(text2).digest("hex");
 function remember(text2, value) {
   const key = lineKey(text2);
   if (decodedLines.has(key))
@@ -7411,7 +11578,7 @@ async function retryStalled(read) {
     } catch (error) {
       if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
         throw error;
-      await new Promise((resolve4) => setImmediate(resolve4));
+      await new Promise((resolve8) => setImmediate(resolve8));
     }
   }
 }
@@ -7432,14 +11599,14 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join9(coordination.directory, "history-v2");
+    this.directory = join17(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join9(coordination.directory, "history-v2");
+    const dir = join17(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join9(dir, "format.json"));
+    const file = coordination.files.read(join17(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
@@ -7455,29 +11622,29 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join9(c.directory, "history-v2");
+    const dir = join17(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
-      storeId: randomUUID6(),
-      workspaceId: randomUUID6(),
+      storeId: randomUUID10(),
+      workspaceId: randomUUID10(),
       rootIdentity: hash2(c.store.root)
     };
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join9(dir, name), true);
+      c.files.directory(join17(dir, name), true);
     }
     lease.assert();
-    const keyPath = join9(dir, "read-proof-key.json");
+    const keyPath = join17(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
       key: randomBytes4(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join9(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join17(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join9(dir, "format.json"));
+    result.syncParents(join17(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -7512,7 +11679,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join17(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -7521,7 +11688,7 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join9(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join17(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
@@ -7549,17 +11716,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join9(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join17(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join9(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join17(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join9(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join17(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join9(this.directory, "runs", runId, "admission.json");
+    return join17(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -7571,21 +11738,21 @@ class HistoryFiles {
   readBudgeted(path, maximum, budget) {
     if (!budget)
       return this.files.read(path, maximum);
-    let size;
+    let size2;
     try {
-      size = lstatSync7(path).size;
+      size2 = lstatSync11(path).size;
     } catch {
       return this.files.read(path, 0, budget.walks);
     }
-    if (size > maximum)
+    if (size2 > maximum)
       corrupt();
-    budget.reserve(size);
-    return this.files.read(path, size, budget.walks);
+    budget.reserve(size2);
+    return this.files.read(path, size2, budget.walks);
   }
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join9(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join17(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
     return this.readAdmissionIdentity(runId, hash2(canonicalJson(identity)), budget);
@@ -7606,24 +11773,24 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname8(file);; path = dirname8(path)) {
+    for (let path = dirname12(file);; path = dirname12(path)) {
       if (!this.files.directory(path))
         corrupt();
-      const fd = openSync5(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
+      const fd = openSync6(path, constants5.O_RDONLY | constants5.O_DIRECTORY);
       try {
         fsyncSync3(fd);
       } finally {
-        closeSync5(fd);
+        closeSync6(fd);
       }
       if (path === this.coordination.directory)
         break;
-      if (path === dirname8(path))
+      if (path === dirname12(path))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join17(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -7658,10 +11825,10 @@ class HistoryFiles {
       if (depth > 8 || !this.files.directory(path))
         corrupt();
       let bytes = 0;
-      const dir = opendirSync3(path);
+      const dir = opendirSync7(path);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join9(path, e.name), st = lstatSync7(p);
+          const p = join17(path, e.name), st = lstatSync11(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -7696,10 +11863,10 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join9(this.directory, "ledger");
+    const ledger = join17(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
-    const dir = opendirSync3(ledger);
+    const dir = opendirSync7(ledger);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         budget?.reserve(0);
@@ -7733,7 +11900,7 @@ class HistoryFiles {
       state.bytes = file.bytes.length;
       state.identity = file.identity;
       state.records = 0;
-      let at = 0, pending = [], pendingBytes = 0, checksum = createHash7("sha256");
+      let at = 0, pending = [], pendingBytes = 0, checksum = createHash10("sha256");
       while (at < file.bytes.length) {
         budget?.reserve(0);
         const end = file.bytes.indexOf(10, at);
@@ -7801,7 +11968,7 @@ class HistoryFiles {
         };
         pending = [];
         pendingBytes = 0;
-        checksum = createHash7("sha256");
+        checksum = createHash10("sha256");
       }
       if (pending.length)
         state.tail = true;
@@ -7837,12 +12004,12 @@ class HistoryFiles {
     if (first < 0 || second < 0)
       corrupt();
     const row = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(0, first + 1)));
-    const marker = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(first + 1, second + 1)));
-    if (row.kind !== "record" || row.value.kind !== "recovery" || marker.kind !== "commit" || row.value.previous.segment !== segment || row.value.previous.committedBytes !== committedOffset || marker.count !== 1 || marker.first !== row.seq || marker.last !== row.seq || !validBatchSequence([row], marker.previous) || marker.sha256 !== hash2(next.bytes.subarray(0, first + 1)) || marker.artifacts.length)
+    const marker2 = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(first + 1, second + 1)));
+    if (row.kind !== "record" || row.value.kind !== "recovery" || marker2.kind !== "commit" || row.value.previous.segment !== segment || row.value.previous.committedBytes !== committedOffset || marker2.count !== 1 || marker2.first !== row.seq || marker2.last !== row.seq || !validBatchSequence([row], marker2.previous) || marker2.sha256 !== hash2(next.bytes.subarray(0, first + 1)) || marker2.artifacts.length)
       corrupt();
     this.validateRecovery(row.value, budget);
-    this.assertPublished(segment + 1, second + 1, marker.last);
-    return { rows: [row], marker, bytes: second + 1, segment: segment + 1 };
+    this.assertPublished(segment + 1, second + 1, marker2.last);
+    return { rows: [row], marker: marker2, bytes: second + 1, segment: segment + 1 };
   }
   async appendRecovery(state, row, assertCurrent, observer) {
     this.assertWritable();
@@ -7853,15 +12020,15 @@ class HistoryFiles {
     this.assertWritable();
     this.assertRecoveryIdle();
     this.validateRecovery(row.value);
-    const { body, trailer, marker } = this.encodeBatch(state, [row]);
+    const { body, trailer, marker: marker2 } = this.encodeBatch(state, [row]);
     const segment = state.segment + 1, path = this.segmentPath(segment);
     publicationFences.set(this.directory, { ...state });
     this.activity().generation++;
     const before = this.files.create(path, "", LIMITS.segmentBytes);
     let committed;
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync7(path);
+      const original = fstatSync5(fd.fd), selected2 = lstatSync11(path);
       if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
         corrupt();
       const snapshot = this.files.read(path, LIMITS.segmentBytes);
@@ -7898,8 +12065,8 @@ class HistoryFiles {
     return {
       snapshot: committed,
       state: {
-        committedSeq: marker.last,
-        highSeq: marker.last,
+        committedSeq: marker2.last,
+        highSeq: marker2.last,
         segment,
         records: 2,
         tail: false,
@@ -7922,7 +12089,7 @@ class HistoryFiles {
     const body = lines.join("");
     if (Buffer.byteLength(body) > 2 * RECORD_BYTES)
       throw new ContractError("oversize");
-    const marker = {
+    const marker2 = {
       kind: "commit",
       ...navigationRoot !== undefined ? { navigationRoot } : {},
       previous: state.committedSeq,
@@ -7932,11 +12099,11 @@ class HistoryFiles {
       sha256: hash2(body),
       artifacts: batchArtifacts(rows)
     };
-    const trailer = encodeJournalText(marker);
+    const trailer = encodeJournalText(marker2);
     return {
       body,
       trailer,
-      marker,
+      marker: marker2,
       rowBytes: lines.map((line) => Buffer.byteLength(line))
     };
   }
@@ -7960,7 +12127,7 @@ class HistoryFiles {
       rowBytes: [...batch.rowBytes],
       trailerBytes: Buffer.byteLength(batch.trailer)
     });
-    const { body, trailer, marker } = batch;
+    const { body, trailer, marker: marker2 } = batch;
     let segment = state.segment || 1;
     if (state.bytes + Buffer.byteLength(body + trailer) > LIMITS.segmentBytes || state.records + rows.length + 1 > LIMITS.segmentRecords)
       segment++;
@@ -7974,11 +12141,11 @@ class HistoryFiles {
     }
     if (!before || segment === state.segment && (before.bytes.length !== state.bytes || before.identity !== state.identity))
       corrupt();
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     try {
       lease.assert();
       this.files.assert(path, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync7(path);
+      const opened = await fd.stat(), selected2 = lstatSync11(path);
       if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
         corrupt();
       beforeEffect?.();
@@ -7993,11 +12160,11 @@ class HistoryFiles {
       lease.assert();
       this.assertWritable();
       const after = this.files.read(path, LIMITS.segmentBytes);
-      if (!after || after.identity !== createHash7("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
+      if (!after || after.identity !== createHash10("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
         corrupt();
       return {
-        committedSeq: marker.last,
-        highSeq: marker.last,
+        committedSeq: marker2.last,
+        highSeq: marker2.last,
         committedBytes: after.bytes.length,
         navigationRoot,
         segment,
@@ -8013,7 +12180,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join9(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path = join17(this.directory, "checkpoint.json"), old = this.files.read(path);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -8598,3333 +12765,6 @@ function projectRunObservation(runId, epoch, o, child) {
   };
 }
 
-// src/history/recovery.ts
-function digestHistory(files, exclude) {
-  files.assertFormat();
-  const digest = createHash8("sha256");
-  let count = 0;
-  const walk = (path, depth) => {
-    if (depth > 8 || !files.files.directory(path))
-      throw new ContractError("corrupt-selected");
-    const directory = lstatSync8(path);
-    digest.update(`incarnation:${directory.dev}:${directory.ino}
-`);
-    const dir = opendirSync4(path), names2 = [];
-    try {
-      for (let e = dir.readSync();e; e = dir.readSync()) {
-        if (++count > LIMITS.dataFrames)
-          throw new ContractError("capacity");
-        names2.push(e.name);
-      }
-    } finally {
-      dir.closeSync();
-    }
-    for (const name of names2.sort()) {
-      const selected2 = join10(path, name);
-      if (selected2 === exclude)
-        continue;
-      const rel = relative4(files.directory, selected2);
-      if (lstatSync8(selected2).isDirectory()) {
-        digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
-`);
-        walk(selected2, depth + 1);
-      } else {
-        const value = files.files.read(selected2, LIMITS.segmentBytes);
-        if (!value)
-          throw new ContractError("conflict");
-        digest.update(`file:${Buffer.byteLength(rel)}:${rel}:${value.stamp}:${value.bytes.length}:`).update(value.bytes);
-      }
-    }
-  };
-  walk(files.directory, 0);
-  files.assertFormat();
-  return digest.digest("hex");
-}
-
-class HistoryRecovery {
-  coordination;
-  committed = new WeakMap;
-  constructor(coordination) {
-    this.coordination = coordination;
-  }
-  files() {
-    const files = HistoryFiles.open(this.coordination);
-    if (!files)
-      throw new ContractError("unavailable");
-    return files;
-  }
-  assertCommitted(fact) {
-    const assert = this.committed.get(fact);
-    if (!assert)
-      throw new ContractError("conflict");
-    assert();
-  }
-  async inspect(epoch) {
-    decodeId(epoch);
-    const files = this.files(), before = digestHistory(files), state = emptyScan();
-    const auth = new Set, processes = new Set, publication = new Set, unfinished = new Set, metadata = new Set, runs = new Map;
-    for (const batch of files.scan(state))
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (v.kind === "recovery") {
-          auth.clear();
-          processes.clear();
-          publication.clear();
-          unfinished.clear();
-          metadata.clear();
-          runs.clear();
-        }
-        if (v.kind === "admission" && v.intent.identity.kind === "action") {
-          if (v.intent.runId) {
-            if (runs.size >= LIMITS.episodes || runs.has(v.intent.runId))
-              throw new ContractError("corrupt-selected");
-            runs.set(v.intent.runId, new RunState(v.intent.runId));
-          } else
-            metadata.add(v.intent.operationId);
-        }
-        for (const [id, state2] of runs) {
-          state2.apply(row, batch.marker.last);
-          if (state2.drained)
-            runs.delete(id);
-        }
-        if (v.kind === "capture" || v.kind === "owner")
-          for (const e of v.events) {
-            if (e.kind === "capture" && e.value.event.kind === "detail-begin" && v.kind === "capture")
-              unfinished.add(`worker/${v.link.childRunId}/${e.value.event.detailId}`);
-            if (e.kind === "owner" && e.value.kind === "content-begin" && v.kind === "owner")
-              unfinished.add(`owner/${v.link.operationId}/${e.value.detailId}`);
-            if (e.kind === "end")
-              unfinished.delete(`${e.detail.origin.kind}/${e.detail.origin.id}/${e.detail.detailId}`);
-          }
-        if (v.kind === "auth-preparation")
-          auth.add(v.intent.operationId);
-        if (v.kind === "auth-settlement")
-          auth.delete(v.result.operationId);
-        if (v.kind === "launch")
-          processes.add(v.link.childRunId);
-        if (v.kind === "settlement" && v.completion.native.closure !== "unconfirmed")
-          processes.delete(v.link.childRunId);
-        if (v.kind === "owner") {
-          for (const e of v.events)
-            if (e.kind === "owner" && e.value.kind === "fact") {
-              const f = e.value.fact;
-              if (f.kind === "check-start")
-                processes.add(f.checkId);
-              if (f.kind === "check-settled" && f.native.closure !== "unconfirmed")
-                processes.delete(f.checkId);
-              if (f.kind === "publication-intent")
-                publication.add(f.publicationId);
-              if (f.kind === "publication-settled") {
-                if (f.status === "published") {
-                  publication.delete(f.publicationId);
-                  metadata.delete(v.link.operationId);
-                } else
-                  publication.add(f.publicationId);
-              }
-            }
-        }
-      }
-    if (before !== digestHistory(files))
-      throw new ContractError("conflict");
-    return {
-      digest: before,
-      processes: processes.size ? "unknown" : "externally-resolved",
-      credentials: auth.size ? "unknown" : "independently-resolved",
-      storage: state.tail || publication.size || unfinished.size || metadata.size || runs.size ? "unknown" : "independently-resolved"
-    };
-  }
-  async append(confirmation, observeWrite) {
-    if (typeof confirmation.assertLocalAuthority !== "function" || confirmation.acknowledgeEscapedProcesses !== true || confirmation.processes !== "externally-resolved" || confirmation.credentials !== "independently-resolved" || confirmation.storage !== "independently-resolved")
-      throw new ContractError("forbidden");
-    const expected = structuredClone(confirmation.expected), files = this.files();
-    files.assertWritable();
-    if (!expected.history || expected.owner !== "absent")
-      throw new ContractError("quarantine");
-    const current = await inspectRecovery(this.coordination, this);
-    if (JSON.stringify(current) !== JSON.stringify(expected))
-      throw new ContractError("conflict");
-    const state = files.inspect(), recoveryId = randomUUID7();
-    const bridge = {
-      kind: "recovery",
-      recoveryId,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      previous: {
-        segment: state.segment,
-        bytes: state.bytes,
-        sha256: state.identity ?? hash2(""),
-        committedBytes: state.committedBytes ?? state.bytes,
-        committedSeq: state.committedSeq,
-        highSeq: state.highSeq ?? state.committedSeq
-      },
-      acknowledgments: { processes: true, credentials: true, storage: true }
-    };
-    const path = files.segmentPath(state.segment + 1);
-    const assertCurrent = async () => {
-      await confirmation.assertLocalAuthority(structuredClone(expected));
-      const selected2 = await inspectRecovery(this.coordination);
-      if (selected2.owner !== "absent")
-        throw new ContractError("quarantine");
-      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
-        throw new ContractError("conflict");
-    };
-    await confirmation.assertLocalAuthority(structuredClone(expected));
-    if (digestHistory(files) !== expected.history.digest)
-      throw new ContractError("conflict");
-    const row = {
-      kind: "record",
-      id: randomUUID7(),
-      seq: String(BigInt(bridge.previous.highSeq) + 1n),
-      value: bridge
-    };
-    let quota = LIMITS.checkoutQuotaBytes;
-    for (const batch of files.scan())
-      for (const row2 of batch.rows)
-        if (row2.value.kind === "admission" && row2.value.policy)
-          quota = row2.value.policy.quotaBytes;
-    const bytes = Buffer.byteLength(files.encodeBatch(state, [row]).body + files.encodeBatch(state, [row]).trailer);
-    if (files.usage() + bytes > quota || files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes)
-      throw new ContractError("recording-exhausted");
-    const after = await files.appendRecovery(state, row, assertCurrent, observeWrite);
-    const assert = () => {
-      files.assertWritable();
-      files.assertRecoveryIdle();
-      files.files.assert(path, after.snapshot, LIMITS.segmentBytes);
-      if (digestHistory(files, path) !== expected.history?.digest)
-        throw new ContractError("conflict");
-    };
-    assert();
-    const fact = {
-      recoveryId,
-      committedSeq: after.state.committedSeq,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      segmentIdentity: after.state.identity ?? ""
-    };
-    this.committed.set(fact, assert);
-    return fact;
-  }
-}
-
-// src/verification-diagnostics.ts
-function diagnosticText(value, maximum = 4096, secrets = []) {
-  maximum = Math.max(0, Math.floor(maximum));
-  let clean = value;
-  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
-    clean = clean.split(secret).join("[redacted]");
-  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
-  if (Buffer.byteLength(clean) <= maximum)
-    return clean;
-  const marker = maximum >= 12 ? `
-[truncated]` : ".".repeat(maximum);
-  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
-  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
-}
-
-// src/service/runtime.ts
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname9, isAbsolute as isAbsolute5, join as join11, resolve as resolve4 } from "node:path";
-var STARTUP_INPUT_BYTES = 16 * 1024;
-function absolute(value) {
-  const result = text(value, 4096, true);
-  if (!isAbsolute5(result))
-    throw new ContractError("invalid");
-  return result;
-}
-function decodeHostConfig(value) {
-  const o = closed(value, [
-    "schema",
-    "http",
-    "cwd",
-    "agentDir",
-    "tokenSource",
-    "tokenFile"
-  ]);
-  const tokenSource = oneOf(o.tokenSource, [
-    "generated",
-    "environment",
-    "file",
-    "config"
-  ]);
-  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
-    throw new ContractError("invalid");
-  return {
-    schema: literal(o.schema, "cadence-service-host/1"),
-    http: decodeHttpPolicy(o.http),
-    cwd: absolute(o.cwd),
-    agentDir: absolute(o.agentDir),
-    tokenSource,
-    tokenFile
-  };
-}
-function reselectable(old, next) {
-  const kept = (c) => encoded({
-    ...c,
-    http: { ...c.http, port: 0 },
-    tokenSource: null,
-    tokenFile: null
-  });
-  return next.tokenSource === "config" && kept(old) === kept(next);
-}
-function readHostConfig(c) {
-  const owner = c.configuration();
-  if (!owner)
-    return;
-  const snapshot = c.files.read(c.path("host-config.json"));
-  if (!snapshot)
-    throw new ContractError("corrupt-selected");
-  const config = decodeHostConfig(json(snapshot));
-  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash2(encoded(config)))
-    throw new ContractError("conflict");
-  return config;
-}
-function hostEnvironment(ambient) {
-  let route;
-  const facts = networkSnapshot(ambient);
-  try {
-    if (facts.NODE_OPTIONS.present)
-      throw new Error;
-    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
-  } catch {
-    throw new ContractError("unsupported-context");
-  }
-  const result = Object.create(null);
-  for (const key of Object.keys(ambient)) {
-    const d = Object.getOwnPropertyDescriptor(ambient, key);
-    if (!d || !("value" in d) || typeof d.value !== "string")
-      throw new ContractError("invalid");
-    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
-      continue;
-    result[key] = d.value;
-  }
-  if (route.redactionLiterals.length) {
-    result.HTTP_PROXY = route.env.HTTP_PROXY;
-    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
-    result.NODE_USE_ENV_PROXY = "1";
-  }
-  result.PI_OFFLINE = "1";
-  result.NO_COLOR = "1";
-  if (!sameNetwork(facts, networkSnapshot(ambient)))
-    throw new ContractError("stale");
-  return result;
-}
-function selectStart(options, ambient) {
-  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
-  const old = readHostConfig(c);
-  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
-  if (env && (!("value" in env) || typeof env.value !== "string"))
-    throw new ContractError("invalid");
-  let fromFile;
-  if (options.config) {
-    const path = resolve4(options.config), f = new PrivateFiles(dirname9(path));
-    const bytes = f.read(path);
-    if (!bytes)
-      throw new ContractError("corrupt-selected");
-    fromFile = decodeHostConfig(json(bytes));
-  }
-  const base = old ?? fromFile ?? decodeHostConfig({
-    schema: "cadence-service-host/1",
-    cwd: workspace.cwd,
-    http: {
-      schema: "cadence-service-http/1",
-      host: options.host ?? "127.0.0.1",
-      port: options.port ?? 17423,
-      proxy: null
-    },
-    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join11(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
-    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
-    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
-  });
-  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
-  let selected2 = base;
-  if (server) {
-    if (options.tokenFile !== undefined)
-      throw new ContractError("conflict");
-    const { port } = readServerConfig(server).config;
-    selected2 = decodeHostConfig({
-      ...base,
-      http: { ...base.http, port },
-      tokenSource: "config",
-      tokenFile: server
-    });
-  }
-  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
-    throw new ContractError("conflict");
-  return {
-    workspace: workspace.root,
-    stateHome: c.stateHome,
-    config: selected2,
-    environmentToken: env?.value ?? null
-  };
-}
-function decodeHostInput(value) {
-  const o = closed(value, [
-    "workspace",
-    "stateHome",
-    "config",
-    "environmentToken"
-  ]);
-  const config = decodeHostConfig(o.config);
-  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
-  if (config.tokenSource === "environment" !== (environmentToken !== null))
-    throw new ContractError("invalid");
-  return {
-    workspace: absolute(o.workspace),
-    stateHome: absolute(o.stateHome),
-    config,
-    environmentToken
-  };
-}
-var STARTUP_STAGES = [
-  "package",
-  "pi-agent-directory",
-  "pi-auth",
-  "pi-models",
-  "pi-runtime",
-  "service"
-];
-
-class StartupRefusal extends ContractError {
-  stage;
-  quarantined;
-  constructor(code2, stage, quarantined = false) {
-    super(code2);
-    this.stage = stage;
-    this.quarantined = quarantined;
-  }
-}
-function startupReport(error) {
-  if (error instanceof StartupRefusal)
-    return {
-      status: error.quarantined ? "quarantined" : "refused",
-      error: error.code,
-      stage: error.stage
-    };
-  return {
-    status: "refused",
-    error: error instanceof ContractError ? error.code : "unavailable",
-    stage: "service"
-  };
-}
-function decodeStartupReport(value) {
-  const o = closed(value, ["status", "error", "stage"]);
-  return {
-    status: oneOf(o.status, ["refused", "quarantined"]),
-    error: oneOf(o.error, ERROR_CODES),
-    stage: oneOf(o.stage, STARTUP_STAGES)
-  };
-}
-
-// src/service/cli.ts
-function nativeCall(c, operation, reveal = false, controlBody) {
-  const access = c.localAccess();
-  const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
-  const write2 = !["status", "diagnose"].includes(operation);
-  const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
-  return new Promise((resolve6, reject) => {
-    let timer;
-    const fail = () => {
-      clearTimeout(timer);
-      reject(new ContractError("unavailable"));
-    };
-    const req = request(url, {
-      method: write2 ? "POST" : "GET",
-      agent: false,
-      headers: {
-        "X-Cadence-Local": access.capability,
-        Connection: "close",
-        ...body ? {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body)
-        } : {}
-      }
-    }, (res) => {
-      let bytes = 0;
-      const chunks = [];
-      res.on("error", fail);
-      res.on("data", (chunk) => {
-        bytes += chunk.length;
-        if (bytes > 16384) {
-          res.destroy();
-          fail();
-        } else
-          chunks.push(chunk);
-      });
-      res.on("end", () => {
-        try {
-          if (res.statusCode !== 200)
-            throw new ContractError("unavailable");
-          const reply = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), 16384), ["kind", "value"]);
-          if (reply.kind !== "ok")
-            throw new ContractError("unavailable");
-          if (["status", "diagnose", "stop"].includes(operation)) {
-            if (!reply.value || typeof reply.value !== "object" || !("epoch" in reply.value) || reply.value.epoch !== access.epoch)
-              throw new ContractError("stale");
-          }
-          clearTimeout(timer);
-          resolve6(reply.value);
-        } catch {
-          fail();
-        }
-      });
-    });
-    timer = setTimeout(() => {
-      fail();
-      req.destroy();
-    }, 2000);
-    req.on("error", fail);
-    req.on("close", fail);
-    req.end(body);
-  });
-}
-var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
-async function serviceStatus(c, diagnose = false) {
-  const registryLock = c.registryLockDiagnostic?.();
-  if (registryLock)
-    return {
-      status: "unavailable",
-      ...registryLock,
-      recovery: "cadence recover inspect --workspace <project> [--state-home <state-home>]"
-    };
-  const observed = c.inspect();
-  if (observed.status === "absent" || observed.status === "stopped")
-    return observed;
-  try {
-    return await nativeCall(c, diagnose ? "diagnose" : "status");
-  } catch {
-    return {
-      status: observed.status === "quarantined" ? "quarantined" : "unavailable"
-    };
-  }
-}
-async function stopService(c) {
-  let epoch;
-  try {
-    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
-    if (reply.status !== "accepted")
-      throw new ContractError("unavailable");
-    epoch = decodeId(reply.epoch);
-  } catch {
-    return { status: "unconfirmed" };
-  }
-  const deadline = performance.now() + LIMITS.stopWaitMs;
-  while (performance.now() < deadline) {
-    let observed;
-    try {
-      observed = c.inspect();
-    } catch {
-      observed = { status: "unavailable" };
-    }
-    if ("epoch" in observed && observed.epoch === epoch && observed.status === "stopped")
-      return { status: "stopped", epoch };
-    if (observed.status === "quarantined")
-      return { status: "quarantined", epoch };
-    if ("epoch" in observed && observed.epoch !== null && observed.epoch !== epoch)
-      return { status: "unconfirmed", epoch };
-    await pause(25);
-  }
-  return { status: "unconfirmed", epoch };
-}
-function failedStatus(result) {
-  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
-}
-function managementExitCode(result, foreground = false) {
-  if (foreground) {
-    try {
-      decodeStartupReport(result);
-      return 78;
-    } catch {}
-  }
-  return 1;
-}
-function serverConfigHint(error) {
-  return `Cadence changed nothing: ${error.path} ${error.reason}.
-Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
-`;
-}
-function registryGuidance(workspace, stateHome) {
-  return `The shared registry lock blocks project access in this state home. No automatic lock deletion. Inspect locally: cadence recover inspect --workspace ${JSON.stringify(workspace)} --state-home ${JSON.stringify(stateHome)}; eligible dead locks require cadence recover resolve in a local terminal.
-`;
-}
-function startupGuidance(result, input) {
-  let report;
-  try {
-    report = decodeStartupReport(result);
-  } catch {
-    return "";
-  }
-  if (report.error === "registry-locked")
-    return registryGuidance(input.workspace, input.stateHome);
-  const agent = input.config.agentDir;
-  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
-`;
-  switch (report.stage) {
-    case "package":
-      return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
-`;
-    case "pi-agent-directory":
-      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
-`;
-    case "pi-auth":
-      return `${join12(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
-`;
-    case "pi-models":
-      return `${join12(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
-`;
-    case "pi-runtime":
-      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
-${inspect}`;
-    default:
-      return report.status === "quarantined" ? `The owner registered, then refused; it stays quarantined.
-${inspect}` : "";
-  }
-}
-async function startService(options, foreground, hostUrl) {
-  const network = networkSnapshot(process.env);
-  const env = hostEnvironment(process.env);
-  const c = new ServiceCoordination(options.workspace, options.stateHome);
-  if (c.registryLockDiagnostic()) {
-    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
-    return {
-      status: "refused",
-      error: "registry-locked",
-      stage: "service"
-    };
-  }
-  let input;
-  try {
-    input = decodeHostInput(selectStart(options, process.env));
-  } catch (error) {
-    if (error instanceof ServerConfigRefusal)
-      process.stderr.write(serverConfigHint(error));
-    throw error;
-  }
-  const serialized = `${JSON.stringify(input)}
-`;
-  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
-    throw new ContractError("oversize");
-  const existing = await serviceStatus(c);
-  if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive") {
-    const running = readHostConfig(c);
-    if (running && encoded(running) !== encoded(input.config))
-      throw new ContractError("conflict");
-    return existing;
-  }
-  return launchHost(input, c, foreground, hostUrl, input.config.cwd, env, network);
-}
-async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
-  const serialized = `${JSON.stringify(input)}
-`;
-  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
-    throw new ContractError("oversize");
-  if (!sameNetwork(network, networkSnapshot(process.env)))
-    throw new ContractError("stale");
-  const child = spawn(process.execPath, [
-    ...env.NODE_USE_ENV_PROXY === "1" ? ["--use-env-proxy"] : [],
-    fileURLToPath2(hostUrl)
-  ], {
-    cwd,
-    env,
-    detached: !foreground,
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "ignore"]
-  });
-  let completed = false;
-  const closure = new Promise((resolve6) => child.once("close", (code2, signal) => {
-    completed = true;
-    if (foreground && (code2 !== 0 || signal !== null))
-      process.exitCode = 1;
-    resolve6();
-  }));
-  const startup = new Promise((resolve6) => {
-    let bytes = "", resolved = false;
-    const finish = (value) => {
-      if (!resolved) {
-        resolved = true;
-        resolve6(value);
-      }
-    };
-    child.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdin.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdout.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdout.on("data", (chunk) => {
-      if (Buffer.byteLength(bytes) + chunk.length > 4096) {
-        finish({ status: "unconfirmed" });
-        return;
-      }
-      bytes += chunk.toString("utf8");
-      if (!bytes.endsWith(`
-`))
-        return;
-      try {
-        const line = parseWireJson(bytes, 4096);
-        if (line && typeof line === "object" && "status" in line && line.status !== "ready") {
-          finish(decodeStartupReport(line));
-          return;
-        }
-        const ready = closed(line, ["status", "epoch"]);
-        if (ready.status !== "ready")
-          throw new ContractError("unavailable");
-        const epoch = decodeId(ready.epoch);
-        nativeCall(c, "status").then((reply) => {
-          if (!reply || typeof reply !== "object" || !("epoch" in reply) || reply.epoch !== epoch)
-            throw new ContractError("stale");
-          finish(reply);
-        }).catch(() => finish({ status: "unconfirmed" }));
-      } catch {
-        finish({ status: "unconfirmed" });
-      }
-    });
-    child.once("close", () => finish({ status: "unconfirmed" }));
-  });
-  child.stdin.end(serialized);
-  let timer;
-  const result = await Promise.race([
-    startup,
-    new Promise((resolve6) => {
-      timer = setTimeout(() => resolve6({ status: "unconfirmed" }), LIMITS.startWaitMs);
-    })
-  ]);
-  clearTimeout(timer);
-  const guidance = "kind" in input ? "" : startupGuidance(result, input);
-  if (guidance)
-    process.stderr.write(guidance);
-  child.stdout.destroy();
-  child.stdin.destroy();
-  if (!foreground)
-    child.unref();
-  else if (!completed) {
-    if (failedStatus(result))
-      process.exitCode = 1;
-    process.stdout.write(`${JSON.stringify(result)}
-`);
-    await closure;
-    if (failedStatus(result))
-      process.exitCode = managementExitCode(result, true);
-    return null;
-  }
-  return result;
-}
-async function privateLink(workspace, stateHome, config) {
-  try {
-    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir3()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
-    return text(value.link, 4096, true);
-  } catch {
-    return;
-  }
-}
-class ProjectOpenRefusal extends ContractError {
-  noOwner;
-  constructor(noOwner, code2 = "unavailable") {
-    super(code2);
-    this.noOwner = noOwner;
-  }
-}
-async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
-  if (privateWorkspace(workspace, stateHome))
-    throw new ContractError("forbidden");
-  effectiveWorkspace(workspace, stateHome);
-  const c = new ServiceCoordination(workspace, stateHome);
-  if (c.registryLockDiagnostic())
-    throw new ProjectOpenRefusal(true, "registry-locked");
-  const kept = readHostConfig(c);
-  const options = {
-    workspace,
-    stateHome,
-    ...!kept ? { port: 0, agentDir } : {}
-  };
-  const result = await startService(options, false, hostUrl);
-  if (!result || typeof result !== "object" || !("status" in result) || result.status !== "alive")
-    throw new ProjectOpenRefusal(!!result && typeof result === "object" && "status" in result && result.status === "refused" && (("error" in result) && result.error === "registry-locked" || c.inspect().status === "absent"), result && typeof result === "object" && "error" in result && result.error === "registry-locked" ? "registry-locked" : "unavailable");
-  const link = await privateLink(c.store.root, stateHome);
-  if (!link)
-    throw new ContractError("unavailable");
-  return { path: c.store.root, link };
-}
-
-// src/service/http.ts
-import { createHash as createHash9, randomUUID as randomUUID8 } from "node:crypto";
-import {
-  createServer
-} from "node:http";
-import { WebSocketServer } from "ws";
-
-// src/service/workbench-send-refusal.ts
-class UnacceptedConversationCommand extends ContractError {
-}
-
-// src/service/http.ts
-function refusal(code2 = "invalid", uncertain = false) {
-  return {
-    kind: "error",
-    error: publicError(code2, uncertain ? "uncertain" : "none")
-  };
-}
-function fixedHeaders(response) {
-  response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Referrer-Policy", "no-referrer");
-  response.setHeader("X-Content-Type-Options", "nosniff");
-  response.setHeader("X-Frame-Options", "DENY");
-  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
-}
-function send(response, status, value) {
-  if (response.destroyed || response.writableEnded)
-    return;
-  response.statusCode = status;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(canonicalJson(value, LIMITS.controlBytes));
-}
-function unavailable() {
-  throw new ContractError("unavailable");
-}
-
-class ServiceHttpServer {
-  server;
-  policy;
-  origin = "";
-  accepting = false;
-  stopped = false;
-  closePromise;
-  sockets = new Set;
-  serving = new Set;
-  requests = new Set;
-  attachments = new Map;
-  viewers = new Set;
-  bodies = 0;
-  reads = 0;
-  exports = 0;
-  searches = 0;
-  assets = new Map;
-  wss = new WebSocketServer({
-    noServer: true,
-    maxPayload: LIMITS.wsClientFrameBytes,
-    perMessageDeflate: false,
-    clientTracking: false
-  });
-  unRevoke;
-  configuration;
-  get options() {
-    if (!this.configuration)
-      unavailable();
-    return this.configuration;
-  }
-  heartbeat;
-  constructor(options) {
-    this.policy = decodeHttpPolicy(options.policy);
-    let total = 0;
-    for (const asset of options.assets ?? []) {
-      total += asset.bytes.byteLength;
-      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
-        throw new ContractError("invalid");
-      this.assets.set(asset.path, {
-        ...asset,
-        bytes: Uint8Array.from(asset.bytes),
-        etag: `"${createHash9("sha256").update(asset.bytes).digest("hex")}"`
-      });
-    }
-    this.server = createServer({
-      maxHeaderSize: LIMITS.headerBytes,
-      headersTimeout: 1e4,
-      requestTimeout: 30000,
-      keepAliveTimeout: 5000
-    }, (req, res) => {
-      this.handle(req, res);
-    });
-    this.server.maxConnections = 64;
-    this.server.on("connection", (socket) => {
-      this.sockets.add(socket);
-      socket.on("error", () => socket.destroy());
-      socket.on("close", () => this.sockets.delete(socket));
-    });
-    this.server.on("clientError", (_error, socket) => {
-      socket.end(`HTTP/1.1 400 Bad Request\r
-Connection: close\r
-Content-Length: 0\r
-\r
-`);
-    });
-    this.server.on("checkContinue", (_req, res) => {
-      fixedHeaders(res);
-      send(res, 400, refusal());
-    });
-    this.server.on("upgrade", (req, socket, head) => {
-      if (this.serving.has(req.socket)) {
-        socket.destroy();
-        return;
-      }
-      try {
-        if (!this.accepting)
-          unavailable();
-        const boundary = requestBoundary(req, this.policy, this.origin);
-        assertRequestTarget(req.url ?? "");
-        const url = new URL(req.url ?? "", this.origin);
-        if (req.method !== "GET" || url.pathname !== WS_PATH || req.url !== `${WS_PATH}?attachment=${url.searchParams.get("attachment")}`)
-          throw new ContractError("invalid");
-        const id = decodeId(url.searchParams.get("attachment"));
-        const caller = this.options.auth.authenticate(boundary, id, false, true);
-        const attachment = this.attachment(caller);
-        if (attachment.socket || this.viewers.size >= LIMITS.viewers)
-          throw new ContractError("capacity");
-        if (!this.options.adapters.projection || !this.options.adapters.live)
-          unavailable();
-        this.wss.handleUpgrade(req, socket, head, (ws) => this.openViewer(ws, attachment));
-      } catch (error) {
-        const status = errorStatus(error instanceof ContractError ? error.code : "unavailable");
-        socket.end(`HTTP/1.1 ${status} Refused\r
-Connection: close\r
-Cache-Control: no-store\r
-Referrer-Policy: no-referrer\r
-Content-Length: 0\r
-\r
-`);
-      }
-    });
-    if (options.auth || options.adapters) {
-      if (!options.auth || !options.adapters)
-        throw new ContractError("invalid");
-      this.configure({
-        auth: options.auth,
-        adapters: options.adapters,
-        management: options.management,
-        build: options.build
-      });
-    }
-  }
-  configure(options) {
-    if (this.configuration || this.accepting || this.stopped)
-      throw new ContractError("conflict");
-    this.configuration = {
-      ...options,
-      ...options.build ? { build: decodeServiceBuild(options.build) } : {}
-    };
-    this.unRevoke = options.auth.material.onRevoke(() => {
-      options.adapters.attachments?.revokeGrants();
-      for (const attachment of [...this.attachments.values()])
-        this.detach(attachment);
-      for (const request2 of this.requests)
-        request2.abort();
-    });
-  }
-  async listen() {
-    if (this.origin || this.stopped)
-      throw new ContractError("conflict");
-    await new Promise((resolve6, reject) => {
-      const failed = () => {
-        this.server.off("listening", ready);
-        reject(new ContractError("unavailable"));
-      };
-      const ready = () => {
-        this.server.off("error", failed);
-        resolve6();
-      };
-      this.server.once("error", failed);
-      this.server.once("listening", ready);
-      this.server.listen({
-        host: this.policy.host,
-        port: this.policy.port,
-        exclusive: true
-      });
-    });
-    this.server.on("error", () => this.quiesce());
-    const address = this.server.address();
-    if (!address || typeof address === "string")
-      unavailable();
-    this.origin = localOrigin(this.policy, address.port);
-    return this.origin;
-  }
-  admit() {
-    if (!this.origin || this.stopped || !this.options.auth.material.available)
-      unavailable();
-    this.accepting = true;
-    this.heartbeat ??= setInterval(() => this.tick(), LIMITS.heartbeatMs);
-  }
-  quiesce() {
-    this.accepting = false;
-    this.configuration?.adapters.attachments?.revokeGrants();
-  }
-  close() {
-    if (this.closePromise)
-      return this.closePromise;
-    let resolve6;
-    let reject;
-    this.closePromise = new Promise((yes, no) => {
-      resolve6 = yes;
-      reject = no;
-    });
-    this.closeTransport().then(resolve6, () => reject(new ContractError("unavailable")));
-    return this.closePromise;
-  }
-  async closeTransport() {
-    this.stopped = true;
-    this.quiesce();
-    clearInterval(this.heartbeat);
-    this.unRevoke?.();
-    for (const request2 of this.requests)
-      request2.abort();
-    for (const attachment of [...this.attachments.values()])
-      this.detach(attachment);
-    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve6) => {
-      if (socket.closed)
-        resolve6();
-      else {
-        socket.once("close", () => resolve6());
-        socket.destroy();
-      }
-    }));
-    const listener = new Promise((resolve6, reject) => {
-      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve6());
-    });
-    const upgrades = new Promise((resolve6) => this.wss.close(() => resolve6()));
-    await Promise.all([listener, upgrades, ...closedSockets]);
-  }
-  attachment(caller) {
-    this.options.auth.current(caller);
-    const attachment = this.attachments.get(caller.attachmentId);
-    if (!attachment || attachment.caller.authority !== caller.authority || attachment.caller.accessGeneration !== caller.accessGeneration)
-      throw new ContractError("stale");
-    attachment.lastSeen = Date.now();
-    return attachment;
-  }
-  detach(attachment) {
-    if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
-      return;
-    this.attachments.delete(attachment.caller.attachmentId);
-    this.options.adapters.attachments?.detach(attachment.caller.attachmentId);
-    if (attachment.socket) {
-      for (const viewer of this.viewers)
-        if (viewer.attachment === attachment)
-          this.closeViewer(viewer);
-    }
-  }
-  async body(req, signal) {
-    if (this.bodies >= LIMITS.admissionCount)
-      throw new ContractError("capacity");
-    this.bodies++;
-    try {
-      if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] !== undefined)
-        throw new ContractError("invalid");
-      const length = req.headers["content-length"];
-      if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
-        throw new ContractError("oversize");
-      const chunks = [];
-      let bytes = 0;
-      for await (const value of req.iterator({ destroyOnReturn: false })) {
-        if (signal.aborted)
-          throw new ContractError("unavailable");
-        const chunk = value;
-        bytes += chunk.length;
-        if (bytes > LIMITS.controlBytes)
-          throw new ContractError("oversize");
-        chunks.push(chunk);
-      }
-      try {
-        return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), LIMITS.controlBytes);
-      } catch (e) {
-        if (e instanceof ContractError)
-          throw e;
-        throw new ContractError("invalid");
-      }
-    } finally {
-      this.bodies--;
-    }
-  }
-  async handle(req, res) {
-    if (this.serving.has(req.socket)) {
-      req.socket.destroy();
-      return;
-    }
-    this.serving.add(req.socket);
-    res.once("close", () => this.serving.delete(req.socket));
-    fixedHeaders(res);
-    const abort = new AbortController;
-    let counted = false;
-    let dispatched = false;
-    let createdAttachment;
-    const abortRead = () => abort.abort();
-    res.once("close", abortRead);
-    const timer = setTimeout(() => {
-      abort.abort();
-      res.destroy();
-    }, LIMITS.downloadIdleMs);
-    const resetIdle = () => timer.refresh();
-    try {
-      const boundary = requestBoundary(req, this.policy, this.origin);
-      const target = req.url ?? "";
-      assertRequestTarget(target);
-      const url = new URL(target, this.origin);
-      if (url.searchParams.has("token")) {
-        if (req.method !== "GET" || !target.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
-          throw new ContractError("invalid");
-        if (!this.accepting)
-          unavailable();
-        res.setHeader("Set-Cookie", this.options.auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
-        res.statusCode = 303;
-        res.setHeader("Location", "/app");
-        res.end();
-        return;
-      }
-      if (target === "/healthz" && req.method === "GET") {
-        send(res, 200, { status: "ok" });
-        return;
-      }
-      if (target === "/" && req.method === "GET") {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
-        return;
-      }
-      if (target.startsWith("/local/v1/admin/")) {
-        await this.manage(req, res, boundary, abort.signal);
-        return;
-      }
-      if (!this.accepting)
-        unavailable();
-      const route = readRoute(target, req.method ?? "");
-      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID8();
-      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
-      if (!route || !mutation(route.operation)) {
-        if (this.reads >= 32)
-          throw new ContractError("capacity");
-        this.reads++;
-        counted = true;
-      }
-      this.requests.add(abort);
-      if (!route) {
-        const asset = this.assets.get(target);
-        if (!asset || req.method !== "GET")
-          throw new ContractError("invalid");
-        this.options.auth.current(caller);
-        res.setHeader("Content-Type", asset.contentType);
-        if (target !== "/app") {
-          res.setHeader("Cache-Control", "private, no-cache");
-          res.setHeader("ETag", asset.etag);
-          if (boundary.headers.get("if-none-match") === asset.etag) {
-            res.statusCode = 304;
-            res.end();
-            return;
-          }
-        }
-        res.end(asset.bytes);
-        return;
-      }
-      let attachment;
-      if (route.operation === "session") {
-        attachment = this.attachments.get(attachmentId);
-        if (attachment)
-          this.attachment(caller);
-        else {
-          for (const value2 of this.attachments.values())
-            if (!value2.socket && Date.now() - value2.lastSeen > LIMITS.browserLifetimeMs)
-              this.detach(value2);
-          if (this.attachments.size >= LIMITS.viewers)
-            throw new ContractError("capacity");
-          attachment = { caller, lastSeen: Date.now() };
-          createdAttachment = attachment;
-          this.attachments.set(attachmentId, attachment);
-        }
-        res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body")
-        attachment = this.attachment(caller);
-      const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
-      if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
-        throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
-      this.options.auth.current(caller);
-      if (abort.signal.aborted || !this.accepting)
-        unavailable();
-      if (attachment && this.attachment(caller) !== attachment)
-        throw new ContractError("stale");
-      if (route.operation === "export" || route.operation === "download") {
-        await this.export(route.operation, input, caller, abort.signal, res, resetIdle);
-        return;
-      }
-      const rawBuild = boundary.headers.get("x-cadence-build");
-      const clientBuild = rawBuild === undefined ? null : decodeClientBuild(parseWireJson(rawBuild, 1024));
-      if (caller.authority === "browser" && clientBuild?.kind === "native")
-        throw new ContractError("forbidden");
-      if ([
-        "preflight",
-        "command",
-        "chooseModel",
-        "cancel",
-        "workbenchCommand"
-      ].includes(route.operation) && !compatibleBuild(this.options.build, clientBuild, route.operation === "cancel" || route.operation === "workbenchCommand" && decodeWorkbenchCommand(input).kind === "interrupt"))
-        throw new ContractError("unsupported-context");
-      dispatched = route.operation === "command" || route.operation === "cancel" || route.operation === "chooseModel" || route.operation === "workbenchCommand";
-      const value = await this.dispatch(route.operation, input, caller, abort.signal, clientBuild);
-      this.options.auth.current(caller);
-      if (abort.signal.aborted)
-        unavailable();
-      if (route.operation === "session")
-        this.attachment(caller);
-      const decoded2 = decodeHttpOutput(route.operation, value);
-      const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
-      send(res, status, decoded2);
-    } catch (e) {
-      if (createdAttachment)
-        this.detach(createdAttachment);
-      if (!res.headersSent)
-        res.removeHeader("X-Cadence-Attachment");
-      if (res.headersSent)
-        res.destroy();
-      else {
-        const code2 = e instanceof ContractError ? e.code : "unavailable";
-        res.setHeader("Connection", "close");
-        send(res, errorStatus(code2), refusal(code2, dispatched && !(e instanceof UnacceptedConversationCommand)));
-      }
-    } finally {
-      clearTimeout(timer);
-      res.off("close", abortRead);
-      this.requests.delete(abort);
-      if (counted)
-        this.reads--;
-    }
-  }
-  async manage(req, res, boundary, signal) {
-    const operation = req.url?.slice("/local/v1/admin/".length);
-    if (![
-      "status",
-      "diagnose",
-      "stop",
-      "token-link",
-      "token-rotate",
-      "detach-viewers"
-    ].includes(operation ?? ""))
-      throw new ContractError("invalid");
-    const write2 = operation !== "status" && operation !== "diagnose";
-    const caller = this.options.auth.authenticate(boundary, randomUUID8(), write2);
-    if (caller.authority !== "local")
-      throw new ContractError("forbidden");
-    if (req.method !== (write2 ? "POST" : "GET"))
-      throw new ContractError("invalid");
-    if (write2) {
-      const body = closed(await this.body(req, signal), operation === "token-link" ? ["reveal"] : operation === "detach-viewers" ? ["attachments"] : []);
-      if (operation === "detach-viewers") {
-        const ids = list(body.attachments, LIMITS.viewers, decodeId);
-        this.options.auth.current(caller);
-        if (signal.aborted)
-          unavailable();
-        for (const id of ids) {
-          const attachment = this.attachments.get(id);
-          if (attachment?.caller.authority === "browser")
-            this.detach(attachment);
-        }
-        send(res, 200, {
-          kind: "ok",
-          value: { status: "detached", epoch: this.options.auth.epoch }
-        });
-        return;
-      }
-      if (operation === "token-link" && body.reveal !== true)
-        throw new ContractError("forbidden");
-    } else if (req.headers["transfer-encoding"] || req.headers["content-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0")
-      throw new ContractError("invalid");
-    this.options.auth.current(caller);
-    if (signal.aborted || !this.options.management)
-      unavailable();
-    const value = this.options.management.invoke(operation);
-    send(res, 200, { kind: "ok", value });
-  }
-  async dispatch(operation, input, caller, signal, build2) {
-    const a = this.options.adapters, p = a.projection;
-    switch (operation) {
-      case "workbenchRead":
-        if (!a.workbench)
-          unavailable();
-        return {
-          kind: "ok",
-          value: a.workbench.read(decodeWorkbenchRead(input))
-        };
-      case "workbenchCommand": {
-        if (!a.workbench)
-          unavailable();
-        const command = decodeWorkbenchCommand(input);
-        if (command.kind === "workflow" && caller.authority !== "local")
-          throw new ContractError("forbidden");
-        return {
-          kind: "ok",
-          value: await a.workbench.command(command, caller)
-        };
-      }
-      case "current":
-        if (!a.current)
-          unavailable();
-        return {
-          kind: "ok",
-          value: await a.current.current(decodeCurrentRequest(input), signal)
-        };
-      case "currentChanges":
-        if (!a.current)
-          unavailable();
-        return {
-          kind: "ok",
-          value: await a.current.currentChanges(decodeCurrentChangesRequest(input), signal)
-        };
-      case "activeRuns":
-        if (!a.current)
-          unavailable();
-        return { kind: "ok", value: await a.current.activeRuns(signal) };
-      case "models":
-        if (!a.models)
-          unavailable();
-        return { kind: "ok", value: a.models.catalog() };
-      case "chooseModel":
-        if (!a.modelChoice)
-          unavailable();
-        return {
-          kind: "ok",
-          value: a.modelChoice.choose(decodeChooseModelRequest(input))
-        };
-      case "detach":
-        this.detach(this.attachment(caller));
-        return { kind: "ok", value: null };
-      case "preflight":
-      case "command":
-        return refusal("unsupported-context");
-      case "cancel":
-        return refusal("unsupported-context");
-      case "receipt":
-        return a.receipts ? decodeReceiptLookup(await a.receipts(decodeId(input))) : {
-          status: "inconclusive",
-          error: publicError("receipt-inconclusive", "uncertain")
-        };
-    }
-    if (!p)
-      unavailable();
-    let value;
-    switch (operation) {
-      case "session": {
-        const original = decodeSessionBootstrap(await p.session());
-        if (original.epoch !== this.options.auth.epoch || original.accessGeneration !== caller.accessGeneration)
-          throw new ContractError("stale");
-        value = decodeSessionBootstrap({
-          ...original,
-          ...this.options.build ? { build: this.options.build } : {},
-          authority: caller.authority,
-          csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
-          capabilities: {
-            actions: original.capabilities.actions && !!a.workbench && compatibleBuild(this.options.build, build2),
-            manualChecks: false,
-            history: original.capabilities.history
-          }
-        });
-        break;
-      }
-      case "workspace":
-        value = await p.workspace();
-        break;
-      case "tasks":
-      case "runs":
-      case "messages":
-      case "tools":
-      case "contents":
-      case "events":
-      case "checks":
-      case "changes":
-      case "reviews":
-        value = await p[operation](decodeListRequest(input));
-        break;
-      case "checkObligations":
-        value = await p.checkObligations(decodeId(input));
-        break;
-      case "entity":
-        value = await p.entity(decodeEntityReadRequest(input));
-        break;
-      case "graph":
-        value = await p.graph(decodeGraphReadRequest(input));
-        break;
-      case "snapshot":
-        value = await p.snapshot(decodeScope(input));
-        break;
-      case "detail":
-      case "search": {
-        const cursor = decodeCursor(input);
-        if (operation === "search" && this.searches >= LIMITS.searchReaders)
-          throw new ContractError("capacity");
-        if (operation === "search")
-          this.searches++;
-        try {
-          const valid = await p.validateCursor(cursor);
-          this.options.auth.current(caller);
-          if (signal.aborted)
-            unavailable();
-          if (valid.status === "refused")
-            return { kind: "error", error: valid.error };
-          value = await p[operation](cursor);
-        } finally {
-          if (operation === "search")
-            this.searches--;
-        }
-        break;
-      }
-      default:
-        throw new ContractError("invalid");
-    }
-    return { kind: "ok", value };
-  }
-  async export(operation, input, caller, signal, res, activity2) {
-    const p = this.options.adapters.projection;
-    if (!p)
-      unavailable();
-    if (this.exports >= LIMITS.exportReaders)
-      throw new ContractError("capacity");
-    this.exports++;
-    const request2 = decodeExportRequest(input), tracker = new ExportTracker(request2);
-    try {
-      res.setHeader("Content-Type", operation === "download" && request2.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request2.format === "markdown" ? "md" : "ndjson"}"`);
-      let trailer;
-      const digest = createHash9("sha256");
-      const write2 = async (frame) => {
-        const data = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
-`);
-        for (let offset = 0;offset < data.length; offset += LIMITS.detailPageBytes) {
-          this.options.auth.current(caller);
-          if (signal.aborted || res.destroyed)
-            unavailable();
-          const chunk = data.subarray(offset, offset + LIMITS.detailPageBytes);
-          await new Promise((resolve6, reject) => {
-            const stop = () => {
-              res.destroy();
-              reject(new ContractError("unavailable"));
-            };
-            signal.addEventListener("abort", stop, { once: true });
-            res.write(chunk, (error) => {
-              signal.removeEventListener("abort", stop);
-              error ? reject(new ContractError("unavailable")) : resolve6();
-            });
-          });
-          activity2();
-        }
-      };
-      for await (const value of p.export(request2, signal)) {
-        this.options.auth.current(caller);
-        if (signal.aborted)
-          unavailable();
-        const frame = tracker.receive(value);
-        if (frame.event.kind === "trailer")
-          trailer = frame;
-        else {
-          digest.update(encodeExportFrame(frame, request2.format));
-          await write2(frame);
-          this.options.auth.current(caller);
-          if (signal.aborted)
-            unavailable();
-        }
-      }
-      this.options.auth.current(caller);
-      if (signal.aborted || !trailer || trailer.event.kind !== "trailer" || trailer.event.sha256 !== digest.digest("hex"))
-        unavailable();
-      await write2(trailer);
-      res.end();
-    } finally {
-      this.exports--;
-    }
-  }
-  openViewer(socket, attachment) {
-    const viewer = {
-      socket,
-      attachment,
-      subscription: 0,
-      pending: [],
-      bytes: 0,
-      sentBytes: 0,
-      sentMessages: 0,
-      reading: false,
-      closed: false,
-      lastPing: Date.now(),
-      lastReconcile: Date.now()
-    };
-    attachment.socket = socket;
-    this.viewers.add(viewer);
-    socket.on("error", () => this.closeViewer(viewer));
-    socket.on("close", () => this.closeViewer(viewer));
-    socket.on("message", (data, binary) => {
-      try {
-        this.attachment(attachment.caller);
-        if (binary || Array.isArray(data))
-          throw new ContractError("invalid");
-        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-        if (bytes.byteLength > LIMITS.wsClientFrameBytes)
-          throw new ContractError("oversize");
-        const command = decodeSocketInput(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), LIMITS.wsClientFrameBytes));
-        viewer.lastPing = Date.now();
-        if (command.kind === "ping")
-          this.heartbeatViewer(viewer);
-        else if (viewer.reading)
-          this.closeViewer(viewer);
-        else
-          this.subscribe(viewer, command.scope);
-      } catch {
-        this.closeViewer(viewer);
-      }
-    });
-  }
-  closeViewer(viewer) {
-    if (viewer.closed)
-      return;
-    viewer.closed = true;
-    viewer.subscription++;
-    try {
-      viewer.unsubscribe?.();
-    } catch {}
-    viewer.pending = [];
-    viewer.bytes = 0;
-    this.viewers.delete(viewer);
-    viewer.socket.terminate();
-    this.detach(viewer.attachment);
-  }
-  sendViewer(viewer, output) {
-    try {
-      this.attachment(viewer.attachment.caller);
-      const data = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data);
-      if (viewer.closed || viewer.sentMessages + viewer.pending.length >= LIMITS.viewerMessages || viewer.sentBytes + viewer.bytes + bytes > LIMITS.viewerBytes || viewer.socket.bufferedAmount > LIMITS.viewerBytes)
-        throw new ContractError("capacity");
-      viewer.sentMessages++;
-      viewer.sentBytes += bytes;
-      viewer.socket.send(data, (error) => {
-        viewer.sentMessages--;
-        viewer.sentBytes -= bytes;
-        if (error)
-          this.closeViewer(viewer);
-      });
-      return true;
-    } catch {
-      this.closeViewer(viewer);
-      return false;
-    }
-  }
-  async subscribe(viewer, scope) {
-    const p = this.options.adapters.projection, live = this.options.adapters.live;
-    if (viewer.closed)
-      return;
-    if (!p || !live) {
-      this.closeViewer(viewer);
-      return;
-    }
-    if (this.reads >= 32) {
-      this.closeViewer(viewer);
-      return;
-    }
-    this.reads++;
-    const generation = ++viewer.subscription;
-    viewer.reading = true;
-    viewer.scope = scope;
-    viewer.snapshot = undefined;
-    viewer.pending = [];
-    viewer.bytes = 0;
-    try {
-      viewer.unsubscribe?.();
-      viewer.unsubscribe = live.subscribe(scope, (value) => {
-        if (viewer.closed || viewer.subscription !== generation)
-          return;
-        try {
-          this.attachment(viewer.attachment.caller);
-          const event = decodeLiveEvent(value);
-          const bytes = Buffer.byteLength(canonicalJson(event, LIMITS.pageBytes));
-          if (viewer.reading) {
-            if (viewer.pending.length + viewer.sentMessages >= LIMITS.viewerMessages || viewer.bytes + viewer.sentBytes + bytes > LIMITS.viewerBytes)
-              throw new ContractError("capacity");
-            viewer.pending.push(event);
-            viewer.bytes += bytes;
-          } else
-            this.deliver(viewer, event);
-        } catch {
-          this.closeViewer(viewer);
-        }
-      });
-      if (viewer.closed) {
-        viewer.unsubscribe();
-        return;
-      }
-      const snapshot = decodeSnapshot(await p.snapshot(scope));
-      if (viewer.closed || viewer.subscription !== generation)
-        return;
-      this.attachment(viewer.attachment.caller);
-      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
-        throw new ContractError("stale");
-      viewer.snapshot = snapshot;
-      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
-        return;
-      viewer.reading = false;
-      viewer.lastReconcile = Date.now();
-      for (const event of viewer.pending.splice(0)) {
-        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
-        this.deliver(viewer, event);
-        if (viewer.closed || viewer.subscription !== generation)
-          break;
-      }
-    } catch {
-      this.closeViewer(viewer);
-    } finally {
-      if (viewer.subscription === generation)
-        viewer.reading = false;
-      this.reads--;
-    }
-  }
-  deliver(viewer, event) {
-    const snapshot = viewer.snapshot;
-    if (!snapshot || viewer.closed)
-      return;
-    if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
-      this.resync(viewer);
-      return;
-    }
-    const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
-    if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
-      return;
-    if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
-      this.resync(viewer);
-      return;
-    }
-    if (this.sendViewer(viewer, { kind: "event", event }))
-      snapshot.committedSeq = event.committedSeq;
-  }
-  resync(viewer) {
-    if (!viewer.reading && viewer.scope) {
-      this.sendViewer(viewer, { kind: "resync" });
-      this.subscribe(viewer, viewer.scope);
-    }
-  }
-  heartbeatViewer(viewer) {
-    if (!viewer.scope || viewer.reading)
-      return;
-    try {
-      const event = decodeLiveEvent(this.options.adapters.live?.watermark(viewer.scope));
-      if (event.kind !== "heartbeat")
-        throw new ContractError("invalid");
-      this.deliver(viewer, event);
-    } catch {
-      this.closeViewer(viewer);
-    }
-  }
-  tick() {
-    for (const viewer of this.viewers) {
-      if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
-        this.closeViewer(viewer);
-      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
-        this.resync(viewer);
-      else
-        this.heartbeatViewer(viewer);
-    }
-  }
-}
-
-// src/service/workbench-files.ts
-import {
-  closeSync as closeSync6,
-  constants as constants5,
-  fstatSync as fstatSync5,
-  lstatSync as lstatSync9,
-  opendirSync as opendirSync5,
-  openSync as openSync6,
-  readSync as readSync4,
-  realpathSync as realpathSync4
-} from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname11, isAbsolute as isAbsolute6, join as join13, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
-
-// src/worker-redaction.mjs
-var marker = "[redacted]";
-var sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|headers|env)$/i;
-function own(value, name) {
-  if (!value || typeof value !== "object")
-    throw new ContractError;
-  const d = Object.getOwnPropertyDescriptor(value, name);
-  if (!d)
-    return;
-  if (!("value" in d))
-    throw new ContractError;
-  return d.value;
-}
-function ownArray(value, maximum = LIMITS.dataFrames) {
-  if (!Array.isArray(value))
-    throw new ContractError;
-  const length = own(value, "length");
-  if (!Number.isSafeInteger(length) || length > maximum)
-    throw new ContractError("oversize");
-  return Array.from({ length }, (_, index) => own(value, String(index)));
-}
-function sourceBytes(value) {
-  let bytes = 0;
-  for (let i = 0;i < value.length; i++) {
-    const code2 = value.charCodeAt(i);
-    if (code2 < 128)
-      bytes++;
-    else if (code2 < 2048)
-      bytes += 2;
-    else if (code2 >= 55296 && code2 <= 56319 && value.charCodeAt(i + 1) >= 56320 && value.charCodeAt(i + 1) <= 57343) {
-      bytes += 4;
-      i++;
-    } else if (code2 >= 55296 && code2 <= 57343)
-      throw new ContractError;
-    else
-      bytes += 3;
-  }
-  return bytes;
-}
-function measureData(value, maximum = LIMITS.workerQueueBytes) {
-  let bytes = 0;
-  let nodes = 0;
-  const seen = new Set;
-  function visit(v, depth) {
-    if (++nodes > LIMITS.dataFrames || depth > 64)
-      throw new ContractError("oversize");
-    if (typeof v === "string")
-      bytes += sourceBytes(v) * 6 + 2;
-    else if (v === null || typeof v === "boolean")
-      bytes += 5;
-    else if (typeof v === "number" && Number.isFinite(v))
-      bytes += 32;
-    else if (v && typeof v === "object") {
-      if (seen.has(v) || ![Object.prototype, Array.prototype, null].includes(Object.getPrototypeOf(v)))
-        throw new ContractError;
-      seen.add(v);
-      bytes += 2;
-      const names2 = Reflect.ownKeys(v);
-      if (names2.length > LIMITS.dataFrames)
-        throw new ContractError("oversize");
-      for (const key of names2) {
-        if (Array.isArray(v) && key === "length")
-          continue;
-        if (typeof key !== "string")
-          throw new ContractError;
-        bytes += sourceBytes(key) * 6 + 4;
-        visit(own(v, key), depth + 1);
-      }
-      seen.delete(v);
-    } else
-      throw new ContractError;
-    if (bytes > maximum)
-      throw new ContractError("oversize");
-  }
-  visit(value, 0);
-  return bytes;
-}
-
-class TextSanitizer {
-  constructor(secrets = []) {
-    if (secrets.some((s) => typeof s !== "string") || secrets.reduce((n, s) => n + utf8Bytes(s), 0) > LIMITS.workerRequestBytes * 2)
-      throw new ContractError("oversize");
-    this.secrets = [];
-    this.addSecrets(secrets);
-    this.pending = "";
-    this.heuristic = "";
-    this.escape = "";
-    this.skipping = false;
-    this.redacted = false;
-    this.ended = false;
-  }
-  addSecrets(secrets) {
-    if (this.ended || !Array.isArray(secrets))
-      throw new ContractError;
-    let incoming = 0;
-    for (const s of secrets) {
-      if (typeof s !== "string")
-        throw new ContractError;
-      incoming += utf8Bytes(s);
-      if (incoming > LIMITS.workerRequestBytes * 2)
-        throw new ContractError("oversize");
-    }
-    let bytes = this.secrets.reduce((n, s) => n + utf8Bytes(s), 0);
-    const added = new Set;
-    for (const s of secrets) {
-      if (!s || this.secrets.includes(s) || added.has(s))
-        continue;
-      bytes += utf8Bytes(s);
-      if (bytes > LIMITS.workerRequestBytes * 2)
-        throw new ContractError("oversize");
-      added.add(s);
-    }
-    this.secrets = this.secrets.concat([...added]).sort((a, b) => b.length - a.length);
-  }
-  get retainedBytes() {
-    return utf8Bytes(this.pending + this.heuristic + this.escape);
-  }
-  write(input, final = false) {
-    if (this.ended || typeof input !== "string")
-      throw new ContractError;
-    let plain = "";
-    for (const ch of input) {
-      if (this.escape) {
-        this.escape += ch;
-        if (this.escape.length > 8192)
-          throw new ContractError("oversize");
-        if (this.escape.startsWith("\x1B[") && this.escape.length > 2 && /[@-~]/.test(ch) || this.escape.startsWith("\x1B]") && (ch === "\x07" || this.escape.endsWith("\x1B\\")) || this.escape.length === 2 && !"[]".includes(ch))
-          this.escape = "";
-        this.redacted = true;
-      } else if (ch === "\x1B")
-        this.escape = ch;
-      else if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(ch))
-        this.redacted = true;
-      else
-        plain += ch;
-    }
-    this.pending += plain;
-    let literal2 = "";
-    let at = 0;
-    while (at < this.pending.length) {
-      const rest = this.pending.slice(at);
-      if (!final && this.secrets.some((s) => s.length > rest.length && s.startsWith(rest)))
-        break;
-      const match = this.secrets.find((s) => rest.startsWith(s));
-      if (match) {
-        literal2 += marker;
-        at += match.length;
-        this.redacted = true;
-      } else {
-        const code2 = this.pending.charCodeAt(at);
-        if (!final && at + 1 === this.pending.length && code2 >= 55296 && code2 <= 56319)
-          break;
-        const cp = this.pending.codePointAt(at);
-        if (cp >= 55296 && cp <= 57343)
-          throw new ContractError;
-        literal2 += String.fromCodePoint(cp);
-        at += cp > 65535 ? 2 : 1;
-      }
-    }
-    this.pending = this.pending.slice(at);
-    this.heuristic += literal2;
-    let output = "";
-    while (this.heuristic) {
-      if (this.skipping) {
-        const end = this.heuristic.search(/[\s,;"'<>]/);
-        if (end < 0) {
-          this.heuristic = "";
-          break;
-        }
-        this.heuristic = this.heuristic.slice(end);
-        this.skipping = false;
-      }
-      const match = /\b(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*)/i.exec(this.heuristic);
-      const url = /https?:\/\//i.exec(this.heuristic);
-      if (url && (!match || url.index < match.index)) {
-        output += this.heuristic.slice(0, url.index);
-        this.heuristic = this.heuristic.slice(url.index);
-        const start = url[0].length;
-        const end = this.heuristic.slice(start).search(/[/\s?#"'<>]/);
-        if (end < 0 && !final) {
-          if (utf8Bytes(this.heuristic) > 8192)
-            throw new ContractError("oversize");
-          break;
-        }
-        const size = end < 0 ? this.heuristic.length : start + end;
-        const authority = this.heuristic.slice(start, size);
-        const pos = authority.lastIndexOf("@");
-        output += this.heuristic.slice(0, start) + (pos < 0 ? authority : `${marker}@${authority.slice(pos + 1)}`);
-        this.redacted ||= pos >= 0;
-        this.heuristic = this.heuristic.slice(size);
-      } else if (match) {
-        output += this.heuristic.slice(0, match.index) + match[0] + marker;
-        this.heuristic = this.heuristic.slice(match.index + match[0].length);
-        this.skipping = true;
-        this.redacted = true;
-      } else {
-        const candidate = /(?:Bearer|api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*$/i.exec(this.heuristic);
-        const keep = final ? 0 : Math.max(64, candidate ? this.heuristic.length - candidate.index : 0);
-        if (keep > 8192)
-          throw new ContractError("oversize");
-        let take = Math.max(0, this.heuristic.length - keep);
-        const before = this.heuristic.charCodeAt(take - 1);
-        if (before >= 55296 && before <= 56319)
-          take--;
-        output += this.heuristic.slice(0, take);
-        this.heuristic = this.heuristic.slice(take);
-        break;
-      }
-    }
-    if (final) {
-      this.ended = true;
-      this.escape = "";
-    }
-    return output;
-  }
-  end() {
-    return this.write("", true);
-  }
-}
-function sanitizeText(value, secrets = []) {
-  const sanitizer = new TextSanitizer(secrets);
-  return sanitizer.write(value, true);
-}
-function sanitizeData(value, secrets = []) {
-  measureData(value);
-  function visit(v) {
-    if (typeof v === "string")
-      return sanitizeText(v, secrets);
-    if (v === null || typeof v !== "object")
-      return v;
-    if (Array.isArray(v))
-      return ownArray(v).map(visit);
-    const result = Object.create(null);
-    for (const key of Object.keys(v).sort()) {
-      const safeKey = sanitizeText(key, secrets);
-      if (Object.hasOwn(result, safeKey))
-        throw new ContractError;
-      result[safeKey] = sensitive.test(key) ? marker : visit(own(v, key));
-    }
-    return result;
-  }
-  return canonicalJson(visit(value), LIMITS.workerQueueBytes);
-}
-
-class DetailSanitizer {
-  constructor(encoding, secrets = [], partial = false) {
-    this.encoding = encoding;
-    this.secrets = secrets;
-    this.partial = partial;
-    this.limited = false;
-    this.text = new TextSanitizer(secrets);
-    this.stack = [];
-    this.root = "value";
-    this.inString = false;
-    this.escape = "";
-    this.key = "";
-    this.keyMode = false;
-    this.suppressed = false;
-    this.token = "";
-    this.redacted = false;
-  }
-  get retainedBytes() {
-    return this.text.retainedBytes + utf8Bytes(this.escape + this.key + this.token) + this.stack.reduce((sum, entry) => sum + utf8Bytes(entry.lastKey ?? "") + utf8Bytes(entry.lastOutputKey ?? ""), 0);
-  }
-  write(input, final = false) {
-    if (this.limited)
-      return "";
-    try {
-      return this.project(input, final);
-    } catch (error) {
-      if (!this.partial || error instanceof ContractError && error.code === "oversize")
-        throw error;
-      this.limited = true;
-      this.redacted = true;
-      return "[redacted: unsupported partial arguments]";
-    }
-  }
-  project(input, final = false) {
-    if (this.encoding === "utf8") {
-      const output2 = this.text.write(input, final);
-      this.redacted = this.text.redacted;
-      return output2;
-    }
-    let output = "";
-    const encoded2 = (s) => JSON.stringify(s).slice(1, -1);
-    const top = () => this.stack.at(-1);
-    const done = () => {
-      if (top()) {
-        top().expect = "comma";
-        top().sensitive = false;
-        top().count++;
-      } else
-        this.root = "done";
-    };
-    const begin = () => {
-      const parent = top();
-      if ((parent?.expect ?? this.root) !== "value")
-        throw new ContractError;
-      const hide = !!parent?.hide || !!parent?.sensitive;
-      if (parent?.sensitive && !parent.hide) {
-        output += JSON.stringify(marker);
-        this.redacted = true;
-      }
-      return hide;
-    };
-    const primitive = () => {
-      if (!/^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/.test(this.token)) {
-        if (!this.partial)
-          throw new ContractError;
-        if (!this.suppressed)
-          output += marker;
-        this.redacted = true;
-        this.limited = true;
-        this.token = "";
-        done();
-        return;
-      }
-      const value = JSON.parse(this.token);
-      if (typeof value === "number" && !Number.isFinite(value))
-        throw new ContractError;
-      if (!this.suppressed)
-        output += this.token;
-      this.token = "";
-      done();
-    };
-    for (const ch of input) {
-      if (this.inString) {
-        let decoded2 = ch;
-        if (this.escape) {
-          this.escape += ch;
-          if (this.escape === "\\u" || this.escape.startsWith("\\u") && this.escape.length < 6)
-            continue;
-          decoded2 = JSON.parse(`"${this.escape}"`);
-          this.escape = "";
-        } else if (ch === "\\") {
-          this.escape = ch;
-          continue;
-        } else if (ch === '"') {
-          if (this.keyMode) {
-            const parent2 = top();
-            if (!this.partial && parent2.lastKey !== undefined && this.key <= parent2.lastKey)
-              throw new ContractError;
-            parent2.lastKey = this.key;
-            parent2.sensitive = sensitive.test(this.key);
-            parent2.expect = "colon";
-            if (!parent2.hide) {
-              const safeKey = sanitizeText(this.key, this.secrets);
-              if (!this.partial && parent2.lastOutputKey !== undefined && safeKey <= parent2.lastOutputKey)
-                throw new ContractError;
-              parent2.lastOutputKey = safeKey;
-              this.redacted ||= safeKey !== this.key;
-              output += JSON.stringify(safeKey);
-            }
-            this.key = "";
-          } else {
-            if (!this.suppressed)
-              output += `${encoded2(this.text.end())}"`;
-            this.redacted ||= this.text.redacted;
-            done();
-          }
-          this.inString = false;
-          continue;
-        }
-        if (this.keyMode) {
-          this.key += decoded2;
-          if (utf8Bytes(this.key) > 8192)
-            throw new ContractError("oversize");
-        } else if (!this.suppressed)
-          output += encoded2(this.text.write(decoded2));
-        continue;
-      }
-      if (this.token && /[\s,\]}]/.test(ch))
-        primitive();
-      if (this.token) {
-        this.token += ch;
-        if (this.token.length > 128)
-          throw new ContractError("oversize");
-        continue;
-      }
-      if (/\s/.test(ch))
-        continue;
-      const parent = top();
-      if (ch === '"') {
-        this.keyMode = parent?.kind === "object" && parent.expect === "key";
-        this.suppressed = this.keyMode ? parent.hide : begin();
-        this.inString = true;
-        this.text = new TextSanitizer(this.secrets);
-        if (!this.keyMode && !this.suppressed)
-          output += '"';
-      } else if (ch === "{" || ch === "[") {
-        const hide = begin();
-        if (!hide)
-          output += ch;
-        if (this.stack.length >= 64)
-          throw new ContractError("oversize");
-        this.stack.push({
-          kind: ch === "{" ? "object" : "array",
-          expect: ch === "{" ? "key" : "value",
-          hide,
-          sensitive: false,
-          count: 0,
-          lastKey: undefined,
-          lastOutputKey: undefined
-        });
-      } else if (ch === "}" || ch === "]") {
-        if (!parent || ch === "}" !== (parent.kind === "object"))
-          throw new ContractError;
-        if (parent.expect !== "comma" && !(parent.count === 0 && parent.expect === (parent.kind === "object" ? "key" : "value")))
-          throw new ContractError;
-        if (!parent.hide)
-          output += ch;
-        this.stack.pop();
-        done();
-      } else if (ch === ":") {
-        if (parent?.expect !== "colon")
-          throw new ContractError;
-        parent.expect = "value";
-        if (!parent.hide)
-          output += ch;
-      } else if (ch === ",") {
-        if (parent?.expect !== "comma")
-          throw new ContractError;
-        parent.expect = parent.kind === "object" ? "key" : "value";
-        parent.count = Math.max(1, parent.count);
-        if (!parent.hide)
-          output += ch;
-      } else {
-        this.suppressed = begin();
-        this.token = ch;
-      }
-    }
-    if (final) {
-      if (this.token)
-        primitive();
-      if (this.partial) {
-        if (this.inString && !this.suppressed) {
-          output += this.keyMode ? JSON.stringify(sanitizeText(this.key, this.secrets)).slice(0, -1) : encoded2(this.text.end());
-        }
-        if (this.escape) {
-          output += marker;
-          this.redacted = true;
-          this.limited = true;
-        }
-      } else if (this.inString || this.escape || this.stack.length || this.root !== "done")
-        throw new ContractError;
-      this.redacted ||= this.text.redacted;
-    }
-    return output;
-  }
-  end() {
-    return this.write("", true);
-  }
-}
-
-// src/service/workbench-files.ts
-function inside(root, path) {
-  const r = relative5(root, path);
-  return r === "" || !isAbsolute6(r) && r !== ".." && !r.startsWith(`..${sep4}`);
-}
-var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
-
-class WorkbenchFiles {
-  secrets;
-  root;
-  excluded;
-  constructor(root, excluded, secrets) {
-    this.secrets = secrets;
-    this.root = realpathSync4(root);
-    this.excluded = excluded.flatMap((path) => [
-      resolve6(path),
-      canonicalAmbientRoot(path)
-    ]);
-  }
-  allowed(path) {
-    if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
-      throw new ContractError("forbidden");
-    const stat = lstatSync9(path);
-    if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
-      throw new ContractError("forbidden");
-  }
-  directory(path) {
-    if (!isAbsolute6(path) || !safeDirectory(path))
-      throw new ContractError("invalid");
-    const canonical = realpathSync4(path);
-    this.allowed(canonical);
-    return canonical;
-  }
-  selected(path) {
-    if (isAbsolute6(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
-      throw new ContractError("forbidden");
-    const target = resolve6(this.root, path);
-    if (!inside(this.root, target) || !safeDirectory(dirname11(target)))
-      throw new ContractError("forbidden");
-    this.allowed(target);
-    if (lstatSync9(target).isSymbolicLink())
-      throw new ContractError("forbidden");
-    return target;
-  }
-  browsed(path) {
-    const full = /^~(?:[\\/]|$)/.test(path) ? join13(homedir4(), path.slice(1)) : path || this.root;
-    try {
-      return this.directory(full);
-    } catch (error) {
-      if (error instanceof Error && error.message === "Unsafe directory")
-        throw new ContractError("forbidden");
-      throw error;
-    }
-  }
-  list(path, directories = false) {
-    const selected2 = directories ? this.browsed(path) : this.selected(path);
-    if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
-      throw new ContractError("forbidden");
-    const entries = [], dir = opendirSync5(selected2);
-    let limited = false, scanned = 0;
-    try {
-      for (let entry = dir.readSync();entry; entry = dir.readSync()) {
-        if (++scanned > 2000) {
-          limited = true;
-          break;
-        }
-        if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
-          continue;
-        const absolute2 = join13(selected2, entry.name);
-        try {
-          this.allowed(absolute2);
-        } catch {
-          continue;
-        }
-        const wire = directories ? absolute2 : relative5(this.root, absolute2).split(sep4).join("/");
-        if (sanitizeText(wire, this.secrets()) !== wire)
-          continue;
-        if (entries.length >= 200) {
-          limited = true;
-          break;
-        }
-        entries.push({
-          name: entry.name,
-          path: wire,
-          directory: entry.isDirectory()
-        });
-      }
-    } finally {
-      dir.closeSync();
-    }
-    entries.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
-    const parent = dirname11(selected2);
-    return {
-      kind: directories ? "directories" : "files",
-      path: directories ? selected2 : path,
-      parent: directories ? parent === selected2 ? null : parent : selected2 === this.root ? null : relative5(this.root, parent).split(sep4).join("/"),
-      entries,
-      limited
-    };
-  }
-  read(path) {
-    const selected2 = this.selected(path), before = lstatSync9(selected2);
-    if (!before.isFile())
-      throw new ContractError("forbidden");
-    const fd = openSync6(selected2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
-    try {
-      const opened = fstatSync5(fd);
-      if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
-        throw new ContractError("stale");
-      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
-      let at = 0;
-      while (at < buffer.length) {
-        const n = readSync4(fd, buffer, at, buffer.length - at, at);
-        if (!n)
-          break;
-        at += n;
-      }
-      const after = fstatSync5(fd), current = lstatSync9(selected2);
-      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
-        throw new ContractError("stale");
-      const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
-      if (decoded2.includes("\x00"))
-        throw new ContractError("unsupported-context");
-      return {
-        kind: "file",
-        path,
-        text: new TextSanitizer(this.secrets()).write(decoded2, at === opened.size),
-        limited: at < opened.size
-      };
-    } finally {
-      closeSync6(fd);
-    }
-  }
-}
-
-// src/service/gateway.ts
-async function joinProjectStops(projects, stopProject) {
-  let uncertain = false;
-  for (const project of projects) {
-    try {
-      await stopProject(project);
-    } catch {
-      uncertain = true;
-    }
-  }
-  if (uncertain)
-    throw new ContractError("quarantine");
-}
-async function createGateway(value, hostUrl, source) {
-  const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
-  const web = loadWebAssets(source?.webDirectory);
-  const build2 = {
-    contractHash: "b855efce6a9694452dd77fcdad0b5dbecce617643cc81ac7c55dafb0f2ca7848",
-    assets: {
-      sourceHash: web.manifest.sourceHash,
-      contractHash: web.manifest.contractHash,
-      buildId: web.manifest.buildId
-    }
-  };
-  const configured = readServerConfig(input.serverConfig).config;
-  if (configured.port !== input.policy.port)
-    throw new ContractError("conflict");
-  const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
-  const connections = new Set, relays = new Set;
-  const opens = new Map;
-  const retirements = new Set;
-  const attachments = new Map;
-  const bindings = new Map;
-  const wss = new WebSocketServer2({
-    noServer: true,
-    clientTracking: false,
-    perMessageDeflate: false,
-    maxPayload: LIMITS.wsClientFrameBytes
-  });
-  let accepting = false, stopping;
-  let auth;
-  let pending = 0;
-  let opening = false;
-  const server = createServer2({
-    maxHeaderSize: LIMITS.headerBytes,
-    headersTimeout: 1e4,
-    requestTimeout: 30000,
-    keepAliveTimeout: 5000
-  }, (req, res) => {
-    handle(req, res);
-  });
-  server.maxConnections = 64;
-  server.on("connection", (socket) => {
-    connections.add(socket);
-    socket.on("error", () => socket.destroy());
-    socket.on("close", () => connections.delete(socket));
-  });
-  server.on("clientError", (_error, socket) => socket.end(`HTTP/1.1 400 Refused\r
-Connection: close\r
-Content-Length: 0\r
-\r
-`));
-  server.on("checkContinue", (_req, res) => reply(res, 400, { kind: "error", error: publicError("invalid") }));
-  await new Promise((resolve7, reject) => {
-    server.once("error", reject);
-    server.listen(input.policy.port, input.policy.host, () => {
-      server.off("error", reject);
-      resolve7();
-    });
-  });
-  const address = server.address();
-  if (!address || typeof address === "string")
-    throw new ContractError("unavailable");
-  const endpoint2 = localOrigin(input.policy, address.port);
-  let acquired;
-  try {
-    acquired = store.acquire(endpoint2, configured.token, input);
-    auth = new HttpAuthentication(acquired.access, acquired.registration.epoch, acquired.registration.id, acquired.registration.capability);
-    acquired.access.onRevoke(() => {
-      for (const close of relays)
-        close();
-      bindings.clear();
-      const grouped = new Map;
-      for (const [id, project] of attachments)
-        grouped.set(project, [...grouped.get(project) ?? [], id]);
-      attachments.clear();
-      const original = (async () => {
-        for (const [id, ids] of grouped) {
-          const project = store.projects().find((p) => p.id === id);
-          if (!project)
-            throw new ContractError("unavailable");
-          const c = new ServiceCoordination(project.path, input.stateHome);
-          if (c.inspect().status === "stopped")
-            continue;
-          if (c.localAccess().epoch !== project.epoch)
-            throw new ContractError("stale");
-          for (let offset = 0;offset < ids.length; offset += LIMITS.viewers) {
-            const result = closed(await nativeCall(c, "detach-viewers", false, {
-              attachments: ids.slice(offset, offset + LIMITS.viewers)
-            }), ["status", "epoch"]);
-            if (result.status !== "detached" || result.epoch !== project.epoch)
-              throw new ContractError("unavailable");
-          }
-        }
-      })();
-      retirements.add(original);
-      original.then(() => retirements.delete(original), () => {});
-    });
-    accepting = true;
-  } catch (error) {
-    server.close();
-    throw error;
-  }
-  const files = new WorkbenchFiles(homedir5(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
-  const assert = () => {
-    store.assert();
-    if (!accepting)
-      throw new ContractError("quarantine");
-  };
-  async function open2(path, id, epoch) {
-    assert();
-    if (epoch !== auth.epoch)
-      throw new ContractError("stale");
-    const identity = canonicalJson({ path, epoch }), previous = opens.get(id);
-    if (previous) {
-      if (previous.identity !== identity)
-        throw new ContractError("conflict");
-      return previous.result;
-    }
-    const intentPath = store.path(`commands/${id}.json`), kept = store.files.read(intentPath);
-    if (kept) {
-      if (kept.bytes.toString("utf8") !== identity)
-        throw new ContractError("conflict");
-      const settled = store.files.read(store.path(`commands/${id}.result.json`));
-      if (!settled)
-        throw new ContractError("receipt-inconclusive");
-      return decodeProjectEntry(json(settled));
-    }
-    if (opening)
-      throw new ContractError("capacity");
-    if (opens.size >= 128 || store.projects().length >= 128)
-      throw new ContractError("capacity");
-    const commands = store.path("commands");
-    if (store.files.directory(commands)) {
-      const dir = opendirSync6(commands);
-      let count = 0;
-      try {
-        while (dir.readSync())
-          if (++count >= 2048)
-            throw new ContractError("capacity");
-      } finally {
-        dir.closeSync();
-      }
-    }
-    const directory = files.directory(path);
-    effectiveWorkspace(directory, input.stateHome);
-    store.files.create(intentPath, identity);
-    opening = true;
-    const result = Promise.resolve().then(async () => {
-      const opened = await openProjectDirectory(directory, input.stateHome, input.agentDir, hostUrl);
-      const c = new ServiceCoordination(opened.path, input.stateHome), access = c.localAccess();
-      const project = {
-        id: hash2(c.store.root),
-        path: c.store.root,
-        cwd: readHostConfig(c)?.cwd ?? directory,
-        epoch: access.epoch
-      };
-      store.saveProject(project);
-      bindings.delete(project.id);
-      store.files.create(store.path(`commands/${id}.result.json`), encoded(project));
-      return project;
-    });
-    opens.set(id, { identity, result });
-    result.then(() => {
-      opens.delete(id);
-      opening = false;
-    }, () => {
-      opening = false;
-    });
-    return result;
-  }
-  function binding(id) {
-    const project = store.associatedProjects().find((p) => p.id === id);
-    if (!project)
-      throw new ContractError("unavailable");
-    const c = new ServiceCoordination(project.path, input.stateHome), local = c.localAccess();
-    if (c.store.root !== project.path || local.epoch !== project.epoch)
-      throw new ContractError("stale");
-    const previous = bindings.get(id);
-    if (previous)
-      return previous;
-    const result = (async () => {
-      const raw = closed(await nativeCall(c, "token-link", true), ["link"]), link = new URL(text(raw.link, 4096, true));
-      const secret = link.searchParams.get("token");
-      if (!secret)
-        throw new ContractError("unavailable");
-      const cookie = await new Promise((resolve7, reject) => {
-        const req = request2(`${local.endpoint}/?token=${encodeURIComponent(secret)}`, { agent: false }, (res) => {
-          const cookie2 = res.headers["set-cookie"];
-          res.resume();
-          if (res.statusCode !== 303 || cookie2?.length !== 1)
-            reject(new ContractError("unavailable"));
-          else
-            resolve7(cookie2[0].split(";")[0]);
-        });
-        req.setTimeout(2000, () => req.destroy(new Error));
-        req.on("error", () => reject(new ContractError("unavailable")));
-        req.end();
-      });
-      if (c.localAccess().epoch !== project.epoch)
-        throw new ContractError("stale");
-      return { project, endpoint: local.endpoint, cookie };
-    })();
-    bindings.set(id, result);
-    return result;
-  }
-  function stop() {
-    if (stopping)
-      return;
-    accepting = false;
-    store.phase("stopping");
-    stopping = (async () => {
-      const originals = await Promise.allSettled([...opens.values()].map((o) => o.result));
-      const uncertainOpening = originals.some((r) => r.status === "rejected" && !(r.reason instanceof ProjectOpenRefusal && r.reason.noOwner));
-      const retired = await Promise.allSettled([...retirements]);
-      const targets = store.associatedProjects();
-      await joinProjectStops(targets, async (p) => {
-        const c = new ServiceCoordination(p.path, input.stateHome), observed = await serviceStatus(c);
-        const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
-        if (status === "stopped") {
-          if (!(observed && typeof observed === "object" && ("epoch" in observed) && observed.epoch === p.epoch))
-            throw new ContractError("stale");
-          return;
-        }
-        if (status !== "alive" || c.localAccess().epoch !== p.epoch)
-          throw new ContractError("quarantine");
-        if ((await stopService(c)).status !== "stopped")
-          throw new ContractError("quarantine");
-      });
-      if (uncertainOpening || retired.some((r) => r.status === "rejected"))
-        throw new ContractError("quarantine");
-      store.release();
-      for (const close of relays)
-        close();
-      wss.close();
-      server.close();
-      for (const socket of connections)
-        socket.end();
-    })().catch(() => {
-      try {
-        store.phase("quarantined");
-      } catch {}
-    });
-  }
-  async function body(req, maximum = 16384) {
-    if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] || req.headers["transfer-encoding"])
-      throw new ContractError("invalid");
-    const chunks = [];
-    let count = 0;
-    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-      count += chunk.length;
-      if (count > maximum)
-        throw new ContractError("oversize");
-      chunks.push(chunk);
-    }
-    return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), maximum);
-  }
-  function reply(res, code2, value2) {
-    if (res.destroyed || res.writableEnded)
-      return;
-    fixedHeaders(res);
-    res.statusCode = code2;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(canonicalJson(value2));
-  }
-  function target(raw) {
-    const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
-    return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
-  }
-  async function handle(req, res) {
-    let effect = false;
-    if (++pending > 64) {
-      pending--;
-      reply(res, 429, { kind: "error", error: publicError("capacity") });
-      return;
-    }
-    fixedHeaders(res);
-    try {
-      const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
-      assertRequestTarget(raw);
-      const url = new URL(raw, endpoint2);
-      if (raw === "/healthz" && req.method === "GET") {
-        reply(res, 200, { status: "ok" });
-        return;
-      }
-      store.assert();
-      if (url.searchParams.has("token")) {
-        if (req.method !== "GET" || !raw.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
-          throw new ContractError("invalid");
-        res.setHeader("Set-Cookie", auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
-        res.statusCode = 303;
-        res.setHeader("Location", "/app");
-        res.end();
-        return;
-      }
-      if (raw === "/" && req.method === "GET") {
-        res.end(`Cadence workbench: open the private link. No default workspace is created.
-`);
-        return;
-      }
-      if (raw.startsWith("/local/v1/admin/")) {
-        const caller2 = auth.authenticate(boundary, randomUUID9(), req.method === "POST");
-        if (caller2.authority !== "local")
-          throw new ContractError("forbidden");
-        const operation = raw.slice("/local/v1/admin/".length);
-        if (["status", "diagnose"].includes(operation) && req.method === "GET") {
-          reply(res, 200, {
-            kind: "ok",
-            value: {
-              ...store.inspect(),
-              projects: store.projects().length
-            }
-          });
-          return;
-        }
-        if (req.method !== "POST")
-          throw new ContractError("invalid");
-        const value2 = await body(req);
-        if (operation === "token-link") {
-          const o = closed(value2, ["reveal"]);
-          if (o.reveal !== true)
-            throw new ContractError("forbidden");
-          reply(res, 200, {
-            kind: "ok",
-            value: {
-              link: acquired.access.tokenLink(input.policy.proxy?.origin ?? endpoint2)
-            }
-          });
-          return;
-        }
-        closed(value2, []);
-        if (operation === "stop") {
-          reply(res, 200, {
-            kind: "ok",
-            value: { status: "accepted", epoch: auth.epoch }
-          });
-          stop();
-          return;
-        }
-        if (operation === "token-rotate") {
-          acquired.access.rotate();
-          await Promise.all([...retirements]);
-          reply(res, 200, {
-            kind: "ok",
-            value: { status: "rotated", epoch: auth.epoch }
-          });
-          return;
-        }
-        throw new ContractError("invalid");
-      }
-      assert();
-      if (boundary.headers.has("x-cadence-local"))
-        throw new ContractError("forbidden");
-      const project = target(raw);
-      const caller = auth.authenticate(boundary, randomUUID9(), !project && req.method === "POST");
-      if (project) {
-        const route = readRoute(project.tail, req.method ?? "");
-        if (!route)
-          throw new ContractError("invalid");
-        const attachment = boundary.headers.get("x-cadence-attachment");
-        if (attachment && attachments.get(attachment) !== project.id || req.method === "POST" && !attachment)
-          throw new ContractError("stale");
-        if (route.operation === "session" && !attachment && attachments.size >= 2048)
-          throw new ContractError("capacity");
-        if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
-          throw new ContractError("forbidden");
-        if (req.headers["content-encoding"] || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes)
-          throw new ContractError("oversize");
-        let commandBody;
-        if (route.operation === "workbenchCommand") {
-          const command = decodeWorkbenchCommand(await body(req, LIMITS.controlBytes));
-          if (command.kind === "open-project")
-            throw new ContractError("forbidden");
-          commandBody = canonicalJson(command, LIMITS.controlBytes);
-        }
-        const b = await binding(project.id);
-        auth.current(caller);
-        assert();
-        const headers = {
-          Cookie: b.cookie,
-          Origin: b.endpoint
-        };
-        for (const key of [
-          "content-type",
-          "content-length",
-          "x-cadence-build",
-          "x-cadence-attachment",
-          "x-cadence-csrf"
-        ]) {
-          const value2 = boundary.headers.get(key);
-          if (value2 !== undefined)
-            headers[key] = value2;
-        }
-        if (commandBody !== undefined)
-          headers["content-length"] = String(Buffer.byteLength(commandBody));
-        await new Promise((resolve7) => {
-          const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers, agent: false }, (incoming) => {
-            try {
-              auth.current(caller);
-            } catch {
-              close();
-              return;
-            }
-            if (route.operation === "session" && incoming.statusCode === 200) {
-              try {
-                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), project.id);
-              } catch {
-                close();
-                return;
-              }
-            }
-            if (route.operation === "detach" && incoming.statusCode === 200 && attachment)
-              attachments.delete(attachment);
-            res.statusCode = incoming.statusCode ?? 502;
-            for (const key of [
-              "content-type",
-              "content-disposition",
-              "x-cadence-attachment"
-            ]) {
-              const value2 = incoming.headers[key];
-              if (value2 !== undefined)
-                res.setHeader(key, value2);
-            }
-            incoming.on("error", close);
-            incoming.pipe(res);
-            res.once("finish", done);
-          });
-          function done() {
-            relays.delete(close);
-            res.off("close", close);
-            res.off("finish", done);
-            resolve7();
-          }
-          function close() {
-            upstream.destroy();
-            res.destroy();
-            done();
-          }
-          relays.add(close);
-          res.once("close", close);
-          upstream.setTimeout(LIMITS.downloadIdleMs, close);
-          upstream.on("error", () => {
-            if (!res.headersSent)
-              reply(res, 502, {
-                kind: "error",
-                error: publicError("unavailable", req.method === "POST" ? "uncertain" : "none")
-              });
-            else
-              res.destroy();
-            done();
-          });
-          if (commandBody === undefined)
-            req.pipe(upstream);
-          else
-            upstream.end(commandBody);
-        });
-        return;
-      }
-      if (raw === "/workbench/v1" && req.method === "GET") {
-        reply(res, 200, {
-          kind: "workbench",
-          epoch: auth.epoch,
-          csrf: auth.csrf,
-          home: homedir5(),
-          projects: store.projects(),
-          build: build2
-        });
-        return;
-      }
-      if (url.pathname === "/workbench/v1/directories" && req.method === "GET" && [...url.searchParams.keys()].join() === "path") {
-        reply(res, 200, files.list(text(url.searchParams.get("path"), 4096, true), true));
-        return;
-      }
-      if (raw === "/workbench/v1/open" && req.method === "POST") {
-        const clientBuild = decodeClientBuild(parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024));
-        if (clientBuild.kind !== "browser" || !compatibleBuild(build2, clientBuild))
-          throw new ContractError("unsupported-context");
-        const o = closed(await body(req), ["commandId", "path", "epoch"]);
-        const id = decodeId(o.commandId), path = text(o.path, 4096, true), epoch = decodeId(o.epoch);
-        auth.current(caller);
-        effect = true;
-        const project2 = await open2(path, id, epoch);
-        auth.current(caller);
-        reply(res, 200, { kind: "project", project: project2 });
-        return;
-      }
-      const app = url.pathname === "/app" && (raw === "/app" || /^[a-f0-9]{64}$/.test(url.searchParams.get("project") ?? "") && [...url.searchParams.keys()].join() === "project");
-      const asset = assets.get(app ? "/app" : raw);
-      if (req.method !== "GET" || !asset)
-        throw new ContractError("invalid");
-      res.setHeader("Content-Type", asset.contentType);
-      res.end(asset.bytes);
-    } catch (error) {
-      const code2 = error instanceof ContractError ? error.code : "unavailable";
-      if (res.headersSent)
-        res.destroy();
-      else
-        reply(res, code2 === "unauthenticated" ? 401 : code2 === "forbidden" ? 403 : 400, {
-          kind: "error",
-          error: publicError(code2, effect ? "uncertain" : "none")
-        });
-    } finally {
-      pending--;
-    }
-  }
-  server.on("upgrade", (req, socket, head) => {
-    (async () => {
-      try {
-        assert();
-        const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
-        assertRequestTarget(raw);
-        if (boundary.headers.has("x-cadence-local"))
-          throw new ContractError("forbidden");
-        const caller = auth.authenticate(boundary, randomUUID9(), false, true), t = target(raw);
-        if (req.method !== "GET" || !t)
-          throw new ContractError("invalid");
-        const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
-        if (attachments.get(attachment) !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
-          throw new ContractError("invalid");
-        const b = await binding(t.id);
-        auth.current(caller);
-        assert();
-        const upstream = new WebSocket(`${b.endpoint.replace("http:", "ws:")}${t.tail}`, {
-          headers: { Cookie: b.cookie, Origin: b.endpoint },
-          agent: false,
-          maxPayload: LIMITS.controlBytes,
-          handshakeTimeout: 5000,
-          perMessageDeflate: false
-        });
-        const abort = () => {
-          upstream.terminate();
-          socket.destroy();
-          relays.delete(abort);
-        };
-        relays.add(abort);
-        socket.once("close", abort);
-        upstream.once("error", abort);
-        upstream.once("close", abort);
-        upstream.once("open", () => {
-          try {
-            auth.current(caller);
-            assert();
-          } catch {
-            abort();
-            return;
-          }
-          wss.handleUpgrade(req, socket, head, (client) => {
-            const forward = (to, data, binary) => {
-              try {
-                auth.current(caller);
-                if (to.bufferedAmount > LIMITS.controlBytes)
-                  throw new Error;
-                to.send(data, { binary });
-              } catch {
-                abort();
-              }
-            };
-            client.on("message", (data, binary) => forward(upstream, data, binary));
-            upstream.on("message", (data, binary) => forward(client, data, binary));
-            client.on("error", abort);
-            client.on("close", abort);
-          });
-        });
-      } catch {
-        socket.end(`HTTP/1.1 403 Refused\r
-Connection: close\r
-Content-Length: 0\r
-\r
-`);
-      }
-    })();
-  });
-  return { store, endpoint: endpoint2, epoch: acquired.registration.epoch, stop };
-}
-
-// src/service/host.ts
-import { lstatSync as lstatSync18, opendirSync as opendirSync12 } from "node:fs";
-import { join as join29 } from "node:path";
-
-// src/agent-registry.ts
-import { createHash as createHash10 } from "node:crypto";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-var AGENT_FILES = [
-  "design-explorer.md",
-  "implementation-worker.md",
-  "diagnosis-worker.md"
-];
-function loadAgentDefinitions() {
-  return AGENT_FILES.map((fileName) => {
-    const path = fileURLToPath3(new URL(`../agents/${fileName}`, import.meta.url));
-    const data = readBounded(path, 32768, true);
-    if (!data)
-      throw new Error("Missing package Agent");
-    return {
-      role: fileName.replace(/\.md$/, ""),
-      fileName,
-      path,
-      sha256: createHash10("sha256").update(data).digest("hex"),
-      bytes: data.length,
-      content: data.toString("utf8")
-    };
-  });
-}
-
-// src/cadence-preferences.ts
-import { realpathSync as realpathSync5 } from "node:fs";
-import { basename, dirname as dirname12, join as join14, resolve as resolve7 } from "node:path";
-function agentNamespace(agentDir) {
-  let at = resolve7(agentDir);
-  const missing2 = [];
-  for (;; ) {
-    try {
-      return join14(realpathSync5(at), ...missing2.reverse());
-    } catch {
-      const parent = dirname12(at);
-      if (parent === at)
-        return resolve7(agentDir);
-      missing2.push(basename(at));
-      at = parent;
-    }
-  }
-}
-
-class CadencePreferences {
-  path;
-  files;
-  constructor(agentDir) {
-    const namespace = agentNamespace(agentDir);
-    this.path = join14(namespace, "cadence", "settings.json");
-    this.files = new PrivateFiles(namespace, false);
-  }
-  read() {
-    const saved = this.files.read(this.path);
-    if (!saved)
-      return null;
-    const o = closed(parseWireJson(saved.bytes.toString("utf8")), [
-      "schema",
-      "model"
-    ]);
-    if (o.schema !== "cadence-preferences/1")
-      throw new Error("Unsupported Cadence preferences");
-    return decodeModelSelector(o.model);
-  }
-  encode(model) {
-    return canonicalJson({
-      schema: "cadence-preferences/1",
-      model: decodeModelSelector(model)
-    });
-  }
-  save(model) {
-    const selected2 = decodeModelSelector(model);
-    const previous = this.files.read(this.path);
-    if (previous && canonicalJson(this.read()) === canonicalJson(selected2))
-      return;
-    const bytes = this.encode(selected2);
-    if (previous)
-      this.files.replace(this.path, previous, bytes);
-    else
-      this.files.create(this.path, bytes);
-  }
-  choose(model) {
-    const bytes = this.encode(model);
-    const previous = this.files.read(this.path);
-    if (previous?.bytes.toString("utf8") === bytes)
-      return;
-    if (previous)
-      this.files.replace(this.path, previous, bytes);
-    else
-      this.files.create(this.path, bytes);
-  }
-}
-
-// src/history/live.ts
-function scopedSnapshot(source, scope) {
-  if (scope.kind === "task" || source.scope.kind === "child")
-    return;
-  if (!source.runs.some((run) => scope.kind === "run" ? run.runId === scope.id && run.childRunId === null : run.childRunId === scope.id))
-    return;
-  return decodeSnapshot({
-    ...source,
-    scope,
-    runs: source.runs.filter((run) => scope.kind === "run" ? run.runId === scope.id : run.childRunId === scope.id),
-    horizon: {
-      ...source.horizon,
-      historicalRuns: { ...source.horizon.historicalRuns, scope }
-    }
-  });
-}
-
-class HistoryLive {
-  writer;
-  projection;
-  viewers = new Set;
-  rings = new Map;
-  pending = new Map;
-  scheduled = false;
-  closed = false;
-  detach;
-  detachSnapshots;
-  constructor(writer, projection) {
-    this.writer = writer;
-    this.projection = projection;
-    this.detachSnapshots = projection.observeSnapshots((snapshot) => {
-      for (const viewer of this.viewers)
-        if (viewer.keys === null && canonicalJson(viewer.scope) === canonicalJson(snapshot.scope)) {
-          viewer.keys = new Set(snapshot.keys);
-          viewer.seq = snapshot.committedSeq;
-        }
-    });
-    this.detach = writer.subscribeCommitted((notice) => {
-      if (this.closed)
-        return;
-      if (notice.gap)
-        for (const v of this.viewers)
-          this.enqueue(v, this.watermark(v.scope));
-      for (const id of notice.runs)
-        this.pending.set(`run/${id}`, { kind: "run", id });
-      for (const id of notice.tasks)
-        this.pending.set(`task/${id}`, { kind: "task", id });
-      for (const v of this.viewers)
-        this.pending.set(`${v.scope.kind}/${v.scope.id}`, v.scope);
-      if (this.pending.size > LIMITS.maxPageEntries) {
-        this.pending.clear();
-        for (const v of this.viewers)
-          this.enqueue(v, this.watermark(v.scope));
-      }
-      if (!this.scheduled) {
-        this.scheduled = true;
-        setImmediate(() => {
-          this.drain();
-        });
-      }
-    });
-  }
-  watermark = (input) => {
-    const scope = decodeScope(input), session = this.projection.environment.session();
-    return decodeLiveEvent({
-      kind: "heartbeat",
-      storeId: this.writer.files.format.storeId,
-      epoch: session.epoch,
-      scope,
-      committedSeq: this.writer.committedSeq
-    });
-  };
-  subscribe = (input, callback) => {
-    if (this.closed || this.viewers.size >= LIMITS.viewers)
-      throw new ContractError("capacity");
-    const scope = decodeScope(input), viewer = {
-      scope,
-      callback,
-      seq: this.writer.committedSeq,
-      closed: false,
-      queue: [],
-      bytes: 0,
-      scheduled: false,
-      keys: null
-    };
-    this.viewers.add(viewer);
-    return () => {
-      viewer.closed = true;
-      viewer.queue = [];
-      viewer.bytes = 0;
-      this.viewers.delete(viewer);
-    };
-  };
-  enqueue(v, event) {
-    if (v.closed)
-      return;
-    const bytes = Buffer.byteLength(canonicalJson(event));
-    if (v.queue.length >= LIMITS.viewerMessages || v.bytes + bytes > LIMITS.viewerBytes) {
-      v.queue = [this.watermark(v.scope)];
-      v.bytes = Buffer.byteLength(canonicalJson(v.queue[0]));
-    } else {
-      v.queue.push(event);
-      v.bytes += bytes;
-    }
-    if (v.scheduled)
-      return;
-    v.scheduled = true;
-    setImmediate(() => {
-      this.pump(v);
-    });
-  }
-  async pump(v) {
-    try {
-      while (!v.closed && v.queue.length) {
-        const event = v.queue.shift();
-        if (!event)
-          break;
-        v.bytes -= Buffer.byteLength(canonicalJson(event));
-        await v.callback(event);
-      }
-    } catch {
-      v.closed = true;
-      this.viewers.delete(v);
-      v.queue = [];
-      v.bytes = 0;
-    } finally {
-      v.scheduled = false;
-    }
-  }
-  async drain() {
-    const order = { task: 0, run: 1, child: 2 };
-    const scopes = [...this.pending.values()].sort((a, b) => order[a.kind] - order[b.kind]);
-    this.pending.clear();
-    const sources = [];
-    try {
-      for (const scope of scopes) {
-        if (this.closed)
-          return;
-        if (scope.kind !== "run" && ![...this.viewers].some((v) => canonicalJson(v.scope) === canonicalJson(scope)))
-          continue;
-        let snapshot;
-        for (let i = sources.length - 1;i >= 0 && !snapshot; i--)
-          snapshot = scopedSnapshot(sources[i], scope);
-        const reused = snapshot !== undefined;
-        try {
-          snapshot ??= await this.projection.snapshot(scope);
-        } catch {
-          for (const v of this.viewers)
-            if (v.scope.id === scope.id)
-              this.enqueue(v, this.watermark(v.scope));
-          continue;
-        }
-        if (!reused && sources.length < LIMITS.viewers && (scope.kind === "task" || scopes.some((s) => s.kind === "child" && snapshot.runs.some((r) => r.childRunId === s.id))))
-          sources.push(snapshot);
-        const key = `${scope.kind}/${scope.id}`, old = this.rings.get(key);
-        const update = (previousSeq, selected2 = scope, previousKeys) => decodeLiveEvent({
-          kind: "update",
-          storeId: snapshot.storeId,
-          epoch: snapshot.epoch,
-          scope: selected2,
-          previousSeq,
-          committedSeq: snapshot.committedSeq,
-          context: snapshot.context,
-          runs: snapshot.runs.filter((r) => selected2.kind !== "child" || r.childRunId === selected2.id),
-          removed: [
-            ...previousKeys ?? new Set((old?.snapshot.runs ?? []).map((r) => r.childRunId ?? r.runId))
-          ].filter((id) => !snapshot.runs.some((r) => (r.childRunId ?? r.runId) === id))
-        });
-        if (old && old.snapshot.committedSeq === snapshot.committedSeq)
-          continue;
-        if (scope.kind === "run") {
-          const event = update(old?.snapshot.committedSeq ?? "0"), bytes = Buffer.byteLength(canonicalJson(event));
-          const ring = old ?? { events: [], bytes: 0, snapshot };
-          while (ring.events.length && (ring.events.length >= LIMITS.ringEvents || ring.bytes + bytes > LIMITS.ringBytes))
-            ring.bytes -= Buffer.byteLength(canonicalJson(ring.events.shift()));
-          ring.events.push(event);
-          ring.bytes += bytes;
-          ring.snapshot = snapshot;
-          this.rings.set(key, ring);
-          while (this.rings.size > LIMITS.maxPageEntries || [...this.rings.values()].reduce((n, r) => n + r.bytes, 0) > 32 * 1024 * 1024) {
-            const first = this.rings.keys().next().value;
-            if (first)
-              this.rings.delete(first);
-            else
-              break;
-          }
-        }
-        for (const v of this.viewers) {
-          const matches = v.scope.kind === scope.kind && v.scope.id === scope.id || scope.kind === "run" && v.scope.kind === "child" && snapshot.runs.some((r) => r.childRunId === v.scope.id);
-          if (!matches || BigInt(v.seq) >= BigInt(snapshot.committedSeq))
-            continue;
-          try {
-            if (!v.keys) {
-              this.enqueue(v, this.watermark(v.scope));
-              continue;
-            }
-            const event = update(v.seq, v.scope, v.keys);
-            v.keys = new Set(snapshot.runs.filter((r) => v.scope.kind !== "child" || r.childRunId === v.scope.id).map((r) => r.childRunId ?? r.runId));
-            v.seq = snapshot.committedSeq;
-            this.enqueue(v, event);
-          } catch {
-            this.enqueue(v, this.watermark(v.scope));
-          }
-        }
-      }
-    } catch {
-      for (const viewer of this.viewers) {
-        try {
-          this.enqueue(viewer, this.watermark(viewer.scope));
-        } catch {
-          viewer.closed = true;
-          this.viewers.delete(viewer);
-        }
-      }
-    } finally {
-      this.scheduled = false;
-      if (!this.closed && this.pending.size) {
-        this.scheduled = true;
-        setImmediate(() => {
-          this.drain();
-        });
-      }
-    }
-  }
-  replay(runId, after) {
-    const ring = this.rings.get(`run/${runId}`);
-    if (!ring)
-      return null;
-    if (after === ring.snapshot.committedSeq)
-      return [];
-    const at = ring.events.findIndex((e) => e.kind === "update" && e.previousSeq === after);
-    return at < 0 ? null : structuredClone(ring.events.slice(at));
-  }
-  close() {
-    this.closed = true;
-    this.detach();
-    this.detachSnapshots();
-    this.pending.clear();
-    this.rings.clear();
-    for (const v of this.viewers) {
-      v.closed = true;
-      v.queue = [];
-    }
-    this.viewers.clear();
-  }
-}
-
-// src/history/navigation.ts
-import { createHash as createHash11 } from "node:crypto";
-import { lstatSync as lstatSync11 } from "node:fs";
-import { dirname as dirname13, join as join16 } from "node:path";
-
-// src/history/index-tree.ts
-import { lstatSync as lstatSync10 } from "node:fs";
-import { join as join15 } from "node:path";
-var MAX_NODE = 16 * 1024;
-var ACTIVE_KEY = "active";
-function chainHash(seq, previous, previousHash) {
-  return hash2(canonicalJson({ seq, previous, previousHash }));
-}
-function decodeNode(value) {
-  if (!value || typeof value !== "object" || !("kind" in value))
-    throw new ContractError("receipt-inconclusive");
-  if (value.kind === "leaf") {
-    const o2 = closed(value, ["kind", "entries"]);
-    if (!o2.entries || typeof o2.entries !== "object" || Array.isArray(o2.entries))
-      throw new ContractError("receipt-inconclusive");
-    const entries = {};
-    for (const [id, v] of Object.entries(o2.entries)) {
-      if (id !== ACTIVE_KEY)
-        decodeId(id.startsWith("roster:") ? id.slice(7) : id);
-      const h = closed(v, ["seq", "hash"]);
-      entries[id] = { seq: decodeSequence(h.seq), hash: decodeHash(h.hash) };
-    }
-    if (Object.keys(entries).length > 32)
-      throw new ContractError("receipt-inconclusive");
-    return { kind: "leaf", entries };
-  }
-  const o = closed(value, ["kind", "children"]);
-  if (o.kind !== "branch" || !o.children || typeof o.children !== "object" || Array.isArray(o.children))
-    throw new ContractError("receipt-inconclusive");
-  const children = {};
-  for (const [key, v] of Object.entries(o.children)) {
-    if (!/^[0-9a-f]$/.test(key))
-      throw new ContractError("receipt-inconclusive");
-    children[key] = decodeHash(v);
-  }
-  return { kind: "branch", children };
-}
-
-class IndexTree {
-  files;
-  cache = new Map;
-  constructor(files) {
-    this.files = files;
-  }
-  path(id) {
-    return join15(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
-  }
-  load(id, budget, unit) {
-    decodeHash(id);
-    const remembered = unit?.get(id);
-    if (remembered)
-      return remembered;
-    const old = this.cache.get(id);
-    if (budget && old?.budget === budget)
-      return old.node;
-    try {
-      let bytes;
-      if (budget) {
-        const path = this.path(id);
-        budget.reserve(0);
-        const selected2 = lstatSync10(path).size;
-        if (selected2 > MAX_NODE)
-          throw new ContractError("receipt-inconclusive");
-        bytes = readRange(this.files, path, 0, selected2, budget);
-      } else {
-        const file = this.files.files.read(this.path(id), MAX_NODE);
-        if (!file)
-          throw new ContractError("receipt-inconclusive");
-        bytes = file.bytes;
-      }
-      if (hash2(bytes) !== id)
-        throw new ContractError("receipt-inconclusive");
-      const node = decodeNode(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-      if (this.cache.size >= 128) {
-        const first = this.cache.keys().next().value;
-        if (first)
-          this.cache.delete(first);
-      }
-      this.cache.set(id, { node, budget });
-      if (unit) {
-        if (unit.size >= 128) {
-          const first = unit.keys().next().value;
-          if (first)
-            unit.delete(first);
-        }
-        unit.set(id, node);
-      }
-      return node;
-    } catch {
-      throw new ContractError("receipt-inconclusive");
-    }
-  }
-  head(root, id, budget) {
-    return this.find(root, id, budget);
-  }
-  find(root, id, budget, unit) {
-    if (id !== ACTIVE_KEY)
-      decodeId(id.startsWith("roster:") ? id.slice(7) : id);
-    let selected2 = root, depth = 0;
-    const key = hash2(id);
-    while (selected2) {
-      if (depth > 64)
-        throw new ContractError("receipt-inconclusive");
-      const node = this.load(selected2, budget, unit);
-      if (node.kind === "leaf")
-        return node.entries[id];
-      selected2 = node.children[key[depth++]] ?? null;
-    }
-  }
-  heads(root, ids) {
-    const unit = new Map, heads = new Map;
-    for (const id of ids) {
-      const head = this.find(root, id, undefined, unit);
-      if (head)
-        heads.set(id, head);
-    }
-    return heads;
-  }
-  update(lease, root, updates, charge) {
-    if (!updates.size)
-      return root;
-    const put = (node) => {
-      const body = canonicalJson(node, MAX_NODE), id = hash2(body), path = this.path(id);
-      lease.assert();
-      const previous = this.files.files.read(path, MAX_NODE);
-      if (previous) {
-        if (previous.identity !== id)
-          throw new ContractError("corrupt-selected");
-        return id;
-      }
-      charge(Buffer.byteLength(body));
-      this.files.files.create(path, body, Buffer.byteLength(body));
-      return id;
-    };
-    const write2 = (old, changes, depth) => {
-      if (depth > 64)
-        throw new ContractError("capacity");
-      const node = old ? this.load(old) : { kind: "leaf", entries: {} };
-      if (node.kind === "leaf") {
-        const entries = { ...node.entries, ...Object.fromEntries(changes) };
-        if (Object.keys(entries).length <= 32)
-          return put({ kind: "leaf", entries });
-        const groups2 = new Map;
-        for (const [id, value] of Object.entries(entries)) {
-          const digit = hash2(id)[depth];
-          if (!digit)
-            throw new ContractError("capacity");
-          const group = groups2.get(digit) ?? new Map;
-          group.set(id, value);
-          groups2.set(digit, group);
-        }
-        return put({
-          kind: "branch",
-          children: Object.fromEntries([...groups2].map(([digit, group]) => [
-            digit,
-            write2(null, group, depth + 1)
-          ]))
-        });
-      }
-      const children = { ...node.children }, groups = new Map;
-      for (const [id, value] of changes) {
-        const digit = hash2(id)[depth];
-        if (!digit)
-          throw new ContractError("capacity");
-        const group = groups.get(digit) ?? new Map;
-        group.set(id, value);
-        groups.set(digit, group);
-      }
-      for (const [digit, group] of groups)
-        children[digit] = write2(children[digit] ?? null, group, depth + 1);
-      return put({ kind: "branch", children });
-    };
-    return write2(root, updates, 0);
-  }
-}
-
 // src/history/source-row.ts
 function decodeSourceRow(value) {
   const o = closed(value, ["segment", "offset", "bytes", "sha256", "seq"]);
@@ -12048,11 +12888,11 @@ class HistoryNavigation {
   cache = new Map;
   cacheBytes = 0;
   blocks = new Map;
-  block(path, at, size, budget) {
-    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync11(path));
+  block(path, at, size2, budget) {
+    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync12(path));
     let old = this.blocks.get(key);
     if (!old || old.budget !== budget || old.stamp !== st) {
-      const bytes = readRange(this.files, path, start, Math.min(1024 * 1024, size - start), budget);
+      const bytes = readRange(this.files, path, start, Math.min(1024 * 1024, size2 - start), budget);
       if (old && (bytes.length < old.bytes.length || !bytes.subarray(0, old.bytes.length).equals(old.bytes)))
         bad2();
       if (!old && this.blocks.size >= 4) {
@@ -12069,7 +12909,7 @@ class HistoryNavigation {
     this.files = files;
     this.tree = new IndexTree(files);
   }
-  prepare(lease, state, rows, active, charge) {
+  prepare(lease, state, rows, active2, charge) {
     if (state.committedSeq !== "0" && state.navigationRoot === undefined)
       return;
     const root = state.navigationRoot ?? null, heads = new Map, updates = new Map, auth = new Map(this.authRuns), seq = rows.at(-1)?.seq;
@@ -12105,7 +12945,7 @@ class HistoryNavigation {
       heads.set(id, head);
       updates.set(id, { seq, hash: head.hash });
     }
-    const activeHash = hash2(canonicalJson(active));
+    const activeHash = hash2(canonicalJson(active2));
     if (previousHeads.get(ACTIVE_KEY)?.hash !== activeHash)
       updates.set(ACTIVE_KEY, { seq, hash: activeHash });
     return { root: this.tree.update(lease, root, updates, charge), heads };
@@ -12127,7 +12967,7 @@ class HistoryNavigation {
     }
   }
   indexPath(group, id) {
-    return join16(this.files.directory, "indexes", group, `${id}.json`);
+    return join18(this.files.directory, "indexes", group, `${id}.json`);
   }
   hintKey(group, id) {
     return `${this.files.directory}/${this.files.format.storeId}/${group}/${id}`;
@@ -12186,10 +13026,10 @@ class HistoryNavigation {
     try {
       if (!this.files.files.directory(dirname13(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
-      const size = lstatSync11(path).size;
-      if (size > RECORD_BYTES)
+      const size2 = lstatSync12(path).size;
+      if (size2 > RECORD_BYTES)
         return source ? structuredClone(source.value) : undefined;
-      return parseWireJson(readRange(this.files, path, 0, size, budget).toString("utf8"), RECORD_BYTES);
+      return parseWireJson(readRange(this.files, path, 0, size2, budget).toString("utf8"), RECORD_BYTES);
     } catch (e) {
       if (e instanceof ContractError && e.code === "receipt-inconclusive")
         throw e;
@@ -12318,7 +13158,7 @@ class HistoryNavigation {
   }
   batch(p, budget) {
     const key = canonicalJson(p), cached = this.cache.get(key), path = this.files.segmentPath(p.segment);
-    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync11(path))) {
+    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync12(path))) {
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
       return cached.batch;
@@ -12329,7 +13169,7 @@ class HistoryNavigation {
       if (cached.identity !== identity)
         bad2();
       cached.budget = budget;
-      cached.stamp = stamp3(lstatSync11(path));
+      cached.stamp = stamp3(lstatSync12(path));
       this.files.assertPublished(p.segment, p.offset + p.bytes, p.seq);
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
@@ -12380,7 +13220,7 @@ class HistoryNavigation {
         identity,
         batch,
         bytes: bytes.length,
-        stamp: stamp3(lstatSync11(path)),
+        stamp: stamp3(lstatSync12(path)),
         budget
       });
       this.cacheBytes += bytes.length;
@@ -12395,25 +13235,25 @@ class HistoryNavigation {
     for (;; ) {
       budget.reserve(0);
       const path = this.files.segmentPath(segment);
-      let size;
+      let size2;
       try {
-        size = lstatSync11(path).size;
+        size2 = lstatSync12(path).size;
       } catch (e) {
         if (e instanceof Error && "code" in e && e.code === "ENOENT")
           return null;
         throw e;
       }
-      if (size > LIMITS.segmentBytes || offset > size)
+      if (size2 > LIMITS.segmentBytes || offset > size2)
         bad2();
-      if (offset === size) {
+      if (offset === size2) {
         segment++;
         offset = 0;
         continue;
       }
       let pending = Buffer.alloc(0), at = offset, bodyBytes = 0;
       const checksum = createHash11("sha256"), rows = [];
-      while (at < size) {
-        const chunk = this.block(path, at, size, budget);
+      while (at < size2) {
+        const chunk = this.block(path, at, size2, budget);
         at += chunk.length;
         pending = Buffer.concat([pending, chunk]);
         for (;; ) {
@@ -13257,8 +14097,8 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash15, randomUUID as randomUUID10 } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash as createHash15, randomUUID as randomUUID11 } from "node:crypto";
+import { readFileSync as readFileSync2 } from "node:fs";
 
 // src/history/search.ts
 import { createHash as createHash14 } from "node:crypto";
@@ -13953,9 +14793,9 @@ class ForwardValidator {
       const start = at, end = bytes.indexOf(10, at);
       if (end < 0)
         bad4();
-      const decode2 = () => decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end + 1)));
+      const decode3 = () => decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end + 1)));
       if (end + 1 === bytes.length) {
-        const r = decode2();
+        const r = decode3();
         if (r.kind !== "commit")
           bad4();
         marker2 = r;
@@ -13965,7 +14805,7 @@ class ForwardValidator {
           enumerable: true,
           get() {
             if (!row) {
-              const r = decode2();
+              const r = decode3();
               if (r.kind !== "record")
                 bad4();
               row = r;
@@ -15068,13 +15908,13 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
                   offset: start
                 }
               };
-              const size = Buffer.byteLength(canonicalJson(hit));
-              if (hits.length >= limit || encoded2 + size > LIMITS.pageBytes - 4096) {
+              const size2 = Buffer.byteLength(canonicalJson(hit));
+              if (hits.length >= limit || encoded2 + size2 > LIMITS.pageBytes - 4096) {
                 p.byte = at;
                 break outer;
               }
               hits.push(hit);
-              encoded2 += size;
+              encoded2 += size2;
               p.byte = at + 1;
               while (p.byte < body.length && (body[p.byte] & 192) === 128)
                 p.byte++;
@@ -15111,7 +15951,7 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash15("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash15("sha256").update(readFileSync2(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
@@ -15171,7 +16011,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID10(), digest = createHash15("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID11(), digest = createHash15("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -16684,15 +17524,15 @@ class HistoryProjection {
         for (;rowIndex < b.rows.length; rowIndex++, itemIndex = 0) {
           for (const item of this.records(b.rows[rowIndex], request3, budget, itemIndex)) {
             itemIndex = item.item;
-            const record2 = item.record, size = Buffer.byteLength(canonicalJson(record2));
-            if (records.length >= request3.limit || bytes + size > LIMITS.pageBytes) {
+            const record2 = item.record, size2 = Buffer.byteLength(canonicalJson(record2));
+            if (records.length >= request3.limit || bytes + size2 > LIMITS.pageBytes) {
               next = {
                 ...request3,
                 after: this.cursor(request3, pos, rowIndex, itemIndex)
               };
               return decodeHistoryPage({ request: request3, records, next, coverage });
             }
-            bytes += size;
+            bytes += size2;
             records.push(record2);
             itemIndex++;
             if (record2.kind === "content")
@@ -16797,10 +17637,10 @@ class HistoryProjection {
           goal: task.goal,
           plan: null
         });
-        const size = Buffer.byteLength(JSON.stringify(record2));
-        if (bytes + size > LIMITS.pageBytes)
+        const size2 = Buffer.byteLength(JSON.stringify(record2));
+        if (bytes + size2 > LIMITS.pageBytes)
           break;
-        bytes += size;
+        bytes += size2;
         records.push(record2);
         offset++;
       }
@@ -16867,7 +17707,7 @@ class HistoryProjection {
     const scope = decodeScope(input), budget = new HistoryReadBudget, seq2 = this.navigation.latest(budget), epoch = this.readEpoch();
     this.navigation.snapshot(seq2, budget);
     let taskId2 = scope.kind === "task" ? scope.id : null;
-    const active = this.navigation.active(seq2, budget), groups = [], seen = new Set;
+    const active2 = this.navigation.active(seq2, budget), groups = [], seen = new Set;
     const selected2 = (id) => {
       const group = this.runState(id, seq2, budget).projections(epoch).filter((r) => fits2(r, scope));
       if (group.length) {
@@ -16876,7 +17716,7 @@ class HistoryProjection {
       }
       return group;
     };
-    for (const a of active)
+    for (const a of active2)
       if (scope.kind === "task" ? a.taskId === scope.id : scope.kind === "run" ? a.runId === scope.id : true) {
         const group = selected2(a.runId);
         if (group.length)
@@ -16957,7 +17797,7 @@ class HistoryProjection {
 // src/history/reader.ts
 import { createHash as createHash18 } from "node:crypto";
 import { existsSync as existsSync2 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/history/saved-graph-state.ts
 var freshSavedGraph = () => ({
@@ -17725,7 +18565,7 @@ class HistoryReader {
   }
   async readDetail(value) {
     const cursor = decodeCursor(value);
-    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join17(this.files.directory, "indexes", "heads", "latest.json")))
+    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join19(this.files.directory, "indexes", "heads", "latest.json")))
       return readRetainedDetail(this, cursor);
     if (this.files.format.schema !== FORMAT)
       return this.detail(cursor);
@@ -17925,23 +18765,28 @@ class HistoryReader {
   }
 }
 
+// src/history/recovery.ts
+import { createHash as createHash22, randomUUID as randomUUID15 } from "node:crypto";
+import { lstatSync as lstatSync13, opendirSync as opendirSync8 } from "node:fs";
+import { join as join23, relative as relative7 } from "node:path";
+
 // src/history/writer.ts
-import { createHash as createHash21, randomUUID as randomUUID13 } from "node:crypto";
-import { join as join20 } from "node:path";
+import { createHash as createHash21, randomUUID as randomUUID14 } from "node:crypto";
+import { join as join22 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash19, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash19, randomUUID as randomUUID12 } from "node:crypto";
 import {
   closeSync as closeSync7,
   fsyncSync as fsyncSync4,
   openSync as openSync7,
   readdirSync as readdirSync2,
-  renameSync as renameSync2,
+  renameSync as renameSync3,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync3
 } from "node:fs";
-import { hostname as hostname4 } from "node:os";
-import { join as join18 } from "node:path";
+import { hostname as hostname6 } from "node:os";
+import { join as join20 } from "node:path";
 // src/task-types.ts
 var TASK_SCHEMA = "cadence-workflow-assistant/1";
 var MAX_RECORD_BYTES = 128 * 1024;
@@ -17997,6 +18842,21 @@ function decodeTask(value) {
     throw new Error("Unknown task fields");
   return structuredClone(value);
 }
+
+// src/verification-diagnostics.ts
+function diagnosticText(value, maximum = 4096, secrets = []) {
+  maximum = Math.max(0, Math.floor(maximum));
+  let clean = value;
+  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
+    clean = clean.split(secret).join("[redacted]");
+  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
+  if (Buffer.byteLength(clean) <= maximum)
+    return clean;
+  const marker2 = maximum >= 12 ? `
+[truncated]` : ".".repeat(maximum);
+  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker2)));
+  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker2;
+}
 // src/task-store.ts
 function recordText(record2) {
   return `${JSON.stringify(record2, null, 2)}
@@ -18013,10 +18873,10 @@ class TaskStore extends CheckoutStore {
   tasks;
   constructor(root, stateHome = defaultStateHome()) {
     super(root, stateHome);
-    this.tasks = join18(this.root, ".cadence", "assistant", "tasks");
+    this.tasks = join20(this.root, ".cadence", "assistant", "tasks");
   }
   recover(expected, acknowledgeEscapedProcesses) {
-    if (!acknowledgeEscapedProcesses || expected.host !== hostname4())
+    if (!acknowledgeEscapedProcesses || expected.host !== hostname6())
       throw new Error("Recovery requires informed local-owner confirmation");
     this.assertOwner(expected);
     try {
@@ -18036,10 +18896,10 @@ class TaskStore extends CheckoutStore {
   loadSnapshot(id) {
     if (!validId(id))
       throw new Error("Invalid task id");
-    const directory = join18(this.tasks, id);
+    const directory = join20(this.tasks, id);
     if (safeDirectory(directory) && readdirSync2(directory).some((name) => name !== "task.json"))
       throw new Error("Unknown task directory content; preserved without reset");
-    const data = readBounded(join18(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
+    const data = readBounded(join20(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
     if (!data)
       return;
     const record2 = decodeTask(parseRecord(data));
@@ -18050,10 +18910,10 @@ class TaskStore extends CheckoutStore {
   list() {
     if (!safeDirectory(this.tasks))
       return [];
-    const entries = readdirSync2(this.tasks);
-    if (entries.length > 1000)
+    const entries2 = readdirSync2(this.tasks);
+    if (entries2.length > 1000)
       throw new Error("Task listing limit exceeded");
-    return entries.map((id) => {
+    return entries2.map((id) => {
       const task = this.load(id);
       if (!task)
         throw new Error("Unknown task directory");
@@ -18068,7 +18928,7 @@ class TaskStore extends CheckoutStore {
     if (Buffer.byteLength(text2) > MAX_RECORD_BYTES)
       throw new Error("Task record limit");
     const lock = held ?? this.acquire();
-    if (lock.pid !== process.pid || lock.host !== hostname4())
+    if (lock.pid !== process.pid || lock.host !== hostname6())
       throw new Error("Not the lock owner");
     try {
       this.assertOwner(lock);
@@ -18077,11 +18937,11 @@ class TaskStore extends CheckoutStore {
         throw new Error("Revision conflict");
       if (current2?.identity !== expectedIdentity)
         throw new Error("Task content changed; reopen it");
-      const dir = join18(this.tasks, next.id);
+      const dir = join20(this.tasks, next.id);
       safeDirectory(dir, true);
       if (!current2 && readdirSync2(dir).length)
         throw new Error("Unknown task directory");
-      const temporary = join18(dir, `task.${randomUUID11()}.tmp`);
+      const temporary = join20(dir, `task.${randomUUID12()}.tmp`);
       const fd = openSync7(temporary, "wx", 384);
       try {
         writeFileSync3(fd, text2);
@@ -18090,12 +18950,12 @@ class TaskStore extends CheckoutStore {
         closeSync7(fd);
       }
       this.assertOwner(lock);
-      const latest = readBounded(join18(dir, "task.json"), MAX_RECORD_BYTES);
+      const latest = readBounded(join20(dir, "task.json"), MAX_RECORD_BYTES);
       if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
         throw new Error("Task content changed; replacement preserved without overwrite");
-      retryWindowsFileOperation(() => renameSync2(temporary, join18(dir, "task.json")), () => {
+      retryWindowsFileOperation(() => renameSync3(temporary, join20(dir, "task.json")), () => {
         this.assertOwner(lock);
-        const now = readBounded(join18(dir, "task.json"), MAX_RECORD_BYTES);
+        const now = readBounded(join20(dir, "task.json"), MAX_RECORD_BYTES);
         if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
           throw new Error("Task content changed; replacement preserved without overwrite");
       });
@@ -18106,7 +18966,7 @@ class TaskStore extends CheckoutStore {
     }
   }
   checks() {
-    const data = readBounded(join18(this.root, ".cadence", "assistant", "config.json"), 32768);
+    const data = readBounded(join20(this.root, ".cadence", "assistant", "config.json"), 32768);
     if (!data)
       return [];
     const value = parseRecord(data);
@@ -18120,16 +18980,16 @@ class TaskStore extends CheckoutStore {
   readLog(name) {
     if (!/^[a-f0-9-]{36}\.log$/.test(name))
       throw new Error("Invalid diagnostic name");
-    this.inspectPrivateFile(join18(this.privateRoot, name), 65536);
-    const data = readBounded(join18(this.privateRoot, name), 65536);
+    this.inspectPrivateFile(join20(this.privateRoot, name), 65536);
+    const data = readBounded(join20(this.privateRoot, name), 65536);
     return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
   }
   writeLog(lock, output) {
-    if (lock.pid !== process.pid || lock.host !== hostname4())
+    if (lock.pid !== process.pid || lock.host !== hostname6())
       throw new Error("Not the lock owner");
     this.assertOwner(lock);
-    const name = `${randomUUID11()}.log`;
-    writeFileSync3(join18(this.privateRoot, name), diagnosticText(output, 65536), {
+    const name = `${randomUUID12()}.log`;
+    writeFileSync3(join20(this.privateRoot, name), diagnosticText(output, 65536), {
       flag: "wx",
       mode: 384
     });
@@ -18148,7 +19008,7 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash20, randomUUID as randomUUID12 } from "node:crypto";
+import { createHash as createHash20, randomUUID as randomUUID13 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
@@ -18156,7 +19016,7 @@ function assertPlanContent(plan, reference, secrets) {
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
-  const detailId = randomUUID12();
+  const detailId = randomUUID13();
   const input = {
     link: { epoch, taskId: graph.taskId, runId: null, operationId },
     observedMs: 0,
@@ -18212,7 +19072,7 @@ import {
   openSync as openSync8,
   realpathSync as realpathSync6
 } from "node:fs";
-import { dirname as dirname14, isAbsolute as isAbsolute7, join as join19, relative as relative6, sep as sep5 } from "node:path";
+import { dirname as dirname14, isAbsolute as isAbsolute7, join as join21, relative as relative6, sep as sep5 } from "node:path";
 function summary(text2, maximum, runId) {
   const label = `[Cadence summary${runId ? `; run ${runId}` : ""}; retained history is separate]
 `;
@@ -18397,7 +19257,7 @@ ${result}`;
 function syncTaskPublication(store, taskId2) {
   if (process.platform === "win32")
     return;
-  for (let path = join19(store.tasks, taskId2);; path = dirname14(path)) {
+  for (let path = join21(store.tasks, taskId2);; path = dirname14(path)) {
     if (!safeDirectory(path))
       throw new ContractError("conflict");
     const fd = openSync8(path, constants6.O_RDONLY | constants6.O_DIRECTORY);
@@ -18628,7 +19488,7 @@ class HistoryWriter {
       this.fenced = true;
     this.auth = {
       lifetimeTracked: !!options.onOriginal,
-      original: (report) => this.originalReports.get(report) ?? report,
+      original: (report2) => this.originalReports.get(report2) ?? report2,
       preparation: (input) => this.authPreparation(input),
       settlement: (input) => this.authSettlement(input)
     };
@@ -18746,7 +19606,7 @@ class HistoryWriter {
             kind: "fact",
             fact: {
               kind: "publication-settled",
-              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID13(),
+              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID14(),
               status: "uncertain",
               observed: null
             }
@@ -18774,7 +19634,7 @@ class HistoryWriter {
     };
   }
   charge(bytes, runId = null, control = false) {
-    const remaining = [...this.reserved.entries()].reduce((n, [id, size]) => n + Math.max(0, size - (id === runId ? bytes : 0)), 0);
+    const remaining = [...this.reserved.entries()].reduce((n, [id, size2]) => n + Math.max(0, size2 - (id === runId ? bytes : 0)), 0);
     if (this.used + bytes + remaining > (this.options.quotaBytes ?? LIMITS.checkoutQuotaBytes) || this.files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes || runId && this.reserved.has(runId) && (this.reserved.get(runId) ?? 0) < bytes + (control ? 0 : LIMITS.episodeControlBytes))
       throw new ContractError("recording-exhausted");
     this.used += bytes;
@@ -18834,7 +19694,7 @@ class HistoryWriter {
     else
       this.timer ??= setTimeout(() => this.schedule(), LIMITS.progressBatchMs);
     let timer;
-    const report = Promise.race([
+    const report2 = Promise.race([
       original.then((result) => {
         clearTimeout(timer);
         return result;
@@ -18846,8 +19706,8 @@ class HistoryWriter {
         }, LIMITS.recordingStallMs);
       })
     ]);
-    this.originalReports.set(report, original);
-    return report;
+    this.originalReports.set(report2, original);
+    return report2;
   }
   rowRunId(v) {
     return v.kind === "admission" ? v.intent.identity.kind === "action" ? v.intent.runId : null : v.kind === "auth-preparation" ? v.intent.runId : v.kind === "auth-settlement" ? this.authOpen.get(v.result.operationId)?.runId ?? null : v.kind === "launch" || v.kind === "settlement" || v.kind === "owner" || v.kind === "capture" ? v.link.runId : null;
@@ -18876,7 +19736,7 @@ class HistoryWriter {
             const row = {
               kind: "record",
               seq: seq2,
-              id: randomUUID13(),
+              id: randomUUID14(),
               value
             };
             rows.push(row);
@@ -19011,10 +19871,10 @@ class HistoryWriter {
                 const d = event.detail;
                 batch.coverage = combineCoverage(batch.coverage, d.coverage);
                 if (d.origin.kind === "worker") {
-                  const active = this.children.get(d.origin.id)?.details.get(d.detailId);
-                  if (!active || active.ended !== d)
+                  const active2 = this.children.get(d.origin.id)?.details.get(d.detailId);
+                  if (!active2 || active2.ended !== d)
                     throw new ContractError("corrupt-selected");
-                  active.committedSeq = this.state.committedSeq;
+                  active2.committedSeq = this.state.committedSeq;
                   batch.details.push({
                     childRunId: d.origin.id,
                     detailId: d.detailId,
@@ -19150,7 +20010,7 @@ class HistoryWriter {
     try {
       const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
-      const directoryExists = this.files.files.directory(join20(this.files.directory, "commands", commandId));
+      const directoryExists = this.files.files.directory(join22(this.files.directory, "commands", commandId));
       const wanted = intent ? decodeAdmissionIntent(json(intent, RECORD_BYTES)) : null;
       let found = null;
       let run = null;
@@ -19296,8 +20156,8 @@ class HistoryWriter {
       this.assertOrdinary();
       const bytes = encoded(intent);
       this.charge(Buffer.byteLength(bytes), intent.runId, true);
-      this.files.files.create(join20(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
-      this.files.syncParents(join20(this.files.directory, "commands", intent.commandId, "intent.json"));
+      this.files.files.create(join22(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
+      this.files.syncParents(join22(this.files.directory, "commands", intent.commandId, "intent.json"));
       await this.options.observeWrite?.("intent");
       const policy = this.resourcePolicy(intent.identity.kind === "action" ? intent.identity.expected.configRev : 1);
       return { kind: "admission", intent, record: record2, policy };
@@ -19462,7 +20322,7 @@ class HistoryWriter {
       };
     }
     this.publishing.add(request3.operationId);
-    const publicationId = randomUUID13();
+    const publicationId = randomUUID14();
     let link;
     let record2;
     let expected;
@@ -19814,7 +20674,7 @@ class HistoryWriter {
       owner,
       descriptor,
       field,
-      recordId: randomUUID13(),
+      recordId: randomUUID14(),
       version: 1,
       bytes: 0,
       hash: createHash21("sha256"),
@@ -19937,7 +20797,7 @@ class HistoryWriter {
           throw new ContractError("invalid");
         child.final = { messageId: event.messageId, detailId: event.detailId };
       }
-      events.push({ kind: "capture", id: randomUUID13(), value: item });
+      events.push({ kind: "capture", id: randomUUID14(), value: item });
     }
     return { kind: "capture", link: input.link, source: input.source, events };
   }
@@ -20063,12 +20923,12 @@ class HistoryWriter {
         candidate.apply({
           kind: "record",
           seq: "1",
-          id: randomUUID13(),
+          id: randomUUID14(),
           value: {
             kind: "owner",
             link: value.link,
             observedMs: value.observedMs,
-            events: [{ kind: "owner", id: randomUUID13(), value: event }]
+            events: [{ kind: "owner", id: randomUUID14(), value: event }]
           }
         }, this.state.committedSeq);
         const children = new Set(identity.assignments.map((a) => a.childRunId));
@@ -20150,7 +21010,7 @@ class HistoryWriter {
           events.push(ended);
         }
       } else
-        events.push({ kind: "owner", id: randomUUID13(), value: event });
+        events.push({ kind: "owner", id: randomUUID14(), value: event });
     }
     return {
       kind: "owner",
@@ -20190,6 +21050,1326 @@ function readOperationStateForPublication(files, operationId) {
   if (!intent)
     throw new ContractError("conflict");
   return { intent, state, facts, recovered, publication };
+}
+
+// src/history/recovery.ts
+function digestHistory(files, exclude) {
+  files.assertFormat();
+  const digest = createHash22("sha256");
+  let count2 = 0;
+  const walk = (path, depth) => {
+    if (depth > 8 || !files.files.directory(path))
+      throw new ContractError("corrupt-selected");
+    const directory = lstatSync13(path);
+    digest.update(`incarnation:${directory.dev}:${directory.ino}
+`);
+    const dir = opendirSync8(path), names2 = [];
+    try {
+      for (let e = dir.readSync();e; e = dir.readSync()) {
+        if (++count2 > LIMITS.dataFrames)
+          throw new ContractError("capacity");
+        names2.push(e.name);
+      }
+    } finally {
+      dir.closeSync();
+    }
+    for (const name of names2.sort()) {
+      const selected2 = join23(path, name);
+      if (selected2 === exclude)
+        continue;
+      const rel = relative7(files.directory, selected2);
+      if (lstatSync13(selected2).isDirectory()) {
+        digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
+`);
+        walk(selected2, depth + 1);
+      } else {
+        const value = files.files.read(selected2, LIMITS.segmentBytes);
+        if (!value)
+          throw new ContractError("conflict");
+        digest.update(`file:${Buffer.byteLength(rel)}:${rel}:${value.stamp}:${value.bytes.length}:`).update(value.bytes);
+      }
+    }
+  };
+  walk(files.directory, 0);
+  files.assertFormat();
+  return digest.digest("hex");
+}
+async function appendRecoveryBridge(lease, files, observeWrite) {
+  lease.assert();
+  files.assertWritable();
+  const state = files.inspect();
+  const bridge = {
+    kind: "recovery",
+    recoveryId: randomUUID15(),
+    epoch: lease.registration.epoch,
+    coordinationDigest: hash2(encoded({ automatic: true, epoch: lease.registration.epoch })),
+    historyDigest: digestHistory(files),
+    previous: {
+      segment: state.segment,
+      bytes: state.bytes,
+      sha256: state.identity ?? hash2(""),
+      committedBytes: state.committedBytes ?? state.bytes,
+      committedSeq: state.committedSeq,
+      highSeq: state.highSeq ?? state.committedSeq
+    },
+    acknowledgments: { processes: true, credentials: true, storage: true }
+  };
+  const row = {
+    kind: "record",
+    id: randomUUID15(),
+    seq: String(BigInt(bridge.previous.highSeq) + 1n),
+    value: bridge
+  };
+  const encodedBatch = files.encodeBatch(state, [row]);
+  const bytes = Buffer.byteLength(encodedBatch.body + encodedBatch.trailer);
+  if (files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes)
+    throw new ContractError("recording-exhausted");
+  const after = await files.appendRecovery(state, row, async () => lease.assert(), observeWrite);
+  return {
+    committedSeq: after.state.committedSeq,
+    segment: after.state.segment
+  };
+}
+function damaged(error) {
+  return !(error instanceof ContractError) || error.code === "corrupt-selected";
+}
+async function healHistory(lease, log) {
+  lease.assert();
+  const c = lease.coordination, directory = join23(c.directory, "history-v2");
+  let files;
+  let broken = false;
+  try {
+    files = HistoryFiles.open(c);
+    if (files) {
+      files.assertWritable();
+      if (new HistoryWriter(lease).quarantined) {
+        await appendRecoveryBridge(lease, files);
+        if (new HistoryWriter(lease).quarantined)
+          throw new ContractError("quarantine");
+        return { heal: "continued-history", archive: null };
+      }
+      return { heal: "clean", archive: null };
+    }
+  } catch (error) {
+    if (!damaged(error))
+      throw error;
+    broken = true;
+  }
+  if (broken) {
+    const archive = log.archive();
+    archive.keep(directory, "history-v2");
+    HistoryFiles.initialize(lease);
+    return { heal: "archived-history", archive: archive.name };
+  }
+  HistoryFiles.initialize(lease);
+  return { heal: "initialized", archive: null };
+}
+
+// src/subagent-process.ts
+import { spawn as spawn2 } from "node:child_process";
+import { join as join24 } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
+
+// src/conversation-context.mjs
+var CONTEXT_BYTES = 2 * 1024 * 1024;
+var clean = (s, secrets, max = CONTEXT_BYTES) => sanitizeText(text(s, max), secrets);
+function argumentsData(value, secrets) {
+  const sanitizer = new DetailSanitizer("canonical-json", secrets);
+  const source = sanitizer.write(canonicalJson(value, 64 * 1024)) + sanitizer.end();
+  if (sanitizer.limited)
+    throw new Error("Unsupported context arguments");
+  return parseWireJson(source, 64 * 1024);
+}
+function own2(value, key2) {
+  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
+  if (!d || !("value" in d))
+    throw new Error("Invalid usage");
+  return d.value;
+}
+function counts(value, keys2) {
+  const out = Object.create(null);
+  for (const key2 of keys2) {
+    const n = own2(value, key2);
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
+      throw new Error("Invalid usage");
+    out[key2] = n;
+  }
+  return out;
+}
+function conversationMessages(messages, secrets = []) {
+  return list(messages, 4096, (message) => {
+    if (!message || typeof message !== "object")
+      throw new Error("Invalid context");
+    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
+    const timestamp2 = integer(message.timestamp, 0);
+    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
+      if (block.type === "text")
+        return { type: "text", text: clean(block.text, secrets) };
+      if (role2 === "assistant" && block.type === "toolCall")
+        return {
+          type: "toolCall",
+          id: clean(block.id, secrets, 512),
+          name: clean(block.name, secrets, 128),
+          arguments: argumentsData(block.arguments, secrets)
+        };
+      return null;
+    }).filter(Boolean);
+    if (role2 === "user")
+      return { role: role2, timestamp: timestamp2, content };
+    if (role2 === "toolResult")
+      return {
+        role: role2,
+        timestamp: timestamp2,
+        content,
+        toolCallId: clean(message.toolCallId, secrets, 512),
+        toolName: clean(message.toolName, secrets, 128),
+        isError: message.isError === true
+      };
+    const usage = counts(message.usage, [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "totalTokens"
+    ]);
+    usage.cost = counts(own2(message.usage, "cost"), [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "total"
+    ]);
+    return {
+      role: role2,
+      timestamp: timestamp2,
+      content,
+      api: clean(message.api, secrets, 128),
+      provider: clean(message.provider, secrets, 128),
+      model: clean(message.model, secrets, 256),
+      usage,
+      stopReason: oneOf(message.stopReason, [
+        "stop",
+        "length",
+        "toolUse",
+        "error",
+        "aborted"
+      ])
+    };
+  });
+}
+// src/worker-capture.mjs
+import { createHash as createHash23, randomUUID as randomUUID16 } from "node:crypto";
+var completeCoverage = () => ({
+  observed: "complete",
+  source: "complete",
+  redacted: false,
+  omissions: []
+});
+var controlEvent = (kind) => ["ready", "capture-status", "worker-failure", "final"].includes(kind);
+function* chunks(text2) {
+  for (let at = 0;at < text2.length; ) {
+    let end = Math.min(at + 2048, text2.length);
+    if (end < text2.length && /[\uD800-\uDBFF]/.test(text2[end - 1]))
+      end--;
+    yield text2.slice(at, end);
+    at = end;
+  }
+}
+function requireFact2(condition) {
+  if (!condition)
+    throw new ContractError;
+}
+
+class CaptureState {
+  constructor(childRunId, request3) {
+    this.position = {
+      childRunId: decodeId(childRunId),
+      workerSeq: 0,
+      observedMs: 0,
+      final: false
+    };
+    this.details = new Map;
+    this.messages = new Map;
+    this.calls = new Map;
+    this.blocks = new Map;
+    this.dataFrames = 0;
+    this.controlFrames = 0;
+    this.bytes = 0;
+    this.coverage = completeCoverage();
+    this.selected = null;
+    this.failed = false;
+    this.request = request3;
+    this.contexts = new Set;
+    this.handoffs = new Set;
+  }
+  accept(input, encodedBytes) {
+    const { frame, position: position2 } = advanceCapture(this.position, input);
+    const e = frame.event;
+    const control = controlEvent(e.kind);
+    this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
+    if (++this[control ? "controlFrames" : "dataFrames"] > (control ? LIMITS.controlFrames : LIMITS.dataFrames) || this.bytes > LIMITS.childProtocolBytes - (control ? 0 : LIMITS.ownerControlBytes))
+      throw new ContractError("oversize");
+    const message = (id) => {
+      const m = this.messages.get(id);
+      requireFact2(m);
+      return m;
+    };
+    const detail = (id, field, ownerId) => {
+      const d = this.details.get(id);
+      requireFact2(d?.ended && d.descriptor.field === field);
+      if (ownerId)
+        requireFact2((d.descriptor.owner.messageId ?? d.descriptor.owner.callId) === ownerId);
+      return d;
+    };
+    const owner = (o) => {
+      if (o.kind === "message" || o.kind === "message-final")
+        requireFact2(!message(o.messageId).ended);
+      if (o.blockId) {
+        const previous = this.blocks.get(o.blockId);
+        const key2 = canonicalJson(o);
+        requireFact2(previous === undefined || previous === key2);
+        this.blocks.set(o.blockId, key2);
+      }
+    };
+    switch (e.kind) {
+      case "ready":
+        break;
+      case "message-start":
+        requireFact2(!this.messages.has(e.messageId));
+        if (e.resultCallId !== null)
+          requireFact2(this.calls.get(e.resultCallId)?.ended);
+        this.messages.set(e.messageId, {
+          role: e.role,
+          ended: false,
+          final: null,
+          stopReason: null,
+          finalIndices: new Set,
+          finalHash: createHash23("sha256"),
+          finalBytes: 0,
+          finalIndex: -1
+        });
+        break;
+      case "detail-begin":
+        requireFact2(!this.details.has(e.detailId));
+        owner(e.descriptor.owner);
+        if (e.descriptor.owner.kind === "context") {
+          requireFact2(!this.contexts.has(e.descriptor.owner.component));
+          this.contexts.add(e.descriptor.owner.component);
+        }
+        if (e.descriptor.owner.kind === "handoff") {
+          const o = e.descriptor.owner;
+          requireFact2(!this.handoffs.has(o.dependencyIndex));
+          if (this.request)
+            requireFact2(this.request.handoff.inputs.some((input2) => input2.dependencyIndex === o.dependencyIndex && canonicalJson(input2.result) === canonicalJson(o.source)));
+          this.handoffs.add(o.dependencyIndex);
+        }
+        if (e.descriptor.owner.kind === "message" && e.descriptor.owner.stage === "final") {
+          const m = message(e.descriptor.owner.messageId);
+          requireFact2(e.descriptor.owner.index > m.finalIndex && !m.finalIndices.has(e.descriptor.owner.index));
+          m.finalIndex = e.descriptor.owner.index;
+          m.finalIndices.add(e.descriptor.owner.index);
+        }
+        this.details.set(e.detailId, {
+          descriptor: e.descriptor,
+          hash: createHash23("sha256"),
+          bytes: 0,
+          ended: false,
+          preview: ""
+        });
+        break;
+      case "detail-chunk": {
+        const d = this.details.get(e.detailId);
+        requireFact2(d && !d.ended && e.offset === d.bytes);
+        d.bytes += utf8Bytes(e.text);
+        d.hash.update(e.text);
+        if (d.descriptor.owner.kind === "message" && d.descriptor.owner.stage === "final") {
+          const m = message(d.descriptor.owner.messageId);
+          m.finalHash.update(e.text);
+          m.finalBytes += utf8Bytes(e.text);
+        }
+        if (d.descriptor.field === "final-text" && utf8Bytes(d.preview) < 16384)
+          d.preview += e.text.slice(0, 16384 - utf8Bytes(d.preview));
+        break;
+      }
+      case "detail-end": {
+        const d = this.details.get(e.detailId);
+        requireFact2(d && !d.ended && d.bytes === e.bytes && d.hash.digest("hex") === e.sha256);
+        if (d.descriptor.owner.kind === "message-final") {
+          const m = message(d.descriptor.owner.messageId);
+          requireFact2(m.finalBytes === e.bytes && m.finalHash.copy().digest("hex") === e.sha256);
+        }
+        d.hash = null;
+        d.ended = true;
+        this.mergeCoverage(e.coverage);
+        break;
+      }
+      case "message-text": {
+        const d = this.details.get(e.detailId);
+        const o = d?.descriptor.owner;
+        requireFact2(!message(e.messageId).ended && d && o.kind === "message" && o.messageId === e.messageId && o.blockId === e.blockId);
+        break;
+      }
+      case "call-declaration": {
+        const m = message(e.declaration.messageId);
+        requireFact2(!m.ended && m.role === "assistant");
+        const old = this.calls.get(e.callId);
+        requireFact2(!old || !old.started && !old.ended && old.stage === "partial" && canonicalJson(old.declaration) === canonicalJson(e.declaration));
+        if (e.argsDetailId)
+          requireFact2(detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner.stage === (e.stage === "partial" ? "arguments-partial" : "arguments-final"));
+        if (e.stage === "final") {
+          requireFact2(!m.finalIndices.has(e.index));
+          m.finalIndices.add(e.index);
+        }
+        this.calls.set(e.callId, { ...e, started: false, ended: false });
+        break;
+      }
+      case "tool-start": {
+        const old = this.calls.get(e.callId);
+        requireFact2(!old || !old.started && !old.ended && canonicalJson(old.declaration) === canonicalJson(e.declaration) && canonicalJson(old.source) === canonicalJson(e.source) && old.name === e.name);
+        requireFact2(old || e.declaration === null);
+        if (e.argsDetailId)
+          requireFact2(detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner.stage === "execution-arguments");
+        this.calls.set(e.callId, { ...old, ...e, started: true, ended: false });
+        break;
+      }
+      case "tool-update":
+        requireFact2(this.calls.get(e.callId)?.started && !this.calls.get(e.callId)?.ended);
+        requireFact2(detail(e.detailId, "tool-update", e.callId).descriptor.owner.stage === "update-snapshot");
+        break;
+      case "tool-end": {
+        const c = this.calls.get(e.callId);
+        requireFact2(!c?.ended && e.startObserved === !!c?.started);
+        if (e.declaration)
+          requireFact2(c && canonicalJson(c.declaration) === canonicalJson(e.declaration));
+        if (c)
+          requireFact2(c.name === e.name && canonicalJson(c.source) === canonicalJson(e.source));
+        requireFact2(detail(e.resultDetailId, "tool-result", e.callId).descriptor.owner.stage === "result");
+        this.calls.set(e.callId, {
+          ...c,
+          ...e,
+          started: e.startObserved,
+          ended: true
+        });
+        break;
+      }
+      case "message-end": {
+        const m = message(e.messageId);
+        requireFact2(!m.ended);
+        if (e.finalDetailId) {
+          const d = detail(e.finalDetailId, "final-text", e.messageId);
+          requireFact2(m.role === "assistant" && d.descriptor.owner.kind === "message-final");
+        }
+        for (const d of this.details.values())
+          if (d.descriptor.owner.messageId === e.messageId) {
+            requireFact2(d.ended);
+            if (d.descriptor.owner.stage === "final")
+              requireFact2(d.descriptor.owner.index < e.finalBlockCount);
+          }
+        requireFact2(m.finalIndices.size === e.finalBlockCount && [...m.finalIndices].every((i) => i < e.finalBlockCount));
+        m.ended = true;
+        m.final = e.finalDetailId;
+        m.stopReason = e.stopReason;
+        break;
+      }
+      case "omitted-block":
+        owner(e.block.owner);
+        if (e.block.owner.kind === "message" && e.block.owner.stage === "final") {
+          const m = message(e.block.owner.messageId);
+          requireFact2(!m.finalIndices.has(e.block.owner.index));
+          m.finalIndices.add(e.block.owner.index);
+        }
+        this.mergeCoverage({
+          observed: "complete",
+          source: "limited",
+          redacted: false,
+          omissions: [e.block.reason]
+        });
+        break;
+      case "capture-status":
+        this.mergeCoverage(e.coverage);
+        break;
+      case "worker-failure":
+        this.failed = true;
+        break;
+      case "final": {
+        if (this.request)
+          requireFact2([
+            "request-context",
+            "request-prompt",
+            "request-instructions",
+            "role",
+            "effective-system"
+          ].every((name) => this.contexts.has(name)) && this.handoffs.size === this.request.handoff.inputs.length);
+        const m = message(e.messageId);
+        requireFact2(!this.failed && m.ended && m.role === "assistant" && m.stopReason === "stop" && m.final === e.detailId && this.coverage.observed === "complete");
+        requireFact2([...this.details.values()].every((d) => d.ended) && [...this.messages.values()].every((v) => v.ended) && [...this.calls.values()].every((c) => !c.started || c.ended));
+        detail(e.detailId, "final-text", e.messageId);
+        this.selected = { messageId: e.messageId, detailId: e.detailId };
+        break;
+      }
+    }
+    this.position = position2;
+    return frame;
+  }
+  mergeCoverage(c) {
+    this.coverage.observed = c.observed === "incomplete" ? "incomplete" : this.coverage.observed;
+    if (c.source !== "complete")
+      this.coverage.source = c.source;
+    this.coverage.redacted ||= c.redacted;
+    this.coverage.omissions = [
+      ...new Set([...this.coverage.omissions, ...c.omissions])
+    ];
+  }
+  get preview() {
+    return this.selected ? this.details.get(this.selected.detailId).preview : "";
+  }
+}
+function parseCaptureLine(line) {
+  return parseWireJson(line, LIMITS.frameBytes);
+}
+
+// src/worker-recording.ts
+class WorkerRecording {
+  link;
+  sink;
+  secrets;
+  stop;
+  details = new Map;
+  commits = new Map;
+  pending = new Set;
+  failure = null;
+  pendingBytes = 0;
+  pendingSlots = 0;
+  parser;
+  rawSizes = new WeakMap;
+  constructor(link, sink, secrets, stop) {
+    this.link = link;
+    this.sink = sink;
+    this.secrets = secrets;
+    this.stop = stop;
+    if (!sink || typeof sink.reserve !== "function")
+      throw new ContractError("unavailable");
+    const parser = sink.reserve({
+      sourceFrames: 0,
+      retainedBytes: LIMITS.frameBytes * 8,
+      outputBytes: 0,
+      outputChunks: 0,
+      lane: "control"
+    });
+    if (parser.status !== "reserved")
+      throw new ContractError("capacity");
+    this.parser = parser.reservation;
+  }
+  reserveRaw(bytes) {
+    const result = this.sink.reserve({
+      sourceFrames: 0,
+      retainedBytes: bytes * 3,
+      outputBytes: 0,
+      outputChunks: 0,
+      lane: "control"
+    });
+    if (result.status !== "reserved") {
+      this.failure = "refused";
+      this.stop();
+      throw new ContractError("recording-exhausted");
+    }
+    this.rawSizes.set(result.reservation, bytes);
+    return result.reservation;
+  }
+  accept(frame, lease) {
+    let consumed = false;
+    try {
+      const source = {
+        first: frame.workerSeq,
+        last: frame.workerSeq,
+        firstObservedMs: frame.observedMs,
+        lastObservedMs: frame.observedMs
+      };
+      const e = frame.event;
+      const rawBytes = this.rawSizes.get(lease) ?? LIMITS.frameBytes;
+      const lane = controlEvent(e.kind) ? "control" : "data";
+      const transferred = this.sink.reserve({
+        sourceFrames: 1,
+        retainedBytes: rawBytes * 3,
+        outputBytes: 0,
+        outputChunks: 0,
+        lane
+      });
+      if (transferred.status !== "reserved")
+        throw new ContractError("capacity");
+      this.rawSizes.delete(lease);
+      lease.release();
+      lease = transferred.reservation;
+      const retained = e.kind === "detail-chunk" || e.kind === "detail-end" ? this.details.get(e.detailId)?.sanitizer.retainedBytes ?? 0 : 0;
+      const allowance = (rawBytes + retained) * 12 + 2048;
+      this.rawSizes.delete(lease);
+      if (lease.grow({
+        sourceFrames: 0,
+        retainedBytes: 0,
+        outputBytes: allowance,
+        outputChunks: Math.ceil(allowance / 2048) + 2,
+        lane
+      }).status !== "reserved")
+        throw new ContractError("capacity");
+      let events;
+      let range2 = source;
+      if (e.kind === "detail-begin") {
+        const prefixBytes = this.secrets.reduce((n, s) => Math.max(n, utf8Bytes(s)), 0) * 4 + 65536 + (e.descriptor.encoding === "canonical-json" ? 1024 * 1024 : 0);
+        const reserved = this.sink.reserve({
+          sourceFrames: 0,
+          retainedBytes: prefixBytes,
+          outputBytes: 0,
+          outputChunks: 0,
+          lane: "data"
+        });
+        if (reserved.status !== "reserved")
+          throw new ContractError("capacity");
+        const partial = e.descriptor.owner.kind === "tool" && e.descriptor.owner.stage === "arguments-partial";
+        this.details.set(e.detailId, {
+          sanitizer: new DetailSanitizer(partial ? "canonical-json" : e.descriptor.encoding, this.secrets, partial),
+          prefix: reserved.reservation,
+          prefixBytes,
+          source: null
+        });
+        events = [e];
+      } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+        const detail = this.details.get(e.detailId);
+        if (!detail)
+          throw new ContractError;
+        const first = detail.source ?? source;
+        range2 = {
+          ...first,
+          last: source.last,
+          lastObservedMs: source.lastObservedMs
+        };
+        const output = e.kind === "detail-chunk" ? detail.sanitizer.write(e.text) : detail.sanitizer.end();
+        const extra = detail.sanitizer.retainedBytes - detail.prefixBytes;
+        if (extra > 0) {
+          if (detail.prefix.grow({
+            sourceFrames: 0,
+            retainedBytes: extra,
+            outputBytes: 0,
+            outputChunks: 0,
+            lane: "data"
+          }).status !== "reserved")
+            throw new ContractError("capacity");
+          detail.prefixBytes += extra;
+        }
+        events = [...chunks(output)].map((text2) => ({
+          kind: "stored-chunk",
+          detailId: e.detailId,
+          text: text2
+        }));
+        detail.source = detail.sanitizer.retainedBytes ? range2 : null;
+        if (e.kind === "detail-end") {
+          events.push({
+            kind: "stored-end",
+            detailId: e.detailId,
+            coverage: {
+              ...e.coverage,
+              redacted: e.coverage.redacted || detail.sanitizer.redacted,
+              source: detail.sanitizer.limited ? "limited" : e.coverage.source,
+              omissions: detail.sanitizer.limited ? [
+                ...new Set([
+                  ...e.coverage.omissions,
+                  "unsupported"
+                ])
+              ] : e.coverage.omissions
+            }
+          });
+          detail.prefix.release();
+          this.details.delete(e.detailId);
+        }
+      } else if (e.kind === "tool-start" || e.kind === "tool-end" || e.kind === "call-declaration") {
+        const value = e.source.value;
+        events = [
+          {
+            ...e,
+            name: sanitizeText(e.name, this.secrets),
+            source: value !== null && sanitizeText(value, this.secrets) !== value ? { disposition: "redacted", value: null } : e.source
+          }
+        ];
+      } else if (e.kind === "message-start") {
+        const value = e.source.value;
+        events = [
+          {
+            ...e,
+            source: value !== null && sanitizeText(value, this.secrets) !== value ? { disposition: "redacted", value: null } : e.source
+          }
+        ];
+      } else if (e.kind === "omitted-block") {
+        const mimeType = e.block.mimeType;
+        const redacted = mimeType !== null && sanitizeText(mimeType, this.secrets) !== mimeType;
+        events = [
+          { ...e, block: { ...e.block, mimeType: redacted ? null : mimeType } }
+        ];
+        if (redacted)
+          events.push({
+            kind: "capture-status",
+            coverage: {
+              observed: "complete",
+              source: "limited",
+              redacted: true,
+              omissions: [e.block.reason]
+            }
+          });
+      } else
+        events = [e];
+      const input = decodeRecordingInput({
+        link: this.link,
+        source: range2,
+        events: events.map((event) => ({ source: range2, event }))
+      });
+      if (utf8Bytes(canonicalJson(input)) > allowance)
+        throw new ContractError("capacity");
+      consumed = true;
+      const charge = rawBytes * 3 + allowance;
+      const slots = 1 + Math.ceil(allowance / 2048) + 2;
+      this.pendingBytes += charge;
+      this.pendingSlots += slots;
+      const original = (async () => {
+        const result = await lease.commit(input);
+        if (result.status !== "committed") {
+          this.failure = result.durability === "uncertain" ? "uncertain" : "refused";
+          this.stop();
+          return;
+        }
+        const batch = decodeCommittedBatch(result.batch);
+        for (const detail of batch.details) {
+          if (detail.childRunId !== this.link.childRunId)
+            throw new ContractError;
+          this.commits.set(detail.detailId, detail);
+        }
+      })();
+      const handled = original.catch(() => {
+        this.failure = "uncertain";
+        this.stop();
+      });
+      this.pending.add(handled);
+      const timer = setTimeout(() => {
+        this.failure = "uncertain";
+        this.stop();
+      }, LIMITS.recordingStallMs);
+      handled.then(() => {
+        clearTimeout(timer);
+        this.pending.delete(handled);
+        this.pendingBytes -= charge;
+        this.pendingSlots -= slots;
+      });
+    } catch {
+      this.failure = "refused";
+      try {
+        if (!consumed)
+          lease.release();
+      } catch {
+        this.failure = "uncertain";
+      }
+      this.stop();
+    }
+  }
+  async writable(signal) {
+    while (!this.failure && !signal.aborted && (this.pendingBytes >= LIMITS.ownerQueueBytes / 2 || this.pendingSlots >= LIMITS.ownerQueueFrames / 2)) {
+      let abort = () => {};
+      try {
+        await Promise.race([
+          ...this.pending,
+          new Promise((resolve8) => {
+            abort = resolve8;
+            signal.addEventListener("abort", abort, { once: true });
+            if (signal.aborted)
+              resolve8();
+          })
+        ]);
+      } finally {
+        signal.removeEventListener("abort", abort);
+      }
+    }
+  }
+  closeIngress() {
+    for (const lease of [
+      this.parser,
+      ...[...this.details.values()].map((d) => d.prefix)
+    ]) {
+      try {
+        lease.release();
+      } catch {
+        this.failure = "uncertain";
+        this.stop();
+      }
+    }
+    this.details.clear();
+  }
+  async drain() {
+    if (!this.pending.size)
+      return;
+    let timer;
+    await Promise.race([
+      Promise.all([...this.pending]),
+      new Promise((resolve8) => {
+        timer = setTimeout(() => {
+          this.failure = "uncertain";
+          this.stop();
+          resolve8();
+        }, LIMITS.recordingStallMs);
+      })
+    ]);
+    clearTimeout(timer);
+  }
+  result(selected2) {
+    if (this.failure === "refused")
+      return {
+        status: "refused",
+        selected: selected2,
+        error: publicError("recording-exhausted", "uncertain")
+      };
+    if (this.failure || this.pending.size)
+      return { status: "uncertain", selected: selected2 };
+    const detail = selected2 && this.commits.get(selected2.detailId);
+    if (!selected2 || !detail)
+      return { status: "pending", selected: selected2 };
+    if (detail.content.field !== "final-text")
+      return { status: "uncertain", selected: selected2 };
+    return { status: "committed", selected: selected2, detail };
+  }
+  get incomplete() {
+    return this.failure !== null;
+  }
+}
+
+// src/subagent-process.ts
+function terminateWindowsTree(pid, fallback) {
+  const root = process.env.SystemRoot;
+  const taskkill = spawn2(root ? join24(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  taskkill.once("error", fallback);
+  taskkill.once("close", (code2) => {
+    if (code2 !== 0)
+      fallback();
+  });
+}
+var processObserver;
+function observeProcesses(observer) {
+  processObserver = observer;
+}
+function runProcess(spec) {
+  const started = Date.now();
+  const early = (outcome, text2) => ({
+    outcome,
+    closed: true,
+    exitCode: null,
+    signal: null,
+    durationMs: Date.now() - started,
+    text: text2,
+    output: "",
+    truncated: false
+  });
+  if (spec.signal.aborted) {
+    spec.onCheckNative?.({
+      outcome: "canceled",
+      closure: "not-launched",
+      exitCode: null,
+      signal: null,
+      durationMs: 0,
+      stdin: "not-required"
+    });
+    return Promise.resolve(early("canceled", "Canceled before launch"));
+  }
+  if (spec.checkRecording && (spec.protocol || spec.input !== undefined || !spec.maySignal || !spec.onCheckNative))
+    throw new Error("Invalid service check context");
+  if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
+    return Promise.resolve(early("failed", "Worker input exceeds bound"));
+  return new Promise((resolve8) => {
+    const child = spawn2(spec.command, spec.args, {
+      cwd: spec.cwd,
+      env: spec.env ?? safeChildEnv(),
+      detached: process.platform !== "win32",
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+      stdio: [
+        spec.input === undefined ? "ignore" : "pipe",
+        "pipe",
+        "pipe",
+        ...spec.onContext || spec.onCoordinator ? [spec.onContext ? "pipe" : "ignore"] : [],
+        ...spec.onCoordinator ? ["ipc"] : []
+      ]
+    });
+    const contextStream = spec.onContext ? child.stdio[3] : null;
+    let contextEnded = false, contextBytes = 0;
+    const contextChunks = [];
+    let settled = false;
+    let nativeClosed = false;
+    let launched = false;
+    const observeLifecycle = (event) => {
+      if (settled)
+        return;
+      try {
+        spec.onLifecycle?.(event);
+      } catch {
+        stop("failed");
+      }
+    };
+    child.once("spawn", () => {
+      launched = true;
+      if (child.pid)
+        try {
+          processObserver?.launched(child.pid);
+        } catch {}
+      observeLifecycle({ kind: "spawned", at: Date.now() });
+    });
+    const ingressStop = new AbortController;
+    let stopping;
+    let byteCount = 0;
+    let truncated = false;
+    let output = "";
+    let pending = "";
+    let final;
+    let ready2 = false;
+    let capture;
+    let stdin = spec.input === undefined ? "not-required" : "failed";
+    const stdoutDecoder = new StringDecoder("utf8");
+    const protocolDecoder = new TextDecoder("utf-8", { fatal: true });
+    const stderrDecoder = new StringDecoder("utf8");
+    let killTimer;
+    let unknownTimer;
+    const clean2 = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
+    const finish = (closed2, exitCode, signal) => {
+      if (settled)
+        return;
+      settled = true;
+      ingressStop.abort();
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      clearTimeout(unknownTimer);
+      spec.signal.removeEventListener("abort", abort);
+      let outcome = closed2 ? stopping ?? (exitCode === 0 ? "completed" : "failed") : "unknown";
+      if (spec.protocol && (!ready2 || final === undefined || pending.length || spec.input !== undefined && stdin !== "delivered") && outcome === "completed")
+        outcome = "failed";
+      spec.onCheckNative?.({
+        outcome,
+        closure: closed2 ? launched ? "direct-child-closed" : "not-launched" : "unconfirmed",
+        exitCode: launched ? exitCode : null,
+        signal: launched ? signal : null,
+        durationMs: Date.now() - started,
+        stdin: "not-required"
+      });
+      spec.onNative?.({
+        outcome,
+        closure: closed2 ? "direct-child-closed" : "unconfirmed",
+        exitCode,
+        signal,
+        durationMs: Date.now() - started,
+        stdin,
+        final: capture?.selected ? "valid" : "missing",
+        cleanup: closed2 && exitCode === 0 ? "settled" : "unconfirmed",
+        capture: capture?.coverage ?? {
+          observed: "incomplete",
+          source: "unavailable",
+          redacted: false,
+          omissions: ["gap"]
+        }
+      }, capture);
+      resolve8({
+        outcome,
+        closed: closed2,
+        exitCode,
+        signal,
+        durationMs: Date.now() - started,
+        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
+        output: clean2(output),
+        truncated
+      });
+      if (!closed2) {
+        child.unref();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.stdin?.destroy();
+        contextStream?.destroy();
+        if (child.connected)
+          child.disconnect();
+      }
+    };
+    const signalChild = (signal) => {
+      try {
+        if (spec.maySignal && !spec.maySignal())
+          return;
+        if (process.platform !== "win32" && child.pid)
+          process.kill(-child.pid, signal);
+        else if (child.pid && child.exitCode === null && child.signalCode === null)
+          terminateWindowsTree(child.pid, () => child.kill(signal));
+        else
+          child.kill(signal);
+      } catch {}
+    };
+    const stop = (outcome) => {
+      if (settled || stopping || spec.uninterruptible)
+        return;
+      stopping = outcome;
+      const requestedAt = Date.now();
+      if (!nativeClosed) {
+        signalChild("SIGTERM");
+        killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
+        unknownTimer = setTimeout(() => finish(false, null, null), 3000);
+      }
+      observeLifecycle({
+        kind: "stop-requested",
+        at: requestedAt,
+        reason: outcome
+      });
+      ingressStop.abort();
+    };
+    let bridgeCalls = 0;
+    let bridgeBusy = false;
+    if (spec.onCoordinator)
+      child.on("message", (message) => {
+        if (settled || stopping)
+          return;
+        (async () => {
+          let row;
+          try {
+            row = closed(message, ["id", "name", "args"]);
+            if (!Number.isSafeInteger(row.id) || row.id < 1 || typeof row.name !== "string")
+              throw new Error("Invalid coordinator frame");
+          } catch {
+            stop("failed");
+            return;
+          }
+          const id = row.id;
+          const refuse2 = () => {
+            if (child.connected && !settled && !stopping)
+              child.send({ id, ok: false }, () => {});
+          };
+          if (++bridgeCalls > 16 || bridgeBusy || Buffer.byteLength(JSON.stringify(message)) > 65536) {
+            refuse2();
+            return;
+          }
+          bridgeBusy = true;
+          try {
+            const secrets = spec.secrets ?? [];
+            const name = row.name;
+            if (sanitizeText(name, secrets) !== name)
+              throw new Error("Invalid coordinator call");
+            const args = row.args === undefined ? undefined : JSON.parse(sanitizeData(row.args, secrets));
+            const value = await spec.onCoordinator?.(name, args, ingressStop.signal);
+            const text2 = sanitizeText(JSON.stringify(value), secrets);
+            const reply = { id, ok: true, text: text2 };
+            if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
+              throw new Error("Coordinator result exceeds bound");
+            if (!settled && !stopping && child.connected)
+              child.send(reply, () => {});
+          } catch {
+            refuse2();
+          } finally {
+            bridgeBusy = false;
+          }
+        })();
+      });
+    const abort = () => stop("canceled");
+    const timeout = spec.uninterruptible ? undefined : setTimeout(() => stop("timeout"), spec.timeoutMs);
+    if (!spec.uninterruptible) {
+      spec.signal.addEventListener("abort", abort, { once: true });
+      if (spec.signal.aborted)
+        abort();
+    }
+    const frame = (line) => {
+      let lease;
+      try {
+        lease = spec.recording?.reserveRaw(Buffer.byteLength(line));
+        const value = parseCaptureLine(line);
+        if (!capture)
+          capture = new CaptureState(spec.childRunId ?? decodeCaptureFrame(value).childRunId, spec.expectedRequest);
+        const decoded2 = capture.accept(value, Buffer.byteLength(line) + 1);
+        spec.onFrame?.(decoded2);
+        if (decoded2.event.kind === "ready") {
+          ready2 = true;
+          spec.onProgress?.("Agent ready");
+        }
+        if (decoded2.event.kind === "tool-start")
+          spec.onProgress?.(clean2(`Tool: ${decoded2.event.name}`, 128));
+        if (decoded2.event.kind === "final")
+          final = capture.preview;
+        if (lease) {
+          spec.recording?.accept(decoded2, lease);
+          lease = undefined;
+        }
+      } catch {
+        lease?.release();
+        stop("failed");
+      }
+    };
+    const receive = async (chunk, stdout) => {
+      if (settled || stopping)
+        return;
+      if (spec.checkRecording) {
+        await spec.checkRecording.receive(chunk, stdout ? "stdout" : "stderr");
+        return;
+      }
+      byteCount += chunk.length;
+      if (byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)) {
+        truncated = true;
+        if (!spec.uninterruptible)
+          stop("failed");
+        return;
+      }
+      let text2;
+      try {
+        text2 = stdout && spec.protocol ? protocolDecoder.decode(chunk, { stream: true }) : (stdout ? stdoutDecoder : stderrDecoder).write(chunk);
+      } catch {
+        stop("failed");
+        return;
+      }
+      if (!spec.protocol || !stdout) {
+        if (spec.uninterruptible && truncated)
+          return;
+        output += text2;
+        if (Buffer.byteLength(output) > 256 * 1024) {
+          truncated = true;
+          if (spec.uninterruptible)
+            output = clean2(output, 256 * 1024);
+          else
+            stop("failed");
+        }
+      } else {
+        pending += text2;
+        let end = pending.indexOf(`
+`);
+        while (end >= 0) {
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          if (Buffer.byteLength(line) >= LIMITS.frameBytes) {
+            truncated = true;
+            stop("failed");
+            break;
+          }
+          if (spec.recording)
+            await spec.recording.writable(ingressStop.signal);
+          if (settled || stopping)
+            break;
+          frame(line);
+          if (settled || stopping)
+            break;
+          end = pending.indexOf(`
+`);
+        }
+        if (Buffer.byteLength(pending) > LIMITS.frameBytes) {
+          truncated = true;
+          stop("failed");
+        }
+      }
+    };
+    contextStream?.on("data", (chunk) => {
+      if (settled || stopping)
+        return;
+      contextBytes += chunk.length;
+      if (contextBytes > CONTEXT_BYTES) {
+        stop("failed");
+        return;
+      }
+      contextChunks.push(chunk);
+    });
+    contextStream?.once("end", () => {
+      contextEnded = true;
+    });
+    contextStream?.on("error", () => stop("failed"));
+    let stdoutWork = Promise.resolve();
+    let stderrWork = Promise.resolve();
+    let stdoutEnded = false, stderrEnded = false;
+    if (spec.checkRecording) {
+      child.stdout.once("end", () => {
+        stdoutEnded = true;
+      });
+      child.stderr.once("end", () => {
+        stderrEnded = true;
+      });
+      child.stdout.on("error", () => stop("failed"));
+      child.stderr.on("error", () => stop("failed"));
+    }
+    child.stdout.on("data", (chunk) => {
+      if (!spec.recording && !spec.checkRecording) {
+        receive(chunk, true).catch(() => stop("failed"));
+        return;
+      }
+      child.stdout.pause();
+      const original = receive(chunk, true).catch(() => stop("failed")).finally(() => {
+        if (!settled && stdoutWork === original)
+          child.stdout.resume();
+      });
+      stdoutWork = original;
+    });
+    child.stderr.on("data", (chunk) => {
+      if (!spec.checkRecording) {
+        receive(chunk, false).catch(() => stop("failed"));
+        return;
+      }
+      child.stderr.pause();
+      const original = receive(chunk, false).catch(() => stop("failed")).finally(() => {
+        if (!settled && stderrWork === original)
+          child.stderr.resume();
+      });
+      stderrWork = original;
+    });
+    child.on("error", () => {
+      stopping = "failed";
+    });
+    child.on("close", (code2, signal) => {
+      nativeClosed = true;
+      if (launched && child.pid)
+        try {
+          processObserver?.closed(child.pid);
+        } catch {}
+      if (launched)
+        observeLifecycle({ kind: "closed", at: Date.now() });
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      clearTimeout(unknownTimer);
+      const close = () => {
+        if (spec.onContext && !stopping && code2 === 0) {
+          try {
+            if (!contextEnded)
+              throw new Error("Context EOF missing");
+            spec.onContext(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(contextChunks)));
+          } catch {
+            stopping = "failed";
+          }
+        }
+        if (!spec.protocol)
+          output += stdoutDecoder.end();
+        else {
+          try {
+            pending += protocolDecoder.decode();
+          } catch {
+            stopping ??= "failed";
+          }
+        }
+        output += stderrDecoder.end();
+        finish(true, code2, signal);
+      };
+      if (spec.checkRecording) {
+        Promise.all([stdoutWork, stderrWork]).then(async () => {
+          try {
+            await spec.checkRecording?.end(!settled && !stopping && stdoutEnded && stderrEnded);
+          } catch {}
+          close();
+        });
+      } else if (spec.recording)
+        stdoutWork.then(close);
+      else
+        close();
+    });
+    if (child.stdin) {
+      child.stdin.on("error", () => {
+        stdin = "failed";
+        stop("failed");
+      });
+      child.stdin.once("finish", () => {
+        stdin = "delivered";
+      });
+      try {
+        child.stdin.end(spec.input);
+      } catch {
+        stdin = "failed";
+        stop("failed");
+      }
+    }
+  });
+}
+class AmbientFileAuth extends Error {
+}
+function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
+  const ambient = captured?.ambient ?? networkSnapshot(process.env);
+  const scoped = captured?.scoped ?? scopedNetwork(material);
+  if (Object.keys(material.auth.env ?? {}).some((name) => /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name)))
+    throw new AmbientFileAuth;
+  const selected2 = sdkNetworkEnvironment(ambient, scoped);
+  const literals = (source) => Object.values(Object.getOwnPropertyDescriptors(source)).flatMap((descriptor) => ("value" in descriptor) && typeof descriptor.value === "string" ? [descriptor.value] : []);
+  const secrets = [
+    material.auth.apiKey ?? "",
+    ...literals(material.auth.headers ?? {}),
+    ...literals(material.auth.env ?? {}),
+    ...selected2.redactionLiterals
+  ];
+  const investigation = {
+    roots,
+    timeoutMs,
+    deadlineMs: Number(process.hrtime.bigint() / 1000000n) + timeoutMs
+  };
+  const input = JSON.stringify({ ...material, investigation });
+  if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
+    throw new Error("network");
+  return { material, investigation, ambient, scoped, selected: selected2, secrets, input };
+}
+function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
+  if (!sameNetwork(encoded2.ambient, networkSnapshot(process.env)) || !sameNetwork(encoded2.scoped, scopedNetwork(encoded2.material)))
+    throw new Error("network");
+  return runProcess({
+    command: process.execPath,
+    args: [fileURLToPath4(new URL("./sdk-worker.mjs", import.meta.url))],
+    cwd: encoded2.material.cwd,
+    input: encoded2.input,
+    env: encoded2.selected.env,
+    protocol: true,
+    childRunId: encoded2.material.request.childRunId,
+    expectedRequest: encoded2.material.request,
+    signal,
+    timeoutMs,
+    secrets: encoded2.secrets,
+    ...extra
+  });
+}
+function launchConversation(prepared, conversation, signal, options) {
+  let encoded2;
+  return prepared.consume((material) => {
+    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } }, options.timeoutMs);
+    encoded2.input = JSON.stringify({
+      ...encoded2.material,
+      investigation: encoded2.investigation,
+      conversation
+    });
+    return encoded2.input;
+  }, (input) => {
+    if (!encoded2 || encoded2.input !== input)
+      throw new Error("Invalid chat launch");
+    const secrets = encoded2.secrets;
+    return launchEncoded(encoded2, signal, options.timeoutMs, {
+      maySignal: options.maySignal,
+      onNative: options.onNative,
+      onCoordinator: options.onCoordinator,
+      onFrame: (frame) => options.onFrame(frame, secrets),
+      onContext: (source) => {
+        const value = closed(parseWireJson(source, CONTEXT_BYTES), [
+          "schema",
+          "messages"
+        ]);
+        if (value.schema !== "cadence-conversation-context/1")
+          throw new Error("Invalid checkpoint");
+        options.onContext(conversationMessages(value.messages, [
+          ...options.ownerSecrets(),
+          ...secrets
+        ]));
+      }
+    });
+  });
+}
+function launchWorkflowWorker(prepared, cwd, signal, options) {
+  let encoded2;
+  return prepared.consume((material) => {
+    encoded2 = encodeEnvelope({
+      ...material,
+      cwd,
+      model: { ...material.model }
+    }, options.timeoutMs, undefined, options.roots ?? [cwd]);
+    return encoded2.input;
+  }, (input) => {
+    if (!encoded2 || encoded2.input !== input)
+      throw new Error("Invalid workflow launch");
+    const secrets = [...encoded2.secrets, ...options.ownerSecrets];
+    return launchEncoded(encoded2, signal, options.timeoutMs, {
+      secrets,
+      maySignal: options.maySignal,
+      onLifecycle: options.onLifecycle,
+      onNative: (native, capture) => options.onNative(native, capture?.selected?.messageId),
+      onFrame: (frame) => options.onFrame(frame, secrets)
+    });
+  });
 }
 
 // src/service/auth-network.ts
@@ -20351,14 +22531,14 @@ class CheckoutGate {
 }
 
 // src/service/model-choice.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID14();
+  catalogId = randomUUID17();
   installing = false;
   constructor(options) {
     this.options = options;
@@ -20413,7 +22593,7 @@ class OwnerModelChoice {
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID14();
+        this.catalogId = randomUUID17();
         this.options.owner.configurationInstalled();
       }
       try {
@@ -20427,8 +22607,8 @@ class OwnerModelChoice {
 }
 
 // src/service/model-config.ts
-import { lstatSync as lstatSync12, realpathSync as realpathSync7 } from "node:fs";
-import { dirname as dirname15, isAbsolute as isAbsolute8, join as join21, resolve as resolve8 } from "node:path";
+import { lstatSync as lstatSync14, realpathSync as realpathSync7 } from "node:fs";
+import { dirname as dirname15, isAbsolute as isAbsolute8, join as join25, resolve as resolve8 } from "node:path";
 var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
 function refuse2() {
@@ -20495,14 +22675,14 @@ function captureEnvironment(value) {
 function piSource(agentDir, home, cwd, env) {
   if (!isAbsolute8(home) || !isAbsolute8(cwd))
     refuse2();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join21(home, ".pi", "agent");
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join25(home, ".pi", "agent");
   if (!selected2 || selected2.includes("\x00"))
     refuse2();
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
   selected2 = resolve8(cwd, selected2);
-  const directory = join21(realpathSync7(dirname15(selected2)), selected2.slice(dirname15(selected2).length + 1));
-  if (!lstatSync12(directory).isDirectory() || lstatSync12(directory).isSymbolicLink())
+  const directory = join25(realpathSync7(dirname15(selected2)), selected2.slice(dirname15(selected2).length + 1));
+  if (!lstatSync14(directory).isDirectory() || lstatSync14(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
   if (!files.directory(directory))
@@ -20510,8 +22690,8 @@ function piSource(agentDir, home, cwd, env) {
   return {
     directory,
     files,
-    authPath: join21(directory, "auth.json"),
-    modelsPath: join21(directory, "models.json")
+    authPath: join25(directory, "auth.json"),
+    modelsPath: join25(directory, "models.json")
   };
 }
 function templateNames(value) {
@@ -20954,7 +23134,7 @@ function clonePrivate(value) {
 }
 
 // src/service/model-context.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -21103,11 +23283,11 @@ class OwnerModelContext {
           return { status: "capacity", entries: [], withheld: 0 };
       }
       const literals = this.catalogLiterals(current2);
-      const entries = [];
+      const entries2 = [];
       let withheld = 0;
       for (const provider of providers) {
         const models = runtime.getModels(provider);
-        if (entries.length + withheld + models.length > LIMITS.maxPageEntries)
+        if (entries2.length + withheld + models.length > LIMITS.maxPageEntries)
           throw new ContractError("capacity");
         for (const model of models) {
           if (model.provider !== provider)
@@ -21147,7 +23327,7 @@ class OwnerModelContext {
                 throw error;
             }
           }
-          entries.push(decodeModelCandidate({
+          entries2.push(decodeModelCandidate({
             provider,
             model: model.id,
             api,
@@ -21162,7 +23342,7 @@ class OwnerModelContext {
       const after = this.catalogSource();
       if (after.auth.identity !== current2.auth.identity || after.auth.stamp !== current2.auth.stamp)
         throw new ContractError("stale");
-      return { status: "complete", entries, withheld };
+      return { status: "complete", entries: entries2, withheld };
     } catch (error) {
       throw new ContractError(error instanceof ContractError ? error.code : "corrupt-selected");
     }
@@ -21193,10 +23373,10 @@ class OwnerModelContext {
     const add = (value) => {
       if (literals.has(value))
         return;
-      const size = Buffer.byteLength(value);
-      if (literalBytes + size > LIMITS.workerRequestBytes * 2)
+      const size2 = Buffer.byteLength(value);
+      if (literalBytes + size2 > LIMITS.workerRequestBytes * 2)
         throw new ContractError("oversize");
-      literalBytes += size;
+      literalBytes += size2;
       literals.add(value);
     };
     for (const route of this.#options.network?.literals ?? [])
@@ -21259,7 +23439,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID15(), ...selector };
+    const selection = { sourceSelectionId: randomUUID18(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -21341,7 +23521,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID15(), ...selector };
+    const selection = { sourceSelectionId: randomUUID18(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -21421,11 +23601,11 @@ class OwnerModelContext {
       };
     ++this.#pending;
     const writes = [];
-    const retainWrite = (report) => {
-      const original = this.#options.accounting.original?.(report) ?? report;
+    const retainWrite = (report2) => {
+      const original = this.#options.accounting.original?.(report2) ?? report2;
       original.catch(() => {});
       writes.push(original);
-      return report;
+      return report2;
     };
     const recordPreparation = async (intent) => {
       if (input.journal)
@@ -21794,6 +23974,17 @@ class ServiceOwner {
     this.closeAdmission();
     this.persistPhase("quarantined");
     this.requestStops();
+    if (!this.faultReported) {
+      this.faultReported = true;
+      try {
+        this.ports.faulted?.();
+      } catch {}
+    }
+  }
+  faultReported = false;
+  async idle() {
+    while (this.activities.size)
+      await this.drainActivities();
   }
   requestStops() {
     try {
@@ -21938,13 +24129,13 @@ class ServiceOwner {
 }
 
 // src/service/workbench.ts
-import { opendirSync as opendirSync11 } from "node:fs";
-import { join as join28 } from "node:path";
+import { opendirSync as opendirSync13 } from "node:fs";
+import { join as join31 } from "node:path";
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
-import { opendirSync as opendirSync8 } from "node:fs";
-import { dirname as dirname17, join as join24 } from "node:path";
+import { randomUUID as randomUUID20 } from "node:crypto";
+import { opendirSync as opendirSync10 } from "node:fs";
+import { dirname as dirname17, join as join27 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
@@ -21955,1206 +24146,9 @@ Present the returned complete plan and invite a single clear execution approval 
 During accepted work answer questions, report actual retained progress, and let the service execute. cadence_cancel is explicit cancellation, not navigation/exit. Never claim a worker's prose is a passing check or automatic review is human review. Failed/unknown/blocked outcomes are not success. A completed goal leaves Cadence ON and ready for the next goal; do not require /cadence again. Unrelated discussion is still ordinary conversation within this mode, not implicit permission to start another implementation. Tools operate on the host; this is not a sandbox.`;
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
-import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname16, join as join23 } from "node:path";
-
-// src/conversation-context.mjs
-var CONTEXT_BYTES = 2 * 1024 * 1024;
-var clean = (s, secrets, max = CONTEXT_BYTES) => sanitizeText(text(s, max), secrets);
-function argumentsData(value, secrets) {
-  const sanitizer = new DetailSanitizer("canonical-json", secrets);
-  const source = sanitizer.write(canonicalJson(value, 64 * 1024)) + sanitizer.end();
-  if (sanitizer.limited)
-    throw new Error("Unsupported context arguments");
-  return parseWireJson(source, 64 * 1024);
-}
-function own2(value, key2) {
-  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
-  if (!d || !("value" in d))
-    throw new Error("Invalid usage");
-  return d.value;
-}
-function counts(value, keys3) {
-  const out = Object.create(null);
-  for (const key2 of keys3) {
-    const n = own2(value, key2);
-    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
-      throw new Error("Invalid usage");
-    out[key2] = n;
-  }
-  return out;
-}
-function conversationMessages(messages, secrets = []) {
-  return list(messages, 4096, (message) => {
-    if (!message || typeof message !== "object")
-      throw new Error("Invalid context");
-    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
-    const timestamp2 = integer(message.timestamp, 0);
-    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
-      if (block.type === "text")
-        return { type: "text", text: clean(block.text, secrets) };
-      if (role2 === "assistant" && block.type === "toolCall")
-        return {
-          type: "toolCall",
-          id: clean(block.id, secrets, 512),
-          name: clean(block.name, secrets, 128),
-          arguments: argumentsData(block.arguments, secrets)
-        };
-      return null;
-    }).filter(Boolean);
-    if (role2 === "user")
-      return { role: role2, timestamp: timestamp2, content };
-    if (role2 === "toolResult")
-      return {
-        role: role2,
-        timestamp: timestamp2,
-        content,
-        toolCallId: clean(message.toolCallId, secrets, 512),
-        toolName: clean(message.toolName, secrets, 128),
-        isError: message.isError === true
-      };
-    const usage = counts(message.usage, [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "totalTokens"
-    ]);
-    usage.cost = counts(own2(message.usage, "cost"), [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "total"
-    ]);
-    return {
-      role: role2,
-      timestamp: timestamp2,
-      content,
-      api: clean(message.api, secrets, 128),
-      provider: clean(message.provider, secrets, 128),
-      model: clean(message.model, secrets, 256),
-      usage,
-      stopReason: oneOf(message.stopReason, [
-        "stop",
-        "length",
-        "toolUse",
-        "error",
-        "aborted"
-      ])
-    };
-  });
-}
-
-// src/subagent-process.ts
-import { spawn as spawn2 } from "node:child_process";
-import { join as join22 } from "node:path";
-import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
-// src/worker-capture.mjs
-import { createHash as createHash22, randomUUID as randomUUID16 } from "node:crypto";
-var completeCoverage = () => ({
-  observed: "complete",
-  source: "complete",
-  redacted: false,
-  omissions: []
-});
-var controlEvent = (kind) => ["ready", "capture-status", "worker-failure", "final"].includes(kind);
-function* chunks(text2) {
-  for (let at = 0;at < text2.length; ) {
-    let end = Math.min(at + 2048, text2.length);
-    if (end < text2.length && /[\uD800-\uDBFF]/.test(text2[end - 1]))
-      end--;
-    yield text2.slice(at, end);
-    at = end;
-  }
-}
-function requireFact2(condition) {
-  if (!condition)
-    throw new ContractError;
-}
-
-class CaptureState {
-  constructor(childRunId, request3) {
-    this.position = {
-      childRunId: decodeId(childRunId),
-      workerSeq: 0,
-      observedMs: 0,
-      final: false
-    };
-    this.details = new Map;
-    this.messages = new Map;
-    this.calls = new Map;
-    this.blocks = new Map;
-    this.dataFrames = 0;
-    this.controlFrames = 0;
-    this.bytes = 0;
-    this.coverage = completeCoverage();
-    this.selected = null;
-    this.failed = false;
-    this.request = request3;
-    this.contexts = new Set;
-    this.handoffs = new Set;
-  }
-  accept(input, encodedBytes) {
-    const { frame, position: position2 } = advanceCapture(this.position, input);
-    const e = frame.event;
-    const control = controlEvent(e.kind);
-    this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
-    if (++this[control ? "controlFrames" : "dataFrames"] > (control ? LIMITS.controlFrames : LIMITS.dataFrames) || this.bytes > LIMITS.childProtocolBytes - (control ? 0 : LIMITS.ownerControlBytes))
-      throw new ContractError("oversize");
-    const message = (id) => {
-      const m = this.messages.get(id);
-      requireFact2(m);
-      return m;
-    };
-    const detail = (id, field, ownerId) => {
-      const d = this.details.get(id);
-      requireFact2(d?.ended && d.descriptor.field === field);
-      if (ownerId)
-        requireFact2((d.descriptor.owner.messageId ?? d.descriptor.owner.callId) === ownerId);
-      return d;
-    };
-    const owner = (o) => {
-      if (o.kind === "message" || o.kind === "message-final")
-        requireFact2(!message(o.messageId).ended);
-      if (o.blockId) {
-        const previous = this.blocks.get(o.blockId);
-        const key2 = canonicalJson(o);
-        requireFact2(previous === undefined || previous === key2);
-        this.blocks.set(o.blockId, key2);
-      }
-    };
-    switch (e.kind) {
-      case "ready":
-        break;
-      case "message-start":
-        requireFact2(!this.messages.has(e.messageId));
-        if (e.resultCallId !== null)
-          requireFact2(this.calls.get(e.resultCallId)?.ended);
-        this.messages.set(e.messageId, {
-          role: e.role,
-          ended: false,
-          final: null,
-          stopReason: null,
-          finalIndices: new Set,
-          finalHash: createHash22("sha256"),
-          finalBytes: 0,
-          finalIndex: -1
-        });
-        break;
-      case "detail-begin":
-        requireFact2(!this.details.has(e.detailId));
-        owner(e.descriptor.owner);
-        if (e.descriptor.owner.kind === "context") {
-          requireFact2(!this.contexts.has(e.descriptor.owner.component));
-          this.contexts.add(e.descriptor.owner.component);
-        }
-        if (e.descriptor.owner.kind === "handoff") {
-          const o = e.descriptor.owner;
-          requireFact2(!this.handoffs.has(o.dependencyIndex));
-          if (this.request)
-            requireFact2(this.request.handoff.inputs.some((input2) => input2.dependencyIndex === o.dependencyIndex && canonicalJson(input2.result) === canonicalJson(o.source)));
-          this.handoffs.add(o.dependencyIndex);
-        }
-        if (e.descriptor.owner.kind === "message" && e.descriptor.owner.stage === "final") {
-          const m = message(e.descriptor.owner.messageId);
-          requireFact2(e.descriptor.owner.index > m.finalIndex && !m.finalIndices.has(e.descriptor.owner.index));
-          m.finalIndex = e.descriptor.owner.index;
-          m.finalIndices.add(e.descriptor.owner.index);
-        }
-        this.details.set(e.detailId, {
-          descriptor: e.descriptor,
-          hash: createHash22("sha256"),
-          bytes: 0,
-          ended: false,
-          preview: ""
-        });
-        break;
-      case "detail-chunk": {
-        const d = this.details.get(e.detailId);
-        requireFact2(d && !d.ended && e.offset === d.bytes);
-        d.bytes += utf8Bytes(e.text);
-        d.hash.update(e.text);
-        if (d.descriptor.owner.kind === "message" && d.descriptor.owner.stage === "final") {
-          const m = message(d.descriptor.owner.messageId);
-          m.finalHash.update(e.text);
-          m.finalBytes += utf8Bytes(e.text);
-        }
-        if (d.descriptor.field === "final-text" && utf8Bytes(d.preview) < 16384)
-          d.preview += e.text.slice(0, 16384 - utf8Bytes(d.preview));
-        break;
-      }
-      case "detail-end": {
-        const d = this.details.get(e.detailId);
-        requireFact2(d && !d.ended && d.bytes === e.bytes && d.hash.digest("hex") === e.sha256);
-        if (d.descriptor.owner.kind === "message-final") {
-          const m = message(d.descriptor.owner.messageId);
-          requireFact2(m.finalBytes === e.bytes && m.finalHash.copy().digest("hex") === e.sha256);
-        }
-        d.hash = null;
-        d.ended = true;
-        this.mergeCoverage(e.coverage);
-        break;
-      }
-      case "message-text": {
-        const d = this.details.get(e.detailId);
-        const o = d?.descriptor.owner;
-        requireFact2(!message(e.messageId).ended && d && o.kind === "message" && o.messageId === e.messageId && o.blockId === e.blockId);
-        break;
-      }
-      case "call-declaration": {
-        const m = message(e.declaration.messageId);
-        requireFact2(!m.ended && m.role === "assistant");
-        const old = this.calls.get(e.callId);
-        requireFact2(!old || !old.started && !old.ended && old.stage === "partial" && canonicalJson(old.declaration) === canonicalJson(e.declaration));
-        if (e.argsDetailId)
-          requireFact2(detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner.stage === (e.stage === "partial" ? "arguments-partial" : "arguments-final"));
-        if (e.stage === "final") {
-          requireFact2(!m.finalIndices.has(e.index));
-          m.finalIndices.add(e.index);
-        }
-        this.calls.set(e.callId, { ...e, started: false, ended: false });
-        break;
-      }
-      case "tool-start": {
-        const old = this.calls.get(e.callId);
-        requireFact2(!old || !old.started && !old.ended && canonicalJson(old.declaration) === canonicalJson(e.declaration) && canonicalJson(old.source) === canonicalJson(e.source) && old.name === e.name);
-        requireFact2(old || e.declaration === null);
-        if (e.argsDetailId)
-          requireFact2(detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner.stage === "execution-arguments");
-        this.calls.set(e.callId, { ...old, ...e, started: true, ended: false });
-        break;
-      }
-      case "tool-update":
-        requireFact2(this.calls.get(e.callId)?.started && !this.calls.get(e.callId)?.ended);
-        requireFact2(detail(e.detailId, "tool-update", e.callId).descriptor.owner.stage === "update-snapshot");
-        break;
-      case "tool-end": {
-        const c = this.calls.get(e.callId);
-        requireFact2(!c?.ended && e.startObserved === !!c?.started);
-        if (e.declaration)
-          requireFact2(c && canonicalJson(c.declaration) === canonicalJson(e.declaration));
-        if (c)
-          requireFact2(c.name === e.name && canonicalJson(c.source) === canonicalJson(e.source));
-        requireFact2(detail(e.resultDetailId, "tool-result", e.callId).descriptor.owner.stage === "result");
-        this.calls.set(e.callId, {
-          ...c,
-          ...e,
-          started: e.startObserved,
-          ended: true
-        });
-        break;
-      }
-      case "message-end": {
-        const m = message(e.messageId);
-        requireFact2(!m.ended);
-        if (e.finalDetailId) {
-          const d = detail(e.finalDetailId, "final-text", e.messageId);
-          requireFact2(m.role === "assistant" && d.descriptor.owner.kind === "message-final");
-        }
-        for (const d of this.details.values())
-          if (d.descriptor.owner.messageId === e.messageId) {
-            requireFact2(d.ended);
-            if (d.descriptor.owner.stage === "final")
-              requireFact2(d.descriptor.owner.index < e.finalBlockCount);
-          }
-        requireFact2(m.finalIndices.size === e.finalBlockCount && [...m.finalIndices].every((i) => i < e.finalBlockCount));
-        m.ended = true;
-        m.final = e.finalDetailId;
-        m.stopReason = e.stopReason;
-        break;
-      }
-      case "omitted-block":
-        owner(e.block.owner);
-        if (e.block.owner.kind === "message" && e.block.owner.stage === "final") {
-          const m = message(e.block.owner.messageId);
-          requireFact2(!m.finalIndices.has(e.block.owner.index));
-          m.finalIndices.add(e.block.owner.index);
-        }
-        this.mergeCoverage({
-          observed: "complete",
-          source: "limited",
-          redacted: false,
-          omissions: [e.block.reason]
-        });
-        break;
-      case "capture-status":
-        this.mergeCoverage(e.coverage);
-        break;
-      case "worker-failure":
-        this.failed = true;
-        break;
-      case "final": {
-        if (this.request)
-          requireFact2([
-            "request-context",
-            "request-prompt",
-            "request-instructions",
-            "role",
-            "effective-system"
-          ].every((name) => this.contexts.has(name)) && this.handoffs.size === this.request.handoff.inputs.length);
-        const m = message(e.messageId);
-        requireFact2(!this.failed && m.ended && m.role === "assistant" && m.stopReason === "stop" && m.final === e.detailId && this.coverage.observed === "complete");
-        requireFact2([...this.details.values()].every((d) => d.ended) && [...this.messages.values()].every((v) => v.ended) && [...this.calls.values()].every((c) => !c.started || c.ended));
-        detail(e.detailId, "final-text", e.messageId);
-        this.selected = { messageId: e.messageId, detailId: e.detailId };
-        break;
-      }
-    }
-    this.position = position2;
-    return frame;
-  }
-  mergeCoverage(c) {
-    this.coverage.observed = c.observed === "incomplete" ? "incomplete" : this.coverage.observed;
-    if (c.source !== "complete")
-      this.coverage.source = c.source;
-    this.coverage.redacted ||= c.redacted;
-    this.coverage.omissions = [
-      ...new Set([...this.coverage.omissions, ...c.omissions])
-    ];
-  }
-  get preview() {
-    return this.selected ? this.details.get(this.selected.detailId).preview : "";
-  }
-}
-function parseCaptureLine(line) {
-  return parseWireJson(line, LIMITS.frameBytes);
-}
-
-// src/worker-recording.ts
-class WorkerRecording {
-  link;
-  sink;
-  secrets;
-  stop;
-  details = new Map;
-  commits = new Map;
-  pending = new Set;
-  failure = null;
-  pendingBytes = 0;
-  pendingSlots = 0;
-  parser;
-  rawSizes = new WeakMap;
-  constructor(link, sink, secrets, stop) {
-    this.link = link;
-    this.sink = sink;
-    this.secrets = secrets;
-    this.stop = stop;
-    if (!sink || typeof sink.reserve !== "function")
-      throw new ContractError("unavailable");
-    const parser = sink.reserve({
-      sourceFrames: 0,
-      retainedBytes: LIMITS.frameBytes * 8,
-      outputBytes: 0,
-      outputChunks: 0,
-      lane: "control"
-    });
-    if (parser.status !== "reserved")
-      throw new ContractError("capacity");
-    this.parser = parser.reservation;
-  }
-  reserveRaw(bytes) {
-    const result = this.sink.reserve({
-      sourceFrames: 0,
-      retainedBytes: bytes * 3,
-      outputBytes: 0,
-      outputChunks: 0,
-      lane: "control"
-    });
-    if (result.status !== "reserved") {
-      this.failure = "refused";
-      this.stop();
-      throw new ContractError("recording-exhausted");
-    }
-    this.rawSizes.set(result.reservation, bytes);
-    return result.reservation;
-  }
-  accept(frame, lease) {
-    let consumed = false;
-    try {
-      const source = {
-        first: frame.workerSeq,
-        last: frame.workerSeq,
-        firstObservedMs: frame.observedMs,
-        lastObservedMs: frame.observedMs
-      };
-      const e = frame.event;
-      const rawBytes = this.rawSizes.get(lease) ?? LIMITS.frameBytes;
-      const lane = controlEvent(e.kind) ? "control" : "data";
-      const transferred = this.sink.reserve({
-        sourceFrames: 1,
-        retainedBytes: rawBytes * 3,
-        outputBytes: 0,
-        outputChunks: 0,
-        lane
-      });
-      if (transferred.status !== "reserved")
-        throw new ContractError("capacity");
-      this.rawSizes.delete(lease);
-      lease.release();
-      lease = transferred.reservation;
-      const retained = e.kind === "detail-chunk" || e.kind === "detail-end" ? this.details.get(e.detailId)?.sanitizer.retainedBytes ?? 0 : 0;
-      const allowance = (rawBytes + retained) * 12 + 2048;
-      this.rawSizes.delete(lease);
-      if (lease.grow({
-        sourceFrames: 0,
-        retainedBytes: 0,
-        outputBytes: allowance,
-        outputChunks: Math.ceil(allowance / 2048) + 2,
-        lane
-      }).status !== "reserved")
-        throw new ContractError("capacity");
-      let events;
-      let range2 = source;
-      if (e.kind === "detail-begin") {
-        const prefixBytes = this.secrets.reduce((n, s) => Math.max(n, utf8Bytes(s)), 0) * 4 + 65536 + (e.descriptor.encoding === "canonical-json" ? 1024 * 1024 : 0);
-        const reserved = this.sink.reserve({
-          sourceFrames: 0,
-          retainedBytes: prefixBytes,
-          outputBytes: 0,
-          outputChunks: 0,
-          lane: "data"
-        });
-        if (reserved.status !== "reserved")
-          throw new ContractError("capacity");
-        const partial = e.descriptor.owner.kind === "tool" && e.descriptor.owner.stage === "arguments-partial";
-        this.details.set(e.detailId, {
-          sanitizer: new DetailSanitizer(partial ? "canonical-json" : e.descriptor.encoding, this.secrets, partial),
-          prefix: reserved.reservation,
-          prefixBytes,
-          source: null
-        });
-        events = [e];
-      } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
-        const detail = this.details.get(e.detailId);
-        if (!detail)
-          throw new ContractError;
-        const first = detail.source ?? source;
-        range2 = {
-          ...first,
-          last: source.last,
-          lastObservedMs: source.lastObservedMs
-        };
-        const output = e.kind === "detail-chunk" ? detail.sanitizer.write(e.text) : detail.sanitizer.end();
-        const extra = detail.sanitizer.retainedBytes - detail.prefixBytes;
-        if (extra > 0) {
-          if (detail.prefix.grow({
-            sourceFrames: 0,
-            retainedBytes: extra,
-            outputBytes: 0,
-            outputChunks: 0,
-            lane: "data"
-          }).status !== "reserved")
-            throw new ContractError("capacity");
-          detail.prefixBytes += extra;
-        }
-        events = [...chunks(output)].map((text2) => ({
-          kind: "stored-chunk",
-          detailId: e.detailId,
-          text: text2
-        }));
-        detail.source = detail.sanitizer.retainedBytes ? range2 : null;
-        if (e.kind === "detail-end") {
-          events.push({
-            kind: "stored-end",
-            detailId: e.detailId,
-            coverage: {
-              ...e.coverage,
-              redacted: e.coverage.redacted || detail.sanitizer.redacted,
-              source: detail.sanitizer.limited ? "limited" : e.coverage.source,
-              omissions: detail.sanitizer.limited ? [
-                ...new Set([
-                  ...e.coverage.omissions,
-                  "unsupported"
-                ])
-              ] : e.coverage.omissions
-            }
-          });
-          detail.prefix.release();
-          this.details.delete(e.detailId);
-        }
-      } else if (e.kind === "tool-start" || e.kind === "tool-end" || e.kind === "call-declaration") {
-        const value = e.source.value;
-        events = [
-          {
-            ...e,
-            name: sanitizeText(e.name, this.secrets),
-            source: value !== null && sanitizeText(value, this.secrets) !== value ? { disposition: "redacted", value: null } : e.source
-          }
-        ];
-      } else if (e.kind === "message-start") {
-        const value = e.source.value;
-        events = [
-          {
-            ...e,
-            source: value !== null && sanitizeText(value, this.secrets) !== value ? { disposition: "redacted", value: null } : e.source
-          }
-        ];
-      } else if (e.kind === "omitted-block") {
-        const mimeType = e.block.mimeType;
-        const redacted = mimeType !== null && sanitizeText(mimeType, this.secrets) !== mimeType;
-        events = [
-          { ...e, block: { ...e.block, mimeType: redacted ? null : mimeType } }
-        ];
-        if (redacted)
-          events.push({
-            kind: "capture-status",
-            coverage: {
-              observed: "complete",
-              source: "limited",
-              redacted: true,
-              omissions: [e.block.reason]
-            }
-          });
-      } else
-        events = [e];
-      const input = decodeRecordingInput({
-        link: this.link,
-        source: range2,
-        events: events.map((event) => ({ source: range2, event }))
-      });
-      if (utf8Bytes(canonicalJson(input)) > allowance)
-        throw new ContractError("capacity");
-      consumed = true;
-      const charge = rawBytes * 3 + allowance;
-      const slots = 1 + Math.ceil(allowance / 2048) + 2;
-      this.pendingBytes += charge;
-      this.pendingSlots += slots;
-      const original = (async () => {
-        const result = await lease.commit(input);
-        if (result.status !== "committed") {
-          this.failure = result.durability === "uncertain" ? "uncertain" : "refused";
-          this.stop();
-          return;
-        }
-        const batch = decodeCommittedBatch(result.batch);
-        for (const detail of batch.details) {
-          if (detail.childRunId !== this.link.childRunId)
-            throw new ContractError;
-          this.commits.set(detail.detailId, detail);
-        }
-      })();
-      const handled = original.catch(() => {
-        this.failure = "uncertain";
-        this.stop();
-      });
-      this.pending.add(handled);
-      const timer = setTimeout(() => {
-        this.failure = "uncertain";
-        this.stop();
-      }, LIMITS.recordingStallMs);
-      handled.then(() => {
-        clearTimeout(timer);
-        this.pending.delete(handled);
-        this.pendingBytes -= charge;
-        this.pendingSlots -= slots;
-      });
-    } catch {
-      this.failure = "refused";
-      try {
-        if (!consumed)
-          lease.release();
-      } catch {
-        this.failure = "uncertain";
-      }
-      this.stop();
-    }
-  }
-  async writable(signal) {
-    while (!this.failure && !signal.aborted && (this.pendingBytes >= LIMITS.ownerQueueBytes / 2 || this.pendingSlots >= LIMITS.ownerQueueFrames / 2)) {
-      let abort = () => {};
-      try {
-        await Promise.race([
-          ...this.pending,
-          new Promise((resolve9) => {
-            abort = resolve9;
-            signal.addEventListener("abort", abort, { once: true });
-            if (signal.aborted)
-              resolve9();
-          })
-        ]);
-      } finally {
-        signal.removeEventListener("abort", abort);
-      }
-    }
-  }
-  closeIngress() {
-    for (const lease of [
-      this.parser,
-      ...[...this.details.values()].map((d) => d.prefix)
-    ]) {
-      try {
-        lease.release();
-      } catch {
-        this.failure = "uncertain";
-        this.stop();
-      }
-    }
-    this.details.clear();
-  }
-  async drain() {
-    if (!this.pending.size)
-      return;
-    let timer;
-    await Promise.race([
-      Promise.all([...this.pending]),
-      new Promise((resolve9) => {
-        timer = setTimeout(() => {
-          this.failure = "uncertain";
-          this.stop();
-          resolve9();
-        }, LIMITS.recordingStallMs);
-      })
-    ]);
-    clearTimeout(timer);
-  }
-  result(selected2) {
-    if (this.failure === "refused")
-      return {
-        status: "refused",
-        selected: selected2,
-        error: publicError("recording-exhausted", "uncertain")
-      };
-    if (this.failure || this.pending.size)
-      return { status: "uncertain", selected: selected2 };
-    const detail = selected2 && this.commits.get(selected2.detailId);
-    if (!selected2 || !detail)
-      return { status: "pending", selected: selected2 };
-    if (detail.content.field !== "final-text")
-      return { status: "uncertain", selected: selected2 };
-    return { status: "committed", selected: selected2, detail };
-  }
-  get incomplete() {
-    return this.failure !== null;
-  }
-}
-
-// src/subagent-process.ts
-function terminateWindowsTree(pid, fallback) {
-  const root = process.env.SystemRoot;
-  const taskkill = spawn2(root ? join22(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
-  taskkill.once("error", fallback);
-  taskkill.once("close", (code2) => {
-    if (code2 !== 0)
-      fallback();
-  });
-}
-function runProcess(spec) {
-  const started = Date.now();
-  const early = (outcome, text2) => ({
-    outcome,
-    closed: true,
-    exitCode: null,
-    signal: null,
-    durationMs: Date.now() - started,
-    text: text2,
-    output: "",
-    truncated: false
-  });
-  if (spec.signal.aborted) {
-    spec.onCheckNative?.({
-      outcome: "canceled",
-      closure: "not-launched",
-      exitCode: null,
-      signal: null,
-      durationMs: 0,
-      stdin: "not-required"
-    });
-    return Promise.resolve(early("canceled", "Canceled before launch"));
-  }
-  if (spec.checkRecording && (spec.protocol || spec.input !== undefined || !spec.maySignal || !spec.onCheckNative))
-    throw new Error("Invalid service check context");
-  if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
-    return Promise.resolve(early("failed", "Worker input exceeds bound"));
-  return new Promise((resolve9) => {
-    const child = spawn2(spec.command, spec.args, {
-      cwd: spec.cwd,
-      env: spec.env ?? safeChildEnv(),
-      detached: process.platform !== "win32",
-      windowsHide: true,
-      windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      stdio: [
-        spec.input === undefined ? "ignore" : "pipe",
-        "pipe",
-        "pipe",
-        ...spec.onContext || spec.onCoordinator ? [spec.onContext ? "pipe" : "ignore"] : [],
-        ...spec.onCoordinator ? ["ipc"] : []
-      ]
-    });
-    const contextStream = spec.onContext ? child.stdio[3] : null;
-    let contextEnded = false, contextBytes = 0;
-    const contextChunks = [];
-    let settled = false;
-    let nativeClosed = false;
-    let launched = false;
-    const observeLifecycle = (event) => {
-      if (settled)
-        return;
-      try {
-        spec.onLifecycle?.(event);
-      } catch {
-        stop("failed");
-      }
-    };
-    child.once("spawn", () => {
-      launched = true;
-      observeLifecycle({ kind: "spawned", at: Date.now() });
-    });
-    const ingressStop = new AbortController;
-    let stopping;
-    let byteCount = 0;
-    let truncated = false;
-    let output = "";
-    let pending = "";
-    let final;
-    let ready2 = false;
-    let capture;
-    let stdin = spec.input === undefined ? "not-required" : "failed";
-    const stdoutDecoder = new StringDecoder("utf8");
-    const protocolDecoder = new TextDecoder("utf-8", { fatal: true });
-    const stderrDecoder = new StringDecoder("utf8");
-    let killTimer;
-    let unknownTimer;
-    const clean2 = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
-    const finish = (closed2, exitCode, signal) => {
-      if (settled)
-        return;
-      settled = true;
-      ingressStop.abort();
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      clearTimeout(unknownTimer);
-      spec.signal.removeEventListener("abort", abort);
-      let outcome = closed2 ? stopping ?? (exitCode === 0 ? "completed" : "failed") : "unknown";
-      if (spec.protocol && (!ready2 || final === undefined || pending.length || spec.input !== undefined && stdin !== "delivered") && outcome === "completed")
-        outcome = "failed";
-      spec.onCheckNative?.({
-        outcome,
-        closure: closed2 ? launched ? "direct-child-closed" : "not-launched" : "unconfirmed",
-        exitCode: launched ? exitCode : null,
-        signal: launched ? signal : null,
-        durationMs: Date.now() - started,
-        stdin: "not-required"
-      });
-      spec.onNative?.({
-        outcome,
-        closure: closed2 ? "direct-child-closed" : "unconfirmed",
-        exitCode,
-        signal,
-        durationMs: Date.now() - started,
-        stdin,
-        final: capture?.selected ? "valid" : "missing",
-        cleanup: closed2 && exitCode === 0 ? "settled" : "unconfirmed",
-        capture: capture?.coverage ?? {
-          observed: "incomplete",
-          source: "unavailable",
-          redacted: false,
-          omissions: ["gap"]
-        }
-      }, capture);
-      resolve9({
-        outcome,
-        closed: closed2,
-        exitCode,
-        signal,
-        durationMs: Date.now() - started,
-        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
-        output: clean2(output),
-        truncated
-      });
-      if (!closed2) {
-        child.unref();
-        child.stdout.destroy();
-        child.stderr.destroy();
-        child.stdin?.destroy();
-        contextStream?.destroy();
-        if (child.connected)
-          child.disconnect();
-      }
-    };
-    const signalChild = (signal) => {
-      try {
-        if (spec.maySignal && !spec.maySignal())
-          return;
-        if (process.platform !== "win32" && child.pid)
-          process.kill(-child.pid, signal);
-        else if (child.pid && child.exitCode === null && child.signalCode === null)
-          terminateWindowsTree(child.pid, () => child.kill(signal));
-        else
-          child.kill(signal);
-      } catch {}
-    };
-    const stop = (outcome) => {
-      if (settled || stopping || spec.uninterruptible)
-        return;
-      stopping = outcome;
-      const requestedAt = Date.now();
-      if (!nativeClosed) {
-        signalChild("SIGTERM");
-        killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
-        unknownTimer = setTimeout(() => finish(false, null, null), 3000);
-      }
-      observeLifecycle({
-        kind: "stop-requested",
-        at: requestedAt,
-        reason: outcome
-      });
-      ingressStop.abort();
-    };
-    let bridgeCalls = 0;
-    let bridgeBusy = false;
-    if (spec.onCoordinator)
-      child.on("message", (message) => {
-        if (settled || stopping)
-          return;
-        (async () => {
-          let row;
-          try {
-            row = closed(message, ["id", "name", "args"]);
-            if (!Number.isSafeInteger(row.id) || row.id < 1 || typeof row.name !== "string")
-              throw new Error("Invalid coordinator frame");
-          } catch {
-            stop("failed");
-            return;
-          }
-          const id = row.id;
-          const refuse3 = () => {
-            if (child.connected && !settled && !stopping)
-              child.send({ id, ok: false }, () => {});
-          };
-          if (++bridgeCalls > 16 || bridgeBusy || Buffer.byteLength(JSON.stringify(message)) > 65536) {
-            refuse3();
-            return;
-          }
-          bridgeBusy = true;
-          try {
-            const secrets = spec.secrets ?? [];
-            const name = row.name;
-            if (sanitizeText(name, secrets) !== name)
-              throw new Error("Invalid coordinator call");
-            const args = row.args === undefined ? undefined : JSON.parse(sanitizeData(row.args, secrets));
-            const value = await spec.onCoordinator?.(name, args, ingressStop.signal);
-            const text2 = sanitizeText(JSON.stringify(value), secrets);
-            const reply = { id, ok: true, text: text2 };
-            if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
-              throw new Error("Coordinator result exceeds bound");
-            if (!settled && !stopping && child.connected)
-              child.send(reply, () => {});
-          } catch {
-            refuse3();
-          } finally {
-            bridgeBusy = false;
-          }
-        })();
-      });
-    const abort = () => stop("canceled");
-    const timeout = spec.uninterruptible ? undefined : setTimeout(() => stop("timeout"), spec.timeoutMs);
-    if (!spec.uninterruptible) {
-      spec.signal.addEventListener("abort", abort, { once: true });
-      if (spec.signal.aborted)
-        abort();
-    }
-    const frame = (line) => {
-      let lease;
-      try {
-        lease = spec.recording?.reserveRaw(Buffer.byteLength(line));
-        const value = parseCaptureLine(line);
-        if (!capture)
-          capture = new CaptureState(spec.childRunId ?? decodeCaptureFrame(value).childRunId, spec.expectedRequest);
-        const decoded2 = capture.accept(value, Buffer.byteLength(line) + 1);
-        spec.onFrame?.(decoded2);
-        if (decoded2.event.kind === "ready") {
-          ready2 = true;
-          spec.onProgress?.("Agent ready");
-        }
-        if (decoded2.event.kind === "tool-start")
-          spec.onProgress?.(clean2(`Tool: ${decoded2.event.name}`, 128));
-        if (decoded2.event.kind === "final")
-          final = capture.preview;
-        if (lease) {
-          spec.recording?.accept(decoded2, lease);
-          lease = undefined;
-        }
-      } catch {
-        lease?.release();
-        stop("failed");
-      }
-    };
-    const receive = async (chunk, stdout) => {
-      if (settled || stopping)
-        return;
-      if (spec.checkRecording) {
-        await spec.checkRecording.receive(chunk, stdout ? "stdout" : "stderr");
-        return;
-      }
-      byteCount += chunk.length;
-      if (byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)) {
-        truncated = true;
-        if (!spec.uninterruptible)
-          stop("failed");
-        return;
-      }
-      let text2;
-      try {
-        text2 = stdout && spec.protocol ? protocolDecoder.decode(chunk, { stream: true }) : (stdout ? stdoutDecoder : stderrDecoder).write(chunk);
-      } catch {
-        stop("failed");
-        return;
-      }
-      if (!spec.protocol || !stdout) {
-        if (spec.uninterruptible && truncated)
-          return;
-        output += text2;
-        if (Buffer.byteLength(output) > 256 * 1024) {
-          truncated = true;
-          if (spec.uninterruptible)
-            output = clean2(output, 256 * 1024);
-          else
-            stop("failed");
-        }
-      } else {
-        pending += text2;
-        let end = pending.indexOf(`
-`);
-        while (end >= 0) {
-          const line = pending.slice(0, end);
-          pending = pending.slice(end + 1);
-          if (Buffer.byteLength(line) >= LIMITS.frameBytes) {
-            truncated = true;
-            stop("failed");
-            break;
-          }
-          if (spec.recording)
-            await spec.recording.writable(ingressStop.signal);
-          if (settled || stopping)
-            break;
-          frame(line);
-          if (settled || stopping)
-            break;
-          end = pending.indexOf(`
-`);
-        }
-        if (Buffer.byteLength(pending) > LIMITS.frameBytes) {
-          truncated = true;
-          stop("failed");
-        }
-      }
-    };
-    contextStream?.on("data", (chunk) => {
-      if (settled || stopping)
-        return;
-      contextBytes += chunk.length;
-      if (contextBytes > CONTEXT_BYTES) {
-        stop("failed");
-        return;
-      }
-      contextChunks.push(chunk);
-    });
-    contextStream?.once("end", () => {
-      contextEnded = true;
-    });
-    contextStream?.on("error", () => stop("failed"));
-    let stdoutWork = Promise.resolve();
-    let stderrWork = Promise.resolve();
-    let stdoutEnded = false, stderrEnded = false;
-    if (spec.checkRecording) {
-      child.stdout.once("end", () => {
-        stdoutEnded = true;
-      });
-      child.stderr.once("end", () => {
-        stderrEnded = true;
-      });
-      child.stdout.on("error", () => stop("failed"));
-      child.stderr.on("error", () => stop("failed"));
-    }
-    child.stdout.on("data", (chunk) => {
-      if (!spec.recording && !spec.checkRecording) {
-        receive(chunk, true).catch(() => stop("failed"));
-        return;
-      }
-      child.stdout.pause();
-      const original = receive(chunk, true).catch(() => stop("failed")).finally(() => {
-        if (!settled && stdoutWork === original)
-          child.stdout.resume();
-      });
-      stdoutWork = original;
-    });
-    child.stderr.on("data", (chunk) => {
-      if (!spec.checkRecording) {
-        receive(chunk, false).catch(() => stop("failed"));
-        return;
-      }
-      child.stderr.pause();
-      const original = receive(chunk, false).catch(() => stop("failed")).finally(() => {
-        if (!settled && stderrWork === original)
-          child.stderr.resume();
-      });
-      stderrWork = original;
-    });
-    child.on("error", () => {
-      stopping = "failed";
-    });
-    child.on("close", (code2, signal) => {
-      nativeClosed = true;
-      if (launched)
-        observeLifecycle({ kind: "closed", at: Date.now() });
-      clearTimeout(timeout);
-      clearTimeout(killTimer);
-      clearTimeout(unknownTimer);
-      const close = () => {
-        if (spec.onContext && !stopping && code2 === 0) {
-          try {
-            if (!contextEnded)
-              throw new Error("Context EOF missing");
-            spec.onContext(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(contextChunks)));
-          } catch {
-            stopping = "failed";
-          }
-        }
-        if (!spec.protocol)
-          output += stdoutDecoder.end();
-        else {
-          try {
-            pending += protocolDecoder.decode();
-          } catch {
-            stopping ??= "failed";
-          }
-        }
-        output += stderrDecoder.end();
-        finish(true, code2, signal);
-      };
-      if (spec.checkRecording) {
-        Promise.all([stdoutWork, stderrWork]).then(async () => {
-          try {
-            await spec.checkRecording?.end(!settled && !stopping && stdoutEnded && stderrEnded);
-          } catch {}
-          close();
-        });
-      } else if (spec.recording)
-        stdoutWork.then(close);
-      else
-        close();
-    });
-    if (child.stdin) {
-      child.stdin.on("error", () => {
-        stdin = "failed";
-        stop("failed");
-      });
-      child.stdin.once("finish", () => {
-        stdin = "delivered";
-      });
-      try {
-        child.stdin.end(spec.input);
-      } catch {
-        stdin = "failed";
-        stop("failed");
-      }
-    }
-  });
-}
-class AmbientFileAuth extends Error {
-}
-function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
-  const ambient = captured?.ambient ?? networkSnapshot(process.env);
-  const scoped = captured?.scoped ?? scopedNetwork(material);
-  if (Object.keys(material.auth.env ?? {}).some((name) => /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name)))
-    throw new AmbientFileAuth;
-  const selected2 = sdkNetworkEnvironment(ambient, scoped);
-  const literals = (source) => Object.values(Object.getOwnPropertyDescriptors(source)).flatMap((descriptor) => ("value" in descriptor) && typeof descriptor.value === "string" ? [descriptor.value] : []);
-  const secrets = [
-    material.auth.apiKey ?? "",
-    ...literals(material.auth.headers ?? {}),
-    ...literals(material.auth.env ?? {}),
-    ...selected2.redactionLiterals
-  ];
-  const investigation = {
-    roots,
-    timeoutMs,
-    deadlineMs: Number(process.hrtime.bigint() / 1000000n) + timeoutMs
-  };
-  const input = JSON.stringify({ ...material, investigation });
-  if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
-    throw new Error("network");
-  return { material, investigation, ambient, scoped, selected: selected2, secrets, input };
-}
-function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
-  if (!sameNetwork(encoded2.ambient, networkSnapshot(process.env)) || !sameNetwork(encoded2.scoped, scopedNetwork(encoded2.material)))
-    throw new Error("network");
-  return runProcess({
-    command: process.execPath,
-    args: [fileURLToPath4(new URL("./sdk-worker.mjs", import.meta.url))],
-    cwd: encoded2.material.cwd,
-    input: encoded2.input,
-    env: encoded2.selected.env,
-    protocol: true,
-    childRunId: encoded2.material.request.childRunId,
-    expectedRequest: encoded2.material.request,
-    signal,
-    timeoutMs,
-    secrets: encoded2.secrets,
-    ...extra
-  });
-}
-function launchConversation(prepared, conversation, signal, options) {
-  let encoded2;
-  return prepared.consume((material) => {
-    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } }, options.timeoutMs);
-    encoded2.input = JSON.stringify({
-      ...encoded2.material,
-      investigation: encoded2.investigation,
-      conversation
-    });
-    return encoded2.input;
-  }, (input) => {
-    if (!encoded2 || encoded2.input !== input)
-      throw new Error("Invalid chat launch");
-    const secrets = encoded2.secrets;
-    return launchEncoded(encoded2, signal, options.timeoutMs, {
-      maySignal: options.maySignal,
-      onNative: options.onNative,
-      onCoordinator: options.onCoordinator,
-      onFrame: (frame) => options.onFrame(frame, secrets),
-      onContext: (source) => {
-        const value = closed(parseWireJson(source, CONTEXT_BYTES), [
-          "schema",
-          "messages"
-        ]);
-        if (value.schema !== "cadence-conversation-context/1")
-          throw new Error("Invalid checkpoint");
-        options.onContext(conversationMessages(value.messages, [
-          ...options.ownerSecrets(),
-          ...secrets
-        ]));
-      }
-    });
-  });
-}
-function launchWorkflowWorker(prepared, cwd, signal, options) {
-  let encoded2;
-  return prepared.consume((material) => {
-    encoded2 = encodeEnvelope({
-      ...material,
-      cwd,
-      model: { ...material.model }
-    }, options.timeoutMs, undefined, options.roots ?? [cwd]);
-    return encoded2.input;
-  }, (input) => {
-    if (!encoded2 || encoded2.input !== input)
-      throw new Error("Invalid workflow launch");
-    const secrets = [...encoded2.secrets, ...options.ownerSecrets];
-    return launchEncoded(encoded2, signal, options.timeoutMs, {
-      secrets,
-      maySignal: options.maySignal,
-      onLifecycle: options.onLifecycle,
-      onNative: (native, capture) => options.onNative(native, capture?.selected?.messageId),
-      onFrame: (frame) => options.onFrame(frame, secrets)
-    });
-  });
-}
-
-// src/service/conversations.ts
+import { randomUUID as randomUUID19 } from "node:crypto";
+import { lstatSync as lstatSync15, opendirSync as opendirSync9, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
+import { dirname as dirname16, join as join26 } from "node:path";
 var TURN_BYTES = 384 * 1024;
 var META_BYTES = 64 * 1024;
 var SESSION_LIMIT = 200;
@@ -23165,7 +24159,7 @@ var OMITTED_FLAG = {
 };
 function observedFile(path) {
   try {
-    const s = lstatSync13(path);
+    const s = lstatSync15(path);
     return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
@@ -23268,7 +24262,7 @@ class ConversationCapture {
       this.turn.notice = `worker-failure: ${e.code}`;
     else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
       this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    if ([...this.details.values()].reduce((size, detail) => size + Buffer.byteLength(detail.text) + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
+    if ([...this.details.values()].reduce((size2, detail) => size2 + Buffer.byteLength(detail.text) + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
       throw new ContractError("capacity");
     canonicalJson(this.turn, TURN_BYTES);
     if (e.kind === "message-end") {
@@ -23289,7 +24283,7 @@ class Conversations {
   summaries = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join23(o.coordination.directory, "conversations-v1");
+    this.root = join26(o.coordination.directory, "conversations-v1");
     this.cwd = realpathSync8(o.cwd);
   }
   currentDirectory() {
@@ -23300,13 +24294,13 @@ class Conversations {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join23(this.root, "turns", decodeId(id), name);
+    return join26(this.root, "turns", decodeId(id), name);
   }
   identityPath(id) {
-    return join23(this.root, "identities", `${decodeId(id)}.json`);
+    return join26(this.root, "identities", `${decodeId(id)}.json`);
   }
   metadataPath(id) {
-    return join23(this.root, "sessions", `${decodeId(id)}.json`);
+    return join26(this.root, "sessions", `${decodeId(id)}.json`);
   }
   read(path, max) {
     const value = this.files.read(path, max);
@@ -23345,18 +24339,18 @@ class Conversations {
     };
   }
   turn(id) {
-    const live = this.active.get(id);
-    const turn = live?.turn ?? decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
+    const live2 = this.active.get(id);
+    const turn = live2?.turn ?? decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
     if (turn.id !== id)
       throw new ContractError("corrupt-selected");
-    return !live && ["queued", "running"].includes(turn.status) ? {
+    return !live2 && ["queued", "running"].includes(turn.status) ? {
       ...turn,
       status: "unknown",
-      notice: "Original work is not observed. No automatic replay."
+      notice: "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry."
     } : turn;
   }
   controlBound(id) {
-    const path = join23(this.root, "control-links", `${decodeId(id)}.json`);
+    const path = join26(this.root, "control-links", `${decodeId(id)}.json`);
     const value = this.read(path, META_BYTES);
     if (value === undefined)
       return false;
@@ -23366,11 +24360,11 @@ class Conversations {
     return true;
   }
   controlKey(id) {
-    return observedFile(join23(this.root, "control-links", `${decodeId(id)}.json`));
+    return observedFile(join26(this.root, "control-links", `${decodeId(id)}.json`));
   }
   bindControl(id) {
     if (!this.controlBound(id))
-      this.write(join23(this.root, "control-links", `${decodeId(id)}.json`), { schema: "cadence-conversation-control/1", conversationId: id }, META_BYTES);
+      this.write(join26(this.root, "control-links", `${decodeId(id)}.json`), { schema: "cadence-conversation-control/1", conversationId: id }, META_BYTES);
   }
   hasTurn(id, turnId) {
     return this.metadata(id)?.turns.includes(turnId) ?? false;
@@ -23411,59 +24405,59 @@ class Conversations {
     }
     return summary2;
   }
-  liveSummary(live) {
+  liveSummary(live2) {
     return {
-      id: live.conversationId,
-      title: live.title,
-      head: live.turn.id,
-      status: live.turn.status,
-      updatedAt: live.acceptedAt
+      id: live2.conversationId,
+      title: live2.title,
+      head: live2.turn.id,
+      status: live2.turn.status,
+      updatedAt: live2.acceptedAt
     };
   }
   list() {
     this.o.owner.lease.assert();
-    const dir = join23(this.root, "sessions");
+    const dir = join26(this.root, "sessions");
     if (!this.files.directory(dir))
       return {
         kind: "conversations",
-        entries: [...this.active.values()].map((live) => this.liveSummary(live))
+        entries: [...this.active.values()].map((live2) => this.liveSummary(live2))
       };
-    const entries = [], opened = opendirSync7(dir);
+    const entries2 = [], opened = opendirSync9(dir);
     try {
       for (let e = opened.readSync();e; e = opened.readSync()) {
-        if (!e.isFile() || !e.name.endsWith(".json") || entries.length >= SESSION_LIMIT)
+        if (!e.isFile() || !e.name.endsWith(".json") || entries2.length >= SESSION_LIMIT)
           throw new ContractError("capacity");
-        entries.push(this.retainedSummary(decodeId(e.name.slice(0, -5))));
+        entries2.push(this.retainedSummary(decodeId(e.name.slice(0, -5))));
       }
     } finally {
       opened.closeSync();
     }
-    for (const live of this.active.values()) {
-      const at = entries.findIndex((entry) => entry.id === live.conversationId);
+    for (const live2 of this.active.values()) {
+      const at = entries2.findIndex((entry) => entry.id === live2.conversationId);
       if (at < 0)
-        entries.push(this.liveSummary(live));
+        entries2.push(this.liveSummary(live2));
       else
-        entries[at] = this.liveSummary(live);
+        entries2[at] = this.liveSummary(live2);
     }
     return {
       kind: "conversations",
-      entries: entries.sort((a, b) => b.updatedAt - a.updatedAt)
+      entries: entries2.sort((a, b) => b.updatedAt - a.updatedAt)
     };
   }
   view(id, before) {
     this.o.owner.lease.assert();
     const meta = this.metadata(id);
     if (!meta) {
-      const live = before === null ? [...this.active.values()].find((turn) => turn.conversationId === id) : undefined;
+      const live2 = before === null ? [...this.active.values()].find((turn) => turn.conversationId === id) : undefined;
       return {
         kind: "conversation",
-        summary: live ? this.liveSummary(live) : null,
-        turns: live ? [
+        summary: live2 ? this.liveSummary(live2) : null,
+        turns: live2 ? [
           {
-            ...structuredClone(live.turn),
+            ...structuredClone(live2.turn),
             notice: [
               "Current metadata unavailable; showing the active turn only. No state was reconstructed.",
-              live.turn.notice
+              live2.turn.notice
             ].filter(Boolean).join(`
 `)
           }
@@ -23477,10 +24471,10 @@ class Conversations {
     const turns = [];
     let bytes = 0;
     while (end > 0 && turns.length < 20) {
-      const turn = this.turn(meta.turns[end - 1]), size = Buffer.byteLength(canonicalJson(turn, TURN_BYTES));
-      if (bytes + size > 400 * 1024)
+      const turn = this.turn(meta.turns[end - 1]), size2 = Buffer.byteLength(canonicalJson(turn, TURN_BYTES));
+      if (bytes + size2 > 400 * 1024)
         break;
-      bytes += size;
+      bytes += size2;
       turns.unshift(structuredClone(turn));
       --end;
     }
@@ -23496,16 +24490,16 @@ class Conversations {
     const visit = (directory, depth) => {
       if (depth > 4 || !this.files.directory(directory))
         return;
-      const dir = opendirSync7(directory);
+      const dir = opendirSync9(directory);
       try {
         for (let entry = dir.readSync();entry; entry = dir.readSync()) {
           if (++count2 > 1e4)
             throw new ContractError("capacity");
-          const path = join23(directory, entry.name);
+          const path = join26(directory, entry.name);
           if (entry.isDirectory())
             visit(path, depth + 1);
           else if (entry.isFile())
-            bytes += lstatSync13(path).size;
+            bytes += lstatSync15(path).size;
           else
             throw new ContractError("corrupt-selected");
           if (bytes + (this.active.size + 1) * (CONTEXT_BYTES + TURN_BYTES + 128 * 1024) > 512 * 1024 * 1024)
@@ -23607,7 +24601,7 @@ class Conversations {
       begin = resolve9;
     });
     const original = ready2.then(() => this.run(command, turn, previous, previousFile, next, abort, control));
-    const live = {
+    const live2 = {
       turn,
       abort,
       original,
@@ -23618,15 +24612,15 @@ class Conversations {
       metaFile: null
     };
     beforeAccept?.();
-    this.active.set(turn.id, live);
+    this.active.set(turn.id, live2);
     this.o.owner.trackConversation(original, () => abort.abort());
     try {
       if (!meta)
         this.write(this.identityPath(next.id), { schema: "cadence-conversation/1", id: next.id, cwd: this.cwd }, META_BYTES);
-      this.write(this.path(turn.id, "accepted.json"), { command, at: live.acceptedAt }, META_BYTES);
-      live.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES);
+      this.write(this.path(turn.id, "accepted.json"), { command, at: live2.acceptedAt }, META_BYTES);
+      live2.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES);
       next.turns.push(turn.id);
-      live.metaFile = this.write(this.metadataPath(next.id), next, META_BYTES, beforeMeta);
+      live2.metaFile = this.write(this.metadataPath(next.id), next, META_BYTES, beforeMeta);
       control?.accept();
     } catch (error) {
       abort.abort();
@@ -23638,7 +24632,7 @@ class Conversations {
   }
   origin(taskId2) {
     this.o.owner.lease.assert();
-    const value = this.read(join23(this.root, "task-links", `${decodeId(taskId2)}.json`), META_BYTES);
+    const value = this.read(join26(this.root, "task-links", `${decodeId(taskId2)}.json`), META_BYTES);
     if (value === undefined)
       return { kind: "task-origin", taskId: taskId2, conversationId: null };
     const row = closed(value, ["conversationId"]);
@@ -23650,11 +24644,11 @@ class Conversations {
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
-    const live = this.active.get(turnId);
-    if (live) {
-      if (live.conversationId !== id || live.turn.epoch !== epoch)
+    const live2 = this.active.get(turnId);
+    if (live2) {
+      if (live2.conversationId !== id || live2.turn.epoch !== epoch)
         throw new ContractError("stale");
-      live.abort.abort();
+      live2.abort.abort();
       return;
     }
     const meta = this.metadata(id);
@@ -23684,11 +24678,11 @@ class Conversations {
         omissions: ["gap"]
       }
     };
-    const live = this.active.get(turn.id);
+    const live2 = this.active.get(turn.id);
     const save = () => {
-      if (!live?.turnFile)
+      if (!live2?.turnFile)
         throw new ContractError("corrupt-selected");
-      live.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES, live.turnFile);
+      live2.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES, live2.turnFile);
     };
     const current2 = () => {
       if (abort.signal.aborted || this.o.owner.state !== "idle" || !this.currentDirectory())
@@ -23719,7 +24713,7 @@ class Conversations {
         taskId: meta.id,
         taskKind: control ? "research" : "code",
         runId: turn.id,
-        childRunId: randomUUID17(),
+        childRunId: randomUUID19(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -23734,7 +24728,7 @@ class Conversations {
       });
       const auth = this.o.models.prepareTracked({
         request: request3,
-        operationId: randomUUID17(),
+        operationId: randomUUID19(),
         epoch: turn.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
@@ -23794,9 +24788,9 @@ class Conversations {
           throw new ContractError("corrupt-selected");
         this.write(this.path(turn.id, "context.json"), { schema: "cadence-conversation-context/1", messages: checkpoint }, CONTEXT_BYTES);
         meta.checkpoint = turn.id;
-        if (!live?.metaFile)
+        if (!live2?.metaFile)
           throw new ContractError("corrupt-selected");
-        live.metaFile = this.write(this.metadataPath(meta.id), meta, META_BYTES, live.metaFile);
+        live2.metaFile = this.write(this.metadataPath(meta.id), meta, META_BYTES, live2.metaFile);
       }
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
@@ -23884,10 +24878,10 @@ class ConversationWorkflow {
   grants = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join24(o.coordination.directory, "conversation-workflows-v1");
+    this.root = join27(o.coordination.directory, "conversation-workflows-v1");
   }
   path(id) {
-    return join24(this.root, decodeId(id), "state.json");
+    return join27(this.root, decodeId(id), "state.json");
   }
   read(id) {
     this.o.owner.lease.assert();
@@ -23948,11 +24942,11 @@ class ConversationWorkflow {
   records() {
     if (!this.o.coordination.files.directory(this.root))
       return 0;
-    const dir = opendirSync8(this.root);
-    let entries = 0, records = 0;
+    const dir = opendirSync10(this.root);
+    let entries2 = 0, records = 0;
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
-        if (++entries > SCAN)
+        if (++entries2 > SCAN)
           return RECORDS;
         if (e.isDirectory())
           ++records;
@@ -23997,7 +24991,7 @@ class ConversationWorkflow {
     try {
       if (!this.o.coordination.files.directory(this.root))
         return links;
-      const dir = opendirSync8(this.root);
+      const dir = opendirSync10(this.root);
       try {
         let seen = 0;
         for (let e = dir.readSync();e && seen < SCAN && wanted.size; e = dir.readSync()) {
@@ -24168,7 +25162,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }
     let published;
     try {
-      published = this.o.workflows.command(randomUUID18(), epoch, {
+      published = this.o.workflows.command(randomUUID20(), epoch, {
         action: "propose",
         plan,
         model
@@ -24214,7 +25208,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID18(), conversationId = current2.state.id;
+    const id = randomUUID20(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -24238,7 +25232,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }, current2.file);
     const cancel = () => {
       try {
-        this.o.workflows.command(randomUUID18(), epoch, {
+        this.o.workflows.command(randomUUID20(), epoch, {
           action: "cancel",
           runId: id
         });
@@ -24257,7 +25251,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join24(this.root, decodeId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join27(this.root, decodeId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -24316,7 +25310,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID18();
+      const g = prepared.response, grant2 = randomUUID20();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -24383,28 +25377,28 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 import {
-  lstatSync as lstatSync17,
-  opendirSync as opendirSync10,
+  lstatSync as lstatSync19,
+  opendirSync as opendirSync12,
   realpathSync as realpathSync10,
   rmdirSync,
   statfsSync as statfsSync3,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { basename as basename2, dirname as dirname19, join as join27, resolve as resolve10 } from "node:path";
+import { basename as basename3, dirname as dirname19, join as join30, resolve as resolve10 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // src/task-diff.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash as createHash23 } from "node:crypto";
-import { lstatSync as lstatSync14, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join25, relative as relative7 } from "node:path";
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { createHash as createHash24 } from "node:crypto";
+import { lstatSync as lstatSync16, readdirSync as readdirSync3, readlinkSync } from "node:fs";
+import { join as join28, relative as relative8 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash23("sha256");
+  const hash3 = createHash24("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -24418,7 +25412,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
     if (Date.now() >= deadline)
       outcome = "time budget exhausted";
     else {
-      const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
+      const result = spawnSync3("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
         cwd: root,
         encoding: "buffer",
         timeout: Math.max(1, deadline - Date.now()),
@@ -24442,8 +25436,8 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       return;
     }
     try {
-      const path = join25(root, name);
-      const st = lstatSync14(path);
+      const path = join28(root, name);
+      const st = lstatSync16(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync(path));
@@ -24462,13 +25456,13 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash23("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash24("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
     }
   };
-  const probe = spawnSync2("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
+  const probe2 = spawnSync3("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
     cwd: root,
     env: gitEnvironment(),
     timeout: 3000,
@@ -24476,7 +25470,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
     encoding: "utf8",
     windowsHide: true
   });
-  const isGit = probe.status === 0 && probe.stdout.trim() === "true";
+  const isGit = probe2.status === 0 && probe2.stdout.trim() === "true";
   if (isGit) {
     const pathspec = [
       "--",
@@ -24566,7 +25560,7 @@ ${data2.toString("utf8")}`);
     parts.push("Administrative .cadence/assistant/tasks records are excluded from business freshness; configuration is not excluded.");
   } else {
     parts.push("Non-Git bounded regular-file inventory; no staged/unstaged distinction. Excludes .git and Cadence task records. Content identities, not a transactional snapshot.");
-    if (probe.error || probe.status !== 0 && !probe.stderr?.includes("not a git repository")) {
+    if (probe2.error || probe2.status !== 0 && !probe2.stderr?.includes("not a git repository")) {
       complete = false;
       limits.push("Git availability/lookup uncertain; using bounded inventory.");
     }
@@ -24583,8 +25577,8 @@ ${data2.toString("utf8")}`);
         return;
       }
       for (const name of names2) {
-        const path = join25(dir, name);
-        const rel = relative7(root, path).split("\\").join("/");
+        const path = join28(dir, name);
+        const rel = relative8(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
         if (++fileCount > 2000 || Date.now() >= deadline) {
@@ -24592,7 +25586,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync14(path);
+          const st = lstatSync16(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -24618,13 +25612,13 @@ ${data2.toString("utf8")}`);
 }
 
 // src/service/workflow-git.ts
-import { spawn as spawn3, spawnSync as spawnSync3 } from "node:child_process";
-import { createHash as createHash24 } from "node:crypto";
+import { spawn as spawn3, spawnSync as spawnSync4 } from "node:child_process";
+import { createHash as createHash25 } from "node:crypto";
 import {
   closeSync as closeSync9,
   constants as constants7,
   fstatSync as fstatSync6,
-  lstatSync as lstatSync15,
+  lstatSync as lstatSync17,
   openSync as openSync9,
   readdirSync as readdirSync4,
   readlinkSync as readlinkSync2,
@@ -24632,7 +25626,7 @@ import {
   realpathSync as realpathSync9
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname18, isAbsolute as isAbsolute9, join as join26, relative as relative8, resolve as resolve9, sep as sep6 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute9, join as join29, relative as relative9, resolve as resolve9, sep as sep6 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -24648,7 +25642,7 @@ class WorkflowRefusal extends ContractError {
   }
 }
 function gitRead(cwd, args) {
-  const r = spawnSync3("git", gitArguments(args), {
+  const r = spawnSync4("git", gitArguments(args), {
     cwd,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -24661,7 +25655,7 @@ function gitRead(cwd, args) {
   return r.stdout;
 }
 function gitAnswer(cwd, args) {
-  const r = spawnSync3("git", gitArguments(args), {
+  const r = spawnSync4("git", gitArguments(args), {
     cwd,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -24717,7 +25711,7 @@ async function gitHead(cwd) {
   return (await gitText(cwd, ["rev-parse", "--verify", "HEAD"])).trim();
 }
 function contains2(root, path) {
-  const within = relative8(root, path);
+  const within = relative9(root, path);
   return !within || !within.startsWith(`..${sep6}`) && within !== ".." && !isAbsolute9(within);
 }
 function nested(a, b) {
@@ -24726,11 +25720,11 @@ function nested(a, b) {
 function safeWorkflowFile(cwd, name) {
   workflowPath(name);
   const p = resolve9(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   safeDirectory(dirname18(p));
   try {
-    const st = lstatSync15(p);
+    const st = lstatSync17(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -24742,11 +25736,11 @@ function safeWorkflowFile(cwd, name) {
 function declaredTarget(cwd, name) {
   workflowPath(name);
   const p = resolve9(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   safeDirectory(dirname18(p));
   try {
-    const st = lstatSync15(p);
+    const st = lstatSync17(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -24781,7 +25775,7 @@ function fileIdentity(p, st, hashBytes) {
   try {
     if (!fstatSync6(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash24("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash25("sha256"), buffer = Buffer.alloc(CHUNK);
     for (let n = readSync5(fd, buffer);n > 0; n = readSync5(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
@@ -24804,7 +25798,7 @@ async function fileIdentityAsync(p, st, hashBytes) {
     throw e;
   }
   try {
-    const digest = createHash24("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash25("sha256"), buffer = Buffer.alloc(CHUNK);
     for (;; ) {
       const { bytesRead } = await handle.read(buffer, 0, CHUNK, null);
       if (!bytesRead)
@@ -24826,13 +25820,13 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join26(directory, entry), relative9 = `${prefix}${entry}`;
-      const st = lstatSync15(full);
+      const full = join29(directory, entry), relative10 = `${prefix}${entry}`;
+      const st = lstatSync17(full);
       if (st.isDirectory()) {
-        rows.push(`${relative9}/`);
-        visit(full, `${relative9}/`);
+        rows.push(`${relative10}/`);
+        visit(full, `${relative10}/`);
       } else
-        rows.push(`${relative9}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
+        rows.push(`${relative10}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
     }
   };
   visit(root, "");
@@ -24848,13 +25842,13 @@ async function directoryIdentityAsync(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join26(directory, entry), relative9 = `${prefix}${entry}`;
+      const full = join29(directory, entry), relative10 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
-        rows.push(`${relative9}/`);
-        await visit(full, `${relative9}/`);
+        rows.push(`${relative10}/`);
+        await visit(full, `${relative10}/`);
       } else
-        rows.push(`${relative9}\x00${await fileIdentityAsync(full, st, DIRECTORY_HASH_BYTES)}`);
+        rows.push(`${relative10}\x00${await fileIdentityAsync(full, st, DIRECTORY_HASH_BYTES)}`);
     }
   };
   await visit(root, "");
@@ -24863,11 +25857,11 @@ async function directoryIdentityAsync(root, name) {
 }
 function pathIdentity(cwd, name, walk = true) {
   const p = resolve9(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
-    st = lstatSync15(p);
+    st = lstatSync17(p);
   } catch (e) {
     if (absent2(e))
       return null;
@@ -24879,7 +25873,7 @@ function pathIdentity(cwd, name, walk = true) {
 }
 async function pathIdentityAsync(cwd, name) {
   const p = resolve9(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
@@ -25089,13 +26083,13 @@ async function assertWorktree(root, cwd) {
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
   const marker2 = resolve9(cwd, ".git");
-  if (!lstatSync15(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
+  if (!lstatSync17(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
 }
 
 // src/service/workflow-history.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync16, opendirSync as opendirSync9 } from "node:fs";
+import { randomUUID as randomUUID21 } from "node:crypto";
+import { lstatSync as lstatSync18, opendirSync as opendirSync11 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -25106,7 +26100,7 @@ class WorkflowHistoryScanner {
     this.directory = directory;
   }
   incarnation() {
-    const st = lstatSync16(this.path, { bigint: true });
+    const st = lstatSync18(this.path, { bigint: true });
     if (!st.isDirectory() || st.isSymbolicLink())
       throw new ContractError("corrupt-selected");
     return `${st.dev}:${st.ino}`;
@@ -25132,7 +26126,7 @@ class WorkflowHistoryScanner {
       if (this.scans.size >= WORKFLOW_LIMITS.historyScans)
         throw new ContractError("capacity");
       const incarnation3 = this.incarnation();
-      state = { dir: opendirSync9(this.path), incarnation: incarnation3, after, ids: [] };
+      state = { dir: opendirSync11(this.path), incarnation: incarnation3, after, ids: [] };
     }
     let suspended = false;
     try {
@@ -25158,7 +26152,7 @@ class WorkflowHistoryScanner {
         if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
           state.ids.pop();
       }
-      const scan = randomUUID19();
+      const scan = randomUUID21();
       state.timer = setTimeout(() => {
         this.scans.delete(scan);
         try {
@@ -25195,8 +26189,8 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.25",
-  build: "cc27e99d5b4978c5cbbd91994967733d01fa02476e8577bc67e0e424e22c80e3",
+  version: "2.0.26",
+  build: "0d1a59a981d4065126bc6199f28b7343fcf7b86e51db3569e06176be5fd52960",
   entry: fileURLToPath5(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -25208,7 +26202,7 @@ var MAX_STEPS = 256;
 var STEP_UNITS = 80;
 var MAX_ACTIVE = 4;
 var GIT_MS = 10 * 60 * 1000;
-var RESTARTED = "The owner restarted before this run settled. Its outcome is not inferred and nothing was replayed; worktrees and any partial edits are retained for inspection.";
+var RESTARTED = "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 var TRANSCRIPT_LIMIT = "Transcript bound reached: later worker activity was not retained here. The worker continued; its outcome and final result are recorded separately.";
 var FINAL_UNAVAILABLE = "The final message exceeded the retained transcript bound and was not retained.";
 
@@ -25233,7 +26227,7 @@ function clipBytes(value, maximum) {
   return Buffer.from(value).subarray(0, maximum).toString("utf8").replace(/�+$/u, "");
 }
 function reviewVerdict(reply) {
-  const decode2 = (raw) => {
+  const decode3 = (raw) => {
     let v;
     try {
       v = JSON.parse(raw);
@@ -25255,7 +26249,7 @@ function reviewVerdict(reply) {
     };
   };
   const body = reply.trim();
-  const direct = decode2(body);
+  const direct = decode3(body);
   if (direct)
     return direct;
   const found = [];
@@ -25276,7 +26270,7 @@ function reviewVerdict(reply) {
       else if (c === "{")
         depth++;
       else if (c === "}" && --depth === 0) {
-        const verdict = decode2(body.slice(start, i + 1));
+        const verdict = decode3(body.slice(start, i + 1));
         if (verdict)
           found.push(verdict);
         break;
@@ -25383,12 +26377,12 @@ class Workflows {
   grants = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join27(o.coordination.directory, "workflows-v1");
+    this.root = join30(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync10(o.coordination.store.root);
-    this.worktreeRoot = join27(o.coordination.stateHome, "cadence-worktrees-v1", basename2(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join27(this.root, "runs"), () => {
+    this.worktreeRoot = join30(o.coordination.stateHome, "cadence-worktrees-v1", basename3(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join30(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join27(this.root, "runs"));
+      return this.files.directory(join30(this.root, "runs"));
     });
     this.recover();
   }
@@ -25396,7 +26390,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join27(this.root, "runs", decodeId(id), name);
+    return join30(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES2) {
     this.o.owner.lease.assert();
@@ -25413,11 +26407,11 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join27(this.root, "runs");
+    const runs = join30(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
-    const dir = opendirSync10(runs);
+    const dir = opendirSync12(runs);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isDirectory())
@@ -25524,7 +26518,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join27(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
+    const file = this.files.read(join30(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES2));
@@ -25558,7 +26552,7 @@ class Workflows {
     if (selected2.kind === "workflow-history-progress")
       return selected2;
     const remaining = selected2.ids;
-    const entries = remaining.slice(0, WORKFLOW_LIMITS.historyPage).map((id) => {
+    const entries2 = remaining.slice(0, WORKFLOW_LIMITS.historyPage).map((id) => {
       try {
         const view = this.view(id);
         if (view.kind !== "workflow" || view.response.type !== "run")
@@ -25579,7 +26573,7 @@ class Workflows {
     });
     return {
       kind: "workflow-history",
-      entries,
+      entries: entries2,
       next: selected2.next
     };
   }
@@ -25591,14 +26585,14 @@ class Workflows {
   }
   view(id) {
     this.o.owner.lease.assert();
-    const live = this.active.get(id);
-    const file = live ? undefined : this.files.read(this.path(id, "state.json"), RECORD_BYTES2);
-    if (!live && !file)
+    const live2 = this.active.get(id);
+    const file = live2 ? undefined : this.files.read(this.path(id, "state.json"), RECORD_BYTES2);
+    if (!live2 && !file)
       throw new ContractError("unavailable");
-    const run = decodeWorkflowRun(live ? live.run : parseWireJson(file ? file.bytes.toString("utf8") : "null", RECORD_BYTES2));
+    const run = decodeWorkflowRun(live2 ? live2.run : parseWireJson(file ? file.bytes.toString("utf8") : "null", RECORD_BYTES2));
     if (run.id !== id)
       throw new ContractError("corrupt-selected");
-    if (!live && ["running", "queued"].includes(run.status))
+    if (!live2 && ["running", "queued"].includes(run.status))
       run.status = "unknown";
     return {
       kind: "workflow",
@@ -25678,8 +26672,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join27(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
-    return this.files.directory(join27(this.root, "runs", id));
+      return !!this.files.read(join30(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
+    return this.files.directory(join30(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -25708,7 +26702,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join27(this.root, "proposals", `${commandId}.json`);
+      const target3 = join30(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES2);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -25731,7 +26725,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID20(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID22(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -25767,7 +26761,7 @@ class Workflows {
     if (request3.action === "execute") {
       proposal = this.proposal(request3.proposalId);
       const source = this.assertProposal(proposal, request3.digest);
-      if ([...this.active.values()].some((live2) => live2.proposal))
+      if ([...this.active.values()].some((live3) => live3.proposal))
         throw new WorkflowRefusal("conflict", "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.");
       this.capacity();
       const grant = this.grants.get(request3.grant);
@@ -25812,10 +26806,10 @@ class Workflows {
     const ready2 = new Promise((resolve11) => {
       begin = resolve11;
     });
-    const live = {
+    const live2 = {
       run,
       abort,
-      original: ready2.then(() => this.execute(live, request3)),
+      original: ready2.then(() => this.execute(live2, request3)),
       proposal,
       target: target2,
       declared,
@@ -25823,11 +26817,11 @@ class Workflows {
       notes: []
     };
     effect();
-    this.active.set(commandId, live);
-    this.o.owner.trackConversation(live.original, () => abort.abort());
+    this.active.set(commandId, live2);
+    this.o.owner.trackConversation(live2.original, () => abort.abort());
     try {
       this.write(acceptedPath, { epoch, request: request3 });
-      live.file = this.write(this.path(commandId, "state.json"), run);
+      live2.file = this.write(this.path(commandId, "state.json"), run);
     } catch (e) {
       abort.abort();
       begin();
@@ -25845,35 +26839,35 @@ class Workflows {
     if (this.active.size >= MAX_ACTIVE)
       throw new ContractError("capacity");
   }
-  save(live) {
-    if (!live.file)
+  save(live2) {
+    if (!live2.file)
       throw new ContractError("corrupt-selected");
-    live.file = this.write(this.path(live.run.id, "state.json"), live.run, live.file);
+    live2.file = this.write(this.path(live2.run.id, "state.json"), live2.run, live2.file);
   }
-  saveFinal(live) {
+  saveFinal(live2) {
     try {
-      canonicalJson(live.run, RECORD_BYTES2);
+      canonicalJson(live2.run, RECORD_BYTES2);
     } catch {
-      live.run.steps = live.run.steps.map((s) => ({
+      live2.run.steps = live2.run.steps.map((s) => ({
         ...s,
         text: clipBytes(s.text, 256),
         truncated: true
       }));
-      live.run.notice = this.notice(clipBytes(live.run.notice, 1024), "Run snapshot exceeded its bound; step previews were clipped.");
+      live2.run.notice = this.notice(clipBytes(live2.run.notice, 1024), "Run snapshot exceeded its bound; step previews were clipped.");
     }
-    this.save(live);
+    this.save(live2);
   }
-  assertRunning(live) {
+  assertRunning(live2) {
     this.current();
     this.floor();
-    if (live.abort.signal.aborted)
+    if (live2.abort.signal.aborted)
       throw new ContractError("stale");
   }
-  step(live, id, kind, childRunId) {
-    if (live.run.steps.length >= MAX_STEPS)
+  step(live2, id, kind, childRunId) {
+    if (live2.run.steps.length >= MAX_STEPS)
       throw new ContractError("capacity");
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID20()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID22()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       ...childRunId ? {
@@ -25893,22 +26887,22 @@ class Workflows {
       exitCode: null,
       truncated: false
     };
-    live.run.steps.push(s);
+    live2.run.steps.push(s);
     try {
-      this.save(live);
+      this.save(live2);
     } catch (e) {
-      live.run.steps.pop();
+      live2.run.steps.pop();
       throw e;
     }
     return s;
   }
-  closeStep(live, s, text2) {
+  closeStep(live2, s, text2) {
     if (s.status !== "running")
       return;
-    s.status = this.o.owner.state === "quarantined" ? "unknown" : live.abort.signal.aborted ? "canceled" : "failed";
+    s.status = this.o.owner.state === "quarantined" ? "unknown" : live2.abort.signal.aborted ? "canceled" : "failed";
     s.text = diagnosticText(text2 || s.text || "Operation did not settle with a recorded result.", 1024, this.o.secrets());
     try {
-      this.save(live);
+      this.save(live2);
     } catch {}
   }
   sanitizeResult(result) {
@@ -25919,9 +26913,9 @@ class Workflows {
       output: sanitizeText(result.output, secrets)
     };
   }
-  finishStep(live, s, original, preview) {
+  finishStep(live2, s, original, preview) {
     const result = this.sanitizeResult(original);
-    this.write(this.path(live.run.id, `results/${hash2(s.id)}.json`), {
+    this.write(this.path(live2.run.id, `results/${hash2(s.id)}.json`), {
       stepId: s.id,
       result
     });
@@ -25932,23 +26926,23 @@ class Workflows {
     s.truncated = result.truncated || Buffer.byteLength(shown) > Buffer.byteLength(s.text);
     if (!result.closed)
       this.o.owner.quarantine();
-    this.save(live);
+    this.save(live2);
   }
-  async worker(live, cwd, id, prompt, readonly, version, roots) {
-    this.assertRunning(live);
+  async worker(live2, cwd, id, prompt, readonly, version, roots) {
+    this.assertRunning(live2);
     const model = this.model(version, true);
     const role2 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
     if (!role2)
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID20(), op = randomUUID20();
-    const plan = live.proposal?.plan;
+    const childRunId = randomUUID22(), op = randomUUID22();
+    const plan = live2.proposal?.plan;
     const request3 = decodeWorkerPublicRequest({
       protocol: 2,
-      taskId: live.run.id,
+      taskId: live2.run.id,
       taskKind: readonly ? "research" : "code",
-      runId: live.run.id,
+      runId: live2.run.id,
       childRunId,
       assignmentId: id,
       purpose: readonly ? "research" : "edit",
@@ -25960,10 +26954,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
     });
-    const step = this.step(live, id, readonly ? live.run.phase === "research" ? "research" : "review" : "implementation", childRunId);
+    const step = this.step(live2, id, readonly ? live2.run.phase === "research" ? "research" : "review" : "implementation", childRunId);
     const current2 = () => {
       try {
-        this.assertRunning(live);
+        this.assertRunning(live2);
         return true;
       } catch {
         return false;
@@ -25974,16 +26968,16 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     const auth = this.o.models.prepareTracked({
       request: request3,
       operationId: op,
-      epoch: live.run.epoch,
+      epoch: live2.run.epoch,
       timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
-      signal: live.abort.signal,
+      signal: live2.abort.signal,
       current: current2,
       journal: {
         preparation: (v) => {
-          this.write(this.path(live.run.id, `auth/${op}-intent.json`), v);
+          this.write(this.path(live2.run.id, `auth/${op}-intent.json`), v);
         },
         settlement: (v) => {
-          this.write(this.path(live.run.id, `auth/${op}-settled.json`), v);
+          this.write(this.path(live2.run.id, `auth/${op}-settled.json`), v);
         }
       }
     });
@@ -25993,15 +26987,15 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         throw new ContractError("auth-unavailable");
       if (step.timing) {
         step.timing.preparedAt = Date.now();
-        this.save(live);
+        this.save(live2);
       }
-      this.write(this.path(live.run.id, `launches/${childRunId}.json`), {
+      this.write(this.path(live2.run.id, `launches/${childRunId}.json`), {
         cwd,
         request: request3
       });
       const transcript = {
         id: childRunId,
-        epoch: live.run.epoch,
+        epoch: live2.run.epoch,
         status: "running",
         items: [],
         notice: "",
@@ -26010,13 +27004,13 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       let transcriptFile;
       let credentials = [];
       const saveTranscript = () => {
-        transcriptFile = this.write(this.path(live.run.id, `transcripts/${childRunId}.json`), transcript, transcriptFile);
+        transcriptFile = this.write(this.path(live2.run.id, `transcripts/${childRunId}.json`), transcript, transcriptFile);
       };
       const recorder = new WorkflowTranscript(transcript, () => [
         ...this.o.secrets(),
         ...credentials
       ]);
-      const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, cwd, live.abort.signal, {
+      const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, cwd, live2.abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets(),
         roots: roots?.length ? roots.map((p) => resolve10(cwd, p)) : [cwd],
@@ -26054,7 +27048,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
                 ...secrets
               ])
             };
-            this.save(live);
+            this.save(live2);
           }
           if (recorder.accept(frame))
             saveTranscript();
@@ -26064,7 +27058,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         if (!native)
           throw new ContractError("quarantine");
         return native;
-      }), () => live.abort.abort());
+      }), () => live2.abort.abort());
       const completed = this.sanitizeResult(await running);
       if (completed.outcome === "completed") {
         const selected2 = recorder.selected(selectedMessageId);
@@ -26084,24 +27078,24 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       }
       transcript.status = completed.outcome;
       saveTranscript();
-      this.finishStep(live, step, completed);
+      this.finishStep(live2, step, completed);
       return { result: completed, step };
     } finally {
       await auth.settled;
       if (step.timing) {
         step.timing.settledAt = Date.now();
-        this.save(live);
+        this.save(live2);
       }
-      this.closeStep(live, step, "Worker did not produce a completed native/recorded result.");
+      this.closeStep(live2, step, "Worker did not produce a completed native/recorded result.");
     }
   }
-  async run(live, cwd, operation, options = {}) {
-    this.assertRunning(live);
+  async run(live2, cwd, operation, options = {}) {
+    this.assertRunning(live2);
     const shell = "check" in operation;
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
-    const id = randomUUID20();
-    this.write(this.path(live.run.id, `operations/${id}-intent.json`), {
+    const id = randomUUID22();
+    this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd,
       args: shell ? operation.check : operation.git
     });
@@ -26114,7 +27108,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       command: shell ? process.platform === "win32" ? environment2.COMSPEC ?? "cmd.exe" : "/bin/sh" : "git",
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "-c",
-        `core.hooksPath=${join27(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join30(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -26126,7 +27120,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       windowsVerbatimArguments: shell && process.platform === "win32" ? true : undefined,
       cwd,
       env: shell ? environment2 : gitEnvironment(),
-      signal: options.uninterruptible ? new AbortController().signal : live.abort.signal,
+      signal: options.uninterruptible ? new AbortController().signal : live2.abort.signal,
       uninterruptible: options.uninterruptible,
       timeoutMs: shell ? operation.check.timeoutMs : GIT_MS,
       secrets: [...this.o.secrets()],
@@ -26146,9 +27140,9 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       if (!native)
         throw new ContractError("quarantine");
       return native;
-    }), () => live.abort.abort());
+    }), () => live2.abort.abort());
     const result = this.sanitizeResult(await running);
-    this.write(this.path(live.run.id, `operations/${id}-settled.json`), {
+    this.write(this.path(live2.run.id, `operations/${id}-settled.json`), {
       result,
       native
     });
@@ -26156,27 +27150,27 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       this.o.owner.quarantine();
     return result;
   }
-  async check(live, cwd, c, title) {
-    const step = this.step(live, title, "check");
+  async check(live2, cwd, c, title) {
+    const step = this.step(live2, title, "check");
     try {
-      const result = await this.run(live, cwd, { check: c });
-      this.finishStep(live, step, result);
+      const result = await this.run(live2, cwd, { check: c });
+      this.finishStep(live2, step, result);
       return result;
     } finally {
-      this.closeStep(live, step);
+      this.closeStep(live2, step);
     }
   }
   success(result) {
     if (result.outcome !== "completed" || !result.closed || result.exitCode !== 0)
       throw new WorkflowFailure(result.outcome === "completed" ? "failed" : result.outcome, `Operation ${result.outcome}: ${diagnosticText(result.output || result.text, 512, this.o.secrets())}`);
   }
-  async gitStep(live, cwd, title, body) {
-    const step = this.step(live, title, "git");
+  async gitStep(live2, cwd, title, body) {
+    const step = this.step(live2, title, "git");
     const lines = [];
     let last;
     try {
       const value = await body(async (args) => {
-        const result = await this.run(live, cwd, { git: args });
+        const result = await this.run(live2, cwd, { git: args });
         last = result;
         lines.push(`git ${args.slice(0, args[0] === "worktree" ? 2 : 1).join(" ")}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`);
         if (result.exitCode !== 0 && result.output)
@@ -26187,36 +27181,36 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const summary2 = lines.join(`
 `) || "No Git operation was needed.";
       if (last)
-        this.finishStep(live, step, last, summary2);
+        this.finishStep(live2, step, last, summary2);
       else {
         step.status = "completed";
         step.text = summary2;
-        this.save(live);
+        this.save(live2);
       }
       return value;
     } catch (error) {
       if (last && step.status === "running")
-        this.finishStep(live, step, {
+        this.finishStep(live2, step, {
           ...last,
           outcome: last.outcome === "completed" ? "failed" : last.outcome
         }, [...lines, this.describe(error)].join(`
 `));
       throw error;
     } finally {
-      this.closeStep(live, step, lines.join(`
+      this.closeStep(live2, step, lines.join(`
 `));
     }
   }
-  async setup(live, cwd, plan) {
+  async setup(live2, cwd, plan) {
     for (const c of plan.setup)
-      this.success(await this.check(live, cwd, c, `setup: ${c.name}`));
+      this.success(await this.check(live2, cwd, c, `setup: ${c.name}`));
   }
-  async checks(live, cwd, plan, baseline = false) {
-    live.run.phase = "verifying";
-    this.save(live);
+  async checks(live2, cwd, plan, baseline = false) {
+    live2.run.phase = "verifying";
+    this.save(live2);
     let passed = true;
     for (const c of baseline ? plan.baselineChecks : plan.checks) {
-      const r = await this.check(live, cwd, c, c.name);
+      const r = await this.check(live2, cwd, c, c.name);
       if (!r.closed || r.outcome === "canceled" || r.outcome === "timeout")
         this.success(r);
       passed &&= r.outcome === "completed" && r.exitCode === 0;
@@ -26227,12 +27221,12 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     if (await gitHead(cwd) !== before)
       throw new ContractError("stale");
   }
-  async commit(live, cwd, allowed, message, before, title) {
+  async commit(live2, cwd, allowed, message, before, title) {
     await this.unchangedHead(cwd, before);
     const changes = await assertWorkflowScope(cwd, allowed);
     if (!changes.length)
       return null;
-    return this.gitStep(live, cwd, title, async (git) => {
+    return this.gitStep(live2, cwd, title, async (git) => {
       await git(["add", "--", ...changes]);
       await assertWorkflowScope(cwd, allowed);
       await this.unchangedHead(cwd, before);
@@ -26253,19 +27247,19 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       return commit;
     });
   }
-  async review(live, cwd, p) {
-    live.run.phase = "reviewing";
-    this.save(live);
-    const { result, step } = await this.worker(live, cwd, `review-${randomUUID20()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+  async review(live2, cwd, p) {
+    live2.run.phase = "reviewing";
+    this.save(live2);
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID22()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     this.success(result);
     const verdict = reviewVerdict(result.text);
     step.status = verdict?.approved ? "completed" : "failed";
     step.text = diagnosticText(verdict ? verdict.approved ? `Agent review approved (automatic, not human review). ${verdict.summary}` : `Agent review rejected: ${[verdict.summary, ...verdict.blockingIssues].filter(Boolean).join(" | ") || "no reason given"}` : `Agent review reply could not be parsed as a verdict${result.truncated ? " (the reply was clipped)" : ""}; it is not counted as approval.`, 1024, this.o.secrets());
-    this.save(live);
+    this.save(live2);
     return verdict ? verdict.approved ? "approved" : "rejected" : "unparseable";
   }
-  async scoped(live, allowed, work) {
+  async scoped(live2, allowed, work) {
     const before = await workingSnapshot(this.cwd, allowed);
     let outcome;
     try {
@@ -26281,23 +27275,23 @@ Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     const outside = changed.filter((p) => !workflowCovers(allowed, p));
     for (const p of changed)
       if (workflowCovers(allowed, p))
-        live.delivered.add(p);
+        live2.delivered.add(p);
     if (outside.length) {
       const detail = `Working-copy edits outside the approved scope were preserved, not reverted: ${outside.slice(0, 32).join(", ")}${outside.length > 32 ? ` and ${outside.length - 32} more` : ""}`;
       if (outcome.ok)
         throw new WorkflowRefusal("forbidden", detail);
-      live.notes.push(detail);
+      live2.notes.push(detail);
     }
     if (!outcome.ok)
       throw outcome.error;
     return outcome.value;
   }
-  async verifyAndRepair(live, cwd, p, git) {
+  async verifyAndRepair(live2, cwd, p, git) {
     const allowed = p.plan.tasks.flatMap((t) => t.writes);
-    for (let attempt = 0;attempt <= p.plan.repairAttempts; attempt++) {
+    for (let attempt2 = 0;attempt2 <= p.plan.repairAttempts; attempt2++) {
       const beforeChecks = git ? await gitHead(cwd) : "";
-      const verdict = await this.review(live, cwd, p);
-      const checked2 = await this.checks(live, cwd, p.plan);
+      const verdict = await this.review(live2, cwd, p);
+      const checked2 = await this.checks(live2, cwd, p.plan);
       if (git) {
         await this.unchangedHead(cwd, beforeChecks);
         await assertWorkflowScope(cwd, allowed);
@@ -26306,27 +27300,27 @@ Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
         return;
       if (verdict === "unparseable" && checked2)
         throw new Error("Checks passed, but the automatic review reply could not be parsed as a verdict; nothing was delivered without an Agent review approval.");
-      if (attempt === p.plan.repairAttempts)
+      if (attempt2 === p.plan.repairAttempts)
         throw new Error(`${checked2 ? "" : "Checks failed. "}${verdict === "rejected" ? "Agent review rejected the candidate. " : verdict === "unparseable" ? "Agent review reply could not be parsed. " : ""}Verification/review failed; repair budget exhausted. Artifacts preserved; nothing merged.`);
-      const failures = live.run.steps.filter((s) => s.kind === "check" || s.kind === "review").slice(-8);
+      const failures = live2.run.steps.filter((s) => s.kind === "check" || s.kind === "review").slice(-8);
       const beforeRepair = git ? await gitHead(cwd) : "";
-      const repair = () => this.worker(live, cwd, `repair-${attempt + 1}`, `Repair only within approved paths and acceptance. Do not remove or weaken tests, install dependencies, change scope or Git. If a product decision is missing, stop and report it.
+      const repair = () => this.worker(live2, cwd, `repair-${attempt2 + 1}`, `Repair only within approved paths and acceptance. Do not remove or weaken tests, install dependencies, change scope or Git. If a product decision is missing, stop and report it.
 Allowed paths (directories include their contents): ${allowed.join(", ")}
 Observed failures/review: ${canonicalJson(failures, 65536)}`, false, p.model);
-      this.success((git ? await repair() : await this.scoped(live, allowed, repair)).result);
+      this.success((git ? await repair() : await this.scoped(live2, allowed, repair)).result);
       if (git)
-        await this.commit(live, cwd, allowed, `Cadence: bounded repair ${attempt + 1}`, beforeRepair, `commit-repair-${attempt + 1}`);
+        await this.commit(live2, cwd, allowed, `Cadence: bounded repair ${attempt2 + 1}`, beforeRepair, `commit-repair-${attempt2 + 1}`);
     }
   }
-  documents(live, plan) {
-    const base = `.cadence/assistant/workflows/${live.run.id}`;
+  documents(live2, plan) {
+    const base = `.cadence/assistant/workflows/${live2.run.id}`;
     return [
       `${base}/plan.md`,
       `${base}/result.md`,
       ...plan.projectContext ? [".cadence/project.md"] : []
     ];
   }
-  notesBody(live, plan, changed, merged = false) {
+  notesBody(live2, plan, changed, merged = false) {
     const delivery = merged ? "after the fast-forward and before post-merge checks" : plan.delivery === "local-merge" ? "before final candidate checks, fast-forward integration and post-merge checks" : "before post-publication checks";
     return `# Workflow delivery notes
 
@@ -26335,7 +27329,7 @@ Written ${delivery}. This file is not a verification result: the owner retains t
 Automatic Agent review, not human review.
 
 ## Steps recorded so far
-${live.run.steps.map((s) => `- ${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}`).join(`
+${live2.run.steps.map((s) => `- ${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}`).join(`
 `)}
 
 ## Changed files
@@ -26343,17 +27337,17 @@ ${changed.map((p) => `- ${p}`).join(`
 `) || "None recorded."}
 `;
   }
-  documentBody(live, cwd, plan, name, changed, merged = false) {
+  documentBody(live2, cwd, plan, name, changed, merged = false) {
     if (name === ".cadence/project.md")
       return projectMarkdown(cwd, plan.projectContext);
-    return name.endsWith("/plan.md") ? readableWorkflowPlan(plan) : this.notesBody(live, plan, changed, merged);
+    return name.endsWith("/plan.md") ? readableWorkflowPlan(plan) : this.notesBody(live2, plan, changed, merged);
   }
-  publish(live, cwd, plan, names3, changed) {
+  publish(live2, cwd, plan, names3, changed) {
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
       if (!safeDirectory(dirname19(file), true))
         throw new ContractError("forbidden");
-      writeFileSync4(file, this.documentBody(live, cwd, plan, name, changed), {
+      writeFileSync4(file, this.documentBody(live2, cwd, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
       });
     }
@@ -26364,23 +27358,23 @@ ${changed.map((p) => `- ${p}`).join(`
     for (const directory of [dirname19(this.worktreeRoot), this.worktreeRoot]) {
       if (!safeDirectory(directory, true))
         throw new ContractError("forbidden");
-      const st = lstatSync17(directory);
+      const st = lstatSync19(directory);
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
-    const home = join27(this.worktreeRoot, decodeId(id));
+    const home = join30(this.worktreeRoot, decodeId(id));
     if (safeDirectory(home))
       throw new ContractError("conflict");
-    safeDirectory(join27(home, "tasks"), true);
+    safeDirectory(join30(home, "tasks"), true);
     return home;
   }
-  async merge(live, candidate) {
-    this.assertRunning(live);
-    const step = this.step(live, "merge", "git");
+  async merge(live2, candidate) {
+    this.assertRunning(live2);
+    const step = this.step(live2, "merge", "git");
     let result;
     let actual = null;
     try {
-      result = await this.run(live, this.cwd, { git: ["merge", "--ff-only", "--no-edit", "--quiet", candidate] }, { uninterruptible: true });
+      result = await this.run(live2, this.cwd, { git: ["merge", "--ff-only", "--no-edit", "--quiet", candidate] }, { uninterruptible: true });
     } finally {
       try {
         actual = await gitHead(this.cwd);
@@ -26388,25 +27382,25 @@ ${changed.map((p) => `- ${p}`).join(`
         actual = null;
       }
       if (actual === candidate)
-        live.run.mergedCommit = candidate;
+        live2.run.mergedCommit = candidate;
       if (result)
-        this.finishStep(live, step, actual === null ? { ...result, outcome: "unknown" } : result, `git merge --ff-only: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}; target HEAD ${actual ? actual.slice(0, 12) : "unreadable"}${result.exitCode === 0 ? "" : `
+        this.finishStep(live2, step, actual === null ? { ...result, outcome: "unknown" } : result, `git merge --ff-only: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}; target HEAD ${actual ? actual.slice(0, 12) : "unreadable"}${result.exitCode === 0 ? "" : `
 ${result.output}`}`);
-      this.closeStep(live, step);
+      this.closeStep(live2, step);
     }
     if (actual === null)
       throw new WorkflowFailure("unknown", "The target HEAD could not be re-read after the fast-forward; whether it completed is unknown. Inspect the branch before acting; nothing will be retried.");
-    if (live.run.mergedCommit !== candidate) {
+    if (live2.run.mergedCommit !== candidate) {
       if (result)
         this.success(result);
       throw new WorkflowRefusal("stale", "The fast-forward did not leave the target at the candidate commit; nothing is reported as merged.");
     }
   }
-  async removeWorktrees(live, entries, home) {
+  async removeWorktrees(live2, entries2, home) {
     const removed = [], retained = [];
-    const step = this.step(live, "remove-merged-worktrees", "git");
+    const step = this.step(live2, "remove-merged-worktrees", "git");
     try {
-      for (const { path, expected, scope } of entries) {
+      for (const { path, expected, scope } of entries2) {
         const label = path.slice(home.length + 1);
         try {
           if (await gitHead(path) !== expected) {
@@ -26418,7 +27412,7 @@ ${result.output}`}`);
             retained.push(`${label} (uncommitted or ignored files under approved paths: ${residue.slice(0, 8).join(", ")}${residue.length > 8 ? ", …" : ""})`);
             continue;
           }
-          const r = await this.run(live, this.cwd, {
+          const r = await this.run(live2, this.cwd, {
             git: ["worktree", "remove", path]
           });
           if (r.outcome === "completed" && r.exitCode === 0)
@@ -26435,65 +27429,65 @@ ${result.output}`}`);
         retained.length ? `Retained: ${retained.join("; ")}` : ""
       ].filter(Boolean).join(`
 `) || "No worktree to remove.", 1024, this.o.secrets());
-      this.save(live);
+      this.save(live2);
     } finally {
-      this.closeStep(live, step);
+      this.closeStep(live2, step);
     }
-    for (const directory of [join27(home, "tasks"), home])
+    for (const directory of [join30(home, "tasks"), home])
       try {
         rmdirSync(directory);
       } catch {}
     if (retained.length)
-      live.notes.push(`Retained worktrees: ${retained.join("; ")}`);
+      live2.notes.push(`Retained worktrees: ${retained.join("; ")}`);
   }
-  async implement(live, p) {
+  async implement(live2, p) {
     const plan = p.plan;
     const allowed = plan.tasks.flatMap((t) => t.writes);
     if (plan.delivery === "working-copy") {
-      await this.setup(live, this.cwd, plan);
-      if (!await this.checks(live, this.cwd, plan, true))
+      await this.setup(live2, this.cwd, plan);
+      if (!await this.checks(live2, this.cwd, plan, true))
         throw new Error("Baseline checks failed; no implementation started.");
       for (const task of workflowOrder(plan.tasks)) {
-        live.run.phase = "implementing";
-        this.save(live);
-        const { result } = await this.scoped(live, allowed, () => this.worker(live, this.cwd, task.id, `${task.instructions}
+        live2.run.phase = "implementing";
+        this.save(live2);
+        const { result } = await this.scoped(live2, allowed, () => this.worker(live2, this.cwd, task.id, `${task.instructions}
 Write only these exact files: ${task.writes.join(", ")} (a declared directory includes its contents)`, false, p.model));
         this.success(result);
       }
-      await this.verifyAndRepair(live, this.cwd, p, false);
-      this.publish(live, this.cwd, plan, this.documents(live, plan), [...live.delivered].sort());
-      if (!await this.checks(live, this.cwd, plan))
+      await this.verifyAndRepair(live2, this.cwd, p, false);
+      this.publish(live2, this.cwd, plan, this.documents(live2, plan), [...live2.delivered].sort());
+      if (!await this.checks(live2, this.cwd, plan))
         throw new Error("Post-publication checks failed; direct working-copy edits preserved.");
       return;
     }
-    const target2 = live.target;
+    const target2 = live2.target;
     if (!target2)
       throw new ContractError("invalid");
     const base = target2.head;
-    const home = this.worktreeHome(live.run.id);
-    const taskHome = join27(home, "tasks");
-    const integration = join27(home, "integration");
-    await this.gitStep(live, this.cwd, "worktree-integration", (git) => git(["worktree", "add", "--detach", integration, base]));
+    const home = this.worktreeHome(live2.run.id);
+    const taskHome = join30(home, "tasks");
+    const integration = join30(home, "integration");
+    await this.gitStep(live2, this.cwd, "worktree-integration", (git) => git(["worktree", "add", "--detach", integration, base]));
     await assertWorktree(this.cwd, integration);
-    await this.setup(live, integration, plan);
+    await this.setup(live2, integration, plan);
     await assertWorkflowScope(integration, []);
-    if (!await this.checks(live, integration, plan, true))
+    if (!await this.checks(live2, integration, plan, true))
       throw new Error("Candidate baseline checks failed. Configure worktree prerequisites in the plan; no implicit dependency installation or copying.");
     await this.unchangedHead(integration, base);
     const commits = new Map, pending = new Set(plan.tasks.map((t) => t.id)), worktrees = [];
     while (pending.size) {
-      this.assertRunning(live);
+      this.assertRunning(live2);
       const batch = workflowOrder(plan.tasks).filter((t) => pending.has(t.id) && t.after.every((d) => commits.has(d))).slice(0, WORKFLOW_LIMITS.parallel);
       if (!batch.length)
         throw new ContractError("invalid");
-      live.run.phase = "implementing";
-      this.save(live);
+      live2.run.phase = "implementing";
+      this.save(live2);
       const outcomes2 = await Promise.allSettled(batch.map(async (task) => {
-        const cwd = join27(taskHome, task.id);
-        await this.gitStep(live, this.cwd, `worktree-${task.id}`, (git) => git(["worktree", "add", "--detach", cwd, base]));
+        const cwd = join30(taskHome, task.id);
+        await this.gitStep(live2, this.cwd, `worktree-${task.id}`, (git) => git(["worktree", "add", "--detach", cwd, base]));
         const picks2 = workflowAncestors(plan.tasks, task.id).map((dep) => commits.get(dep.id)).filter((c) => !!c);
         if (picks2.length)
-          await this.gitStep(live, cwd, `dependencies-${task.id}`, async (git) => {
+          await this.gitStep(live2, cwd, `dependencies-${task.id}`, async (git) => {
             for (const commit2 of picks2)
               await git(["cherry-pick", "--no-edit", commit2]);
           });
@@ -26503,12 +27497,12 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
           expected: beforeWorker,
           scope: task.writes
         });
-        await this.setup(live, cwd, plan);
+        await this.setup(live2, cwd, plan);
         await this.unchangedHead(cwd, beforeWorker);
         await assertWorkflowScope(cwd, []);
-        this.success((await this.worker(live, cwd, task.id, `${task.instructions}
+        this.success((await this.worker(live2, cwd, task.id, `${task.instructions}
 Write only these exact files: ${task.writes.join(", ")} (a declared directory includes its contents). Dependencies are already applied to this worktree.`, false, p.model)).result);
-        const commit = await this.commit(live, cwd, task.writes, `Cadence: ${task.title}`, beforeWorker, `commit-${task.id}`);
+        const commit = await this.commit(live2, cwd, task.writes, `Cadence: ${task.title}`, beforeWorker, `commit-${task.id}`);
         if (commit)
           worktrees[worktrees.findIndex((w) => w.path === cwd)].expected = commit;
         commits.set(task.id, commit);
@@ -26520,12 +27514,12 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     }
     const picks = workflowOrder(plan.tasks).map((t) => commits.get(t.id)).filter((c) => !!c);
     if (picks.length)
-      await this.gitStep(live, integration, "integrate-task-commits", async (git) => {
+      await this.gitStep(live2, integration, "integrate-task-commits", async (git) => {
         for (const commit of picks)
           await git(["cherry-pick", "--no-edit", commit]);
       });
-    await this.verifyAndRepair(live, integration, p, true);
-    const documents = this.documents(live, plan);
+    await this.verifyAndRepair(live2, integration, p, true);
+    const documents = this.documents(live2, plan);
     const committed3 = [];
     for (const name of documents)
       if (await documentPlacement(this.cwd, name) === "commit")
@@ -26533,20 +27527,20 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     const documentBefore = new Map(documents.map((name) => [name, pathIdentity(this.cwd, name)]));
     const beforePublication = await gitHead(integration);
     const changed = await committedPaths(integration, base, beforePublication);
-    this.publish(live, integration, plan, committed3, changed);
-    await this.commit(live, integration, committed3, "Cadence: project context and delivery notes", beforePublication, "commit-delivery-notes");
+    this.publish(live2, integration, plan, committed3, changed);
+    await this.commit(live2, integration, committed3, "Cadence: project context and delivery notes", beforePublication, "commit-delivery-notes");
     const candidate = await gitHead(integration);
-    if (!await this.checks(live, integration, plan))
+    if (!await this.checks(live2, integration, plan))
       throw new Error("Final candidate checks failed; nothing merged.");
     await this.unchangedHead(integration, candidate);
     await assertWorkflowScope(integration, []);
-    this.assertRunning(live);
+    this.assertRunning(live2);
     await assertTarget(this.cwd, target2, [...allowed, ...committed3]);
-    live.run.phase = "integrating";
-    this.save(live);
-    await this.merge(live, candidate);
+    live2.run.phase = "integrating";
+    this.save(live2);
+    await this.merge(live2, candidate);
     for (const path of await committedPaths(this.cwd, base, candidate))
-      live.delivered.add(path);
+      live2.delivered.add(path);
     try {
       for (const name of documents) {
         if (committed3.includes(name) && await tracked(this.cwd, name))
@@ -26556,15 +27550,15 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
         if (!safeDirectory(dirname19(file), true))
           throw new ContractError("unavailable");
-        writeFileSync4(file, this.documentBody(live, this.cwd, plan, name, [...live.delivered].sort(), true), { flag: before ? "w" : "wx" });
+        writeFileSync4(file, this.documentBody(live2, this.cwd, plan, name, [...live2.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }
-      if (!await this.checks(live, this.cwd, plan))
+      if (!await this.checks(live2, this.cwd, plan))
         throw new Error("Local merge completed, but post-merge checks failed. No reset or rollback was attempted.");
       await this.unchangedHead(this.cwd, candidate);
     } finally {
-      if (!live.abort.signal.aborted)
+      if (!live2.abort.signal.aborted)
         try {
-          await this.removeWorktrees(live, [
+          await this.removeWorktrees(live2, [
             ...worktrees,
             {
               path: integration,
@@ -26573,45 +27567,45 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
             }
           ], home);
         } catch (error) {
-          live.notes.push(`Worktrees retained: removal did not complete (${this.describe(error)}).`);
+          live2.notes.push(`Worktrees retained: removal did not complete (${this.describe(error)}).`);
         }
     }
   }
-  async assertStartable(live, p) {
+  async assertStartable(live2, p) {
     this.current();
     this.model(p.model, true);
     if (p.epoch !== this.o.owner.lease.registration.epoch || p.cwd !== this.cwd)
       throw new ContractError("stale");
     const writes = p.plan.tasks.flatMap((t) => t.writes);
-    if (live.target)
-      await assertTarget(this.cwd, live.target, writes);
-    else if (await contentsIdentityAsync(this.cwd, writes) !== live.declared)
+    if (live2.target)
+      await assertTarget(this.cwd, live2.target, writes);
+    else if (await contentsIdentityAsync(this.cwd, writes) !== live2.declared)
       throw new WorkflowRefusal("stale", "Declared targets changed between approval and start; nothing was edited.");
   }
   describe(error) {
     return error instanceof WorkflowRefusal ? `${error.code}: ${error.detail}` : error instanceof ContractError ? error.code : error instanceof Error ? error.message : "Workflow failed";
   }
-  async execute(live, request3) {
+  async execute(live2, request3) {
     let barrier;
     let budgetExpired = false;
     let timer;
     let failure2 = "";
     try {
-      this.assertRunning(live);
-      barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
+      this.assertRunning(live2);
+      barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal);
       barrier.assertHeld();
-      if (live.run.diagnostics)
-        live.run.diagnostics.acquiredAt = Date.now();
+      if (live2.run.diagnostics)
+        live2.run.diagnostics.acquiredAt = Date.now();
       timer = setTimeout(() => {
         budgetExpired = true;
-        live.abort.abort();
+        live2.abort.abort();
       }, WORKFLOW_LIMITS.durationMs);
-      if (live.proposal)
-        await this.assertStartable(live, live.proposal);
-      live.run.status = "running";
-      this.save(live);
+      if (live2.proposal)
+        await this.assertStartable(live2, live2.proposal);
+      live2.run.status = "running";
+      this.save(live2);
       if (request3.action === "research") {
-        const answers = await Promise.allSettled(request3.questions.map((q, i) => this.worker(live, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
+        const answers = await Promise.allSettled(request3.questions.map((q, i) => this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
 Investigation: ${q}
 Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots)));
         for (const a of answers) {
@@ -26619,29 +27613,29 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
             throw a.reason;
           this.success(a.value.result);
         }
-      } else if (live.proposal)
-        await this.implement(live, live.proposal);
+      } else if (live2.proposal)
+        await this.implement(live2, live2.proposal);
       else
         throw new ContractError("invalid");
-      live.run.status = "completed";
+      live2.run.status = "completed";
     } catch (error) {
-      live.run.status = this.o.owner.state === "quarantined" ? "unknown" : budgetExpired ? "timeout" : live.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
+      live2.run.status = this.o.owner.state === "quarantined" ? "unknown" : budgetExpired ? "timeout" : live2.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
       failure2 = this.describe(error);
     } finally {
       clearTimeout(timer);
-      live.run.phase = "finished";
-      if (live.run.diagnostics)
-        live.run.diagnostics.settledAt = Date.now();
-      const delivered = [...live.delivered].sort();
-      live.run.notice = this.notice(failure2, delivered.length ? `${live.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live.notes);
+      live2.run.phase = "finished";
+      if (live2.run.diagnostics)
+        live2.run.diagnostics.settledAt = Date.now();
+      const delivered = [...live2.delivered].sort();
+      live2.run.notice = this.notice(failure2, delivered.length ? `${live2.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live2.notes);
       try {
-        this.saveFinal(live);
+        this.saveFinal(live2);
       } catch {
         this.o.owner.quarantine();
       }
       if (this.o.owner.state === "idle")
         barrier?.release();
-      this.active.delete(live.run.id);
+      this.active.delete(live2.run.id);
     }
     return {
       status: this.o.owner.state === "quarantined" ? "uncertain" : "settled"
@@ -26670,7 +27664,7 @@ class Workbench {
     if (this.conversations.list().entries.some((entry) => entry.status === "unknown"))
       throw new ContractError("quarantine");
     this.files = new WorkbenchFiles(o.cwd, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join28(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join31(o.coordination.files.namespace, "workbench-projects-v1");
   }
   closeReads() {
     this.workflows.closeHistory();
@@ -26682,10 +27676,10 @@ class Workbench {
       case "cadence-conversation":
         return { kind: request3.kind, state: this.cadence.state(request3.id) };
       case "workflow-active": {
-        const active = this.workflows.activeRuns();
+        const active2 = this.workflows.activeRuns();
         return {
-          ...active,
-          links: this.cadence.links(active.runs.map((run) => run.id))
+          ...active2,
+          links: this.cadence.links(active2.runs.map((run) => run.id))
         };
       }
       case "workflow-history":
@@ -26757,15 +27751,15 @@ class Workbench {
     const secrets = this.o.secrets();
     if (sanitizeText(this.o.cwd, secrets) !== this.o.cwd)
       throw new ContractError("forbidden");
-    const entries = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
+    const entries2 = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
     if (!files.directory(this.projectRoot))
-      return { kind: "projects", entries };
-    const directory = opendirSync11(this.projectRoot);
+      return { kind: "projects", entries: entries2 };
+    const directory = opendirSync13(this.projectRoot);
     try {
       for (let e = directory.readSync();e; e = directory.readSync()) {
-        if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries.length > 128)
+        if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join28(this.projectRoot, e.name));
+        const saved = files.read(join31(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -26774,12 +27768,12 @@ class Workbench {
         if (`${hash2(path)}.json` !== e.name)
           throw new ContractError("corrupt-selected");
         if (path !== this.o.cwd && sanitizeText(path, secrets) === path)
-          entries.push({ path, current: false });
+          entries2.push({ path, current: false });
       }
     } finally {
       directory.closeSync();
     }
-    return { kind: "projects", entries };
+    return { kind: "projects", entries: entries2 };
   }
   command(value, caller) {
     const request3 = decodeWorkbenchCommand(value);
@@ -26834,7 +27828,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join28(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join31(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -26852,7 +27846,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join28(this.projectRoot, `${hash2(root)}.json`);
+        const entry = join31(this.projectRoot, `${hash2(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -26868,6 +27862,34 @@ class Workbench {
 }
 
 // src/service/host.ts
+var SUCCESSOR_WAIT_MS = 60000;
+var SELF_RESTARTS = 3;
+var FAULT_SETTLE_MS = 30000;
+async function predecessorExited() {
+  const pid = Number(process.env.CADENCE_SUCCESSOR_OF);
+  if (!Number.isSafeInteger(pid) || pid < 1)
+    return;
+  const deadline = Date.now() + SUCCESSOR_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve11) => setTimeout(resolve11, 100));
+  }
+}
+async function healBeforeStart(c) {
+  await predecessorExited();
+  const registry = new RegistryHealer(c);
+  const lock = await registry.heal();
+  if (lock.status === "blocked" || lock.status === "live")
+    throw new ContractError("registry-locked");
+  await registry.sweep();
+  const own3 = await healProject(c, { responsive: async () => true });
+  if (own3.status === "blocked")
+    throw new ContractError("quarantine");
+}
 function legacy(store, budget, reader) {
   if (!safeDirectory(store.tasks))
     return [];
@@ -26883,20 +27905,20 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync12(store.tasks), records = [];
-  let entries = 0;
+  const dir = opendirSync14(store.tasks), records = [];
+  let entries2 = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
-      if (++entries > 1000)
+      if (++entries2 > 1000)
         throw new ContractError("capacity");
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join29(store.tasks, entry.name, "task.json");
-      const size = lstatSync18(path).size;
-      if (size > 128 * 1024)
+      const path = join32(store.tasks, entry.name, "task.json");
+      const size2 = lstatSync20(path).size;
+      if (size2 > 128 * 1024)
         throw new ContractError("corrupt-selected");
-      budget.reserve(size);
+      budget.reserve(size2);
       const record2 = store.load(entry.name);
       if (!record2)
         throw new ContractError("corrupt-selected");
@@ -26914,8 +27936,39 @@ function refuseAt(stage, step) {
     throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", stage);
   }
 }
-async function createServiceHost(value, sourceBuild) {
-  const embedded = "b855efce6a9694452dd77fcdad0b5dbecce617643cc81ac7c55dafb0f2ca7848";
+var processLifetime = {
+  exit(code2) {
+    process.exit(code2);
+  },
+  successor(input) {
+    if (process.env.CADENCE_SUPERVISED === "systemd")
+      return;
+    const previous = Number(process.env.CADENCE_RESTARTS ?? "0");
+    const restarts = process.uptime() > 600 ? 0 : previous;
+    if (!Number.isSafeInteger(restarts) || restarts >= SELF_RESTARTS)
+      return;
+    const child = spawn4(process.execPath, [
+      ...process.execArgv,
+      fileURLToPath6(new URL("./service-host.mjs", import.meta.url))
+    ], {
+      detached: true,
+      stdio: ["pipe", "ignore", "ignore"],
+      windowsHide: true,
+      env: {
+        ...process.env,
+        CADENCE_SUCCESSOR_OF: String(process.pid),
+        CADENCE_RESTARTS: String(restarts + 1)
+      }
+    });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.stdin.end(`${JSON.stringify(input)}
+`);
+    child.unref();
+  }
+};
+async function createServiceHost(value, sourceBuild, lifetime) {
+  const embedded = "663f71a44cd33f95377644cfc10c2cb657298f191b36d6ca05b810e849c54e68";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -26938,6 +27991,7 @@ async function createServiceHost(value, sourceBuild) {
   const c = new ServiceCoordination(input.workspace, input.stateHome);
   if (resolveWorkspace(input.config.cwd).root !== c.store.root)
     throw new ContractError("conflict");
+  await healBeforeStart(c);
   const old = readHostConfig(c);
   const reselect = !!old && encoded(old) !== encoded(input.config);
   if (old && reselect && !reselectable(old, input.config))
@@ -26952,10 +28006,6 @@ async function createServiceHost(value, sourceBuild) {
       AccessMaterial.validateReselection(c.files, c.directory, source);
     else
       new AccessMaterial(c.files, c.directory, source);
-    const history = HistoryFiles.open(c);
-    if (!history)
-      throw new ContractError("corrupt-selected");
-    history.assertWritable();
   }
   const home = launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir;
   const pi = refuseAt("pi-agent-directory", () => piSource(input.config.agentDir, home, input.config.cwd, launch));
@@ -26986,9 +28036,42 @@ async function createServiceHost(value, sourceBuild) {
       AccessMaterial.reselect(c.files, c.directory, source);
       c.files.replace(c.path("host-config.json"), previous, encoded(resolved));
     } : undefined);
-    let writer, live;
+    let writer, live2;
     let workbench = null;
+    const ledger = new ProcessLedger(c.files).open(lease.registration.epoch);
+    observeProcesses({
+      launched: (pid) => ledger.add(pid),
+      closed: (pid) => ledger.remove(pid)
+    });
+    let ready2 = false, ending = false;
+    const endAfterFault = (restart) => {
+      if (ending || !lifetime)
+        return;
+      ending = true;
+      (async () => {
+        let timer;
+        await Promise.race([
+          owner?.idle(),
+          new Promise((resolve11) => {
+            timer = setTimeout(resolve11, FAULT_SETTLE_MS);
+          })
+        ]);
+        clearTimeout(timer);
+        for (const worker of ledger.workers)
+          if (!worker.started || processStart(worker.pid) === worker.started)
+            await stopProcessGroup(worker.pid).catch(() => false);
+        if (restart) {
+          ledger.requestRestart();
+          lifetime.successor(input);
+        }
+        lifetime.exit(restart ? 75 : 1);
+      })();
+    };
     owner = new ServiceOwner(lease, {
+      faulted: () => {
+        if (ready2 && !stopRequested)
+          endAfterFault(true);
+      },
       quiesce: () => http.quiesce(),
       flush: () => {
         if (!writer)
@@ -26997,7 +28080,7 @@ async function createServiceHost(value, sourceBuild) {
       },
       closeListener: async () => {
         workbench?.closeReads();
-        live?.close();
+        live2?.close();
         const results = await Promise.allSettled([
           network.close(),
           http.close()
@@ -27007,8 +28090,17 @@ async function createServiceHost(value, sourceBuild) {
       }
     });
     const heldOwner = owner;
-    if (!old)
-      HistoryFiles.initialize(lease);
+    const recoveryLog = new RecoveryLog(c.files);
+    const history = await healHistory(lease, recoveryLog);
+    if (history.heal === "continued-history" || history.heal === "archived-history")
+      recoveryLog.record({
+        scope: "project",
+        path: c.store.root,
+        cause: "storage",
+        actions: [history.heal],
+        workers: 0,
+        archive: history.archive
+      });
     writer = new HistoryWriter(lease, {
       onOriginal: (original, safety) => heldOwner.trackHistory(original, safety),
       onFence: () => heldOwner.quarantine()
@@ -27110,9 +28202,8 @@ async function createServiceHost(value, sourceBuild) {
         return records;
       }
     });
-    live = new HistoryLive(writer, projection);
+    live2 = new HistoryLive(writer, projection);
     let stopRequested = false;
-    let ready2 = false;
     http.configure({
       auth,
       build: build2,
@@ -27136,7 +28227,7 @@ async function createServiceHost(value, sourceBuild) {
           })
         },
         projection,
-        live,
+        live: live2,
         receipts: async (id) => {
           const found = await heldWriter.lookup(id);
           return found.status === "found" ? { status: "found", receipt: found.record.receipt } : found.status === "absent" ? found : {
@@ -27158,14 +28249,20 @@ async function createServiceHost(value, sourceBuild) {
                 pendingWrites: heldWriter.pendingWrites,
                 pendingPreparations: models.pending,
                 proxyAuth: network.mode,
-                recovery: "local-interactive-only"
+                recovery: "automatic"
               } : {}
             };
           if (operation === "stop") {
             if (!stopRequested) {
               stopRequested = true;
               setImmediate(() => {
-                heldOwner.stop().finally(() => {
+                heldOwner.stop().then(() => heldOwner.settled()).then(() => {
+                  if (heldOwner.state === "stopped") {
+                    observeProcesses(undefined);
+                    ledger.close();
+                  } else
+                    endAfterFault(false);
+                }).finally(() => {
                   stopRequested = false;
                 });
               });
@@ -27205,7 +28302,7 @@ async function createServiceHost(value, sourceBuild) {
       writer,
       reader,
       projection,
-      live,
+      live: live2,
       models,
       choice,
       access,
@@ -27216,6 +28313,8 @@ async function createServiceHost(value, sourceBuild) {
   } catch (error) {
     if (owner) {
       owner.quarantine();
+      if (lifetime)
+        setTimeout(() => lifetime.exit(1), 500);
       const closing = network.close();
       closing.catch(() => {});
       try {
@@ -27234,15 +28333,15 @@ try {
     throw new Error;
   hostEnvironment(process.env);
   const chunks2 = [];
-  let size = 0;
+  let size2 = 0;
   for await (const chunk of process.stdin) {
-    size += chunk.length;
-    if (size > STARTUP_INPUT_BYTES)
+    size2 += chunk.length;
+    if (size2 > STARTUP_INPUT_BYTES)
       throw new Error;
     chunks2.push(chunk);
   }
   const input = parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks2)), STARTUP_INPUT_BYTES);
-  const host = input.kind === "workbench" ? await createGateway(input, new URL("./service-host.mjs", import.meta.url)) : await createServiceHost(input);
+  const host = input.kind === "workbench" ? await createGateway(input, new URL("./service-host.mjs", import.meta.url)) : await createServiceHost(input, undefined, processLifetime);
   process.stdout.write(`${JSON.stringify({ status: "ready", epoch: "epoch" in host ? host.epoch : host.owner.lease.registration.epoch })}
 `);
 } catch (error) {

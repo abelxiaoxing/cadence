@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { HistoryFiles, HistoryReadBudget } from "../../src/history/files.ts";
 import { HistoryProjection } from "../../src/history/projection.ts";
 import { HistoryReader } from "../../src/history/reader.ts";
-import { HistoryRecovery } from "../../src/history/recovery.ts";
+import { appendRecoveryBridge } from "../../src/history/recovery.ts";
 import {
   parseScanCursor,
   scanCursor,
@@ -23,7 +23,7 @@ import {
 } from "../../src/history/search.ts";
 import { encodeJournalText, type JournalRow } from "../../src/history/types.ts";
 import { ServiceCoordination } from "../../src/service/coordination.ts";
-import { inspectRecovery } from "../../src/service/recovery.ts";
+import { healProject } from "../../src/service/self-heal.ts";
 import {
   type ExportRequest,
   encodeExportFrame,
@@ -240,18 +240,15 @@ if (mode === "produce") {
     files = HistoryFiles.open(c);
   assert.ok(files);
   const predecessor = readFileSync(files.segmentPath(1));
-  const recovery = new HistoryRecovery(c),
-    expected = await inspectRecovery(c, recovery);
-  assert.equal(expected.owner, "absent");
-  let fact = await recovery.append({
-    expected,
-    acknowledgeEscapedProcesses: true,
-    processes: "externally-resolved",
-    credentials: "independently-resolved",
-    storage: "independently-resolved",
-    // Fabricated interactive authority only, not a production management claim.
-    assertLocalAuthority: (choice) => assert.deepEqual(choice, expected),
+  // The producer exited without Stop: startup self-healing reclaims it and
+  // the new lease bridges the preserved tail.
+  assert.equal((await healProject(c)).status, "healed");
+  const lease = c.acquire({
+    schema: "cadence-service-owner-config/1",
+    endpoint: "http://127.0.0.1:17423",
+    policyIdentity: "a".repeat(64),
   });
+  let fact = await appendRecoveryBridge(lease, files);
   assert.deepEqual(readFileSync(files.segmentPath(1)), predecessor);
   const [bridge, marker] = readFileSync(files.segmentPath(2), "utf8")
     .trimEnd()
@@ -272,15 +269,7 @@ if (mode === "produce") {
         value: { kind: "owner-epoch", epoch: randomUUID() },
       })}{"torn":`,
     );
-    const again = await inspectRecovery(c, recovery);
-    fact = await recovery.append({
-      expected: again,
-      acknowledgeEscapedProcesses: true,
-      processes: "externally-resolved",
-      credentials: "independently-resolved",
-      storage: "independently-resolved",
-      assertLocalAuthority: (choice) => assert.deepEqual(choice, again),
-    });
+    fact = await appendRecoveryBridge(lease, files);
     assert.equal(files.inspect().segment, 3);
   }
   if (mode === "probe-bad-head") {

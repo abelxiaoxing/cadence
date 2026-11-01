@@ -1,13 +1,16 @@
 /** One real owner, original lifetimes, current workflows, retained readers and authenticated clients. */
+import { spawn } from "node:child_process";
 import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadAgentDefinitions } from "../agent-registry.ts";
 import { CadencePreferences } from "../cadence-preferences.ts";
-import { HistoryFiles, type HistoryReadBudget } from "../history/files.ts";
+import type { HistoryReadBudget } from "../history/files.ts";
 import { HistoryLive } from "../history/live.ts";
 import { HistoryNavigation } from "../history/navigation.ts";
 import { HistoryProjection } from "../history/projection.ts";
 import { HistoryReader } from "../history/reader.ts";
+import { healHistory } from "../history/recovery.ts";
 import { HistoryWriter } from "../history/writer.ts";
 import { loadWebAssets } from "../service-assets.ts";
 import {
@@ -18,6 +21,7 @@ import {
   decodeId,
   publicError,
 } from "../service-contract.ts";
+import { observeProcesses } from "../subagent-process.ts";
 import { legacyTaskStore, type TaskStore } from "../task-store.ts";
 import type { TaskRecord } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
@@ -32,11 +36,14 @@ import { AuthNetwork } from "./auth-network.ts";
 import { CheckoutGate } from "./checkout-gate.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
+import { processStart, stopProcessGroup } from "./liveness.ts";
 import { OwnerModelChoice } from "./model-choice.ts";
 import { piSource, readPiAuth, readPiModels } from "./model-config.ts";
 import { OwnerModelContext } from "./model-context.ts";
 import { ServiceOwner } from "./owner.ts";
 import { encoded, hash } from "./private-files.ts";
+import { ProcessLedger } from "./process-ledger.ts";
+import { RecoveryLog } from "./recovery-log.ts";
 import {
   decodeHostInput,
   type HostInput,
@@ -46,8 +53,40 @@ import {
   StartupRefusal,
   type StartupStage,
 } from "./runtime.ts";
+import { healProject, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
 import { Workbench } from "./workbench.ts";
+
+/** A restarted owner waits this long for the process it replaces to exit. */
+const SUCCESSOR_WAIT_MS = 60_000;
+/** Runtime faults restart the owner at most this many times in a row. */
+const SELF_RESTARTS = 3;
+/** Original work gets this long to settle before a faulted owner restarts. */
+const FAULT_SETTLE_MS = 30_000;
+async function predecessorExited(): Promise<void> {
+  const pid = Number(process.env.CADENCE_SUCCESSOR_OF);
+  if (!Number.isSafeInteger(pid) || pid < 1) return;
+  const deadline = Date.now() + SUCCESSOR_WAIT_MS;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+/** Release what a dead predecessor left, before this owner registers. */
+async function healBeforeStart(c: ServiceCoordination): Promise<void> {
+  await predecessorExited();
+  const registry = new RegistryHealer(c);
+  const lock = await registry.heal();
+  if (lock.status === "blocked" || lock.status === "live")
+    throw new ContractError("registry-locked");
+  await registry.sweep();
+  const own = await healProject(c, { responsive: async () => true });
+  if (own.status === "blocked") throw new ContractError("quarantine");
+}
 
 function legacy(
   store: TaskStore,
@@ -129,6 +168,49 @@ function refuseAt<T>(stage: StartupStage, step: () => T): T {
     );
   }
 }
+/** What only the real host process may do with its own lifetime. In-process
+ * fixtures pass nothing, so a fault never ends a test runner. */
+export interface HostLifetime {
+  /** End this process; the next start heals what it leaves. */
+  exit(code: number): void;
+  /** Start a replacement owner that first waits for this process to exit. */
+  successor(input: HostInput): void;
+}
+/** The production lifetime, used by service-host-entry.mjs. */
+export const processLifetime: HostLifetime = {
+  exit(code) {
+    process.exit(code);
+  },
+  successor(input) {
+    // A systemd unit restarts its own owner after the failed exit.
+    if (process.env.CADENCE_SUPERVISED === "systemd") return;
+    const previous = Number(process.env.CADENCE_RESTARTS ?? "0");
+    // Only consecutive fast faults count toward the restart bound.
+    const restarts = process.uptime() > 600 ? 0 : previous;
+    if (!Number.isSafeInteger(restarts) || restarts >= SELF_RESTARTS) return;
+    const child = spawn(
+      process.execPath,
+      [
+        ...process.execArgv,
+        fileURLToPath(new URL("./service-host.mjs", import.meta.url)),
+      ],
+      {
+        detached: true,
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          CADENCE_SUCCESSOR_OF: String(process.pid),
+          CADENCE_RESTARTS: String(restarts + 1),
+        },
+      },
+    );
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.stdin.end(`${JSON.stringify(input)}\n`);
+    child.unref();
+  },
+};
 /** Explicit management only; imported code itself has no SDK/filesystem effects. */
 export async function createServiceHost(
   value: HostInput,
@@ -138,6 +220,7 @@ export async function createServiceHost(
     workerTimeoutMs?: number;
     webDirectory?: string;
   },
+  lifetime?: HostLifetime,
 ): Promise<ServiceHost> {
   const embedded =
     typeof __CADENCE_SERVICE_CONTRACT__ === "undefined"
@@ -165,6 +248,7 @@ export async function createServiceHost(
   const c = new ServiceCoordination(input.workspace, input.stateHome);
   if (resolveWorkspace(input.config.cwd).root !== c.store.root)
     throw new ContractError("conflict");
+  await healBeforeStart(c);
   const old = readHostConfig(c);
   // Existing selected setup is all-or-refuse, never filled in by restart; only
   // the server configuration may explicitly reselect a stopped one's port and
@@ -193,9 +277,7 @@ export async function createServiceHost(
     if (reselect)
       AccessMaterial.validateReselection(c.files, c.directory, source);
     else new AccessMaterial(c.files, c.directory, source);
-    const history = HistoryFiles.open(c);
-    if (!history) throw new ContractError("corrupt-selected");
-    history.assertWritable();
+    // History damage is healed after the lease below, never refused here.
   }
   // Selected Pi sources are refused before bind too: a configuration refusal
   // never registers an owner that would quarantine. load() rereads them later.
@@ -243,7 +325,44 @@ export async function createServiceHost(
     );
     let writer: HistoryWriter | undefined, live: HistoryLive | undefined;
     let workbench: Workbench | null = null;
+    // Evidence for a successor: the workers this epoch launches.
+    const ledger = new ProcessLedger(c.files).open(lease.registration.epoch);
+    observeProcesses({
+      launched: (pid) => ledger.add(pid),
+      closed: (pid) => ledger.remove(pid),
+    });
+    let ready = false,
+      ending = false;
+    /** After a fault (or an uncertain Stop) let original work settle, stop
+     * this epoch's leftover workers and end the process; the replacement's
+     * startup heal proves this owner gone and continues its history. */
+    const endAfterFault = (restart: boolean) => {
+      if (ending || !lifetime) return;
+      ending = true;
+      void (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          owner?.idle(),
+          new Promise((resolve) => {
+            timer = setTimeout(resolve, FAULT_SETTLE_MS);
+          }),
+        ]);
+        clearTimeout(timer);
+        // Only a worker whose start identity still matches is ours to stop.
+        for (const worker of ledger.workers)
+          if (!worker.started || processStart(worker.pid) === worker.started)
+            await stopProcessGroup(worker.pid).catch(() => false);
+        if (restart) {
+          ledger.requestRestart();
+          lifetime.successor(input);
+        }
+        lifetime.exit(restart ? 75 : 1);
+      })();
+    };
     owner = new ServiceOwner(lease, {
+      faulted: () => {
+        if (ready && !stopRequested) endAfterFault(true);
+      },
       quiesce: () => http.quiesce(),
       flush: () => {
         if (!writer) throw new ContractError("unavailable");
@@ -263,7 +382,20 @@ export async function createServiceHost(
       },
     });
     const heldOwner = owner;
-    if (!old) HistoryFiles.initialize(lease);
+    const recoveryLog = new RecoveryLog(c.files);
+    const history = await healHistory(lease, recoveryLog);
+    if (
+      history.heal === "continued-history" ||
+      history.heal === "archived-history"
+    )
+      recoveryLog.record({
+        scope: "project",
+        path: c.store.root,
+        cause: "storage",
+        actions: [history.heal],
+        workers: 0,
+        archive: history.archive,
+      });
     writer = new HistoryWriter(lease, {
       onOriginal: (original, safety) =>
         heldOwner.trackHistory(original, safety),
@@ -387,7 +519,6 @@ export async function createServiceHost(
     });
     live = new HistoryLive(writer, projection);
     let stopRequested = false;
-    let ready = false;
     http.configure({
       auth,
       build,
@@ -449,7 +580,7 @@ export async function createServiceHost(
                     pendingWrites: heldWriter.pendingWrites,
                     pendingPreparations: models.pending,
                     proxyAuth: network.mode,
-                    recovery: "local-interactive-only",
+                    recovery: "automatic",
                   }
                 : {}),
             };
@@ -457,9 +588,18 @@ export async function createServiceHost(
             if (!stopRequested) {
               stopRequested = true;
               setImmediate(() => {
-                void heldOwner.stop().finally(() => {
-                  stopRequested = false;
-                });
+                void heldOwner
+                  .stop()
+                  .then(() => heldOwner.settled())
+                  .then(() => {
+                    if (heldOwner.state === "stopped") {
+                      observeProcesses(undefined);
+                      ledger.close();
+                    } else endAfterFault(false);
+                  })
+                  .finally(() => {
+                    stopRequested = false;
+                  });
               });
             }
             return { status: "accepted", epoch: native.epoch };
@@ -506,6 +646,9 @@ export async function createServiceHost(
   } catch (error) {
     if (owner) {
       owner.quarantine();
+      // A registered owner that failed to start leaves nothing it cannot
+      // explain: end the process so the next start heals its registration.
+      if (lifetime) setTimeout(() => lifetime.exit(1), 500);
       // Construction has settled; independently close any allocated route even
       // if installation failed. Keep its original promise and all owner fences.
       const closing = network.close();
@@ -516,8 +659,6 @@ export async function createServiceHost(
         /* late tracking retains the original */
       }
     } else await http.close();
-    // An acquired uncertain owner stays alive/fenced for local diagnosis. No
-    // automatic release, repair, kill or restart after an initialization error.
     throw new StartupRefusal(
       error instanceof ContractError ? error.code : "unavailable",
       stage,

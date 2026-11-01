@@ -256,8 +256,10 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       assert.equal(new URL(page.url()).origin, g.endpoint);
       assert(!page.url().includes("token="));
     }
+    // A registry lock left by a process that died is reclaimed by the next
+    // Open automatically; nothing is asked of the user.
+    const lock = join(g.f.c.registryDirectory, "registry.lock");
     if (process.platform !== "win32") {
-      const lock = join(g.f.c.registryDirectory, "registry.lock");
       const writer = spawnSync(
         process.execPath,
         [
@@ -274,84 +276,9 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
         { encoding: "utf8", timeout: 15000 },
       );
       assert.equal(writer.status, 0, writer.stderr);
-      await page
-        .getByRole("button", { name: "Switch working folder", exact: true })
-        .first()
-        .click();
-      await page
-        .getByRole("button", { name: "Edit path", exact: true })
-        .click();
-      await page.getByRole("textbox", { name: "Folder path" }).fill(paths[0]);
-      await Promise.all([
-        page.waitForResponse(
-          (r) =>
-            r.url().includes("directories") &&
-            r.url().includes(encodeURIComponent(paths[0])) &&
-            r.status() === 200,
-        ),
-        page
-          .getByRole("button", { name: "Open this folder", exact: true })
-          .click(),
-      ]);
-      await page
-        .getByRole("alert")
-        .filter({ hasText: "The shared registry lock is blocking projects." })
-        .waitFor();
-      assert(
-        (await page.getByRole("alert").textContent()).includes(
-          "cadence recover inspect",
-        ),
-      );
-      assert.equal(g.store.projects().length, 0);
-      assert.equal(g.f.contacts(), 0);
-      const receipt = join(root, "registry-pty-receipt.json"),
-        config = join(root, "registry-pty.json");
-      writeFileSync(
-        config,
-        JSON.stringify({
-          mode: "resolve",
-          epoch: g.f.c.inspectRegistryRecovery().epoch,
-          receipt,
-          cwd: root,
-          env: { ...process.env, HOME: root, USERPROFILE: root },
-          argv: [
-            process.execPath,
-            join(process.cwd(), "src/service-cli.mjs"),
-            "recover",
-            "resolve",
-            "--workspace",
-            g.f.c.store.root,
-            "--state-home",
-            g.f.c.stateHome,
-          ],
-        }),
-        { mode: 0o600 },
-      );
-      const driver = spawnSync(
-        "python3",
-        ["test/helpers/recovery-pty.py", config],
-        { encoding: "utf8", timeout: 90000 },
-      );
-      assert.equal(driver.status, 0, driver.stderr);
-      assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), {
-        waitpidReturned: true,
-        exitCode: 0,
-        forced: false,
-        fault: null,
-      });
-      assert(!existsSync(lock));
-      assert.equal(
-        g.store.projects().length,
-        0,
-        "recovery does not replay Open",
-      );
-      await page
-        .getByRole("button", {
-          name: "Close dialog — no cancellation of accepted work",
-        })
-        .click();
     }
     await open(paths[0]);
+    assert(!existsSync(lock));
     const projectB = new URL(page.url()).searchParams.get("project");
     assert(projectB);
     await page.getByRole("button", { name: "Choose owner model" }).click();

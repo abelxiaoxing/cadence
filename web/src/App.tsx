@@ -3,6 +3,7 @@
  * Cadence uses only its existing portable service client. No browser executor. */
 import {
   type CSSProperties,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -134,12 +135,15 @@ export function App({
   onWorkbenchHome,
   workbenchHome,
   projectEntries,
+  notices,
 }: {
   api?: BrowserClient;
   onOpenProject?(path: string): Promise<void>;
   onWorkbenchHome?(): void;
   workbenchHome?: string;
   projectEntries?: { path: string; current: boolean }[];
+  /** Workbench-supplied banners (automatic recovery). */
+  notices?: ReactNode;
 }) {
   const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
@@ -741,6 +745,7 @@ export function App({
           ))}
         </section>
       )}
+      {notices}
       <WorkspaceNotice error={error} observationError={workspace.error} />
       <div
         ref={layout}

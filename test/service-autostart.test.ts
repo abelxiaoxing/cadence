@@ -581,7 +581,9 @@ describe.skipIf(process.platform !== "linux")("systemd user service", () => {
     ]) {
       const refused = run(...argv);
       expect(refused.status).toBe(1);
-      expect(refused.stderr).toBe('{"error":"service-refused"}\n');
+      expect(refused.stderr).toBe(
+        'Cadence did not understand the command or one of its paths (see cadence --help).\n{"error":"service-refused","code":"invalid"}\n',
+      );
     }
     expect(readdirSync(data)).toEqual([]);
   });

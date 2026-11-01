@@ -405,7 +405,7 @@ export function ProjectPicker({
               {" "}
               —{" "}
               {t(
-                "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.",
+                "Another Cadence process is updating the project registry. Try again in a moment; if this persists, run cadence doctor on the service host.",
               )}
             </>
           )}

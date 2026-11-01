@@ -29,7 +29,6 @@ import { HttpAuthentication, requestBoundary } from "./auth.ts";
 import {
   nativeCall,
   openProjectDirectory,
-  ProjectOpenRefusal,
   serviceStatus,
   stopService,
 } from "./cli.ts";
@@ -46,7 +45,9 @@ import {
 } from "./gateway-store.ts";
 import { fixedHeaders } from "./http.ts";
 import { encoded, hash, json } from "./private-files.ts";
+import { RecoveryLog } from "./recovery-log.ts";
 import { readHostConfig } from "./runtime.ts";
+import { healWorkbench, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
 import { WorkbenchFiles } from "./workbench-files.ts";
 
@@ -56,22 +57,24 @@ interface Binding {
   endpoint: string;
   cookie: string;
 }
-/** Serial owner settlement avoids racing their shared registry writer. */
+/** Serial owner settlement avoids racing their shared registry writer.
+ * Resolves with the projects whose Stop was not confirmed; each keeps its own
+ * state, which its next start recovers if the owner has died meanwhile. */
 export async function joinProjectStops(
   projects: readonly GatewayProject[],
   stopProject: (project: GatewayProject) => Promise<void>,
-): Promise<void> {
-  let uncertain = false;
+): Promise<GatewayProject[]> {
+  const unconfirmed: GatewayProject[] = [];
   for (const project of projects) {
     try {
       await stopProject(project);
     } catch {
       // One changed/unknown owner must not prevent Stop reaching the others.
       // Do not signal a changed epoch or upgrade an unconfirmed result.
-      uncertain = true;
+      unconfirmed.push(project);
     }
   }
-  if (uncertain) throw new ContractError("quarantine");
+  return unconfirmed;
 }
 export async function createGateway(
   value: GatewayInput,
@@ -95,6 +98,15 @@ export async function createGateway(
   const configured = readServerConfig(input.serverConfig).config;
   if (configured.port !== input.policy.port)
     throw new ContractError("conflict");
+  // Reclaim what a dead predecessor left behind, before binding the port.
+  const registryHeal = await new RegistryHealer(
+    new ServiceCoordination(null, input.stateHome),
+  ).heal();
+  if (registryHeal.status === "blocked")
+    throw new ContractError("registry-locked");
+  const healed = await healWorkbench(store, { responsive: async () => true });
+  if (healed.status === "blocked" || healed.status === "live")
+    throw new ContractError("quarantine");
   const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
   const connections = new Set<Socket>(),
     relays = new Set<() => void>();
@@ -290,12 +302,18 @@ export async function createGateway(
     return result;
   }
   function binding(id: string): Promise<Binding> {
-    const project = store.associatedProjects().find((p) => p.id === id);
+    let project = store.associatedProjects().find((p) => p.id === id);
     if (!project) throw new ContractError("unavailable");
     const c = new ServiceCoordination(project.path, input.stateHome),
       local = c.localAccess();
-    if (c.store.root !== project.path || local.epoch !== project.epoch)
-      throw new ContractError("stale");
+    if (c.store.root !== project.path) throw new ContractError("stale");
+    if (local.epoch !== project.epoch) {
+      // The same project's owner restarted (after recovering from a fault or
+      // a crash): follow it instead of stranding this project's page.
+      bindings.delete(id);
+      project = { ...project, epoch: local.epoch };
+      store.saveProject(project);
+    }
     const previous = bindings.get(id);
     if (previous) return previous;
     const result = (async () => {
@@ -333,57 +351,47 @@ export async function createGateway(
     accepting = false;
     store.phase("stopping");
     stopping = (async () => {
-      const originals = await Promise.allSettled(
-        [...opens.values()].map((o) => o.result),
-      );
-      // An unconfirmed launch may have its own owner. Retain its fence, but
-      // still stop every independently known associated owner below.
-      const uncertainOpening = originals.some(
-        (r) =>
-          r.status === "rejected" &&
-          !(r.reason instanceof ProjectOpenRefusal && r.reason.noOwner),
-      );
-      const retired = await Promise.allSettled([...retirements]);
+      // An Open in progress settles first; its owner (if any) is stopped
+      // below like every other associated owner.
+      await Promise.allSettled([...opens.values()].map((o) => o.result));
+      await Promise.allSettled([...retirements]);
       const targets = store.associatedProjects();
       // Owners share the short registry writer. Do not race their final release
-      // by issuing simultaneous Stop requests from this workbench.
+      // by issuing simultaneous Stop requests from this workbench. An owner
+      // that is not running (stopped, crashed, or its directory removed) has
+      // nothing to stop; one that does not confirm keeps its own state.
       await joinProjectStops(targets, async (p) => {
-        const c = new ServiceCoordination(p.path, input.stateHome),
-          observed = await serviceStatus(c);
+        let c: ServiceCoordination;
+        try {
+          c = new ServiceCoordination(p.path, input.stateHome);
+        } catch {
+          return;
+        }
+        const observed = await serviceStatus(c);
         const status =
           observed && typeof observed === "object" && "status" in observed
             ? observed.status
             : "unavailable";
-        if (status === "stopped") {
-          if (
-            !(
-              observed &&
-              typeof observed === "object" &&
-              "epoch" in observed &&
-              observed.epoch === p.epoch
-            )
-          )
-            throw new ContractError("stale");
-          return;
-        }
-        if (status !== "alive" || c.localAccess().epoch !== p.epoch)
-          throw new ContractError("quarantine");
+        if (status !== "alive") return;
+        if (c.localAccess().epoch !== p.epoch) return;
         if ((await stopService(c)).status !== "stopped")
           throw new ContractError("quarantine");
       });
-      if (uncertainOpening || retired.some((r) => r.status === "rejected"))
-        throw new ContractError("quarantine");
       store.release();
       for (const close of relays) close();
       wss.close();
       server.close();
       for (const socket of connections) socket.end();
     })().catch(() => {
+      // The workbench's own files changed under it. End the process: its
+      // next start proves this one gone and recovers the registration.
       try {
         store.phase("quarantined");
       } catch {
-        /* uncertain state remains */
+        /* recovered at the next start */
       }
+      server.close();
+      for (const socket of connections) socket.destroy();
     });
   }
   async function body(req: IncomingMessage, maximum = 16384): Promise<unknown> {
@@ -662,6 +670,7 @@ export async function createGateway(
           csrf: auth.csrf,
           home: homedir(),
           projects: store.projects(),
+          recoveries: new RecoveryLog(store.files).notices(),
           build,
         });
         return;

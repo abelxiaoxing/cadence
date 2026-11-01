@@ -1,49 +1,27 @@
-/** W3 recording boundary only. Never releases/signals/steals W1, v1 or registry locks. */
+/** W3 recording continuation after an owner ended without its orderly Stop.
+ * The new owner holds the lease, so nothing else can still write this history:
+ * a torn final batch or unsettled facts of the dead epoch are closed by one
+ * explicit recovery bridge in a new segment (the old bytes stay untouched).
+ * History that cannot be read at all is archived and started afresh. */
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, opendirSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { ServiceCoordination } from "../service/coordination.ts";
-import { hash } from "../service/private-files.ts";
-import {
-  inspectRecovery,
-  type RecoveryHistoryFacts,
-  type RecoveryInspection,
-  type RecoveryInspectionPort,
-} from "../service/recovery.ts";
-import { ContractError, decodeId, LIMITS } from "../service-contract.ts";
-import { emptyScan, HistoryFiles, type WriteObserver } from "./files.ts";
-import { RunState } from "./run-state.ts";
+import type { OwnerLease } from "../service/coordination.ts";
+import { encoded, hash } from "../service/private-files.ts";
+import type { RecoveryLog } from "../service/recovery-log.ts";
+import { ContractError, LIMITS } from "../service-contract.ts";
+import { HistoryFiles, type WriteObserver } from "./files.ts";
 import type { JournalRow, RecoveryBridge } from "./types.ts";
+import { HistoryWriter } from "./writer.ts";
 
-export interface RecoveryConfirmation {
-  expected: RecoveryInspection;
-  acknowledgeEscapedProcesses: true;
-  processes: "externally-resolved";
-  credentials: "independently-resolved";
-  storage: "independently-resolved";
-  /** REQUIRED W1 local capability + fresh interactive-choice assertion. No default.
-   * W3 does not implement or infer management authority from a boolean/token. */
-  assertLocalAuthority: (choice: RecoveryInspection) => void | Promise<void>;
-}
-export interface DurableRecoveryFact {
-  recoveryId: string;
-  committedSeq: string;
-  epoch: string;
-  coordinationDigest: string;
-  historyDigest: string;
-  segmentIdentity: string;
-}
-/** Read exact bounded safe files incrementally; includes orphan/temp/index metadata.
- * This local administrative inspection is not the public 8MiB read request API. */
-function digestHistory(files: HistoryFiles, exclude?: string): string {
+/** Read exact bounded safe files incrementally; includes orphan/temp/index metadata. */
+export function digestHistory(files: HistoryFiles, exclude?: string): string {
   files.assertFormat();
   const digest = createHash("sha256");
   let count = 0;
   const walk = (path: string, depth: number) => {
     if (depth > 8 || !files.files.directory(path))
       throw new ContractError("corrupt-selected");
-    // Directory identity, not mutable directory timestamps: our exclusive new
-    // recovery segment changes its parent's mtime but cannot replace that parent.
     const directory = lstatSync(path);
     digest.update(`incarnation:${directory.dev}:${directory.ino}\n`);
     const dir = opendirSync(path),
@@ -78,217 +56,95 @@ function digestHistory(files: HistoryFiles, exclude?: string): string {
   files.assertFormat();
   return digest.digest("hex");
 }
-export class HistoryRecovery implements RecoveryInspectionPort {
-  private readonly committed = new WeakMap<DurableRecoveryFact, () => void>();
-  constructor(readonly coordination: ServiceCoordination) {}
-  private files(): HistoryFiles {
-    const files = HistoryFiles.open(this.coordination);
-    if (!files) throw new ContractError("unavailable");
-    return files;
-  }
-  /** Only an original completed append can supply this private release guard.
-   * Never adopt a newly inspected digest after the async append/close boundary. */
-  assertCommitted(fact: DurableRecoveryFact): void {
-    const assert = this.committed.get(fact);
-    if (!assert) throw new ContractError("conflict");
-    assert();
-  }
-  async inspect(epoch: string): Promise<RecoveryHistoryFacts> {
-    decodeId(epoch);
-    const files = this.files(),
-      before = digestHistory(files),
-      state = emptyScan();
-    const auth = new Set<string>(),
-      processes = new Set<string>(),
-      publication = new Set<string>(),
-      unfinished = new Set<string>(),
-      metadata = new Set<string>(),
-      runs = new Map<string, RunState>();
-    for (const batch of files.scan(state))
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (v.kind === "recovery") {
-          auth.clear();
-          processes.clear();
-          publication.clear();
-          unfinished.clear();
-          metadata.clear();
-          runs.clear();
-        }
-        if (v.kind === "admission" && v.intent.identity.kind === "action") {
-          if (v.intent.runId) {
-            if (runs.size >= LIMITS.episodes || runs.has(v.intent.runId))
-              throw new ContractError("corrupt-selected");
-            runs.set(v.intent.runId, new RunState(v.intent.runId));
-          } else metadata.add(v.intent.operationId);
-        }
-        for (const [id, state] of runs) {
-          state.apply(row, batch.marker.last);
-          if (state.drained) runs.delete(id);
-        }
-        if (v.kind === "capture" || v.kind === "owner")
-          for (const e of v.events) {
-            if (
-              e.kind === "capture" &&
-              e.value.event.kind === "detail-begin" &&
-              v.kind === "capture"
-            )
-              unfinished.add(
-                `worker/${v.link.childRunId}/${e.value.event.detailId}`,
-              );
-            if (
-              e.kind === "owner" &&
-              e.value.kind === "content-begin" &&
-              v.kind === "owner"
-            )
-              unfinished.add(`owner/${v.link.operationId}/${e.value.detailId}`);
-            if (e.kind === "end")
-              unfinished.delete(
-                `${e.detail.origin.kind}/${e.detail.origin.id}/${e.detail.detailId}`,
-              );
-          }
-        if (v.kind === "auth-preparation") auth.add(v.intent.operationId);
-        if (v.kind === "auth-settlement") auth.delete(v.result.operationId);
-        if (v.kind === "launch") processes.add(v.link.childRunId);
-        if (
-          v.kind === "settlement" &&
-          v.completion.native.closure !== "unconfirmed"
-        )
-          processes.delete(v.link.childRunId);
-        if (v.kind === "owner")
-          for (const e of v.events)
-            if (e.kind === "owner" && e.value.kind === "fact") {
-              const f = e.value.fact;
-              if (f.kind === "check-start") processes.add(f.checkId);
-              if (
-                f.kind === "check-settled" &&
-                f.native.closure !== "unconfirmed"
-              )
-                processes.delete(f.checkId);
-              if (f.kind === "publication-intent")
-                publication.add(f.publicationId);
-              if (f.kind === "publication-settled") {
-                if (f.status === "published") {
-                  publication.delete(f.publicationId);
-                  metadata.delete(v.link.operationId);
-                } else publication.add(f.publicationId);
-              }
-            }
-      }
-    if (before !== digestHistory(files)) throw new ContractError("conflict");
-    return {
-      digest: before,
-      processes: processes.size ? "unknown" : "externally-resolved",
-      credentials: auth.size ? "unknown" : "independently-resolved",
-      storage:
-        state.tail ||
-        publication.size ||
-        unfinished.size ||
-        metadata.size ||
-        runs.size
-          ? "unknown"
-          : "independently-resolved",
-    };
-  }
-  async append(
-    confirmation: RecoveryConfirmation,
-    observeWrite?: WriteObserver,
-  ): Promise<DurableRecoveryFact> {
-    if (
-      typeof confirmation.assertLocalAuthority !== "function" ||
-      confirmation.acknowledgeEscapedProcesses !== true ||
-      confirmation.processes !== "externally-resolved" ||
-      confirmation.credentials !== "independently-resolved" ||
-      confirmation.storage !== "independently-resolved"
-    )
-      throw new ContractError("forbidden");
-    const expected = structuredClone(confirmation.expected),
-      files = this.files();
-    files.assertWritable();
-    if (!expected.history || expected.owner !== "absent")
-      throw new ContractError("quarantine");
-    const current = await inspectRecovery(this.coordination, this);
-    if (JSON.stringify(current) !== JSON.stringify(expected))
-      throw new ContractError("conflict");
-    const state = files.inspect(),
-      recoveryId = randomUUID();
-    const bridge: RecoveryBridge = {
-      kind: "recovery",
-      recoveryId,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      previous: {
-        segment: state.segment,
-        bytes: state.bytes,
-        sha256: state.identity ?? hash(""),
-        committedBytes: state.committedBytes ?? state.bytes,
-        committedSeq: state.committedSeq,
-        highSeq: state.highSeq ?? state.committedSeq,
-      },
-      acknowledgments: { processes: true, credentials: true, storage: true },
-    };
-    const path = files.segmentPath(state.segment + 1);
-    const assertCurrent = async () => {
-      await confirmation.assertLocalAuthority(structuredClone(expected));
-      const selected = await inspectRecovery(this.coordination);
-      if (selected.owner !== "absent") throw new ContractError("quarantine");
-      if (
-        selected.epoch !== expected.epoch ||
-        selected.coordinationDigest !== expected.coordinationDigest ||
-        digestHistory(files, path) !== expected.history?.digest ||
-        this.coordination.recoverySnapshot().digest !==
-          expected.coordinationDigest
-      )
-        throw new ContractError("conflict");
-    };
-    // First guard does not exclude a preexisting conflicting segment.
-    await confirmation.assertLocalAuthority(structuredClone(expected));
-    if (digestHistory(files) !== expected.history.digest)
-      throw new ContractError("conflict");
-    const row: JournalRow = {
-      kind: "record",
-      id: randomUUID(),
-      seq: String(BigInt(bridge.previous.highSeq) + 1n),
-      value: bridge,
-    };
-    let quota: number = LIMITS.checkoutQuotaBytes;
-    for (const batch of files.scan())
-      for (const row of batch.rows)
-        if (row.value.kind === "admission" && row.value.policy)
-          quota = row.value.policy.quotaBytes;
-    const bytes = Buffer.byteLength(
-      files.encodeBatch(state, [row]).body +
-        files.encodeBatch(state, [row]).trailer,
-    );
-    if (
-      files.usage() + bytes > quota ||
-      files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes
-    )
-      throw new ContractError("recording-exhausted");
-    const after = await files.appendRecovery(
-      state,
-      row,
-      assertCurrent,
-      observeWrite,
-    );
-    const assert = () => {
+/** Append one recovery bridge under the current owner's lease. */
+export async function appendRecoveryBridge(
+  lease: OwnerLease,
+  files: HistoryFiles,
+  observeWrite?: WriteObserver,
+): Promise<{ committedSeq: string; segment: number }> {
+  lease.assert();
+  files.assertWritable();
+  const state = files.inspect();
+  const bridge: RecoveryBridge = {
+    kind: "recovery",
+    recoveryId: randomUUID(),
+    epoch: lease.registration.epoch,
+    coordinationDigest: hash(
+      encoded({ automatic: true, epoch: lease.registration.epoch }),
+    ),
+    historyDigest: digestHistory(files),
+    previous: {
+      segment: state.segment,
+      bytes: state.bytes,
+      sha256: state.identity ?? hash(""),
+      committedBytes: state.committedBytes ?? state.bytes,
+      committedSeq: state.committedSeq,
+      highSeq: state.highSeq ?? state.committedSeq,
+    },
+    acknowledgments: { processes: true, credentials: true, storage: true },
+  };
+  const row: JournalRow = {
+    kind: "record",
+    id: randomUUID(),
+    seq: String(BigInt(bridge.previous.highSeq) + 1n),
+    value: bridge,
+  };
+  const encodedBatch = files.encodeBatch(state, [row]);
+  const bytes = Buffer.byteLength(encodedBatch.body + encodedBatch.trailer);
+  if (files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes)
+    throw new ContractError("recording-exhausted");
+  const after = await files.appendRecovery(
+    state,
+    row,
+    async () => lease.assert(),
+    observeWrite,
+  );
+  return {
+    committedSeq: after.state.committedSeq,
+    segment: after.state.segment,
+  };
+}
+export type HistoryHeal =
+  | "clean"
+  | "initialized"
+  | "continued-history"
+  | "archived-history";
+function damaged(error: unknown): boolean {
+  return !(error instanceof ContractError) || error.code === "corrupt-selected";
+}
+/** Make this owner's history writable, whatever its predecessor left. */
+export async function healHistory(
+  lease: OwnerLease,
+  log: RecoveryLog,
+): Promise<{ heal: HistoryHeal; archive: string | null }> {
+  lease.assert();
+  const c = lease.coordination,
+    directory = join(c.directory, "history-v2");
+  let files: HistoryFiles | undefined;
+  let broken = false;
+  try {
+    files = HistoryFiles.open(c);
+    if (files) {
       files.assertWritable();
-      files.assertRecoveryIdle();
-      files.files.assert(path, after.snapshot, LIMITS.segmentBytes);
-      if (digestHistory(files, path) !== expected.history?.digest)
-        throw new ContractError("conflict");
-    };
-    assert();
-    const fact: DurableRecoveryFact = {
-      recoveryId,
-      committedSeq: after.state.committedSeq,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      segmentIdentity: after.state.identity ?? "",
-    };
-    this.committed.set(fact, assert);
-    return fact;
+      // The writer's own reconstruction decides whether it would be fenced.
+      if (new HistoryWriter(lease).quarantined) {
+        await appendRecoveryBridge(lease, files);
+        if (new HistoryWriter(lease).quarantined)
+          throw new ContractError("quarantine");
+        return { heal: "continued-history", archive: null };
+      }
+      return { heal: "clean", archive: null };
+    }
+  } catch (error) {
+    if (!damaged(error)) throw error;
+    broken = true;
   }
+  if (broken) {
+    const archive = log.archive();
+    archive.keep(directory, "history-v2");
+    HistoryFiles.initialize(lease);
+    return { heal: "archived-history", archive: archive.name };
+  }
+  HistoryFiles.initialize(lease);
+  return { heal: "initialized", archive: null };
 }

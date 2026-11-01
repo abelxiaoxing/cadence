@@ -329,7 +329,8 @@ export class Conversations {
       ? {
           ...turn,
           status: "unknown",
-          notice: "Original work is not observed. No automatic replay.",
+          notice:
+            "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.",
         }
       : turn;
   }

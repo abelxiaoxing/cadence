@@ -6,17 +6,19 @@ import { networkSnapshot } from "../sdk-network.ts";
 import { defaultStateHome } from "../workspace.ts";
 
 import {
+  doctorMain,
   launchHost,
   managementExitCode,
   nativeCall,
+  ownerResponsive,
   serviceStatus,
   stopService,
 } from "./cli.ts";
 import { decodeHttpPolicy } from "./config.ts";
 import { ContractError, closed, text } from "./contracts/core.ts";
+import { healWorkbenchForStart } from "./doctor.ts";
 import { decodeGatewayInput, GatewayStore } from "./gateway-store.ts";
 import { encoded, json, PrivateFiles } from "./private-files.ts";
-import { localGatewayRecovery } from "./recovery-cli.ts";
 import { hostEnvironment } from "./runtime.ts";
 import {
   ensureServerConfig,
@@ -26,6 +28,10 @@ import {
 
 export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
   const operation = argv.shift();
+  if (operation === "recover" || operation === "doctor") {
+    await doctorMain(operation, argv);
+    return;
+  }
   if (
     ![
       "start",
@@ -34,15 +40,7 @@ export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
       "stop",
       "token-link",
       "token-rotate",
-      "recover",
     ].includes(operation ?? "")
-  )
-    throw new ContractError("invalid");
-  const recovery = operation === "recover" ? argv.shift() : undefined;
-  if (
-    operation === "recover" &&
-    recovery !== "inspect" &&
-    recovery !== "resolve"
   )
     throw new ContractError("invalid");
   let config = serverConfigPath(homedir()),
@@ -60,10 +58,9 @@ export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
     else if (key === "--reveal" && operation === "token-link") reveal = true;
     else if (
       argv[0] &&
-      (operation === "recover"
-        ? ["--server-config", "--state-home"]
-        : ["--server-config", "--state-home", "--agent-dir", "--config"]
-      ).includes(key)
+      ["--server-config", "--state-home", "--agent-dir", "--config"].includes(
+        key,
+      )
     ) {
       const value = resolve(argv.shift() as string);
       if (key === "--server-config") config = value;
@@ -108,8 +105,15 @@ export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
         ),
       policy: { ...policy, port: server.port },
     });
-    const status = await serviceStatus(store);
-    if (
+    // Whatever a dead predecessor left behind is reclaimed before observing.
+    const blocked = await healWorkbenchForStart(store, () =>
+      ownerResponsive(store),
+    );
+    const status = blocked ? null : await serviceStatus(store);
+    if (blocked) {
+      process.stderr.write(blocked);
+      result = { status: "refused", error: "quarantine", stage: "service" };
+    } else if (
       status &&
       typeof status === "object" &&
       "status" in status &&
@@ -142,12 +146,7 @@ export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
         `Cadence workbench: ${text(reply.link, 4096, true)}\nNo project or default workspace was created.\n`,
       );
     }
-  } else if (
-    operation === "recover" &&
-    (recovery === "inspect" || recovery === "resolve")
-  )
-    result = await localGatewayRecovery(store, recovery);
-  else if (operation === "stop") result = await stopService(store);
+  } else if (operation === "stop") result = await stopService(store);
   else if (operation === "status" || operation === "diagnose")
     result = await serviceStatus(store, operation === "diagnose");
   else {
@@ -174,6 +173,6 @@ export async function gatewayMain(argv: string[], hostUrl: URL): Promise<void> {
     )
   )
     process.stderr.write(
-      `Preserve state; inspect locally: cadence workbench recover inspect --server-config ${JSON.stringify(config)} --state-home ${JSON.stringify(store.stateHome)}. Eligible recovery requires recover resolve in a local terminal; it never starts work.\n`,
+      `The workbench is not ready (${String(result.status)}). Details and repair: cadence doctor --fix${seen.has("--server-config") ? ` --server-config ${JSON.stringify(config)}` : ""}${seen.has("--state-home") ? ` --state-home ${JSON.stringify(store.stateHome)}` : ""}\n`,
     );
 }

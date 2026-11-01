@@ -1,7 +1,7 @@
 // Internal ordinary-Node host. Startup secrets arrive only on anonymous stdin.
 
 import { createGateway } from "./service/gateway.ts";
-import { createServiceHost } from "./service/host.ts";
+import { createServiceHost, processLifetime } from "./service/host.ts";
 import {
   hostEnvironment,
   STARTUP_INPUT_BYTES,
@@ -30,7 +30,7 @@ try {
           input,
           new URL("./service-host.mjs", import.meta.url),
         )
-      : await createServiceHost(input);
+      : await createServiceHost(input, undefined, processLifetime);
   process.stdout.write(
     `${JSON.stringify({ status: "ready", epoch: "epoch" in host ? host.epoch : host.owner.lease.registration.epoch })}\n`,
   );

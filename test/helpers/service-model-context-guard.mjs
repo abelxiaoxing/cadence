@@ -27,11 +27,16 @@ const within = (base, path) => {
   const tail = relative(base, path);
   return !isAbsolute(tail) && tail !== ".." && !tail.startsWith(`..${sep}`);
 };
+// Kernel facts the lock liveness marks read (boot identity, process start);
+// readonly system data, never a user's configuration.
+const kernelFacts =
+  /^\/proc\/(?:stat|sys\/kernel\/random\/boot_id|(?:self|\d+)\/stat)$/;
 const checkedPath = (input, write) => {
   if (typeof input === "number") return; // Previously checked open descriptor.
   const path = resolve(
     input instanceof URL ? fileURLToPath(input) : String(input),
   );
+  if (!write && process.platform === "linux" && kernelFacts.test(path)) return;
   let canonical;
   try {
     canonical = realpath(path);
@@ -107,9 +112,15 @@ for (const key of ["exec", "execSync", "execFile", "execFileSync", "fork"])
   cp[key] = refuse;
 const spawnSync = cp.spawnSync;
 cp.spawnSync = function (executable, args, options) {
+  const liveness =
+    process.platform === "darwin" &&
+    ((executable === "sysctl" &&
+      JSON.stringify(args) === '["-n","kern.bootsessionuuid"]') ||
+      (executable === "ps" && args?.[0] === "-o" && args?.[1] === "lstart="));
   if (
-    executable !== "git" ||
-    JSON.stringify(args) !== '["rev-parse","--show-toplevel"]'
+    !liveness &&
+    (executable !== "git" ||
+      JSON.stringify(args) !== '["rev-parse","--show-toplevel"]')
   )
     refuse();
   return spawnSync.call(this, executable, args, options);

@@ -881,7 +881,7 @@ it("explicit management starts configured owner routing before SDK imports and c
     expect(JSON.parse((await run(f, "diagnose")).stdout)).toMatchObject({
       status: "alive",
       proxyAuth: "validated-proxy",
-      recovery: "local-interactive-only",
+      recovery: "automatic",
     });
     expect(contacts).toBe(0); // startup/catalog is not provider auth
     expect((await run(f, "stop")).code).toBe(0);
@@ -1209,3 +1209,118 @@ it("lost authenticated Stop acknowledgement remains unconfirmed even after real 
     status: "unconfirmed",
   });
 }, 30000);
+
+it("a runtime fault stops the owner's workers, requests a successor and the next start recovers", async () => {
+  const f = fixture();
+  const bundle = join(f.dir, "bundle");
+  mkdirSync(bundle);
+  symlinkSync(
+    fileURLToPath(new URL("../node_modules", import.meta.url)),
+    join(bundle, "node_modules"),
+    "junction",
+  );
+  const target = join(bundle, "restart-fixture.mjs");
+  const built = spawnSync(
+    "bun",
+    [
+      "build",
+      fileURLToPath(new URL("./helpers/self-restart-host.ts", import.meta.url)),
+      "--target=node",
+      "--packages=external",
+      `--define=__CADENCE_TEST_ROOT__=${JSON.stringify(fileURLToPath(new URL("../", import.meta.url)))}`,
+      `--outfile=${target}`,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(built.status, built.stderr).toBe(0);
+  const child = spawn(process.execPath, [target], {
+    cwd: f.root,
+    env: f.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "",
+    errors = "";
+  child.stdout.on("data", (data) => {
+    output += data;
+  });
+  child.stderr.on("data", (data) => {
+    errors += data;
+  });
+  const closed = once(child, "close");
+  child.stdin.end(
+    JSON.stringify({
+      workspace: f.root,
+      stateHome: f.state,
+      environmentToken: null,
+      config: {
+        schema: "cadence-service-host/1",
+        http: {
+          schema: "cadence-service-http/1",
+          host: "127.0.0.1",
+          port: 0,
+          proxy: null,
+        },
+        cwd: f.root,
+        agentDir: join(f.dir, "agent"),
+        tokenSource: "generated",
+        tokenFile: null,
+      },
+    }),
+  );
+  const [code] = await closed;
+  const lines = output
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(code, errors).toBe(75);
+  const worker = lines[0].worker as number;
+  expect(worker).toBeGreaterThan(0);
+  expect(lines.slice(1)).toEqual([{ successor: f.root }, { exit: 75 }]);
+  expect(() => process.kill(worker, 0)).toThrow();
+  // The successor's startup proves this owner gone and recovers it.
+  const r = await run(f, "start", ["--agent-dir", join(f.dir, "agent")]);
+  pending.push(f);
+  expect(r.code, r.stderr).toBe(0);
+  expect(r.stderr).toContain("Cadence restarted itself after a runtime fault");
+  expect(JSON.parse(r.stdout)).toMatchObject({ status: "alive" });
+}, 30000);
+
+it("a removed project directory gets a readable refusal, not an opaque one", async () => {
+  const f = fixture();
+  const missing = join(f.dir, "removed-project");
+  const r = await new Promise<{
+    code: number | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [
+        cli,
+        "start",
+        "--foreground",
+        "--workspace",
+        missing,
+        "--state-home",
+        f.state,
+      ],
+      { cwd: f.dir, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (b) => {
+      stdout += b;
+    });
+    child.stderr.on("data", (b) => {
+      stderr += b;
+    });
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+  // A unit pointing at a removed directory must not restart in a loop.
+  expect(r.code).toBe(78);
+  expect(r.stderr).toContain(`The project directory ${missing} does not exist`);
+  expect(JSON.parse(r.stdout)).toEqual({
+    status: "refused",
+    reason: "workspace-missing",
+  });
+});
