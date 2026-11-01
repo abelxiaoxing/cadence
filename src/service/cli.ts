@@ -33,6 +33,7 @@ import {
   stopAutostart,
 } from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
+import { decodeVersion } from "./contracts/gateway.ts";
 import {
   type RegistryLockDiagnostic,
   ServiceCoordination,
@@ -59,6 +60,17 @@ import {
   removeLoginRun,
   stopLoginRun,
 } from "./login-run.ts";
+import {
+  insideUnit,
+  installedVersion,
+  jobOutcome,
+  MaintenanceRecord,
+  npm,
+  PACKAGE,
+  restartInstalled,
+  type UpgradeResult,
+  upgradeService,
+} from "./maintenance.ts";
 import { encoded } from "./private-files.ts";
 import {
   decodeHostInput,
@@ -80,7 +92,6 @@ import {
   TOKEN_KEY,
   serverConfigPath as workbenchConfigPath,
 } from "./server-config.ts";
-
 import {
   configureSystemService,
   stopSystemService,
@@ -594,7 +605,7 @@ async function privateLink(
   }
 }
 /** Orderly owner control for service managers that only signal (macOS, Windows). */
-const ownerControl: OwnerControl = {
+export const ownerControl: OwnerControl = {
   async ownerStatus(workspace, config) {
     try {
       const observed = await serviceStatus(
@@ -627,10 +638,16 @@ const ownerControl: OwnerControl = {
     }
   },
 };
-type ServerAction = "install" | "status" | "restart" | "stop" | "uninstall";
+type ServerAction =
+  | "install"
+  | "status"
+  | "restart"
+  | "stop"
+  | "uninstall"
+  | "upgrade";
 async function serverAction(
   s: AutostartSystem,
-  action: ServerAction,
+  action: Exclude<ServerAction, "upgrade">,
   requested: string | undefined,
   linger: boolean,
 ): Promise<AutostartResult> {
@@ -660,6 +677,19 @@ async function serverAction(
     default:
       return { status: "unsupported" };
   }
+}
+/** Linux only: the WebUI's restart and upgrade use systemd's transient units,
+ * and the other platforms' managers have not been qualified for it. */
+function upgrade(
+  s: AutostartSystem,
+  to: string | undefined,
+): Promise<UpgradeResult> {
+  if (s.platform !== "linux") return Promise.resolve({ status: "unsupported" });
+  return upgradeService(s, to, {
+    npm,
+    stop: () => serverAction(s, "stop", undefined, false),
+    restart: () => restartInstalled(s),
+  });
 }
 function serverGuidance(
   s: AutostartSystem,
@@ -700,14 +730,43 @@ function managerDetail(s: AutostartSystem): string {
       return `run its launcher to see why: wscript ${JSON.stringify(launcherPath(s))}`;
   }
 }
+const REASONS: Record<string, string> = {
+  "fetch-failed": "the release could not be fetched; the service kept running",
+  "stop-unconfirmed": "the running service did not confirm its orderly Stop",
+  "install-failed": "npm could not install it",
+  "not-ready": "the new version did not become ready",
+};
 function serverStatusGuidance(
   s: AutostartSystem,
   action: ServerAction,
-  result: AutostartResult & { service?: string; endpoint?: string },
+  result: UpgradeResult & { service?: string; endpoint?: string },
   cli: string,
   link: string | undefined,
 ): string {
   const workspace = JSON.stringify(result.workspace ?? "");
+  if (result.status === "inside-service")
+    return `This command runs inside ${s.unit}: stopping the service would also end this command before it starts Cadence again. Restart or upgrade from the WebUI (Cadence service), or run the command in a terminal outside the service.\n`;
+  if (action === "upgrade") {
+    const terminal = `Upgrade it the way you installed it, then: ${cli} server restart`;
+    switch (result.status) {
+      case "upgraded":
+        return `Cadence ${result.version} is running (upgraded from ${result.from}).\n`;
+      case "current":
+        return `Cadence ${result.version} is already the latest version.\n`;
+      case "deprecated":
+        return `Cadence ${result.to} is deprecated on npm; nothing changed.\n`;
+      case "rolled-back":
+        return `Cadence ${result.to} did not become ready, so ${result.from} was reinstalled and is running; ${managerDetail(s)}.\n`;
+      case "not-npm-global":
+        return `This copy of Cadence (${s.root}) was not installed with npm install -g, so it cannot upgrade itself. ${terminal}\n`;
+      case "not-writable":
+        return `npm cannot write ${s.root} as this account. ${terminal}\n`;
+      case "unsupported":
+        return `Cadence upgrades itself only on Linux. Run npm install -g ${PACKAGE}@latest, then: ${cli} server restart\n`;
+      case "failed":
+        return `Cadence was not upgraded: ${REASONS[result.reason ?? ""] ?? result.reason}. Running now: ${result.version ?? result.from}; ${managerDetail(s)}.\n`;
+    }
+  }
   if (
     result.workspace === null &&
     ["quarantined", "unconfirmed", "unavailable"].includes(result.status)
@@ -793,6 +852,7 @@ const SERVER_ACTIONS: ServerAction[] = [
   "restart",
   "stop",
   "uninstall",
+  "upgrade",
 ];
 async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   const action = SERVER_ACTIONS.find((a) => a === argv[0]);
@@ -802,6 +862,7 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   let linger = process.env.CADENCE_LINGER !== "0";
   let scope: "system" | "user" | undefined;
   let name: string | undefined, port: number | undefined;
+  let to: string | undefined, job: string | undefined;
   const seen = new Set<string>();
   while (argv.length) {
     const flag = argv.shift();
@@ -817,7 +878,16 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
     else if (flag === "--port" && action === "install" && argv[0]) {
       port = portValue(argv.shift() as string);
       if (!port) throw new ContractError("invalid");
-    } else throw new ContractError("invalid");
+    } else if (flag === "--to" && action === "upgrade" && argv[0])
+      to = decodeVersion(argv.shift());
+    // The WebUI's transient unit names the job whose outcome it records.
+    else if (
+      flag === "--job" &&
+      (action === "restart" || action === "upgrade") &&
+      argv[0]
+    )
+      job = decodeId(argv.shift());
+    else throw new ContractError("invalid");
   }
   const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl, {
     scope,
@@ -827,6 +897,14 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
     throw new ContractError("unsupported-context");
   if (s.scope === "system" && s.uid !== 0) {
     const result = { status: "root-required", scope: "system" as const };
+    process.stderr.write(serverGuidance(s, action, result, undefined));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  // Before any change: stopping the unit would end this command with it.
+  if (action !== "status" && insideUnit(s)) {
+    const result = { status: "inside-service", unit: s.unit };
     process.stderr.write(serverGuidance(s, action, result, undefined));
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = 1;
@@ -857,9 +935,12 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       throw error;
     }
   }
-  let result: AutostartResult & { service?: string; endpoint?: string };
+  let result: UpgradeResult & { service?: string; endpoint?: string };
   try {
-    result = await serverAction(s, action, requested, linger);
+    result =
+      action === "upgrade"
+        ? await upgrade(s, to)
+        : await serverAction(s, action, requested, linger);
   } catch (error) {
     if (error instanceof ContractError && error.code === "invalid")
       process.stderr.write(
@@ -880,7 +961,8 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       ...observedServerResult(result, observation.service),
       ...observation,
     };
-    if (result.service === "alive")
+    // A job's output goes to the journal; the browser already holds its cookie.
+    if (result.service === "alive" && !job)
       link = await privateLink(workspace, undefined, serviceConfigPath(s));
   }
   if (
@@ -906,6 +988,19 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
     }
   }
   if (vanished) result = { ...result, service: "workspace-missing" };
+  if (job && (action === "restart" || action === "upgrade")) {
+    const { state, reason } = jobOutcome(action, result);
+    try {
+      new MaintenanceRecord(new GatewayStore(serviceConfigPath(s))).finish(
+        job,
+        state,
+        reason,
+        installedVersion(s.root),
+      );
+    } catch {
+      // Not recorded: the WebUI reads the ended job as interrupted.
+    }
+  }
   process.stderr.write(vanished ?? serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (
@@ -922,6 +1017,11 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       "workspace-changed",
       "project-running",
       "environment-changed",
+      "inside-service",
+      "not-npm-global",
+      "not-writable",
+      "deprecated",
+      "rolled-back",
     ].includes(result.status) ||
     (result.status === "absent" && (action === "restart" || action === "stop"))
   )
@@ -1158,7 +1258,7 @@ export async function managementMain(
     }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall|upgrade [--to VERSION]\nUpgrade (Linux, npm global installs) fetches the release while the service runs, then stops it, installs the release and restarts; a release that does not become ready is replaced by the previous version. Server commands that change the service refuse to run inside it; use the WebUI or a terminal.\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
       );
       return;
     }

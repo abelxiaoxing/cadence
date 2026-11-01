@@ -11,6 +11,8 @@ import {
 } from "node:http";
 import type { Socket } from "node:net";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { loadWebAssets } from "../service-assets.ts";
 import {
@@ -26,15 +28,30 @@ import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
 import { effectiveWorkspace } from "../workspace.ts";
 
 import { HttpAuthentication, requestBoundary } from "./auth.ts";
+import { hostSystem, serviceConfigPath } from "./autostart.ts";
 import {
   nativeCall,
   openProjectDirectory,
+  ownerControl,
   serviceStatus,
   stopService,
 } from "./cli.ts";
 import { localOrigin } from "./config.ts";
-import { closed, decodeHash, decodeId, text } from "./contracts/core.ts";
-import { decodeProjectEntry } from "./contracts/gateway.ts";
+import {
+  closed,
+  decodeHash,
+  decodeId,
+  integer,
+  oneOf,
+  text,
+} from "./contracts/core.ts";
+import {
+  decodeProjectEntry,
+  decodeVersion,
+  MAINTENANCE_ACTIONS,
+  type MaintenanceJob,
+  type ServiceEntry,
+} from "./contracts/gateway.ts";
 import { decodeWorkbenchCommand } from "./contracts/workbench.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import {
@@ -44,6 +61,16 @@ import {
   GatewayStore,
 } from "./gateway-store.ts";
 import { fixedHeaders } from "./http.ts";
+import {
+  installedVersion,
+  jobRunning,
+  launchJob,
+  MaintenanceRecord,
+  release,
+  supervisingUnit,
+  type UpgradeRoute,
+  upgradeRoute,
+} from "./maintenance.ts";
 import { encoded, hash, json } from "./private-files.ts";
 import { RecoveryLog } from "./recovery-log.ts";
 import { readHostConfig } from "./runtime.ts";
@@ -222,6 +249,112 @@ export async function createGateway(
     store.assert();
     if (!accepting) throw new ContractError("quarantine");
   };
+  const root = dirname(dirname(fileURLToPath(hostUrl))),
+    version = installedVersion(root),
+    record = new MaintenanceRecord(store);
+  // Only the generated unit this workbench runs in can be restarted from here.
+  const managed = (() => {
+    const s = supervisingUnit(process.env, (selection) =>
+      hostSystem(root, ownerControl, selection),
+    );
+    return s && serviceConfigPath(s) === input.serverConfig ? s : undefined;
+  })();
+  let route: Promise<UpgradeRoute> | undefined,
+    requesting = false;
+  /** Accepted work in associated running owners: what a restart stops. */
+  async function associatedWork(): Promise<number> {
+    const counts = await Promise.all(
+      store.associatedProjects().map(async (p) => {
+        try {
+          const observed = await serviceStatus(
+            new ServiceCoordination(p.path, input.stateHome),
+          );
+          return observed &&
+            typeof observed === "object" &&
+            "status" in observed &&
+            observed.status === "alive" &&
+            "work" in observed &&
+            typeof observed.work === "number"
+            ? observed.work
+            : 0;
+        } catch {
+          return 0;
+        }
+      }),
+    );
+    return counts.reduce((sum, count) => sum + count, 0);
+  }
+  function latestJob(): MaintenanceJob | null {
+    const job = record.read();
+    // Ended without reporting: killed, or stopped by its runtime bound.
+    return job?.state === "running" && managed && !jobRunning(managed)
+      ? { ...job, state: "failed", reason: "interrupted" }
+      : job;
+  }
+  async function serviceEntry(): Promise<ServiceEntry> {
+    route ??= upgradeRoute(root);
+    return {
+      kind: "service",
+      version,
+      unit: managed
+        ? { name: managed.unit, scope: managed.scope ?? "user" }
+        : null,
+      upgrade: await route,
+      work: await associatedWork(),
+      job: latestJob(),
+    };
+  }
+  /** A request must name the exact state the browser confirmed. */
+  async function requestJob(
+    value: unknown,
+    current: () => void,
+  ): Promise<MaintenanceJob> {
+    const o = closed(value, ["action", "from", "to", "work", "epoch"]);
+    const action = oneOf(o.action, MAINTENANCE_ACTIONS),
+      to = o.to === null ? null : decodeVersion(o.to);
+    if ((action === "upgrade") !== (to !== null))
+      throw new ContractError("invalid");
+    if (decodeId(o.epoch) !== auth.epoch || decodeVersion(o.from) !== version)
+      throw new ContractError("stale");
+    if (!managed) throw new ContractError("unsupported-context");
+    route ??= upgradeRoute(root);
+    if (action === "upgrade" && (await route) !== "npm")
+      throw new ContractError("unsupported-context");
+    if (requesting || jobRunning(managed)) throw new ContractError("conflict");
+    requesting = true;
+    try {
+      if ((await associatedWork()) !== integer(o.work, 0, 1_000_000))
+        throw new ContractError("stale");
+      current();
+      assert();
+      const job: MaintenanceJob = {
+        id: randomUUID(),
+        action,
+        from: version,
+        to,
+        state: "running",
+        reason: null,
+        version: null,
+        at: Date.now(),
+        endedAt: null,
+      };
+      record.write(job);
+      if (!launchJob(managed, job)) {
+        record.finish(job.id, "failed", "refused", version);
+        throw new ContractError("unavailable");
+      }
+      return job;
+    } finally {
+      requesting = false;
+    }
+  }
+  function browserBuild(boundary: ReturnType<typeof requestBoundary>): void {
+    const clientBuild = decodeClientBuild(
+      parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024),
+    );
+    if (clientBuild.kind !== "browser" || !compatibleBuild(build, clientBuild))
+      throw new ContractError("unsupported-context");
+  }
   async function open(
     path: string,
     id: string,
@@ -687,18 +820,27 @@ export async function createGateway(
         );
         return;
       }
+      if (raw === "/workbench/v1/service" && req.method === "GET") {
+        reply(res, 200, await serviceEntry());
+        return;
+      }
+      // Registry contact only on an explicit check, never in the background.
+      if (raw === "/workbench/v1/service/release" && req.method === "GET") {
+        const latest = await release();
+        if (!latest) throw new ContractError("unavailable");
+        reply(res, 200, { kind: "release", ...latest });
+        return;
+      }
+      if (raw === "/workbench/v1/service" && req.method === "POST") {
+        browserBuild(boundary);
+        const value = await body(req);
+        auth.current(caller);
+        const job = await requestJob(value, () => auth.current(caller));
+        reply(res, 200, { kind: "service-job", job });
+        return;
+      }
       if (raw === "/workbench/v1/open" && req.method === "POST") {
-        const clientBuild = decodeClientBuild(
-          parseWireJson(
-            boundary.headers.get("x-cadence-build") ?? "null",
-            1024,
-          ),
-        );
-        if (
-          clientBuild.kind !== "browser" ||
-          !compatibleBuild(build, clientBuild)
-        )
-          throw new ContractError("unsupported-context");
+        browserBuild(boundary);
         const o = closed(await body(req), ["commandId", "path", "epoch"]);
         const id = decodeId(o.commandId),
           path = text(o.path, 4096, true),

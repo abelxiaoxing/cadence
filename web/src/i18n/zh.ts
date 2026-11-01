@@ -821,4 +821,70 @@ export const zh = {
   "Open a folder…": "打开文件夹…",
   "Open a working folder to start chatting.": "打开工作文件夹后即可开始对话。",
   "{path} could not be opened ({code}).": "无法打开 {path}（{code}）。",
+  "Cadence service": "Cadence 服务",
+  "Version, restart and upgrade.": "版本、重启和升级。",
+  "Reading the service…": "正在读取服务状态…",
+  "Runs as {unit} ({scope} systemd service).":
+    "以 {unit} 运行（{scope} 级 systemd 服务）。",
+  "This workbench was not started by Cadence's systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.":
+    "此工作台不是由 Cadence 的 systemd 服务启动的，页面无法重启或升级它。请在终端中运行 cadence server restart。",
+  "Last request ({time}): {outcome}": "上次请求（{time}）：{outcome}",
+  Updates: "更新",
+  "npm could not be reached.": "无法连接 npm。",
+  "Check for updates": "检查更新",
+  "Asking npm for the latest version…": "正在向 npm 查询最新版本…",
+  "Cadence {version} is the latest version.":
+    "Cadence {version} 已是最新版本。",
+  "{version} is deprecated on npm and is not offered.":
+    "{version} 在 npm 上已弃用，不提供升级。",
+  "{version} is available, but this account cannot write the installation; upgrade it in a terminal.":
+    "{version} 可用，但当前账户无法写入安装目录；请在终端中升级。",
+  "{version} is available, but this copy was not installed with npm install -g; upgrade it the way you installed it.":
+    "{version} 可用，但当前副本不是通过 npm install -g 安装的；请按原安装方式升级。",
+  "Upgrade to {version}": "升级到 {version}",
+  "Restart service": "重启服务",
+  "Restart Cadence?": "重启 Cadence？",
+  "Upgrade Cadence {from} to {to}?": "将 Cadence 从 {from} 升级到 {to}？",
+  "The service stops in order and starts again; this page waits and then reloads.":
+    "服务会按顺序停止并重新启动；此页面会等待完成后重新加载。",
+  "npm downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.":
+    "npm 会在 Cadence 继续运行时下载 {to}；然后服务停止、安装 {to} 并重新启动。如果 {to} 未能就绪，会重新安装 {from}。",
+  "{count} running workflows or conversations will be stopped.":
+    "{count} 个正在运行的工作流或会话将被停止。",
+  "Stop them and continue": "停止它们并继续",
+  "Restart now": "立即重启",
+  "Upgrade now": "立即升级",
+  "Stopping Cadence…": "正在停止 Cadence…",
+  "Cadence is starting again…": "Cadence 正在重新启动…",
+  "Downloading {to}, then stopping Cadence…":
+    "正在下载 {to}，随后停止 Cadence…",
+  "Installing {to} and starting Cadence…": "正在安装 {to} 并启动 Cadence…",
+  "This runs outside the service: closing or reloading the page does not stop it, and running work is stopped in order.":
+    "此操作在服务之外运行：关闭或刷新页面不会中断它，运行中的工作会按顺序停止。",
+  "Reload the page to reconnect to the new service.":
+    "重新加载页面以连接新的服务。",
+  "Details in a terminal:": "在终端中查看详情：",
+  "Reload page": "重新加载页面",
+  "Cadence did not report back within {minutes} minutes.":
+    "Cadence 在 {minutes} 分钟内没有返回结果。",
+  "Cadence answered with a different version.": "Cadence 以另一个版本响应。",
+  "Cadence restarted.": "Cadence 已重启。",
+  "Cadence {version} was already installed.": "Cadence {version} 已经安装。",
+  "Cadence {version} is running.": "Cadence {version} 正在运行。",
+  "Cadence {to} did not become ready; {version} was reinstalled.":
+    "Cadence {to} 未能就绪，已重新安装 {version}。",
+  "In progress…": "进行中…",
+  "The restart did not finish: {reason}": "重启未完成：{reason}",
+  "The upgrade did not finish: {reason}": "升级未完成：{reason}",
+  "The release could not be downloaded; the service kept running.":
+    "无法下载该版本；服务保持运行。",
+  "The running service did not confirm its orderly stop.":
+    "正在运行的服务没有确认有序停止。",
+  "npm could not install the release.": "npm 无法安装该版本。",
+  "The new service did not become ready.": "新服务未能就绪。",
+  "The service manager refused the operation.": "服务管理器拒绝了此操作。",
+  "The job ended without reporting.": "任务在报告结果前结束。",
+  "The service was not changed; this page stays connected.":
+    "服务没有改动；此页面保持连接。",
+  Close: "关闭",
 } satisfies Record<string, string>;

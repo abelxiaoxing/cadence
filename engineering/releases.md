@@ -424,3 +424,25 @@ Observed environment: Linux, Node 26.7.0, Bun 1.3.14, installed public Pi SDK 0.
 Evidence is retained under `/home/mirako/abel/.cr-eWZbMy` (`verify-1.log`, `browser-retention-1.log`, `retention-integration-1.log`, `bun-pack.log`); earlier development attempts, including failed checks, are preserved under `/home/mirako/abel/.cv-l7kXXN`, without enlarged test budgets or retrospective claims that those failures passed.
 Windows/macOS, paid providers, real PTY interaction and power-loss behavior were not newly qualified.
 Commit, GitHub push and npm publication were explicitly authorized; this snapshot records candidate verification, not a claim that publication or consumer installation already occurred.
+
+## Release 2.0.29 acceptance snapshot
+
+External feedback reported that `cadence server restart`, run from a WebUI tool, left the service inactive: the CLI stopped the unit it ran in, so systemd ended it (KillMode=mixed) before its own start, and `nohup`, background jobs or a new session do not leave the unit's cgroup.
+A throwaway experiment with persistent runtime units confirmed both halves: a `setsid nohup` child stayed in `app.slice/<unit>.service` and never reached start, while the same steps in a `systemd-run --user` unit completed.
+Server commands that change the service now compare `/proc/self/cgroup` with the unit's `ControlGroup` before any change, including the `.env` append, and refuse with `inside-service`; child-process cleanup is unchanged.
+The workbench gains a Cadence service dialog (entry server button, More → Cadence service) with the running version and unit, an explicit npm update check, and a confirmed restart or upgrade that names the running work it stops.
+The gateway proves its own generated unit by `InvocationID` and runs the same CLI in a transient `cadence[-NAME].maintenance.service` outside the cgroup; the job records its outcome in `maintenance.json`, which the page waits for, and its journal carries no private link.
+`cadence server upgrade [--to VERSION]` (Linux, npm global installs the account can write) fetches the exact release while the service runs, stops it orderly, installs it and runs the installed copy's own restart; a copy that never becomes ready is replaced by the previous version from npm's cache.
+The owner status adds the accepted-work count the dialog names; the gateway contract changes, so 2.0.28 and 2.0.29 clients and owners refuse each other as incompatible.
+
+The new opt-in `test/service-maintenance-systemd.test.ts` (`CADENCE_SYSTEMD_E2E=1`) runs a generated workbench unit under the real user manager, linked from `$XDG_RUNTIME_DIR/systemd/user` into a private HOME: an `ExecStartPost` child started with `setsid nohup` is refused without any change, and the WebUI route restarts the unit under a new `InvocationID` with the job recorded `ready`.
+Pointed at the 2.0.28 CLI, the same child was killed at the stop and the test failed, as the feedback described.
+A real Chromium acceptance against real user units restarted this build from the Chinese dialog, kept the service untouched when the upgrade target (an update-check answer replaced with the nonexistent 2.0.30) could not be fetched, and, through the same route, installed 2.0.28 from the registry into a temporary npm prefix, whose own restart became ready in about seven seconds.
+Screenshots are kept untracked in the main checkout under `预览图片/2026-11-01/webui-service-maintenance/`.
+The first full `verify` (1787 root/native tests in 88 files with 28 skipped, 147 WebUI tests in 15 files, eight browser scenarios in seven files and the 151-member pack audit) passed.
+After a WebUI-only change (an untouched service keeps the page connected), two further full runs failed `service-conversation-pages` with a read refusal `unavailable` (the second also `service-history`'s idle-flush 5s budget) at load averages of 5 to 8 on the shared host; both files pass alone.
+Four concurrent runs of `service-conversation-pages` failed the same way on unchanged 2.0.28 `main` (three `unavailable`, one timeout) as on this branch, so this load sensitivity predates the release and is not qualified as fixed; no budget was changed.
+The systemd lane passed with that final source.
+A separate Bun pack contains 151 files; SHA-256 `eae7f0915b086a7f4ad0f5cc793e71178718cba7cc1b017ff7a589df532209da`, SHA-1 `7eee8a5ef27127885b2b0b227b61c16f3a5b0be4`.
+Observed environment: Linux, systemd 259 user manager, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); system-scope units, macOS and Windows were not executed, and their WebUI restart and upgrade stay unavailable.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.

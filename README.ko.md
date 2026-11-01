@@ -99,11 +99,15 @@ WebUI 폴더 선택기도 같은 방법으로 프로젝트를 엽니다.
 ```sh
 cadence server status
 cadence server restart     # 업그레이드나 .env / models.json 변경 후
+cadence server upgrade     # npm 전역 설치: 받기, 설치, 재시작
 cadence server stop        # 등록은 유지되고 다음 부팅 또는 로그인 시 다시 시작
 cadence server uninstall   # npm uninstall -g 전에 실행
 ```
 
-`npm install -g @abelxiaoxing/cadence@latest`로 업그레이드하고, 그 후 `cadence server restart`. restart, stop, uninstall는 작업이 연결 끊긴 채로 남지 않도록 실행 중인 작업을 순서대로 멈춥니다. uninstall은 서비스 정의만 제거합니다.
+`cadence server upgrade` 또는 WebUI의 Cadence 서비스 대화 상자로 업그레이드합니다.
+Cadence가 실행 중일 때 새 버전을 받아 두고, 새 버전이 시작되지 않으면 이전 버전으로 되돌립니다.
+Restart, stop, uninstall는 작업이 연결 끊긴 채로 남지 않도록 실행 중인 작업을 순서대로 멈춥니다.
+Uninstall은 서비스 정의만 제거합니다.
 프로젝트, 역사, Pi 설정은 유지됩니다.
 Linux 루트 및 이름 지정 서비스, 원격 HTTPS 액세스, 복구에는 [서비스 관리](docs/service-management.md)와 [원격 액세스](docs/remote-access.md)를 참조하세요.
 

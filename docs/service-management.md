@@ -74,11 +74,12 @@ Changing to root changes the effective account and its private namespace: stop a
 cadence server install [--workspace /absolute/project] [--system|--user] [--no-linger]
 cadence server status
 cadence server restart
+cadence server upgrade [--to VERSION]
 cadence server stop
 cadence server uninstall
 ```
 
-Only these explicit commands register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
+Only these explicit commands and the WebUI's confirmed [restart and upgrade](#restart-and-upgrade-from-the-webui) register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
 The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; the pinned Pi SDK's blocked `@google/genai` preinstall only echoes `no-op`, and its `protobufjs` postinstall only warns about version schemes.
 Linux server commands accept `--system` or `--user` after the action; root defaults to system scope and other accounts to user scope.
 `--system` requires root and never runs sudo itself; `--user` explicitly selects the legacy per-user manager, even when invoked by root.
@@ -97,6 +98,9 @@ A successful manager start request is not owner readiness: an unready owner repo
 Status also retains the manager's `active`/`activating`/`failed` observation separately.
 A definition whose project directory was removed gets a readable refusal (exit78, so the unit does not restart in a loop); `cadence server install` switches it to the workbench.
 `restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
+The `upgrade` command (Linux) installs the latest version, or exactly `--to VERSION`, with npm and restarts; see [Restart and upgrade from the WebUI](#restart-and-upgrade-from-the-webui) for its steps.
+Commands that change the service (`install`, `restart`, `stop`, `uninstall`, `upgrade`) refuse with `inside-service` when they run inside the service they would stop, for example from a tool of its own agent: stopping a systemd unit ends every process in it, so the command would die before it started the service again.
+Use the WebUI or a terminal outside the service instead.
 `stop` joins the workbench's accepted openings and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
 An associated owner that is not running (or whose directory is gone) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still stops.
 Project-specific `stop --workspace <path>` remains scoped to that owner.
@@ -115,6 +119,24 @@ While no service is registered, Pi's session-start card shows a separate warning
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
 The readonly `/cadence-history` client names the same management command when no owner exists; daily `/cadence` instead uses explicit on-demand project startup, without requiring a boot service.
 A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
+
+### Restart and upgrade from the WebUI
+
+On Linux the workbench has a **Cadence service** dialog: the server button on the entry page, or **More → Cadence service** in a project.
+It shows the running version and its systemd unit, asks npm for the latest version only when you press **Check for updates**, and offers **Restart service** and **Upgrade to VERSION**.
+The confirmation names the running workflows and conversations the restart stops; they stop through the orderly Stop, never by a signal.
+If work starts or ends before you confirm, the request is refused as stale and the dialog reads the service again.
+
+The request runs outside the service, in a transient unit `cadence.maintenance.service` (`cadence-NAME.maintenance.service` for a named service), so closing or reloading the page does not interrupt it and one job runs at a time.
+It runs the same `cadence server restart` or `cadence server upgrade`, then records its outcome; the page waits for that record and offers to reload.
+If it reports nothing, see `journalctl --user -u cadence.maintenance.service` (without `--user` for a system service) and `cadence server status`.
+
+An upgrade fetches the exact release while the service still runs, so an unreachable registry changes nothing.
+Then it stops the service, installs the release with `npm install --global` and starts the new copy's own `server restart`.
+A new version that does not become ready is replaced by the previous version again from npm's cache.
+The npm calls use npm's own configuration (`~/.npmrc` registry, proxy and prefix).
+Only a copy that `npm root --global` names, and that the service account can write, upgrades itself; the dialog says when another installation (Pi's own copy, a checkout, Bun, a root-owned prefix) has to be upgraded the way it was installed, followed by `cadence server restart`.
+A workbench that was not started by its systemd service, and services on macOS and Windows, show the version only; restart and upgrade them in a terminal.
 
 ### One copy for Pi and the service
 

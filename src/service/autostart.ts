@@ -55,6 +55,8 @@ export interface AutostartSystem extends OwnerControl {
   /** Injected filesystem destination for isolated manager tests, never a CLI option. */
   unitDirectory?: string;
   uid: number | undefined;
+  /** Linux: this process's /proc/self/cgroup, undefined elsewhere. */
+  cgroup(): string | undefined;
   systemctl(args: string[]): Command;
   linger(): boolean | undefined;
   /** `loginctl enable-linger` for this user; interactive may ask for a password. */
@@ -114,6 +116,13 @@ export function hostSystem(
     unit,
     scope,
     uid: process.getuid?.(),
+    cgroup: () => {
+      try {
+        return readFileSync("/proc/self/cgroup", "utf8");
+      } catch {
+        return undefined;
+      }
+    },
     systemctl: (args) =>
       run("systemctl", [scope === "system" ? "--system" : "--user", ...args]),
     linger: () => {
@@ -374,6 +383,23 @@ export function unitWorkspace(
   if (text?.includes("# Cadence workbench gateway; no project workspace"))
     return null;
   return text?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
+}
+/** The Environment= lines a generated unit bakes, in order. */
+export function unitEnvironment(text: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("Environment=")) continue;
+    const value: unknown = JSON.parse(line.slice("Environment=".length));
+    if (typeof value !== "string" || value.indexOf("=") < 1)
+      throw new ContractError("invalid");
+    const at = value.indexOf("=");
+    out.push([value.slice(0, at), value.slice(at + 1).replaceAll("%%", "%")]);
+  }
+  return out;
+}
+/** The selected definition: undefined when absent, null when not Cadence's. */
+export function generatedUnit(s: AutostartSystem): string | undefined | null {
+  return readGenerated(unitPath(s), MARKER);
 }
 function directory(path: string): boolean {
   try {

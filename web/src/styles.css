@@ -1661,6 +1661,20 @@ summary:focus-visible,
 .action-dialog > label > :is(select, textarea, input) {
   width: 100%;
 }
+/* Service dialog: version, restart and upgrade of the workbench's service. */
+.service-info > h3 {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+.service-commands code {
+  display: inline-block;
+  margin: 4px 6px 0 0;
+}
+.service-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* ---- Artifact preview / diff (pi .fp-* / .scm-* rules in reference.css) ---- */
 .fp-toc-layout {

@@ -14,6 +14,7 @@ import {
   serviceConfigPath,
   serviceEnvironment,
   settle,
+  unitEnvironment,
   unitPath,
   unitWorkspace,
   write,
@@ -49,17 +50,11 @@ function masked(s: AutostartSystem): boolean {
  * unit used. A changed HOME/XDG source is not proof that its old owner is absent. */
 function sameStateEnvironment(s: AutostartSystem, previous: string): boolean {
   try {
-    const values = new Map<string, string>();
-    for (const line of previous.split("\n")) {
-      if (!line.startsWith("Environment=")) continue;
-      const value: unknown = JSON.parse(line.slice("Environment=".length));
-      if (typeof value !== "string") return false;
-      const at = value.indexOf("=");
-      const key = value.slice(0, at);
-      if (key !== "HOME" && key !== "XDG_STATE_HOME") continue;
-      if (values.has(key)) return false;
-      values.set(key, value.slice(at + 1).replaceAll("%%", "%"));
-    }
+    const kept = unitEnvironment(previous).filter(
+      ([key]) => key === "HOME" || key === "XDG_STATE_HOME",
+    );
+    const values = new Map(kept);
+    if (values.size !== kept.length) return false;
     const state = s.env.XDG_STATE_HOME;
     return (
       values.get("HOME") === s.home &&

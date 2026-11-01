@@ -102,11 +102,13 @@ WebUI のフォルダピッカーも同じ方法でプロジェクトを開く�
 ```sh
 cadence server status
 cadence server restart     # アップグレードや .env / models.json の変更後
+cadence server upgrade     # npm グローバルインストール: 取得、インストール、再起動
 cadence server stop        # 登録は保持され、次の起動またはログイン時に再び起動する
 cadence server uninstall   # npm uninstall -g の前に実行
 ```
 
-`npm install -g @abelxiaoxing/cadence@latest` でアップグレードし、次に `cadence server restart`。
+`cadence server upgrade` または WebUI の Cadence サービスダイアログでアップグレードします。
+Cadence の実行中に新しいバージョンを取得し、新しいバージョンが起動しない場合は以前のバージョンに戻します。
 restart、stop、uninstall はデタッチしたままにせずに、実行中の作業を順番に停止する。
 uninstall はサービス定義のみを削除する。
 プロジェクト、履歴、Pi の設定は残る。

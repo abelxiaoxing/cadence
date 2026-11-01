@@ -13,6 +13,7 @@ import {
   FiFolder,
   FiGlobe,
   FiMenu,
+  FiServer,
   FiSidebar,
 } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
@@ -29,6 +30,7 @@ export function WorkbenchHome({
   opening = null,
   onOpenFolder,
   onOpenProject,
+  onOpenService,
   children,
 }: {
   ready: boolean;
@@ -39,6 +41,8 @@ export function WorkbenchHome({
   onOpenFolder(path?: string): void;
   /** Explicit Open of a recent project; without it, a click preselects the picker. */
   onOpenProject?(path: string): void;
+  /** The workbench's service restart and upgrade. */
+  onOpenService?(): void;
   children?: ReactNode;
 }) {
   const { t, locale, setLocale } = useT();
@@ -96,6 +100,17 @@ export function WorkbenchHome({
           </span>
           <span className="tb-spacer" />
           <div className="tb-actions">
+            {onOpenService && (
+              <button
+                type="button"
+                className="chip"
+                aria-label={t("Cadence service")}
+                data-tip={t("Cadence service")}
+                onClick={onOpenService}
+              >
+                <FiServer aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               className="chip chip-lang"

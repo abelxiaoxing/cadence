@@ -10,10 +10,8 @@ import type { ServiceClient } from "../../src/service-client.ts";
 import {
   ContractError,
   ERROR_CODES,
-  parseWireJson,
   publicError,
 } from "../../src/service-contract.ts";
-import { boundedText } from "../../src/service-http-client.ts";
 import { App } from "./App";
 import { browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
@@ -23,26 +21,13 @@ import {
   restorableProject,
 } from "./client/last-project";
 import { currentProject } from "./client/project-route";
+import { errorCode, readJson as read } from "./client/service";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
+import { ServiceDialog } from "./components/workspace/ServiceDialog";
 import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
 import { useT } from "./i18n/locale";
 
-async function read(response: Response): Promise<unknown> {
-  return parseWireJson(await boundedText(response, 1024 * 1024), 1024 * 1024);
-}
-function errorCode(value: unknown): string {
-  return value &&
-    typeof value === "object" &&
-    "kind" in value &&
-    value.kind === "error" &&
-    "error" in value &&
-    value.error &&
-    typeof value.error === "object" &&
-    "code" in value.error
-    ? String(value.error.code)
-    : "unavailable";
-}
 /** Entry discovery is readonly. Only an explicit Open starts/reuses a project.
  * Scope changes remount the thin project client, detaching rather than stopping.
  * An unselected first entry returns to the last project only while it runs. */
@@ -55,6 +40,7 @@ export function Workbench() {
   const [openError, setOpenError] = useState("");
   const [error, setError] = useState("");
   const [revision, refresh] = useState(0);
+  const [serviceOpen, setServiceOpen] = useState(false);
   const [restore, setRestore] = useState<{
     status: "checking" | "stopped";
     path: string;
@@ -225,22 +211,37 @@ export function Workbench() {
     if (project) rememberProject(project.id);
   }, [project]);
   if (entry === null) return <App />;
+  const service = entry && serviceOpen && (
+    <ServiceDialog
+      epoch={entry.epoch}
+      csrf={entry.csrf}
+      onClose={() => setServiceOpen(false)}
+    />
+  );
+  const openService = () => setServiceOpen(true);
   if (entry && project && api)
     return (
-      <App
-        key={`${project.id}:${project.epoch}`}
-        api={api}
-        onOpenProject={open}
-        onWorkbenchHome={() => navigate(null)}
-        workbenchHome={entry.home}
-        projectEntries={entry.projects.map((p) => ({
-          path: p.cwd,
-          current: p.id === selected,
-        }))}
-        notices={
-          <RecoveryNotices notices={entry.recoveries} project={project.path} />
-        }
-      />
+      <>
+        <App
+          key={`${project.id}:${project.epoch}`}
+          api={api}
+          onOpenProject={open}
+          onWorkbenchHome={() => navigate(null)}
+          workbenchHome={entry.home}
+          projectEntries={entry.projects.map((p) => ({
+            path: p.cwd,
+            current: p.id === selected,
+          }))}
+          notices={
+            <RecoveryNotices
+              notices={entry.recoveries}
+              project={project.path}
+            />
+          }
+          onOpenService={openService}
+        />
+        {service}
+      </>
     );
   return (
     <>
@@ -249,6 +250,7 @@ export function Workbench() {
         projects={entry?.projects.map((p) => p.cwd) ?? []}
         restore={restore}
         opening={opening}
+        onOpenService={entry ? openService : undefined}
         onOpenFolder={(path) => {
           cancelRestore();
           setOpenError("");
@@ -310,6 +312,7 @@ export function Workbench() {
           onOpen={open}
         />
       )}
+      {service}
     </>
   );
 }

@@ -88,11 +88,12 @@ Ihre tatsächlichen Ergebnisse bleiben von der automatischen Agent-Prüfung getr
 ```sh
 cadence server status
 cadence server restart     # nach einem Upgrade oder einer .env / models.json-Änderung
+cadence server upgrade     # npm-Globalinstallation: laden, installieren, neu starten
 cadence server stop        # bleibt registriert und startet beim nächsten Boot oder Login erneut
 cadence server uninstall   # vor npm uninstall -g ausführen
 ```
 
-Upgrade mit `npm install -g @abelxiaoxing/cadence@latest`, dann `cadence server restart`.
+Upgrade mit `cadence server upgrade` oder im Cadence-Dienstdialog der WebUI: Die Version wird geladen, während Cadence weiterläuft, und die vorherige Version kommt zurück, wenn die neue nicht startet.
 Restart, Stop und Uninstall stoppen laufende Arbeit geordnet, statt sie getrennt zurückzulassen.
 Uninstall entfernt nur die Dienstdefinition; Projekte, Historie und Pi-Einstellungen bleiben.
 Linux-Root- und benannte Dienste, entfernter HTTPS-Zugang und Wiederherstellung sind in [Dienstverwaltung](docs/service-management.md) und [Fernzugriff](docs/remote-access.md) beschrieben.

@@ -152,6 +152,7 @@ function fake(
     root,
     unit: "cadence.service",
     uid: 501,
+    cgroup: () => undefined,
     systemctl(args) {
       calls.push(args.join(" "));
       if (args[0] === "is-enabled")

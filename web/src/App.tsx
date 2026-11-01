@@ -25,6 +25,7 @@ import {
   FiMessageSquare,
   FiMoreHorizontal,
   FiRefreshCw,
+  FiServer,
   FiSidebar,
   FiSquare,
   FiTool,
@@ -136,6 +137,7 @@ export function App({
   workbenchHome,
   projectEntries,
   notices,
+  onOpenService,
 }: {
   api?: BrowserClient;
   onOpenProject?(path: string): Promise<void>;
@@ -144,6 +146,8 @@ export function App({
   projectEntries?: { path: string; current: boolean }[];
   /** Workbench-supplied banners (automatic recovery). */
   notices?: ReactNode;
+  /** The workbench's service restart and upgrade; absent on a direct owner. */
+  onOpenService?(): void;
 }) {
   const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
@@ -705,6 +709,21 @@ export function App({
                   <FiRefreshCw aria-hidden="true" />
                   {t("Refresh status")}
                 </button>
+                {onOpenService && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeMore();
+                      onOpenService();
+                    }}
+                  >
+                    <FiServer aria-hidden="true" />
+                    <span className="more-menu-text">
+                      {t("Cadence service")}
+                      <small>{t("Version, restart and upgrade.")}</small>
+                    </span>
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label={t("Disconnect this page")}
