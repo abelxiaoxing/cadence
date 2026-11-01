@@ -377,3 +377,20 @@ Observed environment: Linux, official Node 22.22.1, Bun 1.3.14, installed public
 The native panel was also driven in a real Pi 0.84.3 terminal (live batch, failure, card, follow-up batch, Ctrl+O, ↓ list, transcript view and `--continue`); the dock's heights were measured against the built stylesheet in Chromium.
 Pi 1.4.0 was checked only for the same entry-renderer and widget APIs, not run.
 Commit, merge to `main`, push and npm publication were explicitly authorized; no consumer installation/service change, dependency/browser download or enlarged time budget occurred; the `ci/windows` workflow was not run.
+
+## Release 2.0.26 acceptance snapshot
+
+Automatic recovery replaces the typed four-acknowledgment `recover resolve` ceremony: every start (CLI, project open, workbench, background service, native `/cadence`, the host itself) heals what a provably dead Cadence process left behind.
+New registry, owner, checkout and gateway locks carry the holder's boot identity and process start identity; legacy locks fall back to their mtime against process start and boot time with a ten-minute margin.
+A dead owner's leftover workers (per-epoch process ledger, exact PID and start identity) are stopped before its registration, reservation, capability, owner lock and checkout lock are released in the orderly order; a dead short registry lock is released and a damaged registry rebuilt from live owners' registrations.
+The new owner continues a torn or unsettled history with one recovery bridge in a new segment; unreadable history, half-written metadata and interrupted temporaries are archived (`recovery-archive-v1`, 30 days or 2GiB) before a clean start.
+A runtime quarantine now settles (bounded 30s), stops the owner's own workers and exits 75 for a recovering restart (a successor process, or its systemd unit); `cadence doctor [--fix] [--yes]` reports readonly and handles unresponsive, foreign-host or unidentifiable holders after one confirmation, and `recover inspect|resolve` alias it.
+The WebUI shows each recovery once; the workbench follows an associated project's restarted owner and no longer quarantines itself over an associated owner that is not running; a removed project directory gets a readable refusal and exit78.
+Full `verify` (before the version bump) passed apart from one known load flake: `service-history.test.ts` "warm detail revalidates interior in a later segment" measured 102.75ms against its 100ms read quantum under load and passed alone and in a full-file rerun (39/39); no deadline was changed.
+After the version bump the release `verify` passed on its first attempt: 1762 root/native tests in 83 files (27 platform skips on Linux), 141 web tests in 13 files, seven real-browser tests in six files and the 151-member real-pack audit.
+The model-context fixture guard now allows readonly `/proc` boot and process-start reads (`liveness.ts`), which the package ships for the extension's checkout lock.
+A separate `bun pm pack --destination <private-disk-temp>` archive had 151 members; SHA-256 `2e20052791a77b9d3d5f33110e3f12d83cc534fdca52fc6b393901a7eef13410`, SHA-1 `fa422d0e5e17bbfbbac82e3017cb447ea5a70bcb`.
+Real-owner checks: a `kill -9`ed owner restarted with an automatic-recovery notice; a faulted source host stopped its worker, requested a successor and exited 75, and the next start reported the self-restart.
+Host acceptance: the worktree CLI's readonly `doctor` classified this host's 2.0.10 reservation for the deleted `/home/abel/cadence` as left over by a machine restart, and `doctor --fix` released it (registry rows 0, history untouched); the host's global install and its systemd unit were not changed.
+Observed environment: Linux, official Node 22.22.1, Bun 1.3.14, installed public Pi/SDK 0.84.3 and existing Chrome for Testing (Playwright chromium-1243); Windows, macOS and real power-loss qualification were not executed, and the `ci/windows` workflow was not run.
+Commit, merge to `main`, push and npm publication were explicitly authorized.

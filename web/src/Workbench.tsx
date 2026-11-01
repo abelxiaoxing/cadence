@@ -24,6 +24,7 @@ import {
 } from "./client/last-project";
 import { currentProject } from "./client/project-route";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
+import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
 import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
 import { useT } from "./i18n/locale";
 
@@ -234,6 +235,9 @@ export function Workbench() {
           path: p.cwd,
           current: p.id === selected,
         }))}
+        notices={
+          <RecoveryNotices notices={entry.recoveries} project={project.path} />
+        }
       />
     );
   return (
@@ -247,6 +251,7 @@ export function Workbench() {
           setPicker(path ?? entry?.home ?? "");
         }}
       >
+        {entry && <RecoveryNotices notices={entry.recoveries} />}
         {error && (
           <p role="alert" className="banner-notice">
             {error}{" "}

@@ -26,6 +26,7 @@ No restart replays an unfinished workflow.
 At startup a run left queued/running (or accepted without a snapshot) is recorded as `unknown` with a notice that the owner restarted, nothing was inferred or replayed, and worktrees and partial edits are retained (an integrating run may have fast-forwarded); unreadable records stay untouched and do not fence startup.
 Stop joins the shared owner accounting.
 Workflow cancel needs only the lease and epoch, so it works while the owner is quarantined or stopping; the fast-forward merge itself is never interrupted, and if HEAD cannot be re-read after it the run ends `unknown`, not failed.
+An interrupted run's notice says it was interrupted and that starting it again continues the work; its outcome is still `unknown`, never inferred.
 A native workflow command refused before any write, grant or admission for a never-attempted ID, by a healthy owner, reports no effect; anything else stays uncertain.
 Access rotation does not revoke an accepted worker's pinned model choice; source/epoch changes still refuse.
 
@@ -47,19 +48,9 @@ The remaining historical writer and transport coupling is documented in [archite
   Ordinary-user Git trust behavior remains unchanged.
   System services require uid0, bypass user managers/logind entirely and require confirmed native Stop before manager stop or definition replacement; changed state-home inputs, old user units and detached running owners refuse implicit adoption.
   Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
-- The short global registry lock never expires or auto-reclaims from PID absence.
-  `recover inspect|resolve` handles a valid dead same-host lock explicitly before project recovery, with fresh local-terminal acknowledgments, exact registry/unreserved-project checks and a flushed exclusive evidence receipt.
-  Concurrent or interrupted resolvers cannot remove a successor lock; all project reservations, locks and history remain intact.
-  Unreserved partial release, unsafe/corrupt registry or receipt bytes, live/remote/ambiguous holders and changed resources stay fenced.
-  Readonly diagnosis and project Open name `registry-locked`; see [global registry recovery](../docs/service-management.md#residual-global-registry-lock).
-  Missing retained project directories do not invalidate the global registry: their exact reservations and private fences remain, while canonical existing ancestors, aliases and overlaps are still checked.
-  Unbound `recover` addresses account/workbench state, not cwd; project recovery requires explicit `--workspace`.
-- Workbench recovery is local and interactive, never acquire-on-dead-PID.
-  A bounded flushed receipt precedes exact gateway fence release; project registrations, locks, incomplete opening receipts and history are untouched.
-  The receipt retires the exact old project-reference incarnations from proxy/Stop association until explicit Open republishes them, preventing a deleted old directory from re-quarantining the next orderly Stop.
-  New workbench registrations record their host; legacy hostless registrations require an extra fresh same-host attestation, never automatic host inference.
-  Live/foreign/ambiguous owners and changed or unsafe resources refuse.
-  Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
+- The short global registry lock never expires by age; see [self-healing](#self-healing) for when its holder is proven dead.
+  Missing retained project directories do not invalidate the global registry: canonical existing ancestors, aliases and overlaps are still checked, and a dead owner's reservation is released by the next start or `cadence doctor`.
+- Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
 - Boot model choice is absent until selected; native mode resolves the remembered credential-free preference (or current Pi choice on first use) into a new exact owner selection.
@@ -74,26 +65,44 @@ The remaining historical writer and transport coupling is documented in [archite
   Overflow, stale dependencies, first failure or wait expiry closes admission without retry; independent already-running siblings retain their own outcomes.
   Each assignment or check observes the working copy at its baseline, immediately before its native launch and after exit; the steps between recheck ownership, sources and definitions without another Git/file capture.
 - Register the original accepted control flow before its first effect, in addition to separate native/auth/storage originals.
-  Reporting timeout, a caught promise, PID absence or an empty roster cannot release resources.
+  Within a running owner, a reporting timeout, a caught promise, PID absence or an empty roster cannot release resources; only a successor's startup heal reclaims them.
   Stop publishes one shared attempt, quiesces all admissions, requests stops before awaiting children and joins permitted original continuation/safety writes.
   Already-started publication can finish; new post-Stop ordinary publication cannot start.
 - TERM/KILL recheck lease ownership at each signal boundary.
   Stop sends TERM and arms KILL/unknown timers before observer or coordinator interruption callbacks; lifecycle observation performs no synchronous journal I/O.
   Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
-  Unknown process/auth/storage settlement preserves fences; late completion never retroactively repairs an unknown result.
+  Unknown process/auth/storage settlement quarantines the running owner; late completion never retroactively repairs an unknown result.
+  A quarantined owner lets original work settle (bounded), stops its own ledger-recorded workers and exits; the replacement (a successor it spawns, or its systemd unit) recovers it at startup.
 - Return, navigation, browser disconnect and Pi quit detach accepted work.
   Reconnect does not resend mutations; a refused Cancel permits only another explicit click, not automatic retry.
 
-## Workbench Stop and recovery
+## Workbench Stop
 
 Workbench state lives separately under `<state-home>/cadence-assistant-v1/workbenches-v1/<configuration-hash>/`, not in a hidden substitute workspace.
 Whole-workbench Stop joins its accepted openings and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
-A changed epoch, uncertain launch or unconfirmed Stop keeps the workbench fenced, but does not prevent Stop from reaching its other known associated owners.
-Workbenches never repair missing private state or automatically erase uncertain locks.
-`cadence workbench recover inspect|resolve` offers explicit local recovery after a dead gateway, with exact resources, durable evidence and fresh terminal acknowledgments; it preserves project fences/history and retires only the old workbench associations until another explicit Open.
-Registrations from older versions without a hostname additionally require independent same-host attestation; unknown provenance is not recoverable by guessing a PID.
+An associated owner that is not running (stopped, crashed, restarted under a new epoch or its directory removed) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still releases its own registration.
+The gateway follows an associated project's restarted owner (same canonical path, new epoch) instead of refusing its page as stale.
 Service restart never resumes the old queue.
-Uncertain process/auth/storage settlement keeps fences; use documented local informed recovery, not PID-only deletion or automatic cleanup.
+
+## Self-healing
+
+A process that ends without its orderly Stop (power loss, shutdown, crash, `kill -9`, a supervisor's SIGKILL) leaves its registration and locks.
+Every start (`cadence start`, `project open`, workbench start, native `/cadence`, the host itself) heals them before acquiring, through `src/service/self-heal.ts`:
+
+- New locks (registry, owner, checkout, gateway) carry the holder's boot identity and process start identity (`src/service/liveness.ts`).
+  A different boot, an absent PID, a PID owned by another account or a PID whose start identity differs proves the holder dead.
+  Legacy marks without those fields fall back to the lock's mtime against process start and boot time, with a ten-minute margin.
+- A dead owner's leftover workers, listed by exact PID and start identity in `<namespace>/process-ledger-v1/<epoch>.json`, are stopped (TERM, then KILL) before its fences are released; after a reboot none can remain.
+- Release follows the orderly order: registration to `stopped`, reservation, capability, owner lock, checkout lock; every file is asserted against the snapshot that was classified.
+- The registry is healed first: a dead short lock is released; a damaged registry is archived and rebuilt from the live owners' own registrations; every dead reservation in the account is released, including one whose directory was removed.
+- Half-written selection metadata, a workbench without a readable registration and interrupted `pending-*.json` temporaries are archived under `<namespace>/recovery-archive-v1/`; archives expire after 30 days or beyond 2 GiB.
+- With the lease held, the new owner continues its history (`src/history/recovery.ts`): a torn final batch or unsettled facts of the dead epoch get one recovery bridge in a new segment (the old bytes stay), and history that cannot be scanned is archived and started afresh.
+- Each recovery is recorded once in `<namespace>/recovery-log-v1/` (later steps of the same recovery merge into it), printed by the CLI and shown once in the WebUI.
+
+A live owner is never reclaimed.
+A running owner that does not answer, a holder on another host and a PID that can be neither identified nor shown absent are reported with one sentence and the next step; `cadence doctor --fix` handles them after one confirmation (`--yes` for scripts).
+Stopping an unresponsive owner requires its recorded start identity; taking over a foreign or unidentifiable holder touches no process.
+Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
 Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
 Queue time is outside the workflow/process budgets; ongoing tool/model activity never renews a worker's total deadline.

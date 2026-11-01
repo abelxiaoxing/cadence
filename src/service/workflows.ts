@@ -118,7 +118,7 @@ const MAX_ACTIVE = 4;
 /** Private-worktree Git operations: realistic for large repositories. */
 const GIT_MS = 10 * 60 * 1000;
 const RESTARTED =
-  "The owner restarted before this run settled. Its outcome is not inferred and nothing was replayed; worktrees and any partial edits are retained for inspection.";
+  "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 const TRANSCRIPT_LIMIT =
   "Transcript bound reached: later worker activity was not retained here. The worker continued; its outcome and final result are recorded separately.";
 const FINAL_UNAVAILABLE =

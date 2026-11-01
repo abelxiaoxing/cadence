@@ -57,7 +57,7 @@ Never put provider credentials in a browser or URL.
 `token-rotate` invalidates old links/cookies, pending grants, authenticated sockets and incomplete downloads without canceling admitted tasks.
 Environment-backed tokens require explicit Stop/restart with changed environment instead; an `.env` token's rotation rewrites only its `CADENCE_TOKEN` line.
 Links may already exist in clipboard/history or external logs; redirecting cannot retract disclosure.
-Use [management and recovery](service-management.md) for Stop, uncertainty and exact local resolution.
+Use [management and automatic recovery](service-management.md) for Stop, recovery and `cadence doctor`.
 Loopback HTTPS/viewport tests are not physical-device or second-machine deployment qualification.
 
 ## Unified workbench entry

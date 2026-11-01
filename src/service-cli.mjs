@@ -5,8 +5,8 @@
 import { spawn } from "node:child_process";
 import { mkdirSync as mkdirSync6 } from "node:fs";
 import { request } from "node:http";
-import { homedir as homedir6 } from "node:os";
-import { dirname as dirname14, join as join17, resolve as resolve7 } from "node:path";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname12, join as join17, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/install-config.mjs
@@ -182,7 +182,6 @@ function sdkNetworkEnvironment(ambient, scoped) {
 
 // src/worker-public.mjs
 var WORKER_PROTOCOL = 2;
-var GRAPH_SCHEMA = "cadence-graph/2";
 var LIMITS = Object.freeze({
   controlBytes: 1024 * 1024,
   admissionCount: 16,
@@ -572,20 +571,6 @@ function decodeModelSelection(v) {
     ...decodeModelSelector(selector)
   };
 }
-function role(v) {
-  const o = closed(v, ["role", "sha256"]);
-  return {
-    role: oneOf(o.role, [
-      "design-explorer",
-      "implementation-worker",
-      "diagnosis-worker"
-    ]),
-    sha256: decodeHash(o.sha256)
-  };
-}
-function roleForPurpose(purpose) {
-  return purpose === "edit" ? "implementation-worker" : purpose === "diagnosis" ? "diagnosis-worker" : "design-explorer";
-}
 function decodeContentRef(v) {
   const o = closed(v, ["recordId", "version", "field", "bytes", "sha256"]);
   return {
@@ -601,34 +586,6 @@ function range(v) {
   const start = integer(o.start);
   return { start, end: integer(o.end, start + 1, LIMITS.detailBytes) };
 }
-function dependency(v) {
-  const o = closed(v, ["source", "range", "requireCompleteObservation"]);
-  const kind = tag(o.source);
-  let source;
-  if (kind === "current") {
-    const s = closed(o.source, ["kind", "assignmentId"]);
-    source = { kind, assignmentId: assignmentId(s.assignmentId) };
-  } else {
-    const s = closed(o.source, ["kind", "runId", "childRunId", "result"]);
-    literal(kind, "historical");
-    const result = decodeContentRef(s.result);
-    literal(result.field, "final-text");
-    source = {
-      kind: "historical",
-      runId: decodeId(s.runId),
-      childRunId: decodeId(s.childRunId),
-      result
-    };
-  }
-  const selected = nullable(o.range, range);
-  if (source.kind === "historical" && selected && selected.end > source.result.bytes)
-    invalid();
-  return {
-    source,
-    range: selected,
-    requireCompleteObservation: bool(o.requireCompleteObservation)
-  };
-}
 function tag(v, key = "kind") {
   if (v === null || typeof v !== "object")
     invalid();
@@ -636,90 +593,6 @@ function tag(v, key = "kind") {
   if (!d || !("value" in d))
     invalid();
   return text(d.value, 64, true);
-}
-function decodeGraph(v) {
-  canonicalJson(v, LIMITS.graphBytes);
-  const o = closed(v, [
-    "schema",
-    "taskId",
-    "taskKind",
-    "taskRevision",
-    "revision",
-    "planRevision",
-    "plan",
-    "assignments"
-  ]);
-  const plan = decodeContentRef(o.plan);
-  literal(plan.field, "plan");
-  const planRevision = integer(o.planRevision, 1);
-  if (plan.version !== planRevision)
-    invalid();
-  const graph = {
-    schema: literal(o.schema, GRAPH_SCHEMA),
-    taskId: decodeId(o.taskId),
-    taskKind: oneOf(o.taskKind, ["code", "research", "diagnosis"]),
-    taskRevision: integer(o.taskRevision, 1),
-    revision: integer(o.revision, 1),
-    planRevision,
-    plan,
-    assignments: list(o.assignments, LIMITS.assignments, (v2) => {
-      const a = closed(v2, [
-        "id",
-        "purpose",
-        "instructions",
-        "expectedOutput",
-        "role",
-        "model",
-        "dependencies"
-      ]);
-      return {
-        id: assignmentId(a.id),
-        purpose: oneOf(a.purpose, ["research", "diagnosis", "review", "edit"]),
-        instructions: text(a.instructions, LIMITS.instructionsBytes, true),
-        expectedOutput: text(a.expectedOutput, LIMITS.expectedOutputBytes, true),
-        role: role(a.role),
-        model: decodeModelSelection(a.model),
-        dependencies: list(a.dependencies, LIMITS.assignments, dependency)
-      };
-    })
-  };
-  if (!graph.assignments.length)
-    invalid();
-  const ids = new Map(graph.assignments.map((a) => [a.id, a]));
-  if (ids.size !== graph.assignments.length)
-    invalid();
-  const visiting = new Set;
-  const visited = new Set;
-  function visit(a) {
-    if (visiting.has(a.id))
-      invalid();
-    if (visited.has(a.id))
-      return;
-    visiting.add(a.id);
-    const seen = new Set;
-    for (const d of a.dependencies) {
-      const key = canonicalJson(d.source);
-      if (seen.has(key))
-        invalid();
-      seen.add(key);
-      if (d.source.kind === "current") {
-        const prior = ids.get(d.source.assignmentId);
-        if (!prior)
-          invalid();
-        visit(prior);
-      }
-    }
-    visiting.delete(a.id);
-    visited.add(a.id);
-  }
-  for (const a of graph.assignments) {
-    if (graph.taskKind !== "code" && a.purpose === "edit")
-      throw new ContractError("forbidden");
-    if (a.role.role !== roleForPurpose(a.purpose))
-      throw new ContractError("forbidden");
-    visit(a);
-  }
-  return graph;
 }
 function taskVersion(v) {
   const o = closed(v, [
@@ -789,75 +662,6 @@ function checkSelection(v) {
   if (result.kind === "manual" && (result.name !== "Manual" || result.timeoutMs !== 120000))
     invalid();
   return result;
-}
-function decodeAction(v) {
-  canonicalJson(v);
-  switch (tag(v)) {
-    case "create": {
-      const o = closed(v, ["kind", "taskKind", "goal"]);
-      return {
-        kind: "create",
-        taskKind: oneOf(o.taskKind, ["code", "research", "diagnosis"]),
-        goal: text(o.goal, 8192, true)
-      };
-    }
-    case "save-plan": {
-      const o = closed(v, ["kind", "taskId", "plan", "graph"]);
-      const graph = decodeGraph(o.graph);
-      const taskId = decodeId(o.taskId);
-      if (graph.taskId !== taskId)
-        invalid();
-      return { kind: "save-plan", taskId, plan: text(o.plan, 32768), graph };
-    }
-    case "generate-plan":
-    case "start": {
-      const kind = tag(v);
-      const o = closed(v, ["kind", "taskId"]);
-      return { kind, taskId: decodeId(o.taskId) };
-    }
-    case "check": {
-      const o = closed(v, ["kind", "taskId", "check"]);
-      return {
-        kind: "check",
-        taskId: decodeId(o.taskId),
-        check: checkSelection(o.check)
-      };
-    }
-    case "review": {
-      const o = closed(v, [
-        "kind",
-        "taskId",
-        "runId",
-        "changesIdentity",
-        "checksRevision",
-        "acceptIssues"
-      ]);
-      return {
-        kind: "review",
-        taskId: decodeId(o.taskId),
-        runId: decodeId(o.runId),
-        changesIdentity: decodeHash(o.changesIdentity),
-        checksRevision: integer(o.checksRevision),
-        acceptIssues: bool(o.acceptIssues)
-      };
-    }
-    default:
-      return invalid();
-  }
-}
-function decodeCommandIdentity(v) {
-  canonicalJson(v);
-  if (tag(v) === "action") {
-    const o2 = closed(v, ["kind", "expected", "action"]);
-    return {
-      kind: "action",
-      expected: decodeContext(o2.expected),
-      action: decodeAction(o2.action)
-    };
-  }
-  const o = closed(v, ["kind", "epoch", "runId"]);
-  literal(o.kind, "cancel");
-  return { kind: "cancel", epoch: decodeId(o.epoch), runId: decodeId(o.runId) };
 }
 function decodeCoverage(v) {
   const o = closed(v, ["observed", "source", "redacted", "omissions"]);
@@ -1100,14 +904,14 @@ function decodeCaptureEvent(v) {
         "source",
         "resultCallId"
       ]);
-      const role2 = oneOf(o.role, ["user", "assistant", "tool-result"]);
+      const role = oneOf(o.role, ["user", "assistant", "tool-result"]);
       const resultCallId = nullable(o.resultCallId, decodeId);
-      if (role2 !== "tool-result" && resultCallId !== null)
+      if (role !== "tool-result" && resultCallId !== null)
         invalid();
       return {
         kind,
         messageId: decodeId(o.messageId),
-        role: role2,
+        role,
         source: decodeSourceIdentity(o.source),
         resultCallId
       };
@@ -1363,13 +1167,6 @@ function decodeSettlementSeq(v, recording) {
 function childSatisfied(child) {
   return child.native?.outcome === "completed" && child.recording.status === "committed" && child.settlementSeq !== null;
 }
-function settlementOutcome(s) {
-  if (s.kind === "parent")
-    return s.outcome;
-  if (s.native.outcome !== "completed")
-    return s.native.outcome;
-  return s.kind === "sdk" ? childSatisfied(s) ? "completed" : "failed" : s.capture.observed === "complete" && s.settlementSeq !== null ? "completed" : "failed";
-}
 function decodeRunSettlement(v) {
   const kind = tag(v);
   if (kind === "sdk") {
@@ -1419,18 +1216,6 @@ function decodeRunSettlement(v) {
   if (!required.length || new Set(required.map((c) => c.assignmentId)).size !== required.length || new Set(required.map((c) => c.childRunId)).size !== required.length || outcome === "completed" && !required.every(childSatisfied))
     invalid();
   return { kind: "parent", outcome, required };
-}
-function decodeWorkerCompletion(v) {
-  const o = closed(v, ["childRunId", "native", "selected", "recording"]);
-  const r = {
-    childRunId: decodeId(o.childRunId),
-    native: decodeNativeSettlement(o.native),
-    selected: nullable(o.selected, decodeFinalSelection),
-    recording: decodeFinalRecording(o.recording)
-  };
-  if (r.native.final === "valid" !== (r.selected !== null) || canonicalJson(r.selected) !== canonicalJson(r.recording.selected) || r.recording.status === "committed" && r.recording.detail.childRunId !== r.childRunId)
-    invalid();
-  return r;
 }
 function decodeSourceRange(v) {
   const o = closed(v, ["first", "last", "firstObservedMs", "lastObservedMs"]);
@@ -1510,62 +1295,6 @@ function decodeCaptureBudget(v) {
   return r;
 }
 // src/service/contracts/history.ts
-function decodeReceipt(v) {
-  canonicalJson(v);
-  const o = closed(v, [
-    "commandId",
-    "operationId",
-    "runId",
-    "admission",
-    "committedSeq",
-    "execution",
-    "settlement",
-    "created",
-    "publication"
-  ]);
-  const r = {
-    commandId: decodeId(o.commandId),
-    operationId: decodeId(o.operationId),
-    runId: nullable(o.runId, decodeId),
-    admission: oneOf(o.admission, ["accepted", "refused", "uncertain"]),
-    committedSeq: decodeSequence(o.committedSeq),
-    execution: nullable(o.execution, (v2) => oneOf(v2, outcomes)),
-    settlement: nullable(o.settlement, decodeRunSettlement),
-    created: nullable(o.created, (v2) => {
-      const c = closed(v2, ["kind", "taskId", "state"]);
-      return {
-        kind: literal(c.kind, "task"),
-        taskId: decodeId(c.taskId),
-        state: oneOf(c.state, ["reserved", "published"])
-      };
-    }),
-    publication: oneOf(o.publication, [
-      "pending",
-      "published",
-      "conflict",
-      "uncertain"
-    ])
-  };
-  if (r.committedSeq === "0" || r.settlement?.kind === "sdk" || r.execution === "completed" && !r.settlement || r.execution !== null && r.settlement !== null && settlementOutcome(r.settlement) !== r.execution || r.created?.state === "published" && r.publication !== "published")
-    invalid();
-  return r;
-}
-function decodeStoredCommand(v) {
-  canonicalJson(v);
-  const o = closed(v, ["identity", "receipt"]);
-  const identity = decodeCommandIdentity(o.identity), receipt = decodeReceipt(o.receipt);
-  if (identity.kind === "cancel" && receipt.runId !== identity.runId)
-    invalid();
-  const create = identity.kind === "action" && identity.action.kind === "create";
-  if (!create && receipt.created !== null || create && receipt.admission === "accepted" && receipt.created === null)
-    invalid();
-  if (identity.kind === "action") {
-    const episode = ["start", "generate-plan", "check"].includes(identity.action.kind);
-    if (receipt.admission === "accepted" && episode !== (receipt.runId !== null) || !episode && (receipt.execution !== null || receipt.settlement !== null) || receipt.settlement !== null && receipt.settlement.kind !== (identity.action.kind === "check" ? "check" : "parent"))
-      invalid();
-  }
-  return { identity, receipt };
-}
 function decodeRunIdentity(v) {
   const o = closed(v, [
     "operationId",
@@ -3148,7 +2877,7 @@ function autostartStatus(s) {
 // src/service/coordination.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "node:crypto";
 import { opendirSync } from "node:fs";
-import { hostname as hostname2 } from "node:os";
+import { hostname as hostname3 } from "node:os";
 import { dirname as dirname6, isAbsolute as isAbsolute4, join as join6, relative as relative3, sep as sep4 } from "node:path";
 
 // src/service/checkout-lock.ts
@@ -3162,8 +2891,187 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync3
 } from "node:fs";
-import { hostname } from "node:os";
+import { hostname as hostname2 } from "node:os";
 import { dirname as dirname5, join as join5 } from "node:path";
+
+// src/service/liveness.ts
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { hostname, uptime } from "node:os";
+var LEGACY_BOOT_MARGIN_MS = 10 * 60 * 1000;
+var REUSE_SLACK_MS = 5000;
+var LINUX_TICKS_PER_SECOND = 100;
+var cachedBoot;
+function bootId() {
+  if (cachedBoot !== undefined)
+    return cachedBoot;
+  cachedBoot = null;
+  try {
+    if (process.platform === "linux") {
+      const id = readFileSync2("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      if (/^[0-9a-f-]{36}$/.test(id))
+        cachedBoot = id;
+    } else if (process.platform === "darwin") {
+      const r = spawnSync3("sysctl", ["-n", "kern.bootsessionuuid"], {
+        encoding: "utf8",
+        timeout: 2000
+      });
+      const id = r.status === 0 ? r.stdout.trim() : "";
+      if (/^[0-9A-Fa-f-]{36}$/.test(id))
+        cachedBoot = id;
+    }
+  } catch {
+    cachedBoot = null;
+  }
+  return cachedBoot;
+}
+function bootTime() {
+  if (process.platform === "linux")
+    try {
+      const line = /^btime (\d+)$/m.exec(readFileSync2("/proc/stat", "utf8"));
+      if (line)
+        return Number(line[1]) * 1000;
+    } catch {}
+  return Date.now() - uptime() * 1000;
+}
+function linuxStat(pid) {
+  try {
+    const stat = readFileSync2(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).trim().split(" ");
+  } catch {
+    return null;
+  }
+}
+function processStart(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1)
+    return null;
+  if (process.platform === "linux") {
+    const fields2 = linuxStat(pid);
+    const ticks = fields2?.[19];
+    return ticks && /^\d+$/.test(ticks) ? `ticks:${ticks}` : null;
+  }
+  if (process.platform === "darwin") {
+    const r = spawnSync3("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 2000,
+      env: { ...process.env, LC_ALL: "C" }
+    });
+    const value = r.status === 0 ? r.stdout.trim() : "";
+    return value ? `lstart:${value}` : null;
+  }
+  return null;
+}
+function processStartMs(pid) {
+  if (process.platform === "linux") {
+    const ticks = linuxStat(pid)?.[19];
+    return ticks && /^\d+$/.test(ticks) ? bootTime() + Number(ticks) * 1000 / LINUX_TICKS_PER_SECOND : null;
+  }
+  const start = processStart(pid);
+  if (start?.startsWith("lstart:")) {
+    const ms = Date.parse(start.slice("lstart:".length));
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+var cachedSelf;
+function selfMark() {
+  cachedSelf ??= processStart(process.pid);
+  return {
+    pid: process.pid,
+    host: hostname(),
+    boot: bootId(),
+    started: cachedSelf
+  };
+}
+function probe(pid) {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (error) {
+    const code2 = error instanceof Error && "code" in error ? error.code : undefined;
+    return code2 === "ESRCH" || code2 === "EPERM" ? "absent" : "error";
+  }
+}
+function holderState(mark, writtenAt) {
+  if (mark.host !== hostname())
+    return { state: "foreign", reboot: false };
+  const boot = bootId();
+  if (mark.boot && boot && mark.boot !== boot)
+    return { state: "dead", reboot: true };
+  const legacyEarlierBoot = !mark.boot && writtenAt !== undefined && writtenAt < bootTime() - LEGACY_BOOT_MARGIN_MS;
+  if (mark.pid === process.pid) {
+    const self = selfMark().started;
+    if (mark.started && self)
+      return mark.started === self ? live() : dead(legacyEarlierBoot);
+    const ownStart = Date.now() - process.uptime() * 1000;
+    return writtenAt !== undefined && writtenAt < ownStart - REUSE_SLACK_MS ? dead(legacyEarlierBoot) : live();
+  }
+  const seen = probe(mark.pid);
+  if (seen === "absent")
+    return { state: "dead", reboot: legacyEarlierBoot };
+  if (seen === "error")
+    return { state: "unknown", reboot: false };
+  if (mark.started) {
+    const now = processStart(mark.pid);
+    if (now)
+      return now === mark.started ? live() : dead(legacyEarlierBoot);
+    return probe(mark.pid) === "absent" ? dead(legacyEarlierBoot) : { state: "unknown", reboot: false };
+  }
+  const startedAt = processStartMs(mark.pid);
+  if (startedAt !== null && writtenAt !== undefined)
+    return startedAt > writtenAt + REUSE_SLACK_MS ? dead(legacyEarlierBoot) : live();
+  if (legacyEarlierBoot)
+    return dead(true);
+  return startedAt === null ? { state: "unknown", reboot: false } : live();
+}
+function live() {
+  return { state: "live", reboot: false };
+}
+function dead(reboot) {
+  return { state: "dead", reboot };
+}
+function stampTime(stamp2) {
+  const value = Number(stamp2.slice(stamp2.lastIndexOf(":") + 1));
+  return Number.isFinite(value) ? value : undefined;
+}
+function decodeMarkFields(o) {
+  const field = (value) => typeof value === "string" && value.length <= 128 ? value : null;
+  return { boot: field(o.boot), started: field(o.started) };
+}
+async function stopProcessGroup(pgid, waitMs = 5000) {
+  const gone = () => {
+    try {
+      process.kill(process.platform === "win32" ? pgid : -pgid, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  };
+  const send = (signal) => {
+    try {
+      if (process.platform === "win32")
+        process.kill(pgid, signal);
+      else
+        process.kill(-pgid, signal);
+    } catch {}
+  };
+  if (gone())
+    return true;
+  send("SIGTERM");
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve4) => setTimeout(resolve4, 100));
+    if (gone())
+      return true;
+    if (Date.now() > deadline - waitMs / 2)
+      send("SIGKILL");
+  }
+  send("SIGKILL");
+  await new Promise((resolve4) => setTimeout(resolve4, 200));
+  return gone();
+}
+
+// src/service/checkout-lock.ts
 class CheckoutStore {
   root;
   privateRoot;
@@ -3214,13 +3122,16 @@ class CheckoutStore {
   acquire() {
     this.inspectPrivate();
     safeDirectory(this.privateRoot, true);
+    const mark = selfMark();
     const lock = {
       schema: "cadence-assistant-lock/1",
       token: randomUUID2(),
       runId: randomUUID2(),
       pid: process.pid,
-      host: hostname(),
-      root: this.root
+      host: hostname2(),
+      root: this.root,
+      boot: mark.boot,
+      started: mark.started
     };
     let fd;
     try {
@@ -3241,7 +3152,7 @@ class CheckoutStore {
       throw new Error("Coordination lock changed");
   }
   release(lock) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
+    if (lock.pid !== process.pid || lock.host !== hostname2())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
     retryWindowsFileOperation(() => unlinkSync2(this.lockPath), () => this.assertOwner(lock));
@@ -3338,13 +3249,23 @@ function names(path2, allowed) {
     dir.closeSync();
   }
 }
+function markedKeys(value, keys) {
+  const has = (key) => !!value && typeof value === "object" && Object.hasOwn(value, key);
+  return [
+    ...keys,
+    ...has("boot") ? ["boot"] : [],
+    ...has("started") ? ["started"] : []
+  ];
+}
 function decodeRegistryLock(snapshot) {
-  const o = closed(json(snapshot), ["schema", "token", "pid", "host"]);
+  const raw = json(snapshot);
+  const o = closed(raw, markedKeys(raw, ["schema", "token", "pid", "host"]));
   return {
     schema: literal(o.schema, "cadence-service-registry-lock/1"),
     token: decodeId(o.token),
     pid: integer(o.pid, 1, 2147483647),
-    host: text(o.host, 255, true)
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
   };
 }
 var registryNames = [
@@ -3353,33 +3274,6 @@ var registryNames = [
   "registry.lock",
   "recovery-v1"
 ];
-function recoveryOwnerStatus(pid, host) {
-  if (host !== hostname2())
-    return "ambiguous";
-  try {
-    process.kill(pid, 0);
-    return "live";
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ESRCH" ? "absent" : "ambiguous";
-  }
-}
-function recoveryDigest(registry, selected) {
-  return hash(encoded([
-    registry.format.identity,
-    registry.format.stamp,
-    registry.snapshot.identity,
-    registry.snapshot.stamp,
-    selected.capability?.stamp ?? null,
-    ...[
-      selected.manifest,
-      selected.config,
-      selected.hostConfig,
-      selected.registration,
-      selected.owner,
-      selected.checkout
-    ].map((value) => value ? [value.identity, value.stamp] : null)
-  ]));
-}
 
 class ServiceCoordination {
   project;
@@ -3490,13 +3384,8 @@ class ServiceCoordination {
     if (value && value.phase !== "stopped") {
       if (!owner || !checkout || !capability)
         refused();
-      const lock = closed(json(owner), [
-        "schema",
-        "epoch",
-        "token",
-        "pid",
-        "host"
-      ]);
+      const raw = json(owner);
+      const lock = closed(raw, markedKeys(raw, ["schema", "epoch", "token", "pid", "host"]));
       literal(lock.schema, "cadence-service-owner-lock/1");
       literal(lock.epoch, value.epoch);
       literal(lock.token, value.ownerToken);
@@ -3564,17 +3453,26 @@ class ServiceCoordination {
       configIdentity: saved.identity
     }));
   }
+  registryView() {
+    return this.registry();
+  }
+  mutateRegistry(operation) {
+    return this.withRegistry(operation);
+  }
   withRegistry(operation) {
     this.files.directory(this.registryDirectory, true);
     names(this.registryDirectory, registryNames);
     const lockPath = this.registryPath("registry.lock");
     let lock;
     try {
+      const mark = selfMark();
       lock = this.files.create(lockPath, encoded({
         schema: "cadence-service-registry-lock/1",
         token: randomUUID3(),
         pid: process.pid,
-        host: hostname2()
+        host: hostname3(),
+        boot: mark.boot,
+        started: mark.started
       }));
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "EEXIST")
@@ -3640,7 +3538,7 @@ class ServiceCoordination {
         endpoint: bound,
         epoch: randomUUID3(),
         pid: process.pid,
-        host: hostname2(),
+        host: hostname3(),
         ownerToken: randomUUID3()
       };
       mutate();
@@ -3665,12 +3563,15 @@ class ServiceCoordination {
       const checkoutFile = this.files.read(this.store.lockPath, 8192);
       if (!checkoutFile)
         refused();
+      const mark = selfMark();
       const owner = this.files.create(this.path("owner.lock"), encoded({
         schema: "cadence-service-owner-lock/1",
         epoch: row.epoch,
         token: row.ownerToken,
         pid: row.pid,
-        host: row.host
+        host: row.host,
+        boot: mark.boot,
+        started: mark.started
       }));
       const capability = this.files.create(this.path("local-capability.json"), encoded({
         schema: "cadence-service-local-capability/1",
@@ -3743,233 +3644,14 @@ class ServiceCoordination {
       if (!lock)
         return;
       const value = decodeRegistryLock(lock);
+      const holder = holderState(value, stampTime(lock.stamp)).state;
       return {
         reason: "registry-locked",
-        owner: recoveryOwnerStatus(value.pid, value.host)
+        owner: holder === "live" ? "live" : holder === "dead" ? "absent" : "ambiguous"
       };
     } catch {
       return { reason: "registry-locked", owner: "unreadable" };
     }
-  }
-  registryRecoveryState() {
-    const lock = this.files.read(this.registryPath("registry.lock"));
-    if (!lock)
-      throw new ContractError("conflict");
-    const value = decodeRegistryLock(lock);
-    names(this.registryDirectory, registryNames);
-    const format = this.files.read(this.registryPath("format.json"));
-    const roots = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
-    const registry = !format && !roots ? undefined : this.registry();
-    const entries = registry?.value.entries ?? [];
-    const protectedRoots = new Set(entries.map((row) => hash(row.root)));
-    const proofs = [];
-    const directory2 = opendirSync(this.files.namespace);
-    try {
-      let count = 0;
-      for (let entry = directory2.readSync();entry; entry = directory2.readSync()) {
-        if (++count > 1024)
-          throw new ContractError("capacity");
-        if (!/^[a-f0-9]{64}$/.test(entry.name) || protectedRoots.has(entry.name))
-          continue;
-        const service = join6(this.files.namespace, entry.name, "service-v1");
-        if (!this.files.directory(service))
-          continue;
-        const manifest = this.files.read(join6(service, "format.json"));
-        if (!manifest)
-          refused();
-        const f = closed(json(manifest), [
-          "schema",
-          "root",
-          "stateHome",
-          "configIdentity"
-        ]);
-        const root = pathValue(f.root);
-        if (hash(root) !== entry.name)
-          refused();
-        const selected = this.selected(service, root, true);
-        if (!selected)
-          throw new ContractError("quarantine");
-        proofs.push([
-          entry.name,
-          ...[
-            selected.manifest,
-            selected.config,
-            selected.hostConfig,
-            selected.registration
-          ].map((file) => file ? [file.identity, file.stamp] : null)
-        ]);
-      }
-    } finally {
-      directory2.closeSync();
-    }
-    proofs.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
-    const stateDigest = hash(encoded([
-      lock.identity,
-      lock.stamp,
-      format ? [format.identity, format.stamp] : null,
-      roots ? [roots.identity, roots.stamp] : null,
-      proofs
-    ]));
-    const epoch = hash(encoded([lock.identity, lock.stamp]));
-    const archive = this.registryPath(join6("recovery-v1", epoch));
-    const attempts = [];
-    let previousResolver = null;
-    if (this.files.directory(archive)) {
-      names(archive, Array.from({ length: 128 }, (_, n) => `${n}.json`));
-      for (let n = 0;n < 128; n++) {
-        const attempt = this.files.read(join6(archive, `${n}.json`), 32768);
-        if (!attempt) {
-          names(archive, attempts.map((_, i) => `${i}.json`));
-          break;
-        }
-        const o = closed(json(attempt, 32768), [
-          "schema",
-          "lock",
-          "pid",
-          "host",
-          "digest"
-        ]);
-        literal(o.schema, "cadence-registry-recovery/1");
-        literal(o.lock, lock.bytes.toString("utf8"));
-        decodeHash(o.digest);
-        previousResolver = recoveryOwnerStatus(integer(o.pid, 1, 2147483647), text(o.host, 255, true));
-        attempts.push(attempt);
-      }
-    }
-    const inspection = {
-      scope: "global-registry",
-      epoch,
-      coordinationDigest: hash(encoded([stateDigest, attempts.map((a) => [a.identity, a.stamp])])),
-      owner: recoveryOwnerStatus(value.pid, value.host),
-      process: { pid: value.pid, host: value.host },
-      reservations: entries.length,
-      previousResolver,
-      resolution: "local-interactive-only"
-    };
-    return { lock, archive, attempts, stateDigest, inspection };
-  }
-  inspectRegistryRecovery() {
-    return this.registryRecoveryState().inspection;
-  }
-  resolveRegistryRecovery(expected, assertAuthority) {
-    assertAuthority();
-    const state = this.registryRecoveryState();
-    if (encoded(state.inspection) !== encoded(expected))
-      throw new ContractError("conflict");
-    if (expected.owner !== "absent" || expected.previousResolver !== null && expected.previousResolver !== "absent")
-      throw new ContractError("quarantine");
-    if (state.attempts.length >= 128)
-      throw new ContractError("capacity");
-    assertAuthority();
-    const receiptPath = join6(state.archive, `${state.attempts.length}.json`);
-    const receipt = this.files.create(receiptPath, encoded({
-      schema: "cadence-registry-recovery/1",
-      lock: state.lock.bytes.toString("utf8"),
-      pid: process.pid,
-      host: hostname2(),
-      digest: expected.coordinationDigest
-    }), 32768);
-    assertAuthority();
-    const current = this.registryRecoveryState();
-    if (current.stateDigest !== state.stateDigest || current.inspection.owner !== "absent" || current.attempts.length !== state.attempts.length + 1)
-      throw new ContractError("conflict");
-    for (const [n, attempt] of state.attempts.entries())
-      this.files.assert(join6(state.archive, `${n}.json`), attempt, 32768);
-    this.files.assert(receiptPath, receipt, 32768);
-    assertAuthority();
-    this.files.remove(this.registryPath("registry.lock"), state.lock);
-    return {
-      status: "resolved",
-      scope: "global-registry",
-      recoveryId: expected.epoch,
-      notice: "registry-only-project-fences-preserved"
-    };
-  }
-  prepareRecoveryRelease(expected, assertAuthority) {
-    assertAuthority();
-    if (this.recoverySnapshot().digest !== expected)
-      throw new ContractError("conflict");
-    const selected = this.selected();
-    if (!selected?.value || !selected.registration || !selected.owner || !selected.checkout || !selected.capability)
-      throw new ContractError("quarantine");
-    const r = selected.value;
-    const absent2 = () => {
-      assertAuthority();
-      if (recoveryOwnerStatus(r.pid, r.host) !== "absent")
-        throw new ContractError("quarantine");
-    };
-    absent2();
-    let used = false;
-    return (assertDurable) => {
-      if (used)
-        throw new ContractError("consumed-grant");
-      used = true;
-      this.withRegistry((view, mutate, assertHeld) => {
-        let registry = view.snapshot;
-        let registration = selected.registration;
-        let capability = selected.capability;
-        let owner = selected.owner;
-        let checkout = selected.checkout;
-        if (!registration || !capability || !owner || !checkout)
-          throw new ContractError("conflict");
-        if (recoveryDigest(view, selected) !== expected)
-          throw new ContractError("conflict");
-        const assert = () => {
-          absent2();
-          assertHeld();
-          this.assertNamespace();
-          this.files.assert(this.registryPath("roots.json"), registry, REGISTRY_BYTES);
-          for (const [name, snapshot] of [
-            ["format.json", selected.manifest],
-            ["config.json", selected.config],
-            ["host-config.json", selected.hostConfig],
-            ["registration.json", registration],
-            ["local-capability.json", capability],
-            ["owner.lock", owner]
-          ])
-            this.files.assert(this.path(name), snapshot);
-          this.files.assert(this.store.lockPath, checkout, 8192);
-          assertDurable();
-        };
-        assert();
-        const matching = view.value.entries.filter((row) => row.epoch === r.epoch);
-        if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(r)))
-          throw new ContractError("conflict");
-        mutate();
-        registration = this.files.replace(this.path("registration.json"), registration, encoded({ ...r, phase: "stopped" }));
-        assert();
-        registry = this.files.replace(this.registryPath("roots.json"), registry, encoded({
-          ...view.value,
-          entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
-        }), REGISTRY_BYTES);
-        assert();
-        this.files.remove(this.path("local-capability.json"), capability);
-        capability = undefined;
-        assert();
-        this.files.remove(this.path("owner.lock"), owner);
-        owner = undefined;
-        assert();
-        this.files.remove(this.store.lockPath, checkout, 8192);
-        checkout = undefined;
-        assert();
-      });
-    };
-  }
-  recoverySnapshot() {
-    if (this.files.read(this.registryPath("registry.lock")))
-      throw new ContractError("quarantine");
-    const registry = this.registry();
-    const selected = this.selected();
-    if (!registry || !selected?.value || !selected.registration || !selected.owner || !selected.checkout)
-      refused();
-    const value = selected.value;
-    const matching = registry.value.entries.filter((row) => row.epoch === value.epoch);
-    if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(value)))
-      refused();
-    return {
-      registration: { ...selected.value },
-      digest: recoveryDigest(registry, selected)
-    };
   }
 }
 
@@ -3987,7 +3669,7 @@ class OwnerLease {
     return { ...this.selected.value };
   }
   assert() {
-    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
+    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname3())
       throw new ContractError("conflict");
     const c = this.coordination, walks = new DirectoryWalks;
     c.assertNamespace(walks);
@@ -4034,10 +3716,26 @@ class OwnerLease {
   }
 }
 
-// src/service/gateway-cli.ts
-import { homedir as homedir5 } from "node:os";
-import { dirname as dirname11, join as join13, resolve as resolve6 } from "node:path";
-import { fileURLToPath } from "node:url";
+// src/service/doctor.ts
+import { existsSync as existsSync2 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { createInterface } from "node:readline";
+import { isatty } from "node:tty";
+
+// src/service/gateway-store.ts
+import { randomBytes as randomBytes4, randomUUID as randomUUID5 } from "node:crypto";
+import { opendirSync as opendirSync2 } from "node:fs";
+import { hostname as hostname4 } from "node:os";
+import { join as join8, resolve as resolve4 } from "node:path";
+
+// src/service/auth.ts
+import {
+  createHash as createHash3,
+  randomBytes as randomBytes3,
+  randomUUID as randomUUID4,
+  timingSafeEqual
+} from "node:crypto";
+import { dirname as dirname7, isAbsolute as isAbsolute5, join as join7 } from "node:path";
 
 // src/service/config.ts
 import { isIP } from "node:net";
@@ -4087,20 +3785,7 @@ function localOrigin(policy, actualPort) {
   return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
 }
 
-// src/service/gateway-store.ts
-import { randomBytes as randomBytes4, randomUUID as randomUUID5 } from "node:crypto";
-import { opendirSync as opendirSync2 } from "node:fs";
-import { hostname as hostname3 } from "node:os";
-import { join as join8, resolve as resolve4 } from "node:path";
-
 // src/service/auth.ts
-import {
-  createHash as createHash3,
-  randomBytes as randomBytes3,
-  randomUUID as randomUUID4,
-  timingSafeEqual
-} from "node:crypto";
-import { dirname as dirname7, isAbsolute as isAbsolute5, join as join7 } from "node:path";
 function sameSecret(candidate, expected) {
   const a = createHash3("sha256").update(candidate).digest();
   const b = createHash3("sha256").update(expected).digest();
@@ -4434,6 +4119,23 @@ function decodeProjectEntry(value) {
     epoch: decodeId(o.epoch)
   };
 }
+var RECOVERY_SCOPES = ["registry", "workbench", "project"];
+var RECOVERY_CAUSES = [
+  "reboot",
+  "crash",
+  "restart",
+  "storage"
+];
+var RECOVERY_ACTIONS = [
+  "released-locks",
+  "stopped-workers",
+  "stopped-owner",
+  "continued-history",
+  "archived-history",
+  "archived-state",
+  "rebuilt-registry",
+  "removed-temporaries"
+];
 
 // src/service/gateway-store.ts
 function decodeGatewayInput(value) {
@@ -4565,7 +4267,14 @@ class GatewayStore {
       throw new ContractError("quarantine");
     if (previous?.recovery)
       this.associatedProjects();
-    this.lock = this.files.create(this.path("gateway.lock"), encoded({ epoch: randomUUID5() }));
+    const mark = selfMark();
+    this.lock = this.files.create(this.path("gateway.lock"), encoded({
+      epoch: randomUUID5(),
+      pid: process.pid,
+      host: hostname4(),
+      boot: mark.boot,
+      started: mark.started
+    }));
     const source = { serverConfig: this.serverConfig, token };
     if (!previous)
       AccessMaterial.initialize(this.files, this.directory, source);
@@ -4584,7 +4293,7 @@ class GatewayStore {
       capability: randomBytes4(32).toString("base64url"),
       selection: hash(inputBytes),
       pid: process.pid,
-      host: hostname3(),
+      host: hostname4(),
       ...previous?.recovery ? { recovery: previous.recovery } : {},
       phase: "alive"
     };
@@ -4659,2262 +4368,1208 @@ class GatewayStore {
   }
 }
 
-// src/service/recovery-cli.ts
-import { isatty } from "node:tty";
-
-// src/history/recovery.ts
-import { createHash as createHash6, randomUUID as randomUUID7 } from "node:crypto";
-import { lstatSync as lstatSync8, opendirSync as opendirSync4 } from "node:fs";
-import { join as join10, relative as relative4 } from "node:path";
-
-// src/service/recovery.ts
-async function inspectRecovery(coordination, history) {
-  const selected = coordination.recoverySnapshot();
-  const facts = history ? await history.inspect(selected.registration.epoch) : null;
-  if (facts)
-    decodeHash(facts.digest);
-  if (coordination.recoverySnapshot().digest !== selected.digest)
-    throw new ContractError("conflict");
-  return {
-    epoch: selected.registration.epoch,
-    coordinationDigest: selected.digest,
-    history: facts,
-    owner: recoveryOwnerStatus(selected.registration.pid, selected.registration.host),
-    resolution: "local-interactive-only"
-  };
-}
-async function resolveRecovery(coordination, confirmation, history) {
-  if (typeof confirmation.assertLocalAuthority !== "function" || confirmation.acknowledgeEscapedProcesses !== true || confirmation.processes !== "externally-resolved" || confirmation.credentials !== "independently-resolved" || confirmation.storage !== "independently-resolved")
-    throw new ContractError("forbidden");
-  const expected = structuredClone(confirmation.expected);
-  const authority = () => confirmation.assertLocalAuthority(structuredClone(expected));
-  authority();
-  const release = coordination.prepareRecoveryRelease(expected.coordinationDigest, authority);
-  const current = await inspectRecovery(coordination, history);
-  if (JSON.stringify(current) !== JSON.stringify(expected))
-    throw new ContractError("conflict");
-  if (current.owner !== "absent" || !current.history)
-    throw new ContractError("quarantine");
-  const fact = await history.append({
-    ...confirmation,
-    expected
-  });
-  authority();
-  if (fact.epoch !== expected.epoch || fact.coordinationDigest !== expected.coordinationDigest || fact.historyDigest !== expected.history?.digest)
-    throw new ContractError("conflict");
-  release(() => history.assertCommitted(fact));
-  return {
-    status: "resolved",
-    epoch: fact.epoch,
-    recoveryId: fact.recoveryId,
-    committedSeq: fact.committedSeq,
-    notice: "operator-acknowledgment-not-certification"
-  };
-}
-
-// src/history/files.ts
-import { createHash as createHash5, randomBytes as randomBytes5, randomUUID as randomUUID6 } from "node:crypto";
+// src/service/recovery-log.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
 import {
-  closeSync as closeSync6,
-  constants as constants5,
-  fstatSync as fstatSync4,
-  fsyncSync as fsyncSync3,
-  lstatSync as lstatSync7,
-  opendirSync as opendirSync3,
-  openSync as openSync6,
-  statfsSync
-} from "node:fs";
-import { open } from "node:fs/promises";
-import { dirname as dirname9, join as join9 } from "node:path";
-
-// src/history/admission.ts
-function decodeRunAdmission(value) {
-  const o = closed(value, ["schema", "runId", "identity", "graph"]);
-  const result = {
-    schema: literal(o.schema, "cadence-run-admission/2"),
-    runId: decodeId(o.runId),
-    identity: decodeRunIdentity(o.identity),
-    graph: nullable(o.graph, decodeGraph)
-  };
-  const { identity, graph } = result;
-  if (identity.kind === "start" !== (graph !== null))
-    throw new ContractError("invalid");
-  if (graph && (graph.taskId !== identity.context.task?.id || graph.taskKind !== identity.context.task.kind || graph.taskRevision > identity.context.task.revision || graph.revision !== identity.graph?.revision || hash(canonicalJson(graph)) !== identity.graph.sha256 || canonicalJson(graph.assignments.map((a) => a.id)) !== canonicalJson(identity.assignments.map((a) => a.assignmentId)) || graph.assignments.some((a) => canonicalJson(a.model) !== canonicalJson(identity.context.model))))
-    throw new ContractError("conflict");
-  return result;
-}
-
-// src/history/read-io.ts
-import {
-  closeSync as closeSync5,
-  constants as constants4,
-  fstatSync as fstatSync3,
   lstatSync as lstatSync6,
-  openSync as openSync5,
-  readSync as readSync3
+  opendirSync as opendirSync3,
+  renameSync as renameSync3,
+  rmSync as rmSync2
 } from "node:fs";
-import { dirname as dirname8 } from "node:path";
-function bad() {
-  throw new ContractError("corrupt-selected");
-}
-var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path2, read, walks) {
-  if (!files.files.directory(dirname8(path2), false, walks))
-    bad();
-  const before = lstatSync6(path2);
-  if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
-    bad();
-  const fd = openSync5(path2, constants4.O_RDONLY | (constants4.O_NOFOLLOW ?? 0));
-  try {
-    if (stamp2(fstatSync3(fd)) !== stamp2(before))
-      bad();
-    const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync6(path2)) !== stamp2(before))
-      bad();
-    return result;
-  } finally {
-    closeSync5(fd);
-  }
-}
-function assertIncarnation(files, path2, expected) {
-  selected(files, path2, (_fd, _size, current) => {
-    if (current !== expected)
-      bad();
-  });
-}
-function statSize(files, path2, maximum) {
-  return selected(files, path2, (_fd, size) => {
-    if (size > maximum)
-      bad();
-    return size;
-  });
-}
-
-// src/history/types.ts
-import { createHash as createHash4 } from "node:crypto";
-var RECORD_BYTES = LIMITS.controlBytes + 64 * 1024;
-var LEGACY_FORMAT = "cadence-history-store/2";
-var FORMAT = "cadence-history-store/3";
-function decodeFormat(value) {
-  const o = closed(value, ["schema", "storeId", "workspaceId", "rootIdentity"]);
-  return {
-    schema: oneOf(o.schema, [FORMAT, LEGACY_FORMAT]),
-    storeId: decodeId(o.storeId),
-    workspaceId: decodeId(o.workspaceId),
-    rootIdentity: decodeHash(o.rootIdentity)
-  };
-}
-function decodeArtifact(value) {
-  const o = closed(value, ["runId", "artifactId", "part", "bytes", "sha256"]);
-  return {
-    runId: decodeId(o.runId),
-    artifactId: decodeId(o.artifactId),
-    part: integer(o.part),
-    bytes: integer(o.bytes, 1, LIMITS.artifactPartBytes),
-    sha256: decodeHash(o.sha256)
-  };
-}
-function decodeRetainedDetail(value) {
+import { basename, join as join9, relative as relative4 } from "node:path";
+var RECOVERY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
+var RECOVERY_EVENTS = 50;
+var RECOVERY_ARCHIVE_MS = 30 * 24 * 60 * 60 * 1000;
+var RECOVERY_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+var EVENT_BYTES = 16 * 1024;
+var RECOVERY_MERGE_MS = 2 * 60 * 1000;
+function decodeRecoveryEvent(value) {
   const o = closed(value, [
-    "detailId",
-    "origin",
-    "owner",
-    "descriptor",
-    "content",
-    "coverage"
+    "schema",
+    "id",
+    "at",
+    "scope",
+    "path",
+    "cause",
+    "actions",
+    "workers",
+    "archive"
   ]);
-  const origin = closed(o.origin, ["kind", "id"]);
-  const r = {
-    detailId: decodeId(o.detailId),
-    origin: {
-      kind: oneOf(origin.kind, ["worker", "owner"]),
-      id: decodeId(origin.id)
-    },
-    owner: decodeRecordOwner(o.owner),
-    descriptor: nullable(o.descriptor, decodeDetailDescriptor),
-    content: decodeContentRef(o.content),
-    coverage: decodeCoverage(o.coverage)
-  };
-  if (r.origin.kind === "worker" !== (r.descriptor !== null) || r.descriptor && r.content.field !== r.descriptor.field)
-    invalid();
-  return r;
-}
-function decodeSavedEvent(value, owner) {
-  const kind = closedTag(value);
-  if (kind === "capture") {
-    const o2 = closed(value, ["kind", "id", "value"]), v = decodeRecordingEvent(o2.value);
-    if (owner || v.event.kind === "stored-chunk" || v.event.kind === "stored-end")
-      invalid();
-    return { kind, id: decodeId(o2.id), value: v };
-  }
-  if (kind === "owner") {
-    const o2 = closed(value, ["kind", "id", "value"]);
-    if (!owner)
-      invalid();
-    const v = decodeOwnerRecordingInput({
-      link: owner,
-      observedMs: 0,
-      events: [o2.value]
-    }).events[0];
-    if (v.kind === "content-chunk" || v.kind === "content-end")
-      invalid();
-    return { kind, id: decodeId(o2.id), value: v };
-  }
-  if (kind === "chunk") {
-    const o2 = closed(value, [
-      "kind",
-      "detailId",
-      "source",
-      "artifact",
-      "offset",
-      "start",
-      "length"
-    ]);
-    const source2 = nullable(o2.source, decodeSourceRange);
-    if (source2 === null !== (owner !== null))
-      invalid();
-    const artifact = decodeArtifact(o2.artifact), offset = integer(o2.offset, 0, LIMITS.detailBytes), start = integer(o2.start, 0, LIMITS.artifactPartBytes), length = integer(o2.length, 1, LIMITS.chunkBytes);
-    if (start + length > artifact.bytes || offset + length > LIMITS.detailBytes)
-      invalid();
-    return {
-      kind,
-      detailId: decodeId(o2.detailId),
-      source: source2,
-      artifact,
-      offset,
-      start,
-      length
-    };
-  }
-  const o = closed(value, ["kind", "detail", "source"]);
-  literal(kind, "end");
-  const detail = decodeRetainedDetail(o.detail), source = nullable(o.source, decodeSourceRange);
-  if (detail.origin.kind === "owner" !== (owner !== null) || source === null !== (owner !== null))
-    invalid();
-  return { kind: "end", detail, source };
-}
-function closedTag(value) {
-  if (!value || typeof value !== "object" || !("kind" in value) || typeof value.kind !== "string")
-    invalid();
-  return value.kind;
-}
-function decodeAdmissionIntent(value) {
-  const o = closed(value, [
-    "commandId",
-    "operationId",
-    "runId",
-    "identity",
-    "createdTaskId"
-  ]);
-  return {
-    commandId: decodeId(o.commandId),
-    operationId: decodeId(o.operationId),
-    runId: nullable(o.runId, decodeId),
-    identity: decodeCommandIdentity(o.identity),
-    createdTaskId: nullable(o.createdTaskId, decodeId)
-  };
-}
-function decodeAuthIntent(value) {
-  const o = closed(value, [
-    "operationId",
-    "epoch",
-    "runId",
-    "childRunId",
-    "sourceSelectionId",
-    "validityMs"
-  ]);
-  return {
-    operationId: decodeId(o.operationId),
-    epoch: decodeId(o.epoch),
-    runId: decodeId(o.runId),
-    childRunId: decodeId(o.childRunId),
-    sourceSelectionId: decodeId(o.sourceSelectionId),
-    validityMs: integer(o.validityMs, 1)
-  };
-}
-function decodeAuthSettlement(value) {
-  const o = closed(value, ["operationId", "outcome", "admissionClosed"]);
-  return {
-    operationId: decodeId(o.operationId),
-    outcome: oneOf(o.outcome, ["resolved", "refused", "failed"]),
-    admissionClosed: bool(o.admissionClosed)
-  };
-}
-function decodeRecoveryBridge(v) {
-  const o = closed(v, [
-    "kind",
-    "recoveryId",
-    "epoch",
-    "coordinationDigest",
-    "historyDigest",
-    "previous",
-    "acknowledgments"
-  ]);
-  const p = closed(o.previous, [
-    "segment",
-    "bytes",
-    "sha256",
-    "committedBytes",
-    "committedSeq",
-    "highSeq"
-  ]);
-  const a = closed(o.acknowledgments, ["processes", "credentials", "storage"]);
-  const previous = {
-    segment: integer(p.segment),
-    bytes: integer(p.bytes, 0, LIMITS.segmentBytes),
-    sha256: decodeHash(p.sha256),
-    committedBytes: integer(p.committedBytes, 0, LIMITS.segmentBytes),
-    committedSeq: decodeSequence(p.committedSeq),
-    highSeq: decodeSequence(p.highSeq)
-  };
-  if (previous.committedBytes > previous.bytes || BigInt(previous.highSeq) < BigInt(previous.committedSeq))
-    invalid();
-  if (a.processes !== true || a.credentials !== true || a.storage !== true)
-    invalid();
-  return {
-    kind: literal(o.kind, "recovery"),
-    recoveryId: decodeId(o.recoveryId),
-    epoch: decodeId(o.epoch),
-    coordinationDigest: decodeHash(o.coordinationDigest),
-    historyDigest: decodeHash(o.historyDigest),
-    previous,
-    acknowledgments: { processes: true, credentials: true, storage: true }
-  };
-}
-function validBatchSequence(rows, previous) {
-  const bridge = rows[0]?.value;
-  const base = bridge?.kind === "recovery" ? bridge.previous.highSeq : previous;
-  if (bridge?.kind === "recovery" && (rows.length !== 1 || bridge.previous.committedSeq !== previous))
-    return false;
-  return rows.every((row, i) => row.seq === String(BigInt(base) + BigInt(i) + 1n) && (i === 0 || row.value.kind !== "recovery"));
-}
-function decodeResourcePolicy(v) {
-  const o = closed(v, [
-    "generation",
-    "quotaBytes",
-    "episodeReservationBytes",
-    "freeSpaceFloorBytes",
-    "episodeControlBytes"
-  ]);
-  return {
-    generation: integer(o.generation, 1),
-    quotaBytes: integer(o.quotaBytes, LIMITS.episodeControlBytes),
-    episodeReservationBytes: integer(o.episodeReservationBytes, LIMITS.episodeControlBytes),
-    freeSpaceFloorBytes: literal(o.freeSpaceFloorBytes, LIMITS.freeSpaceFloorBytes),
-    episodeControlBytes: literal(o.episodeControlBytes, LIMITS.episodeControlBytes)
-  };
-}
-function decodeJournalValue(value) {
-  const kind = closedTag(value);
-  switch (kind) {
-    case "recovery":
-      return decodeRecoveryBridge(value);
-    case "owner-epoch": {
-      const o = closed(value, ["kind", "epoch"]);
-      return { kind, epoch: decodeId(o.epoch) };
-    }
-    case "admission-compact": {
-      const hasPolicy = Object.hasOwn(value, "policy");
-      const o = closed(value, [
-        "kind",
-        "intent",
-        "receipt",
-        ...hasPolicy ? ["policy"] : []
-      ]);
-      const intent = decodeAdmissionIntent(o.intent);
-      return decodeJournalValue({
-        kind: "admission",
-        intent,
-        record: { identity: intent.identity, receipt: o.receipt },
-        ...hasPolicy ? { policy: o.policy } : {}
-      });
-    }
-    case "admission": {
-      const hasPolicy = typeof value === "object" && value !== null && Object.hasOwn(value, "policy");
-      const o = closed(value, [
-        "kind",
-        "intent",
-        "record",
-        ...hasPolicy ? ["policy"] : []
-      ]), intent = decodeAdmissionIntent(o.intent), record = decodeStoredCommand(o.record);
-      if (record.receipt.commandId !== intent.commandId || record.receipt.operationId !== intent.operationId || record.receipt.runId !== intent.runId || canonicalJson(record.identity) !== canonicalJson(intent.identity) || (record.receipt.created?.taskId ?? null) !== intent.createdTaskId)
-        invalid();
-      const policy = hasPolicy ? decodeResourcePolicy(o.policy) : undefined;
-      if (policy && intent.identity.kind === "action" && policy.generation !== intent.identity.expected.configRev)
-        invalid();
-      return { kind, intent, record, ...policy ? { policy } : {} };
-    }
-    case "auth-preparation": {
-      const o = closed(value, ["kind", "intent"]);
-      return { kind, intent: decodeAuthIntent(o.intent) };
-    }
-    case "auth-settlement": {
-      const o = closed(value, ["kind", "result"]);
-      return { kind, result: decodeAuthSettlement(o.result) };
-    }
-    case "launch": {
-      const o = closed(value, ["kind", "link", "operationId"]);
-      return {
-        kind,
-        link: decodeRecordingLink(o.link),
-        operationId: decodeId(o.operationId)
-      };
-    }
-    case "settlement": {
-      const o = closed(value, ["kind", "link", "completion"]), link = decodeRecordingLink(o.link), completion = decodeWorkerCompletion(o.completion);
-      if (link.childRunId !== completion.childRunId)
-        invalid();
-      return { kind, link, completion };
-    }
-    case "capture": {
-      const o = closed(value, ["kind", "link", "source", "events"]);
-      return {
-        kind,
-        link: decodeRecordingLink(o.link),
-        source: decodeSourceRange(o.source),
-        events: list(o.events, LIMITS.ownerQueueFrames, (v) => decodeSavedEvent(v, null))
-      };
-    }
-    case "owner": {
-      const o = closed(value, ["kind", "link", "observedMs", "events"]), link = decodeOwnerLink(o.link);
-      return {
-        kind,
-        link,
-        observedMs: integer(o.observedMs),
-        events: list(o.events, LIMITS.ownerQueueFrames, (v) => decodeSavedEvent(v, link))
-      };
-    }
-    default:
-      return invalid();
-  }
-}
-function decodeJournalLine(value) {
-  if (closedTag(value) === "record") {
-    const o2 = closed(value, ["kind", "seq", "id", "value"]);
-    return {
-      kind: "record",
-      seq: decodeSequence(o2.seq),
-      id: decodeId(o2.id),
-      value: decodeJournalValue(o2.value)
-    };
-  }
-  const indexed = typeof value === "object" && value !== null && Object.hasOwn(value, "navigationRoot");
-  const o = closed(value, [
-    ...indexed ? ["navigationRoot"] : [],
-    "kind",
-    "previous",
-    "first",
-    "last",
-    "count",
-    "sha256",
-    "artifacts"
-  ]);
-  literal(o.kind, "commit");
-  return {
-    kind: "commit",
-    ...indexed ? { navigationRoot: nullable(o.navigationRoot, decodeHash) } : {},
-    previous: decodeSequence(o.previous),
-    first: decodeSequence(o.first),
-    last: decodeSequence(o.last),
-    count: integer(o.count, 1, LIMITS.segmentRecords),
-    sha256: decodeHash(o.sha256),
-    artifacts: list(o.artifacts, LIMITS.ownerQueueFrames, decodeArtifact)
-  };
-}
-var COMPLETE = {
-  observed: "complete",
-  source: "complete",
-  redacted: false,
-  omissions: []
-};
-function captureCoverage(event) {
-  if (event.kind === "capture-status")
-    return event.coverage;
-  if (event.kind === "omitted-block")
-    return { ...COMPLETE, source: "limited", omissions: [event.block.reason] };
-  return null;
-}
-function combineCoverage(a, b) {
-  return {
-    observed: a.observed === "complete" && b.observed === "complete" ? "complete" : "incomplete",
-    source: a.source === "unavailable" || b.source === "unavailable" ? "unavailable" : a.source === "limited" || b.source === "limited" ? "limited" : "complete",
-    redacted: a.redacted || b.redacted,
-    omissions: [...new Set([...a.omissions, ...b.omissions])]
-  };
-}
-function rowArtifacts(row) {
-  return row.value.kind === "capture" || row.value.kind === "owner" ? row.value.events.flatMap((e) => e.kind === "chunk" ? [e.artifact] : []) : [];
-}
-function batchArtifacts(rows) {
-  const unique = new Map;
-  for (const ref of rows.flatMap(rowArtifacts)) {
-    const key = `${ref.runId}/${ref.artifactId}/${ref.part}`, previous = unique.get(key);
-    if (previous && canonicalJson(previous) !== canonicalJson(ref))
-      invalid();
-    unique.set(key, ref);
-  }
-  return [...unique.values()];
-}
-var decodedLines = new Map;
-var decodedBytes = 0;
-var lineKey = (text2) => createHash4("sha256").update(text2).digest("hex");
-function remember(text2, value) {
-  const key = lineKey(text2);
-  if (decodedLines.has(key))
-    return;
-  const bytes = Buffer.byteLength(text2);
-  while (decodedLines.size && (decodedLines.size >= 2 * LIMITS.segmentRecords || decodedBytes + bytes > 2 * LIMITS.segmentBytes)) {
-    const first = decodedLines.keys().next().value;
-    if (!first)
-      break;
-    decodedBytes -= decodedLines.get(first)?.bytes ?? 0;
-    decodedLines.delete(first);
-  }
-  if (bytes <= 2 * LIMITS.segmentBytes) {
-    decodedLines.set(key, { bytes, value });
-    decodedBytes += bytes;
-  }
-}
-function compactAdmission(value) {
-  if (value.kind !== "record" || value.value.kind !== "admission")
-    return value;
-  const { intent, record, policy } = value.value;
-  return {
-    ...value,
-    value: {
-      kind: "admission-compact",
-      intent,
-      receipt: record.receipt,
-      ...policy ? { policy } : {}
-    }
-  };
-}
-function encodeJournalText(input) {
-  const value = decodeJournalLine(input), text2 = canonicalJson(compactAdmission(value), RECORD_BYTES);
-  remember(text2, value);
-  return `${text2}
-`;
-}
-function decodeJournalText(line) {
-  const text2 = line.endsWith(`
-`) ? line.slice(0, -1) : line;
-  const epoch = /^\{"id":"([0-9a-f-]{36})","kind":"record","seq":"([0-9]+)","value":\{"epoch":"([0-9a-f-]{36})","kind":"owner-epoch"\}\}$/.exec(text2);
-  if (epoch)
-    return {
-      kind: "record",
-      id: decodeId(epoch[1]),
-      seq: decodeSequence(epoch[2]),
-      value: { kind: "owner-epoch", epoch: decodeId(epoch[3]) }
-    };
-  const key = lineKey(text2), cached = decodedLines.get(key);
-  if (cached)
-    return structuredClone(cached.value);
-  const raw = JSON.parse(text2);
-  const value = decodeJournalLine(raw);
-  const compact = raw?.kind === "record" && raw.value?.kind === "admission-compact";
-  if (canonicalJson(compact ? compactAdmission(value) : value, RECORD_BYTES) !== text2)
-    invalid();
-  remember(text2, value);
-  return structuredClone(value);
-}
-
-// src/history/files.ts
-class HistoryReadBudget {
-  clock;
-  started = performance.now();
-  bytes = 0;
-  walks = new DirectoryWalks;
-  constructor(clock = true) {
-    this.clock = clock;
-  }
-  static authority() {
-    return new HistoryReadBudget(false);
-  }
-  reserve(bytes) {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || this.elapsed)
-      throw new ContractError("receipt-inconclusive");
-    this.bytes += bytes;
-  }
-  get elapsed() {
-    return this.clock && performance.now() - this.started >= LIMITS.searchMs;
-  }
-}
-function corrupt() {
-  throw new ContractError("corrupt-selected");
-}
-var publicationFences = new Map;
-var activity = new Map;
-
-class HistoryFiles {
-  coordination;
-  format;
-  formatSnapshot;
-  directory;
-  files;
-  proofSnapshot;
-  constructor(coordination, format, formatSnapshot) {
-    this.coordination = coordination;
-    this.format = format;
-    this.formatSnapshot = formatSnapshot;
-    this.directory = join9(coordination.directory, "history-v2");
-    this.files = coordination.files;
-  }
-  static open(coordination) {
-    const dir = join9(coordination.directory, "history-v2");
-    if (!coordination.files.directory(dir))
-      return;
-    const file = coordination.files.read(join9(dir, "format.json"));
-    if (!file)
-      corrupt();
-    const format = decodeFormat(json(file));
-    if (format.rootIdentity !== hash(coordination.store.root))
-      corrupt();
-    return new HistoryFiles(coordination, format, file);
-  }
-  static initialize(lease) {
-    lease.assert();
-    const c = lease.coordination;
-    const existing = HistoryFiles.open(c);
-    if (existing) {
-      existing.assertWritable();
-      return existing;
-    }
-    const dir = join9(c.directory, "history-v2");
-    const format = {
-      schema: FORMAT,
-      storeId: randomUUID6(),
-      workspaceId: randomUUID6(),
-      rootIdentity: hash(c.store.root)
-    };
-    c.files.directory(dir, true);
-    for (const name of ["commands", "ledger", "runs", "indexes"]) {
-      lease.assert();
-      c.files.directory(join9(dir, name), true);
-    }
-    lease.assert();
-    const keyPath = join9(dir, "read-proof-key.json");
-    c.files.create(keyPath, encoded({
-      schema: "cadence-history-read-key/1",
-      storeId: format.storeId,
-      key: randomBytes5(32).toString("base64url")
-    }));
-    lease.assert();
-    const snapshot = c.files.create(join9(dir, "format.json"), encoded(format));
-    const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join9(dir, "format.json"));
-    result.assertWritable();
-    return result;
-  }
-  activity() {
-    const key = `${this.directory}/${this.format.storeId}`;
-    let state = activity.get(key);
-    if (!state) {
-      state = { pending: 0, generation: 0 };
-      activity.set(key, state);
-    }
-    return state;
-  }
-  get writeGeneration() {
-    return this.activity().generation;
-  }
-  assertWriteGeneration(generation) {
-    if (generation !== this.writeGeneration)
-      throw new ContractError("quarantine");
-  }
-  retainOriginal(generation) {
-    this.assertWriteGeneration(generation);
-    if (publicationFences.has(this.directory) && !this.activity().pending)
-      throw new ContractError("quarantine");
-    const state = this.activity();
-    state.pending++;
-    return () => {
-      state.pending--;
-    };
-  }
-  assertRecoveryIdle() {
-    if (this.activity().pending || publicationFences.has(this.directory))
-      throw new ContractError("quarantine");
-  }
-  assertFormat() {
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot);
-  }
-  readProofMaterial(budget) {
-    if (this.format.schema !== FORMAT)
-      throw new ContractError("unsupported-context");
-    if (budget)
-      this.assertReadFormat(budget);
-    else
-      this.assertFormat();
-    const selected2 = this.readBudgeted(join9(this.directory, "read-proof-key.json"), 512, budget);
-    if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
-      corrupt();
-    try {
-      const record = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(selected2.bytes), 512), ["schema", "storeId", "key"]);
-      literal(record.schema, "cadence-history-read-key/1");
-      if (decodeId(record.storeId) !== this.format.storeId)
-        corrupt();
-      const value = text(record.key, 43, true), key = Buffer.from(value, "base64url");
-      if (!/^[A-Za-z0-9_-]{43}$/.test(value) || key.length !== 32 || key.toString("base64url") !== value)
-        corrupt();
-      this.proofSnapshot ??= selected2;
-      return {
-        key,
-        formatStamp: this.formatSnapshot.stamp,
-        keyStamp: selected2.stamp,
-        readBytes: this.formatSnapshot.bytes.length + selected2.bytes.length
-      };
-    } catch {
-      return corrupt();
-    }
-  }
-  assertWritable() {
-    if (!this.proofSnapshot) {
-      this.readProofMaterial();
-      return;
-    }
-    this.assertFormat();
-    assertIncarnation(this, join9(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
-  }
-  segmentPath(segment) {
-    return join9(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
-  }
-  artifactPath(ref) {
-    return join9(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
-  }
-  admissionPath(runId) {
-    decodeId(runId);
-    return join9(this.directory, "runs", runId, "admission.json");
-  }
-  writeAdmission(lease, input) {
-    lease.assert();
-    this.assertWritable();
-    const value = decodeRunAdmission(input);
-    this.files.create(this.admissionPath(value.runId), encoded(value), RECORD_BYTES);
-    this.syncParents(this.admissionPath(value.runId));
-  }
-  readBudgeted(path2, maximum, budget) {
-    if (!budget)
-      return this.files.read(path2, maximum);
-    let size;
-    try {
-      size = lstatSync7(path2).size;
-    } catch {
-      return this.files.read(path2, 0, budget.walks);
-    }
-    if (size > maximum)
-      corrupt();
-    budget.reserve(size);
-    return this.files.read(path2, size, budget.walks);
-  }
-  readCommand(commandId, budget) {
-    decodeId(commandId);
-    this.assertReadFormat(budget);
-    return this.readBudgeted(join9(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
-  }
-  readAdmission(runId, identity, budget) {
-    return this.readAdmissionIdentity(runId, hash(canonicalJson(identity)), budget);
-  }
-  readAdmissionIdentity(runId, identity, budget) {
-    if (budget)
-      this.assertReadFormat(budget);
-    else
-      this.assertFormat();
-    const file = this.readBudgeted(this.admissionPath(runId), RECORD_BYTES, budget);
-    if (!file)
-      corrupt();
-    const value = decodeRunAdmission(json(file, RECORD_BYTES));
-    if (value.runId !== runId || hash(canonicalJson(value.identity)) !== identity)
-      corrupt();
-    return value;
-  }
-  syncParents(file) {
-    if (process.platform === "win32")
-      return;
-    for (let path2 = dirname9(file);; path2 = dirname9(path2)) {
-      if (!this.files.directory(path2))
-        corrupt();
-      const fd = openSync6(path2, constants5.O_RDONLY | constants5.O_DIRECTORY);
-      try {
-        fsyncSync3(fd);
-      } finally {
-        closeSync6(fd);
-      }
-      if (path2 === this.coordination.directory)
-        break;
-      if (path2 === dirname9(path2))
-        corrupt();
-    }
-  }
-  assertReadFormat(budget) {
-    budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
-  }
-  assertPublished(segment, end, seq) {
-    const fence = publicationFences.get(this.directory);
-    if (fence && (BigInt(seq) > BigInt(fence.committedSeq) || segment > fence.segment || segment === fence.segment && end > fence.bytes))
-      throw new ContractError("receipt-inconclusive");
-  }
-  readArtifact(ref, budget) {
-    if (budget)
-      this.assertReadFormat(budget);
-    else
-      this.assertFormat();
-    const file = this.readBudgeted(this.artifactPath(ref), LIMITS.artifactPartBytes, budget);
-    if (!file || file.bytes.length !== ref.bytes || file.identity !== ref.sha256)
-      corrupt();
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
-    } catch {
-      corrupt();
-    }
-    return file.bytes;
-  }
-  writeArtifact(lease, ref, text2) {
-    lease.assert();
-    this.assertWritable();
-    if (Buffer.byteLength(text2) !== ref.bytes || hash(text2) !== ref.sha256)
-      corrupt();
-    this.files.create(this.artifactPath(ref), text2, LIMITS.artifactPartBytes);
-    this.syncParents(this.artifactPath(ref));
-  }
-  usage() {
-    const walk = (path2, depth) => {
-      if (depth > 8 || !this.files.directory(path2))
-        corrupt();
-      let bytes = 0;
-      const dir = opendirSync3(path2);
-      try {
-        for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join9(path2, e.name), st = lstatSync7(p);
-          if (st.isDirectory())
-            bytes += walk(p, depth + 1);
-          else {
-            bytes += statSize(this, p, LIMITS.segmentBytes);
-          }
-          if (!Number.isSafeInteger(bytes))
-            corrupt();
-        }
-      } finally {
-        dir.closeSync();
-      }
-      return bytes;
-    };
-    return walk(this.directory, 0);
-  }
-  freeBytes() {
-    const s = statfsSync(this.directory, { bigint: true });
-    return Number(s.bavail * s.bsize);
-  }
-  *scan(state = emptyScan(), verifyArtifacts = true, budget, throughSegment = Number.MAX_SAFE_INTEGER) {
-    if (budget)
-      this.assertReadFormat(budget);
-    else
-      this.assertFormat();
-    state.committedSeq = "0";
-    state.highSeq = "0";
-    state.committedBytes = 0;
-    state.navigationRoot = undefined;
-    state.segment = 0;
-    state.records = 0;
-    state.tail = false;
-    state.bytes = 0;
-    state.identity = null;
-    let count = 0;
-    const ledger = join9(this.directory, "ledger");
-    if (!this.files.directory(ledger))
-      corrupt();
-    const dir = opendirSync3(ledger);
-    try {
-      for (let e = dir.readSync();e; e = dir.readSync()) {
-        budget?.reserve(0);
-        if (!/^[0-9]{12}\.jsonl$/.test(e.name) || !e.isFile())
-          corrupt();
-        count++;
-      }
-    } finally {
-      dir.closeSync();
-    }
-    const fence = publicationFences.get(this.directory);
-    if (fence)
-      count = Math.min(count, fence.segment);
-    count = Math.min(count, throughSegment);
-    for (let n = 1;n <= count; n++) {
-      let file = this.readBudgeted(this.segmentPath(n), LIMITS.segmentBytes, budget);
-      if (!file)
-        corrupt();
-      if (fence && n === fence.segment) {
-        if (file.bytes.length < fence.bytes)
-          corrupt();
-        const bytes = file.bytes.subarray(0, fence.bytes);
-        if (hash(bytes) !== fence.identity)
-          corrupt();
-        file = { ...file, bytes, identity: hash(bytes) };
-      }
-      const preceding = { ...state };
-      state.segment = n;
-      state.committedBytes = 0;
-      state.tail = false;
-      state.bytes = file.bytes.length;
-      state.identity = file.identity;
-      state.records = 0;
-      let at = 0, pending = [], pendingBytes = 0, checksum = createHash5("sha256");
-      while (at < file.bytes.length) {
-        budget?.reserve(0);
-        const end = file.bytes.indexOf(10, at);
-        if (end < 0) {
-          state.tail = true;
-          break;
-        }
-        const line = file.bytes.subarray(at, end + 1);
-        if (line.length > RECORD_BYTES)
-          corrupt();
-        let decoded2;
-        try {
-          decoded2 = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(line));
-        } catch {
-          corrupt();
-        }
-        at = end + 1;
-        state.records++;
-        if (state.records > LIMITS.segmentRecords)
-          corrupt();
-        if (decoded2.kind === "record") {
-          let base = state.committedSeq;
-          if (decoded2.value.kind === "recovery") {
-            if (pending.length || at !== line.length || n !== decoded2.value.previous.segment + 1)
-              corrupt();
-            if (decoded2.value.previous.segment !== preceding.segment || decoded2.value.previous.bytes !== preceding.bytes || decoded2.value.previous.sha256 !== (preceding.identity ?? hash("")) || decoded2.value.previous.committedSeq !== preceding.committedSeq || decoded2.value.previous.highSeq !== (preceding.highSeq ?? preceding.committedSeq) || decoded2.value.previous.committedBytes !== (preceding.committedBytes ?? 0))
-              corrupt();
-            base = decoded2.value.previous.highSeq;
-          } else if (preceding.tail && state.committedBytes === 0)
-            corrupt();
-          const next = BigInt(base) + BigInt(pending.length) + 1n;
-          if (decoded2.seq !== String(next))
-            corrupt();
-          state.highSeq = decoded2.seq;
-          pendingBytes += line.length;
-          if (pendingBytes > 2 * RECORD_BYTES)
-            corrupt();
-          pending.push(decoded2);
-          checksum.update(line);
-          continue;
-        }
-        const artifacts = batchArtifacts(pending);
-        if (!pending.length || !validBatchSequence(pending, decoded2.previous) || decoded2.previous !== state.committedSeq || decoded2.first !== pending[0].seq || decoded2.last !== pending.at(-1)?.seq || decoded2.count !== pending.length || decoded2.sha256 !== checksum.digest("hex") || canonicalJson(decoded2.artifacts, RECORD_BYTES) !== canonicalJson(artifacts, RECORD_BYTES))
-          corrupt();
-        if (verifyArtifacts)
-          for (const artifact of artifacts)
-            this.readArtifact(artifact, budget);
-        for (const row of pending) {
-          const v = row.value;
-          if (v.kind !== "owner")
-            continue;
-          for (const e of v.events)
-            if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
-              this.readAdmission(e.value.fact.runId, e.value.fact.identity, budget);
-        }
-        state.committedSeq = decoded2.last;
-        state.committedBytes = at;
-        state.navigationRoot = decoded2.navigationRoot;
-        yield {
-          rows: pending,
-          marker: decoded2,
-          segment: n,
-          identity: file.identity,
-          segmentBytes: file.bytes.length
-        };
-        pending = [];
-        pendingBytes = 0;
-        checksum = createHash5("sha256");
-      }
-      if (pending.length)
-        state.tail = true;
-      if (state.tail && n !== count) {
-        const next = this.recoveryAfterTail(n, state.committedBytes ?? 0, budget);
-        if (!next)
-          corrupt();
-      }
-    }
-    if (fence && fence.segment <= throughSegment) {
-      if (state.committedSeq !== fence.committedSeq)
-        corrupt();
-      state.tail = true;
-    }
-  }
-  validateRecovery(bridge, budget) {
-    const p = bridge.previous;
-    if (p.segment === 0) {
-      if (p.bytes || p.committedBytes || p.committedSeq !== "0" || p.highSeq !== "0" || p.sha256 !== hash(""))
-        corrupt();
-      return;
-    }
-    const prior = emptyScan();
-    for (const _ of this.scan(prior, false, budget, p.segment)) {}
-    if (prior.segment !== p.segment || prior.bytes !== p.bytes || prior.identity !== p.sha256 || prior.committedBytes !== p.committedBytes || prior.committedSeq !== p.committedSeq || prior.highSeq !== p.highSeq)
-      corrupt();
-  }
-  recoveryAfterTail(segment, committedOffset, budget) {
-    const next = this.readBudgeted(this.segmentPath(segment + 1), LIMITS.segmentBytes, budget);
-    if (!next)
-      return null;
-    const first = next.bytes.indexOf(10), second = next.bytes.indexOf(10, first + 1);
-    if (first < 0 || second < 0)
-      corrupt();
-    const row = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(0, first + 1)));
-    const marker = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(first + 1, second + 1)));
-    if (row.kind !== "record" || row.value.kind !== "recovery" || marker.kind !== "commit" || row.value.previous.segment !== segment || row.value.previous.committedBytes !== committedOffset || marker.count !== 1 || marker.first !== row.seq || marker.last !== row.seq || !validBatchSequence([row], marker.previous) || marker.sha256 !== hash(next.bytes.subarray(0, first + 1)) || marker.artifacts.length)
-      corrupt();
-    this.validateRecovery(row.value, budget);
-    this.assertPublished(segment + 1, second + 1, marker.last);
-    return { rows: [row], marker, bytes: second + 1, segment: segment + 1 };
-  }
-  async appendRecovery(state, row, assertCurrent, observer) {
-    this.assertWritable();
-    this.assertRecoveryIdle();
-    if (row.value.kind !== "recovery")
-      throw new ContractError("quarantine");
-    await assertCurrent();
-    this.assertWritable();
-    this.assertRecoveryIdle();
-    this.validateRecovery(row.value);
-    const { body, trailer, marker } = this.encodeBatch(state, [row]);
-    const segment = state.segment + 1, path2 = this.segmentPath(segment);
-    publicationFences.set(this.directory, { ...state });
-    this.activity().generation++;
-    const before = this.files.create(path2, "", LIMITS.segmentBytes);
-    let committed;
-    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
-    const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync7(path2);
-      if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
-        corrupt();
-      const snapshot = this.files.read(path2, LIMITS.segmentBytes);
-      if (!snapshot || snapshot.identity !== hash(bytes))
-        corrupt();
-      return snapshot;
-    };
-    try {
-      await assertCurrent();
-      this.assertWritable();
-      this.files.assert(path2, before, LIMITS.segmentBytes);
-      assertOriginal("");
-      await fd.writeFile(body);
-      await observer?.("journal");
-      await assertCurrent();
-      this.assertWritable();
-      assertOriginal(body);
-      await fd.writeFile(trailer);
-      await fd.sync();
-      this.syncParents(path2);
-      await observer?.("commit");
-      await assertCurrent();
-      this.assertWritable();
-      committed = assertOriginal(body + trailer);
-    } finally {
-      await fd.close();
-    }
-    await assertCurrent();
-    this.assertWritable();
-    if (!committed)
-      corrupt();
-    this.files.assert(path2, committed, LIMITS.segmentBytes);
-    publicationFences.delete(this.directory);
-    return {
-      snapshot: committed,
-      state: {
-        committedSeq: marker.last,
-        highSeq: marker.last,
-        segment,
-        records: 2,
-        tail: false,
-        bytes: Buffer.byteLength(body + trailer),
-        committedBytes: Buffer.byteLength(body + trailer),
-        identity: hash(body + trailer),
-        navigationRoot: undefined
-      }
-    };
-  }
-  inspect() {
-    const state = emptyScan();
-    for (const _ of this.scan(state)) {}
-    return state;
-  }
-  encodeBatch(state, rows, navigationRoot) {
-    if (!rows.length)
-      throw new ContractError("invalid");
-    const lines = rows.map(encodeJournalText);
-    const body = lines.join("");
-    if (Buffer.byteLength(body) > 2 * RECORD_BYTES)
-      throw new ContractError("oversize");
-    const marker = {
-      kind: "commit",
-      ...navigationRoot !== undefined ? { navigationRoot } : {},
-      previous: state.committedSeq,
-      first: rows[0].seq,
-      last: rows[rows.length - 1].seq,
-      count: rows.length,
-      sha256: hash(body),
-      artifacts: batchArtifacts(rows)
-    };
-    const trailer = encodeJournalText(marker);
-    return {
-      body,
-      trailer,
-      marker,
-      rowBytes: lines.map((line) => Buffer.byteLength(line))
-    };
-  }
-  async append(lease, state, rows, observer, navigationRoot, beforeAppend, beforeEffect) {
-    this.assertWritable();
-    beforeEffect?.();
-    if (publicationFences.has(this.directory))
-      throw new ContractError("quarantine");
-    publicationFences.set(this.directory, { ...state });
-    const next = await this.appendOriginal(lease, state, rows, observer, navigationRoot, beforeAppend, beforeEffect);
-    publicationFences.delete(this.directory);
-    return next;
-  }
-  async appendOriginal(lease, state, rows, observer, navigationRoot, beforeAppend, beforeEffect) {
-    this.assertWritable();
-    beforeEffect?.();
-    if (!rows.length || state.tail)
-      throw new ContractError("quarantine");
-    const batch = this.encodeBatch(state, rows, navigationRoot);
-    beforeAppend?.({
-      rowBytes: [...batch.rowBytes],
-      trailerBytes: Buffer.byteLength(batch.trailer)
-    });
-    const { body, trailer, marker } = batch;
-    let segment = state.segment || 1;
-    if (state.bytes + Buffer.byteLength(body + trailer) > LIMITS.segmentBytes || state.records + rows.length + 1 > LIMITS.segmentRecords)
-      segment++;
-    lease.assert();
-    const path2 = this.segmentPath(segment);
-    let before = this.files.read(path2, LIMITS.segmentBytes);
-    if (segment !== state.segment) {
-      if (before)
-        corrupt();
-      before = this.files.create(path2, "", LIMITS.segmentBytes);
-    }
-    if (!before || segment === state.segment && (before.bytes.length !== state.bytes || before.identity !== state.identity))
-      corrupt();
-    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
-    try {
-      lease.assert();
-      this.files.assert(path2, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync7(path2);
-      if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
-        corrupt();
-      beforeEffect?.();
-      await fd.writeFile(body);
-      await observer?.("journal");
-      lease.assert();
-      this.assertWritable();
-      beforeEffect?.();
-      await fd.writeFile(trailer);
-      await fd.sync();
-      await observer?.("commit");
-      lease.assert();
-      this.assertWritable();
-      const after = this.files.read(path2, LIMITS.segmentBytes);
-      if (!after || after.identity !== createHash5("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
-        corrupt();
-      return {
-        committedSeq: marker.last,
-        highSeq: marker.last,
-        committedBytes: after.bytes.length,
-        navigationRoot,
-        segment,
-        records: (segment === state.segment ? state.records : 0) + rows.length + 1,
-        tail: false,
-        bytes: after.bytes.length,
-        identity: after.identity
-      };
-    } finally {
-      await fd.close();
-    }
-  }
-  checkpoint(lease, state) {
-    lease.assert();
-    this.assertWritable();
-    const path2 = join9(this.directory, "checkpoint.json"), old = this.files.read(path2);
-    const body = encoded({
-      schema: "cadence-history-checkpoint/2",
-      storeId: this.format.storeId,
-      committedSeq: state.committedSeq,
-      segment: state.segment
-    });
-    if (old)
-      this.files.replace(path2, old, body);
-    else
-      this.files.create(path2, body);
-  }
-}
-function emptyScan() {
-  return {
-    committedSeq: "0",
-    segment: 0,
-    records: 0,
-    tail: false,
-    bytes: 0,
-    identity: null
-  };
-}
-
-// src/history/run-state.ts
-var uncertainSettlement = (completion) => completion.native.closure === "unconfirmed" || completion.recording.status === "pending" && completion.recording.selected !== null || completion.recording.status === "uncertain";
-var equal = (a, b) => canonicalJson(a) === canonicalJson(b);
-function requireFact(condition) {
-  if (!condition)
+  const archive = o.archive === null ? null : text(o.archive, 128, true);
+  if (archive !== null && !/^[0-9]{13}-[0-9a-f-]{36}$/.test(archive))
     throw new ContractError("corrupt-selected");
-}
-function publicationTransition(state, initial, fact, seq) {
-  if (fact.kind === "publication-intent") {
-    requireFact(!state.intent && state.status === "pending" || state.status === "published");
-    requireFact(fact.expectedRevision === (state.intent?.nextRevision ?? initial.revision) && fact.expectedIdentity === (state.intent?.nextIdentity ?? initial.identity));
-    return { intent: fact, status: "pending", seq };
-  }
-  if ((!state.intent && state.status === "pending" || state.intent && state.status === "published" && fact.publicationId !== state.intent.publicationId) && fact.status === "uncertain" && fact.observed === null)
-    return { ...state, status: "uncertain", seq };
-  requireFact(state.intent && state.status === "pending" && fact.publicationId === state.intent.publicationId);
-  if (fact.status === "published")
-    requireFact(fact.observed?.revision === state.intent.nextRevision && fact.observed.identity === state.intent.nextIdentity);
-  return { ...state, status: fact.status, seq };
-}
-class RunState {
-  runId;
-  command = null;
-  admission = null;
-  admittedSeq = null;
-  coverage = { ...COMPLETE, omissions: [...COMPLETE.omissions] };
-  auth = new Map;
-  children = new Map;
-  check = null;
-  settlement = null;
-  settledSeq = null;
-  publication = "pending";
-  recovered = false;
-  publicationSeq = null;
-  publicationIntent = null;
-  gate = null;
-  gates = new Map;
-  assignments = new Map;
-  admissionClosed = null;
-  constructor(runId) {
-    this.runId = runId;
-  }
-  copy() {
-    return Object.assign(new RunState(this.runId), structuredClone(this));
-  }
-  identity() {
-    requireFact(this.admission);
-    return this.admission;
-  }
-  owner(link) {
-    const identity = this.identity();
-    requireFact(link.runId === this.runId && link.taskId === identity.context.task?.id && link.epoch === identity.context.epoch && link.operationId === identity.operationId);
-    return identity;
-  }
-  worker(link) {
-    const identity = this.identity();
-    requireFact(link.runId === this.runId && link.taskId === identity.context.task?.id && link.epoch === identity.context.epoch && identity.assignments.some((a) => a.childRunId === link.childRunId));
-    return identity;
-  }
-  publicationExpected() {
-    const identity = this.command?.intent.identity;
-    requireFact(identity?.kind === "action" && (!this.publicationIntent || this.publication === "published"));
-    return {
-      revision: this.publicationIntent?.nextRevision ?? identity.expected.task?.revision ?? 0,
-      identity: this.publicationIntent?.nextIdentity ?? identity.expected.task?.identity ?? null
-    };
-  }
-  get unknownGate() {
-    return this.gate?.state === "unknown" || [...this.gates.values()].some((g) => g.state === "unknown");
-  }
-  get drained() {
-    return !["conflict", "uncertain"].includes(this.publication) && this.settlement !== null && settlementOutcome(this.settlement) !== "unknown" && [...this.auth.values()].every((a) => a.result !== null) && [...this.children.values()].every((c) => c.completion !== null && !uncertainSettlement(c.completion)) && (this.settlement.kind !== "check" || this.settlement.native.closure !== "unconfirmed") && (this.gate === null || this.gate.state === "released") && [...this.gates.values()].every((g) => g.state === "released");
-  }
-  apply(row, committedSeq) {
-    const v = row.value;
-    switch (v.kind) {
-      case "recovery":
-        if (this.command)
-          this.recovered = true;
-        return;
-      case "admission":
-        if (v.intent.runId !== this.runId || v.intent.identity.kind !== "action")
-          return;
-        requireFact(!this.command);
-        this.command = { intent: v.intent, record: v.record };
-        return;
-      case "auth-preparation": {
-        if (v.intent.runId !== this.runId)
-          return;
-        const i = this.identity();
-        requireFact(!this.settlement && !this.admissionClosed && v.intent.epoch === i.context.epoch && v.intent.sourceSelectionId === i.context.model.sourceSelectionId && i.assignments.some((a) => a.childRunId === v.intent.childRunId) && !this.auth.has(v.intent.operationId) && ![...this.auth.values()].some((a) => a.intent.childRunId === v.intent.childRunId));
-        this.auth.set(v.intent.operationId, { intent: v.intent, result: null });
-        return;
-      }
-      case "auth-settlement": {
-        const a = this.auth.get(v.result.operationId);
-        if (!a)
-          return;
-        requireFact(a.result === null);
-        a.result = v.result;
-        return;
-      }
-      case "launch": {
-        if (v.link.runId !== this.runId)
-          return;
-        const i = this.worker(v.link);
-        requireFact(!this.settlement && !this.admissionClosed && v.operationId === i.operationId && !this.children.has(v.link.childRunId));
-        const auth = [...this.auth.values()].find((a) => a.intent.childRunId === v.link.childRunId);
-        requireFact(auth?.result?.outcome === "resolved" && !auth.result.admissionClosed);
-        this.children.set(v.link.childRunId, {
-          link: v.link,
-          completion: null,
-          settlementSeq: null,
-          coverage: { ...COMPLETE, omissions: [] }
-        });
-        return;
-      }
-      case "settlement": {
-        if (v.link.runId !== this.runId)
-          return;
-        this.worker(v.link);
-        const child = this.children.get(v.link.childRunId);
-        requireFact(child && !child.completion && equal(child.link, v.link) && !this.settlement);
-        child.completion = v.completion;
-        child.settlementSeq = committedSeq;
-        this.coverage = combineCoverage(this.coverage, v.completion.native.capture);
-        return;
-      }
-      case "capture": {
-        if (v.link.runId !== this.runId)
-          return;
-        this.worker(v.link);
-        const child = this.children.get(v.link.childRunId);
-        requireFact(child && !child.completion && equal(child.link, v.link));
-        for (const e of v.events) {
-          const coverage = e.kind === "end" ? e.detail.coverage : e.kind === "capture" ? captureCoverage(e.value.event) : null;
-          if (coverage) {
-            child.coverage = combineCoverage(child.coverage, coverage);
-            this.coverage = combineCoverage(this.coverage, coverage);
-          }
-        }
-        return;
-      }
-      case "owner":
-        if (v.link.runId !== this.runId)
-          return;
-        for (const e of v.events)
-          if (e.kind === "owner" && e.value.kind === "fact")
-            this.fact(v.link, e.value.fact, committedSeq);
-        return;
-      default:
-        return;
-    }
-  }
-  fact(link, fact, seq) {
-    if (fact.kind === "parent-admitted") {
-      const command = this.command;
-      requireFact(!this.admission && command && command.intent.identity.kind === "action");
-      const requested = command.intent.identity;
-      requireFact(fact.runId === this.runId && fact.identity.operationId === command.intent.operationId && fact.identity.commandId === command.intent.commandId && fact.identity.kind === requested.action.kind && equal(fact.identity.context, requested.expected));
-      this.admission = fact.identity;
-      this.owner(link);
-      this.admittedSeq = seq;
-      return;
-    }
-    if (["review", "changes", "handoff"].includes(fact.kind)) {
-      const identity = this.identity();
-      requireFact(link.taskId === identity.context.task?.id && (fact.kind !== "handoff" || link.epoch === identity.context.epoch));
-      return;
-    }
-    if (!this.admission && fact.kind === "publication-settled") {
-      const command = this.command;
-      requireFact(command?.intent.identity.kind === "action");
-      const expected = command.intent.identity.expected;
-      requireFact(expected.task && link.runId === this.runId && link.operationId === command.intent.operationId && link.epoch === expected.epoch && link.taskId === expected.task.id && fact.status === "uncertain" && fact.observed === null);
-      this.applyPublication(expected.task, fact, seq);
-      return;
-    }
-    const i = this.owner(link);
-    const task = i.context.task;
-    requireFact(task);
-    switch (fact.kind) {
-      case "parent-settled": {
-        requireFact(i.kind !== "check" && !this.settlement && equal(fact.settlement.required.map(({ assignmentId: assignmentId2, childRunId }) => ({
-          assignmentId: assignmentId2,
-          childRunId
-        })), i.assignments));
-        for (const required of fact.settlement.required) {
-          const child = this.children.get(required.childRunId);
-          if (child)
-            requireFact(child.completion && equal(required.native, child.completion.native) && equal(required.recording, child.completion.recording) && required.settlementSeq === child.settlementSeq);
-          else
-            requireFact(required.native === null && required.settlementSeq === null && required.recording.status !== "committed" && required.recording.selected === null);
-        }
-        requireFact([...this.auth.values()].every((a) => a.result !== null));
-        this.settlement = fact.settlement;
-        this.settledSeq = seq;
-        return;
-      }
-      case "check-start": {
-        const command = this.command?.intent.identity;
-        requireFact(i.kind === "check" && !this.check && !this.settlement && command?.kind === "action" && command.action.kind === "check");
-        requireFact(equal(fact.selection, command.action.check) && fact.cwdId === i.context.cwdId && fact.checkEnvGeneration === i.context.checkEnvGeneration && fact.before.identity === i.context.observation.identity && fact.before.complete === i.context.observation.complete && fact.before.checkoutGeneration === i.context.checkoutGeneration);
-        this.check = fact;
-        return;
-      }
-      case "check-settled":
-        requireFact(this.check && !this.settlement && fact.checkId === this.check.checkId && equal(fact.before, this.check.before));
-        if (fact.ownAdvance) {
-          const advance = fact.ownAdvance, gate = this.gates.get(fact.checkId);
-          requireFact(advance.operationId === i.operationId && advance.reservationId === this.check.checkId && gate?.lane === "check" && gate.state === "held" && gate.checkoutGeneration === advance.from && fact.before.checkoutGeneration === advance.from && fact.after.checkoutGeneration === advance.to && advance.to === advance.from + 1);
-        }
-        this.settlement = {
-          kind: "check",
-          native: fact.native,
-          capture: fact.coverage,
-          settlementSeq: seq
-        };
-        this.settledSeq = seq;
-        this.coverage = combineCoverage(this.coverage, fact.coverage);
-        return;
-      case "admission-closed":
-        requireFact(!this.settlement && !this.admissionClosed);
-        this.admissionClosed = fact;
-        return;
-      case "assignment-state": {
-        requireFact(!this.settlement && i.assignments.some((a) => a.childRunId === fact.childRunId));
-        const previous = this.assignments.get(fact.childRunId);
-        const launched = this.children.has(fact.childRunId);
-        requireFact(previous?.state !== "unstarted");
-        if (fact.state === "unstarted")
-          requireFact(!launched);
-        if (["waiting", "ready", "preparing"].includes(fact.state))
-          requireFact(!launched && !this.admissionClosed && previous?.state !== "closing");
-        if (previous?.state === "preparing")
-          requireFact(fact.state === "closing" || fact.state === "unstarted");
-        this.assignments.set(fact.childRunId, fact);
-        return;
-      }
-      case "gate": {
-        requireFact(fact.reservationId ? this.gate === null : this.gates.size === 0);
-        requireFact(fact.lane === "check" === (i.kind === "check"));
-        if (fact.lane === "writer")
-          requireFact(i.kind === "start" && i.context.task?.kind === "code");
-        if (fact.reservationId)
-          requireFact(i.kind === "check" ? this.check?.checkId === fact.reservationId : i.assignments.some((a) => a.childRunId === fact.reservationId));
-        const previous = fact.reservationId ? this.gates.get(fact.reservationId) : this.gate;
-        if (fact.state === "waiting")
-          requireFact(!this.settlement && !this.admissionClosed && (!previous || previous.state === "released"));
-        if (fact.state === "held")
-          requireFact(!this.settlement && !this.admissionClosed && (!previous || previous.state === "waiting" || previous.state === "released"));
-        if (fact.state === "released")
-          requireFact(previous?.state === "held" && previous.lane === fact.lane);
-        if (fact.reservationId && fact.state === "released" && i.kind !== "check") {
-          const child = this.children.get(fact.reservationId);
-          requireFact([...this.auth.values()].every((a) => a.intent.childRunId !== fact.reservationId || a.result !== null) && (!child || child.completion !== null && !uncertainSettlement(child.completion)));
-        }
-        if (fact.reservationId && fact.state === "released" && i.kind === "check")
-          requireFact(this.settlement?.kind === "check" && this.settlement.native.closure !== "unconfirmed");
-        if (fact.reservationId && fact.state === "held")
-          requireFact([...this.gates.entries()].every(([id, gate]) => id === fact.reservationId || gate.state === "released" || gate.state === "waiting" || gate.state === "held" && gate.lane === "reader" && fact.lane === "reader"));
-        if (previous)
-          requireFact(fact.checkoutGeneration >= previous.checkoutGeneration && previous.state !== "unknown");
-        if (fact.reservationId)
-          this.gates.set(fact.reservationId, fact);
-        else
-          this.gate = fact;
-        return;
-      }
-      case "publication-intent":
-      case "publication-settled": {
-        this.applyPublication(task, fact, seq);
-        return;
-      }
-    }
-  }
-  applyPublication(initial, fact, seq) {
-    const next = publicationTransition({
-      intent: this.publicationIntent,
-      status: this.publication,
-      seq: this.publicationSeq
-    }, initial, fact, seq);
-    this.publicationIntent = next.intent;
-    this.publication = next.status;
-    this.publicationSeq = next.seq;
-  }
-  projections(epoch) {
-    if (!this.admission)
-      return [];
-    const observation = {
-      admission: this.admission,
-      recovered: this.recovered,
-      publication: this.publication,
-      gate: this.gate,
-      admissionClosed: this.admissionClosed,
-      unknownGate: this.unknownGate,
-      settlement: this.settlement,
-      coverage: this.coverage,
-      children: this.children.size,
-      auth: this.auth.size,
-      closed: [...this.children.values()].filter((c) => c.completion !== null).length,
-      uncertain: [...this.children.values()].some((c) => c.completion && uncertainSettlement(c.completion)),
-      check: this.check !== null
-    };
-    return [
-      projectRunObservation(this.runId, epoch, observation, null),
-      ...this.admission.assignments.map((a) => {
-        const child = this.children.get(a.childRunId);
-        return projectRunObservation(this.runId, epoch, observation, {
-          ...a,
-          state: this.assignments.get(a.childRunId) ?? null,
-          prepared: [...this.auth.values()].some((x) => x.intent.childRunId === a.childRunId),
-          launched: !!child,
-          completion: child?.completion ?? null,
-          settlementSeq: child?.settlementSeq ?? null,
-          coverage: child?.coverage ?? COMPLETE
-        });
-      })
-    ];
-  }
-  receipt() {
-    if (!this.command)
-      return null;
-    return {
-      identity: this.command.record.identity,
-      receipt: {
-        ...this.command.record.receipt,
-        execution: this.settlement ? settlementOutcome(this.settlement) : null,
-        settlement: this.settlement,
-        publication: this.publication,
-        committedSeq: [this.publicationSeq, this.settledSeq].reduce((latest, seq) => seq !== null && compareSequence(seq, latest) > 0 ? seq : latest, this.command.record.receipt.committedSeq)
-      }
-    };
-  }
-}
-function projectRunObservation(runId, epoch, o, child) {
-  const admission = o.admission, task = admission.context.task;
-  requireFact(task);
-  const old = admission.context.epoch !== epoch || o.recovered;
-  if (child) {
-    const settlement = child.completion && child.settlementSeq ? {
-      kind: "sdk",
-      native: child.completion.native,
-      recording: child.completion.recording,
-      settlementSeq: child.settlementSeq
-    } : null;
-    const outcome2 = settlement ? settlementOutcome(settlement) : o.settlement ? "blocked" : old ? "unknown" : null;
-    return {
-      runId,
-      taskId: task.id,
-      childRunId: child.childRunId,
-      assignmentId: child.assignmentId,
-      admission,
-      lifecycle: outcome2 !== null ? "settled" : child.state?.state === "closing" ? "closing" : child.launched ? "running" : child.prepared ? "preparing" : "queued",
-      outcome: outcome2,
-      settlement,
-      reason: old && !settlement && !o.settlement || child.completion && uncertainSettlement(child.completion) ? "quarantine" : child.state?.reason ?? (o.settlement && !child.launched ? "parent-stopped" : null),
-      publication: o.publication,
-      coverage: combineCoverage(child.coverage, child.completion?.native.capture ?? COMPLETE),
-      result: child.completion?.recording.status === "committed" ? child.completion.recording.detail.content : null
-    };
-  }
-  const uncertain = o.unknownGate || o.gate?.state === "unknown" || o.uncertain || o.settlement?.kind === "check" && o.settlement.native.closure === "unconfirmed" || ["conflict", "uncertain"].includes(o.publication);
-  const closing = !!o.admissionClosed || uncertain || admission.assignments.length > 0 && o.children === admission.assignments.length && o.closed === o.children;
-  const outcome = o.settlement ? settlementOutcome(o.settlement) : old ? "unknown" : null;
   return {
-    runId,
-    taskId: task.id,
-    childRunId: null,
-    assignmentId: null,
-    admission,
-    lifecycle: outcome !== null ? "settled" : closing ? "closing" : o.children || o.check ? "running" : o.auth ? "preparing" : "queued",
-    outcome,
-    settlement: o.settlement,
-    reason: old && !o.settlement || uncertain ? "quarantine" : o.admissionClosed ? ["wait-expired", "handoff-overflow", "stale-dependency"].includes(o.admissionClosed.reason) ? o.admissionClosed.reason : "parent-stopped" : o.gate?.state === "waiting" ? "writer" : null,
-    publication: o.publication,
-    coverage: o.coverage,
-    result: null
+    schema: literal(o.schema, "cadence-recovery-event/1"),
+    id: decodeId(o.id),
+    at: integer(o.at, 0),
+    scope: oneOf(o.scope, RECOVERY_SCOPES),
+    path: o.path === null ? null : text(o.path, 4096, true),
+    cause: oneOf(o.cause, RECOVERY_CAUSES),
+    actions: list(o.actions, RECOVERY_ACTIONS.length, (a) => oneOf(a, RECOVERY_ACTIONS)),
+    workers: integer(o.workers, 0, 1e6),
+    archive
   };
 }
-
-// src/history/recovery.ts
-function digestHistory(files, exclude) {
-  files.assertFormat();
-  const digest = createHash6("sha256");
-  let count = 0;
-  const walk = (path2, depth) => {
-    if (depth > 8 || !files.files.directory(path2))
-      throw new ContractError("corrupt-selected");
-    const directory2 = lstatSync8(path2);
-    digest.update(`incarnation:${directory2.dev}:${directory2.ino}
-`);
-    const dir = opendirSync4(path2), names2 = [];
-    try {
-      for (let e = dir.readSync();e; e = dir.readSync()) {
-        if (++count > LIMITS.dataFrames)
-          throw new ContractError("capacity");
-        names2.push(e.name);
-      }
-    } finally {
-      dir.closeSync();
-    }
-    for (const name of names2.sort()) {
-      const selected2 = join10(path2, name);
-      if (selected2 === exclude)
-        continue;
-      const rel = relative4(files.directory, selected2);
-      if (lstatSync8(selected2).isDirectory()) {
-        digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
-`);
-        walk(selected2, depth + 1);
-      } else {
-        const value = files.files.read(selected2, LIMITS.segmentBytes);
-        if (!value)
-          throw new ContractError("conflict");
-        digest.update(`file:${Buffer.byteLength(rel)}:${rel}:${value.stamp}:${value.bytes.length}:`).update(value.bytes);
-      }
-    }
-  };
-  walk(files.directory, 0);
-  files.assertFormat();
-  return digest.digest("hex");
-}
-
-class HistoryRecovery {
-  coordination;
-  committed = new WeakMap;
-  constructor(coordination) {
-    this.coordination = coordination;
-  }
-  files() {
-    const files = HistoryFiles.open(this.coordination);
-    if (!files)
-      throw new ContractError("unavailable");
-    return files;
-  }
-  assertCommitted(fact) {
-    const assert = this.committed.get(fact);
-    if (!assert)
-      throw new ContractError("conflict");
-    assert();
-  }
-  async inspect(epoch) {
-    decodeId(epoch);
-    const files = this.files(), before = digestHistory(files), state = emptyScan();
-    const auth = new Set, processes = new Set, publication = new Set, unfinished = new Set, metadata = new Set, runs = new Map;
-    for (const batch of files.scan(state))
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (v.kind === "recovery") {
-          auth.clear();
-          processes.clear();
-          publication.clear();
-          unfinished.clear();
-          metadata.clear();
-          runs.clear();
-        }
-        if (v.kind === "admission" && v.intent.identity.kind === "action") {
-          if (v.intent.runId) {
-            if (runs.size >= LIMITS.episodes || runs.has(v.intent.runId))
-              throw new ContractError("corrupt-selected");
-            runs.set(v.intent.runId, new RunState(v.intent.runId));
-          } else
-            metadata.add(v.intent.operationId);
-        }
-        for (const [id, state2] of runs) {
-          state2.apply(row, batch.marker.last);
-          if (state2.drained)
-            runs.delete(id);
-        }
-        if (v.kind === "capture" || v.kind === "owner")
-          for (const e of v.events) {
-            if (e.kind === "capture" && e.value.event.kind === "detail-begin" && v.kind === "capture")
-              unfinished.add(`worker/${v.link.childRunId}/${e.value.event.detailId}`);
-            if (e.kind === "owner" && e.value.kind === "content-begin" && v.kind === "owner")
-              unfinished.add(`owner/${v.link.operationId}/${e.value.detailId}`);
-            if (e.kind === "end")
-              unfinished.delete(`${e.detail.origin.kind}/${e.detail.origin.id}/${e.detail.detailId}`);
-          }
-        if (v.kind === "auth-preparation")
-          auth.add(v.intent.operationId);
-        if (v.kind === "auth-settlement")
-          auth.delete(v.result.operationId);
-        if (v.kind === "launch")
-          processes.add(v.link.childRunId);
-        if (v.kind === "settlement" && v.completion.native.closure !== "unconfirmed")
-          processes.delete(v.link.childRunId);
-        if (v.kind === "owner") {
-          for (const e of v.events)
-            if (e.kind === "owner" && e.value.kind === "fact") {
-              const f = e.value.fact;
-              if (f.kind === "check-start")
-                processes.add(f.checkId);
-              if (f.kind === "check-settled" && f.native.closure !== "unconfirmed")
-                processes.delete(f.checkId);
-              if (f.kind === "publication-intent")
-                publication.add(f.publicationId);
-              if (f.kind === "publication-settled") {
-                if (f.status === "published") {
-                  publication.delete(f.publicationId);
-                  metadata.delete(v.link.operationId);
-                } else
-                  publication.add(f.publicationId);
-              }
-            }
-        }
-      }
-    if (before !== digestHistory(files))
-      throw new ContractError("conflict");
-    return {
-      digest: before,
-      processes: processes.size ? "unknown" : "externally-resolved",
-      credentials: auth.size ? "unknown" : "independently-resolved",
-      storage: state.tail || publication.size || unfinished.size || metadata.size || runs.size ? "unknown" : "independently-resolved"
-    };
-  }
-  async append(confirmation, observeWrite) {
-    if (typeof confirmation.assertLocalAuthority !== "function" || confirmation.acknowledgeEscapedProcesses !== true || confirmation.processes !== "externally-resolved" || confirmation.credentials !== "independently-resolved" || confirmation.storage !== "independently-resolved")
-      throw new ContractError("forbidden");
-    const expected = structuredClone(confirmation.expected), files = this.files();
-    files.assertWritable();
-    if (!expected.history || expected.owner !== "absent")
-      throw new ContractError("quarantine");
-    const current = await inspectRecovery(this.coordination, this);
-    if (JSON.stringify(current) !== JSON.stringify(expected))
-      throw new ContractError("conflict");
-    const state = files.inspect(), recoveryId = randomUUID7();
-    const bridge = {
-      kind: "recovery",
-      recoveryId,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      previous: {
-        segment: state.segment,
-        bytes: state.bytes,
-        sha256: state.identity ?? hash(""),
-        committedBytes: state.committedBytes ?? state.bytes,
-        committedSeq: state.committedSeq,
-        highSeq: state.highSeq ?? state.committedSeq
-      },
-      acknowledgments: { processes: true, credentials: true, storage: true }
-    };
-    const path2 = files.segmentPath(state.segment + 1);
-    const assertCurrent = async () => {
-      await confirmation.assertLocalAuthority(structuredClone(expected));
-      const selected2 = await inspectRecovery(this.coordination);
-      if (selected2.owner !== "absent")
-        throw new ContractError("quarantine");
-      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path2) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
-        throw new ContractError("conflict");
-    };
-    await confirmation.assertLocalAuthority(structuredClone(expected));
-    if (digestHistory(files) !== expected.history.digest)
-      throw new ContractError("conflict");
-    const row = {
-      kind: "record",
-      id: randomUUID7(),
-      seq: String(BigInt(bridge.previous.highSeq) + 1n),
-      value: bridge
-    };
-    let quota = LIMITS.checkoutQuotaBytes;
-    for (const batch of files.scan())
-      for (const row2 of batch.rows)
-        if (row2.value.kind === "admission" && row2.value.policy)
-          quota = row2.value.policy.quotaBytes;
-    const bytes = Buffer.byteLength(files.encodeBatch(state, [row]).body + files.encodeBatch(state, [row]).trailer);
-    if (files.usage() + bytes > quota || files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes)
-      throw new ContractError("recording-exhausted");
-    const after = await files.appendRecovery(state, row, assertCurrent, observeWrite);
-    const assert = () => {
-      files.assertWritable();
-      files.assertRecoveryIdle();
-      files.files.assert(path2, after.snapshot, LIMITS.segmentBytes);
-      if (digestHistory(files, path2) !== expected.history?.digest)
-        throw new ContractError("conflict");
-    };
-    assert();
-    const fact = {
-      recoveryId,
-      committedSeq: after.state.committedSeq,
-      epoch: expected.epoch,
-      coordinationDigest: expected.coordinationDigest,
-      historyDigest: expected.history.digest,
-      segmentIdentity: after.state.identity ?? ""
-    };
-    this.committed.set(fact, assert);
-    return fact;
-  }
-}
-
-// src/verification-diagnostics.ts
-function diagnosticText(value, maximum = 4096, secrets = []) {
-  maximum = Math.max(0, Math.floor(maximum));
-  let clean = value;
-  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
-    clean = clean.split(secret).join("[redacted]");
-  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
-  if (Buffer.byteLength(clean) <= maximum)
-    return clean;
-  const marker = maximum >= 12 ? `
-[truncated]` : ".".repeat(maximum);
-  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
-  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
-}
-
-// src/service/gateway-recovery.ts
-import { opendirSync as opendirSync5 } from "node:fs";
-import { hostname as hostname4 } from "node:os";
-import { join as join11 } from "node:path";
-function required(resources, name) {
-  const file = resources.get(name);
-  if (!file)
-    throw new ContractError("corrupt-selected");
-  return file;
-}
-function names2(store, path2, maximum) {
-  if (!store.files.directory(path2))
-    return [];
-  const stream = opendirSync5(path2), out = [];
+function entries(path2, maximum = 4096) {
+  const out = [];
+  let dir;
   try {
-    for (let row = stream.readSync();row; row = stream.readSync()) {
-      if (out.length >= maximum || !row.isFile() && !row.isDirectory())
-        throw new ContractError("corrupt-selected");
-      out.push(row.name);
-    }
+    dir = opendirSync3(path2);
+  } catch {
+    return out;
+  }
+  try {
+    for (let e = dir.readSync();e && out.length < maximum; e = dir.readSync())
+      out.push(e.name);
   } finally {
-    stream.closeSync();
+    dir.closeSync();
   }
   return out.sort();
 }
-function capture(store) {
-  const out = new Map;
-  const keep = (name) => {
-    const file = store.files.read(store.path(name));
-    if (!file)
-      throw new ContractError("corrupt-selected");
-    out.set(name, file);
-  };
-  for (const name of names2(store, store.directory, 9)) {
-    if ([
-      "gateway.json",
-      "gateway.lock",
-      "input.json",
-      "access-config.json",
-      "access.json"
-    ].includes(name))
-      keep(name);
-    else if (name === "projects" || name === "commands") {
-      for (const child of names2(store, store.path(name), name === "projects" ? 128 : 2048)) {
-        if (name === "projects" ? !/^[a-f0-9]{64}\.json$/.test(child) : !/^[a-f0-9-]{36}(?:\.result)?\.json$/.test(child))
-          throw new ContractError("corrupt-selected");
-        keep(`${name}/${child}`);
-      }
-    } else if (name !== "recovery-v1" || !store.files.directory(store.path(name)))
-      throw new ContractError("corrupt-selected");
+function size(path2, limit = { left: 1e5 }) {
+  let st;
+  try {
+    st = lstatSync6(path2);
+  } catch {
+    return 0;
   }
-  for (const name of [
-    "gateway.json",
-    "input.json",
-    "access-config.json",
-    "access.json"
-  ])
-    if (!out.has(name))
-      throw new ContractError("corrupt-selected");
-  for (const [name, file] of out) {
-    if (!name.startsWith("commands/"))
-      continue;
-    if (name.endsWith(".result.json")) {
-      if (!out.has(name.replace(".result.json", ".json")))
-        throw new ContractError("corrupt-selected");
-      decodeProjectEntry(json(file));
-    } else {
-      decodeId(name.slice("commands/".length, -5));
-      const intent = closed(json(file), ["path", "epoch"]);
-      text(intent.path, 4096, true);
-      decodeId(intent.epoch);
+  if (--limit.left < 0)
+    return st.size;
+  if (!st.isDirectory())
+    return st.size;
+  let total = 0;
+  for (const name of entries(path2, 1e5))
+    total += size(join9(path2, name), limit);
+  return total;
+}
+
+class RecoveryLog {
+  files;
+  logDirectory;
+  archiveDirectory;
+  constructor(files) {
+    this.files = files;
+    this.logDirectory = join9(files.namespace, "recovery-log-v1");
+    this.archiveDirectory = join9(files.namespace, "recovery-archive-v1");
+  }
+  archive() {
+    const name = `${Date.now()}-${randomUUID6()}`;
+    const directory2 = join9(this.archiveDirectory, name);
+    let used = false;
+    return {
+      name,
+      keep: (path2, as) => {
+        const rel = relative4(this.files.namespace, path2);
+        if (!rel || rel.startsWith(".."))
+          throw new ContractError("forbidden");
+        this.files.directory(directory2, true);
+        const target = join9(directory2, as ?? rel.split(/[\\/]/).join("--"));
+        retryWindowsFileOperation(() => renameSync3(path2, target));
+        used = true;
+      },
+      used: () => used
+    };
+  }
+  record(event) {
+    try {
+      const latest = this.latestFile();
+      if (latest && latest.value.scope === event.scope && latest.value.path === event.path && Date.now() - latest.value.at < RECOVERY_MERGE_MS) {
+        const merged = {
+          ...latest.value,
+          actions: [...new Set([...latest.value.actions, ...event.actions])],
+          workers: latest.value.workers + event.workers,
+          archive: latest.value.archive ?? event.archive
+        };
+        this.files.replace(latest.path, latest.snapshot, encoded(decodeRecoveryEvent(merged)), EVENT_BYTES);
+        return merged;
+      }
+    } catch {}
+    const value = {
+      schema: "cadence-recovery-event/1",
+      id: randomUUID6(),
+      at: Date.now(),
+      ...event
+    };
+    decodeRecoveryEvent(value);
+    try {
+      this.files.create(join9(this.logDirectory, `${value.at}-${value.id}.json`), encoded(value), EVENT_BYTES);
+      this.prune();
+    } catch {}
+    return value;
+  }
+  latestFile() {
+    for (const name of entries(this.logDirectory).reverse()) {
+      if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
+        continue;
+      const path2 = join9(this.logDirectory, name);
+      const snapshot = this.files.read(path2, EVENT_BYTES);
+      if (!snapshot)
+        return;
+      return {
+        path: path2,
+        snapshot,
+        value: decodeRecoveryEvent(json(snapshot, EVENT_BYTES))
+      };
     }
+    return;
+  }
+  events(limit = 20) {
+    const out = [];
+    for (const name of entries(this.logDirectory).reverse()) {
+      if (out.length >= limit)
+        break;
+      if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
+        continue;
+      try {
+        const file = this.files.read(join9(this.logDirectory, name), EVENT_BYTES);
+        if (file)
+          out.push(decodeRecoveryEvent(json(file, EVENT_BYTES)));
+      } catch {}
+    }
+    return out;
+  }
+  prune(now = Date.now()) {
+    const names2 = entries(this.logDirectory);
+    for (const name of names2.slice(0, Math.max(0, names2.length - RECOVERY_EVENTS)))
+      rmSync2(join9(this.logDirectory, name), { force: true });
+    const archived = entries(this.archiveDirectory).filter((name) => /^[0-9]{13}-[0-9a-f-]{36}$/.test(name));
+    const kept = [];
+    for (const name of archived) {
+      const path2 = join9(this.archiveDirectory, name);
+      if (now - Number(name.slice(0, 13)) > RECOVERY_ARCHIVE_MS)
+        rmSync2(path2, { recursive: true, force: true });
+      else
+        kept.push({ name, bytes: size(path2) });
+    }
+    let total = kept.reduce((sum, entry) => sum + entry.bytes, 0);
+    for (const entry of kept) {
+      if (total <= RECOVERY_ARCHIVE_BYTES)
+        break;
+      rmSync2(join9(this.archiveDirectory, entry.name), {
+        recursive: true,
+        force: true
+      });
+      total -= entry.bytes;
+    }
+  }
+  notices(limit = 10, now = Date.now()) {
+    return this.events(limit).filter((e) => now - e.at < RECOVERY_NOTICE_MS).map((e) => ({
+      id: e.id,
+      at: e.at,
+      scope: e.scope,
+      path: e.path,
+      cause: e.cause,
+      actions: e.actions,
+      workers: e.workers,
+      archived: e.archive !== null
+    }));
+  }
+  usage() {
+    const names2 = entries(this.archiveDirectory);
+    return {
+      entries: names2.length,
+      bytes: names2.reduce((sum, name) => sum + size(join9(this.archiveDirectory, name)), 0)
+    };
+  }
+}
+function strayTemporaries(directory2) {
+  return entries(directory2).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join9(directory2, name));
+}
+
+// src/service/self-heal.ts
+import { createHash as createHash4, randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { hostname as hostname5 } from "node:os";
+import { join as join11 } from "node:path";
+
+// src/service/process-ledger.ts
+import { rmSync as rmSync3 } from "node:fs";
+import { join as join10 } from "node:path";
+var LEDGER_BYTES = 64 * 1024;
+var LEDGER_WORKERS = 512;
+function decode2(value) {
+  const o = closed(value, ["schema", "epoch", "boot", "restart", "workers"]);
+  return {
+    schema: literal(o.schema, "cadence-process-ledger/1"),
+    epoch: decodeId(o.epoch),
+    boot: o.boot === null ? null : text(o.boot, 128, true),
+    restart: o.restart === true,
+    workers: list(o.workers, LEDGER_WORKERS, (w) => {
+      const row = closed(w, ["pid", "started"]);
+      return {
+        pid: integer(row.pid, 1, 2147483647),
+        started: row.started === null ? null : text(row.started, 128, true)
+      };
+    })
+  };
+}
+
+class ProcessLedger {
+  files;
+  directory;
+  constructor(files) {
+    this.files = files;
+    this.directory = join10(files.namespace, "process-ledger-v1");
+  }
+  path(epoch) {
+    return join10(this.directory, `${decodeId(epoch)}.json`);
+  }
+  file(epoch) {
+    try {
+      const snapshot = this.files.read(this.path(epoch), LEDGER_BYTES);
+      return snapshot ? decode2(json(snapshot, LEDGER_BYTES)) : null;
+    } catch {
+      return null;
+    }
+  }
+  read(epoch) {
+    const file = this.file(epoch);
+    return file ? file.workers.map((w) => ({ ...w, boot: file.boot })) : [];
+  }
+  restartRequested(epoch) {
+    return this.file(epoch)?.restart === true;
+  }
+  remove(epoch) {
+    try {
+      rmSync3(this.path(epoch), { force: true });
+    } catch {}
+  }
+  open(epoch) {
+    return new LiveLedger(this, epoch);
+  }
+}
+
+class LiveLedger {
+  ledger;
+  epoch;
+  snapshot;
+  value;
+  constructor(ledger, epoch) {
+    this.ledger = ledger;
+    this.epoch = epoch;
+    this.value = {
+      schema: "cadence-process-ledger/1",
+      epoch: decodeId(epoch),
+      boot: bootId(),
+      restart: false,
+      workers: []
+    };
+    this.write();
+  }
+  write() {
+    try {
+      const path2 = this.ledger.path(this.epoch);
+      const bytes = encoded(this.value);
+      this.snapshot = this.snapshot ? this.ledger.files.replace(path2, this.snapshot, bytes, LEDGER_BYTES) : this.ledger.files.create(path2, bytes, LEDGER_BYTES);
+    } catch {
+      this.snapshot = undefined;
+      try {
+        const path2 = this.ledger.path(this.epoch);
+        const current = this.ledger.files.read(path2, LEDGER_BYTES);
+        this.snapshot = current ? this.ledger.files.replace(path2, current, encoded(this.value), LEDGER_BYTES) : this.ledger.files.create(path2, encoded(this.value), LEDGER_BYTES);
+      } catch {
+        this.snapshot = undefined;
+      }
+    }
+  }
+  get workers() {
+    return this.value.workers;
+  }
+  add(pid) {
+    if (this.value.workers.length >= LEDGER_WORKERS)
+      return;
+    this.value.workers = [
+      ...this.value.workers.filter((w) => w.pid !== pid),
+      { pid, started: processStart(pid) }
+    ];
+    this.write();
+  }
+  remove(pid) {
+    const before = this.value.workers.length;
+    this.value.workers = this.value.workers.filter((w) => w.pid !== pid);
+    if (this.value.workers.length !== before)
+      this.write();
+  }
+  requestRestart() {
+    this.value.restart = true;
+    this.write();
+  }
+  close() {
+    this.ledger.remove(this.epoch);
+    this.snapshot = undefined;
+  }
+}
+
+// src/service/self-heal.ts
+function attempt(read) {
+  try {
+    return read();
+  } catch {
+    return null;
+  }
+}
+function readFile(files, path2, decode3, maximum) {
+  let snapshot;
+  try {
+    snapshot = files.read(path2, maximum);
+  } catch {
+    return "unreadable";
+  }
+  if (!snapshot)
+    return;
+  const bytes = snapshot;
+  return {
+    path: path2,
+    snapshot: bytes,
+    value: attempt(() => decode3(json(bytes, maximum)))
+  };
+}
+function decodeOwnerLock(value) {
+  const o = closed(value, markedKeys(value, ["schema", "epoch", "token", "pid", "host"]));
+  if (o.schema !== "cadence-service-owner-lock/1")
+    throw new ContractError("corrupt-selected");
+  return {
+    epoch: decodeId(o.epoch),
+    pid: integer(o.pid, 1, 2147483647),
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
+  };
+}
+function decodeCheckoutLock(value) {
+  if (!value || typeof value !== "object")
+    throw new ContractError("corrupt-selected");
+  const o = value;
+  if (o.schema !== "cadence-assistant-lock/1")
+    throw new ContractError("corrupt-selected");
+  return {
+    epoch: null,
+    pid: integer(o.pid, 1, 2147483647),
+    host: text(o.host, 255, true),
+    ...decodeMarkFields(o)
+  };
+}
+function decodeRegistrationLenient(value) {
+  const o = value;
+  if (o?.schema !== "cadence-service-registration/1" || !["idle", "stopping", "quarantined", "stopped"].includes(o.phase))
+    throw new ContractError("corrupt-selected");
+  integer(o.pid, 1, 2147483647);
+  text(o.host, 255, true);
+  decodeId(o.epoch);
+  return o;
+}
+function combine(holders) {
+  const order = ["foreign", "unknown", "live", "dead"];
+  const worst = order.find((state) => holders.some((h) => h.state === state)) ?? "dead";
+  return {
+    state: worst,
+    worst,
+    reboot: holders.length > 0 && holders.every((h) => h.reboot)
+  };
+}
+async function stopWorkers(ledger, epoch, reboot, inspect) {
+  if (!epoch || reboot)
+    return { stopped: 0, running: 0 };
+  let stopped = 0, running = 0;
+  for (const worker of ledger.read(epoch)) {
+    const holder = holderState({ ...worker, host: hostname5() });
+    if (holder.state !== "live")
+      continue;
+    if (!worker.started) {
+      running++;
+      continue;
+    }
+    if (inspect) {
+      stopped++;
+      continue;
+    }
+    if (await stopProcessGroup(worker.pid))
+      stopped++;
+    else
+      running++;
+  }
+  return { stopped, running };
+}
+async function stopOwnerProcess(pid) {
+  if (pid === process.pid)
+    return false;
+  const gone = () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return error instanceof Error && "code" in error && error.code === "ESRCH";
+    }
+  };
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return gone();
+  }
+  for (let n = 0;n < 50; n++) {
+    await new Promise((resolve5) => setTimeout(resolve5, 100));
+    if (gone())
+      return true;
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+  for (let n = 0;n < 20; n++) {
+    await new Promise((resolve5) => setTimeout(resolve5, 100));
+    if (gone())
+      return true;
+  }
+  return false;
+}
+
+class RegistryHealer {
+  c;
+  log;
+  ledger;
+  constructor(c) {
+    this.c = c;
+    this.log = new RecoveryLog(c.files);
+    this.ledger = new ProcessLedger(c.files);
+  }
+  path(name) {
+    return join11(this.c.registryDirectory, name);
+  }
+  async heal(options = {}) {
+    const lockPath = this.path("registry.lock");
+    let lock;
+    try {
+      lock = this.c.files.read(lockPath);
+    } catch {
+      lock = undefined;
+      const age = (() => {
+        try {
+          return Date.now() - lstatSync7(lockPath).mtimeMs;
+        } catch {
+          return 0;
+        }
+      })();
+      if (age > 60000) {
+        if (options.inspect)
+          return { status: "reclaimable", cause: "storage", workers: 0 };
+        const archive2 = this.log.archive();
+        archive2.keep(lockPath);
+        return {
+          status: "healed",
+          event: this.log.record({
+            scope: "registry",
+            path: null,
+            cause: "storage",
+            actions: ["released-locks"],
+            workers: 0,
+            archive: archive2.name
+          })
+        };
+      }
+    }
+    const actions = new Set;
+    let cause = "storage";
+    let archive;
+    if (lock) {
+      const mark = attempt(() => decodeRegistryLock(lock));
+      const writtenAt = stampTime(lock.stamp) ?? Date.now();
+      let holder;
+      if (mark)
+        holder = holderState(mark, writtenAt);
+      else
+        holder = {
+          state: Date.now() - writtenAt > 60000 ? "dead" : "unknown",
+          reboot: false
+        };
+      if (holder.state === "foreign" && !options.takeOver)
+        return {
+          status: "blocked",
+          reason: "foreign-host",
+          pid: mark?.pid ?? null
+        };
+      if (holder.state === "live") {
+        await new Promise((resolve5) => setTimeout(resolve5, 250));
+        if (!this.c.files.read(lockPath))
+          return { status: "clean" };
+        return { status: "live" };
+      }
+      if (holder.state === "unknown" && !options.takeOver)
+        return {
+          status: "blocked",
+          reason: "holder-unknown",
+          pid: mark?.pid ?? null
+        };
+      cause = holder.reboot ? "reboot" : "crash";
+      if (options.inspect)
+        return { status: "reclaimable", cause, workers: 0 };
+      this.c.files.remove(lockPath, lock);
+      actions.add("released-locks");
+    }
+    if (options.inspect) {
+      if (!this.valid())
+        return { status: "reclaimable", cause, workers: 0 };
+      return { status: "clean" };
+    }
+    const temporaries = strayTemporaries(this.c.registryDirectory);
+    if (temporaries.length) {
+      archive ??= this.log.archive();
+      for (const path2 of temporaries)
+        archive.keep(path2);
+      actions.add("removed-temporaries");
+    }
+    if (!this.valid()) {
+      archive ??= this.log.archive();
+      this.rebuild(archive);
+      actions.add("rebuilt-registry");
+    }
+    if (!actions.size)
+      return { status: "clean" };
+    return {
+      status: "healed",
+      event: this.log.record({
+        scope: "registry",
+        path: null,
+        cause,
+        actions: [...actions],
+        workers: 0,
+        archive: archive?.used() ? archive.name : null
+      })
+    };
+  }
+  valid() {
+    try {
+      if (!this.c.files.read(this.path("format.json")) && !this.c.files.read(this.path("roots.json"), 1024 * 1024))
+        return true;
+      this.c.registryView();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  rebuild(archive) {
+    const lockPath = this.path("registry.lock");
+    const lock = this.c.files.create(lockPath, encoded({
+      schema: "cadence-service-registry-lock/1",
+      token: randomUUID7(),
+      pid: process.pid,
+      host: hostname5()
+    }));
+    try {
+      for (const name of ["format.json", "roots.json"]) {
+        try {
+          if (this.c.files.read(this.path(name), 1024 * 1024))
+            archive.keep(this.path(name));
+        } catch {
+          archive.keep(this.path(name));
+        }
+      }
+      const entries2 = [];
+      for (const row of liveReservations(this.c))
+        entries2.push(row);
+      this.c.files.create(this.path("format.json"), encoded({
+        schema: "cadence-service-registry-format/1",
+        stateHome: this.c.stateHome
+      }));
+      this.c.files.create(this.path("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: entries2 }), 1024 * 1024);
+    } finally {
+      this.c.files.remove(lockPath, lock);
+    }
+  }
+  async sweep(options = {}) {
+    let rows;
+    try {
+      rows = this.c.registryView()?.value.entries ?? [];
+    } catch {
+      return [];
+    }
+    const out = [];
+    for (const row of rows)
+      out.push(await healProjectAt(this.c, row.root, {
+        ...options,
+        responsive: undefined
+      }));
+    return out;
+  }
+}
+function liveReservations(c) {
+  const out = [];
+  const dir = opendirSync4(c.files.namespace);
+  try {
+    for (let e = dir.readSync();e; e = dir.readSync()) {
+      if (!/^[a-f0-9]{64}$/.test(e.name))
+        continue;
+      const service = join11(c.files.namespace, e.name, "service-v1");
+      const registration2 = readFile(c.files, join11(service, "registration.json"), decodeRegistrationLenient);
+      if (!registration2 || registration2 === "unreadable")
+        continue;
+      const r = registration2.value;
+      if (!r || r.phase === "stopped")
+        continue;
+      const owner = readFile(c.files, join11(service, "owner.lock"), decodeOwnerLock);
+      const mark = owner && owner !== "unreadable" && owner.value ? owner.value : r;
+      if (holderState(mark, stampTime(registration2.snapshot.stamp)).state !== "live")
+        continue;
+      out.push({
+        root: r.root,
+        stateHome: r.stateHome,
+        configIdentity: r.configIdentity,
+        endpoint: r.endpoint,
+        epoch: r.epoch,
+        pid: r.pid,
+        host: r.host,
+        ownerToken: r.ownerToken
+      });
+    }
+  } finally {
+    dir.closeSync();
   }
   return out;
 }
-function signature(resources) {
-  return hash(encoded([...resources].sort(([a], [b]) => a.localeCompare(b, "en")).map(([name, file]) => [
-    name,
-    file.stamp,
-    ["gateway.json", "access.json", "access-config.json"].includes(name) ? null : file.identity
-  ])));
+function projectFiles(c, root) {
+  const privateRoot = join11(c.files.namespace, createHash4("sha256").update(root).digest("hex"));
+  return {
+    root,
+    privateRoot,
+    service: join11(privateRoot, "service-v1"),
+    checkoutPath: join11(privateRoot, "checkout.lock")
+  };
 }
-function state(store) {
-  const registration2 = store.read();
-  if (!registration2)
-    throw new ContractError("unavailable");
-  const resources = capture(store), lock = resources.get("gateway.lock");
-  if (!lock)
-    throw new ContractError("unavailable");
-  decodeId(closed(json(lock), ["epoch"]).epoch);
-  const input = decodeGatewayInput(json(required(resources, "input.json")));
-  if (input.serverConfig !== store.serverConfig || input.stateHome !== store.stateHome)
-    throw new ContractError("conflict");
-  const projects = store.projects();
-  store.associatedProjects();
-  const incarnation = hash(encoded([lock.identity, lock.stamp]));
-  if (registration2.phase === "stopped" && !registration2.recovery?.receipt.startsWith(`recovery-v1/${incarnation}/`))
-    throw new ContractError("corrupt-selected");
-  const archive = store.path(`recovery-v1/${incarnation}`);
-  const attempts = [];
-  let previousResolver = null;
-  const entries = names2(store, archive, 128);
-  for (let n = 0;n < entries.length; n++) {
-    if (!entries.includes(`${n}.json`))
-      throw new ContractError("corrupt-selected");
-    const file = store.files.read(join11(archive, `${n}.json`), 65536);
-    if (!file)
-      throw new ContractError("corrupt-selected");
-    const row = closed(json(file, 65536), [
-      "schema",
-      "lock",
-      "epoch",
-      "digest",
-      "pid",
-      "host",
-      "legacyHost",
-      "retiredProjects"
-    ]);
-    literal(row.schema, "cadence-workbench-recovery/1");
-    literal(row.lock, lock.bytes.toString("utf8"));
-    literal(row.epoch, registration2.epoch);
-    decodeHash(row.digest);
-    if (!Array.isArray(row.retiredProjects) || row.retiredProjects.length > 128)
-      throw new ContractError("corrupt-selected");
-    for (const entry of row.retiredProjects) {
-      const project = closed(entry, ["id", "stamp"]);
-      decodeHash(project.id);
-      text(project.stamp, 512, true);
-    }
-    if (typeof row.legacyHost !== "boolean")
-      throw new ContractError("corrupt-selected");
-    previousResolver = recoveryOwnerStatus(integer(row.pid, 1, 2147483647), text(row.host, 255, true));
-    attempts.push(file);
+function snapshotProject(c, p) {
+  const s = { temporaries: [] };
+  s.registration = readFile(c.files, join11(p.service, "registration.json"), decodeRegistrationLenient);
+  s.owner = readFile(c.files, join11(p.service, "owner.lock"), decodeOwnerLock);
+  try {
+    s.capability = c.files.read(join11(p.service, "local-capability.json"));
+  } catch {
+    s.capability = "unreadable";
   }
-  if (encoded(store.read()) !== encoded(registration2))
-    throw new ContractError("conflict");
-  for (const [name, file] of resources)
-    store.files.assert(store.path(name), file);
-  const localOwner = recoveryOwnerStatus(registration2.pid, registration2.host ?? hostname4());
-  const inspection = {
-    scope: "workbench",
-    epoch: registration2.epoch,
-    coordinationDigest: hash(encoded([
-      signature(resources),
-      attempts.map((a) => [a.identity, a.stamp])
-    ])),
-    owner: registration2.host ? localOwner : localOwner === "live" ? "live" : "ambiguous",
-    process: { pid: registration2.pid, host: registration2.host ?? null },
-    legacyHost: !registration2.host,
-    previousResolver,
-    projects: projects.length,
-    openings: [...resources.keys()].filter((name) => name.startsWith("commands/") && !name.endsWith(".result.json")).length,
-    resolution: registration2.host ? "local-interactive-only" : "local-host-confirmation-required"
-  };
-  return {
-    registration: registration2,
-    resources,
-    lock,
-    archive,
-    incarnation,
-    attempts,
-    localOwner,
-    inspection
-  };
-}
-function inspectGatewayRecovery(store) {
-  const before = state(store), after = state(store);
-  if (encoded(before.inspection) !== encoded(after.inspection))
-    throw new ContractError("conflict");
-  return before.inspection;
-}
-function resolveGatewayRecovery(store, expected, assertAuthority, legacyHostConfirmed = false) {
-  assertAuthority();
-  const selected2 = state(store);
-  if (encoded(selected2.inspection) !== encoded(expected))
-    throw new ContractError("conflict");
-  const absent2 = () => {
-    assertAuthority();
-    if (expected.legacyHost && !legacyHostConfirmed || recoveryOwnerStatus(selected2.registration.pid, selected2.registration.host ?? hostname4()) !== "absent")
-      throw new ContractError("quarantine");
-  };
-  absent2();
-  if (expected.previousResolver !== null && expected.previousResolver !== "absent")
-    throw new ContractError("quarantine");
-  if (selected2.attempts.length >= 128)
-    throw new ContractError("capacity");
-  const receiptPath = join11(selected2.archive, `${selected2.attempts.length}.json`);
-  const receipt = store.files.create(receiptPath, encoded({
-    schema: "cadence-workbench-recovery/1",
-    lock: selected2.lock.bytes.toString("utf8"),
-    epoch: expected.epoch,
-    digest: expected.coordinationDigest,
-    pid: process.pid,
-    host: hostname4(),
-    legacyHost: expected.legacyHost,
-    retiredProjects: [...selected2.resources].filter(([name]) => name.startsWith("projects/")).map(([name, file]) => ({
-      id: name.slice("projects/".length, -5),
-      stamp: file.stamp
-    }))
-  }), 65536);
-  const assert = () => {
-    absent2();
-    store.associatedProjects();
-    const current = capture(store);
-    if (signature(current) !== signature(selected2.resources))
-      throw new ContractError("conflict");
-    for (const [name, file] of selected2.resources)
-      store.files.assert(store.path(name), file);
-    if (names2(store, selected2.archive, 128).length !== selected2.attempts.length + 1)
-      throw new ContractError("conflict");
-    for (const [n, file] of selected2.attempts.entries())
-      store.files.assert(join11(selected2.archive, `${n}.json`), file, 65536);
-    store.files.assert(receiptPath, receipt, 65536);
-  };
-  assert();
-  const registration2 = store.files.replace(store.path("gateway.json"), required(selected2.resources, "gateway.json"), encoded({
-    ...selected2.registration,
-    phase: "stopped",
-    recovery: {
-      receipt: `recovery-v1/${selected2.incarnation}/${selected2.attempts.length}.json`,
-      sha256: receipt.identity,
-      stamp: receipt.stamp
+  s.checkout = readFile(c.files, p.checkoutPath, decodeCheckoutLock, 8192);
+  try {
+    const view = c.registryView();
+    const row = view?.value.entries.find((r) => r.root === p.root);
+    if (row) {
+      s.row = row;
+      s.rowWrittenAt = stampTime(view?.snapshot.stamp ?? "");
     }
-  }));
-  selected2.resources.set("gateway.json", registration2);
-  assert();
-  store.files.remove(store.path("gateway.lock"), selected2.lock);
-  return {
-    status: "resolved",
-    scope: "workbench",
-    epoch: expected.epoch,
-    notice: "operator-acknowledgment-only-project-fences-preserved"
+  } catch {}
+  s.temporaries = [
+    ...strayTemporaries(p.service),
+    ...strayTemporaries(join11(p.service, "history-v2"))
+  ];
+  return s;
+}
+function active(s) {
+  const registration2 = s.registration && s.registration !== "unreadable" ? s.registration.value : null;
+  return !!(s.row || s.owner || s.checkout || s.capability || s.registration === "unreadable" || s.registration && registration2?.phase !== "stopped");
+}
+function holders(s) {
+  const found = [];
+  let epoch = null, pid = null;
+  const consider = (mark, at) => {
+    if (!mark)
+      return;
+    pid ??= mark.pid;
+    found.push(holderState(mark, at));
   };
+  if (s.owner && s.owner !== "unreadable" && s.owner.value) {
+    epoch = s.owner.value.epoch;
+    consider(s.owner.value, stampTime(s.owner.snapshot.stamp));
+  }
+  if (s.registration && s.registration !== "unreadable" && s.registration.value) {
+    const r = s.registration.value;
+    if (r.phase !== "stopped") {
+      epoch ??= r.epoch;
+      consider(r, stampTime(s.registration.snapshot.stamp));
+    }
+  }
+  if (s.row) {
+    epoch ??= s.row.epoch;
+    consider(s.row, s.rowWrittenAt);
+  }
+  if (s.checkout && s.checkout !== "unreadable" && s.checkout.value)
+    consider(s.checkout.value, stampTime(s.checkout.snapshot.stamp));
+  return { holder: combine(found), epoch, pid };
+}
+async function healProjectAt(c, root, options = {}) {
+  const p = projectFiles(c, root);
+  const log = new RecoveryLog(c.files), ledger = new ProcessLedger(c.files);
+  let s = snapshotProject(c, p);
+  if (!active(s) && !s.temporaries.length)
+    return { status: "clean" };
+  let { holder, epoch, pid } = holders(s);
+  let stoppedOwner = false;
+  const takenOver = !!options.takeOver && (holder.state === "foreign" || holder.state === "unknown");
+  if (active(s) && !takenOver) {
+    if (holder.state === "foreign")
+      return { status: "blocked", reason: "foreign-host", pid };
+    if (holder.state === "unknown")
+      return options.responsive && await options.responsive() ? { status: "live" } : { status: "blocked", reason: "holder-unknown", pid };
+    if (holder.state === "live") {
+      if (!options.responsive || await options.responsive())
+        return { status: "live" };
+      const mark = s.owner && s.owner !== "unreadable" ? s.owner.value : null;
+      const ours = !!mark?.started;
+      if (!options.stopUnresponsive || !ours || options.inspect || pid === null)
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      if (!await stopOwnerProcess(pid))
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      stoppedOwner = true;
+      s = snapshotProject(c, p);
+      ({ holder, epoch, pid } = holders(s));
+      if (holder.state !== "dead")
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+    }
+  }
+  const workers = takenOver ? { stopped: 0, running: 0 } : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
+  if (workers.running)
+    return { status: "blocked", reason: "workers-running", pid };
+  const restarted = epoch ? ledger.restartRequested(epoch) : false;
+  const cause = !active(s) ? "storage" : holder.reboot ? "reboot" : restarted ? "restart" : "crash";
+  if (options.inspect)
+    return { status: "reclaimable", cause, workers: workers.stopped };
+  const actions = new Set;
+  if (stoppedOwner)
+    actions.add("stopped-owner");
+  if (workers.stopped)
+    actions.add("stopped-workers");
+  const archive = log.archive();
+  if (active(s)) {
+    reclaim(c, p, s, archive);
+    actions.add("released-locks");
+  }
+  for (const path2 of snapshotProject(c, p).temporaries) {
+    archive.keep(path2);
+    actions.add("removed-temporaries");
+  }
+  if (active(s) && metadataDamaged(c, p)) {
+    archive.keep(p.service, "service-v1");
+    actions.add("archived-state");
+  }
+  if (epoch)
+    ledger.remove(epoch);
+  return {
+    status: "healed",
+    event: log.record({
+      scope: "project",
+      path: root,
+      cause: actions.has("archived-state") && !active(s) ? "storage" : cause,
+      actions: [...actions],
+      workers: workers.stopped,
+      archive: archive.used() ? archive.name : null
+    })
+  };
+}
+function metadataDamaged(c, p) {
+  try {
+    if (!c.files.directory(p.service))
+      return false;
+  } catch {
+    return false;
+  }
+  try {
+    const format = c.files.read(join11(p.service, "format.json"));
+    const config = c.files.read(join11(p.service, "config.json"));
+    if (!format || !config)
+      return true;
+    const f = closed(json(format), [
+      "schema",
+      "root",
+      "stateHome",
+      "configIdentity"
+    ]);
+    if (f.schema !== "cadence-service-format/1" || f.root !== p.root || f.stateHome !== c.stateHome || f.configIdentity !== config.identity)
+      return true;
+    const selected = decodeOwnerConfig(json(config));
+    const host = c.files.read(join11(p.service, "host-config.json"));
+    if (host && host.identity !== selected.policyIdentity)
+      return true;
+    const registration2 = c.files.read(join11(p.service, "registration.json"));
+    if (registration2) {
+      const r = decodeRegistration(json(registration2));
+      if (r.root !== p.root || r.stateHome !== c.stateHome || r.configIdentity !== config.identity)
+        return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+function reclaim(c, p, expected, archive) {
+  c.mutateRegistry((view, mutate) => {
+    const s = snapshotProject(c, p);
+    const same2 = (a, b) => {
+      const id = (x) => x === undefined ? "absent" : x === "unreadable" ? "unreadable" : ("snapshot" in x) ? `${x.snapshot.identity}:${x.snapshot.stamp}` : `${x.identity}:${x.stamp}`;
+      return id(a) === id(b);
+    };
+    if (!same2(s.registration, expected.registration) || !same2(s.owner, expected.owner) || !same2(s.capability, expected.capability) || !same2(s.checkout, expected.checkout) || encoded(s.row ?? null) !== encoded(expected.row ?? null))
+      throw new ContractError("conflict");
+    mutate();
+    const registration2 = s.registration;
+    if (registration2 === "unreadable")
+      archive.keep(join11(p.service, "registration.json"));
+    else if (registration2) {
+      if (!registration2.value)
+        archive.keep(registration2.path);
+      else if (registration2.value.phase !== "stopped")
+        c.files.replace(registration2.path, registration2.snapshot, encoded({ ...registration2.value, phase: "stopped" }));
+    }
+    if (s.row)
+      c.files.replace(join11(c.registryDirectory, "roots.json"), view.snapshot, encoded({
+        ...view.value,
+        entries: view.value.entries.filter((row) => row.root !== p.root)
+      }), 1024 * 1024);
+    const drop = (path2, value, maximum) => {
+      if (value === undefined)
+        return;
+      if (value === "unreadable") {
+        archive.keep(path2);
+        return;
+      }
+      c.files.remove(path2, "snapshot" in value ? value.snapshot : value, maximum);
+    };
+    drop(join11(p.service, "local-capability.json"), s.capability);
+    drop(join11(p.service, "owner.lock"), s.owner);
+    drop(p.checkoutPath, s.checkout, 8192);
+  });
+}
+async function healWorkbench(store, options = {}) {
+  const log = new RecoveryLog(store.files);
+  const lockPath = store.path("gateway.lock"), registrationPath = store.path("gateway.json");
+  if (!store.files.directory(store.directory))
+    return { status: "clean" };
+  const lock = readFile(store.files, lockPath, decodeGatewayLock);
+  const registration2 = readFile(store.files, registrationPath, decodeGatewayRegistration);
+  const temporaries = [
+    ...strayTemporaries(store.directory),
+    ...strayTemporaries(store.path("projects"))
+  ];
+  const value = registration2 && registration2 !== "unreadable" ? registration2.value : null;
+  const activeNow = !!(lock || registration2 === "unreadable" || registration2 && value?.phase !== "stopped");
+  let input = null;
+  try {
+    input = store.read();
+  } catch {
+    input = null;
+  }
+  const damaged = !input && !!(registration2 || lock);
+  if (!activeNow && !temporaries.length && !damaged)
+    return { status: "clean" };
+  const found = [];
+  let pid = null;
+  if (lock && lock !== "unreadable" && lock.value?.pid) {
+    pid = lock.value.pid;
+    found.push(holderState(lock.value, stampTime(lock.snapshot.stamp)));
+  }
+  if (value && value.phase !== "stopped") {
+    pid ??= value.pid;
+    found.push(holderState({ pid: value.pid, host: value.host ?? hostname5() }, registration2 && registration2 !== "unreadable" ? stampTime(registration2.snapshot.stamp) : undefined));
+  }
+  if (!found.length && lock && lock !== "unreadable")
+    found.push({
+      state: Date.now() - (stampTime(lock.snapshot.stamp) ?? Date.now()) > 60000 ? "dead" : "unknown",
+      reboot: false
+    });
+  const holder = combine(found);
+  const takenOver = !!options.takeOver && (holder.state === "foreign" || holder.state === "unknown");
+  if (activeNow && !takenOver) {
+    if (holder.state === "foreign")
+      return { status: "blocked", reason: "foreign-host", pid };
+    if (holder.state === "unknown")
+      return options.responsive && await options.responsive() ? { status: "live" } : { status: "blocked", reason: "holder-unknown", pid };
+    if (holder.state === "live") {
+      if (!options.responsive || await options.responsive())
+        return { status: "live" };
+      const ours = !!(lock && lock !== "unreadable" && lock.value?.started);
+      if (!options.stopUnresponsive || !ours || options.inspect || pid === null)
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      if (!await stopOwnerProcess(pid))
+        return { status: "blocked", reason: "owner-unresponsive", pid };
+      return healWorkbench(store, { ...options, stopUnresponsive: false });
+    }
+  }
+  const cause = !activeNow || damaged ? "storage" : holder.reboot ? "reboot" : "crash";
+  if (options.inspect)
+    return { status: "reclaimable", cause, workers: 0 };
+  const actions = new Set;
+  const archive = log.archive();
+  for (const path2 of temporaries) {
+    archive.keep(path2);
+    actions.add("removed-temporaries");
+  }
+  if (damaged) {
+    archive.keep(store.directory, "workbench");
+    actions.add("archived-state");
+  } else if (activeNow) {
+    if (value && registration2 && registration2 !== "unreadable" && value.phase !== "stopped")
+      store.files.replace(registrationPath, registration2.snapshot, encoded({ ...value, phase: "stopped" }));
+    if (lock === "unreadable")
+      archive.keep(lockPath);
+    else if (lock)
+      store.files.remove(lockPath, lock.snapshot);
+    actions.add("released-locks");
+  }
+  return {
+    status: "healed",
+    event: log.record({
+      scope: "workbench",
+      path: null,
+      cause,
+      actions: [...actions],
+      workers: 0,
+      archive: archive.used() ? archive.name : null
+    })
+  };
+}
+function decodeGatewayLock(value) {
+  const o = closed(value, markedKeys(value, value && typeof value === "object" && Object.hasOwn(value, "pid") ? ["epoch", "pid", "host"] : ["epoch"]));
+  return {
+    epoch: decodeId(o.epoch),
+    ...o.pid !== undefined ? { pid: integer(o.pid, 1, 2147483647), host: text(o.host, 255, true) } : {},
+    ...decodeMarkFields(o)
+  };
+}
+function decodeGatewayRegistration(value) {
+  const o = value;
+  if (!o || typeof o !== "object" || !["alive", "stopping", "stopped", "quarantined"].includes(o.phase))
+    throw new ContractError("corrupt-selected");
+  integer(o.pid, 1, 2147483647);
+  return o;
 }
 
-// src/service/recovery-cli.ts
-var warning = "PID absence is not proof that descendants stopped or credential writes settled. Inspect/stop old processes externally, independently inspect the selected Pi credential store and SDK locks, and inspect retained history/storage. Cadence does not kill, repair, reset, migrate or certify those resources. Unknown historical outcomes remain unknown. A new Start is required.";
-function native() {
-  if (!isatty(0) || !isatty(1) || !process.stdin.isTTY || !process.stdout.isTTY)
-    throw new ContractError("forbidden");
+// src/service/doctor.ts
+var CAUSES = {
+  reboot: "the machine restarted while Cadence was running",
+  crash: "the Cadence process ended without its orderly stop",
+  restart: "Cadence restarted itself after a runtime fault",
+  storage: "some private files were incomplete or damaged"
+};
+var ACTIONS = {
+  "released-locks": "released its locks",
+  "stopped-workers": "stopped leftover worker processes",
+  "stopped-owner": "stopped the unresponsive owner",
+  "continued-history": "continued its history after the last complete entry",
+  "archived-history": "archived unreadable history and started a new one",
+  "archived-state": "archived damaged state and started afresh",
+  "rebuilt-registry": "rebuilt the project registry",
+  "removed-temporaries": "set aside interrupted temporary files"
+};
+function scopeLabel(e) {
+  return e.scope === "project" ? `project ${e.path}` : e.scope === "workbench" ? "the workbench" : "the project registry";
 }
-async function confirm(expected) {
-  native();
-  if (process.stdin.readableLength)
-    throw new ContractError("forbidden");
-  const identity = JSON.stringify(expected);
-  const deadline = performance.now() + LIMITS.grantMs;
-  const prompts = [
-    ...expected.legacyHost ? [
-      [
-        "Legacy registration has no host identity. Independently verify this state originated on THIS host and is not shared/copied from another host. Type local-host",
-        "local-host"
-      ]
-    ] : [],
-    [
-      "Confirm old processes stopped externally; acknowledge escaped-descendant uncertainty. Type processes",
-      "processes"
-    ],
-    [
-      "Confirm independent credential/refresh/writeback inspection; PID absence does not settle auth. Type credentials",
-      "credentials"
-    ],
-    [
-      "Confirm independent storage inspection; preserve damaged bytes and unknown outcomes. Type storage",
-      "storage"
-    ],
-    [
-      `${expected.scope === "global-registry" ? "Release ONLY the global registry lock; all project fences remain." : expected.scope === "workbench" ? "Release ONLY the workbench fence and retire its old project associations; all project fences remain." : "Release ONLY the displayed unchanged service-owned fences."} Type resolve ${expected.epoch}`,
-      `resolve ${expected.epoch}`
-    ]
-  ];
-  await new Promise((resolve5, reject) => {
-    let index = 0, line = "", done = false;
-    const raw = process.stdin.isRaw;
-    const finish = (ok) => {
-      if (done)
-        return;
-      done = true;
-      clearTimeout(timer);
-      process.stdin.removeListener("data", input);
-      process.stdin.removeListener("end", fail);
-      process.stdin.removeListener("error", fail);
-      process.stdin.setRawMode(raw);
-      process.stdin.pause();
-      process.stdout.write(`\x1B[?2004l
-`);
-      if (ok)
-        resolve5();
-      else
-        reject(new ContractError("forbidden"));
-    };
-    const fail = () => finish(false);
-    const show = () => process.stdout.write(`${prompts[index]?.[0]}: `);
-    const input = (chunk) => {
-      if (performance.now() >= deadline || chunk.length > 128)
-        return fail();
-      for (let n = 0;n < chunk.length; n++) {
-        const byte = chunk[n];
-        if (byte === 13 || byte === 10) {
-          if (n !== chunk.length - 1 || line !== prompts[index]?.[1])
-            return fail();
-          line = "";
-          process.stdout.write(`
-`);
-          if (++index === prompts.length)
-            return finish(true);
-          show();
-        } else if (byte === 127) {
-          line = line.slice(0, -1);
-        } else if (byte !== undefined && byte >= 32 && byte <= 126 && line.length < 80) {
-          line += String.fromCharCode(byte);
-        } else
-          return fail();
-      }
-    };
-    const timer = setTimeout(fail, LIMITS.grantMs);
-    process.stdin.setRawMode(true);
-    process.stdout.write("\x1B[?2004h");
-    process.stdin.on("data", input).once("end", fail).once("error", fail).resume();
-    show();
-  });
-  return () => {
-    native();
-    if (performance.now() >= deadline || JSON.stringify(expected) !== identity)
-      throw new ContractError("stale");
-  };
+function describeEvent(e, archive) {
+  const actions = e.actions.map((a) => a === "stopped-workers" && e.workers ? `stopped ${e.workers} leftover worker process${e.workers === 1 ? "" : "es"}` : ACTIONS[a]);
+  const kept = e.archive && archive ? ` Damaged files are kept for 30 days in ${archive}/${e.archive}.` : "";
+  return `Cadence recovered ${scopeLabel(e)} automatically: ${CAUSES[e.cause]}; ${actions.join(", ")}.${kept}`;
 }
-async function localRegistryRecovery(c, operation) {
-  if (operation === "resolve")
-    native();
-  const registryLock = c.registryLockDiagnostic();
-  if (registryLock) {
-    let expected;
-    try {
-      expected = c.inspectRegistryRecovery();
-    } catch {
-      const blocked = {
-        scope: "global-registry",
-        ...registryLock,
-        coordination: "unavailable",
-        resolution: "blocked-preserve-state",
-        notice: "Registry state is incomplete, changed or unsafe. Preserve it; no lock or project resource was released."
-      };
-      if (operation === "inspect")
-        return blocked;
-      process.stdout.write(`${JSON.stringify(blocked)}
-`);
-      throw new ContractError("quarantine");
-    }
-    const view = {
-      ...expected,
-      process: {
-        ...expected.process,
-        host: diagnosticText(expected.process.host, 255)
-      },
-      notice: `Global registry lock blocks every project in this state home. Recovery preserves its original bytes and all project reservations, owner/checkout locks and history. Inspect project fences separately afterward. ${warning}`
-    };
-    if (operation === "inspect")
-      return view;
-    process.stdout.write(`${JSON.stringify(view)}
-`);
-    if (expected.owner !== "absent" || expected.previousResolver !== null && expected.previousResolver !== "absent")
-      throw new ContractError("quarantine");
-    const assertFresh = await confirm(expected);
-    return c.resolveRegistryRecovery(expected, assertFresh);
+function describeBlock(outcome, target) {
+  const pid = outcome.pid === null ? "" : ` (PID ${outcome.pid})`;
+  switch (outcome.reason) {
+    case "owner-unresponsive":
+      return `Cadence for ${target} is running${pid} but not responding.
+Stop it and recover: cadence doctor --fix
+`;
+    case "workers-running":
+      return `Leftover Cadence worker processes for ${target} did not stop.
+Stop them (or restart the machine), then start again; cadence doctor shows the details.
+`;
+    case "foreign-host":
+      return `Cadence state for ${target} was registered on another machine${pid}; it cannot be observed from here.
+If that machine no longer runs Cadence with this state, take it over: cadence doctor --fix
+`;
+    default:
+      return `A process${pid} may still be the previous Cadence for ${target}, and Cadence cannot tell.
+If no Cadence is running, recover: cadence doctor --fix
+`;
   }
-  return;
 }
-async function localRecovery(c, operation) {
-  const registry = await localRegistryRecovery(c, operation);
-  if (registry !== undefined)
-    return registry;
-  const history = new HistoryRecovery(c);
-  const expected = await inspectRecovery(c, history);
-  const registration2 = c.recoverySnapshot().registration;
-  const view = {
-    ...expected,
-    process: {
-      pid: registration2.pid,
-      host: diagnosticText(registration2.host, 255)
-    },
-    notice: warning
-  };
-  if (operation === "inspect")
-    return view;
-  process.stdout.write(`${JSON.stringify(view)}
-`);
-  if (expected.owner !== "absent")
-    throw new ContractError("quarantine");
-  const assertFresh = await confirm(expected);
-  return resolveRecovery(c, {
-    expected,
-    acknowledgeEscapedProcesses: true,
-    processes: "externally-resolved",
-    credentials: "independently-resolved",
-    storage: "independently-resolved",
-    assertLocalAuthority: (choice) => {
-      assertFresh();
-      if (JSON.stringify(choice) !== JSON.stringify(expected))
-        throw new ContractError("stale");
-    }
-  }, history);
-}
-async function localGatewayRecovery(store, operation) {
-  const registry = await localRegistryRecovery(new ServiceCoordination(null, store.stateHome), operation);
-  if (registry !== undefined)
-    return registry;
-  let expected;
+async function confirm(question) {
+  if (!isatty(0) || !isatty(2))
+    return false;
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const observed = store.inspect();
-    if (observed.status === "absent" || observed.status === "stopped") {
-      if (operation === "resolve")
-        throw new ContractError("unavailable");
-      return { ...observed, scope: "workbench" };
-    }
-    expected = inspectGatewayRecovery(store);
-  } catch (error) {
-    if (operation === "resolve")
-      throw error;
-    return {
-      status: "unavailable",
-      scope: "workbench",
-      resolution: "blocked-preserve-state",
-      error: error instanceof ContractError ? error.code : "unavailable",
-      notice: "Workbench state is incomplete, changed or unsafe. Preserve it; no resource was released."
-    };
+    const answer = await new Promise((resolve5) => rl.question(`${question} [y/N] `, resolve5));
+    return /^y(es)?$/i.test(answer.trim());
+  } finally {
+    rl.close();
   }
-  const view = {
-    ...expected,
-    process: {
-      ...expected.process,
-      host: expected.process.host === null ? null : diagnosticText(expected.process.host, 255)
-    },
-    notice: `Recovery releases ONLY the workbench fence and retires its exact old project associations. Project references, reservations, owner/checkout locks, opening receipts and history remain unchanged. Explicit Open must associate a project again; recover affected project owners separately. ${warning}`
-  };
-  if (operation === "inspect")
-    return view;
-  process.stdout.write(`${JSON.stringify(view)}
-`);
-  if (!expected.legacyHost && expected.owner !== "absent" || expected.owner === "live" || expected.previousResolver !== null && expected.previousResolver !== "absent")
-    throw new ContractError("quarantine");
-  const authority = await confirm(expected);
-  return resolveGatewayRecovery(store, expected, authority, expected.legacyHost);
 }
+async function healAccount(c, options = {}) {
+  const healer = new RegistryHealer(c);
+  const registry = await healer.heal(options);
+  if (registry.status === "blocked" || registry.status === "live")
+    return { registry, projects: [] };
+  return {
+    registry,
+    projects: await healer.sweep({
+      inspect: options.inspect,
+      takeOver: false
+    })
+  };
+}
+function report(outcomes2, log) {
+  for (const outcome of outcomes2)
+    if (outcome.status === "healed")
+      process.stderr.write(`${describeEvent(outcome.event, log.archiveDirectory)}
+`);
+}
+async function healProjectForStart(c, responsive) {
+  const log = new RecoveryLog(c.files);
+  const account = await healAccount(c);
+  report([account.registry, ...account.projects], log);
+  if (account.registry.status === "blocked")
+    return describeBlock(account.registry, "the project registry");
+  let own = await healProjectAt(c, c.store.root, { responsive });
+  if (own.status === "blocked" && own.reason === "owner-unresponsive" && await confirm(`Cadence for ${c.store.root}${own.pid === null ? "" : ` (PID ${own.pid})`} is running but not responding. Stop it and recover?`))
+    own = await healProjectAt(c, c.store.root, {
+      responsive,
+      stopUnresponsive: true
+    });
+  report([own], log);
+  return own.status === "blocked" ? describeBlock(own, c.store.root) : null;
+}
+async function healWorkbenchForStart(store, responsive) {
+  const log = new RecoveryLog(store.files);
+  const account = await healAccount(new ServiceCoordination(null, store.stateHome));
+  report([account.registry, ...account.projects], log);
+  if (account.registry.status === "blocked")
+    return describeBlock(account.registry, "the project registry");
+  let own = await healWorkbench(store, { responsive });
+  if (own.status === "blocked" && own.reason === "owner-unresponsive" && await confirm(`The Cadence workbench${own.pid === null ? "" : ` (PID ${own.pid})`} is running but not responding. Stop it and recover?`))
+    own = await healWorkbench(store, { responsive, stopUnresponsive: true });
+  report([own], log);
+  return own.status === "blocked" ? describeBlock(own, "the workbench") : null;
+}
+function summary(line) {
+  const o = line.outcome;
+  switch (o.status) {
+    case "clean":
+      return `${line.target}: OK`;
+    case "live":
+      return `${line.target}: running`;
+    case "reclaimable":
+      return `${line.target}: left over (${CAUSES[o.cause]})${o.workers ? `, ${o.workers} leftover worker process${o.workers === 1 ? "" : "es"}` : ""}; recovers automatically at the next start, or now with: cadence doctor --fix`;
+    case "healed":
+      return `${line.target}: recovered (${o.event.actions.map((a) => ACTIONS[a]).join(", ")})`;
+    default:
+      return `${line.target}: needs attention
+    ${describeBlock(o, line.target).trimEnd().replace(/\n/g, `
+    `)}`;
+  }
+}
+async function doctor(o) {
+  const stateHome = o.stateHome ?? defaultStateHome();
+  const account = new ServiceCoordination(null, stateHome);
+  const log = new RecoveryLog(account.files);
+  const lines = [];
+  const decide = async (question) => o.yes || await confirm(question);
+  const options = { inspect: !o.fix };
+  const registry = await new RegistryHealer(account).heal(options);
+  lines.push({ target: "Project registry", outcome: registry });
+  if (registry.status === "blocked" && o.fix) {
+    if (await decide("The project registry lock's holder cannot be observed. Take it over (only if no other Cadence is using this state)?"))
+      lines[0] = {
+        target: "Project registry",
+        outcome: await new RegistryHealer(account).heal({ takeOver: true })
+      };
+  }
+  const roots = new Set;
+  try {
+    for (const row of account.registryView()?.value.entries ?? [])
+      roots.add(row.root);
+  } catch {}
+  if (o.workspace) {
+    try {
+      roots.add(new ServiceCoordination(o.workspace, stateHome).store.root);
+    } catch {
+      if (!existsSync2(o.workspace))
+        lines.push({
+          target: `Project ${o.workspace}`,
+          outcome: { status: "clean" }
+        });
+    }
+  }
+  for (const root of roots) {
+    const c = account;
+    const missing2 = !existsSync2(root);
+    const responsive = () => o.probeProject(root, stateHome);
+    let outcome = await healProjectAt(c, root, { ...options, responsive });
+    if (o.fix && outcome.status === "blocked") {
+      const question = outcome.reason === "owner-unresponsive" ? `Cadence for ${root} is running but not responding. Stop it and recover?` : outcome.reason === "workers-running" ? null : `The previous Cadence for ${root} cannot be observed from here. Take its state over (only if it is not running anywhere)?`;
+      if (question && await decide(question))
+        outcome = await healProjectAt(c, root, {
+          responsive,
+          stopUnresponsive: outcome.reason === "owner-unresponsive",
+          takeOver: outcome.reason !== "owner-unresponsive"
+        });
+    }
+    lines.push({
+      target: `Project ${root}${missing2 ? " (directory no longer exists)" : ""}`,
+      outcome
+    });
+  }
+  const config = o.serverConfig ?? serverConfigPath(homedir4());
+  const store = new GatewayStore(config, stateHome);
+  if (store.files.directory(store.directory)) {
+    const responsive = () => o.probeWorkbench(store);
+    let outcome = await healWorkbench(store, { ...options, responsive });
+    if (o.fix && outcome.status === "blocked") {
+      const stop = outcome.reason === "owner-unresponsive";
+      if (await decide(stop ? "The workbench is running but not responding. Stop it and recover?" : "The previous workbench cannot be observed from here. Take its state over?"))
+        outcome = await healWorkbench(store, {
+          responsive,
+          stopUnresponsive: stop,
+          takeOver: !stop
+        });
+    }
+    lines.push({ target: "Workbench", outcome });
+  }
+  const recent = log.events(5);
+  const usage = log.usage();
+  process.stderr.write(`Cadence doctor${o.fix ? " --fix" : ""}
+${lines.map((l) => `  ${summary(l)}`).join(`
+`)}
+${recent.length ? `Recent automatic recoveries:
+${recent.map((e) => `  ${new Date(e.at).toLocaleString()}: ${describeEvent(e, log.archiveDirectory)}`).join(`
+`)}
+` : ""}${usage.entries ? `Archived damaged state: ${usage.entries} entr${usage.entries === 1 ? "y" : "ies"}, ${Math.ceil(usage.bytes / 1024)} KiB in ${log.archiveDirectory} (expires after 30 days).
+` : ""}`);
+  const needs = lines.some((l) => l.outcome.status === "blocked");
+  if (needs)
+    process.exitCode = 1;
+  return {
+    status: needs ? "attention" : "ok",
+    checks: lines.map((l) => ({
+      target: l.target,
+      status: l.outcome.status,
+      ...l.outcome.status === "blocked" ? { reason: l.outcome.reason, pid: l.outcome.pid } : {},
+      ...l.outcome.status === "reclaimable" ? { cause: l.outcome.cause, workers: l.outcome.workers } : {}
+    })),
+    recent: recent.map((e) => ({
+      at: e.at,
+      scope: e.scope,
+      path: e.path,
+      cause: e.cause,
+      actions: e.actions,
+      workers: e.workers,
+      archive: e.archive
+    }))
+  };
+}
+function missingWorkspace(workspace) {
+  if (existsSync2(workspace))
+    return null;
+  return `The project directory ${workspace} does not exist (moved or deleted).
+Recreate it, choose another project, or switch the background service to the workbench: cadence server install
+Cadence releases whatever the old project owner left behind automatically.
+`;
+}
+
+// src/service/gateway-cli.ts
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname9, join as join13, resolve as resolve6 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // src/service/runtime.ts
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname10, isAbsolute as isAbsolute6, join as join12, resolve as resolve5 } from "node:path";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname8, isAbsolute as isAbsolute6, join as join12, resolve as resolve5 } from "node:path";
 var STARTUP_INPUT_BYTES = 16 * 1024;
 function absolute(value) {
   const result = text(value, 4096, true);
@@ -6999,7 +5654,7 @@ function selectStart(options, ambient) {
     throw new ContractError("invalid");
   let fromFile;
   if (options.config) {
-    const path2 = resolve5(options.config), f = new PrivateFiles(dirname10(path2));
+    const path2 = resolve5(options.config), f = new PrivateFiles(dirname8(path2));
     const bytes = f.read(path2);
     if (!bytes)
       throw new ContractError("corrupt-selected");
@@ -7014,29 +5669,29 @@ function selectStart(options, ambient) {
       port: options.port ?? 17423,
       proxy: null
     },
-    agentDir: resolve5(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join12(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
+    agentDir: resolve5(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join12(ambient.HOME ?? ambient.USERPROFILE ?? homedir5(), ".pi", "agent")),
     tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
     tokenFile: options.tokenFile ? resolve5(options.tokenFile) : null
   });
   const server = options.serverConfig !== undefined ? resolve5(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
-  let selected2 = base;
+  let selected = base;
   if (server) {
     if (options.tokenFile !== undefined)
       throw new ContractError("conflict");
     const { port } = readServerConfig(server).config;
-    selected2 = decodeHostConfig({
+    selected = decodeHostConfig({
       ...base,
       http: { ...base.http, port },
       tokenSource: "config",
       tokenFile: server
     });
   }
-  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve5(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve5(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
+  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve5(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve5(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
     throw new ContractError("conflict");
   return {
     workspace: workspace.root,
     stateHome: c.stateHome,
-    config: selected2,
+    config: selected,
     environmentToken: env?.value ?? null
   };
 }
@@ -7083,20 +5738,20 @@ function decodeStartupReport(value) {
 // src/service/gateway-cli.ts
 async function gatewayMain(argv, hostUrl) {
   const operation = argv.shift();
+  if (operation === "recover" || operation === "doctor") {
+    await doctorMain(operation, argv);
+    return;
+  }
   if (![
     "start",
     "status",
     "diagnose",
     "stop",
     "token-link",
-    "token-rotate",
-    "recover"
+    "token-rotate"
   ].includes(operation ?? ""))
     throw new ContractError("invalid");
-  const recovery = operation === "recover" ? argv.shift() : undefined;
-  if (operation === "recover" && recovery !== "inspect" && recovery !== "resolve")
-    throw new ContractError("invalid");
-  let config = serverConfigPath(homedir5()), stateHome = defaultStateHome(), agentDir, policyFile;
+  let config = serverConfigPath(homedir6()), stateHome = defaultStateHome(), agentDir, policyFile;
   let foreground = false, reveal = false;
   const seen = new Set;
   while (argv.length) {
@@ -7108,7 +5763,7 @@ async function gatewayMain(argv, hostUrl) {
       foreground = true;
     else if (key === "--reveal" && operation === "token-link")
       reveal = true;
-    else if (argv[0] && (operation === "recover" ? ["--server-config", "--state-home"] : ["--server-config", "--state-home", "--agent-dir", "--config"]).includes(key)) {
+    else if (argv[0] && ["--server-config", "--state-home", "--agent-dir", "--config"].includes(key)) {
       const value = resolve6(argv.shift());
       if (key === "--server-config")
         config = value;
@@ -7126,18 +5781,18 @@ async function gatewayMain(argv, hostUrl) {
   if (operation === "start") {
     const network = networkSnapshot(process.env), env = hostEnvironment(process.env);
     if (!seen.has("--server-config"))
-      ensureServerConfig(homedir5());
+      ensureServerConfig(homedir6());
     const server = readServerConfig(config).config;
     const selectedFile = store.files.read(store.path("input.json"));
-    const selected2 = selectedFile ? decodeGatewayInput(json(selectedFile)) : undefined;
-    let policy = selected2?.policy ?? decodeHttpPolicy({
+    const selected = selectedFile ? decodeGatewayInput(json(selectedFile)) : undefined;
+    let policy = selected?.policy ?? decodeHttpPolicy({
       schema: "cadence-service-http/1",
       host: "127.0.0.1",
       port: server.port,
       proxy: null
     });
     if (policyFile) {
-      const file = new PrivateFiles(dirname11(policyFile)).read(policyFile);
+      const file = new PrivateFiles(dirname9(policyFile)).read(policyFile);
       if (!file)
         throw new ContractError("invalid");
       policy = decodeHttpPolicy(json(file));
@@ -7146,16 +5801,20 @@ async function gatewayMain(argv, hostUrl) {
       kind: "workbench",
       serverConfig: config,
       stateHome: store.stateHome,
-      agentDir: agentDir ?? selected2?.agentDir ?? resolve6(process.env.PI_CODING_AGENT_DIR ?? join13(homedir5(), ".pi", "agent")),
+      agentDir: agentDir ?? selected?.agentDir ?? resolve6(process.env.PI_CODING_AGENT_DIR ?? join13(homedir6(), ".pi", "agent")),
       policy: { ...policy, port: server.port }
     });
-    const status = await serviceStatus(store);
-    if (status && typeof status === "object" && "status" in status && status.status === "alive") {
-      if (!selected2 || encoded(selected2) !== encoded(input))
+    const blocked = await healWorkbenchForStart(store, () => ownerResponsive(store));
+    const status = blocked ? null : await serviceStatus(store);
+    if (blocked) {
+      process.stderr.write(blocked);
+      result = { status: "refused", error: "quarantine", stage: "service" };
+    } else if (status && typeof status === "object" && "status" in status && status.status === "alive") {
+      if (!selected || encoded(selected) !== encoded(input))
         throw new ContractError("conflict");
       result = status;
     } else
-      result = await launchHost(input, store, foreground, hostUrl, dirname11(dirname11(fileURLToPath(hostUrl))), env, network);
+      result = await launchHost(input, store, foreground, hostUrl, dirname9(dirname9(fileURLToPath(hostUrl))), env, network);
     if (!foreground && result && typeof result === "object" && "status" in result && result.status === "alive") {
       const reply = closed(await nativeCall(store, "token-link", true), [
         "link"
@@ -7164,9 +5823,7 @@ async function gatewayMain(argv, hostUrl) {
 No project or default workspace was created.
 `);
     }
-  } else if (operation === "recover" && (recovery === "inspect" || recovery === "resolve"))
-    result = await localGatewayRecovery(store, recovery);
-  else if (operation === "stop")
+  } else if (operation === "stop")
     result = await stopService(store);
   else if (operation === "status" || operation === "diagnose")
     result = await serviceStatus(store, operation === "diagnose");
@@ -7181,13 +5838,13 @@ No project or default workspace was created.
   if (result && typeof result === "object" && "status" in result && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)))
     process.exitCode = managementExitCode(result, foreground);
   if (result && typeof result === "object" && "status" in result && ["unavailable", "quarantined", "refused", "unconfirmed"].includes(String(result.status)))
-    process.stderr.write(`Preserve state; inspect locally: cadence workbench recover inspect --server-config ${JSON.stringify(config)} --state-home ${JSON.stringify(store.stateHome)}. Eligible recovery requires recover resolve in a local terminal; it never starts work.
+    process.stderr.write(`The workbench is not ready (${String(result.status)}). Details and repair: cadence doctor --fix${seen.has("--server-config") ? ` --server-config ${JSON.stringify(config)}` : ""}${seen.has("--state-home") ? ` --state-home ${JSON.stringify(store.stateHome)}` : ""}
 `);
 }
 
 // src/service/launchd.ts
-import { rmSync as rmSync2 } from "node:fs";
-import { dirname as dirname12, join as join14 } from "node:path";
+import { rmSync as rmSync4 } from "node:fs";
+import { dirname as dirname10, join as join14 } from "node:path";
 var LABEL = "com.abelxiaoxing.cadence";
 var MARKER2 = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated by @abelxiaoxing/cadence`;
@@ -7217,7 +5874,7 @@ function buildPlist(u) {
     "\t</array>",
     ...u.workspace === null ? ["<!-- Cadence workbench gateway; no project workspace -->"] : [],
     "\t<key>WorkingDirectory</key>",
-    `	<string>${xml(u.workspace ?? dirname12(dirname12(u.cli)))}</string>`,
+    `	<string>${xml(u.workspace ?? dirname10(dirname10(u.cli)))}</string>`,
     "\t<key>EnvironmentVariables</key>",
     "\t<dict>",
     ...u.environment.flatMap(([k, v]) => [
@@ -7315,7 +5972,7 @@ async function removeLaunchAgent(s) {
     return { ...refused2, unit: path2 };
   if (s.uid !== undefined && loaded(s))
     s.launchctl(["bootout", target(s)]);
-  rmSync2(path2);
+  rmSync4(path2);
   return { status: "removed", unit: path2 };
 }
 function launchAgentStatus(s) {
@@ -7335,8 +5992,8 @@ function launchAgentStatus(s) {
 }
 
 // src/service/login-run.ts
-import { rmSync as rmSync3 } from "node:fs";
-import { dirname as dirname13, isAbsolute as isAbsolute7, join as join15 } from "node:path";
+import { rmSync as rmSync5 } from "node:fs";
+import { dirname as dirname11, isAbsolute as isAbsolute7, join as join15 } from "node:path";
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 var RUN_VALUE = "Cadence";
@@ -7360,7 +6017,7 @@ function buildLauncher(u) {
     ...u.environment.length ? ['Set env = shell.Environment("Process")'] : [],
     ...u.environment.map(([k, v]) => `env(${literal2(k)}) = ${literal2(v)}`),
     ...u.workspace === null ? ["' Cadence workbench gateway; no project workspace"] : [],
-    `shell.CurrentDirectory = ${literal2(u.workspace ?? dirname13(dirname13(u.cli)))}`,
+    `shell.CurrentDirectory = ${literal2(u.workspace ?? dirname11(dirname11(u.cli)))}`,
     `shell.Run ${literal2(command)}, 0, False`,
     ""
   ].join(`\r
@@ -7443,7 +6100,7 @@ async function removeLoginRun(s) {
   for (const key of [RUN_KEY, APPROVED_KEY])
     if (present(s, key))
       s.reg(["delete", key, "/v", RUN_VALUE, "/f"]);
-  rmSync3(path2);
+  rmSync5(path2);
   return { status: "removed", unit: path2 };
 }
 async function loginRunStatus(s) {
@@ -7464,7 +6121,7 @@ async function loginRunStatus(s) {
 }
 
 // src/service/system-service.ts
-import { existsSync as existsSync2, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
+import { existsSync as existsSync3, realpathSync as realpathSync5, rmSync as rmSync6 } from "node:fs";
 import { isAbsolute as isAbsolute8, join as join16 } from "node:path";
 var MARKER4 = "# Generated by @abelxiaoxing/cadence";
 function boundary(s) {
@@ -7507,8 +6164,8 @@ function sameStateEnvironment(s, previous) {
         return false;
       values.set(key, value.slice(at + 1).replaceAll("%%", "%"));
     }
-    const state2 = s.env.XDG_STATE_HOME;
-    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state2 && isAbsolute8(state2) ? state2 : undefined);
+    const state = s.env.XDG_STATE_HOME;
+    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute8(state) ? state : undefined);
   } catch {
     return false;
   }
@@ -7529,7 +6186,7 @@ async function configureSystemService(s, mode, requested) {
   const refused2 = boundary(s);
   if (refused2)
     return refused2;
-  if (existsSync2(legacyPath(s)))
+  if (existsSync3(legacyPath(s)))
     return { status: "scope-conflict", unit: legacyPath(s), scope: "system" };
   if (s.systemctl(["show-environment"]).status !== 0)
     return { status: "unavailable", scope: "system" };
@@ -7541,18 +6198,18 @@ async function configureSystemService(s, mode, requested) {
   if (mode === "restart" && previous === undefined)
     return { status: "absent", scope: "system" };
   const sdk = sdkPackages(s.root);
-  if (previous && unitWorkspace(previous) && !existsSync2(unitWorkspace(previous)))
+  if (previous && unitWorkspace(previous) && !existsSync3(unitWorkspace(previous)))
     return { status: "workspace-changed", ...result };
-  const selected2 = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : unitWorkspace(previous), false);
-  if (selected2.workspace !== null && !sdk)
+  const selected = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : unitWorkspace(previous), false);
+  if (selected.workspace !== null && !sdk)
     return { status: "missing-pi-sdk", scope: "system" };
-  const selectedReal = selected2.workspace && existsSync2(selected2.workspace) ? realpathSync5(selected2.workspace) : undefined;
+  const selectedReal = selected.workspace && existsSync3(selected.workspace) ? realpathSync5(selected.workspace) : undefined;
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     system: true,
     node: s.node,
     cli: join16(s.root, "src", "service-cli.mjs"),
-    workspace: selected2.workspace,
+    workspace: selected.workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
     sdk: sdk ?? [],
@@ -7560,36 +6217,36 @@ async function configureSystemService(s, mode, requested) {
   });
   if (previous && !sameStateEnvironment(s, previous))
     return { status: "environment-changed", ...result };
-  const active = s.systemctl(["is-active", "--quiet", s.unit]);
-  if (active.status !== 0 && active.status !== 3 && !(active.status === 4 && previous === undefined))
+  const active2 = s.systemctl(["is-active", "--quiet", s.unit]);
+  if (active2.status !== 0 && active2.status !== 3 && !(active2.status === 4 && previous === undefined))
     return { status: "unavailable", ...result };
-  if (active.status === 0 && previous === undefined)
+  if (active2.status === 0 && previous === undefined)
     return { status: "foreign", ...result };
-  if ((selected2.workspace === null || selectedReal) && (previous === undefined || selected2.workspace !== unitWorkspace(previous))) {
-    const target2 = await ownerBoundary(s, selected2.workspace, false);
+  if ((selected.workspace === null || selectedReal) && (previous === undefined || selected.workspace !== unitWorkspace(previous))) {
+    const target2 = await ownerBoundary(s, selected.workspace, false);
     if (target2)
-      return { ...selected2, ...target2, ...result };
+      return { ...selected, ...target2, ...result };
   }
   const workspace = unitWorkspace(previous);
   if (workspace !== undefined) {
-    const refused3 = await ownerBoundary(s, workspace, active.status === 0);
+    const refused3 = await ownerBoundary(s, workspace, active2.status === 0);
     if (refused3)
       return { ...refused3, ...result };
   }
-  const unsettled = active.status === 0 ? await settle(s, workspace) : undefined;
+  const unsettled = active2.status === 0 ? await settle(s, workspace) : undefined;
   if (unsettled)
     return { ...unsettled, ...result };
   if (readGenerated(path2, MARKER4) !== previous)
     return { status: "foreign", ...result };
-  if (selectedReal && selected2.workspace) {
+  if (selectedReal && selected.workspace) {
     try {
-      if (realpathSync5(selected2.workspace) !== selectedReal)
+      if (realpathSync5(selected.workspace) !== selectedReal)
         return { status: "workspace-changed", ...result };
     } catch {
       return { status: "workspace-changed", ...result };
     }
   }
-  if (active.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
+  if (active2.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
     return {
       status: "unconfirmed",
       workspace: unitWorkspace(previous),
@@ -7597,16 +6254,16 @@ async function configureSystemService(s, mode, requested) {
     };
   write(path2, content);
   if (s.systemctl(["daemon-reload"]).status !== 0)
-    return { status: "failed", ...result, ...selected2 };
+    return { status: "failed", ...result, ...selected };
   if (mode === "install" && s.systemctl(["enable", s.unit]).status !== 0)
-    return { status: "failed", ...result, ...selected2 };
-  if (selected2.workspace !== null && !regularFile(join16(agentDir, "auth.json")))
-    return { status: "waiting-for-pi-login", ...result, ...selected2 };
+    return { status: "failed", ...result, ...selected };
+  if (selected.workspace !== null && !regularFile(join16(agentDir, "auth.json")))
+    return { status: "waiting-for-pi-login", ...result, ...selected };
   s.systemctl(["reset-failed", s.unit]);
   return {
     status: s.systemctl(["start", s.unit]).status === 0 ? "started" : "failed",
     ...result,
-    ...selected2
+    ...selected
   };
 }
 async function stopSystemService(s, remove = false) {
@@ -7623,18 +6280,18 @@ async function stopSystemService(s, remove = false) {
   const workspace = unitWorkspace(previous);
   if (!sameStateEnvironment(s, previous))
     return { status: "environment-changed", workspace, ...result };
-  const active = s.systemctl(["is-active", "--quiet", s.unit]);
-  if (active.status !== 0 && active.status !== 3)
+  const active2 = s.systemctl(["is-active", "--quiet", s.unit]);
+  if (active2.status !== 0 && active2.status !== 3)
     return { status: "unavailable", workspace, ...result };
-  const owner = await ownerBoundary(s, workspace, active.status === 0);
+  const owner = await ownerBoundary(s, workspace, active2.status === 0);
   if (owner)
     return { ...owner, ...result };
-  const unsettled = active.status === 0 ? await settle(s, workspace) : undefined;
+  const unsettled = active2.status === 0 ? await settle(s, workspace) : undefined;
   if (unsettled)
     return { ...unsettled, ...result };
   if (readGenerated(path2, MARKER4) !== previous)
     return { status: "foreign", ...result };
-  if (active.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
+  if (active2.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
     return { status: "unconfirmed", workspace, ...result };
   if (!remove)
     return { status: "stopped", workspace, ...result };
@@ -7642,7 +6299,7 @@ async function stopSystemService(s, remove = false) {
     return { status: "failed", workspace, ...result };
   if (readGenerated(path2, MARKER4) !== previous)
     return { status: "foreign", ...result };
-  rmSync4(path2);
+  rmSync6(path2);
   if (s.systemctl(["daemon-reload"]).status !== 0)
     return { status: "failed", ...result };
   s.systemctl(["reset-failed", s.unit]);
@@ -7737,7 +6394,7 @@ async function serviceStatus(c, diagnose = false) {
     return {
       status: "unavailable",
       ...registryLock,
-      recovery: "cadence recover inspect --workspace <project> [--state-home <state-home>]"
+      recovery: "cadence doctor"
     };
   const observed2 = c.inspect();
   if (observed2.status === "absent" || observed2.status === "stopped")
@@ -7805,23 +6462,34 @@ function serverConfigHint(error) {
 Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
 `;
 }
-function registryGuidance(workspace, stateHome) {
-  return `The shared registry lock blocks project access in this state home. No automatic lock deletion. Inspect locally: cadence recover inspect --workspace ${JSON.stringify(workspace)} --state-home ${JSON.stringify(stateHome)}; eligible dead locks require cadence recover resolve in a local terminal.
+function registryGuidance(_workspace, stateHome) {
+  return `Another Cadence process is updating the shared project registry right now. Try again in a moment; if this persists: cadence doctor --state-home ${JSON.stringify(stateHome)}
 `;
 }
+async function ownerResponsive(c) {
+  for (let attempt2 = 0;attempt2 < 3; attempt2++) {
+    try {
+      await nativeCall(c, "status");
+      return true;
+    } catch {
+      await pause(500);
+    }
+  }
+  return false;
+}
 function startupGuidance(result, input) {
-  let report;
+  let report2;
   try {
-    report = decodeStartupReport(result);
+    report2 = decodeStartupReport(result);
   } catch {
     return "";
   }
-  if (report.error === "registry-locked")
+  if (report2.error === "registry-locked")
     return registryGuidance(input.workspace, input.stateHome);
   const agent = input.config.agentDir;
-  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
+  const inspect = `Details: cadence doctor --workspace ${JSON.stringify(input.workspace)}
 `;
-  switch (report.stage) {
+  switch (report2.stage) {
     case "package":
       return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
 `;
@@ -7835,10 +6503,11 @@ function startupGuidance(result, input) {
       return `${join17(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
-      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
+      return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.
 ${inspect}`;
     default:
-      return report.status === "quarantined" ? `The owner registered, then refused; it stays quarantined.
+      return report2.error === "recording-exhausted" ? `The disk is too full for Cadence's history. Free some space and start again.
+` : report2.status === "quarantined" ? `The owner registered, then refused to start. Start again; the next start recovers its registration automatically.
 ${inspect}` : "";
   }
 }
@@ -7846,6 +6515,15 @@ async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
+  const blocked = await healProjectForStart(c, () => ownerResponsive(c));
+  if (blocked) {
+    process.stderr.write(blocked);
+    return {
+      status: "refused",
+      error: "quarantine",
+      stage: "service"
+    };
+  }
   if (c.registryLockDiagnostic()) {
     process.stderr.write(registryGuidance(c.store.root, c.stateHome));
     return {
@@ -7887,7 +6565,7 @@ async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
     fileURLToPath2(hostUrl)
   ], {
     cwd,
-    env,
+    env: foreground && process.env.INVOCATION_ID ? { ...env, CADENCE_SUPERVISED: "systemd" } : env,
     detached: !foreground,
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"]
@@ -7973,7 +6651,7 @@ async function observeStarted(workspace, config) {
   let service = "unconfirmed";
   while (performance.now() < deadline) {
     try {
-      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace);
+      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir7())) : new ServiceCoordination(workspace);
       const observed2 = await serviceStatus(c);
       if (observed2 && typeof observed2 === "object" && "status" in observed2)
         service = String(observed2.status);
@@ -7988,7 +6666,7 @@ async function observeStarted(workspace, config) {
 }
 async function privateLink(workspace, stateHome, config) {
   try {
-    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
+    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir7()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
     return text(value.link, 4096, true);
   } catch {
     return;
@@ -7997,7 +6675,7 @@ async function privateLink(workspace, stateHome, config) {
 var ownerControl = {
   async ownerStatus(workspace, config) {
     try {
-      const observed2 = await serviceStatus(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace));
+      const observed2 = await serviceStatus(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir7())) : new ServiceCoordination(workspace));
       return observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
     } catch {
       return "unavailable";
@@ -8005,7 +6683,7 @@ var ownerControl = {
   },
   async stopOwner(workspace, config) {
     try {
-      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace);
+      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir7())) : new ServiceCoordination(workspace);
       const observed2 = await serviceStatus(c);
       const status = observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
       if (status === "absent" || status === "stopped")
@@ -8083,9 +6761,8 @@ function managerDetail(s) {
 function serverStatusGuidance(s, action, result, cli, link) {
   const workspace = JSON.stringify(result.workspace ?? "");
   if (result.workspace === null && ["quarantined", "unconfirmed", "unavailable"].includes(result.status))
-    return `Cadence workbench is not ready (${result.status}); no successful startup or Stop is inferred.
-Inspect locally: ${cli} workbench recover inspect --server-config ${JSON.stringify(serviceConfigPath(s))}
-Use the definition's same account and state home; eligible recovery requires recover resolve in a local terminal. Preserve locks and history.
+    return `Cadence workbench is not ready (${result.status}).
+Details and repair: ${cli} doctor${s.platform === "linux" ? "" : ""} --fix
 `;
   if (result.workspace === null && result.status === "started")
     return `Cadence unified workbench: ${link ?? result.endpoint ?? result.service ?? "unconfirmed"}
@@ -8163,10 +6840,8 @@ ${lingerGuidance(result.linger)}`;
 `;
     case "unconfirmed":
     case "quarantined":
-      return `Cadence owner reports ${result.status}; successful startup or orderly Stop is not confirmed.
-Inspect: ${cli} diagnose --workspace ${workspace}
-Local recovery: ${cli} recover inspect --workspace ${workspace}
-Preserve uncertain state; recovery requires separate fresh terminal confirmation.
+      return `Cadence owner reports ${result.status}; it did not confirm a successful start or stop.
+Details and repair: ${cli} doctor --workspace ${workspace} --fix
 `;
     case "failed":
       return `Could not register or start Cadence's service; ${managerDetail(s)}.
@@ -8224,7 +6899,7 @@ async function serverMain(argv, hostUrl) {
     } else
       throw new ContractError("invalid");
   }
-  const s = hostSystem(dirname14(dirname14(fileURLToPath2(hostUrl))), ownerControl, {
+  const s = hostSystem(dirname12(dirname12(fileURLToPath2(hostUrl))), ownerControl, {
     scope,
     name
   });
@@ -8268,6 +6943,7 @@ async function serverMain(argv, hostUrl) {
 `);
     throw error;
   }
+  const vanished = typeof result.workspace === "string" ? missingWorkspace(result.workspace) : null;
   let link;
   if (result.status === "started" && result.workspace !== undefined) {
     const workspace = result.workspace;
@@ -8279,7 +6955,7 @@ async function serverMain(argv, hostUrl) {
     if (result.service === "alive")
       link = await privateLink(workspace, undefined, serviceConfigPath(s));
   }
-  if (action === "status" && result.workspace !== undefined && ["active", "activating", "failed"].includes(result.status)) {
+  if (action === "status" && result.workspace !== undefined && !vanished && ["active", "activating", "failed"].includes(result.status)) {
     const target2 = result.workspace === null ? new GatewayStore(serviceConfigPath(s)) : new ServiceCoordination(result.workspace);
     const observed2 = await serviceStatus(target2);
     if (observed2 && typeof observed2 === "object" && "status" in observed2) {
@@ -8291,7 +6967,9 @@ async function serverMain(argv, hostUrl) {
       };
     }
   }
-  process.stderr.write(serverGuidance(s, action, result, link));
+  if (vanished)
+    result = { ...result, service: "workspace-missing" };
+  process.stderr.write(vanished ?? serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}
 `);
   if ([
@@ -8314,13 +6992,13 @@ async function projectMain(argv, hostUrl) {
   if (argv.shift() !== "open")
     throw new ContractError("invalid");
   const options = { workspace: process.cwd() };
-  let create = false, selected2 = false;
+  let create = false, selected = false;
   const seen = new Set;
   while (argv.length) {
     const flag = argv.shift();
-    if (!flag.startsWith("--") && !selected2) {
+    if (!flag.startsWith("--") && !selected) {
       options.workspace = resolve7(flag);
-      selected2 = true;
+      selected = true;
     } else if (!seen.has(flag) && flag === "--create") {
       seen.add(flag);
       create = true;
@@ -8338,8 +7016,17 @@ async function projectMain(argv, hostUrl) {
     throw new ContractError("forbidden");
   if (create)
     mkdirSync6(options.workspace, { recursive: true });
+  const missing2 = missingWorkspace(options.workspace);
+  if (missing2) {
+    process.stderr.write(missing2);
+    process.stdout.write(`${JSON.stringify({ status: "refused", reason: "workspace-missing" })}
+`);
+    process.exitCode = 1;
+    return;
+  }
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
+  await healAccount(new ServiceCoordination(null, options.stateHome));
   const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   if (!kept)
     options.port = 0;
@@ -8361,13 +7048,85 @@ async function projectMain(argv, hostUrl) {
   if (failedStatus(result))
     process.exitCode = 1;
 }
+function refusalHint(code2) {
+  switch (code2) {
+    case "invalid":
+      return `Cadence did not understand the command or one of its paths (see cadence --help).
+`;
+    case "registry-locked":
+      return `Another Cadence process is updating the shared project registry. Try again in a moment, or run: cadence doctor
+`;
+    case "quarantine":
+    case "conflict":
+      return `Cadence could not take over this project right now. See what is holding it: cadence doctor
+`;
+    case "recording-exhausted":
+      return `The disk is too full for Cadence's history. Free some space and try again.
+`;
+    case "unsupported-context":
+      return `Run Cadence's management command with Node.js 22.19 or newer (not Bun), without NODE_OPTIONS.
+`;
+    default:
+      return `Cadence could not complete the command. Details: cadence doctor
+`;
+  }
+}
+async function doctorMain(command, argv) {
+  let fix = false, yes = false;
+  if (command === "recover") {
+    const mode = argv.shift();
+    if (mode !== "inspect" && mode !== "resolve")
+      throw new ContractError("invalid");
+    fix = mode === "resolve";
+  }
+  const options = {};
+  const seen = new Set;
+  while (argv.length) {
+    const flag = argv.shift();
+    if (seen.has(flag))
+      throw new ContractError("invalid");
+    seen.add(flag);
+    if (flag === "--fix")
+      fix = true;
+    else if (flag === "--yes")
+      yes = true;
+    else if (["--workspace", "--state-home", "--server-config"].includes(flag) && argv[0]) {
+      const value = resolve7(argv.shift());
+      if (flag === "--workspace")
+        options.workspace = value;
+      else if (flag === "--state-home")
+        options.stateHome = value;
+      else
+        options.serverConfig = value;
+    } else
+      throw new ContractError("invalid");
+  }
+  const result = await doctor({
+    ...options,
+    fix,
+    yes,
+    probeProject: async (root, stateHome) => {
+      try {
+        return await ownerResponsive(new ServiceCoordination(root, stateHome));
+      } catch {
+        return false;
+      }
+    },
+    probeWorkbench: (store) => ownerResponsive(store)
+  });
+  process.stdout.write(`${JSON.stringify(result)}
+`);
+}
 async function managementMain(argv, hostUrl) {
   const foregroundStart = argv.includes("--foreground") && (argv[0] === "start" || argv[0] === "workbench" && argv[1] === "start");
-  const recoveryCommand = argv[0] === "recover" || argv[0] === "workbench" && argv[1] === "recover";
   try {
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
     const command = argv.shift();
+    if (command === "doctor" || command === "recover") {
+      await doctorMain(command, argv);
+      return;
+    }
     if (command === "workbench") {
       await gatewayMain(argv, hostUrl);
       return;
@@ -8378,23 +7137,23 @@ async function managementMain(argv, hostUrl) {
       "diagnose",
       "stop",
       "token-link",
-      "token-rotate",
-      "recover"
+      "token-rotate"
     ].includes(command ?? "") && !argv.includes("--workspace")) {
       await gatewayMain([command, ...argv], hostUrl);
       return;
     }
     if (command === "--help" && !argv.length) {
-      process.stdout.write(`cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
-Without --workspace these commands (including recover) address the unified workbench, never cwd; no default project directory is created. Project recovery requires explicit --workspace PATH. Recovery checks the account-wide registry lock first.
-cadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--server-config PATH] [--state-home PATH]
+      process.stdout.write(`cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]
+Without --workspace these commands address the unified workbench, never cwd; no default project directory is created.
+cadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]
+cadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]
+Start recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.
 cadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall
 Linux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.
 cadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]
 Project open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.
 Start is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).
-Return/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.
-Recovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.
+Return/quit detaches clients; only explicit Cancel/Stop requests stop.
 `);
       return;
     }
@@ -8406,23 +7165,15 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       await serverMain(argv, hostUrl);
       return;
     }
-    let recovery;
     if (![
       "start",
       "status",
       "stop",
       "diagnose",
       "token-link",
-      "token-rotate",
-      "recover"
+      "token-rotate"
     ].includes(command ?? ""))
       throw new ContractError("invalid");
-    if (command === "recover") {
-      const selected2 = argv.shift();
-      if (selected2 !== "inspect" && selected2 !== "resolve")
-        throw new ContractError("invalid");
-      recovery = selected2;
-    }
     const options = { workspace: process.cwd() };
     let foreground = false, reveal = false;
     const seen = new Set;
@@ -8465,15 +7216,24 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
+    const missing2 = missingWorkspace(resolve7(options.workspace));
+    if (missing2) {
+      process.stderr.write(missing2);
+      await healAccount(new ServiceCoordination(null, options.stateHome)).catch(() => {
+        return;
+      });
+      process.stdout.write(`${JSON.stringify({ status: command === "start" ? "refused" : "absent", reason: "workspace-missing" })}
+`);
+      process.exitCode = foreground ? 78 : 1;
+      return;
+    }
     effectiveWorkspace(options.workspace, options.stateHome);
     let result;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
     else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
-      if (command === "recover" && recovery)
-        result = await localRecovery(c, recovery);
-      else if (command === "status" || command === "diagnose")
+      if (command === "status" || command === "diagnose")
         result = await serviceStatus(c, command === "diagnose");
       else if (command === "stop")
         result = await stopService(c);
@@ -8493,14 +7253,8 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
     if (failedStatus(result))
       process.exitCode = managementExitCode(result, foreground);
   } catch (error) {
-    process.stderr.write(`${JSON.stringify({
-      error: "service-refused",
-      ...recoveryCommand ? {
-        code: error instanceof ContractError ? error.code : "unavailable",
-        stage: "recovery",
-        notice: "Use workbench recover for account/workbench state or explicit --workspace for an existing project; preserve state on refusal."
-      } : {}
-    })}
+    const code2 = error instanceof ContractError ? error.code : "unavailable";
+    process.stderr.write(`${refusalHint(code2)}${JSON.stringify({ error: "service-refused", code: code2 })}
 `);
     process.exitCode = foregroundStart && (error instanceof ContractError || error instanceof ServerConfigRefusal) ? 78 : 1;
   }

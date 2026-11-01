@@ -48,7 +48,7 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `service-conversation-workflow`, `test/web/workflow.test.tsx`, `test/web/cadence-browser.e2e.mjs`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
 - `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
-- `checkout-gate`, `service-owner`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
+- `checkout-gate`, `service-owner`, `self-heal`: original operations, overlap, Stop, and startup self-healing from real crashed owners, registry locks, partial reservations, orphan workers, torn/unreadable history, half-written metadata, removed project directories and dead workbenches (live owners never reclaimed).
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
 - `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
@@ -56,10 +56,9 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` seeds fabricated archived records without a task executor or model call, then checks a cold generated owner, retired controls, exact search, complete downloads and viewports; `cadence-browser` covers current browser approval/execution/cancel.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
-- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
+- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running, rotation of the token line, a runtime fault's worker stop/successor/recovering restart and the readable refusal for a removed project directory.
 - `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
-- `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work and genuine multi-owner Stop over loopback.
-- `gateway-recovery`: real crashed owners/resolvers, exact gateway-only release, preserved project fences and unfinished openings, retired/reopened associations, live/remote/changed/linked refusals, generated CLI diagnostics and native-TTY host/process/credential/storage acknowledgments.
+- `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, an Open that reclaims a dead registry lock and genuine multi-owner Stop over loopback.
 
 ## Builds and packaging
 
@@ -73,10 +72,10 @@ Preserve original license bytes through their precise Git attributes; line-endin
 
 | Condition                                                      | Required behavior                                                                                     |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Missing/unsafe/corrupt/partial selected state                  | Absent or fixed refusal; no bootstrap, adoption, repair or cleanup on observation                     |
+| Missing/unsafe/corrupt/partial selected state                  | Readonly observation changes nothing; startup archives what a dead owner left half-written            |
 | Native exit0 with recording/stdin/final/cleanup failure        | Preserve native zero independently; no workflow success                                               |
 | Stale grant, selected task bytes or model/source identity      | Refuse and require fresh observation/confirmation                                                     |
-| Unknown original stop/auth/storage or changed lease            | Retain fences/charges; no guessed process signaling or automatic release                              |
+| Unknown original stop/auth/storage or changed lease            | Quarantine, settle, stop own ledger workers, exit; the successor's startup heal recovers it           |
 | Failed/unrun/stale check, partial child or incomplete coverage | Explicit issues review; preserve independent recorded outcomes                                        |
 | Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel                                   |
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                                        |
@@ -84,7 +83,7 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start                           |
 | Missing optional SDK or Pi `auth.json`                         | Project-less workbench may start without loading either; explicit project startup retains its refusal |
 | Package files hard-linked into a package manager's store (Bun) | Packaged reads ignore link count, bind exact bodies; other files stay single-link                     |
-| Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined`                   |
+| Host refuses during startup                                    | Fixed code/stage only; a registered host exits too and the next start recovers its registration       |
 | Workspace containing the private state home                    | Refuse the project selection; no redirection, default directory or state relocation                   |
 | Restart changes the definition's workspace or Node path        | Stop with the loaded definition before rewriting, not only a signal                                   |
 | npm 12 or Bun skips untrusted install scripts by default       | Ship none; `cadence server install` registers the service and creates the template                    |
@@ -97,6 +96,8 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Git output past its buffer/time bound (`node_modules` listing) | Hash a fixed outcome, never pipe-timed partial bytes: an unchanged tree keeps one identity            |
 | Optional Pi usage keys (`reasoning`, `cacheWrite1h`)           | Checkpoint only the counts every message carries; a provider breakdown never fails the turn           |
 | A turn's steps watched live, then failing without an answer    | Derive the fold from the settled turn on every render, not from mount-time state; user toggles win    |
+| Power loss or shutdown while an owner runs (idle or busy)      | Next start proves the holder dead (boot ID, PID, start identity) and recovers; no typed confirmation  |
+| Systemd unit pointing at a removed project directory           | Readable refusal, exit78 (no restart loop); its dead reservation is released account-wide             |
 
 Good: current context → exact plan approval → durable acceptance → genuine original native/auth/storage settlement → real checks → automatic Agent review.
 Archived human Review is not a new workflow approval.

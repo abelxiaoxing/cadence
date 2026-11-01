@@ -20,6 +20,7 @@ import {
 } from "./contracts/core.ts";
 import type { ProjectEntry as GatewayProject } from "./contracts/gateway.ts";
 import { decodeProjectEntry, type ProjectEntry } from "./contracts/gateway.ts";
+import { selfMark } from "./liveness.ts";
 import {
   encoded,
   type FileSnapshot,
@@ -199,9 +200,16 @@ export class GatewayStore {
     if (previous && previous.phase !== "stopped")
       throw new ContractError("quarantine");
     if (previous?.recovery) this.associatedProjects();
+    const mark = selfMark();
     this.lock = this.files.create(
       this.path("gateway.lock"),
-      encoded({ epoch: randomUUID() }),
+      encoded({
+        epoch: randomUUID(),
+        pid: process.pid,
+        host: hostname(),
+        boot: mark.boot,
+        started: mark.started,
+      }),
     );
     // A failed initialization intentionally leaves this exact lock in place.
     const source = { serverConfig: this.serverConfig, token };

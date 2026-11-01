@@ -6,14 +6,15 @@ Only explicit `cadence server install` registers and starts the generated boot s
 Native and browser `/cadence [goal]` enable a persistent conversation mode until explicit exit; completion never disables it. Native entry/current user Send may start or reuse a local project owner without installing a boot service.
 Code workflows require a readable plan and fresh context-bound execution consent, then service-owned host-tool edits, real checks and automatic Agent review (never labelled human review). Approved local delivery may include isolated parallel Git worktrees, bounded repairs, local task commits and fast-forward integration; no implicit push, deployment or source/profile copying. Legacy task execution controls are retired; existing check/human Review evidence remains readonly.
 Native entry retains raw-terminal guards; browser access authentication is not action consent. Browser execution uses an exact-plan, conversation/attachment-bound approval, never a native capability. Owner-held conversation mode survives refresh; the bounded SDK coordinator cannot edit or approve itself and does not hold the checkout gate while waiting for subagents.
-Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.
-No terminal embedded executor, automatic replay, profile copying or recovery by deleting uncertain locks is allowed.
+Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure, and an owner that cannot settle its work restarts itself after stopping its own workers.
+No terminal embedded executor, automatic replay or profile copying is allowed.
+Startup self-heals what a provably dead Cadence process left behind (an earlier boot, an absent or reused PID, then its leftover workers stopped by exact identity) and records what it did; a live, unresponsive, foreign-host or unidentifiable holder is never reclaimed without one explicit confirmation (`cadence doctor --fix`).
 This is not a sandbox, certified executor or transactional application system.
 Research/diagnosis are readonly; ordinary conversations remain independent and use direct host tools only on explicit Send, under the shared checkout gate.
 Human-readable legacy summaries live under `.cadence/assistant/tasks`; new workflow notes use `.cadence/assistant/workflows` and managed project context uses `.cadence/project.md`; private history and coordination use `cadence-assistant-v1` outside the working copy.
 The unified workbench has no project cwd and never creates a default workspace; private-state ancestors are refused as project roots, never redirected.
-Explicit Open associates independent project owners behind one authenticated origin; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.
-Consumer data and uncertain resources must never be imported, reset or cleaned incidentally.
+Explicit Open associates independent project owners behind one authenticated origin and follows an associated project's restarted owner; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.
+Consumer data must never be imported, reset or cleaned incidentally; damaged or half-written private state is archived (expiring after 30 days), never silently deleted, before a clean start.
 `cadence project open` explicitly starts or reuses a directory owner on its own selected port, never a task; named Linux services keep projects independent, and root operation never copies another account's credentials or adopts its state.
 
 ## Development
@@ -44,7 +45,7 @@ Use the installed public Pi declarations rather than assuming global documentati
 - `src/history/` owns durable recording and retained readers; `web/src/` owns the browser client.
 - `agents/`, `skills/` and `config/` contain the shipped independent profiles, skills and examples.
 - `engineering/architecture.md`: module ownership, maintained seams, packaging and shipped content.
-- `engineering/lifetimes.md`: admission, scheduling, Stop, registry and recovery.
+- `engineering/lifetimes.md`: admission, scheduling, Stop, registry and automatic recovery.
 - `engineering/checks-review.md`: checks, change observation, task publication and Review.
 - `engineering/history.md`: capture, redaction and retained history readers.
 - `engineering/clients.md`: the native client, the agent panel, the WebUI and ordinary conversations.

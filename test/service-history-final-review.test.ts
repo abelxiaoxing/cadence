@@ -3,9 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { expect, it, vi } from "vitest";
-import { HistoryRecovery } from "../src/history/recovery.ts";
-import { inspectRecovery } from "../src/service/recovery.ts";
+import { expect, it } from "vitest";
+import { appendRecoveryBridge } from "../src/history/recovery.ts";
 import { canonicalJson, type ExportFrame } from "../src/service-contract.ts";
 import { legacyTaskStore } from "../src/task-store.ts";
 import {
@@ -66,27 +65,13 @@ it.each(["intent", "artifacts"] as const)(
     armed = true;
     const original = f.writer.commit(f.intent);
     await entered;
-    const probe = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw Object.assign(Error("injected ESRCH"), { code: "ESRCH" });
-    });
-    const recovery = new HistoryRecovery(f.c);
     try {
-      const expected = await inspectRecovery(f.c, recovery),
-        before = storedTree(f.dir);
+      const before = storedTree(f.dir);
       expect(f.writer.pendingWrites).toBe(1);
-      await expect(
-        recovery.append({
-          expected,
-          acknowledgeEscapedProcesses: true,
-          processes: "externally-resolved",
-          credentials: "independently-resolved",
-          storage: "independently-resolved",
-          assertLocalAuthority: () => {}, // Deliberately fabricated; cannot override an original W3 promise.
-        }),
-      ).rejects.toThrow();
+      // Even the lease holder cannot bridge over its own original W3 write.
+      await expect(appendRecoveryBridge(f.lease, f.files)).rejects.toThrow();
       expect(storedTree(f.dir)).toEqual(before);
     } finally {
-      probe.mockRestore();
       release();
       await original;
       await f.writer.settled();

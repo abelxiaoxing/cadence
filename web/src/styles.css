@@ -458,6 +458,27 @@ summary:focus-visible,
 .banner-notice code {
   color: var(--text);
 }
+.recovery-notice {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.recovery-notice button {
+  font: inherit;
+  color: var(--accent-text);
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.recovery-details {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.recovery-details time {
+  color: var(--text-faint);
+}
 
 /* ============================================================
    Three-pane layout (pi .layout / .panel / resize handle)

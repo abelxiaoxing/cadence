@@ -2,12 +2,11 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { expect, it, vi } from "vitest";
-import { HistoryRecovery } from "../src/history/recovery.ts";
+import { expect, it } from "vitest";
+import { appendRecoveryBridge } from "../src/history/recovery.ts";
 import { RECORD_BYTES } from "../src/history/types.ts";
 import { HistoryWriter } from "../src/history/writer.ts";
 import { hash } from "../src/service/private-files.ts";
-import { inspectRecovery } from "../src/service/recovery.ts";
 import { ServiceClient, type ServiceTransport } from "../src/service-client.ts";
 import {
   type ChooseModelRequest,
@@ -288,29 +287,8 @@ it("accepted metadata floor survives epochs/recovery without resource policy; co
   lines[1] = canonicalJson(marker, RECORD_BYTES);
   writeFileSync(segment, `${lines.join("\n")}\n`);
   const preserved = readFileSync(segment);
-  const recovery = new HistoryRecovery(f.c);
-  // Injected absent-PID observation AND informed authority. This exercises the
-  // real bridge/floor scanner, not native crash or management takeover.
-  const probe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-    expect(pid).toBe(process.pid);
-    expect(signal).toBe(0);
-    throw Object.assign(new Error("fixture absent"), { code: "ESRCH" });
-  });
-  try {
-    const expected = await inspectRecovery(f.c, recovery);
-    await recovery.append({
-      expected,
-      processes: "externally-resolved",
-      credentials: "independently-resolved",
-      storage: "independently-resolved",
-      acknowledgeEscapedProcesses: true,
-      assertLocalAuthority: (choice) => {
-        expect(choice).toEqual(expected);
-      },
-    });
-  } finally {
-    probe.mockRestore();
-  }
+  // The real bridge/floor scanner, appended under the current lease.
+  await appendRecoveryBridge(f.lease, f.files);
   expect(readFileSync(segment)).toEqual(preserved);
   f.lease.release();
   const lease = f.c.acquire({

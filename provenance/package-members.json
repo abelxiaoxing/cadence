@@ -71,6 +71,7 @@
   "package/src/service/contracts/workbench.ts",
   "package/src/service/contracts/workflow.ts",
   "package/src/service/coordination.ts",
+  "package/src/service/liveness.ts",
   "package/src/service/private-files.ts",
   "package/src/startup-card.ts",
   "package/src/verification-diagnostics.ts",

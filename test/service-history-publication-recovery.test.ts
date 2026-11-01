@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,22 +12,23 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, expect, it, vi } from "vitest";
-import { HistoryFiles, HistoryReadBudget } from "../src/history/files.ts";
+import { beforeAll, expect, it } from "vitest";
+import {
+  HistoryFiles,
+  HistoryReadBudget,
+  type WriteObserver,
+} from "../src/history/files.ts";
 import { HistoryNavigation } from "../src/history/navigation.ts";
 import { publicationPhase, summary } from "../src/history/publication.ts";
 import { HistoryReader } from "../src/history/reader.ts";
-import {
-  HistoryRecovery,
-  type RecoveryConfirmation,
-} from "../src/history/recovery.ts";
+import { appendRecoveryBridge } from "../src/history/recovery.ts";
 import { RunState, readOperationState } from "../src/history/run-state.ts";
 import { searchHistory } from "../src/history/search.ts";
 import { COMPLETE } from "../src/history/types.ts";
 import { HistoryWriter } from "../src/history/writer.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { ServiceOwner } from "../src/service/owner.ts";
-import { inspectRecovery } from "../src/service/recovery.ts";
+import { healProject } from "../src/service/self-heal.ts";
 import { canonicalJson, LIMITS } from "../src/service-contract.ts";
 import { legacyTaskStore, savedRecordIdentity } from "../src/task-store.ts";
 import { TASK_SCHEMA } from "../src/task-types.ts";
@@ -272,23 +272,22 @@ function crash(boundary: string) {
     selected: JSON.parse(readFileSync(join(dir, "selection.json"), "utf8")),
   };
 }
-async function confirmation(
-  c: ServiceCoordination,
-): Promise<RecoveryConfirmation> {
-  const recovery = new HistoryRecovery(c),
-    expected = await inspectRecovery(c, recovery);
-  // Fabricated management authority/independent operator acknowledgments, NOT a production CLI.
-  return {
-    expected,
-    processes: "externally-resolved",
-    credentials: "independently-resolved",
-    storage: "independently-resolved",
-    acknowledgeEscapedProcesses: true,
-    assertLocalAuthority: (choice) => {
-      expect(choice.coordinationDigest).toBe(expected.coordinationDigest);
-      expect(choice.owner).toBe("absent");
-    },
-  };
+const ownerConfig = {
+  schema: "cadence-service-owner-config/1",
+  endpoint: "http://127.0.0.1:17423",
+  policyIdentity: "a".repeat(64),
+} as const;
+/** What the next owner's startup does after a crash: reclaim the dead
+ * predecessor, take the lease and bridge its preserved history. */
+async function recoverOwner(c: ServiceCoordination, observe?: WriteObserver) {
+  expect((await healProject(c)).status).toBe("healed");
+  const lease = c.acquire(ownerConfig);
+  const fact = await appendRecoveryBridge(
+    lease,
+    HistoryFiles.open(c)!,
+    observe,
+  );
+  return { ...fact, lease };
 }
 it.each([
   "publication-before-save",
@@ -308,8 +307,10 @@ it.each([
     expect(!!legacyTaskStore(f.c).load(f.selected.taskId)).toBe(
       boundary !== "publication-before-save",
     );
-    const recovery = new HistoryRecovery(f.c);
-    expect((await inspectRecovery(f.c, recovery)).owner).toBe("absent");
+    expect(await healProject(f.c, { inspect: true })).toMatchObject({
+      status: "reclaimable",
+      cause: "crash",
+    });
     expect(diskIdentity(f.dir)).toEqual(before);
     expect(() =>
       f.c.acquire({
@@ -320,64 +321,23 @@ it.each([
     ).toThrow();
   },
 );
-it("readonly recovery rejects live owners and missing authority without writes", async () => {
+it("a live owner is never reclaimed by another starter", async () => {
   const f = createFixture();
   await f.writer.commit(f.intent);
-  const recovery = new HistoryRecovery(f.c),
-    before = diskIdentity(f.dir);
-  const selected = await confirmation(f.c);
-  await expect(recovery.append(selected)).rejects.toThrow();
-  const missing = { ...selected, assertLocalAuthority: undefined };
-  // Runtime boundary deliberately malformed, not an accepting TypeScript cast.
-  await expect(
-    recovery.append(missing as unknown as RecoveryConfirmation),
-  ).rejects.toThrow();
+  const before = diskIdentity(f.dir);
+  expect(await healProject(f.c)).toEqual({ status: "live" });
   expect(diskIdentity(f.dir)).toEqual(before);
 });
-it.each([
-  "authority",
-  "processes",
-  "credentials",
-  "storage",
-  "stale",
-  "changed-in-callback",
-])(
-  "guarded recovery refuses %s and never removes coordination locks",
-  async (mode) => {
-    const f = crash("tail"),
-      recovery = new HistoryRecovery(f.c),
-      selected = await confirmation(f.c);
-    const lock = readFileSync(legacyTaskStore(f.c).lockPath);
-    if (mode === "authority")
-      selected.assertLocalAuthority = () => {
-        throw Error("fabricated local authority refusal");
-      };
-    if (mode === "stale") appendFileSync(f.files.segmentPath(1), "changed");
-    if (mode === "changed-in-callback")
-      selected.assertLocalAuthority = () => {
-        appendFileSync(f.files.segmentPath(1), "changed");
-      };
-    if (["processes", "credentials", "storage"].includes(mode))
-      Object.assign(selected, { [mode]: "unknown" });
-    await expect(recovery.append(selected)).rejects.toThrow();
-    expect(readFileSync(legacyTaskStore(f.c).lockPath)).toEqual(lock);
-    expect(existsSync(f.files.segmentPath(2))).toBe(false);
-  },
-);
-it("torn FINAL bytes survive an explicit bridge; new monotonically separated batches retain old ranges", async () => {
+it("torn FINAL bytes survive an automatic bridge; new monotonically separated batches retain old ranges", async () => {
   const f = crash("tail"),
-    recovery = new HistoryRecovery(f.c),
     original = readFileSync(f.files.segmentPath(1));
   const old = f.files.inspect(),
     first = [...f.files.scan()][0];
-  const choice = await confirmation(f.c),
-    locks = f.c.recoverySnapshot().digest;
-  const fact = await recovery.append(choice);
+  const fact = await recoverOwner(f.c);
   expect(BigInt(fact.committedSeq)).toBeGreaterThan(
     BigInt(old.highSeq ?? old.committedSeq),
   );
   expect(readFileSync(f.files.segmentPath(1))).toEqual(original);
-  expect(f.c.recoverySnapshot().digest).toBe(locks);
   expect(f.files.inspect().tail).toBe(false);
   expect([...f.files.scan()][0].rows).toEqual(first.rows);
   const nav = new HistoryNavigation(f.files),
@@ -386,31 +346,16 @@ it("torn FINAL bytes survive an explicit bridge; new monotonically separated bat
   expect(nav.snapshot(fact.committedSeq, new HistoryReadBudget())?.seq).toBe(
     fact.committedSeq,
   );
-  expect((await recovery.inspect(choice.expected.epoch)).storage).toBe(
-    "independently-resolved",
-  );
-  // W3 returned a durable fact but W1 intentionally STILL refuses lock takeover.
-  expect(() =>
-    f.c.acquire({
-      schema: "cadence-service-owner-config/1",
-      endpoint: "http://127.0.0.1:17423",
-      policyIdentity: "a".repeat(64),
-    }),
-  ).toThrow();
+  // The bridged history is writable by the new owner.
+  expect(new HistoryWriter(fact.lease).quarantined).toBe(false);
 });
 it("unmatched auth is independent of process closure and remains inspectable after recovery", async () => {
-  const f = crash("auth"),
-    recovery = new HistoryRecovery(f.c),
-    selected = await confirmation(f.c);
-  expect(selected.expected.history).toMatchObject({
-    credentials: "unknown",
-    processes: "externally-resolved",
-  });
+  const f = crash("auth");
   const original = [...f.files.scan()]
     .flatMap((b) => b.rows)
     .filter((r) => r.value.kind === "auth-preparation");
   expect(original).toHaveLength(1);
-  await recovery.append(selected);
+  await recoverOwner(f.c);
   expect(
     [...f.files.scan()]
       .flatMap((b) => b.rows)
@@ -428,11 +373,9 @@ it("interior corruption cannot be repaired into success by a recovery append", a
     original = readFileSync(path);
   original[0] = 120;
   writeFileSync(path, original);
-  const recovery = new HistoryRecovery(f.c);
-  await expect(confirmation(f.c)).rejects.toThrow();
-  await expect(
-    recovery.inspect(f.c.recoverySnapshot().registration.epoch),
-  ).rejects.toThrow();
+  // Coordination is reclaimed, but no bridge can make damaged interior bytes
+  // readable; the owner's startup archives such a history instead.
+  await expect(recoverOwner(f.c)).rejects.toThrow();
   expect(readFileSync(path)).toEqual(original);
   expect(existsSync(f.files.segmentPath(2))).toBe(false);
 });
@@ -460,12 +403,11 @@ it.each(["rename-before", "rename-after"])(
     expect(diskIdentity(f.dir)).toEqual(before);
   },
 );
-it("uncommitted complete tail rows cannot reuse their sequence after explicit recovery", async () => {
+it("uncommitted complete tail rows cannot reuse their sequence after automatic recovery", async () => {
   const f = crash("outcome-journal"),
-    old = f.files.inspect(),
-    recovery = new HistoryRecovery(f.c);
+    old = f.files.inspect();
   expect(BigInt(old.highSeq!)).toBeGreaterThan(BigInt(old.committedSeq));
-  const fact = await recovery.append(await confirmation(f.c));
+  const fact = await recoverOwner(f.c);
   expect(BigInt(fact.committedSeq)).toBe(BigInt(old.highSeq!) + 1n);
   expect(f.files.inspect().committedSeq).toBe(fact.committedSeq);
   expect(
@@ -479,40 +421,14 @@ it("uncommitted complete tail rows cannot reuse their sequence after explicit re
       .publication,
   ).toBe("pending");
 });
-it("a changed affected history after the original recovery body is written prevents durable success", async () => {
-  const f = crash("tail"),
-    recovery = new HistoryRecovery(f.c),
-    choice = await confirmation(f.c),
-    locks = f.c.recoverySnapshot().digest;
-  await expect(
-    recovery.append(choice, (at) => {
-      if (at === "journal")
-        appendFileSync(f.files.segmentPath(1), "changed-original");
-    }),
-  ).rejects.toThrow();
-  expect(f.c.recoverySnapshot().digest).toBe(locks);
-  expect(readFileSync(f.files.segmentPath(1), "utf8")).toContain(
-    "changed-original",
-  );
-  expect(existsSync(f.files.segmentPath(2))).toBe(true);
-});
 it("reopened writer after a guarded bridge has no old dispatch authority (injected ESRCH only)", async () => {
   const f = historyFixture();
   legacy(f);
   await f.writer.commit(f.intent);
   await admitFixtureRun(f);
   expect(new HistoryWriter(f.lease).quarantined).toBe(true);
-  // Explicit process-status injection permits testing W3 reopen WITHOUT changing or removing W1 locks.
-  const probe = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
-    expect(signal).toBe(0);
-    throw Object.assign(Error("fixture ESRCH"), { code: "ESRCH" });
-  });
-  try {
-    const recovery = new HistoryRecovery(f.c);
-    await recovery.append(await confirmation(f.c));
-  } finally {
-    probe.mockRestore();
-  }
+  // The bridge is appended under the current lease, as the next owner would.
+  await appendRecoveryBridge(f.lease, f.files);
   const before = diskIdentity(f.dir),
     reopened = new HistoryWriter(f.lease);
   expect((await f.writer.flush()).status).toBe("refused");
@@ -762,9 +678,6 @@ it.each(
     });
     expect(existsSync(path) ? readFileSync(path) : null).toEqual(before);
     expect(new HistoryWriter(f.lease).quarantined).toBe(true);
-    expect((await new HistoryRecovery(f.c).inspect(f.link.epoch)).storage).toBe(
-      "unknown",
-    );
   },
 );
 it.each([0, 32])(
@@ -883,8 +796,7 @@ it("actual dead-owner recovery retains exact old search/detail cursor and report
   expect(result.hits).toHaveLength(1);
   const cursor = result.hits[0].cursor,
     page = await reader.detail(cursor);
-  const recovery = new HistoryRecovery(f.c),
-    fact = await recovery.append(await confirmation(f.c));
+  const fact = await recoverOwner(f.c);
   expect(await HistoryReader.open(f.c)!.detail(cursor)).toEqual(page);
   const after = await searchHistory(HistoryReader.open(f.c)!, {
     ...seed,
@@ -913,27 +825,10 @@ it("actual dead-owner recovery retains exact old search/detail cursor and report
     omissions: ["gap"],
   });
 });
-it("ambiguous original-owner probe refuses recovery without treating EPERM as dead", async () => {
-  const f = crash("tail"),
-    recovery = new HistoryRecovery(f.c),
-    choice = await confirmation(f.c),
-    before = diskIdentity(f.dir);
-  const probe = vi.spyOn(process, "kill").mockImplementation(() => {
-    throw Object.assign(Error("injected probe"), { code: "EPERM" });
-  });
-  try {
-    await expect(recovery.append(choice)).rejects.toThrow();
-  } finally {
-    probe.mockRestore();
-  }
-  expect(diskIdentity(f.dir)).toEqual(before);
-});
-
 it("final review: checksum-valid recovery cannot invent an uncommitted sequence gap in navigation/search", async () => {
-  const f = crash("tail"),
-    recovery = new HistoryRecovery(f.c);
+  const f = crash("tail");
   const old = f.files.inspect();
-  await recovery.append(await confirmation(f.c));
+  await recoverOwner(f.c);
   const path = f.files.segmentPath(old.segment + 1);
   const [row, marker] = readFileSync(path, "utf8")
     .trimEnd()
@@ -968,15 +863,12 @@ it("final review: checksum-valid recovery cannot invent an uncommitted sequence 
 it.each(["journal", "commit"] as const)(
   "recovery pins exact key incarnation across %s boundary",
   async (boundary) => {
-    const f = crash("tail"),
-      recovery = new HistoryRecovery(f.c),
-      choice = await confirmation(f.c);
-    const locks = f.c.recoverySnapshot().digest,
-      key = join(f.files.directory, "read-proof-key.json"),
+    const f = crash("tail");
+    const key = join(f.files.directory, "read-proof-key.json"),
       original = readFileSync(key);
     let replaced = false;
     await expect(
-      recovery.append(choice, (at) => {
+      recoverOwner(f.c, (at) => {
         if (at !== boundary) return;
         renameSync(key, join(f.dir, `preserved-key-${boundary}.json`));
         writeFileSync(key, original, { mode: 0o600, flag: "wx" });
@@ -985,7 +877,6 @@ it.each(["journal", "commit"] as const)(
     ).rejects.toThrow();
     expect(replaced).toBe(true);
     expect(readFileSync(key)).toEqual(original);
-    expect(f.c.recoverySnapshot().digest).toBe(locks);
     expect(existsSync(f.files.segmentPath(2))).toBe(true);
     expect(() => HistoryFiles.open(f.c)!.assertRecoveryIdle()).toThrow();
   },
@@ -1002,9 +893,8 @@ it.each([
   "original forward proof rejects checksum-valid forged bridge %s",
   async (field) => {
     const f = crash("tail"),
-      recovery = new HistoryRecovery(f.c),
       prior = f.files.inspect();
-    await recovery.append(await confirmation(f.c));
+    await recoverOwner(f.c);
     const path = f.files.segmentPath(prior.segment + 1);
     const [row, marker] = readFileSync(path, "utf8")
       .trimEnd()

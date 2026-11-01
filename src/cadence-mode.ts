@@ -408,7 +408,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     // A signal (including the timeout) reports code 0 from Pi's exec.
     if (launched.killed || launched.code !== 0)
       throw new Error(
-        `Cadence project owner could not start${launched.killed ? " before its startup deadline" : ""}.${bun ? " Pi runs on Bun here; on-demand startup needs Node.js 22.19+ on PATH." : ""} No install, fallback or uncertain-lock cleanup was attempted. Use cadence-service diagnose --workspace <path> for details.`,
+        `Cadence project owner could not start${launched.killed ? " before its startup deadline" : ""}.${bun ? " Pi runs on Bun here; on-demand startup needs Node.js 22.19+ on PATH." : ""}${launched.stderr.trim() ? `\n${launched.stderr.trim().split("\n").slice(-3).join("\n")}` : ""}\nDetails: cadence doctor --workspace ${JSON.stringify(ctx.cwd)}`,
       );
     let workspace = effectiveWorkspace(ctx.cwd).workspace;
     try {
@@ -446,18 +446,29 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       const observed = new ServiceCoordination(
         effectiveWorkspace(ctx.cwd).workspace,
       ).inspect();
-      if (
-        (observed.status === "absent" || observed.status === "stopped") &&
-        allowStart
-      ) {
+      const notRunning =
+        observed.status === "absent" || observed.status === "stopped";
+      if (notRunning && allowStart) {
         await launchOwner(ctx);
         check();
       }
       try {
         await connection.attach(ctx.cwd);
       } catch (error) {
-        reattach = true;
-        throw error;
+        if (notRunning || !allowStart) {
+          reattach = true;
+          throw error;
+        }
+        // A registration left by an owner that died (machine restart, crash)
+        // does not answer; opening the project recovers it automatically.
+        await launchOwner(ctx);
+        check();
+        try {
+          await connection.attach(ctx.cwd);
+        } catch (again) {
+          reattach = true;
+          throw again;
+        }
       }
       check();
     })();

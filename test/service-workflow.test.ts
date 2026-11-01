@@ -343,7 +343,7 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
       phase: "finished",
       mergedCommit: null,
     });
-    expect(recovered.value.response.run.notice).toContain("restarted");
+    expect(recovered.value.response.run.notice).toContain("Interrupted");
     expect(recovered.value.response.run.notice).toContain(
       "fast-forward may have completed",
     );

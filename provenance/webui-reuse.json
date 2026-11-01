@@ -74,7 +74,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects that only preselect it. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation. Recorded views appear only for a task/child scope (an ordinary conversation folds its tools into the transcript), and the current snapshot's owner run projection heads the retained run pages in one Runs view. The task inspector is now readonly retained content/check/change/review evidence; Legacy task creation is removed. Workflow history is an on-demand paged exact-ID listing, not a second executor. The subagent dock sizes to its rows up to its former fixed height until a drag sets one."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects that only preselect it. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation. Recorded views appear only for a task/child scope (an ordinary conversation folds its tools into the transcript), and the current snapshot's owner run projection heads the retained run pages in one Runs view. The task inspector is now readonly retained content/check/change/review evidence; Legacy task creation is removed. Workflow history is an on-demand paged exact-ID listing, not a second executor. The subagent dock sizes to its rows up to its former fixed height until a drag sets one. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor."
     },
     {
       "id": "plan-navigation",
@@ -213,7 +213,7 @@
         "web/src/components/workspace/ProjectPicker.tsx",
         "web/src/components/workspace/ChatTurnView.tsx"
       ],
-      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; workflow cards link to that view instead of embedding the transcript. The subagent dock heading leads its total with the queued or running count."
+      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; workflow cards link to that view instead of embedding the transcript. The subagent dock heading leads its total with the queued or running count. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor."
     }
   ],
   "newIntegrationFiles": [
@@ -279,9 +279,6 @@
     "web/src/components/workspace/WorkbenchHome.tsx",
     "web/src/components/workspace/WorkingFolderButton.tsx",
     "web/src/client/last-project.ts",
-    "src/service/gateway-recovery.ts",
-    "test/gateway-recovery.test.ts",
-    "test/helpers/gateway-recovery-child.ts",
     "src/cadence-instructions.ts",
     "src/coordinator-tools.mjs",
     "src/service/conversation-workflow.ts",
@@ -300,7 +297,7 @@
   ],
   "destinations": {
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "cab3b4b133d7f00b243444de054d8569b60f5b7905a606b7e7ac7b53092545bc",
+    "web/src/App.tsx": "e18497794215c2e17922438e1f45eba5468671262e655b6792aa38bdcdb65a5c",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "7554f4c97d7a9a899630cbbd0f675360549a1c708e2987b30668cd26d96f235e",
@@ -349,7 +346,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "5834ebaf10deb5e2cde2d91e865030391488b015ae7d7d3f344e1ed1024c7565",
+    "web/src/styles.css": "3107d84c0d747d30ab6ed4903463f4d3c6fd87af83fd5400dabb1293c64e966e",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -387,7 +384,7 @@
     "src/conversation-context.d.mts": "2d33f1b812d9a982bb2cefa5397e0c8230c7525a3c82c6659637a9f289cfdb9c",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
     "src/service/contracts/workbench.ts": "385e4734e912c6c49ca94c786cb46a309040493435589d01e210d769b0d8c34a",
-    "src/service/conversations.ts": "b61ac4103bc492ab4b2c548dd1364b3dfd8578af574ed31b8038209a21804aec",
+    "src/service/conversations.ts": "292b36b3b8e764c4e273de2468f2fff5283b77d60896e66cb82a75c7257d6534",
     "src/service/workbench-files.ts": "03499ec86d55014cd5f1d7575424f2e9f12cca0cb1165d0a8c1a0e3343b6b7e1",
     "src/service/workbench.ts": "2ae7f94effaed1e65847b192a99e4dfddfe0f7cd5d06f571dd339e2966d553e5",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
@@ -398,24 +395,21 @@
     "web/src/components/workspace/ChatSteps.tsx": "c9bfb8549c78bd84257c314253b1faa7d49424ab0509a01342ad9f84757d955c",
     "web/src/components/workspace/AgentDock.tsx": "7aedb79657903af51a3a4dfc6a09988c478e2645dba2fffd14e61bacecc9d472",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
-    "web/src/components/workspace/ProjectPicker.tsx": "75b7ea9dbf56852c524b1535e5e50bf03ecec9aa1fa66e195a6f85298e806c7e",
-    "src/service/gateway.ts": "94aabda87f60b2265db7cf8f8cb6015a7b4a2aa231b71b0b299631fe9b4469e9",
-    "src/service/gateway-cli.ts": "1ab0ab109c73c0d4581428af56e88cbdb38fd7714b88d2e06ce36f1baa1ab162",
-    "src/service/gateway-store.ts": "6aee66444e4ce1a7e843253fdde92268f1c48512783b46ad366d6a5f84666766",
-    "src/service/contracts/gateway.ts": "5853740ebaa77e4b0b8a33d4f9d8dcec478340b6383f75bd7059efd951e7d49a",
-    "web/src/Workbench.tsx": "fa9718cb847e862f0816eb969e07d9391270fa76c047973f53d5a52a3f423d9e",
+    "web/src/components/workspace/ProjectPicker.tsx": "4e8cf614851d2a4d70c1675f34229835f88a52ceab4bae961d33948885216f0e",
+    "src/service/gateway.ts": "01f03530f157424fa54cde396bdffe5446570883ee9e1422504d78eb3c163f41",
+    "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
+    "src/service/gateway-store.ts": "f8af7a883e8c5e8e62e368b0a1dac1784c461a1e2f713fe5047c82f5e877bcb8",
+    "src/service/contracts/gateway.ts": "5f6db77e1ae37a4c4dd989545c7f73d7020fe95c4d304ac2b643f9bb40a7283d",
+    "web/src/Workbench.tsx": "8c5c7d9c7cc0db66fa2346cb31246dca38758d152001f71d00da28df35e3a73d",
     "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
-    "test/gateway-state.test.ts": "88d93773e0ba3c36291848c0c9cb334b5a1814c98b7c7dc7dadd8c7091e51673",
+    "test/gateway-state.test.ts": "b4ef6ec9dbda3a8248a8703f05a7d4324dc6d0489d1cd20e9ea75f8491ed4afa",
     "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
-    "test/web/gateway-browser.e2e.mjs": "5dcc04b239613078f3592233e7f4fa0d516fa3d90f41af4634eea5e6bd57cce6",
+    "test/web/gateway-browser.e2e.mjs": "d035d6ac2c8599d0d966a0b85a1b70ef64667423e10d958aaa79a0fb1d1adce7",
     "web/src/components/workspace/ChatWelcome.tsx": "011efc1a31b5eda7bcb7856ffe33af4359be8eb7b54b37d75b8d432e0a3c79a6",
     "web/src/components/workspace/ConversationActions.tsx": "a10e51800f557c141244b38e40ce6c12dac0ad8e1a259d8f34d7ca61220c9a52",
     "web/src/components/workspace/WorkbenchHome.tsx": "dab9d00e9d1cc8d3ec2ee1f72fafc5a1df2d4654f12558f47d30b94c6d046afe",
     "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee",
     "web/src/client/last-project.ts": "45ceb96bf9d9e3d28e8f43220206a0b2979cda3757f149d125687e7aff95dbff",
-    "src/service/gateway-recovery.ts": "c870bea2b8da75c07c762255a9a3be415966b02cc3bcd6f7e0b4c5fe26f76589",
-    "test/gateway-recovery.test.ts": "e6fb1f46b58e2f2699be77c080bd4c1a676c4c1851cc07575a1d7516698bbb12",
-    "test/helpers/gateway-recovery-child.ts": "6d25ebe009588275b55a5f852883184e96076030cb3bc74c945cb08a1d2f489d",
     "src/cadence-instructions.ts": "aa02ce63605e53f80543d2a0f8738c1b82e8909f91d4bff15e73b97130c699e5",
     "src/coordinator-tools.mjs": "cedae26a4e2c7ed079d247dddb6dbe3fa9b5df14b8444ac80f70b82206543dbc",
     "src/service/conversation-workflow.ts": "b0e752c3445eb15ec46da7ea6c6742b240f14a61baa65d1edec6615c36c7fa06",

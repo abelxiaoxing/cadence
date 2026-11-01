@@ -120,6 +120,16 @@ function terminateWindowsTree(pid: number, fallback: () => void): void {
     if (code !== 0) fallback();
   });
 }
+/** Owner-installed observer of every launched worker/check process, so a
+ * successor can find this owner's orphans after a crash. Evidence only. */
+export interface ProcessObserver {
+  launched(pid: number): void;
+  closed(pid: number): void;
+}
+let processObserver: ProcessObserver | undefined;
+export function observeProcesses(observer: ProcessObserver | undefined): void {
+  processObserver = observer;
+}
 export function runProcess(spec: ProcessSpec): Promise<RunResult> {
   const started = Date.now();
   const early = (outcome: RunResult["outcome"], text: string): RunResult => ({
@@ -191,6 +201,12 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     };
     child.once("spawn", () => {
       launched = true;
+      if (child.pid)
+        try {
+          processObserver?.launched(child.pid);
+        } catch {
+          /* evidence only */
+        }
       observeLifecycle({ kind: "spawned", at: Date.now() });
     });
     const ingressStop = new AbortController();
@@ -543,6 +559,12 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     });
     child.on("close", (code, signal) => {
       nativeClosed = true;
+      if (launched && child.pid)
+        try {
+          processObserver?.closed(child.pid);
+        } catch {
+          /* evidence only */
+        }
       if (launched) observeLifecycle({ kind: "closed", at: Date.now() });
       clearTimeout(timeout);
       clearTimeout(killTimer);

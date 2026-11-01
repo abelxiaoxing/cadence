@@ -13,7 +13,7 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import { hostname as hostname2 } from "node:os";
+import { hostname as hostname3 } from "node:os";
 import { join as join3 } from "node:path";
 
 // src/data-shapes.ts
@@ -305,8 +305,77 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { hostname } from "node:os";
+import { hostname as hostname2 } from "node:os";
 import { dirname as dirname2, join as join2 } from "node:path";
+
+// src/service/liveness.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { hostname, uptime } from "node:os";
+var LEGACY_BOOT_MARGIN_MS = 10 * 60 * 1000;
+var cachedBoot;
+function bootId() {
+  if (cachedBoot !== undefined)
+    return cachedBoot;
+  cachedBoot = null;
+  try {
+    if (process.platform === "linux") {
+      const id = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      if (/^[0-9a-f-]{36}$/.test(id))
+        cachedBoot = id;
+    } else if (process.platform === "darwin") {
+      const r = spawnSync2("sysctl", ["-n", "kern.bootsessionuuid"], {
+        encoding: "utf8",
+        timeout: 2000
+      });
+      const id = r.status === 0 ? r.stdout.trim() : "";
+      if (/^[0-9A-Fa-f-]{36}$/.test(id))
+        cachedBoot = id;
+    }
+  } catch {
+    cachedBoot = null;
+  }
+  return cachedBoot;
+}
+function linuxStat(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).trim().split(" ");
+  } catch {
+    return null;
+  }
+}
+function processStart(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1)
+    return null;
+  if (process.platform === "linux") {
+    const fields = linuxStat(pid);
+    const ticks = fields?.[19];
+    return ticks && /^\d+$/.test(ticks) ? `ticks:${ticks}` : null;
+  }
+  if (process.platform === "darwin") {
+    const r = spawnSync2("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 2000,
+      env: { ...process.env, LC_ALL: "C" }
+    });
+    const value = r.status === 0 ? r.stdout.trim() : "";
+    return value ? `lstart:${value}` : null;
+  }
+  return null;
+}
+var cachedSelf;
+function selfMark() {
+  cachedSelf ??= processStart(process.pid);
+  return {
+    pid: process.pid,
+    host: hostname(),
+    boot: bootId(),
+    started: cachedSelf
+  };
+}
+
+// src/service/checkout-lock.ts
 class CheckoutStore {
   root;
   privateRoot;
@@ -357,13 +426,16 @@ class CheckoutStore {
   acquire() {
     this.inspectPrivate();
     safeDirectory(this.privateRoot, true);
+    const mark = selfMark();
     const lock = {
       schema: "cadence-assistant-lock/1",
       token: randomUUID(),
       runId: randomUUID(),
       pid: process.pid,
-      host: hostname(),
-      root: this.root
+      host: hostname2(),
+      root: this.root,
+      boot: mark.boot,
+      started: mark.started
     };
     let fd;
     try {
@@ -384,7 +456,7 @@ class CheckoutStore {
       throw new Error("Coordination lock changed");
   }
   release(lock) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
+    if (lock.pid !== process.pid || lock.host !== hostname2())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
     retryWindowsFileOperation(() => unlinkSync(this.lockPath), () => this.assertOwner(lock));
@@ -406,7 +478,7 @@ class TaskStore extends CheckoutStore {
     this.tasks = join3(this.root, ".cadence", "assistant", "tasks");
   }
   recover(expected, acknowledgeEscapedProcesses) {
-    if (!acknowledgeEscapedProcesses || expected.host !== hostname2())
+    if (!acknowledgeEscapedProcesses || expected.host !== hostname3())
       throw new Error("Recovery requires informed local-owner confirmation");
     this.assertOwner(expected);
     try {
@@ -458,7 +530,7 @@ class TaskStore extends CheckoutStore {
     if (Buffer.byteLength(text) > MAX_RECORD_BYTES)
       throw new Error("Task record limit");
     const lock = held ?? this.acquire();
-    if (lock.pid !== process.pid || lock.host !== hostname2())
+    if (lock.pid !== process.pid || lock.host !== hostname3())
       throw new Error("Not the lock owner");
     try {
       this.assertOwner(lock);
@@ -515,7 +587,7 @@ class TaskStore extends CheckoutStore {
     return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
   }
   writeLog(lock, output) {
-    if (lock.pid !== process.pid || lock.host !== hostname2())
+    if (lock.pid !== process.pid || lock.host !== hostname3())
       throw new Error("Not the lock owner");
     this.assertOwner(lock);
     const name = `${randomUUID2()}.log`;
