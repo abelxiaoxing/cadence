@@ -568,6 +568,8 @@ export async function createServiceHost(
                     : "unavailable"
                   : heldOwner.state,
               epoch: native.epoch,
+              // Accepted work its Stop would end; the WebUI names it before a restart.
+              work: heldOwner.acceptedPending,
               actions:
                 heldOwner.state === "idle" &&
                 !!workbench &&

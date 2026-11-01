@@ -71,6 +71,26 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       0,
       "the entry has one central Open action, not a duplicate sidebar entry",
     );
+    // Started outside systemd, the service dialog explains instead of offering
+    // a restart it could not run; reading it contacts no registry.
+    await page
+      .getByRole("button", { name: "Cadence service", exact: true })
+      .click();
+    const service = page.getByRole("dialog", {
+      name: "Cadence service",
+      exact: true,
+    });
+    await service
+      .getByText("was not started by Cadence's systemd service", {
+        exact: false,
+      })
+      .waitFor();
+    assert(
+      await service
+        .getByRole("button", { name: "Restart service", exact: true })
+        .isDisabled(),
+    );
+    await service.getByRole("button", { name: /^Close dialog/ }).click();
     await page
       .getByRole("button", { name: "Open a folder…", exact: true })
       .click();

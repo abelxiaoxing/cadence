@@ -88,11 +88,12 @@ Os resultados reais permanecem separados da revisão automática do agente.
 ```sh
 cadence server status
 cadence server restart     # após um upgrade ou uma alteração de .env / models.json
+cadence server upgrade     # instalação global do npm: baixar, instalar e reiniciar
 cadence server stop        # permanece registrado e inicia de novo no próximo boot ou login
 cadence server uninstall   # executar antes de npm uninstall -g
 ```
 
-Faça upgrade com `npm install -g @abelxiaoxing/cadence@latest`, depois `cadence server restart`.
+Faça upgrade com `cadence server upgrade` ou pela caixa de diálogo do serviço Cadence na WebUI: a versão é baixada enquanto o Cadence continua em execução, e a anterior volta se a nova não iniciar.
 Restart, stop e uninstall param o trabalho em execução em ordem, em vez de deixá-lo desconectado.
 Uninstall remove apenas a definição do serviço; projetos, histórico e configurações do Pi permanecem.
 Serviços root e nomeados do Linux, acesso HTTPS remoto e recuperação estão cobertos em [gerenciamento do serviço](docs/service-management.md) e [acesso remoto](docs/remote-access.md).

@@ -88,11 +88,12 @@ cadence project open /absolute/new-project --create
 ```sh
 cadence server status
 cadence server restart     # 升级或修改 .env / models.json 之后
+cadence server upgrade     # npm 全局安装：下载、安装并重启
 cadence server stop        # 保持注册状态，并在下次启动或登录时再次启动
 cadence server uninstall   # 在 npm uninstall -g 之前运行
 ```
 
-用 `npm install -g @abelxiaoxing/cadence@latest` 升级，然后 `cadence server restart`。
+用 `cadence server upgrade` 或 WebUI 的 Cadence 服务对话框升级：它在 Cadence 继续运行时先下载新版本，新版本无法启动时会装回原版本。
 restart、stop 和 uninstall 按顺序停止运行中的工作，而不是留下断开连接的工作。
 uninstall 只删除服务定义；项目、历史和 Pi 设置保留。
 Linux root 与命名服务、远程 HTTPS 访问和恢复见[服务管理](docs/service-management.md)和[远程访问](docs/remote-access.md)。

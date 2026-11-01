@@ -74,7 +74,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects, one click on which is their explicit Open; one central Open a folder… action replaces the entry's New conversation. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation. Recorded views appear only for a task/child scope (an ordinary conversation folds its tools into the transcript), and the current snapshot's owner run projection heads the retained run pages in one Runs view. The task inspector is now readonly retained content/check/change/review evidence; Legacy task creation is removed. Workflow history is an on-demand paged exact-ID listing, not a second executor. The subagent dock sizes to its rows up to its former fixed height until a drag sets one. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer model panel replaces the topbar Model chip and owner-model dialog; a More menu holds refresh, disconnect and build information; Running conversations lists only live replies."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects, one click on which is their explicit Open; one central Open a folder… action replaces the entry's New conversation. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation. Recorded views appear only for a task/child scope (an ordinary conversation folds its tools into the transcript), and the current snapshot's owner run projection heads the retained run pages in one Runs view. The task inspector is now readonly retained content/check/change/review evidence; Legacy task creation is removed. Workflow history is an on-demand paged exact-ID listing, not a second executor. The subagent dock sizes to its rows up to its former fixed height until a drag sets one. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer model panel replaces the topbar Model chip and owner-model dialog; a More menu holds refresh, disconnect and build information; Running conversations lists only live replies. The More menu and the entry topbar open the Cadence service dialog: version, an explicit npm update check, and a confirmed restart or upgrade that runs outside the service while the page waits for its recorded outcome."
     },
     {
       "id": "plan-navigation",
@@ -183,7 +183,7 @@
         "web/src/components/actions/ActionDialog.tsx",
         "web/src/components/actions/ReceiptPanel.tsx"
       ],
-      "modifications": "Adapt stale-socket generation/bounded reconnect and immutable same-entity append algorithm. Shared ProjectionTracker alone reduces execution projections; no copied upstream UiState/schema. Native dialog/focus replaces extension response sender. Finite preflight/named command/cancel/exact receipt; no automatic action retry or confirmation renewal. Disconnect/Return detaches, not Cancel. Legacy task preflight/confirmation UI is removed; retained receipts, model selection, dialogs and independent Cancel remain."
+      "modifications": "Adapt stale-socket generation/bounded reconnect and immutable same-entity append algorithm. Shared ProjectionTracker alone reduces execution projections; no copied upstream UiState/schema. Native dialog/focus replaces extension response sender. Finite preflight/named command/cancel/exact receipt; no automatic action retry or confirmation renewal. Disconnect/Return detaches, not Cancel. Legacy task preflight/confirmation UI is removed; retained receipts, model selection, dialogs and independent Cancel remain. A dialog without a close handler cannot be dismissed while a service restart is in progress."
     },
     {
       "id": "build",
@@ -308,11 +308,11 @@
   ],
   "destinations": {
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "2f6230382161249b1b218e5ddd7069c4835a7ddbd8b67485efbffcf78c0bb92f",
+    "web/src/App.tsx": "0546e71a9e65a202ba47b6eb4eff2052e074f6591b514b144e1fe7ee146918ec",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "7554f4c97d7a9a899630cbbd0f675360549a1c708e2987b30668cd26d96f235e",
-    "web/src/components/actions/ActionDialog.tsx": "bda42b4eb56ffa8f9df299e64f7686151dee87f2f515f7774564a83f5ebac92a",
+    "web/src/components/actions/ActionDialog.tsx": "16771e04fd6c393e213e187551dd17d0eca71dfd1c268066e369f8e88ad0ed9d",
     "web/src/components/actions/ReceiptPanel.tsx": "f657bfc5379a4219ce9b783375047fc5de9d851c4069c28f6a37382037c232fa",
     "web/src/components/history/ContentExplorer.tsx": "362fb87f04bea106dafbae313e4946486678e8a79685b47ac0626e6680e312d3",
     "web/src/components/history/Coverage.tsx": "14ea29207c31e45ff963ae06b785421176c4cdd903e507a4881689d25c3defb5",
@@ -357,7 +357,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "63342b43f6c8cb466862dfec6159fbe60e506168b9f145f3d796c156d1c27dff",
+    "web/src/styles.css": "588a29be23fc27f299ff65e474e48b0e203d709c784e930da62667fc6751a7e9",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -406,18 +406,18 @@
     "web/src/components/workspace/AgentDock.tsx": "5125396c4a9bbdf00ebd541c952ffac3e844773bf742170e1956e9e0d9577abc",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
     "web/src/components/workspace/ProjectPicker.tsx": "4e8cf614851d2a4d70c1675f34229835f88a52ceab4bae961d33948885216f0e",
-    "src/service/gateway.ts": "01f03530f157424fa54cde396bdffe5446570883ee9e1422504d78eb3c163f41",
+    "src/service/gateway.ts": "00f95503790f2622048bda441abcf055bdc8d796e517398c2f20bed0c39c88ad",
     "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
     "src/service/gateway-store.ts": "f8af7a883e8c5e8e62e368b0a1dac1784c461a1e2f713fe5047c82f5e877bcb8",
-    "src/service/contracts/gateway.ts": "5f6db77e1ae37a4c4dd989545c7f73d7020fe95c4d304ac2b643f9bb40a7283d",
-    "web/src/Workbench.tsx": "b8db6717df31d3dbde9a16c7e12c6200bd13f999870854e14a76bf30d3dc36db",
+    "src/service/contracts/gateway.ts": "2e3ae5a3b3c252031004cdb5285ed257a3475b863384ff1e3283b199c61d6222",
+    "web/src/Workbench.tsx": "3143f7f851823ee2d968566856a333a3547753d72cbb4a9af354f283a9cdb65b",
     "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
-    "test/gateway-state.test.ts": "b4ef6ec9dbda3a8248a8703f05a7d4324dc6d0489d1cd20e9ea75f8491ed4afa",
+    "test/gateway-state.test.ts": "9d307507efb40184b43374c79c0ca66c4cea48619404dfd7d10ac47931024b09",
     "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
-    "test/web/gateway-browser.e2e.mjs": "b07cf284ec7cc67bb5b15d3f57bafe2c51486c04bc7180aa3fe1ab27fabca0cf",
+    "test/web/gateway-browser.e2e.mjs": "4534219124cae136ed86b5f93f3af69be97c964ee4ca73aaeba1d3a18050485b",
     "web/src/components/workspace/ChatWelcome.tsx": "4318f03acdb580c4ba0750fcd2f7012bda8863b7ea03f8ed19ff57c954c31ecf",
     "web/src/components/workspace/ConversationActions.tsx": "a10e51800f557c141244b38e40ce6c12dac0ad8e1a259d8f34d7ca61220c9a52",
-    "web/src/components/workspace/WorkbenchHome.tsx": "32f2bcb657403176174d0c767b3343352abc8dda171aad65ca22c5cc9ed6c862",
+    "web/src/components/workspace/WorkbenchHome.tsx": "dea39c8ab1675481913046ce392b195e92fc3864f69417d47dc84c9bc3442206",
     "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee",
     "web/src/client/last-project.ts": "77adeb05c21e588eb16599f286529c072d3e7edc61b2ab4c2d07984449e091fe",
     "src/cadence-instructions.ts": "aa02ce63605e53f80543d2a0f8738c1b82e8909f91d4bff15e73b97130c699e5",

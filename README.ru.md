@@ -88,11 +88,12 @@ cadence project open /absolute/new-project --create
 ```sh
 cadence server status
 cadence server restart     # после обновления или изменения .env / models.json
+cadence server upgrade     # глобальная установка npm: загрузить, установить, перезапустить
 cadence server stop        # остаётся зарегистрированной и снова запускается при следующей загрузке или входе
 cadence server uninstall   # выполнить перед npm uninstall -g
 ```
 
-Обновляйте с помощью `npm install -g @abelxiaoxing/cadence@latest`, затем `cadence server restart`.
+Обновляйте с помощью `cadence server upgrade` или в диалоге службы Cadence в WebUI: новая версия загружается, пока Cadence продолжает работать, а если она не запускается, возвращается предыдущая.
 Restart, stop и uninstall останавливают выполняемую работу по порядку, а не оставляют её отключённой.
 Uninstall удаляет только определение службы; проекты, история и настройки Pi остаются.
 Корневые и именованные службы Linux, удалённый HTTPS-доступ и восстановление описаны в [управлении службой](docs/service-management.md) и [удалённом доступе](docs/remote-access.md).

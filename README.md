@@ -87,6 +87,7 @@ Their actual outcomes remain separate from automatic Agent review.
 ```sh
 cadence server status
 cadence server restart     # after an upgrade or a .env / models.json change
+cadence server upgrade     # npm global install: fetch, install and restart
 cadence server stop        # stays registered and starts again at the next boot or login
 cadence server uninstall   # run before npm uninstall -g
 cadence doctor             # what is left over or recently recovered; --fix for the rest
@@ -94,7 +95,7 @@ cadence doctor             # what is left over or recently recovered; --fix for 
 
 A power loss, shutdown or crash needs no cleanup: the next start recovers automatically, marks interrupted work as interrupted and says what it did.
 
-Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`.
+Upgrade with `cadence server upgrade` or from the WebUI's Cadence service dialog: it fetches the release while Cadence keeps running and puts the previous version back if the new one does not start.
 Restart, stop and uninstall stop running work in order rather than leaving it detached.
 Uninstall removes only the service definition; projects, history and Pi settings stay.
 Linux root and named services, remote HTTPS access and automatic recovery are covered in [service management](docs/service-management.md) and [remote access](docs/remote-access.md).

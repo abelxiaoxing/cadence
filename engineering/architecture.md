@@ -24,6 +24,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination and same-origin project routing, not task execution.
+`src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the npm upgrade with rollback; it stays SDK-free like the rest of management.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
 `src/service/{workbench,conversations,conversation-transcript,conversation-history,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.

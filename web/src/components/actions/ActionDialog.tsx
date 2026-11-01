@@ -10,7 +10,8 @@ export function ActionDialog({
 }: {
   title: string;
   children: ReactNode;
-  onClose: () => void;
+  /** Omitted while the dialog must stay open, such as during a restart. */
+  onClose?: () => void;
 }) {
   const { t } = useT();
   const ref = useRef<HTMLDialogElement>(null),
@@ -34,20 +35,22 @@ export function ActionDialog({
       aria-labelledby={id}
       onCancel={(event) => {
         event.preventDefault();
-        close.current();
+        close.current?.();
       }}
     >
       <header>
         <h2 id={id}>{title}</h2>
-        <button
-          type="button"
-          className="dialog-close"
-          aria-label={t("Close dialog — no cancellation of accepted work")}
-          title={t("Close — accepted work is not cancelled")}
-          onClick={onClose}
-        >
-          <FiX aria-hidden="true" />
-        </button>
+        {onClose && (
+          <button
+            type="button"
+            className="dialog-close"
+            aria-label={t("Close dialog — no cancellation of accepted work")}
+            title={t("Close — accepted work is not cancelled")}
+            onClick={onClose}
+          >
+            <FiX aria-hidden="true" />
+          </button>
+        )}
       </header>
       {children}
     </dialog>

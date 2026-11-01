@@ -84,6 +84,16 @@ An associated owner that is not running (stopped, crashed, restarted under a new
 The gateway follows an associated project's restarted owner (same canonical path, new epoch) instead of refusing its page as stale.
 Service restart never resumes the old queue.
 
+## Service restart and upgrade
+
+Stopping a systemd unit ends every process in its cgroup, including a management command that one of the service's own tools started, however it was detached (`nohup`, `setsid`, double fork).
+The `server install|restart|stop|uninstall|upgrade` commands therefore compare `/proc/self/cgroup` with the unit's `ControlGroup` before any change, including the `.env` key append, and refuse inside it with `inside-service`; child-process cleanup is never weakened to make them survive.
+The WebUI's restart and upgrade run the same CLI outside that cgroup: the gateway proves its own unit (cgroup name, generated definition, `InvocationID` equal to its `INVOCATION_ID`, its own `.env`) and starts `systemd-run --collect` as `cadence[-NAME].maintenance.service`, whose fixed name admits one job at a time, with the environment the definition bakes plus the gateway's `HOME`.
+A request names the version, target, epoch and running-work count the browser confirmed; any difference is `stale`, and running work is named and stopped only by its orderly Stop.
+The job records its outcome in `maintenance.json` beside the workbench registration; a job that ends without reporting reads as `interrupted`, and the job's journal never carries the private link.
+An upgrade (Linux, an npm global install the account can write) resolves one exact version and fetches it while the service still runs, then stops it orderly, installs it and runs the installed copy's own `server restart`; a copy that never becomes ready wrote no state, so the previous version is reinstalled from npm's cache and restarted.
+On macOS and Windows, restart and upgrade stay in a terminal: their managers' process tracking for a job that outlives the service has not been qualified.
+
 ## Self-healing
 
 A process that ends without its orderly Stop (power loss, shutdown, crash, `kill -9`, a supervisor's SIGKILL) leaves its registration and locks.

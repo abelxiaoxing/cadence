@@ -15,6 +15,7 @@ bun run test:service
 bun run test:web
 CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run test:browser
 CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+CADENCE_SYSTEMD_E2E=1 bun run test test/service-maintenance-systemd.test.ts
 bun pm pack --destination /absolute/private-temp
 ```
 
@@ -25,6 +26,7 @@ It needs a Node with TypeScript type stripping (official builds; a distro Node b
 Fabricated loopback providers are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
 Those additional lanes remain unqualified unless their own receipts exist.
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
+The systemd lane is opt-in: it needs a running user manager and adds a temporary unit under `$XDG_RUNTIME_DIR/systemd/user`, which it removes; run it for any change to service management.
 
 ## Development practice
 
@@ -57,6 +59,7 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` seeds fabricated archived records without a task executor or model call, then checks a cold generated owner, retired controls, exact search, complete downloads and viewports; `cadence-browser` covers current browser approval/execution/cancel.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
+- `service-maintenance`, `service-maintenance-systemd`, `test/web/service-dialog.test.tsx`: cgroup and `InvocationID` proofs, the job record, upgrade fetch/stop/install/rollback order, and against a real user manager a child inside the service that is refused without change and a WebUI restart that a transient unit completes.
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running, rotation of the token line, a runtime fault's worker stop/successor/recovering restart and the readable refusal for a removed project directory.
 - `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
 - `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, an Open that reclaims a dead registry lock and genuine multi-owner Stop over loopback.
