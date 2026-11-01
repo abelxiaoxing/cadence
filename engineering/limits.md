@@ -43,9 +43,9 @@ Clean worktrees at their expected commit are removed after a merge with plain `g
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
 Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`), at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
-New conversation-control records stop at 200 record directories (or more than 256 entries); existing records stay readable.
+Conversation-control records have no retained-directory admission cap; a bounded cache and legacy link fallback are not storage quotas.
 The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
-Control records are bounded at 384KiB, inherit the 200-conversation/1000-turn ceilings, and link at most 200 workflow attempts; no eviction.
+Control records are bounded at 384KiB and project the most recent 200 workflow links; new links and displaced legacy links remain independently retained, without a lifetime attempt cap or history eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
 The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.
 
@@ -61,3 +61,14 @@ The tool-admission cutoff reserves the smaller of 120s and 10% of the process bu
 The launcher fixes a same-host monotonic deadline before serialization/spawn; SDK bootstrap consumes that budget, and tool construction never renews it.
 These are cooperative I/O limits: outstanding filesystem operations and directory/file closure are joined, never abandoned on timeout; the unchanged parent worker deadline is the hard process bound.
 Explicit investigation roots are limited to eight; omitted roots select the project cwd.
+
+Ordinary/coordinator conversation capture (`src/service/conversation-transcript.ts`, `src/service/conversations.ts`) has no lifetime transcript-byte/item cap: immutable pages and turn snapshots are at most 384KiB each.
+The latest preview budgets 300KiB/128 items and 16Ki UTF-16 code units per field (labelled when clipped); it never substitutes for the full transcript pages.
+Each full field has the existing 32MiB logical-detail bound; unfinished capture has at most 256 items/64MiB, plus 64 open details/64MiB of open-detail text and sanitizer state.
+`src/conversation-context.mjs` streams continuation messages in records bounded by that same 32MiB detail limit, with no aggregate 2MiB checkpoint cap; 2MiB remains only the legacy checkpoint/manifest reader bound.
+The former separate 512MiB/10,000-entry conversation-store admission quota is removed, without eviction or incidental cleanup; admission and page/checkpoint writes retain the 256MiB free-space floor.
+Conversations and turns per conversation have no lifetime count cap; new turns use immutable ordinal/membership slots and a 64KiB head/count manifest instead of growing an inline ID array.
+The legacy inline prefix stays readable and unchanged; it is not a new-turn ceiling.
+Conversation history (`src/service/conversation-history.ts`) returns 50 recent-first summaries, scans at most eight record heads/100ms per quantum and holds at most 16 readonly scans with 120s idle expiry; progress is not an empty page.
+The summary cache holds 256 entries, not 256 conversations; the independent live roster reads only the eight admitted turns.
+Worker deadline/protocol and concurrency protections are unchanged.

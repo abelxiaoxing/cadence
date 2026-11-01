@@ -5,7 +5,7 @@ import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
-  CONTEXT_BYTES,
+  CONTEXT_RECORD_BYTES,
   conversationMessages,
 } from "./conversation-context.mjs";
 import {
@@ -91,8 +91,9 @@ export interface ProcessSpec {
   onProgress?: (text: string) => void;
   /** Ordinary-chat capture, separately persisted; never a task recording receipt. */
   onFrame?: (frame: CaptureFrame) => void;
-  /** Bounded anonymous checkpoint pipe, never a raw spill file. */
+  /** One bounded checkpoint record at a time, never a raw spill file. */
   onContext?: (source: string) => void;
+  onContextEnd?: () => void;
   onCoordinator?: (
     name: string,
     args: unknown,
@@ -501,12 +502,27 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     };
     contextStream?.on("data", (chunk: Buffer) => {
       if (settled || stopping) return;
-      contextBytes += chunk.length;
-      if (contextBytes > CONTEXT_BYTES) {
+      try {
+        let offset = 0;
+        while (offset < chunk.length) {
+          const end = chunk.indexOf(10, offset);
+          const part = chunk.subarray(offset, end < 0 ? chunk.length : end);
+          contextBytes += part.length;
+          if (contextBytes > CONTEXT_RECORD_BYTES)
+            throw new Error("Checkpoint record too large");
+          contextChunks.push(part);
+          if (end < 0) break;
+          const source = new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.concat(contextChunks, contextBytes),
+          );
+          contextChunks.length = 0;
+          contextBytes = 0;
+          spec.onContext?.(source);
+          offset = end + 1;
+        }
+      } catch {
         stop("failed");
-        return;
       }
-      contextChunks.push(chunk);
     });
     contextStream?.once("end", () => {
       contextEnded = true;
@@ -574,12 +590,9 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       const close = () => {
         if (spec.onContext && !stopping && code === 0) {
           try {
-            if (!contextEnded) throw new Error("Context EOF missing");
-            spec.onContext(
-              new TextDecoder("utf-8", { fatal: true }).decode(
-                Buffer.concat(contextChunks),
-              ),
-            );
+            if (!contextEnded || contextBytes)
+              throw new Error("Context EOF missing");
+            spec.onContextEnd?.();
           } catch {
             stopping = "failed";
           }
@@ -728,6 +741,7 @@ function launchEncoded(
     | "maySignal"
     | "onFrame"
     | "onContext"
+    | "onContextEnd"
     | "onCoordinator"
     | "secrets"
   > = {},
@@ -920,7 +934,8 @@ export function launchConversation(
     onNative(native: NativeSettlement): void;
     onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
     ownerSecrets(): readonly string[];
-    onContext(messages: unknown[]): void;
+    onContext(message: unknown): void;
+    onContextEnd(): void;
     onCoordinator?: ProcessSpec["onCoordinator"];
   },
 ): Promise<RunResult> {
@@ -942,24 +957,39 @@ export function launchConversation(
       if (!encoded || encoded.input !== input)
         throw new Error("Invalid chat launch");
       const secrets = encoded.secrets;
+      let contextCount = 0,
+        contextComplete = false;
       return launchEncoded(encoded, signal, options.timeoutMs, {
         maySignal: options.maySignal,
         onNative: options.onNative,
         onCoordinator: options.onCoordinator,
         onFrame: (frame) => options.onFrame(frame, secrets),
         onContext: (source) => {
-          const value = closed(parseWireJson(source, CONTEXT_BYTES), [
-            "schema",
-            "messages",
-          ]);
-          if (value.schema !== "cadence-conversation-context/1")
+          if (contextComplete) throw new Error("Checkpoint after end");
+          const value = parseWireJson(source, CONTEXT_RECORD_BYTES) as {
+            schema?: string;
+          };
+          if (value.schema === "cadence-conversation-stream-end/1") {
+            const record = closed(value, ["schema", "count"]);
+            if (record.count !== contextCount)
+              throw new Error("Invalid checkpoint count");
+            contextComplete = true;
+            return;
+          }
+          const record = closed(value, ["schema", "message"]);
+          if (record.schema !== "cadence-conversation-stream/1")
             throw new Error("Invalid checkpoint");
           options.onContext(
-            conversationMessages(value.messages, [
-              ...options.ownerSecrets(),
-              ...secrets,
-            ]),
+            conversationMessages(
+              [record.message],
+              [...options.ownerSecrets(), ...secrets],
+            )[0],
           );
+          contextCount++;
+        },
+        onContextEnd: () => {
+          if (!contextComplete) throw new Error("Incomplete checkpoint");
+          options.onContextEnd();
         },
       });
     },

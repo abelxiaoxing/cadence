@@ -67,12 +67,7 @@ export class Workbench implements WorkbenchPort {
     });
     // Control records are not a startup gate: one unusable record degrades
     // only its own conversation (see ConversationWorkflow.read).
-    if (
-      this.conversations
-        .list()
-        .entries.some((entry) => entry.status === "unknown")
-    )
-      throw new ContractError("quarantine");
+    this.conversations.assertSettled();
     this.files = new WorkbenchFiles(
       o.cwd,
       [o.coordination.files.namespace, o.agentDir],
@@ -84,7 +79,11 @@ export class Workbench implements WorkbenchPort {
     );
   }
   closeReads(): void {
-    this.workflows.closeHistory();
+    try {
+      this.workflows.closeHistory();
+    } finally {
+      this.conversations.closeReads();
+    }
   }
   read(value: WorkbenchRead): WorkbenchResult {
     const request = decodeWorkbenchRead(value);
@@ -109,8 +108,17 @@ export class Workbench implements WorkbenchPort {
         return this.workflows.view(request.id);
       case "task-origin":
         return this.conversations.origin(request.taskId);
+      case "conversation-active":
       case "conversations": {
-        const value = this.conversations.list();
+        const value =
+          request.kind === "conversation-active"
+            ? this.conversations.activeConversations()
+            : this.conversations.list(request.after ?? null, request.scan);
+        if (
+          value.kind !== "conversations" &&
+          value.kind !== "conversation-active"
+        )
+          return value;
         return {
           ...value,
           entries: value.entries.map((entry) => ({
@@ -119,6 +127,12 @@ export class Workbench implements WorkbenchPort {
           })),
         };
       }
+      case "conversation-transcript":
+        return this.conversations.transcript(
+          request.id,
+          request.turnId,
+          request.page,
+        );
       case "conversation":
         return this.conversations.view(request.id, request.before);
       case "files":

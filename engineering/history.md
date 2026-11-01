@@ -18,7 +18,7 @@ Storage exhaustion refuses new work rather than silently evicting history.
 ## Capture, retained history and privacy
 
 Task workers use public SDK APIs, explicit empty resources, in-memory session/settings and disabled retries/compaction/cache warming.
-Ordinary-conversation workers share that launcher/auth/capture boundary but load only the explicit ordinary resource policy in [clients](clients.md#ordinary-conversations) and restore their own bounded sanitized checkpoint into an in-memory SessionManager.
+Ordinary-conversation workers share that launcher/auth/capture boundary but load only the explicit ordinary resource policy in [clients](clients.md#ordinary-conversations) and restore their own record-bounded sanitized checkpoint into an in-memory SessionManager.
 Verify exact model and effective thinking before READY/prompt; no provider discovery, credential argv/file envelope or implicit network fallback.
 Use the awaited public core-agent subscription for backpressure, reserving synchronous tool/update ingress before any copy or await.
 Custom bash uses public local operations plus the bounded redacted accumulator, not the stock raw-spill accumulator.
@@ -61,6 +61,22 @@ Readonly POST uses the same finite security/decoder boundary when inputs cannot 
 Exports stream task/run/child scope with actual counts/digest/watermark/trailer and original EOF; revoked or interrupted output has no successful completion.
 Browser download requested is not UI-verified completion; native export verifies the complete stream and creates destinations exclusively.
 
+## Ordinary conversation records
+
+Ordinary/coordinator transcripts use immutable `turns/<turn>/transcript/<page>.json` records, published by page count only after their durable write.
+The bounded `turn.json` is explicitly a latest preview; exact conversation/turn/page reads validate membership and never reconstruct missing pages.
+Finalized items are retained in completion order, with oversized fields continued across pages; an interrupted turn keeps its sanitized partial observations and actual status.
+Version-2 continuation manifests bind `context-<index>.json` records by a hash chain.
+Each message crosses the anonymous pipe separately and is sanitized again by the owner before persistence.
+Only a counted end marker, original successful process closure and durable manifest publication advance the conversation checkpoint; a torn pipe or failed turn never adopts partial sidecars.
+Version-1 inline contexts and old inline turn records remain readonly-compatible; nothing migrates, cleans up or replays consumer data.
+
+Conversation metadata stores a fixed legacy prefix plus the committed head/count; new turns have immutable ordinal slots and reverse membership records.
+A reverse record without its matching committed ordinal slot is not a conversation member, and an abandoned acceptance is never adopted by a later Send.
+Startup checks every retained head for unknown work, whereas new admission relies on the original owner fence instead of rescanning all retained conversations.
+Client history scans keep one page plus lookahead, expire their readonly handles and close on owner teardown; source replacement, stale or consumed cursors refuse without rebuilding anything.
+New workflow-to-conversation links are retained separately, and a legacy link is saved there before leaving the bounded recent control projection; the recent window does not limit new investigations or approvals.
+
 ## Conversation workflow records
 
 The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
@@ -79,7 +95,7 @@ Missing/deleted bound controls refuse instead of silently reverting to ordinary 
 Explicit activation binds an existing/new conversation without rewriting its original turns; no bulk migration or Pi-session import occurs.
 Control revision, accepted proposal and run-attempt identities are retained separately from the sanitized conversation checkpoint.
 Approval evidence records the exact proposal/revision and authenticated caller, never a reusable grant or browser cookie.
-Ordinary and coordinator messages still use the existing capture sanitizer and bounded checkpoint pipe.
+Ordinary and coordinator messages still use the existing capture sanitizer and record-bounded checkpoint pipe.
 A separate bounded IPC channel admits only named research/plan/status requests; it cannot carry a browser/native execution capability.
 
 ## Readonly diagnostics

@@ -8,3 +8,12 @@ export function encodeConversationContext(
   messages: unknown,
   secrets: readonly string[],
 ): string;
+
+export const CONTEXT_RECORD_BYTES: number;
+export function iterateConversationContext(
+  path: string | null,
+): Generator<unknown>;
+export function conversationContextRecords(
+  messages: unknown,
+  secrets?: readonly string[],
+): Generator<string>;

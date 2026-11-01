@@ -34,6 +34,7 @@ import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
+import { useConversationHistory } from "./client/use-conversation-history";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
@@ -172,11 +173,25 @@ export function App({
   const chatWorkspace = useRef<string | null>(null);
   if (workspace.workspace)
     chatWorkspace.current = workspace.workspace.workspaceId;
-  const chats = useWorkbench(
+  const chats = useConversationHistory(
     api.client,
-    workspace.workspace && !detached ? { kind: "conversations" } : null,
-    2000,
+    !!workspace.workspace && !detached,
   );
+  const chatActivity = useWorkbench(
+    api.client,
+    workspace.workspace && !detached ? { kind: "conversation-active" } : null,
+    1000,
+  );
+  const activeChats =
+    chatActivity.value?.kind === "conversation-active"
+      ? chatActivity.value.entries
+      : [];
+  const chatEntries = [
+    ...activeChats,
+    ...(chats.value?.entries ?? []).filter(
+      (row) => !activeChats.some((active) => active.id === row.id),
+    ),
+  ];
   const workflowActivity = useWorkbench(
     api.client,
     workspace.workspace && !detached ? { kind: "workflow-active" } : null,
@@ -816,8 +831,51 @@ export function App({
               cancelCompatible={!!workspace.cancelCompatible}
               canceling={canceling}
               onCancel={cancel}
-              chats={
-                chats.value?.kind === "conversations" ? chats.value.entries : []
+              chats={chatEntries}
+              chatActivityKnown={
+                chatActivity.value?.kind === "conversation-active" &&
+                !chatActivity.error
+              }
+              chatHistoryPartial={
+                chats.loading || chats.canPrevious || !!chats.value?.next
+              }
+              chatHistoryControls={
+                <>
+                  {chats.error && <p role="alert">{chats.error}</p>}
+                  {chats.loading && (
+                    <p className="panel-hint">
+                      {t("Reading conversation history…")}
+                    </p>
+                  )}
+                  {chats.canPrevious && (
+                    <button
+                      type="button"
+                      disabled={chats.loading}
+                      onClick={chats.previous}
+                    >
+                      {t("Newer conversations")}
+                    </button>
+                  )}
+                  {chats.value?.next && (
+                    <button
+                      type="button"
+                      disabled={chats.loading}
+                      onClick={chats.next}
+                    >
+                      {t("Older conversations")}
+                    </button>
+                  )}
+                  {chats.canPrevious && (
+                    <button type="button" onClick={chats.first}>
+                      {t("Latest conversations")}
+                    </button>
+                  )}
+                  {chats.error && (
+                    <button type="button" onClick={chats.refresh}>
+                      {t("Observe current state")}
+                    </button>
+                  )}
+                </>
               }
               conversationId={chatId}
               onConversation={selectChat}

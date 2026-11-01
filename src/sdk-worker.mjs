@@ -17,8 +17,8 @@ import {
   VERSION,
 } from "@earendil-works/pi-coding-agent";
 import {
-  encodeConversationContext,
-  readConversationContext,
+  conversationContextRecords,
+  iterateConversationContext,
 } from "./conversation-context.mjs";
 import { conversationResources } from "./conversation-resources.mjs";
 import { coordinatorTools } from "./coordinator-tools.mjs";
@@ -390,7 +390,7 @@ try {
   const requestedThinkingLevel = thinkingLevel ?? "off";
   const manager = SessionManager.inMemory(cwd);
   if (conversation)
-    for (const message of readConversationContext(conversation.previous))
+    for (const message of iterateConversationContext(conversation.previous))
       manager.appendMessage(message);
   const coordinationTools = coordinator ? coordinatorTools() : undefined;
   ownsCoordinatorChannel = coordinator;
@@ -583,7 +583,8 @@ try {
   // any checkpoint reaches disk; worker output cannot contain owner credentials.
   if (conversation) {
     stage = "conversation-context";
-    writeFileSync(3, encodeConversationContext(session.messages, secrets));
+    for (const record of conversationContextRecords(session.messages, secrets))
+      writeFileSync(3, record);
   }
   await capture.final();
   await emitter.drain();

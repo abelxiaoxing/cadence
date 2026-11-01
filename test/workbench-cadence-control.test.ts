@@ -571,14 +571,14 @@ it("the catalog shows a remembered preference read only, only when it is still o
   expect(choice.snapshot().selected).toBeNull();
 });
 
-it("a full or untidy record directory refuses only new control records", () => {
+it("retained control directories never impose a lifetime conversation cap", () => {
   const f = fixture();
   const existing = randomUUID();
   f.send(existing, "enter", "/cadence");
   writeFileSync(join(f.root, "stray.txt"), "junk", { mode: 0o600 });
-  for (let i = 0; i < 199; i++)
+  for (let i = 0; i < 300; i++)
     mkdirSync(join(f.root, randomUUID()), { mode: 0o700 });
-  expect(() => f.send(randomUUID(), "enter", "/cadence")).toThrow("capacity");
+  expect(() => f.send(randomUUID(), "enter", "/cadence")).not.toThrow();
   expect(f.cw.state(randomUUID())).toMatchObject({ enabled: false });
   expect(f.cw.observe(existing).enabled).toBe(true);
   expect(() => f.send(existing, "exit", "exit cadence")).not.toThrow();
@@ -612,22 +612,12 @@ it("a refusal before admission never consumes the browser grant", async () => {
       { ...caller, attachmentId: randomUUID() },
     ),
   ).toThrow(UnacceptedConversationCommand);
-  // A capacity refusal is checked before the grant and also leaves it live.
-  const record = join(f.root, id, "state.json"),
-    bytes = readFileSync(record, "utf8");
-  const full = JSON.parse(bytes);
+  // The recent 200-run projection is not an admission cap. Its oldest link
+  // is archived before the projection advances; the grant remains exact.
+  const record = join(f.root, id, "state.json");
+  const full = JSON.parse(readFileSync(record, "utf8"));
   full.state.runs = Array.from({ length: 200 }, () => randomUUID());
   writeFileSync(record, JSON.stringify(full));
-  const refused = (() => {
-    try {
-      f.cw.approval({ ...approve, grant, commandId: randomUUID() }, caller);
-    } catch (error) {
-      return error;
-    }
-  })();
-  expect(refused).toBeInstanceOf(UnacceptedConversationCommand);
-  expect(refused).toMatchObject({ code: "capacity" });
-  writeFileSync(record, bytes);
   const runId = randomUUID();
   expect(
     f.cw.approval({ ...approve, grant, commandId: runId }, caller),
@@ -637,6 +627,12 @@ it("a refusal before admission never consumes the browser grant", async () => {
     f.cw.approval({ ...approve, grant, commandId: randomUUID() }, caller),
   ).toThrow();
   expect(f.runs.size).toBe(1);
+  expect(f.cw.state(id).runs).toHaveLength(200);
+  expect(f.cw.state(id).runs.at(-1)).toBe(runId);
+  expect(f.cw.links([full.state.runs[0], runId])).toEqual([
+    { runId: full.state.runs[0], conversationId: id },
+    { runId, conversationId: id },
+  ]);
 });
 
 it("a transient read failure is reported as unavailable and never remembered", async () => {

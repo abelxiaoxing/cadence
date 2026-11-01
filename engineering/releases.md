@@ -407,3 +407,20 @@ A separate `bun pm pack --destination <private-disk-temp>` archive had 151 membe
 The user reviewed real-browser screenshots of the new entry, model panel, Send-without-model flow, remembered model, More menu and phone layout before release.
 Observed environment: Linux, official Node 22.22.1, Bun 1.3.14, installed public Pi/SDK 0.84.3 and Chrome for Testing 153 (Playwright chromium-1243, reinstalled with the user's approval after the host cache was cleared); Windows and macOS were not executed, and the `ci/windows` workflow was not run.
 Commit, merge to `main`, push, npm publication and deletion of the `webui-model-ux` and `ci/windows` branches were explicitly authorized.
+
+## Release 2.0.28 acceptance snapshot
+
+Conversation retention no longer gates work at 384KiB/256 items per turn, 2MiB per continuation checkpoint, 512MiB/10,000 conversation-store entries, 200 conversations or 1000 turns per conversation.
+Complete sanitized transcript fields use immutable bounded pages and a labelled recent preview; continuation messages stream over the anonymous pipe into hash-chained records, published only after the counted end and original successful closure.
+New turns have immutable ordinal/membership records and a small expected-byte head/count manifest, while old inline IDs remain readable and extend only on explicit Send.
+Recent-first history has bounded scan continuations and page-local counts, separate from the live roster; new and displaced legacy workflow links remain durable outside the recent 200-link control projection.
+Review corrected the remaining finite-metadata/list/control bottlenecks, preserved original native settlement before final transcript publication, bound membership to committed ordinal slots, and covered source replacement/consumed cursors, old control records, split secrets, Unicode and torn checkpoints.
+Concurrency, per-record/protocol limits, free-space protection, explicit approval, lost-reply observation and original Stop fences remain intact; no consumer history was migrated, evicted or replayed.
+
+Final release `verify` passed: 1773 root/native tests in 87 files (27 skipped), 144 WebUI tests in 14 files, eight real-browser scenarios in seven files and the exact 151-member/body pack audit.
+The generated owner restarted over 205 fabricated conversations, continued a legacy conversation at turn 1001 and admitted conversation 206 through the real SDK; the built browser traversed all 205 retained conversations without provider contact and then explicitly sent a new one.
+A separate Bun pack contains 151 files; SHA-256 `4fd5a6af595db5d14f28bd784bf19096c6ced1bfe83d616d5b5a9c0aed2f98b9`, SHA-1 `46ef8ec679b88e7bea9a272111934a727f4b05fb`.
+Observed environment: Linux, Node 26.7.0, Bun 1.3.14, installed public Pi SDK 0.84.3 and existing Chrome for Testing 151.0.7922.34.
+Evidence is retained under `/home/mirako/abel/.cr-eWZbMy` (`verify-1.log`, `browser-retention-1.log`, `retention-integration-1.log`, `bun-pack.log`); earlier development attempts, including failed checks, are preserved under `/home/mirako/abel/.cv-l7kXXN`, without enlarged test budgets or retrospective claims that those failures passed.
+Windows/macOS, paid providers, real PTY interaction and power-loss behavior were not newly qualified.
+Commit, GitHub push and npm publication were explicitly authorized; this snapshot records candidate verification, not a claim that publication or consumer installation already occurred.

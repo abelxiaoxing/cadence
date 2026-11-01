@@ -23,7 +23,7 @@ import {
 import { describeError, useT } from "../../i18n/locale";
 import { ModelPicker } from "../actions/ModelPicker";
 import type { WorkflowAgent } from "./AgentDock";
-import { ChatTurnView } from "./ChatTurnView";
+import { ChatTurnHistory } from "./ChatTurnHistory";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkflowPanel } from "./WorkflowPanel";
 
@@ -507,7 +507,12 @@ export function ChatWorkspace({
           </button>
         )}
         {view?.turns.map((turn) => (
-          <ChatTurnView key={turn.id} turn={turn} />
+          <ChatTurnHistory
+            key={turn.id}
+            client={client}
+            conversationId={id}
+            turn={turn}
+          />
         ))}
         {state && (
           <WorkflowPanel

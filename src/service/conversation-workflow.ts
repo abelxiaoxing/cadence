@@ -46,10 +46,8 @@ const SCHEMA = "cadence-conversation-workflow/1";
 /** Concurrent coordinator turns, one per conversation. Conversations still
  * enforces the shared eight-turn total with ordinary chat. */
 const COORDINATORS = 8;
-/** Retained control records (one per conversation, like the conversation
- * ceiling) and workflow attempts linked from one record. No eviction. */
-const RECORDS = 200;
-const RUNS = 200;
+/** Recent control projection only. Every run link is retained separately. */
+const RECENT_RUNS = 200;
 /** Bounded read-side directory scan; extra entries are ignored, never removed. */
 const SCAN = 256;
 const INCOMPLETE =
@@ -65,8 +63,7 @@ const PLAN_REFUSALS: Partial<Record<string, string>> = {
     "The current project state conflicts with this plan (for example uncommitted changes in a declared target or its project context). No plan card was published; explain this to the user.",
   forbidden:
     "The plan contains a protected value or an unsafe path and cannot be shown for approval. No plan card was published.",
-  capacity:
-    "Retained workflow capacity is exhausted. No plan card was published.",
+  capacity: "Workflow storage is unavailable. No plan card was published.",
   invalid:
     "The plan cannot use this delivery policy here (for example local-merge outside an existing Git branch). No plan card was published.",
   oversize: "The plan exceeds its size bounds. No plan card was published.",
@@ -77,7 +74,7 @@ const RESEARCH_REFUSALS: Partial<Record<string, string>> = {
   stale:
     "The project, model selection or owner changed. No investigation started.",
   capacity:
-    "The owner is at its workflow capacity (active or retained runs). No investigation started.",
+    "The owner has no available workflow slot or storage. No investigation started.",
   forbidden:
     "The request contains a protected value. No investigation started.",
 };
@@ -212,12 +209,35 @@ export class ConversationWorkflow {
     this.o.owner.lease.assert();
     if (!Number.isSafeInteger(state.revision))
       throw new ContractError("capacity");
-    const { notice: _projectionOnly, ...persisted } = state;
+    const { notice: _projectionOnly, ...persisted } = {
+      ...state,
+      runs: state.runs.slice(-RECENT_RUNS),
+    };
     const body = canonicalJson(
       { schema: SCHEMA, state: decodeCadenceConversation(persisted) },
       BYTES,
     );
     try {
+      const prior = file
+        ? decodeCadenceConversation(
+            closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
+              "schema",
+              "state",
+            ]).state,
+          ).runs
+        : [];
+      for (const [index, runId] of state.runs.entries()) {
+        // Preserve a legacy link before it leaves the recent projection.
+        if (index >= state.runs.length - RECENT_RUNS && prior.includes(runId))
+          continue;
+        const path = this.runLink(runId);
+        const old = this.o.coordination.files.read(path);
+        const value = canonicalJson({ runId, conversationId: state.id });
+        if (old) {
+          if (old.bytes.toString("utf8") !== value)
+            throw new ContractError("conflict");
+        } else this.o.coordination.files.create(path, value);
+      }
       if (file)
         this.o.coordination.files.replace(
           this.path(state.id),
@@ -230,23 +250,6 @@ export class ConversationWorkflow {
       this.o.owner.quarantine();
       throw e;
     }
-  }
-  /** Retained records, for admission of a new one only. Stray entries are
-   * ignored (never removed); an oversized directory refuses admission. */
-  private records(): number {
-    if (!this.o.coordination.files.directory(this.root)) return 0;
-    const dir = opendirSync(this.root);
-    let entries = 0,
-      records = 0;
-    try {
-      for (let e = dir.readSync(); e; e = dir.readSync()) {
-        if (++entries > SCAN) return RECORDS;
-        if (e.isDirectory()) ++records;
-      }
-    } finally {
-      dir.closeSync();
-    }
-    return records;
   }
   state(id: string): CadenceConversation {
     const loaded = this.read(id);
@@ -275,12 +278,38 @@ export class ConversationWorkflow {
     this.cache.set(id, { key, state: loaded.state });
     return loaded.state;
   }
+  private runLink(runId: string): string {
+    return join(
+      this.o.coordination.directory,
+      "conversations-v1",
+      "workflow-links",
+      `${decodeId(runId)}.json`,
+    );
+  }
   /** Browser owners of the given runs. Partial when records are unusable. */
   links(runIds: readonly string[]): WorkflowLink[] {
     this.o.owner.lease.assert();
     const wanted = new Set(runIds),
       links: WorkflowLink[] = [];
+    for (const runId of runIds) {
+      try {
+        const file = this.o.coordination.files.read(this.runLink(runId));
+        if (!file) continue;
+        const row = closed(parseWireJson(file.bytes.toString("utf8")), [
+          "runId",
+          "conversationId",
+        ]);
+        if (row.runId !== runId) continue;
+        const conversationId = decodeId(row.conversationId);
+        if (this.observe(conversationId).notice) continue;
+        links.push({ runId, conversationId });
+        wanted.delete(runId);
+      } catch {
+        this.o.owner.lease.assert();
+      }
+    }
     if (!wanted.size) return links;
+    // Compatibility fallback for the at-most-200 records older owners wrote.
     try {
       if (!this.o.coordination.files.directory(this.root)) return links;
       const dir = opendirSync(this.root);
@@ -380,7 +409,6 @@ export class ConversationWorkflow {
       throw new ContractError("conflict");
     if (enabled && this.active.size >= COORDINATORS)
       throw new ContractError("capacity");
-    if (!file && this.records() >= RECORDS) throw new ContractError("capacity");
     const next: CadenceConversation = {
       id: state.id,
       revision: state.revision + 1,
@@ -551,11 +579,6 @@ export class ConversationWorkflow {
         "An investigation needs a goal and one or two non-empty questions. Nothing was started.",
       );
     }
-    if (current.state.runs.length >= RUNS)
-      return refusal(
-        "capacity",
-        "This conversation reached its retained workflow limit. Nothing was started; continue in a new conversation.",
-      );
     // Readonly investigations may queue behind each other, never behind a
     // long approved implementation that holds the checkout.
     const busy = this.o.workflows
@@ -732,7 +755,6 @@ export class ConversationWorkflow {
     }
     // Every refusal before consumption leaves a live grant usable, so it is a
     // definite no-effect refusal. A grant is consumed only on admission below.
-    if (state.runs.length >= RUNS) throw new ContractError("capacity");
     const grant = this.grants.get(c.grant);
     if (grant && grant.expiresAt < Date.now()) this.grants.delete(c.grant);
     if (

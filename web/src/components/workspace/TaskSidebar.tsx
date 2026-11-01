@@ -220,6 +220,9 @@ export function TaskSidebar({
   onTask,
   onScope,
   chats = [],
+  chatActivityKnown = true,
+  chatHistoryPartial = false,
+  chatHistoryControls,
   conversationId,
   onConversation,
   onNewConversation,
@@ -243,6 +246,9 @@ export function TaskSidebar({
   onTask: (id: string, title?: string) => void;
   onScope: OpenScope;
   chats?: ChatSummary[];
+  chatActivityKnown?: boolean;
+  chatHistoryPartial?: boolean;
+  chatHistoryControls?: ReactNode;
   conversationId?: string | null;
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
@@ -380,7 +386,10 @@ export function TaskSidebar({
       <SidebarSection
         title={t("Running conversations")}
         count={
-          activeRuns?.status === "complete" && workflows && !workflowError
+          activeRuns?.status === "complete" &&
+          workflows &&
+          !workflowError &&
+          chatActivityKnown
             ? String(active.length + liveChats.length + workflows.length)
             : "?"
         }
@@ -400,13 +409,21 @@ export function TaskSidebar({
             )}
           </p>
         )}
+        {!chatActivityKnown && (
+          <p className="panel-hint">
+            {t("Conversation activity unavailable.")}
+          </p>
+        )}
         {liveChats.map(chatRow)}
         {workflows?.map(workflowRow)}
         {activeRuns?.status === "complete" &&
           active.length === 0 &&
           liveChats.length === 0 &&
           workflows?.length === 0 &&
-          !workflowError && <p className="panel-hint">{t("No active runs")}</p>}
+          !workflowError &&
+          chatActivityKnown && (
+            <p className="panel-hint">{t("No active runs")}</p>
+          )}
         {active.map((run) => {
           const title = records.find(
             (r) => r.owner.taskId === run.taskId,
@@ -453,7 +470,7 @@ export function TaskSidebar({
         title={t("Conversation history")}
         count={
           tasks.page && !("kind" in tasks.page)
-            ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious ? "+" : ""}`
+            ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
             : "?"
         }
         className="grow"
@@ -489,9 +506,11 @@ export function TaskSidebar({
           {tasks.page &&
             !("kind" in tasks.page) &&
             history.length === 0 &&
-            pastChats.length === 0 && (
+            pastChats.length === 0 &&
+            !chatHistoryPartial && (
               <p className="panel-hint">{t("No conversations yet.")}</p>
             )}
+          {chatHistoryControls}
           <PageControls pager={tasks} compact />
         </nav>
         {!history.some((r) => r.owner.taskId === taskId) && conversations}

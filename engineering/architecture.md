@@ -26,7 +26,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination and same-origin project routing, not task execution.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
-`src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/{workbench,conversations,conversation-transcript,conversation-history,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and checkout gate.
 
