@@ -51,6 +51,8 @@ export function Workbench() {
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
   const [selected, setSelected] = useState(currentProject);
   const [picker, setPicker] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+  const [openError, setOpenError] = useState("");
   const [error, setError] = useState("");
   const [revision, refresh] = useState(0);
   const [restore, setRestore] = useState<{
@@ -246,11 +248,36 @@ export function Workbench() {
         ready={!!entry}
         projects={entry?.projects.map((p) => p.cwd) ?? []}
         restore={restore}
+        opening={opening}
         onOpenFolder={(path) => {
           cancelRestore();
+          setOpenError("");
           setPicker(path ?? entry?.home ?? "");
         }}
+        onOpenProject={(path) => {
+          // One click on a recent project is its explicit Open; a failure
+          // names the folder and opens nothing else.
+          if (opening) return;
+          cancelRestore();
+          setOpenError("");
+          setOpening(path);
+          void open(path)
+            .catch((e: unknown) =>
+              setOpenError(
+                t("{path} could not be opened ({code}).", {
+                  path,
+                  code: e instanceof Error ? e.message : "unavailable",
+                }),
+              ),
+            )
+            .finally(() => setOpening(null));
+        }}
       >
+        {openError && (
+          <p role="alert" className="banner-notice">
+            {openError}
+          </p>
+        )}
         {entry && <RecoveryNotices notices={entry.recoveries} />}
         {error && (
           <p role="alert" className="banner-notice">

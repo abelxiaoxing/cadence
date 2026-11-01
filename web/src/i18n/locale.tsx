@@ -33,6 +33,23 @@ export function translate(locale: Locale, text: string, vars?: Vars): string {
       )
     : template;
 }
+const ERROR_TEXT: Readonly<Record<string, MessageKey>> = {
+  unavailable: "The service is unavailable right now ({code}).",
+  conflict:
+    "Another operation is still in progress ({code}). Try again when it finishes.",
+  stale:
+    "This page was out of date ({code}) and has been read again. Try once more.",
+  "auth-unavailable":
+    "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.",
+  "unsupported-context": "This is not supported here ({code}).",
+  capacity: "A limit was reached ({code}).",
+};
+/** A bare public error code gets a readable sentence; the code itself stays
+ * untranslated inside it. Any other text passes through unchanged. */
+export function describeError(t: Translator["t"], text: string): string {
+  const key = Object.hasOwn(ERROR_TEXT, text) ? ERROR_TEXT[text] : undefined;
+  return key ? t(key, { code: text }) : text;
+}
 /** A translated sentence with nodes (code spans) at its `{name}` marks. */
 export function Template({
   text,

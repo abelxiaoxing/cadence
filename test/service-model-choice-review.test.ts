@@ -41,6 +41,7 @@ const catalog = {
   status: "complete",
   entries: [],
   withheld: 0,
+  remembered: null,
 };
 
 it.each(["models", "chooseModel"] as const)(

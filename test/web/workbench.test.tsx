@@ -235,13 +235,15 @@ it("each omitted content kind gets its own line and a title when no tool ran", (
   expect(other).not.toContain("Media is not retained.");
 });
 
-it("the project-less entry is a conversation shell with navigation at bottom right, not a project landing page", () => {
+it("the project-less entry is a conversation shell with one central Open action and navigation at bottom right, not a project landing page", () => {
   const open = vi.fn();
   const html = renderToStaticMarkup(
     <WorkbenchHome ready onOpenFolder={open} />,
   );
   expect(html).toContain('class="panel panel-left lp-panel"');
-  expect(html).toContain("New conversation");
+  // One central action opens the folder picker; no duplicate sidebar entry.
+  expect(html).toMatch(/class="primary welcome-action"[^>]*>.*Open a folder…/);
+  expect(html).not.toContain("New conversation");
   expect(html).toContain("Conversation history");
   expect(html).toContain(
     "Conversations are kept with each project. Open a working folder to see its history.",
@@ -266,14 +268,18 @@ it("the project-less entry is a conversation shell with navigation at bottom rig
       <WorkbenchHome ready onOpenFolder={open} />
     </LocaleProvider>,
   );
-  expect(chinese).toContain("新对话");
-  expect(chinese).toContain("在右下角选择工作文件夹");
+  expect(chinese).toContain("打开文件夹…");
+  expect(chinese).toContain("打开工作文件夹后即可开始对话");
+  // The welcome and the composer no longer point in different directions.
+  expect(chinese).not.toContain("右下角");
+  expect(chinese).not.toContain("从左侧");
   expect(chinese).not.toContain("你的工作台，你的项目");
 });
 
 it("the shared empty conversation has no central task creation shortcut", () => {
-  const html = renderToStaticMarkup(<ChatWelcome />);
+  const html = renderToStaticMarkup(<ChatWelcome hint="Type below." />);
   expect(html).toContain("What would you like to work on?");
+  expect(html).toContain("Type below.");
   expect(html).not.toContain("<button");
 });
 
@@ -324,14 +330,14 @@ it("folder navigation keeps the full current path and recent choices in the pick
   expect(chinese).not.toContain("浏览");
 });
 
-it("the entry sidebar explains per-project history and lists recent projects without opening one", () => {
+it("the entry sidebar explains per-project history and lists recent projects without opening one on render", () => {
   const open = vi.fn();
   const projects = ["/work/alpha", "/work/beta & co"];
   const html = renderToStaticMarkup(
     <WorkbenchHome ready projects={projects} onOpenFolder={open} />,
   );
   expect(html).toContain(
-    "Conversations are kept with each project. Choose a project below and open it to see its history.",
+    "Conversations are kept with each project. Click a project to open it.",
   );
   expect(html).toMatch(
     /class="session-item project-item" title="\/work\/alpha".*>alpha<.*\/work\/alpha</,
@@ -358,7 +364,7 @@ it("the entry sidebar explains per-project history and lists recent projects wit
       />
     </LocaleProvider>,
   );
-  expect(stopped).toContain("上次的项目 alpha 当前未运行");
+  expect(stopped).toContain("上次的项目 alpha 未在运行");
   expect(stopped).toContain("历史对话");
   const loading = renderToStaticMarkup(
     <WorkbenchHome ready={false} projects={projects} onOpenFolder={open} />,
@@ -366,6 +372,19 @@ it("the entry sidebar explains per-project history and lists recent projects wit
   expect(loading).toMatch(
     /<button type="button" class="session-item project-item"[^>]*disabled=""/,
   );
+  // While one recent project opens, every entry waits and that one says so.
+  const opening = renderToStaticMarkup(
+    <WorkbenchHome
+      ready
+      projects={projects}
+      opening="/work/alpha"
+      onOpenFolder={open}
+      onOpenProject={open}
+    />,
+  );
+  expect(opening).toContain("Opening…");
+  expect(opening).toMatch(/aria-busy="true"/);
+  expect(opening.match(/project-item"[^>]*disabled=""/g)?.length).toBe(2);
   expect(open).not.toHaveBeenCalled();
 });
 

@@ -250,7 +250,7 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
 - `alive` requires an authenticated exact-epoch reply.
   It is not a PID probe.
   `actions:false` can mean that no owner model has been explicitly selected yet.
-- Return, browser close and Pi quit detach clients; admitted work continues.
+- Disconnect this page (the WebUI More menu), browser close and Pi quit detach clients; admitted work continues.
   Use the client's **Cancel** for a run or management **stop** for the service.
 - Stop closes admission and waits original processes, credential writes, history writes, already-started publication continuations, owned networking and listener closure before releasing fences.
   Checks, native process outcomes and human review remain separate facts.

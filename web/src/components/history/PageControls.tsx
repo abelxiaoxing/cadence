@@ -29,7 +29,16 @@ export function PageControls({
           {t("; continue this exact read. No data page yet.")}
         </p>
       )}
-      {page && <Coverage value={page.coverage} compact={compact} />}
+      {/* A compact list (the sidebar) notes only partial, redacted or
+          omitted coverage; complete coverage needs no note there. */}
+      {page &&
+        !(
+          compact &&
+          page.coverage.observed === "complete" &&
+          page.coverage.source === "complete" &&
+          !page.coverage.redacted &&
+          page.coverage.omissions.length === 0
+        ) && <Coverage value={page.coverage} compact={compact} />}
       {(!compact || pager.canPrevious) && (
         <button
           type="button"

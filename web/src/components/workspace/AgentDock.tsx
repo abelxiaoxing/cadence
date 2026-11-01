@@ -100,7 +100,8 @@ export function AgentDock({
   onOpenWorkflow?(agent: WorkflowAgent): void;
 }) {
   const { t, tx } = useT();
-  const [open, setOpen] = useState(true),
+  // Unset follows the roster: folded while empty, open once agents appear.
+  const [opened, setOpen] = useState<boolean | null>(null),
     [rows, setRows] = useState<Row[]>([]),
     [error, setError] = useState(false);
   const workflows = useWorkflowRuns(client, workflowRuns);
@@ -180,13 +181,14 @@ export function AgentDock({
   const live =
     agents.filter(({ step }) => LIVE.includes(step.status)).length +
     merged.filter((row) => row.run.lifecycle !== "settled").length;
+  const open = opened ?? (count > 0 || !!error);
   return (
     <section className={`agent-dock${open ? "" : " collapsed"}`}>
       <button
         type="button"
         className="agent-dock-heading"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen(!open)}
       >
         <FiChevronDown />
         <FiCpu />

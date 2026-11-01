@@ -429,6 +429,7 @@ export async function createServiceHost(
       models,
       access,
       remember: (value) => preferences.save(value),
+      recall: () => preferences.read(),
     });
     const { PI_OFFLINE: _offline, ...ordinary } = launch;
     const checkEnvironment = Object.freeze(ordinary);

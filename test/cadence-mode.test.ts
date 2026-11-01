@@ -128,6 +128,7 @@ function host(entries: any[] = []) {
         status: "complete",
         entries: [],
         withheld: 0,
+        remembered: null,
       }),
     ),
     chooseModel: vi.fn(async () => ok({})),
@@ -724,6 +725,7 @@ it("a model-selecting call never inherits an attach-only connection", async () =
       status: "complete",
       entries: [],
       withheld: 0,
+      remembered: null,
     }),
   );
   injected.client.chooseModel.mockImplementation(async (r: any) => {
@@ -765,6 +767,7 @@ it("an unreadable preference does not block planning, and an explicit model choi
         },
       ],
       withheld: 0,
+      remembered: null,
     }),
   );
   // An untyped (stray) selection changes nothing.

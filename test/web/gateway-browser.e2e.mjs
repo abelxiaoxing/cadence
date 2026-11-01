@@ -64,8 +64,15 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       await page.getByText("Recent projects", { exact: true }).count(),
       0,
     );
+    assert.equal(
+      await page
+        .getByRole("button", { name: "New conversation", exact: true })
+        .count(),
+      0,
+      "the entry has one central Open action, not a duplicate sidebar entry",
+    );
     await page
-      .getByRole("button", { name: "New conversation", exact: true })
+      .getByRole("button", { name: "Open a folder…", exact: true })
       .click();
     await page
       .getByRole("dialog", { name: "Open working folder", exact: true })
@@ -73,7 +80,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     assert.equal(
       g.store.projects().length,
       0,
-      "New conversation only offers folder selection",
+      "the central action only offers folder selection",
     );
     const openProject = page.getByRole("button", {
       name: "Open this folder",
@@ -281,14 +288,14 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     assert(!existsSync(lock));
     const projectB = new URL(page.url()).searchParams.get("project");
     assert(projectB);
-    await page.getByRole("button", { name: "Choose owner model" }).click();
+    await page.getByRole("button", { name: /^Model: / }).click();
     await page
-      .getByLabel("Exact model / API / thinking")
-      .selectOption({ label: "fixture/fixed · openai-completions · off" });
-    await page
-      .getByRole("button", { name: "Confirm owner model choice" })
+      .getByRole("dialog", { name: "Choose a model" })
+      .getByRole("option", { name: /^fixed/ })
       .click();
-    await page.locator("dialog[open]").waitFor({ state: "hidden" });
+    await page
+      .getByRole("dialog", { name: "Choose a model" })
+      .waitFor({ state: "hidden" });
     await page
       .getByRole("textbox", { name: "Message", exact: true })
       .fill("Ordinary conversation in project B");
@@ -388,7 +395,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     );
     assert.equal(page.url(), chatUrl);
     await page
-      .getByRole("button", { name: "Exit Cadence", exact: true })
+      .getByRole("button", { name: "Cadence mode", exact: true })
       .click();
     await page
       .locator(".conversation-badge")

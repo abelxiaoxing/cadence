@@ -510,6 +510,67 @@ it("an unremembered model preference never turns an installed choice into a fail
   expect(choice.snapshot()).toEqual(chosen);
 });
 
+it("the catalog shows a remembered preference read only, only when it is still offered", () => {
+  const epoch = randomUUID();
+  const selector = {
+    provider: "fixture",
+    model: "fixed",
+    api: "openai-completions" as const,
+    thinking: "off" as const,
+  };
+  let saved: unknown = selector;
+  let installs = 0;
+  const choice = new OwnerModelChoice({
+    owner: {
+      lease: { assert() {}, registration: { epoch } },
+      assertQuiescent() {},
+      configurationInstalled() {},
+    },
+    models: {
+      pending: 0,
+      loading: false,
+      assertCurrent() {},
+      catalog: () => ({
+        status: "complete",
+        withheld: 0,
+        entries: [
+          {
+            provider: "fixture",
+            model: "fixed",
+            api: "openai-completions",
+            thinking: [{ level: "off", selectable: true }],
+            eligibility: "candidate",
+          },
+        ],
+      }),
+      replaceSelection: () => {
+        installs++;
+        throw new Error("not installed by reading");
+      },
+    },
+    access: { assertCurrent() {}, generation: 1 },
+    recall: () => {
+      if (saved instanceof Error) throw saved;
+      return saved;
+    },
+  } as unknown as ConstructorParameters<typeof OwnerModelChoice>[0]);
+  expect(choice.catalog()).toMatchObject({
+    selected: null,
+    remembered: selector,
+  });
+  for (const value of [
+    { ...selector, model: "gone" },
+    { ...selector, thinking: "high" },
+    new Error("Unsupported Cadence preferences"),
+    null,
+  ]) {
+    saved = value;
+    expect(choice.catalog().remembered).toBeNull();
+  }
+  expect(installs).toBe(0);
+  expect(choice.snapshot().selected).toBeNull();
+});
+
 it("a full or untidy record directory refuses only new control records", () => {
   const f = fixture();
   const existing = randomUUID();

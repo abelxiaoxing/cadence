@@ -733,4 +733,82 @@ export const zh = {
   "partial-results": "结果不完整",
   "recording-incomplete": "记录不完整",
   "legacy-context": "旧版上下文",
+  Off: "关闭",
+  Minimal: "最低",
+  Low: "低",
+  Medium: "中",
+  High: "高",
+  "Extra high": "极高",
+  Max: "最大",
+  "A reply or workflow is still running in this project. Switch models after it finishes.":
+    "此项目中还有回复或工作流正在运行，结束后再切换模型。",
+  "The model list changed and was read again. Choose once more.":
+    "模型列表已变化并已重新读取，请再选一次。",
+  "This model's credentials are unavailable. Check auth.json or the provider's API key.":
+    "此模型的凭据不可用，请检查 auth.json 或提供方的 API key。",
+  "This model or thinking level is not supported.": "不支持此模型或思考级别。",
+  "The choice was not confirmed. The list was read again; check the current model before choosing again.":
+    "未能确认这次选择，列表已重新读取；请先确认当前模型再重新选择。",
+  "Model unavailable": "模型不可用",
+  "Choose a model": "选择模型",
+  "Model: {model}": "模型：{model}",
+  "Switch models after the current reply finishes.":
+    "当前回复结束后才能切换模型。",
+  "Last used model; it is used again when you send.":
+    "上次使用的模型，发送时会再次启用。",
+  "Choose a model; your message is sent right after.":
+    "选择模型后会立即发送你的消息。",
+  "Search models": "搜索模型",
+  "Search models…": "搜索模型…",
+  Models: "模型列表",
+  "Reading models…": "正在读取模型…",
+  "Credentials unavailable": "凭据不可用",
+  "Not supported": "不支持",
+  "Used when you send": "发送时启用",
+  "No matching models.": "没有匹配的模型。",
+  "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.":
+    "还没有配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供方，然后重启服务。",
+  "Thinking level: {level}": "思考级别：{level}",
+  Thinking: "思考",
+  "The model list could not be read ({code}).": "无法读取模型列表（{code}）。",
+  "Read again": "重新读取",
+  "The model was not changed ({code}).": "模型未切换（{code}）。",
+  "Switching model…": "正在切换模型…",
+  "Every conversation in this project uses this model.":
+    "此项目中的所有对话都使用这个模型。",
+  "Type a message below. Turn on Cadence mode to agree on a plan before implementation.":
+    "在下方输入消息开始对话。打开 Cadence 模式可以先商定计划再实施。",
+  "Cadence mode": "Cadence 模式",
+  "Cadence mode is on. Click to exit it.": "Cadence 模式已开启，点击退出。",
+  "Your next message turns on Cadence mode. Click to cancel.":
+    "发送下一条消息时将开启 Cadence 模式，点击取消。",
+  "Turn on Cadence mode: agree on a plan before implementation.":
+    "开启 Cadence 模式：先商定计划，再开始实施。",
+  "Your next message turns on Cadence mode.":
+    "发送下一条消息时将开启 Cadence 模式。",
+  "The service is unavailable right now ({code}).":
+    "服务暂时不可用（{code}）。",
+  "Another operation is still in progress ({code}). Try again when it finishes.":
+    "另一项操作仍在进行（{code}），结束后再试。",
+  "This page was out of date ({code}) and has been read again. Try once more.":
+    "页面状态已过期（{code}），已重新读取，请再试一次。",
+  "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.":
+    "模型凭据不可用（{code}），请检查 auth.json 或提供方的 API key。",
+  "This is not supported here ({code}).": "此处不支持该操作（{code}）。",
+  "A limit was reached ({code}).": "已达到上限（{code}）。",
+  More: "更多",
+  "Refresh status": "刷新状态",
+  "Disconnect this page": "断开此页面",
+  "Started work keeps running.": "已开始的工作会继续运行。",
+  "No conversations yet.": "还没有对话。",
+  "Your last project {name} is not running. Click it below to open it again.":
+    "上次的项目 {name} 未在运行，点击下方项目即可重新打开。",
+  "Conversations are kept with each project. Click a project to open it.":
+    "对话按项目保存，点击项目即可打开。",
+  "Opening…": "正在打开…",
+  "Open a working folder to start. Each project keeps its own conversations.":
+    "打开一个工作文件夹即可开始，每个项目保存各自的对话。",
+  "Open a folder…": "打开文件夹…",
+  "Open a working folder to start chatting.": "打开工作文件夹后即可开始对话。",
+  "{path} could not be opened ({code}).": "无法打开 {path}（{code}）。",
 } satisfies Record<string, string>;
