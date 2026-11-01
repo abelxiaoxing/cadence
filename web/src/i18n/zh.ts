@@ -2,6 +2,16 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Newer conversations": "较新的会话",
+  "Latest conversations": "最近会话",
+  "Reading conversation history…": "正在读取会话历史…",
+  "Older conversations": "更早的会话",
+  "Conversation activity unavailable.": "当前无法读取会话运行状态。",
+  "Long messages and tool results continue on the next transcript page.":
+    "长消息和工具结果会在下一页记录中继续。",
+  "Transcript page {page} of {pages}": "记录第 {page} 页，共 {pages} 页",
+  "Full transcript ({pages} pages)": "完整记录（{pages} 页）",
+  "Turn transcript": "本轮完整记录",
   "Files / history": "文件 / 历史",
   "Files and history drawer": "文件与历史面板",
   History: "历史",

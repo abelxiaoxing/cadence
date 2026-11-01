@@ -103,6 +103,36 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
           ?.textContent === "completed",
     );
     assert.equal(f.contacts(), base + 1);
+    // Full records are readonly pages, independent of the latest preview.
+    await p.getByRole("button", { name: "Full transcript (2 pages)" }).click();
+    await p.getByText("Transcript page 1 of 2", { exact: true }).waitFor();
+    await p
+      .locator(".chat-message.user")
+      .getByText("Browser ordinary conversation", { exact: true })
+      .waitFor();
+    await p.getByRole("button", { name: "Next page", exact: true }).click();
+    await p.getByText("Transcript page 2 of 2", { exact: true }).waitFor();
+    await p
+      .locator(".chat-message.assistant")
+      .getByText(/Advisory:/)
+      .waitFor();
+    await p.getByRole("button", { name: "Previous page", exact: true }).click();
+    await p
+      .locator(".chat-message.user")
+      .getByText("Browser ordinary conversation", { exact: true })
+      .waitFor();
+    await p
+      .getByRole("button", { name: "Latest messages", exact: true })
+      .click();
+    await p
+      .locator(".chat-message.assistant")
+      .getByText(/Advisory:/)
+      .waitFor();
+    assert.equal(
+      f.contacts(),
+      base + 1,
+      "paging never sends or replays a turn",
+    );
     const chatUrl = p.url();
     await p.getByRole("button", { name: "existing.txt", exact: true }).click();
     await p

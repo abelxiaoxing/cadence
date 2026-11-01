@@ -136,7 +136,7 @@ Conversation identities are not recreated when their metadata disappears, unacce
 An active turn retains independent interruption authority even when its metadata is unavailable; readonly views do not reconstruct that metadata.
 Access-token rotation revokes viewers, not admitted queued turns.
 A completed turn retains sanitized text and tool exchanges for its next explicit Send.
-The bounded checkpoint passes through an anonymous pipe and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
+The checkpoint passes through an anonymous pipe one bounded message at a time and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
 A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced; turns saved before the flags decode with all three unset.
 Releases through 2.0.19 refuse a turn that carries the flags, so going back to one leaves conversations written since unreadable there.
 Assistant usage keeps only the counts every Pi message carries; optional provider breakdowns such as `reasoning` or `cacheWrite1h` are dropped, not refused.
@@ -144,7 +144,15 @@ Failed, interrupted or over-budget turns remain visible but currently require a 
 A restart never resumes pending turns; unknown work keeps fences.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction.
 Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers.
-Limits are explicit: 200 conversations, 1000 turns per conversation, eight admitted turns (serialized within one checkout), 384KiB per retained visible turn, 2MiB continuation context, and 512MiB/10,000 entries for the separate conversation store, without eviction.
+Conversation and per-conversation turn counts have no lifetime admission cap; only active-work concurrency is bounded.
+History is recent-first and paged, continuing readonly bounded scans as necessary; active conversations use a separate roster and never disappear merely because an older history page is selected.
+New turns append immutable ordinal slots while keeping a small expected-byte head/count manifest; old inline turn IDs remain a readable prefix, extended only by explicit Send without bulk migration.
+New ordinary/coordinator turns retain complete sanitized text and tool exchanges in immutable transcript pages, with a labelled latest preview and readonly Previous/Next navigation; 384KiB is a page/snapshot bound, not a whole-turn execution cutoff.
+Large fields continue across pages without losing Unicode or JSON-escaped text; navigating pages never sends, retries or grows an unbounded client list.
+Continuation checkpoints use hash-chained per-message records and a small committed manifest, so the former 2MiB aggregate pipe/file cap no longer ends otherwise successful replies.
+The separate conversation store has no aggregate byte or file-count quota and never evicts history; the free-space floor and per-record/process safety bounds remain (see `engineering/limits.md`).
+Old turns and checkpoints remain readable without migration.
+Older versions do not understand paged turns, indexed metadata or version-2 checkpoints; downgrading cannot resume those conversations.
 Task history retains its existing independent bounds.
 File browsing lists at most 200 entries from 2000 directory entries and previews at most 128KiB of UTF-8 text.
 It refuses symlinks, hard-linked files, private state, Pi's agent directory (including its configured alias target), `.git`, `.env` variants, common credential directories such as `.ssh`/`.aws`, and credential/config filenames; limitations remain visible.

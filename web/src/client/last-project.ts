@@ -38,7 +38,7 @@ export async function projectRunning(
 ): Promise<boolean> {
   try {
     const reply = await browserClient(id).client.workbenchRead(
-      { kind: "conversations" },
+      { kind: "conversation-active" },
       signal,
     );
     return reply.kind === "ok" && !signal.aborted;

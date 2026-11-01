@@ -72,7 +72,14 @@ export type WorkbenchRead =
   | { kind: "workflow-detail"; id: string; stepId: string }
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string }
-  | { kind: "conversations" }
+  | {
+      kind: "conversation-transcript";
+      id: string;
+      turnId: string;
+      page: number;
+    }
+  | { kind: "conversation-active" }
+  | { kind: "conversations"; after?: ChatCursor | null; scan?: string }
   | { kind: "task-origin"; taskId: string }
   | { kind: "conversation"; id: string; before: string | null }
   | { kind: "files"; path: string }
@@ -160,9 +167,19 @@ export interface ChatTurn {
   status: ChatStatus;
   items: ChatItem[];
   notice: string;
+  /** Immutable full-transcript pages; items above are only the latest preview. */
+  transcript?: { pages: number };
   /** Content kinds observed and not retained; never written into `notice`.
    * `other` is a block of a type Cadence does not recognize. */
   omitted: { thinking: boolean; media: boolean; other: boolean };
+}
+export interface ChatCursor {
+  id: string;
+  updatedAt: number;
+}
+function decodeChatCursor(value: unknown): ChatCursor {
+  const o = closed(value, ["id", "updatedAt"]);
+  return { id: decodeId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
 export interface ChatSummary {
   id: string;
@@ -178,6 +195,12 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
+  | {
+      kind: "conversation-transcript";
+      conversationId: string;
+      page: number;
+      turn: ChatTurn;
+    }
   | { kind: "workflow-history-progress"; after: string | null; scan: string }
   | {
       kind: "workflow-history";
@@ -207,7 +230,9 @@ export type WorkbenchResult =
     }
   | { kind: "workflow"; commandId: string | null; response: WorkflowResponse }
   | { kind: "task-origin"; taskId: string; conversationId: string | null }
-  | { kind: "conversations"; entries: ChatSummary[] }
+  | { kind: "conversation-active"; entries: ChatSummary[] }
+  | { kind: "conversations-progress"; after: ChatCursor | null; scan: string }
+  | { kind: "conversations"; entries: ChatSummary[]; next?: ChatCursor | null }
   | {
       kind: "conversation";
       summary: ChatSummary | null;
@@ -248,6 +273,15 @@ const statuses = [
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
+    case "conversation-transcript": {
+      const o = closed(v, ["kind", "id", "turnId", "page"]);
+      return {
+        kind,
+        id: decodeId(o.id),
+        turnId: decodeId(o.turnId),
+        page: integer(o.page, 0),
+      };
+    }
     case "cadence-conversation": {
       const o = closed(v, ["kind", "id"]);
       return { kind, id: decodeId(o.id) };
@@ -273,7 +307,21 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       const o = closed(v, ["kind", "id"]);
       return { kind, id: decodeId(o.id) };
     }
-    case "conversations":
+    case "conversations": {
+      const after = Object.hasOwn(v as object, "after"),
+        scan = Object.hasOwn(v as object, "scan");
+      const o = closed(v, [
+        "kind",
+        ...(after ? ["after"] : []),
+        ...(scan ? ["scan"] : []),
+      ]);
+      return {
+        kind,
+        ...(after ? { after: nullable(o.after, decodeChatCursor) } : {}),
+        ...(scan ? { scan: decodeId(o.scan) } : {}),
+      };
+    }
+    case "conversation-active":
     case "projects":
       closed(v, ["kind"]);
       return { kind };
@@ -424,7 +472,14 @@ export function decodeChatTurn(v: unknown): ChatTurn {
   const keys = ["id", "epoch", "status", "items", "notice"];
   const current =
     v !== null && typeof v === "object" && Object.hasOwn(v, "omitted");
-  const o = closed(v, current ? [...keys, "omitted"] : keys);
+  const paged =
+    v !== null && typeof v === "object" && Object.hasOwn(v, "transcript");
+  const o = closed(v, [
+    ...keys,
+    ...(current ? ["omitted"] : []),
+    ...(paged ? ["transcript"] : []),
+  ]);
+  const transcript = paged ? closed(o.transcript, ["pages"]) : null;
   const omitted = current
     ? closed(o.omitted, ["thinking", "media", "other"])
     : null;
@@ -433,6 +488,9 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
+    ...(transcript
+      ? { transcript: { pages: integer(transcript.pages, 0) } }
+      : {}),
     omitted: {
       thinking: omitted ? bool(omitted.thinking) : false,
       media: omitted ? bool(omitted.media) : false,
@@ -474,6 +532,14 @@ export function decodeChatSummary(v: unknown): ChatSummary {
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
   canonicalJson(v, 512 * 1024);
   const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (k === "conversation-transcript") {
+    const o = closed(v, ["kind", "conversationId", "page", "turn"]);
+    const turn = decodeChatTurn(o.turn),
+      page = integer(o.page, 0);
+    if (!turn.transcript || page >= turn.transcript.pages)
+      throw new ContractError("invalid");
+    return { kind: k, conversationId: decodeId(o.conversationId), page, turn };
+  }
   if (k === "workflow-transcript") {
     const o = closed(v, ["kind", "runId", "stepId", "turn"]);
     return {
@@ -569,9 +635,26 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       conversationId: nullable(o.conversationId, decodeId),
     };
   }
-  if (kind === "conversations") {
+  if (kind === "conversations-progress") {
+    const o = closed(v, ["kind", "after", "scan"]);
+    return {
+      kind,
+      after: nullable(o.after, decodeChatCursor),
+      scan: decodeId(o.scan),
+    };
+  }
+  if (kind === "conversation-active") {
     const o = closed(v, ["kind", "entries"]);
-    return { kind, entries: list(o.entries, 200, decodeChatSummary) };
+    return { kind, entries: list(o.entries, 8, decodeChatSummary) };
+  }
+  if (kind === "conversations") {
+    const paged = Object.hasOwn(v as object, "next");
+    const o = closed(v, ["kind", "entries", ...(paged ? ["next"] : [])]);
+    return {
+      kind,
+      entries: list(o.entries, 200, decodeChatSummary),
+      ...(paged ? { next: nullable(o.next, decodeChatCursor) } : {}),
+    };
   }
   if (kind === "conversation") {
     const o = closed(v, ["kind", "summary", "turns", "before"]);
