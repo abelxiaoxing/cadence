@@ -234,6 +234,7 @@ export {
 export {
   type ChoiceVersion,
   type ChooseModelRequest,
+  catalogOffers,
   decodeChoiceVersion,
   decodeChooseModelRequest,
   decodeModelCandidate,

@@ -3,7 +3,7 @@
 In a trusted Pi terminal or a WebUI conversation in an explicitly selected project, enter `/cadence <goal>` once (or `/cadence` to discuss the goal).
 Cadence stays enabled for the entire conversation, including after a goal finishes.
 Continue using normal messages; do not repeat the command for clarification or another goal.
-Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly.
+Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly; in the browser the composer's **Cadence mode** switch enters it on the next Send and leaves it when on.
 Leaving, closing Pi/browser and switching conversations detach; they do not cancel accepted work.
 Browser conversation mode is retained by the project owner, not by a browser-only toggle, and works without a live Pi terminal.
 
@@ -34,8 +34,9 @@ When an observation reply is lost, ask for status; do not infer that the action 
 
 The first native use defaults to the current Pi provider/model/API/thinking selection.
 The selected preference is remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) and reused across projects.
-Ask Cadence to change its model in Pi, or use **Model** in the browser.
-The browser restores an available saved preference on explicit Send; reads/login do not install a choice.
+Ask Cadence to change its model in Pi, or use the model button beside the browser composer; it shows the current model and thinking level, and choosing from its list or thinking row takes effect at once for every conversation in the project.
+The browser restores an available saved preference on explicit Send and shows it dimmed until then; reads/login do not install a choice.
+With no choice and no saved preference, Send opens the model list and sends the message right after the choice.
 If no usable preference exists, choose once; an unreadable preference file falls back to the current Pi model, and choosing a model rewrites it.
 An accepted run keeps its original exact model.
 An unavailable remembered model is not silently substituted.

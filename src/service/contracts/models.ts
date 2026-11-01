@@ -46,6 +46,9 @@ export interface ModelCatalog extends ModelChoiceState {
   /** Models left out because a provider/model ID contains a known credential
    * literal or control characters; never their identifiers. */
   withheld: number;
+  /** The saved preference that the next Send would install, read only and
+   * offered only when it names a selectable entry of this catalog. */
+  remembered: ModelSelector | null;
 }
 export interface ChooseModelRequest {
   expected: ChoiceVersion;
@@ -120,6 +123,19 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     invalid();
   return candidate;
 }
+/** Whether a catalog offers this exact selector as a selectable choice. */
+export function catalogOffers(
+  entries: readonly ModelCandidate[],
+  selector: ModelSelector,
+): boolean {
+  return entries.some(
+    (e) =>
+      e.provider === selector.provider &&
+      e.model === selector.model &&
+      e.api === selector.api &&
+      e.thinking.some((t) => t.selectable && t.level === selector.thinking),
+  );
+}
 export function decodeModelCatalog(value: unknown): ModelCatalog {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
   const o = closed(value, [
@@ -128,15 +144,18 @@ export function decodeModelCatalog(value: unknown): ModelCatalog {
     "status",
     "entries",
     "withheld",
+    "remembered",
   ]);
   const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
+  const remembered = nullable(o.remembered, decodeModelSelector);
   const status = oneOf(o.status, ["complete", "capacity"]);
   const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
   if (
     (status === "capacity" && (entries.length || withheld)) ||
     entries.length + withheld > LIMITS.maxPageEntries ||
     new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !==
-      entries.length
+      entries.length ||
+    (remembered && !catalogOffers(entries, remembered))
   )
     invalid();
   return {
@@ -145,5 +164,6 @@ export function decodeModelCatalog(value: unknown): ModelCatalog {
     status,
     entries,
     withheld,
+    remembered,
   };
 }

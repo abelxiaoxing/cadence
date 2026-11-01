@@ -344,12 +344,12 @@ export function TaskSidebar({
       </div>
     );
   };
+  // Only live replies are "running"; the open conversation stays in history
+  // (highlighted there) once its reply settles.
   const liveChats = chats.filter(
-    (chat) =>
-      chat.status === "running" ||
-      chat.status === "queued" ||
-      chat.id === conversationId,
+    (chat) => chat.status === "running" || chat.status === "queued",
   );
+  const pastChats = chats.filter((chat) => !liveChats.includes(chat));
   const chatRow = (chat: ChatSummary) => (
     <button
       type="button"
@@ -453,13 +453,13 @@ export function TaskSidebar({
         title={t("Conversation history")}
         count={
           tasks.page && !("kind" in tasks.page)
-            ? `${history.length}${tasks.page.next || tasks.canPrevious ? "+" : ""}`
+            ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious ? "+" : ""}`
             : "?"
         }
         className="grow"
       >
         <nav aria-label={t("Tasks")} className="task-list">
-          {chats.filter((chat) => !liveChats.includes(chat)).map(chatRow)}
+          {pastChats.map(chatRow)}
           {history.map((r) => (
             <div key={r.owner.taskId}>
               <button
@@ -486,9 +486,12 @@ export function TaskSidebar({
               {r.owner.taskId === taskId && conversations}
             </div>
           ))}
-          {tasks.page && !("kind" in tasks.page) && history.length === 0 && (
-            <p className="panel-hint">{t("No retained task on this page.")}</p>
-          )}
+          {tasks.page &&
+            !("kind" in tasks.page) &&
+            history.length === 0 &&
+            pastChats.length === 0 && (
+              <p className="panel-hint">{t("No conversations yet.")}</p>
+            )}
           <PageControls pager={tasks} compact />
         </nav>
         {!history.some((r) => r.owner.taskId === taskId) && conversations}

@@ -3611,6 +3611,9 @@ function decodeModelCandidate(value) {
     invalid();
   return candidate;
 }
+function catalogOffers(entries, selector) {
+  return entries.some((e) => e.provider === selector.provider && e.model === selector.model && e.api === selector.api && e.thinking.some((t) => t.selectable && t.level === selector.thinking));
+}
 function decodeModelCatalog(value) {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
   const o = closed(value, [
@@ -3618,19 +3621,22 @@ function decodeModelCatalog(value) {
     "selected",
     "status",
     "entries",
-    "withheld"
+    "withheld",
+    "remembered"
   ]);
   const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
+  const remembered = nullable(o.remembered, decodeModelSelector);
   const status = oneOf(o.status, ["complete", "capacity"]);
   const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
-  if (status === "capacity" && (entries.length || withheld) || entries.length + withheld > LIMITS.maxPageEntries || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length)
+  if (status === "capacity" && (entries.length || withheld) || entries.length + withheld > LIMITS.maxPageEntries || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length || remembered && !catalogOffers(entries, remembered))
     invalid();
   return {
     version: decodeChoiceVersion(o.version),
     selected: nullable(o.selected, decodeModelSelection),
     status,
     entries,
-    withheld
+    withheld,
+    remembered
   };
 }
 // src/service/contracts/workflow.ts
@@ -9884,7 +9890,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "663f71a44cd33f95377644cfc10c2cb657298f191b36d6ca05b810e849c54e68",
+    contractHash: "b6935a8daa09f70de094136c18d8e3588fdd34fc24b9a8fe95e465de11ddae8d",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -22569,7 +22575,15 @@ class OwnerModelChoice {
       this.options.models.assertCurrent(before.selected);
     if (canonicalJson(before) !== canonicalJson(this.snapshot()))
       throw new ContractError("stale");
-    return decodeModelCatalog({ ...before, ...catalog });
+    let remembered = null;
+    try {
+      const saved = this.options.recall?.() ?? null;
+      if (saved && catalogOffers(catalog.entries, saved))
+        remembered = saved;
+    } catch {
+      remembered = null;
+    }
+    return decodeModelCatalog({ ...before, ...catalog, remembered });
   }
   choose(value) {
     const request3 = decodeChooseModelRequest(value);
@@ -26189,8 +26203,8 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.26",
-  build: "0d1a59a981d4065126bc6199f28b7343fcf7b86e51db3569e06176be5fd52960",
+  version: "2.0.27",
+  build: "8ef1833b9806c52b446f2864252a2cd50eb71fef901da32dcd35aee988c4775c",
   entry: fileURLToPath5(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -27968,7 +27982,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "663f71a44cd33f95377644cfc10c2cb657298f191b36d6ca05b810e849c54e68";
+  const embedded = "b6935a8daa09f70de094136c18d8e3588fdd34fc24b9a8fe95e465de11ddae8d";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -28126,7 +28140,8 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       owner,
       models,
       access,
-      remember: (value2) => preferences.save(value2)
+      remember: (value2) => preferences.save(value2),
+      recall: () => preferences.read()
     });
     const { PI_OFFLINE: _offline, ...ordinary } = launch;
     const checkEnvironment = Object.freeze(ordinary);

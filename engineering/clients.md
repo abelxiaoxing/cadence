@@ -93,6 +93,11 @@ The independent project workflow roster includes native-started work; missing ob
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
 Known closed failed coordinator turns may continue on a new explicit Send from the last complete checkpoint; no incomplete tool call is resumed.
 A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
+The model catalog reports that preference read only as `remembered`, and only when it names a selectable entry of the same catalog, so the browser can show it as "used when you send" without installing it; an unreadable or no longer offered preference is simply absent.
+The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
+One click is one explicit choice; choosing another model keeps the current thinking level when it offers it, otherwise the nearest offered level, and the panel shows the result at once.
+The button is disabled while this conversation's reply is live, and the owner's `conflict` refusal for other running work is explained in the panel.
+A Send with no installed model and no remembered preference opens that panel instead of failing; the message waits there and is sent once after one explicit choice, or not at all if the panel is dismissed or sending stays impossible for ten seconds.
 Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
 Exit does not require a usable selected model.
 There is no Legacy task creation entry or task composer.
@@ -106,8 +111,12 @@ Ordinary Send binds its exact text, conversation head, epoch, access and selecte
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar provides New conversation alongside running/retained conversations and an on-demand Workflow history listing; a separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
-The dock is only as tall as its rows, up to its default height, until a drag sets one; its heading count leads the total with the queued or running agents (`2 active · 5 total`).
+The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
+The composer's Cadence mode switch replaces the old mode select: off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
+The left sidebar provides New conversation alongside running/retained conversations and an on-demand Workflow history listing; Running conversations holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
+The dock is only as tall as its rows, up to its default height, until a drag sets one; it stays folded while empty unless opened, and its heading count leads the total with the queued or running agents (`2 active · 5 total`).
+A compact sidebar list notes only partial, redacted or omitted recording coverage; complete coverage needs no note there.
 It is not a subagent engine.
 The right sidebar defaults to readonly files, bounded text previews and path-only references; retained content/check/change/review evidence occupies its History details tab.
 The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
@@ -146,9 +155,9 @@ This is not a filesystem sandbox for model tools.
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
 The browser is conversation-first, including before any project is selected: ordinary chat and explicitly enabled Cadence conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
-The empty entry has no project welcome screen or central Create shortcut; New conversation offers folder selection until a project is explicitly opened.
+The empty entry has no project welcome screen or Create shortcut; its one central action, Open a folder…, offers folder selection until a project is explicitly opened, and its sidebar has no separate New conversation entry.
 The bottom-right folder control is always present, and its picker lists recent projects.
-Conversation history belongs to each project owner, so the unselected entry's history section says so and lists the recent projects; choosing one only preselects its folder in the picker.
+Conversation history belongs to each project owner, so the unselected entry's history section says so and lists the recent projects; one click on one is its explicit Open (all entries wait while it opens, and a failure names the folder and opens nothing else).
 An unselected first entry returns to the last selected project, remembered only in that browser as its opaque key, after one readonly conversation listing proves that owner still runs in its associated epoch; this is navigation, never Open.
 A stopped, changed or unknown owner stays stopped: the entry remains and names the last project as not running, and any navigation, Open or folder choice during the check wins.
 Browsing or dismissing the picker never opens a project or sends a message.

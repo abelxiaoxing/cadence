@@ -48,16 +48,22 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
     await p.getByRole("textbox", { name: "Message", exact: true }).waitFor();
     assert(!p.url().includes("token="));
     assert.equal(f.contacts(), 0);
-    await p.getByRole("button", { name: "Choose owner model" }).click();
-    await p
-      .getByLabel("Exact model / API / thinking")
-      .selectOption({ label: "fixture/fixed · openai-completions · off" });
-    await p.getByRole("button", { name: "Confirm owner model choice" }).click();
-    await p.locator("dialog[open]").waitFor({ state: "hidden" });
+    // With no model and no saved preference, the button asks for one and Send
+    // opens the model panel; one explicit choice then sends the waiting
+    // message without another click (here refused locally as oversized).
+    await p.getByRole("button", { name: "Model: Choose a model" }).waitFor();
     const input = p.getByRole("textbox", { name: "Message", exact: true });
     await input.fill("x".repeat(16 * 1024 + 1));
     await p.getByRole("button", { name: "Send", exact: true }).click();
+    const picker = p.getByRole("dialog", { name: "Choose a model" });
+    await picker
+      .getByText("Choose a model; your message is sent right after.")
+      .waitFor();
+    assert.equal(await p.locator('[role="alert"]').count(), 0);
+    await picker.getByRole("option", { name: /^fixed/ }).click();
+    await picker.waitFor({ state: "hidden" });
     await p.getByText(/Send unavailable.*16 KiB/).waitFor();
+    await p.getByRole("button", { name: "Model: fixed · Off" }).waitFor();
     assert.equal(f.contacts(), 0);
     // Steps watched live open by themselves once the turn fails without an answer.
     f.mode("read-then-fail");

@@ -5,7 +5,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   FiArrowDown,
   FiArrowUp,
-  FiCpu,
   FiMessageSquare,
   FiSquare,
 } from "react-icons/fi";
@@ -21,7 +20,8 @@ import {
   cadenceApproval,
   cadenceExit,
 } from "../../client/workflow-entry";
-import { useT } from "../../i18n/locale";
+import { describeError, useT } from "../../i18n/locale";
+import { ModelPicker } from "../actions/ModelPicker";
 import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
@@ -41,7 +41,8 @@ export function ChatWorkspace({
   enabled,
   available = enabled,
   canInterrupt = enabled,
-  onModel,
+  modelEnabled = enabled,
+  onModelChanged,
   onChanged,
   reference,
   onReferenceUsed,
@@ -60,7 +61,10 @@ export function ChatWorkspace({
   onOpenAgent?(agent: WorkflowAgent): void;
   /** This conversation's recent workflow runs, for the subagent dock. */
   onWorkflowRuns?(ids: string[]): void;
-  onModel(): void;
+  /** The owner is compatible and current, so a model can be chosen. */
+  modelEnabled?: boolean;
+  /** An explicit model choice changed the owner configuration. */
+  onModelChanged(): void;
   onChanged(): void;
   reference?: string;
   onReferenceUsed(): void;
@@ -75,6 +79,11 @@ export function ChatWorkspace({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [pending, setPending] = useState(() => stored(`${draftKey}:pending`));
+  const [modelOpen, setModelOpen] = useState(false);
+  // A Send found no model: it continues once one is explicitly chosen.
+  const [awaitingModel, setAwaitingModel] = useState(false);
+  const [resume, setResume] = useState(false);
+  const [modelReads, setModelReads] = useState(0);
   const page = useWorkbench(
     client,
     available ? { kind: "conversation", id, before } : null,
@@ -307,9 +316,19 @@ export function ChatWorkspace({
         onChanged();
         return;
       }
+      const chooseFirst = () => {
+        setAwaitingModel(true);
+        setModelOpen(true);
+      };
       let catalog = await client.models();
       if (!alive.current) return;
-      if (catalog.kind === "ok" && !catalog.value.selected) {
+      // Send installs the saved preference; with none, the model control
+      // opens and this message waits for one explicit choice.
+      if (
+        catalog.kind === "ok" &&
+        !catalog.value.selected &&
+        catalog.value.remembered
+      ) {
         const restored = await client.workbenchCommand({
           kind: "restore-model",
           commandId: crypto.randomUUID(),
@@ -318,13 +337,15 @@ export function ChatWorkspace({
         if (!alive.current) return;
         if (restored.kind === "error") {
           setError(restored.error.code);
-          onModel();
+          chooseFirst();
           return;
         }
         catalog = await client.models();
+        if (!alive.current) return;
+        setModelReads((n) => n + 1);
       }
       if (catalog.kind !== "ok" || !catalog.value.selected) {
-        onModel();
+        chooseFirst();
         return;
       }
       const common = {
@@ -380,6 +401,21 @@ export function ChatWorkspace({
       if (alive.current) setBusy(false);
     }
   };
+  const sendLatest = useRef(send);
+  sendLatest.current = send;
+  // The Send that waited for a model continues once sending is possible again.
+  useEffect(() => {
+    if (resume && canSend && !running) {
+      setResume(false);
+      void sendLatest.current();
+    }
+  }, [resume, canSend, running]);
+  // Never a late surprise: if sending stays impossible, the message waits.
+  useEffect(() => {
+    if (!resume) return;
+    const timer = setTimeout(() => setResume(false), 10000);
+    return () => clearTimeout(timer);
+  }, [resume]);
   const interrupt = async () => {
     const turn = view?.turns.find((row) => row.id === summary?.head);
     if (!turn || busy) return;
@@ -411,16 +447,6 @@ export function ChatWorkspace({
           <span className="conversation-badge">
             {cadence ? t("Cadence on") : t("Ordinary")}
           </span>
-          {cadence && (
-            <button
-              type="button"
-              className="ghost"
-              disabled={!canExit}
-              onClick={() => void send("exit cadence")}
-            >
-              {t("Exit Cadence")}
-            </button>
-          )}
         </div>
         {summary && (
           <span className={`ep-state ${summary.status}`}>
@@ -449,7 +475,13 @@ export function ChatWorkspace({
           }
         }}
       >
-        {!summary && <ChatWelcome />}
+        {!summary && (
+          <ChatWelcome
+            hint={t(
+              "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
+            )}
+          />
+        )}
         {view?.before && (
           <button
             type="button"
@@ -505,7 +537,7 @@ export function ChatWorkspace({
         )}
         {(error || page.error || workflow.error) && (
           <p role="alert" className="banner-notice">
-            {error || page.error || workflow.error}
+            {describeError(t, error || page.error || workflow.error || "")}
           </p>
         )}
         {pending && (
@@ -581,32 +613,63 @@ export function ChatWorkspace({
           }}
         />
         <div className="composer-toolbar">
-          <select
-            aria-label={t("Conversation mode")}
-            value={cadence ? "cadence" : input.mode}
-            disabled={cadence || running || busy}
-            onChange={(event) => {
-              const selected =
-                event.target.value === "cadence" ? "cadence" : "chat";
-              setMode(selected);
-              if (
-                selected === "chat" &&
-                cadenceInput(draft, "chat").mode === "cadence"
-              )
-                setDraft(input.text);
+          <button
+            type="button"
+            className={`mode-toggle${cadence || input.mode === "cadence" ? " on" : ""}`}
+            aria-label={t("Cadence mode")}
+            aria-pressed={cadence || input.mode === "cadence"}
+            disabled={cadence ? !canExit : running || busy}
+            title={
+              cadence
+                ? t("Cadence mode is on. Click to exit it.")
+                : input.mode === "cadence"
+                  ? t(
+                      "Your next message turns on Cadence mode. Click to cancel.",
+                    )
+                  : t(
+                      "Turn on Cadence mode: agree on a plan before implementation.",
+                    )
+            }
+            onClick={() => {
+              if (cadence) {
+                void send("exit cadence");
+                return;
+              }
+              if (input.mode === "cadence") {
+                setMode("chat");
+                if (cadenceInput(draft, "chat").mode === "cadence")
+                  setDraft(input.text);
+              } else setMode("cadence");
             }}
           >
-            <option value="chat">{t("Ordinary conversation")}</option>
-            <option value="cadence">{t("Cadence on Send")}</option>
-          </select>
-          <button type="button" className="ghost" onClick={onModel}>
-            <FiCpu />
-            {t("Model")}
+            <span className="mode-switch" aria-hidden="true" />
+            Cadence
           </button>
+          <ModelPicker
+            client={client}
+            enabled={modelEnabled && available}
+            locked={!!running}
+            refresh={String(modelReads)}
+            open={modelOpen}
+            onOpenChange={(value) => {
+              setModelOpen(value);
+              if (!value) setAwaitingModel(false);
+            }}
+            onChanged={onModelChanged}
+            onChosen={() => {
+              if (!awaitingModel) return;
+              setAwaitingModel(false);
+              setError("");
+              setResume(true);
+            }}
+            awaitingSend={awaitingModel}
+          />
           <span className="composer-hint">
-            {input.mode === "cadence"
+            {cadence
               ? t("Cadence stays on. Confirm one plan before implementation.")
-              : t("Direct host tools · no Cadence task")}
+              : input.mode === "cadence"
+                ? t("Your next message turns on Cadence mode.")
+                : ""}
           </span>
           {running ? (
             <button

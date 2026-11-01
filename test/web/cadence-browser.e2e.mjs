@@ -78,15 +78,14 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
       await route.continue().catch(() => {});
     });
     await page.goto(f.tokenLink);
+    await page.getByRole("button", { name: /^Model: / }).click();
     await page
-      .getByRole("button", { name: "Choose owner model", exact: true })
+      .getByRole("dialog", { name: "Choose a model" })
+      .getByRole("option", { name: /^fixed/ })
       .click();
     await page
-      .getByLabel("Exact model / API / thinking")
-      .selectOption({ label: "fixture/fixed · openai-completions · off" });
-    await page
-      .getByRole("button", { name: "Confirm owner model choice", exact: true })
-      .click();
+      .getByRole("dialog", { name: "Choose a model" })
+      .waitFor({ state: "hidden" });
     await sawMode;
     assert(
       await page
@@ -149,8 +148,14 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
     );
     assert(
       await page
-        .getByRole("button", { name: "Exit Cadence", exact: true })
+        .getByRole("button", { name: "Cadence mode", exact: true })
         .isEnabled(),
+    );
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Cadence mode", exact: true })
+        .getAttribute("aria-pressed"),
+      "true",
     );
     assert.equal(f.contacts(), beforeRefusal);
     await page.reload();
@@ -357,8 +362,9 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
         body: JSON.stringify({ kind: "error", error: publicError("stale") }),
       }),
     );
+    await page.locator('.more-menu > summary[aria-label="More"]').click();
     await page
-      .locator('button.chip[aria-label="Observe current state"]')
+      .locator('.more-menu-items button[aria-label="Observe current state"]')
       .click();
     await page
       .locator('[role="alert"]')
@@ -371,7 +377,7 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
         .isDisabled(),
     );
     await page
-      .getByRole("button", { name: "Exit Cadence", exact: true })
+      .getByRole("button", { name: "Cadence mode", exact: true })
       .click();
     assert.equal(
       unexpectedModelReads,

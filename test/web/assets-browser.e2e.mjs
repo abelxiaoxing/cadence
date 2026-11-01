@@ -164,8 +164,9 @@ it("actual built assets, two isolated readonly contexts and CSP (no execution wo
       assert.equal(observed.untrustedStyle, "");
       assert(observed.directives.includes("script-src-elem"));
       assert(observed.directives.includes("style-src-elem"));
+      await page.locator('.more-menu > summary[aria-label="More"]').click();
       await page
-        .getByRole("button", { name: "Return — work continues" })
+        .getByRole("button", { name: "Disconnect this page", exact: true })
         .click();
       await page
         .getByRole("heading", { name: "Detached", exact: true })

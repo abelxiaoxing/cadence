@@ -1,5 +1,6 @@
 /** Project-less conversation shell. No project client, task or Send is created.
- * History belongs to each project; a recent project only preselects the picker. */
+ * History belongs to each project; one click on a recent project is its
+ * explicit Open, and the central action opens the folder picker. */
 import {
   type ReactNode,
   useCallback,
@@ -19,20 +20,25 @@ import type { DrawerSide } from "../../layout/swipe-drawer";
 import { useDrawerFocus } from "../../layout/use-drawer-focus";
 import { useSwipeDrawer } from "../../layout/use-swipe-drawer";
 import { ChatWelcome } from "./ChatWelcome";
-import { ConversationActions } from "./ConversationActions";
 import { WorkingFolderButton } from "./WorkingFolderButton";
 
 export function WorkbenchHome({
   ready,
   projects = [],
   restore = null,
+  opening = null,
   onOpenFolder,
+  onOpenProject,
   children,
 }: {
   ready: boolean;
   projects?: readonly string[];
   restore?: { status: "checking" | "stopped"; path: string } | null;
+  /** The recent project being opened, if any. */
+  opening?: string | null;
   onOpenFolder(path?: string): void;
+  /** Explicit Open of a recent project; without it, a click preselects the picker. */
+  onOpenProject?(path: string): void;
   children?: ReactNode;
 }) {
   const { t, locale, setLocale } = useT();
@@ -58,6 +64,11 @@ export function WorkbenchHome({
   const openFolder = (path?: string) => {
     closeDrawer();
     onOpenFolder(path);
+  };
+  const openProject = (path: string) => {
+    closeDrawer();
+    if (onOpenProject) onOpenProject(path);
+    else onOpenFolder(path);
   };
   const name = (path: string) =>
     path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
@@ -128,10 +139,6 @@ export function WorkbenchHome({
           inert={mobile && drawer !== "left"}
         >
           <aside className="panel panel-left lp-panel">
-            <ConversationActions
-              onConversation={() => openFolder()}
-              disabled={!ready}
-            />
             <section className="lp-section grow">
               <header className="lp-section-header">
                 <span className="lp-section-title">
@@ -146,12 +153,12 @@ export function WorkbenchHome({
                       })
                     : restore?.status === "stopped"
                       ? t(
-                          "Your last project {name} is not running. Choose it below and open it again to see its conversations.",
+                          "Your last project {name} is not running. Click it below to open it again.",
                           { name: name(restore.path) },
                         )
                       : projects.length
                         ? t(
-                            "Conversations are kept with each project. Choose a project below and open it to see its history.",
+                            "Conversations are kept with each project. Click a project to open it.",
                           )
                         : t(
                             "Conversations are kept with each project. Open a working folder to see its history.",
@@ -163,15 +170,18 @@ export function WorkbenchHome({
                     className="session-item project-item"
                     key={path}
                     title={path}
-                    disabled={!ready}
-                    onClick={() => openFolder(path)}
+                    disabled={!ready || !!opening}
+                    aria-busy={opening === path}
+                    onClick={() => openProject(path)}
                   >
                     <span className="session-icon">
                       <FiFolder aria-hidden="true" />
                     </span>
                     <span className="session-info">
                       <span className="session-title">{name(path)}</span>
-                      <span className="session-sub">{path}</span>
+                      <span className="session-sub">
+                        {opening === path ? t("Opening…") : path}
+                      </span>
                     </span>
                   </button>
                 ))}
@@ -185,16 +195,28 @@ export function WorkbenchHome({
             aria-label={t("Ordinary conversation")}
           >
             <div className="chat-messages">
-              <ChatWelcome />
+              <ChatWelcome
+                hint={t(
+                  "Open a working folder to start. Each project keeps its own conversations.",
+                )}
+              >
+                <button
+                  type="button"
+                  className="primary welcome-action"
+                  disabled={!ready}
+                  onClick={() => openFolder()}
+                >
+                  <FiFolder aria-hidden="true" />
+                  {t("Open a folder…")}
+                </button>
+              </ChatWelcome>
             </div>
             <div className="chat-composer">
               <textarea
                 disabled
                 aria-label={t("Message")}
                 rows={3}
-                placeholder={t(
-                  "Choose a working folder at the bottom right to start chatting.",
-                )}
+                placeholder={t("Open a working folder to start chatting.")}
               />
               <div className="composer-toolbar">
                 <span className="composer-hint">

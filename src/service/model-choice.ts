@@ -3,6 +3,7 @@ import {
   type ChooseModelRequest,
   ContractError,
   canonicalJson,
+  catalogOffers,
   decodeChooseModelRequest,
   decodeModelCatalog,
   decodeModelChoiceState,
@@ -28,6 +29,8 @@ export class OwnerModelChoice {
       models: OwnerModelContext;
       access: AccessMaterial;
       remember?(choice: ModelSelector): void;
+      /** Reads the saved preference without installing it. */
+      recall?(): ModelSelector | null;
     },
   ) {
     if (choiceOwners.has(options.owner)) throw new ContractError("conflict");
@@ -56,7 +59,16 @@ export class OwnerModelChoice {
     if (before.selected) this.options.models.assertCurrent(before.selected);
     if (canonicalJson(before) !== canonicalJson(this.snapshot()))
       throw new ContractError("stale");
-    return decodeModelCatalog({ ...before, ...catalog });
+    // Display only: Send alone installs a saved preference. An unreadable,
+    // unsupported or no longer offered preference is simply not shown.
+    let remembered: ModelSelector | null = null;
+    try {
+      const saved = this.options.recall?.() ?? null;
+      if (saved && catalogOffers(catalog.entries, saved)) remembered = saved;
+    } catch {
+      remembered = null;
+    }
+    return decodeModelCatalog({ ...before, ...catalog, remembered });
   }
   choose(value: ChooseModelRequest): ModelChoiceState {
     const request = decodeChooseModelRequest(value);

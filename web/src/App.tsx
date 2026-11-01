@@ -14,7 +14,6 @@ import type { IconType } from "react-icons";
 import {
   FiChevronDown,
   FiClock,
-  FiCpu,
   FiDownload,
   FiFolder,
   FiGitBranch,
@@ -24,6 +23,7 @@ import {
   FiLogOut,
   FiMenu,
   FiMessageSquare,
+  FiMoreHorizontal,
   FiRefreshCw,
   FiSidebar,
   FiSquare,
@@ -37,7 +37,6 @@ import { mergeObservation } from "./client/receipts";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
-import { ModelChooser } from "./components/actions/ModelChooser";
 import { ReceiptPanel } from "./components/actions/ReceiptPanel";
 import { ContentExplorer } from "./components/history/ContentExplorer";
 import { DetailPane } from "./components/history/DetailPane";
@@ -147,7 +146,6 @@ export function App({
 }) {
   const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
-  const [modelOpen, setModelOpen] = useState(false);
   const [detached, setDetached] = useState(false);
   const [initial] = useState(readHistoryUrl),
     [taskId, setTaskId] = useState<string | null>(initial?.taskId ?? null);
@@ -252,7 +250,11 @@ export function App({
   const [taskTitle, setTaskTitle] = useState("");
   const [scopeTitle, setScopeTitle] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const viewMenu = useRef<HTMLDetailsElement>(null);
+  const viewMenu = useRef<HTMLDetailsElement>(null),
+    moreMenu = useRef<HTMLDetailsElement>(null);
+  const closeMore = () => {
+    if (moreMenu.current) moreMenu.current.open = false;
+  };
   const [tab, setTab] = useState("messages"),
     [searchOpen, setSearchOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false);
@@ -537,15 +539,6 @@ export function App({
             </span>
             <h1 className="brand-name">Cadence</h1>
           </span>
-          {workspace.workspace && (
-            <span
-              className="chip static chip-root"
-              title={workspace.workspace.rootLabel}
-            >
-              <FiFolder aria-hidden="true" />
-              <span>{workspace.workspace.rootLabel}</span>
-            </span>
-          )}
           <span className="tb-spacer" aria-hidden="true" />
           {/* Recorded views read a task/child scope; an ordinary conversation
               has none and folds its tools into the transcript. */}
@@ -651,44 +644,6 @@ export function App({
               disabled={!searchSeed}
               onOpen={() => setSearchOpen(true)}
             />
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Observe current state")}
-              data-tip={t("Observe current state")}
-              onClick={() => {
-                workspace.refresh();
-                observation.refresh();
-              }}
-            >
-              <FiRefreshCw aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Choose owner model")}
-              data-tip={t("Choose owner model")}
-              onClick={() => setModelOpen(true)}
-            >
-              <FiCpu aria-hidden="true" />
-              <span className="chip-label">{t("Model")}</span>
-            </button>
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Return — work continues")}
-              data-tip={t("Return — accepted work continues")}
-              onClick={() => {
-                setDrawer(null);
-                setSearchOpen(false);
-                setExportOpen(false);
-                lifetime.current.depart();
-                setDetached(true);
-              }}
-            >
-              <FiLogOut aria-hidden="true" />
-              <span className="chip-label">{t("Return")}</span>
-            </button>
             {/* Named in the language it selects, so either reader can find it. */}
             <button
               type="button"
@@ -701,6 +656,85 @@ export function App({
               <FiGlobe aria-hidden="true" />
               <span>{locale === "zh" ? "EN" : "中文"}</span>
             </button>
+            <details
+              className="more-menu"
+              ref={moreMenu}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && moreMenu.current) {
+                  moreMenu.current.open = false;
+                  moreMenu.current.querySelector("summary")?.focus();
+                }
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget))
+                  event.currentTarget.open = false;
+              }}
+            >
+              <summary
+                className="chip"
+                aria-label={t("More")}
+                title={t("More")}
+              >
+                <FiMoreHorizontal aria-hidden="true" />
+              </summary>
+              <div className="more-menu-items">
+                <button
+                  type="button"
+                  aria-label={t("Observe current state")}
+                  onClick={() => {
+                    closeMore();
+                    workspace.refresh();
+                    observation.refresh();
+                  }}
+                >
+                  <FiRefreshCw aria-hidden="true" />
+                  {t("Refresh status")}
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("Disconnect this page")}
+                  title={t("Return — accepted work continues")}
+                  onClick={() => {
+                    closeMore();
+                    setDrawer(null);
+                    setSearchOpen(false);
+                    setExportOpen(false);
+                    lifetime.current.depart();
+                    setDetached(true);
+                  }}
+                >
+                  <FiLogOut aria-hidden="true" />
+                  <span className="more-menu-text">
+                    {t("Disconnect this page")}
+                    <small>{t("Started work keeps running.")}</small>
+                  </span>
+                </button>
+                <div
+                  className={`more-menu-build${workspace.compatible ? "" : " warn"}`}
+                  title={localBuild?.buildId ?? t("unbuilt source")}
+                >
+                  <span>
+                    {t("Shared compatibility: {state}.", {
+                      state: workspace.compatible
+                        ? t("compatible")
+                        : t(
+                            "unavailable / mismatch — reload built assets; normal actions disabled",
+                          ),
+                    })}
+                  </span>
+                  <Template
+                    text={t("Local browser build: {build}.")}
+                    slots={{
+                      build: (
+                        <code>
+                          {localBuild?.buildId ?? t("unbuilt source")}
+                        </code>
+                      ),
+                    }}
+                  />
+                </div>
+              </div>
+            </details>
           </div>
         </div>
         <button
@@ -881,7 +915,15 @@ export function App({
                 !!workspace.compatible &&
                 !workspace.error
               }
-              onModel={() => setModelOpen(true)}
+              modelEnabled={
+                !!workspace.compatible &&
+                workspace.transportStatus === "current" &&
+                !workspace.error
+              }
+              onModelChanged={() => {
+                lifetime.current.depart();
+                workspace.refresh(true);
+              }}
               onChanged={() => {
                 chats.refresh();
                 workspace.refresh();
@@ -1129,33 +1171,30 @@ export function App({
               aria-hidden="true"
             />
             {tx(connection)}
-            {t(" · transport {status}", {
-              status: tx(observation.transportStatus),
-            })}
+            {observation.transportStatus !== "current" &&
+              t(" · transport {status}", {
+                status: tx(observation.transportStatus),
+              })}
             {observation.error ? ` · ${tx(observation.error)}` : ""}
           </span>
-          <span
-            className={`status-item${
-              roster?.status === "complete"
-                ? activeRuns.length > 0
-                  ? " warn"
-                  : ""
-                : " faint"
-            }`}
-          >
-            {roster?.status === "complete"
-              ? activeRuns.length > 0
-                ? t(
-                    activeRuns.length === 1
-                      ? "{count} active run"
-                      : "{count} active runs",
-                    { count: activeRuns.length },
-                  )
-                : t("No active runs")
-              : t(
-                  "Active roster unavailable; absence is not proof of settlement.",
+          {roster?.status === "complete" ? (
+            activeRuns.length > 0 && (
+              <span className="status-item warn">
+                {t(
+                  activeRuns.length === 1
+                    ? "{count} active run"
+                    : "{count} active runs",
+                  { count: activeRuns.length },
                 )}
-          </span>
+              </span>
+            )
+          ) : (
+            <span className="status-item faint">
+              {t(
+                "Active roster unavailable; absence is not proof of settlement.",
+              )}
+            </span>
+          )}
         </div>
         <div className="statusbar-right">
           {workspace.workspace && (
@@ -1164,31 +1203,13 @@ export function App({
               onClick={() => setProjectOpen("")}
             />
           )}
-          <div
-            className={`status-item${workspace.compatible ? " faint" : " warn"}`}
-            title={localBuild?.buildId ?? t("unbuilt source")}
-          >
-            <details className="build-part">
-              <summary>{t("Build information")}</summary>
-              <Template
-                text={t("Local browser build: {build}.")}
-                slots={{
-                  build: (
-                    <code>{localBuild?.buildId ?? t("unbuilt source")}</code>
-                  ),
-                }}
-              />{" "}
-            </details>
-            <span>
-              {t("Shared compatibility: {state}.", {
-                state: workspace.compatible
-                  ? t("compatible")
-                  : t(
-                      "unavailable / mismatch — reload built assets; normal actions disabled",
-                    ),
-              })}
+          {!workspace.compatible && (
+            <span className="status-item warn">
+              {t(
+                "unavailable / mismatch — reload built assets; normal actions disabled",
+              )}
             </span>
-          </div>
+          )}
         </div>
       </footer>
       {projectOpen !== null && workspace.workspace && (
@@ -1204,21 +1225,6 @@ export function App({
           home={workbenchHome}
           epoch={workspace.workspace.epoch}
           onClose={() => setProjectOpen(null)}
-        />
-      )}
-      {modelOpen && (
-        <ModelChooser
-          client={api.client}
-          compatible={
-            !!workspace.compatible &&
-            workspace.transportStatus === "current" &&
-            !workspace.error
-          }
-          onClose={() => setModelOpen(false)}
-          onChanged={() => {
-            lifetime.current.depart();
-            workspace.refresh(true);
-          }}
         />
       )}
       {searchOpen && searchSeed && (

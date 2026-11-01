@@ -92,7 +92,7 @@ it.each([
   expect(() => decodeModelCandidate(value)).toThrow();
 });
 it("catalog capacity is explicit, bounded, and never a clipped complete roster", () => {
-  const catalog = { version, selected: null, withheld: 0 };
+  const catalog = { version, selected: null, withheld: 0, remembered: null };
   expect(
     decodeModelCatalog({ ...catalog, status: "capacity", entries: [] }).status,
   ).toBe("capacity");
@@ -120,7 +120,12 @@ it("catalog capacity is explicit, bounded, and never a clipped complete roster",
   expect(httpOutputLimit("models")).toBe(LIMITS.pageBytes);
 });
 it("counts withheld entries without their identifiers, within the same bound", () => {
-  const catalog = { version, selected: null, status: "complete" };
+  const catalog = {
+    version,
+    selected: null,
+    status: "complete",
+    remembered: null,
+  };
   expect(
     decodeModelCatalog({ ...catalog, entries: [candidate], withheld: 199 })
       .withheld,
@@ -137,6 +142,26 @@ it("counts withheld entries without their identifiers, within the same bound", (
       withheld: 1,
     }),
   ).toThrow();
+});
+it("offers a remembered preference only as a selectable entry of the same catalog", () => {
+  const catalog = {
+    version,
+    selected: null,
+    status: "complete",
+    entries: [candidate],
+    withheld: 0,
+  };
+  expect(
+    decodeModelCatalog({ ...catalog, remembered: selector }).remembered,
+  ).toEqual(selector);
+  for (const remembered of [
+    { ...selector, thinking: "max" },
+    { ...selector, model: "other" },
+    { ...selector, api: "openai-responses" },
+    { ...selector, sourceSelectionId: randomUUID() },
+    undefined,
+  ])
+    expect(() => decodeModelCatalog({ ...catalog, remembered })).toThrow();
 });
 it("uses bodyless authenticated catalog and explicit choice POST, never readonly POST or query authority", () => {
   expect(wireRequest("models", null)).toEqual({
@@ -164,6 +189,7 @@ it("client forwards readonly abort and treats a substituted/lost choice as uncer
           status: "complete",
           entries: [candidate],
           withheld: 0,
+          remembered: null,
         },
       };
     },
