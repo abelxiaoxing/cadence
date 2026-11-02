@@ -179,7 +179,6 @@ describe("explicit private access setup (no user/provider credentials)", () => {
   });
   it.each([
     "",
-    "x".repeat(31),
     "x".repeat(1025),
     `${"x".repeat(32)}\n`,
     `${"x".repeat(32)}\u202e`,
@@ -189,6 +188,12 @@ describe("explicit private access setup (no user/provider credentials)", () => {
       AccessMaterial.initialize(new PrivateFiles(dir), dir, { environment }),
     ).toThrow();
     expect(existsSync(join(dir, "access-config.json"))).toBe(false);
+  });
+  it("accepts a configured token of any non-empty length", () => {
+    for (const environment of ["x", "x".repeat(1024)])
+      expect(accessFixture({ environment }).material.matches(environment)).toBe(
+        true,
+      );
   });
   it("supports special exact environment bytes and requires restart for rotation", () => {
     const environment = " +%=&雪/!".repeat(8),

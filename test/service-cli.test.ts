@@ -516,12 +516,12 @@ it("an unusable server configuration refuses before registering, naming only its
 });
 // Mode bits and links are POSIX facts; Windows has neither check.
 it.skipIf(process.platform === "win32")(
-  "a real owner starts from a group-readable .env behind dotfiles links, like Pi's sources",
+  "a real owner starts from a group-readable .env behind dotfiles links, like Pi's sources, and admits a short token",
   async () => {
     const f = fixture();
     pending.push(f);
     const port = await freePort();
-    const secret = "fabricated-server-config-token-1111111111";
+    const secret = "fab-pin";
     const repo = join(f.dir, "dotfiles");
     mkdirSync(repo, { mode: 0o755 });
     chmodSync(repo, 0o775);
