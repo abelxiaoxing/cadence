@@ -30,6 +30,7 @@ import {
   FiSquare,
   FiTool,
 } from "react-icons/fi";
+import { decodeSessionId } from "../../src/service/contracts/workbench.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
@@ -60,11 +61,11 @@ import {
   InspectorPanel,
   InspectorPlaceholder,
 } from "./components/workspace/InspectorPanel";
+import { LegacyMigration } from "./components/workspace/LegacyMigration";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
-import { WorkflowHistory } from "./components/workspace/WorkflowHistory";
 import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
@@ -78,12 +79,14 @@ import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
 
+/** A conversation link names its Pi session, as the terminal names it too. */
 function chatFromLocation(): string | null {
   const value = new URLSearchParams(window.location.hash?.slice(1)).get("chat");
-  return value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
-    ? value
-    : null;
+  try {
+    return value ? decodeSessionId(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 const VIEWS: readonly (readonly [string, IconType])[] = [
@@ -860,6 +863,10 @@ export function App({
               }
               chatHistoryControls={
                 <>
+                  <LegacyMigration
+                    client={api.client}
+                    onMigrated={chats.refresh}
+                  />
                   {chats.error && <p role="alert">{chats.error}</p>}
                   {chats.loading && (
                     <p className="panel-hint">
@@ -917,15 +924,6 @@ export function App({
               }}
               onTask={selectTask}
               onScope={selectScope}
-            />
-          )}
-          {workspace.workspace && (
-            <WorkflowHistory
-              client={api.client}
-              onOpen={(next) => {
-                setAgent(next);
-                closeDrawer();
-              }}
             />
           )}
           {workspace.workspace && (

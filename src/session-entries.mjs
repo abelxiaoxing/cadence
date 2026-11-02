@@ -1,0 +1,7 @@
+/** Custom Pi session entry types Cadence writes, shared by the Pi extension,
+ * the SDK worker and the owner's session reader. */
+
+/** Native Cadence mode state, appended by the terminal extension. */
+export const CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
+/** Marks a session the browser created; Pi ignores it in the model context. */
+export const WEBUI_SESSION_ENTRY = "cadence-webui/1";

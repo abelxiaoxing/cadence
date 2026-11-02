@@ -20,6 +20,7 @@ import {
   type WorkbenchRead,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
+import { ConversationMigration } from "./conversation-migration.ts";
 import { ConversationWorkflow } from "./conversation-workflow.ts";
 import { Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
@@ -37,6 +38,7 @@ export class Workbench implements WorkbenchPort {
   readonly files: WorkbenchFiles;
   readonly workflows: Workflows;
   readonly cadence: ConversationWorkflow;
+  private readonly migration: ConversationMigration;
   private readonly projectRoot: string;
   private readonly opening = new Map<
     string,
@@ -56,9 +58,16 @@ export class Workbench implements WorkbenchPort {
       secrets(): readonly string[];
       timeoutMs?: number;
       checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
+      /** Where the project's Pi sessions live; defaults to Pi's own resolution. */
+      sessionDir?: string;
     },
   ) {
     this.conversations = new Conversations(o);
+    this.migration = new ConversationMigration({
+      ...o,
+      cwd: this.conversations.cwd,
+      sessions: this.conversations.sessions,
+    });
     this.workflows = new Workflows(o);
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -79,11 +88,7 @@ export class Workbench implements WorkbenchPort {
     );
   }
   closeReads(): void {
-    try {
-      this.workflows.closeHistory();
-    } finally {
-      this.conversations.closeReads();
-    }
+    this.workflows.closeHistory();
   }
   read(value: WorkbenchRead): WorkbenchResult {
     const request = decodeWorkbenchRead(value);
@@ -93,10 +98,13 @@ export class Workbench implements WorkbenchPort {
         return { kind: request.kind, state: this.cadence.state(request.id) };
       case "workflow-active": {
         const active = this.workflows.activeRuns();
-        return {
-          ...active,
-          links: this.cadence.links(active.runs.map((run) => run.id)),
-        };
+        const ids = active.runs.map((run) => run.id);
+        const browser = this.cadence.links(ids);
+        // A run started in the terminal belongs to the session that recorded it.
+        const terminal = this.conversations
+          .nativeLinks(ids)
+          .filter((link) => !browser.some((b) => b.runId === link.runId));
+        return { ...active, links: [...browser, ...terminal] };
       }
       case "workflow-history":
         return this.workflows.history(request.after, request.scan);
@@ -113,7 +121,7 @@ export class Workbench implements WorkbenchPort {
         const value =
           request.kind === "conversation-active"
             ? this.conversations.activeConversations()
-            : this.conversations.list(request.after ?? null, request.scan);
+            : this.conversations.list(request.after ?? null);
         if (
           value.kind !== "conversations" &&
           value.kind !== "conversation-active"
@@ -128,20 +136,30 @@ export class Workbench implements WorkbenchPort {
         };
       }
       case "conversation":
-        return this.conversations.conversation(request.id);
+        return this.conversations.conversation(
+          request.id,
+          request.leaf,
+          request.known,
+        );
       case "conversation-turn":
         return this.conversations.turnSteps(
           request.id,
+          request.leaf,
           request.ordinal,
           request.before,
         );
       case "conversation-step":
         return this.conversations.step(
           request.id,
+          request.leaf,
           request.turnId,
           request.step,
           request.part,
         );
+      case "conversation-tree":
+        return this.conversations.tree(request.id, request.leaf);
+      case "conversation-legacy":
+        return { kind: request.kind, pending: this.migration.pending() };
       case "files":
         return this.files.list(request.path);
       case "file":
@@ -282,6 +300,14 @@ export class Workbench implements WorkbenchPort {
         request.epoch,
       );
       return { kind: "accepted", commandId: request.commandId };
+    }
+    if (request.kind === "conversation-migrate") {
+      if (!caller) throw new ContractError("forbidden");
+      return {
+        kind: "conversation-migrated",
+        commandId: request.commandId,
+        ...this.migration.migrate(),
+      };
     }
     this.o.owner.lease.assert();
     if (!this.o.projectsEnabled) throw new ContractError("unsupported-context");

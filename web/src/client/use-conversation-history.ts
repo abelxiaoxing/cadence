@@ -7,13 +7,12 @@ import type { ServiceClient } from "../../../src/service-client.ts";
 import { useWorkbench } from "./use-workbench";
 
 type Page = Extract<WorkbenchResult, { kind: "conversations" }>;
-/** Recent-first pages; progress resumes readonly scans, never an action. */
+/** The project's Pi sessions, most recently written first, in pages. */
 export function useConversationHistory(
   client: ServiceClient,
   enabled: boolean,
 ) {
   const [after, setAfter] = useState<ChatCursor | null>(null);
-  const [scan, setScan] = useState<string>();
   const [back, setBack] = useState<(ChatCursor | null)[]>([]);
   const [revision, setRevision] = useState(0);
   const [saved, setSaved] = useState<{
@@ -25,28 +24,19 @@ export function useConversationHistory(
   const key = JSON.stringify([after, revision]);
   const request = useWorkbench(
     client,
-    enabled
-      ? { kind: "conversations", after, ...(scan ? { scan } : {}) }
-      : null,
+    enabled ? { kind: "conversations", after } : null,
   );
   const refresh = useCallback(() => {
-    setScan(undefined);
     setRevision((n) => n + 1);
     request.refresh();
   }, [request.refresh]);
   useEffect(() => {
     if (request.loading || request.error || !request.value) return;
-    if (request.value.kind === "conversations-progress")
-      setScan(request.value.scan);
-    else if (request.value.kind === "conversations")
+    if (request.value.kind === "conversations")
       setSaved({ key, boundary, page: request.value });
   }, [request.value, request.error, request.loading, key, boundary]);
   const loading =
-    enabled &&
-    !request.error &&
-    (request.loading ||
-      saved?.key !== key ||
-      request.value?.kind === "conversations-progress");
+    enabled && !request.error && (request.loading || saved?.key !== key);
   useEffect(() => {
     if (!enabled || after !== null || loading) return;
     const timer = setTimeout(refresh, 2000);
@@ -67,13 +57,11 @@ export function useConversationHistory(
       if (loading || !back.length) return;
       setAfter(back.at(-1) ?? null);
       setBack((rows) => rows.slice(0, -1));
-      setScan(undefined);
     },
     next: () => {
       if (loading || !saved?.page.next) return;
       setBack((rows) => [...rows, after]);
       setAfter(saved.page.next);
-      setScan(undefined);
     },
   };
 }

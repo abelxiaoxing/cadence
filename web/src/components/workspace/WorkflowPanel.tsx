@@ -13,6 +13,7 @@ import { type WorkflowAgent, workflowAgentLabel } from "./AgentDock";
 export function WorkflowPanel({
   client,
   state,
+  runs,
   canApprove,
   approvalHint,
   onApprove,
@@ -21,6 +22,8 @@ export function WorkflowPanel({
 }: {
   client: ServiceClient;
   state: CadenceConversation;
+  /** Every workflow of this session, the terminal's included; else the browser's. */
+  runs?: readonly string[];
   canApprove: boolean;
   /** Why approval is unavailable for the displayed plan, if known. */
   approvalHint?: string;
@@ -30,7 +33,7 @@ export function WorkflowPanel({
 }) {
   const { t } = useT();
   const [count, setCount] = useState(2);
-  const ids = [...new Set(state.runs)];
+  const ids = [...new Set(runs ?? state.runs)];
   return (
     <section className="workflow-panel" aria-label={t("Cadence workflow")}>
       {ids.length > count && (

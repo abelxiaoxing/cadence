@@ -27,7 +27,10 @@ Read this before moving a responsibility between modules, adding an import or ch
 `src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the npm upgrade with rollback; it stays SDK-free like the rest of management.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
-`src/service/{workbench,conversations,conversation-transcript,conversation-steps,conversation-history,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission, live preview and reads), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, and `src/session-entries.mjs` names the custom entries Cadence adds.
+`src/service/conversation-migration.ts` copies pre-2.0.31 browser conversations into Pi sessions on explicit request only; `src/conversation-context.mjs` reads their old checkpoints.
+`src/service/turn-capture.ts` retains workflow subagent turns from capture frames; `src/session-sharing.ts` is the extension's readonly notice when the browser continued the session a terminal holds.
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and checkout gate.
 

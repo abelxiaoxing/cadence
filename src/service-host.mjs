@@ -4063,7 +4063,7 @@ function decodeCadenceConversation(v) {
     ...degraded ? ["notice"] : []
   ]);
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     revision: integer(o.revision, 0),
     enabled: bool(o.enabled),
     head: nullable(o.head, decodeId),
@@ -4072,6 +4072,19 @@ function decodeCadenceConversation(v) {
     ...degraded ? { notice: text(o.notice, 1024, true) } : {}
   };
 }
+function decodeSessionId(v) {
+  const s = text(v, 128, true);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(s))
+    throw new ContractError("invalid");
+  return s;
+}
+function decodeEntryId(v) {
+  const s = text(v, 64, true);
+  if (!/^[A-Za-z0-9_-]+$/.test(s))
+    throw new ContractError("invalid");
+  return s;
+}
+var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
 var STEP_READ = 24;
@@ -4124,7 +4137,7 @@ function chatStep(item, parts, more = false) {
 }
 function decodeChatCursor(value) {
   const o = closed(value, ["id", "updatedAt"]);
-  return { id: decodeId(o.id), updatedAt: integer(o.updatedAt, 0) };
+  return { id: decodeSessionId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
 var statuses = [
   "queued",
@@ -4139,27 +4152,37 @@ function decodeWorkbenchRead(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
     case "conversation-turn": {
-      const o = closed(v, ["kind", "id", "ordinal", "before"]);
+      const o = closed(v, ["kind", "id", "leaf", "ordinal", "before"]);
       return {
         kind,
-        id: decodeId(o.id),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
         ordinal: integer(o.ordinal, 0),
         before: nullable(o.before, (b) => integer(b, 0))
       };
     }
     case "conversation-step": {
-      const o = closed(v, ["kind", "id", "turnId", "step", "part"]);
+      const o = closed(v, ["kind", "id", "leaf", "turnId", "step", "part"]);
       return {
         kind,
-        id: decodeId(o.id),
-        turnId: decodeId(o.turnId),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        turnId: decodeEntryId(o.turnId),
         step: integer(o.step, 0),
         part: integer(o.part, 0)
       };
     }
     case "cadence-conversation": {
       const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      return { kind, id: decodeSessionId(o.id) };
+    }
+    case "conversation-tree": {
+      const o = closed(v, ["kind", "id", "leaf"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId)
+      };
     }
     case "workflow-history": {
       const continued = Object.hasOwn(v, "scan");
@@ -4183,19 +4206,15 @@ function decodeWorkbenchRead(v) {
       return { kind, id: decodeId(o.id) };
     }
     case "conversations": {
-      const after = Object.hasOwn(v, "after"), scan = Object.hasOwn(v, "scan");
-      const o = closed(v, [
-        "kind",
-        ...after ? ["after"] : [],
-        ...scan ? ["scan"] : []
-      ]);
+      const after = Object.hasOwn(v, "after");
+      const o = closed(v, ["kind", ...after ? ["after"] : []]);
       return {
         kind,
-        ...after ? { after: nullable(o.after, decodeChatCursor) } : {},
-        ...scan ? { scan: decodeId(o.scan) } : {}
+        ...after ? { after: nullable(o.after, decodeChatCursor) } : {}
       };
     }
     case "conversation-active":
+    case "conversation-legacy":
     case "projects":
       closed(v, ["kind"]);
       return { kind };
@@ -4204,8 +4223,13 @@ function decodeWorkbenchRead(v) {
       return { kind, taskId: decodeId(o.taskId) };
     }
     case "conversation": {
-      const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      const o = closed(v, ["kind", "id", "leaf", "known"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        known: nullable(o.known, decodeEntryId)
+      };
     }
     default: {
       const o = closed(v, ["kind", "path"]);
@@ -4234,8 +4258,8 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       revision: integer(o2.revision, 0)
     };
   }
@@ -4253,8 +4277,8 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, 16384, true),
       model: decodeChoiceVersion(o2.model),
       revision: integer(o2.revision, 0),
@@ -4273,7 +4297,7 @@ function decodeWorkbenchCommand(v) {
     const o2 = closed(v, kind === "cadence-approve" ? [...keys2, "grant"] : keys2);
     const base = {
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
       revision: integer(o2.revision, 0),
       proposalId: decodeId(o2.proposalId),
       digest: decodeHash(o2.digest)
@@ -4301,8 +4325,8 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, 16 * 1024, true),
       model: decodeChoiceVersion(o2.model)
     };
@@ -4318,10 +4342,14 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
       turnId: decodeId(o2.turnId),
       epoch: decodeId(o2.epoch)
     };
+  }
+  if (kind === "conversation-migrate") {
+    const o2 = closed(v, ["kind", "commandId"]);
+    return { kind, commandId: decodeId(o2.commandId) };
   }
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
@@ -4395,18 +4423,20 @@ function decodeChatStep(v) {
 function decodeChatTurnHeader(v) {
   const o = closed(v, [
     "id",
-    "epoch",
     "status",
     "notice",
     "omitted",
     "steps",
-    "stable"
+    "stable",
+    "entry",
+    "at"
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
-    id: decodeId(o.id),
-    epoch: decodeId(o.epoch),
+    id: decodeEntryId(o.id),
+    entry: nullable(o.entry, decodeEntryId),
+    at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
     omitted: {
@@ -4419,22 +4449,52 @@ function decodeChatTurnHeader(v) {
   };
 }
 function decodeChatSummary(v) {
-  const modern = v !== null && typeof v === "object" && Object.hasOwn(v, "cadence");
+  const has = (key) => v !== null && typeof v === "object" && Object.hasOwn(v, key);
   const o = closed(v, [
     "id",
     "title",
-    "head",
+    "leaf",
     "status",
     "updatedAt",
-    ...modern ? ["cadence"] : []
+    "origin",
+    ...has("cadence") ? ["cadence"] : [],
+    ...has("live") ? ["live"] : []
   ]);
+  const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
-    head: decodeId(o.head),
+    leaf: nullable(o.leaf, decodeEntryId),
     status: oneOf(o.status, statuses),
     updatedAt: integer(o.updatedAt, 0),
-    ...modern ? { cadence: bool(o.cadence) } : {}
+    origin: oneOf(o.origin, ["terminal", "webui"]),
+    ...has("cadence") ? { cadence: bool(o.cadence) } : {},
+    ...live ? {
+      live: {
+        commandId: decodeId(live.commandId),
+        epoch: decodeId(live.epoch)
+      }
+    } : {}
+  };
+}
+function decodeChatAttempt(v) {
+  const o = closed(v, ["commandId", "text", "status", "notice"]);
+  return {
+    commandId: decodeId(o.commandId),
+    text: text(o.text, 16 * 1024),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024)
+  };
+}
+function decodeChatTreeNode(v) {
+  const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
+  return {
+    id: decodeEntryId(o.id),
+    parent: nullable(o.parent, decodeEntryId),
+    text: text(o.text, 1024),
+    at: integer(o.at, 0),
+    leaf: decodeEntryId(o.leaf),
+    current: bool(o.current)
   };
 }
 function decodeWorkbenchResult(v) {
@@ -4483,7 +4543,7 @@ function decodeWorkbenchResult(v) {
       const l = closed(value, ["runId", "conversationId"]);
       return {
         runId: decodeId(l.runId),
-        conversationId: decodeId(l.conversationId)
+        conversationId: decodeSessionId(l.conversationId)
       };
     }) : [];
     if (new Set(links.map((l) => l.runId)).size !== links.length || links.some((l) => !runs.some((r) => r.id === l.runId)))
@@ -4522,15 +4582,7 @@ function decodeWorkbenchResult(v) {
     return {
       kind,
       taskId: decodeId(o2.taskId),
-      conversationId: nullable(o2.conversationId, decodeId)
-    };
-  }
-  if (kind === "conversations-progress") {
-    const o2 = closed(v, ["kind", "after", "scan"]);
-    return {
-      kind,
-      after: nullable(o2.after, decodeChatCursor),
-      scan: decodeId(o2.scan)
+      conversationId: nullable(o2.conversationId, decodeSessionId)
     };
   }
   if (kind === "conversation-active") {
@@ -4538,25 +4590,65 @@ function decodeWorkbenchResult(v) {
     return { kind, entries: list(o2.entries, 8, decodeChatSummary) };
   }
   if (kind === "conversations") {
-    const paged = Object.hasOwn(v, "next");
-    const o2 = closed(v, ["kind", "entries", ...paged ? ["next"] : []]);
+    const o2 = closed(v, ["kind", "entries", "next"]);
     return {
       kind,
       entries: list(o2.entries, 200, decodeChatSummary),
-      ...paged ? { next: nullable(o2.next, decodeChatCursor) } : {}
+      next: nullable(o2.next, decodeChatCursor)
     };
   }
   if (kind === "conversation") {
-    const o2 = closed(v, ["kind", "summary", "turns"]);
+    const o2 = closed(v, [
+      "kind",
+      "summary",
+      "leaf",
+      "continues",
+      "turns",
+      "branches",
+      "runs",
+      "attempt"
+    ]);
     const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
     if (!summary && turns)
       throw new ContractError("invalid");
-    return { kind, summary, turns };
+    return {
+      kind,
+      summary,
+      leaf: nullable(o2.leaf, decodeEntryId),
+      continues: bool(o2.continues),
+      turns,
+      branches: integer(o2.branches, 0),
+      runs: list(o2.runs, 200, decodeId),
+      attempt: nullable(o2.attempt, decodeChatAttempt)
+    };
+  }
+  if (kind === "conversation-tree") {
+    const o2 = closed(v, ["kind", "conversationId", "nodes", "truncated"]);
+    return {
+      kind,
+      conversationId: decodeSessionId(o2.conversationId),
+      nodes: list(o2.nodes, TREE_NODES, decodeChatTreeNode),
+      truncated: bool(o2.truncated)
+    };
+  }
+  if (kind === "conversation-legacy") {
+    const o2 = closed(v, ["kind", "pending"]);
+    return { kind, pending: integer(o2.pending, 0) };
+  }
+  if (kind === "conversation-migrated") {
+    const o2 = closed(v, ["kind", "commandId", "migrated", "skipped"]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      migrated: integer(o2.migrated, 0),
+      skipped: integer(o2.skipped, 0)
+    };
   }
   if (kind === "conversation-turn") {
     const o2 = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "ordinal",
       "turn",
       "start",
@@ -4567,7 +4659,8 @@ function decodeWorkbenchResult(v) {
       throw new ContractError("invalid");
     return {
       kind,
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
+      leaf: nullable(o2.leaf, decodeEntryId),
       ordinal: integer(o2.ordinal, 0),
       turn,
       start,
@@ -4578,6 +4671,7 @@ function decodeWorkbenchResult(v) {
     const o2 = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "turnId",
       "step",
       "part",
@@ -4585,8 +4679,9 @@ function decodeWorkbenchResult(v) {
     ]);
     return {
       kind,
-      conversationId: decodeId(o2.conversationId),
-      turnId: decodeId(o2.turnId),
+      conversationId: decodeSessionId(o2.conversationId),
+      leaf: nullable(o2.leaf, decodeEntryId),
+      turnId: decodeEntryId(o2.turnId),
       step: integer(o2.step, 0),
       part: integer(o2.part, 0),
       item: decodeChatItem(o2.item)
@@ -6583,6 +6678,7 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2",
       "conversations-v1",
+      "conversation-commands-v1",
       "conversation-workflows-v1",
       "workflows-v1"
     ]);
@@ -10491,7 +10587,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "d0edc9d93f682dd7c637bd28cdb756b823ad8eafeabebc63479bee1bac5b2b55",
+    contractHash: "3305384b10bb0c658565426ec2291d0237533cb9ae7aeb1d63f42ac8824b0c82",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -11174,8 +11270,8 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn5 } from "node:child_process";
-import { lstatSync as lstatSync22, opendirSync as opendirSync15 } from "node:fs";
-import { join as join34 } from "node:path";
+import { lstatSync as lstatSync23, opendirSync as opendirSync15 } from "node:fs";
+import { join as join37 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/agent-registry.ts
@@ -21875,95 +21971,6 @@ import { spawn as spawn3 } from "node:child_process";
 import { join as join26 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
-
-// src/conversation-context.mjs
-var CONTEXT_BYTES = 2 * 1024 * 1024;
-var CONTEXT_RECORD_BYTES = LIMITS.detailBytes;
-var clean = (s, secrets, max = CONTEXT_RECORD_BYTES) => sanitizeText(text(s, max), secrets);
-function argumentsData(value, secrets) {
-  const sanitizer = new DetailSanitizer("canonical-json", secrets);
-  const source = sanitizer.write(canonicalJson(value, CONTEXT_RECORD_BYTES)) + sanitizer.end();
-  if (sanitizer.limited)
-    throw new Error("Unsupported context arguments");
-  return parseWireJson(source, CONTEXT_RECORD_BYTES);
-}
-function own2(value, key2) {
-  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
-  if (!d || !("value" in d))
-    throw new Error("Invalid usage");
-  return d.value;
-}
-function counts(value, keys2) {
-  const out = Object.create(null);
-  for (const key2 of keys2) {
-    const n = own2(value, key2);
-    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
-      throw new Error("Invalid usage");
-    out[key2] = n;
-  }
-  return out;
-}
-function conversationMessages(messages, secrets = []) {
-  return list(messages, 4096, (message) => {
-    if (!message || typeof message !== "object")
-      throw new Error("Invalid context");
-    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
-    const timestamp2 = integer(message.timestamp, 0);
-    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
-      if (block.type === "text")
-        return { type: "text", text: clean(block.text, secrets) };
-      if (role2 === "assistant" && block.type === "toolCall")
-        return {
-          type: "toolCall",
-          id: clean(block.id, secrets, 512),
-          name: clean(block.name, secrets, 128),
-          arguments: argumentsData(block.arguments, secrets)
-        };
-      return null;
-    }).filter(Boolean);
-    if (role2 === "user")
-      return { role: role2, timestamp: timestamp2, content };
-    if (role2 === "toolResult")
-      return {
-        role: role2,
-        timestamp: timestamp2,
-        content,
-        toolCallId: clean(message.toolCallId, secrets, 512),
-        toolName: clean(message.toolName, secrets, 128),
-        isError: message.isError === true
-      };
-    const usage = counts(message.usage, [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "totalTokens"
-    ]);
-    usage.cost = counts(own2(message.usage, "cost"), [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "total"
-    ]);
-    return {
-      role: role2,
-      timestamp: timestamp2,
-      content,
-      api: clean(message.api, secrets, 128),
-      provider: clean(message.provider, secrets, 128),
-      model: clean(message.model, secrets, 256),
-      usage,
-      stopReason: oneOf(message.stopReason, [
-        "stop",
-        "length",
-        "toolUse",
-        "error",
-        "aborted"
-      ])
-    };
-  });
-}
 // src/worker-capture.mjs
 import { createHash as createHash23, randomUUID as randomUUID16 } from "node:crypto";
 var completeCoverage = () => ({
@@ -22595,13 +22602,9 @@ function runProcess(spec) {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...spec.onContext || spec.onCoordinator ? [spec.onContext ? "pipe" : "ignore"] : [],
-        ...spec.onCoordinator ? ["ipc"] : []
+        ...spec.onCoordinator ? ["ignore", "ipc"] : []
       ]
     });
-    const contextStream = spec.onContext ? child.stdio[3] : null;
-    let contextEnded = false, contextBytes = 0;
-    const contextChunks = [];
     let settled = false;
     let nativeClosed = false;
     let launched = false;
@@ -22637,7 +22640,7 @@ function runProcess(spec) {
     const stderrDecoder = new StringDecoder("utf8");
     let killTimer;
     let unknownTimer;
-    const clean2 = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
+    const clean = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
     const finish = (closed2, exitCode, signal) => {
       if (settled)
         return;
@@ -22680,8 +22683,8 @@ function runProcess(spec) {
         exitCode,
         signal,
         durationMs: Date.now() - started,
-        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
-        output: clean2(output),
+        text: clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
+        output: clean(output),
         truncated
       });
       if (!closed2) {
@@ -22689,7 +22692,6 @@ function runProcess(spec) {
         child.stdout.destroy();
         child.stderr.destroy();
         child.stdin?.destroy();
-        contextStream?.destroy();
         if (child.connected)
           child.disconnect();
       }
@@ -22790,7 +22792,7 @@ function runProcess(spec) {
           spec.onProgress?.("Agent ready");
         }
         if (decoded2.event.kind === "tool-start")
-          spec.onProgress?.(clean2(`Tool: ${decoded2.event.name}`, 128));
+          spec.onProgress?.(clean(`Tool: ${decoded2.event.name}`, 128));
         if (decoded2.event.kind === "final")
           final = capture.preview;
         if (lease) {
@@ -22830,7 +22832,7 @@ function runProcess(spec) {
         if (Buffer.byteLength(output) > 256 * 1024) {
           truncated = true;
           if (spec.uninterruptible)
-            output = clean2(output, 256 * 1024);
+            output = clean(output, 256 * 1024);
           else
             stop("failed");
         }
@@ -22862,34 +22864,6 @@ function runProcess(spec) {
         }
       }
     };
-    contextStream?.on("data", (chunk) => {
-      if (settled || stopping)
-        return;
-      try {
-        let offset = 0;
-        while (offset < chunk.length) {
-          const end = chunk.indexOf(10, offset);
-          const part = chunk.subarray(offset, end < 0 ? chunk.length : end);
-          contextBytes += part.length;
-          if (contextBytes > CONTEXT_RECORD_BYTES)
-            throw new Error("Checkpoint record too large");
-          contextChunks.push(part);
-          if (end < 0)
-            break;
-          const source = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(contextChunks, contextBytes));
-          contextChunks.length = 0;
-          contextBytes = 0;
-          spec.onContext?.(source);
-          offset = end + 1;
-        }
-      } catch {
-        stop("failed");
-      }
-    });
-    contextStream?.once("end", () => {
-      contextEnded = true;
-    });
-    contextStream?.on("error", () => stop("failed"));
     let stdoutWork = Promise.resolve();
     let stderrWork = Promise.resolve();
     let stdoutEnded = false, stderrEnded = false;
@@ -22942,15 +22916,6 @@ function runProcess(spec) {
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
       const close = () => {
-        if (spec.onContext && !stopping && code2 === 0) {
-          try {
-            if (!contextEnded || contextBytes)
-              throw new Error("Context EOF missing");
-            spec.onContextEnd?.();
-          } catch {
-            stopping = "failed";
-          }
-        }
         if (!spec.protocol)
           output += stdoutDecoder.end();
         else {
@@ -23049,34 +23014,11 @@ function launchConversation(prepared, conversation, signal, options) {
     if (!encoded2 || encoded2.input !== input)
       throw new Error("Invalid chat launch");
     const secrets = encoded2.secrets;
-    let contextCount = 0, contextComplete = false;
     return launchEncoded(encoded2, signal, options.timeoutMs, {
       maySignal: options.maySignal,
       onNative: options.onNative,
       onCoordinator: options.onCoordinator,
-      onFrame: (frame) => options.onFrame(frame, secrets),
-      onContext: (source) => {
-        if (contextComplete)
-          throw new Error("Checkpoint after end");
-        const value = parseWireJson(source, CONTEXT_RECORD_BYTES);
-        if (value.schema === "cadence-conversation-stream-end/1") {
-          const record3 = closed(value, ["schema", "count"]);
-          if (record3.count !== contextCount)
-            throw new Error("Invalid checkpoint count");
-          contextComplete = true;
-          return;
-        }
-        const record2 = closed(value, ["schema", "message"]);
-        if (record2.schema !== "cadence-conversation-stream/1")
-          throw new Error("Invalid checkpoint");
-        options.onContext(conversationMessages([record2.message], [...options.ownerSecrets(), ...secrets])[0]);
-        contextCount++;
-      },
-      onContextEnd: () => {
-        if (!contextComplete)
-          throw new Error("Incomplete checkpoint");
-        options.onContextEnd();
-      }
+      onFrame: (frame) => options.onFrame(frame, secrets)
     });
   });
 }
@@ -24869,12 +24811,314 @@ class ServiceOwner {
 
 // src/service/workbench.ts
 import { opendirSync as opendirSync14 } from "node:fs";
-import { join as join33 } from "node:path";
+import { join as join36 } from "node:path";
+
+// src/service/conversation-migration.ts
+import { randomBytes as randomBytes6 } from "node:crypto";
+import {
+  closeSync as closeSync10,
+  fsyncSync as fsyncSync6,
+  linkSync,
+  mkdirSync as mkdirSync5,
+  opendirSync as opendirSync9,
+  openSync as openSync10,
+  unlinkSync as unlinkSync4,
+  writeSync
+} from "node:fs";
+import { join as join29 } from "node:path";
+
+// src/conversation-context.mjs
+import { createHash as createHash24 } from "node:crypto";
+import {
+  closeSync as closeSync9,
+  constants as constants8,
+  fstatSync as fstatSync6,
+  lstatSync as lstatSync16,
+  openSync as openSync9,
+  readSync as readSync5
+} from "node:fs";
+import { dirname as dirname19, join as join28 } from "node:path";
+var CONTEXT_BYTES = 2 * 1024 * 1024;
+var CONTEXT_RECORD_BYTES = LIMITS.detailBytes;
+var clean = (s, secrets, max = CONTEXT_RECORD_BYTES) => sanitizeText(text(s, max), secrets);
+function argumentsData(value, secrets) {
+  const sanitizer = new DetailSanitizer("canonical-json", secrets);
+  const source = sanitizer.write(canonicalJson(value, CONTEXT_RECORD_BYTES)) + sanitizer.end();
+  if (sanitizer.limited)
+    throw new Error("Unsupported context arguments");
+  return parseWireJson(source, CONTEXT_RECORD_BYTES);
+}
+function own2(value, key2) {
+  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
+  if (!d || !("value" in d))
+    throw new Error("Invalid usage");
+  return d.value;
+}
+function counts(value, keys3) {
+  const out = Object.create(null);
+  for (const key2 of keys3) {
+    const n = own2(value, key2);
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
+      throw new Error("Invalid usage");
+    out[key2] = n;
+  }
+  return out;
+}
+function conversationMessages(messages, secrets = []) {
+  return list(messages, 4096, (message) => {
+    if (!message || typeof message !== "object")
+      throw new Error("Invalid context");
+    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
+    const timestamp2 = integer(message.timestamp, 0);
+    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
+      if (block.type === "text")
+        return { type: "text", text: clean(block.text, secrets) };
+      if (role2 === "assistant" && block.type === "toolCall")
+        return {
+          type: "toolCall",
+          id: clean(block.id, secrets, 512),
+          name: clean(block.name, secrets, 128),
+          arguments: argumentsData(block.arguments, secrets)
+        };
+      return null;
+    }).filter(Boolean);
+    if (role2 === "user")
+      return { role: role2, timestamp: timestamp2, content };
+    if (role2 === "toolResult")
+      return {
+        role: role2,
+        timestamp: timestamp2,
+        content,
+        toolCallId: clean(message.toolCallId, secrets, 512),
+        toolName: clean(message.toolName, secrets, 128),
+        isError: message.isError === true
+      };
+    const usage = counts(message.usage, [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "totalTokens"
+    ]);
+    usage.cost = counts(own2(message.usage, "cost"), [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "total"
+    ]);
+    return {
+      role: role2,
+      timestamp: timestamp2,
+      content,
+      api: clean(message.api, secrets, 128),
+      provider: clean(message.provider, secrets, 128),
+      model: clean(message.model, secrets, 256),
+      usage,
+      stopReason: oneOf(message.stopReason, [
+        "stop",
+        "length",
+        "toolUse",
+        "error",
+        "aborted"
+      ])
+    };
+  });
+}
+function readPrivateContext(path, maximum) {
+  const fd = openSync9(path, constants8.O_RDONLY | (constants8.O_NOFOLLOW ?? 0));
+  try {
+    const st = fstatSync6(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > maximum || process.platform !== "win32" && (st.mode & 63 || st.uid !== process.getuid()))
+      throw new Error("Invalid context file");
+    const buffer = Buffer.alloc(st.size + 1);
+    let size2 = 0;
+    while (size2 < buffer.length) {
+      const n = readSync5(fd, buffer, size2, buffer.length - size2, null);
+      if (!n)
+        break;
+      size2 += n;
+    }
+    const after = fstatSync6(fd);
+    if (size2 !== st.size || after.size !== st.size || after.mtimeMs !== st.mtimeMs || after.ctimeMs !== st.ctimeMs || lstatSync16(path).ino !== st.ino)
+      throw new Error("Changed context file");
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, size2));
+  } finally {
+    closeSync9(fd);
+  }
+}
+function* iterateConversationContext(path) {
+  if (path === null)
+    return;
+  const source = readPrivateContext(path, CONTEXT_BYTES);
+  const value = parseWireJson(source, CONTEXT_BYTES);
+  if (value.schema === "cadence-conversation-context/1") {
+    const o2 = closed(value, ["schema", "messages"]);
+    yield* conversationMessages(o2.messages);
+    return;
+  }
+  const o = closed(value, ["schema", "messages", "head"]);
+  if (o.schema !== "cadence-conversation-context/2")
+    throw new Error("Invalid context format");
+  const count2 = integer(o.messages, 0);
+  let head = null;
+  for (let index = 0;index < count2; index++) {
+    const body = readPrivateContext(join28(dirname19(path), `context-${index}.json`), CONTEXT_RECORD_BYTES);
+    const record2 = closed(parseWireJson(body, CONTEXT_RECORD_BYTES), [
+      "schema",
+      "index",
+      "previous",
+      "message"
+    ]);
+    if (record2.schema !== "cadence-conversation-message/1" || record2.index !== index || record2.previous !== head)
+      throw new Error("Invalid context chain");
+    head = createHash24("sha256").update(body).digest("hex");
+    yield conversationMessages([record2.message])[0];
+  }
+  if (o.head !== head)
+    throw new Error("Changed context chain");
+}
+
+// src/session-entries.mjs
+var CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
+var WEBUI_SESSION_ENTRY = "cadence-webui/1";
+
+// src/service/conversation-migration.ts
+var META_BYTES = 64 * 1024;
+
+class ConversationMigration {
+  o;
+  root;
+  constructor(o) {
+    this.o = o;
+    this.root = join29(o.coordination.directory, "conversations-v1");
+  }
+  read(path) {
+    const file = this.o.coordination.files.read(path, META_BYTES);
+    return file ? parseWireJson(file.bytes.toString("utf8"), META_BYTES) : undefined;
+  }
+  legacy() {
+    const dir = join29(this.root, "sessions");
+    if (!this.o.coordination.files.directory(dir))
+      return [];
+    const out = [];
+    const handle = opendirSync9(dir);
+    try {
+      for (let e = handle.readSync();e; e = handle.readSync()) {
+        try {
+          if (!e.isFile() || !e.name.endsWith(".json"))
+            continue;
+          const id = decodeId(e.name.slice(0, -5));
+          const identity = this.read(join29(this.root, "identities", `${id}.json`));
+          if (!identity || typeof identity !== "object" || identity.schema !== "cadence-conversation/1" || identity.id !== id || identity.cwd !== this.o.cwd)
+            continue;
+          const meta = this.read(join29(dir, e.name));
+          const checkpoint = meta && typeof meta === "object" ? meta.checkpoint : null;
+          if (typeof checkpoint === "string")
+            out.push({ id, checkpoint: decodeId(checkpoint) });
+        } catch {}
+      }
+    } finally {
+      handle.closeSync();
+    }
+    return out;
+  }
+  pending() {
+    this.o.owner.lease.assert();
+    const sessions = new Set(this.o.sessions.list().map((l) => l.summary.id));
+    return this.legacy().filter((c) => !sessions.has(c.id)).length;
+  }
+  migrate() {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const sessions = new Set(this.o.sessions.list().map((l) => l.summary.id));
+    let migrated = 0, skipped = 0;
+    for (const conversation of this.legacy()) {
+      if (sessions.has(conversation.id))
+        continue;
+      try {
+        this.copy(conversation);
+        migrated++;
+      } catch {
+        skipped++;
+      }
+    }
+    return { migrated, skipped };
+  }
+  copy(conversation) {
+    const messages = [
+      ...iterateConversationContext(join29(this.root, "turns", conversation.checkpoint, "context.json"))
+    ];
+    if (!messages.length)
+      throw new ContractError("invalid");
+    const first = messages[0].timestamp || Date.now();
+    const iso = (ms) => new Date(ms || first).toISOString();
+    const ids = new Set;
+    const nextId = () => {
+      for (;; ) {
+        const id = randomBytes6(4).toString("hex");
+        if (!ids.has(id)) {
+          ids.add(id);
+          return id;
+        }
+      }
+    };
+    let parentId = null;
+    const lines = [
+      {
+        type: "session",
+        version: 3,
+        id: conversation.id,
+        timestamp: iso(first),
+        cwd: this.o.cwd
+      }
+    ];
+    const append = (entry) => {
+      const id = nextId();
+      lines.push({ ...entry, id, parentId });
+      parentId = id;
+    };
+    append({
+      type: "custom",
+      customType: WEBUI_SESSION_ENTRY,
+      timestamp: iso(first)
+    });
+    const assistant = messages.find((m) => m.role === "assistant");
+    if (assistant?.provider && assistant.model)
+      append({
+        type: "model_change",
+        timestamp: iso(first),
+        provider: assistant.provider,
+        modelId: assistant.model
+      });
+    for (const message of messages)
+      append({ type: "message", timestamp: iso(message.timestamp), message });
+    const name = `${iso(first).replace(/[:.]/g, "-")}_${conversation.id}.jsonl`;
+    const directory = this.o.sessions.directory;
+    mkdirSync5(directory, { recursive: true, mode: 448 });
+    const temporary = join29(directory, `.${name}.${randomBytes6(6).toString("hex")}`);
+    const fd = openSync10(temporary, "wx", 384);
+    try {
+      writeSync(fd, `${lines.map((line) => JSON.stringify(line)).join(`
+`)}
+`);
+      fsyncSync6(fd);
+    } finally {
+      closeSync10(fd);
+    }
+    try {
+      linkSync(temporary, join29(directory, name));
+    } finally {
+      unlinkSync4(temporary);
+    }
+  }
+}
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import { opendirSync as opendirSync11 } from "node:fs";
-import { dirname as dirname20, join as join29 } from "node:path";
+import { dirname as dirname21, join as join32 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
@@ -24885,350 +25129,681 @@ Present the returned complete plan and invite a single clear execution approval 
 During accepted work answer questions, report actual retained progress, and let the service execute. cadence_cancel is explicit cancellation, not navigation/exit. Never claim a worker's prose is a passing check or automatic review is human review. Failed/unknown/blocked outcomes are not success. A completed goal leaves Cadence ON and ready for the next goal; do not require /cadence again. Unrelated discussion is still ordinary conversation within this mode, not implicit permission to start another implementation. Tools operate on the host; this is not a sandbox.`;
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
-import { lstatSync as lstatSync17, opendirSync as opendirSync10, realpathSync as realpathSync10, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname19, join as join28 } from "node:path";
-
-// src/service/conversation-history.ts
 import { randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync16, opendirSync as opendirSync9 } from "node:fs";
-var CONVERSATION_PAGE = 50;
-var SCAN_ENTRIES = 8;
-var SCANS = 16;
-var IDLE_MS = 120000;
-var compareChats = (a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+import { lstatSync as lstatSync18, opendirSync as opendirSync10, realpathSync as realpathSync10, statfsSync as statfsSync2 } from "node:fs";
+import { dirname as dirname20, join as join31 } from "node:path";
 
-class ConversationHistory {
-  path;
-  directory;
-  summary;
-  scans = new Map;
-  closed = false;
-  constructor(path, directory, summary2) {
-    this.path = path;
-    this.directory = directory;
-    this.summary = summary2;
-  }
-  incarnation() {
-    const st = lstatSync16(this.path, { bigint: true });
-    if (!st.isDirectory() || st.isSymbolicLink())
-      throw new ContractError("corrupt-selected");
-    return `${st.dev}:${st.ino}`;
-  }
-  read(after, cursor) {
-    if (this.closed)
-      throw new ContractError("unavailable");
-    let state;
-    if (cursor) {
-      const selected2 = this.scans.get(cursor);
-      if (!selected2 || selected2.after?.id !== after?.id || selected2.after?.updatedAt !== after?.updatedAt)
-        throw new ContractError("stale");
-      this.scans.delete(cursor);
-      clearTimeout(selected2.timer);
-      state = selected2;
-    } else {
-      if (!this.directory())
-        return { kind: "conversations", entries: [], next: null };
-      if (this.scans.size >= SCANS)
-        throw new ContractError("capacity");
-      const incarnation3 = this.incarnation();
-      state = {
-        dir: opendirSync9(this.path),
-        incarnation: incarnation3,
-        after,
-        entries: []
-      };
-    }
-    let suspended = false;
-    try {
-      if (!this.directory() || this.incarnation() !== state.incarnation)
-        throw new ContractError("stale");
-      const started = performance.now();
-      for (let n = 0;n < SCAN_ENTRIES; n++) {
-        if (n && performance.now() - started >= LIMITS.searchMs)
-          break;
-        const e = state.dir.readSync();
-        if (!e) {
-          const entries2 = state.entries.slice(0, CONVERSATION_PAGE);
-          const last = entries2.at(-1);
-          return {
-            kind: "conversations",
-            entries: entries2,
-            next: state.entries.length > entries2.length && last ? { id: last.id, updatedAt: last.updatedAt } : null
-          };
-        }
-        if (!e.isFile() || !e.name.endsWith(".json"))
-          throw new ContractError("corrupt-selected");
-        const summary2 = this.summary(decodeId(e.name.slice(0, -5)));
-        if (after && compareChats(summary2, after) <= 0)
-          continue;
-        if (state.entries.some((row) => row.id === summary2.id))
-          continue;
-        state.entries.push(summary2);
-        state.entries.sort(compareChats);
-        if (state.entries.length > CONVERSATION_PAGE + 1)
-          state.entries.pop();
-      }
-      const scan = randomUUID19();
-      state.timer = setTimeout(() => {
-        this.scans.delete(scan);
-        try {
-          state.dir.closeSync();
-        } catch {
-          this.closed = true;
-        }
-      }, IDLE_MS);
-      state.timer.unref();
-      this.scans.set(scan, state);
-      suspended = true;
-      return { kind: "conversations-progress", after, scan };
-    } finally {
-      if (!suspended)
-        state.dir.closeSync();
-    }
-  }
-  close() {
-    this.closed = true;
-    let failed = false;
-    for (const state of this.scans.values()) {
-      clearTimeout(state.timer);
-      try {
-        state.dir.closeSync();
-      } catch {
-        failed = true;
-      }
-    }
-    this.scans.clear();
-    if (failed)
-      throw new ContractError("unavailable");
-  }
-}
-
-// src/service/conversation-steps.ts
+// src/service/pi-sessions.ts
+import { createHash as createHash25 } from "node:crypto";
+import {
+  closeSync as closeSync11,
+  constants as constants9,
+  fstatSync as fstatSync7,
+  lstatSync as lstatSync17,
+  openSync as openSync11,
+  readdirSync as readdirSync3,
+  readSync as readSync6
+} from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { isAbsolute as isAbsolute10, join as join30, resolve as resolve10 } from "node:path";
+var SESSION_BYTES = 64 * 1024 * 1024;
+var LISTED_FILES = 1e4;
+var OPEN_SESSIONS = 8;
+var BUILT_TURNS = 64;
+var SETTINGS_BYTES = 1024 * 1024;
+var TITLE_CHARS = 100;
+var NOTICE_BYTES = 1024;
+var PART_TEXT_BYTES = 200 * 1024;
+var PART_ARGS_BYTES = 48 * 1024;
 var TARGET_ARGS = 1024 * 1024;
-var INDEXED_TURNS = 32;
-function itemStep(item) {
-  const step = chatStep(item, 0);
-  const more = step.clipped || item.role === "tool" && !!(item.args || item.text);
-  return { ...step, parts: more ? 1 : 0 };
+function sessionDirectory(cwd, agentDir, env = process.env) {
+  const expand = (value) => {
+    const home = value === "~" ? homedir7() : value.startsWith("~/") ? join30(homedir7(), value.slice(2)) : value;
+    return isAbsolute10(home) ? resolve10(home) : resolve10(cwd, home);
+  };
+  const fromEnv = env.PI_CODING_AGENT_SESSION_DIR;
+  if (fromEnv)
+    return expand(fromEnv);
+  let configured;
+  for (const file of [
+    join30(agentDir, "settings.json"),
+    join30(cwd, ".pi", "settings.json")
+  ]) {
+    const value = settingsSessionDir(file);
+    if (value)
+      configured = value;
+  }
+  if (configured)
+    return expand(configured);
+  return join30(agentDir, "sessions", `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+}
+function settingsSessionDir(file) {
+  let fd;
+  try {
+    fd = openSync11(file, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0));
+    const st = fstatSync7(fd);
+    if (!st.isFile() || st.size > SETTINGS_BYTES)
+      return;
+    const buffer = Buffer.alloc(st.size);
+    readSync6(fd, buffer, 0, st.size, 0);
+    const value = JSON.parse(buffer.toString("utf8"));
+    const dir = value && typeof value === "object" && !Array.isArray(value) ? value.sessionDir : undefined;
+    return typeof dir === "string" && dir.trim() ? dir.trim() : undefined;
+  } catch {
+    return;
+  } finally {
+    if (fd !== undefined)
+      closeSync11(fd);
+  }
+}
+var own3 = (o, key2) => Object.hasOwn(o, key2) ? o[key2] : undefined;
+function parseLine(text2, pos) {
+  let value;
+  try {
+    value = JSON.parse(text2);
+  } catch {
+    return;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return;
+  const o = value;
+  const type = own3(o, "type");
+  if (type === "session") {
+    const id2 = own3(o, "id"), cwd = own3(o, "cwd"), version = own3(o, "version"), timestamp3 = own3(o, "timestamp");
+    if (typeof id2 !== "string" || !id2)
+      return;
+    return {
+      kind: "header",
+      header: {
+        id: id2,
+        cwd: typeof cwd === "string" ? cwd : "",
+        version: typeof version === "number" ? version : 1,
+        timestamp: typeof timestamp3 === "string" ? timestamp3 : ""
+      }
+    };
+  }
+  const id = own3(o, "id"), parentId = own3(o, "parentId"), timestamp2 = own3(o, "timestamp");
+  if (typeof type !== "string" || typeof id !== "string" || !id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id) || !(parentId === null || typeof parentId === "string"))
+    return;
+  return {
+    kind: "entry",
+    entry: {
+      type,
+      id,
+      parentId,
+      timestamp: typeof timestamp2 === "string" ? timestamp2 : "",
+      pos,
+      raw: o
+    }
+  };
+}
+function readLines(path, from, onLine) {
+  const fd = openSync11(path, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0));
+  try {
+    const st = fstatSync7(fd);
+    if (!st.isFile())
+      throw new ContractError("forbidden");
+    if (st.size > SESSION_BYTES)
+      throw new ContractError("capacity");
+    const restarted = !from || from.ino !== st.ino || st.size < from.end;
+    const start = restarted ? 0 : from.end;
+    const length = st.size - start;
+    let end = start;
+    if (length > 0) {
+      const buffer = Buffer.allocUnsafe(length);
+      let read2 = 0;
+      while (read2 < length) {
+        const n = readSync6(fd, buffer, read2, length - read2, start + read2);
+        if (n === 0)
+          break;
+        read2 += n;
+      }
+      let line = 0;
+      for (let i = buffer.indexOf(10);i >= 0 && i < read2; ) {
+        const text2 = buffer.toString("utf8", line, i);
+        if (text2.trim())
+          onLine(text2, start + line);
+        line = i + 1;
+        i = buffer.indexOf(10, line);
+      }
+      end = start + line;
+    }
+    return { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, end, restarted };
+  } finally {
+    closeSync11(fd);
+  }
+}
+var message = (entry) => {
+  if (entry.type !== "message")
+    return;
+  const m = own3(entry.raw, "message");
+  return m && typeof m === "object" && !Array.isArray(m) ? m : undefined;
+};
+var role2 = (entry) => {
+  const m = message(entry);
+  return m ? own3(m, "role") : undefined;
+};
+var isUser = (entry) => role2(entry) === "user";
+function contentText(content, omitted2) {
+  if (typeof content === "string")
+    return content;
+  if (!Array.isArray(content))
+    return "";
+  const parts = [];
+  for (const block of content) {
+    const b = block && typeof block === "object" ? block : {};
+    const kind = own3(b, "type");
+    const value = own3(b, "text");
+    if (kind === "text" && typeof value === "string")
+      parts.push(value);
+    else if (omitted2 && kind === "image")
+      omitted2.media = true;
+    else if (omitted2)
+      omitted2.other = true;
+  }
+  return parts.join(`
+`);
+}
+var firstLine = (value) => [...value.trim().split(`
+`, 1)[0] ?? ""].slice(0, TITLE_CHARS).join("");
+var time = (value) => {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+};
+function stopStatus(m) {
+  const reason = own3(m, "stopReason");
+  if (reason === "error") {
+    const error = own3(m, "errorMessage");
+    return {
+      status: "failed",
+      notice: typeof error === "string" ? error : "The model request failed."
+    };
+  }
+  if (reason === "aborted")
+    return { status: "canceled", notice: "" };
+  return { status: "completed", notice: "" };
+}
+function emptySummary() {
+  return {
+    id: "",
+    cwd: "",
+    version: 0,
+    created: 0,
+    name: null,
+    firstUser: null,
+    leaf: null,
+    webui: false,
+    runs: [],
+    cadence: false,
+    stop: null
+  };
+}
+function fold(summary2, line) {
+  if (line.kind === "header") {
+    summary2.id = line.header.id;
+    summary2.cwd = line.header.cwd;
+    summary2.version = line.header.version;
+    summary2.created = time(line.header.timestamp);
+    return;
+  }
+  const entry = line.entry;
+  summary2.leaf = entry.id;
+  if (entry.type === "session_info") {
+    const name = own3(entry.raw, "name");
+    summary2.name = typeof name === "string" && name.trim() ? name : null;
+  } else if (entry.type === "custom") {
+    const kind = own3(entry.raw, "customType");
+    if (kind === WEBUI_SESSION_ENTRY)
+      summary2.webui = true;
+    if (kind === CADENCE_MODE_ENTRY) {
+      const data2 = own3(entry.raw, "data");
+      const d = data2 && typeof data2 === "object" ? data2 : {};
+      const runId = own3(d, "runId");
+      summary2.cadence = own3(d, "enabled") === true;
+      if (typeof runId === "string" && /^[0-9a-f-]{36}$/.test(runId) && !summary2.runs.includes(runId) && summary2.runs.length < 200)
+        summary2.runs.push(runId);
+    }
+  } else {
+    const m = message(entry);
+    if (m && own3(m, "role") === "user" && summary2.firstUser === null) {
+      const text2 = firstLine(contentText(own3(m, "content")));
+      if (text2)
+        summary2.firstUser = text2;
+    }
+    if (m && own3(m, "role") === "assistant")
+      summary2.stop = stopStatus(m);
+  }
 }
 
-class ConversationSteps {
-  page;
-  indexes = new Map;
-  constructor(page) {
-    this.page = page;
+class ParsedSession {
+  path;
+  entries = [];
+  byId = new Map;
+  children = new Map;
+  header = null;
+  read;
+  constructor(path) {
+    this.path = path;
   }
-  list(turn) {
-    const settled = !["queued", "running"].includes(turn.status);
-    if (!turn.transcript) {
-      const steps2 = turn.items.map((item, index2) => ({
-        step: itemStep(item),
-        source: { kind: "item", index: index2 }
-      }));
-      return { steps: steps2, stable: settled ? steps2.length : 0 };
+  refresh() {
+    const lines = [];
+    const next = readLines(this.path, this.read, (text2, pos) => {
+      const line = parseLine(text2, pos);
+      if (line)
+        lines.push(line);
+    });
+    if (next.restarted) {
+      this.entries.length = 0;
+      this.byId.clear();
+      this.children.clear();
+      this.header = null;
     }
-    const index = this.index(turn.id, turn.transcript.pages);
-    const steps = [
-      ...index.steps,
-      ...turn.items.filter((item) => !index.ids.has(item.id)).map((item) => ({
-        step: itemStep(item),
-        source: { kind: "preview", id: item.id }
-      }))
-    ];
-    return { steps, stable: settled ? steps.length : index.steps.length };
-  }
-  detail(turn, step, part) {
-    const listed = this.list(turn).steps[step];
-    if (!listed || part >= listed.step.parts)
-      throw new ContractError("stale");
-    const source = listed.source;
-    if (source.kind === "pages")
-      return this.page(turn.id, source.first + part);
-    const item = source.kind === "item" ? turn.items[source.index] : turn.items.find((i) => i.id === source.id);
-    if (!item)
-      throw new ContractError("stale");
-    return item;
-  }
-  index(turnId, pages) {
-    let index = this.indexes.get(turnId);
-    this.indexes.delete(turnId);
-    if (!index || index.pages > pages)
-      index = { pages: 0, steps: [], ids: new Set, last: null };
-    for (;index.pages < pages; index.pages++) {
-      const fragment = this.page(turnId, index.pages);
-      const last = index.last;
-      const tail = index.steps.at(-1);
-      if (last && tail && last.item.id === fragment.id) {
-        const text2 = last.item.text + fragment.text, head2 = clipText(text2, STEP_TEXT_BYTES);
-        last.more ||= head2.length < text2.length;
-        last.args = last.args !== null && last.args.length + fragment.args.length <= TARGET_ARGS ? last.args + fragment.args : null;
-        last.item = { ...fragment, text: head2, args: last.args ?? "" };
-        tail.step = chatStep(last.item, tail.step.parts + 1, last.more);
+    for (const line of lines) {
+      if (line.kind === "header") {
+        this.header ??= line.header;
         continue;
       }
-      const head = clipText(fragment.text, STEP_TEXT_BYTES);
-      index.last = {
-        item: { ...fragment, text: head },
-        more: head.length < fragment.text.length,
-        args: fragment.args
+      const entry = line.entry;
+      if (this.byId.has(entry.id))
+        continue;
+      this.entries.push(entry);
+      this.byId.set(entry.id, entry);
+      const key2 = entry.parentId ?? "";
+      const siblings = this.children.get(key2);
+      if (siblings)
+        siblings.push(entry);
+      else
+        this.children.set(key2, [entry]);
+    }
+    this.read = next;
+    return this;
+  }
+  current() {
+    return this.entries.at(-1)?.id ?? null;
+  }
+  branch(leaf) {
+    const out = [];
+    let entry = leaf === null ? undefined : this.byId.get(leaf);
+    if (leaf !== null && !entry)
+      throw new ContractError("stale");
+    for (let n = 0;entry && n <= this.entries.length; n++) {
+      out.push(entry);
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    return out.reverse();
+  }
+  contains(leaf, ancestor) {
+    let entry = leaf === null ? undefined : this.byId.get(leaf);
+    for (let n = 0;entry && n <= this.entries.length; n++) {
+      if (entry.id === ancestor)
+        return true;
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    return false;
+  }
+  leaves() {
+    let count2 = 0;
+    for (const entry of this.entries)
+      if (!this.children.has(entry.id))
+        count2++;
+    return count2;
+  }
+  chain(parent, offset, text2) {
+    const fresh2 = (entry) => entry.pos >= offset;
+    const reaches = (entry) => {
+      let current2 = entry;
+      for (let n = 0;current2 && n <= this.entries.length; n++) {
+        if (current2.parentId === null)
+          return parent === null;
+        if (current2.parentId === parent)
+          return true;
+        current2 = this.byId.get(current2.parentId);
+        if (current2 && !fresh2(current2))
+          return false;
+      }
+      return false;
+    };
+    const user = this.entries.find((entry) => fresh2(entry) && isUser(entry) && contentText(own3(message(entry) ?? {}, "content")) === text2 && reaches(entry));
+    if (!user)
+      return [];
+    const out = [user];
+    for (let n = 0;n < this.entries.length; n++) {
+      const next = (this.children.get(out[out.length - 1].id) ?? []).filter(fresh2);
+      if (!next.length)
+        break;
+      out.push(next.reduce((a, b) => b.pos > a.pos ? b : a));
+    }
+    return out;
+  }
+  tree(leaf, secrets) {
+    const newest = new Map;
+    for (let i = this.entries.length - 1;i >= 0; i--) {
+      let entry = this.entries[i];
+      const leaf2 = entry;
+      for (let n = 0;entry && !newest.has(entry.id) && n <= i; n++) {
+        newest.set(entry.id, leaf2);
+        entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+      }
+    }
+    const onBranch = new Set(this.branch(leaf).map((entry) => entry.id));
+    const users = this.entries.filter(isUser);
+    const kept = users.slice(-TREE_NODES);
+    const keep = new Set(kept.map((entry) => entry.id));
+    const nodes = kept.map((entry) => {
+      let parent = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+      for (let n = 0;parent && !keep.has(parent.id) && n <= this.entries.length; n++)
+        parent = parent.parentId === null ? undefined : this.byId.get(parent.parentId);
+      const m = message(entry) ?? {};
+      return {
+        id: entry.id,
+        parent: parent?.id ?? null,
+        text: clipText(sanitizeText(firstLine(contentText(own3(m, "content"))), secrets), 512),
+        at: time(entry.timestamp),
+        leaf: (newest.get(entry.id) ?? entry).id,
+        current: onBranch.has(entry.id)
       };
-      index.steps.push({
-        step: chatStep(index.last.item, 1, index.last.more),
-        source: { kind: "pages", first: index.pages }
-      });
-      index.ids.add(fragment.id);
-    }
-    this.indexes.set(turnId, index);
-    if (this.indexes.size > INDEXED_TURNS)
-      this.indexes.delete(this.indexes.keys().next().value);
-    return index;
+    });
+    return { nodes, truncated: kept.length < users.length };
   }
 }
-
-// src/service/conversation-transcript.ts
-var TRANSCRIPT_PAGE_BYTES = 384 * 1024;
-var PREVIEW_BYTES = 300 * 1024;
-var FIELD_CHARS = 16 * 1024;
-var PREVIEW_MARK = `
-[Preview only; the rest appears once this step completes.]`;
-function part(value, offset, chars = FIELD_CHARS) {
-  let end = Math.min(value.length, offset + chars);
-  if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1]))
-    end--;
-  return value.slice(offset, end);
+function turnSpans(path) {
+  const turns = [];
+  for (const entry of path) {
+    if (isUser(entry) || !turns.length)
+      turns.push([entry]);
+    else
+      turns[turns.length - 1].push(entry);
+  }
+  if (turns.length && !isUser(turns[0][0]) && !turns[0].some(shown))
+    turns.shift();
+  return turns;
 }
-function previewHead(head, added) {
-  return head.length > FIELD_CHARS ? head : head + added.slice(0, FIELD_CHARS + 1 - head.length);
+function shown(entry) {
+  if (entry.type === "message")
+    return ["user", "assistant", "toolResult", "bashExecution"].includes(role2(entry));
+  if (entry.type === "custom_message")
+    return own3(entry.raw, "display") === true;
+  return entry.type === "compaction" || entry.type === "branch_summary";
 }
+var clip = (value, bytes) => clipText(value, bytes);
+function turnItems(entries2, secrets) {
+  const omitted2 = { thinking: false, media: false, other: false };
+  const items = [];
+  const tools = new Map;
+  let status = "completed", notice = "";
+  const add = (item) => {
+    items.push({
+      ...item,
+      id: clip(item.id, 160) || "item",
+      name: clip(sanitizeText(item.name, secrets), 128),
+      text: sanitizeText(item.text, secrets),
+      args: sanitizeText(item.args, secrets)
+    });
+    return items[items.length - 1];
+  };
+  const tool = (id, name, args, text2 = "", error = false) => add({ id, role: "tool", name, args, text: text2, error });
+  for (const entry of entries2) {
+    const m = message(entry);
+    if (m) {
+      const kind = own3(m, "role");
+      if (kind === "user")
+        add({
+          id: entry.id,
+          role: "user",
+          text: contentText(own3(m, "content"), omitted2),
+          name: "",
+          args: "",
+          error: false
+        });
+      else if (kind === "assistant") {
+        let text2;
+        const content = own3(m, "content");
+        for (const block of Array.isArray(content) ? content : []) {
+          const b = block && typeof block === "object" ? block : {};
+          const type = own3(b, "type");
+          if (type === "text" && typeof own3(b, "text") === "string") {
+            const value = own3(b, "text");
+            if (text2 && items[items.length - 1] === text2)
+              text2.text += sanitizeText(`
 
-class ConversationTranscript {
-  turn;
-  write;
-  state = { pages: 0 };
-  workingSizes = new Map;
-  fieldBytes = new Map;
-  workingBytes = 0;
-  sizes = new Map;
-  bytes = 4096;
-  pending = new Map;
-  constructor(turn, write2) {
-    this.turn = turn;
-    this.write = write2;
-    turn.transcript = this.state;
-    for (const item of [...turn.items]) {
-      this.archive(item);
-      this.preview(item);
+${value}`, secrets);
+            else
+              text2 = add({
+                id: `${entry.id}:${items.length}`,
+                role: "assistant",
+                text: value,
+                name: "",
+                args: "",
+                error: false
+              });
+          } else if (type === "toolCall") {
+            const id = own3(b, "id"), name = own3(b, "name");
+            let args = "";
+            try {
+              args = JSON.stringify(own3(b, "arguments") ?? {}) ?? "";
+            } catch {
+              omitted2.other = true;
+            }
+            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${items.length}`, typeof name === "string" ? name : "tool", args);
+            if (typeof id === "string")
+              tools.set(id, call);
+          } else if (type === "thinking" || type === "redactedThinking")
+            omitted2.thinking = true;
+          else if (type === "image")
+            omitted2.media = true;
+          else
+            omitted2.other = true;
+        }
+        ({ status, notice } = stopStatus(m));
+      } else if (kind === "toolResult") {
+        const id = own3(m, "toolCallId"), name = own3(m, "toolName");
+        const output = sanitizeText(contentText(own3(m, "content"), omitted2), secrets);
+        const call = typeof id === "string" ? tools.get(id) : undefined;
+        if (call) {
+          call.text = output;
+          call.error = own3(m, "isError") === true;
+        } else
+          tool(typeof id === "string" && id ? id : entry.id, typeof name === "string" ? name : "tool", "", output, own3(m, "isError") === true);
+      } else if (kind === "bashExecution") {
+        const command = own3(m, "command"), output = own3(m, "output"), code2 = own3(m, "exitCode");
+        tool(entry.id, "bash", JSON.stringify({
+          command: typeof command === "string" ? command : ""
+        }), typeof output === "string" ? output : "", own3(m, "cancelled") === true || typeof code2 === "number" && code2 !== 0);
+      }
+    } else if (entry.type === "custom_message" && own3(entry.raw, "display") === true) {
+      const kind = own3(entry.raw, "customType");
+      tool(entry.id, typeof kind === "string" ? kind : "message", "", contentText(own3(entry.raw, "content"), omitted2));
+    } else if (entry.type === "compaction" || entry.type === "branch_summary") {
+      const summary2 = own3(entry.raw, "summary");
+      tool(entry.id, entry.type === "compaction" ? "compaction" : "branch-summary", "", typeof summary2 === "string" ? summary2 : "");
     }
   }
-  item(id, role2) {
-    let item = this.pending.get(id);
-    if (!item) {
-      if (this.pending.size >= 256)
-        throw new ContractError("capacity");
-      item = { id, role: role2, text: "", name: "", args: "", error: false };
-      this.pending.set(id, item);
-      this.preview(item);
+  const first = entries2.find(isUser) ?? entries2[0];
+  return {
+    id: first?.id ?? "",
+    entry: entries2.at(-1)?.id ?? null,
+    at: first ? time(first.timestamp) : 0,
+    status,
+    notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),
+    omitted: omitted2,
+    items
+  };
+}
+function encodedChunks(value, bytes) {
+  const chunks2 = [];
+  let start = 0, size2 = 2;
+  for (let i = 0;i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    const pair = c >= 55296 && c <= 56319 && i + 1 < value.length;
+    const unit = c === 34 || c === 92 ? 2 : c < 32 ? [8, 9, 10, 12, 13].includes(c) ? 2 : 6 : c < 128 ? 1 : c < 2048 ? 2 : pair ? 4 : c >= 55296 && c <= 57343 ? 6 : 3;
+    if (size2 + unit > bytes && i > start) {
+      chunks2.push(value.slice(start, i));
+      start = i;
+      size2 = 2;
     }
-    return item;
+    size2 += unit;
+    if (pair)
+      i++;
+  }
+  if (start < value.length)
+    chunks2.push(value.slice(start));
+  return chunks2;
+}
+function itemParts(item) {
+  const text2 = encodedChunks(item.text, PART_TEXT_BYTES), args = encodedChunks(item.args, PART_ARGS_BYTES);
+  const count2 = Math.max(text2.length, args.length, 1);
+  return Array.from({ length: count2 }, (_, i) => ({
+    ...item,
+    text: text2[i] ?? "",
+    args: args[i] ?? ""
+  }));
+}
+function listTurn(turn) {
+  const parts = turn.items.map(itemParts);
+  const steps = turn.items.map((item, index) => {
+    const listed = chatStep(item.role === "tool" && item.args.length > TARGET_ARGS ? { ...item, args: "" } : item, 0);
+    const more = listed.clipped || item.role === "tool" && !!(item.args || item.text);
+    return { ...listed, parts: more ? parts[index].length : 0 };
+  });
+  return { ...turn, steps, parts };
+}
+
+class PiSessions {
+  directory;
+  cwd;
+  listed = new Map;
+  open = new Map;
+  built = new Map;
+  constructor(directory, cwd) {
+    this.directory = directory;
+    this.cwd = cwd;
+  }
+  list() {
+    let names2;
+    try {
+      names2 = readdirSync3(this.directory, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith(".jsonl")).map((d) => d.name).sort().reverse().slice(0, LISTED_FILES);
+    } catch (error) {
+      if (error.code === "ENOENT")
+        return [];
+      throw new ContractError("unavailable");
+    }
+    const seen = new Set;
+    const out = [];
+    for (const name of names2) {
+      const path = join30(this.directory, name);
+      seen.add(path);
+      try {
+        const listed = this.summary(path);
+        if (listed.summary.cwd === this.cwd && listed.summary.version >= 3)
+          out.push(listed);
+      } catch {
+        this.listed.delete(path);
+      }
+    }
+    for (const path of this.listed.keys())
+      if (!seen.has(path))
+        this.listed.delete(path);
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.summary.id < b.summary.id ? -1 : 1));
+  }
+  summary(path) {
+    const st = lstatSync17(path);
+    if (!st.isFile())
+      throw new ContractError("forbidden");
+    const cached = this.listed.get(path);
+    if (cached && cached.ino === st.ino && cached.size === st.size) {
+      cached.mtimeMs = st.mtimeMs;
+      return cached;
+    }
+    let summary2 = cached && cached.ino === st.ino && st.size >= cached.end ? cached.summary : emptySummary();
+    const lines = [];
+    const read2 = readLines(path, cached, (text2, pos) => {
+      const line = parseLine(text2, pos);
+      if (line)
+        lines.push(line);
+    });
+    if (read2.restarted)
+      summary2 = emptySummary();
+    for (const line of lines)
+      fold(summary2, line);
+    const listed = { path, ...read2, summary: summary2 };
+    this.listed.set(path, listed);
+    return listed;
   }
   find(id) {
-    return this.pending.get(id);
-  }
-  preview(item, known = {}) {
-    if (this.pending.has(item.id)) {
-      const cached = this.fieldBytes.get(item.id);
-      const bytes = (field) => known[field]?.bytes ?? cached?.[field] ?? Buffer.byteLength(item[field]);
-      const fields2 = {
-        text: bytes("text"),
-        args: bytes("args"),
-        name: bytes("name")
-      };
-      this.fieldBytes.set(item.id, fields2);
-      const size3 = fields2.text + fields2.args + fields2.name;
-      this.workingBytes += size3 - (this.workingSizes.get(item.id) ?? 0);
-      this.workingSizes.set(item.id, size3);
-      if (this.workingBytes > 2 * LIMITS.detailBytes)
-        throw new ContractError("capacity");
-    }
-    const clip = (field) => {
-      const value = item[field];
-      const prefix = part(known[field]?.head ?? value, 0);
-      return prefix.length < value.length ? prefix + PREVIEW_MARK : value;
-    };
-    const preview = { ...item, text: clip("text"), args: clip("args") };
-    const size2 = Buffer.byteLength(canonicalJson(preview, PREVIEW_BYTES));
-    this.bytes += size2 - (this.sizes.get(item.id) ?? 0);
-    this.sizes.set(item.id, size2);
-    const at = this.turn.items.findIndex((i) => i.id === item.id);
-    if (at < 0)
-      this.turn.items.push(preview);
-    else
-      this.turn.items[at] = preview;
-    while (this.bytes > PREVIEW_BYTES || this.turn.items.length > 128) {
-      if (this.turn.items.length <= 2)
-        throw new ContractError("oversize");
-      const [removed] = this.turn.items.splice(this.turn.items[0].role === "user" ? 1 : 0, 1);
-      this.bytes -= this.sizes.get(removed.id) ?? 0;
-      this.sizes.delete(removed.id);
-    }
-  }
-  complete(id) {
-    const item = this.pending.get(id);
-    if (!item)
-      return;
-    this.preview(item);
-    this.archive(item);
-    this.pending.delete(id);
-    this.fieldBytes.delete(id);
-    this.workingBytes -= this.workingSizes.get(id) ?? 0;
-    this.workingSizes.delete(id);
-  }
-  finish() {
-    for (const id of this.pending.keys())
-      this.complete(id);
-  }
-  archive(item) {
-    let text2 = 0, args = 0;
-    do {
-      let chars = 128 * 1024;
-      const fragment = { ...item, text: "", args: part(item.args, args) };
-      for (;; ) {
-        fragment.text = part(item.text, text2, chars);
-        try {
-          if (Buffer.byteLength(fragment.text) > 256 * 1024)
-            throw new ContractError("oversize");
-          canonicalJson(fragment, TRANSCRIPT_PAGE_BYTES - 4096);
-          break;
-        } catch (error) {
-          if (!(error instanceof ContractError) || error.code !== "oversize" || chars <= FIELD_CHARS)
-            throw error;
-          chars /= 2;
-        }
+    const known = [...this.listed.values()].find((listed) => listed.summary.id === id);
+    if (known)
+      try {
+        const listed = this.summary(known.path);
+        if (listed.summary.id === id && listed.summary.cwd === this.cwd)
+          return listed;
+      } catch {
+        this.listed.delete(known.path);
       }
-      const page = this.state.pages;
-      if (!Number.isSafeInteger(page + 1))
-        throw new ContractError("capacity");
-      this.write({ turnId: this.turn.id, page, items: [fragment] });
-      this.state.pages = page + 1;
-      text2 += fragment.text.length;
-      args += fragment.args.length;
-    } while (text2 < item.text.length || args < item.args.length);
+    return this.list().find((listed) => listed.summary.id === id);
   }
+  session(id) {
+    const listed = this.find(id);
+    if (!listed)
+      return;
+    let parsed = this.open.get(listed.path);
+    this.open.delete(listed.path);
+    parsed ??= new ParsedSession(listed.path);
+    parsed.refresh();
+    if (parsed.header?.id !== id)
+      throw new ContractError("corrupt-selected");
+    this.open.set(listed.path, parsed);
+    if (this.open.size > OPEN_SESSIONS)
+      this.open.delete(this.open.keys().next().value);
+    return parsed;
+  }
+  turn(session, entries2, secrets) {
+    const key2 = [
+      session.path,
+      entries2[0]?.id,
+      entries2.at(-1)?.id,
+      entries2.length,
+      createHash25("sha256").update(secrets.join("\x00")).digest("hex")
+    ].join("|");
+    const hit = this.built.get(key2);
+    this.built.delete(key2);
+    const turn = hit ?? listTurn(turnItems(entries2, secrets));
+    this.built.set(key2, turn);
+    if (this.built.size > BUILT_TURNS)
+      this.built.delete(this.built.keys().next().value);
+    return turn;
+  }
+  nativeRuns() {
+    const out = new Map;
+    for (const listed of this.list())
+      for (const run2 of listed.summary.runs)
+        if (!out.has(run2))
+          out.set(run2, listed.summary.id);
+    return out;
+  }
+}
+function summaryTitle(summary2) {
+  return summary2.name ?? summary2.firstUser ?? "Conversation";
 }
 
 // src/service/conversations.ts
-var TURN_BYTES = 384 * 1024;
-var META_BYTES = 64 * 1024;
-var SUMMARY_CACHE = 256;
+var META_BYTES2 = 64 * 1024;
+var PAGE = 50;
+var INDEXED_COMMANDS = 64;
+var COMMAND_STATES = 512;
+var PREVIEW_BYTES = 64 * 1024;
+var RECENT_PREVIEWS = 8;
+var PREVIEW_MARK = `
+[Preview truncated; the rest appears once it is written.]`;
+var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
 var OMITTED_FLAG = {
   "hidden-thinking": "thinking",
   binary: "media",
   unsupported: "other"
 };
+var LIVE = ["queued", "running"];
 function observedFile(path) {
   try {
-    const s = lstatSync17(path);
+    const s = lstatSync18(path);
     return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
@@ -25237,156 +25812,191 @@ function observedFile(path) {
   }
 }
 
-class ConversationCapture {
-  turn;
-  save;
+class LiveCapture {
   secrets;
-  transcript;
+  omitted = { thinking: false, media: false, other: false };
+  notice = "";
+  assistants = [];
+  tools = [];
   details = new Map;
-  messageText = new Map;
-  constructor(turn, save, secrets, transcript) {
-    this.turn = turn;
-    this.save = save;
+  blocks = new Map;
+  constructor(secrets) {
     this.secrets = secrets;
-    this.transcript = transcript;
   }
-  item(id, role2) {
-    if (this.transcript)
-      return this.transcript.item(id, role2);
-    let item = this.turn.items.find((i) => i.id === id);
-    if (!item) {
-      if (this.turn.items.length >= 256)
-        throw new ContractError("capacity");
-      item = { id, role: role2, text: "", name: "", args: "", error: false };
-      this.turn.items.push(item);
-      try {
-        canonicalJson(this.turn, TURN_BYTES - 2048);
-      } catch (error) {
-        this.turn.items.pop();
-        this.turn.notice = "Conversation capture limit exceeded.";
-        throw error;
-      }
-    }
-    return item;
+  bounded(value) {
+    return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
   }
-  update(item, field, value, maximum, known = { bytes: Buffer.byteLength(value), head: value }) {
-    const bytes = known.bytes;
-    if (this.transcript) {
-      if (bytes > LIMITS.detailBytes)
-        throw new ContractError("capacity");
-      item[field] = value;
-      this.transcript.preview(item, { [field]: known });
-      return;
+  tool(callId) {
+    let tool = this.tools.find((t) => t.id === callId);
+    if (!tool) {
+      tool = { id: callId, name: "", args: "", text: "", error: false };
+      this.tools.push(tool);
+      const stale = this.tools[this.tools.length - 1 - RECENT_PREVIEWS];
+      if (stale)
+        stale.args = stale.text = "";
     }
-    const before = item[field];
-    try {
-      if (bytes > maximum)
-        throw new ContractError("capacity");
-      item[field] = value;
-      canonicalJson(this.turn, TURN_BYTES - 2048);
-    } catch (error) {
-      item[field] = before;
-      this.turn.notice = "Conversation capture limit exceeded.";
-      throw error;
-    }
+    return tool;
   }
   accept(frame) {
     const e = frame.event;
-    if (e.kind === "detail-begin") {
-      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+    if (e.kind === "message-start" && e.role === "assistant") {
+      if (!this.assistants.some((a) => a.id === e.messageId)) {
+        this.assistants.push({ id: e.messageId, text: "" });
+        const stale = this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
+        if (stale)
+          stale.text = "";
+      }
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const tool = this.tool(e.callId);
+      tool.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      if (e.kind === "tool-end")
+        tool.error = e.isError;
+    } else if (e.kind === "detail-begin") {
+      const kind = e.descriptor.owner.kind;
+      if (kind === "context" || kind === "handoff")
         return;
       if (this.details.size >= 64)
-        throw new ContractError("capacity");
+        return;
       this.details.set(e.detailId, {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
-        text: "",
-        bytes: 0,
-        head: ""
+        text: ""
       });
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d)
         return;
       const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
-      d.text += added;
-      d.bytes += Buffer.byteLength(added);
-      d.head = previewHead(d.head, added);
-      if (d.bytes > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
-        throw new ContractError("capacity");
+      if (Buffer.byteLength(d.text) <= PREVIEW_BYTES)
+        d.text += added;
       const o = d.descriptor.owner;
-      if (o.kind === "message") {
-        const role2 = (this.transcript?.find(o.messageId) ?? this.turn.items.find((i) => i.id === o.messageId))?.role;
-        if (role2 === "assistant" && o.stage === "stream") {
-          this.messageText.set(o.blockId, {
-            messageId: o.messageId,
-            text: d.text,
-            bytes: d.bytes,
-            head: d.head
-          });
-          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
-          this.update(this.item(o.messageId, "assistant"), "text", blocks.length === 1 ? blocks[0].text : blocks.map((block) => block.text).join(""), 256 * 1024, {
-            bytes: blocks.reduce((size2, block) => size2 + block.bytes, 0),
-            head: blocks.reduce((head, block) => previewHead(head, block.head), "")
-          });
-        }
+      if (o.kind === "message" && o.stage === "stream") {
+        this.blocks.set(o.blockId, { messageId: o.messageId, text: d.text });
+        const message2 = this.assistants.find((a) => a.id === o.messageId);
+        if (message2)
+          message2.text = this.bounded([...this.blocks.values()].filter((b) => b.messageId === o.messageId).map((b) => b.text).join(""));
       } else if (o.kind === "message-final") {
-        const item = this.transcript?.find(o.messageId) ?? this.turn.items.find((i) => i.id === o.messageId);
-        if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024, d);
+        const message2 = this.assistants.find((a) => a.id === o.messageId);
+        if (message2)
+          message2.text = this.bounded(d.text);
       } else if (o.kind === "tool") {
-        const item = this.item(o.callId, "tool");
+        const tool = this.tool(o.callId);
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024, d);
+          tool.args = this.bounded(d.text);
         if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024, d);
+          tool.text = this.bounded(d.text);
       }
       if (e.kind === "detail-end")
         this.details.delete(e.detailId);
-    } else if (e.kind === "message-start" && e.role === "assistant") {
-      this.item(e.messageId, "assistant");
-    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
-      const item = this.item(e.callId, "tool");
-      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-end")
-        item.error = e.isError;
-    } else if (e.kind === "worker-failure")
-      this.turn.notice = `worker-failure: ${e.code}`;
-    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
-      this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    if ([...this.details.values()].reduce((size2, detail) => size2 + detail.bytes + detail.sanitizer.retainedBytes, 0) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES))
-      throw new ContractError("capacity");
-    if (!this.transcript)
-      canonicalJson(this.turn, TURN_BYTES);
-    if (e.kind === "message-end") {
-      for (const [id, block] of this.messageText)
+    } else if (e.kind === "message-end") {
+      for (const [id, block] of this.blocks)
         if (block.messageId === e.messageId)
-          this.messageText.delete(id);
-    }
-    if (e.kind === "message-end" || e.kind === "tool-end") {
-      this.transcript?.complete(e.kind === "message-end" ? e.messageId : e.callId);
-      this.save();
-    }
+          this.blocks.delete(id);
+    } else if (e.kind === "worker-failure")
+      this.notice = `worker-failure: ${e.code}`;
+    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.omitted[OMITTED_FLAG[e.block.reason]] = true;
   }
+  extend(items) {
+    const out = items.map((item) => ({ ...item }));
+    const written = out.filter((i) => i.role === "assistant").length;
+    const calls = out.filter((i) => i.role === "tool");
+    const results = calls.filter((i) => i.text || i.error).length;
+    let stable = out.length;
+    this.tools.forEach((tool, index) => {
+      if (index < results)
+        return;
+      const item = index < calls.length ? calls[index] : (() => {
+        const added = {
+          id: tool.id,
+          role: "tool",
+          name: tool.name,
+          args: tool.args,
+          text: "",
+          error: false
+        };
+        out.push(added);
+        return added;
+      })();
+      item.text = tool.text;
+      item.error = tool.error;
+      stable = Math.min(stable, out.indexOf(item));
+    });
+    this.assistants.slice(written).forEach((message2) => {
+      stable = Math.min(stable, out.length);
+      out.push({
+        id: message2.id,
+        role: "assistant",
+        text: message2.text,
+        name: "",
+        args: "",
+        error: false
+      });
+    });
+    return { items: out, stable };
+  }
+}
+function decodeAccepted(value) {
+  const o = closed(value, ["command", "at", "session", "parent", "offset"]);
+  const command = decodeWorkbenchCommand(o.command);
+  if (command.kind !== "send")
+    throw new ContractError("corrupt-selected");
+  return {
+    command,
+    at: integer(o.at, 0),
+    session: decodeSessionId(o.session),
+    parent: o.parent === null ? null : decodeEntryId(o.parent),
+    offset: integer(o.offset, 0)
+  };
+}
+var statuses2 = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+function decodeState2(value) {
+  const o = closed(value, ["status", "notice", "omitted", "user"]);
+  const omitted2 = closed(o.omitted, ["thinking", "media", "other"]);
+  return {
+    status: oneOf(o.status, statuses2),
+    notice: text(o.notice, 4096),
+    omitted: {
+      thinking: omitted2.thinking === true,
+      media: omitted2.media === true,
+      other: omitted2.other === true
+    },
+    user: o.user === null ? null : decodeEntryId(o.user)
+  };
 }
 
 class Conversations {
   o;
   root;
-  history;
+  legacy;
   cwd;
+  sessions;
   active = new Map;
-  summaries = new Map;
-  steps = new ConversationSteps((turnId, page) => this.page(turnId, page));
+  knownSecrets;
+  states = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join28(o.coordination.directory, "conversations-v1");
+    this.root = join31(o.coordination.directory, "conversation-commands-v1");
+    this.legacy = join31(o.coordination.directory, "conversations-v1");
     this.cwd = realpathSync10(o.cwd);
-    const sessions = join28(this.root, "sessions");
-    this.history = new ConversationHistory(sessions, () => {
-      this.o.owner.lease.assert();
-      return this.files.directory(sessions);
-    }, (id) => this.retainedSummary(id));
+    this.sessions = new PiSessions(o.sessionDir ?? sessionDirectory(this.cwd, o.agentDir), this.cwd);
+  }
+  readSecrets() {
+    try {
+      this.knownSecrets = this.o.secrets();
+    } catch (error) {
+      if (!this.knownSecrets)
+        throw error instanceof ContractError ? error : new ContractError("unavailable");
+    }
+    return this.knownSecrets;
   }
   currentDirectory() {
     const current2 = resolveWorkspace(this.o.cwd);
@@ -25395,20 +26005,17 @@ class Conversations {
   get files() {
     return this.o.coordination.files;
   }
-  path(id, name) {
-    return join28(this.root, "turns", decodeId(id), name);
+  path(commandId, name) {
+    return join31(this.root, "commands", decodeId(commandId), name);
   }
-  identityPath(id) {
-    return join28(this.root, "identities", `${decodeId(id)}.json`);
+  indexPath(id) {
+    return join31(this.root, "sessions", `${decodeSessionId(id)}.json`);
   }
-  metadataPath(id) {
-    return join28(this.root, "sessions", `${decodeId(id)}.json`);
-  }
-  read(path, max) {
+  read(path, max = META_BYTES2) {
     const value = this.files.read(path, max);
     return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
   }
-  write(path, value, max, expected) {
+  write(path, value, max = META_BYTES2, expected) {
     this.o.owner.lease.assert();
     const source = canonicalJson(value, max);
     try {
@@ -25418,91 +26025,50 @@ class Conversations {
       throw error;
     }
   }
-  metadata(id) {
-    const value = this.read(this.metadataPath(id), META_BYTES);
-    if (value === undefined)
-      return null;
-    const identity = closed(this.read(this.identityPath(id), META_BYTES), [
+  index(id) {
+    const file = this.files.read(this.indexPath(id), META_BYTES2);
+    if (!file)
+      return { commands: [] };
+    const o = closed(parseWireJson(file.bytes.toString("utf8"), META_BYTES2), [
       "schema",
       "id",
-      "cwd"
+      "commands"
     ]);
-    if (identity.schema !== "cadence-conversation/1" || identity.id !== id || identity.cwd !== this.cwd)
+    if (o.schema !== "cadence-session-commands/1" || o.id !== id)
       throw new ContractError("corrupt-selected");
-    const indexed = value !== null && typeof value === "object" && Object.hasOwn(value, "count");
-    const m = closed(value, [
-      "id",
-      "title",
-      "turns",
-      "checkpoint",
-      ...indexed ? ["head", "count"] : []
-    ]);
-    const turns = list(m.turns, 1000, decodeId);
-    const count2 = indexed ? integer(m.count, Math.max(1, turns.length)) : turns.length;
-    const head = indexed ? decodeId(m.head) : turns.at(-1);
-    if (!head || !count2 || new Set(turns).size !== turns.length || m.id !== id)
-      throw new ContractError("corrupt-selected");
-    const meta = {
-      id,
-      title: text(m.title, 512, true),
-      turns,
-      head,
-      count: count2,
-      checkpoint: m.checkpoint === null ? null : decodeId(m.checkpoint)
-    };
-    if (this.turnAt(meta, count2 - 1) !== head || indexed && this.position(meta, head) !== count2 - 1 || meta.checkpoint && !this.contains(meta, meta.checkpoint))
-      throw new ContractError("corrupt-selected");
-    return meta;
+    return { file, commands: list(o.commands, INDEXED_COMMANDS, decodeId) };
   }
-  slotPath(id, ordinal) {
-    return join28(this.root, "indices", decodeId(id), `${integer(ordinal, 0)}.json`);
+  accepted(commandId) {
+    const value = this.read(this.path(commandId, "accepted.json"));
+    return value === undefined ? undefined : decodeAccepted(value);
   }
-  turnAt(meta, ordinal) {
-    if (ordinal < 0 || ordinal >= meta.count)
-      throw new ContractError("stale");
-    if (ordinal < meta.turns.length)
-      return meta.turns[ordinal];
-    const row = closed(this.read(this.slotPath(meta.id, ordinal), META_BYTES), [
-      "conversationId",
-      "ordinal",
-      "turnId"
-    ]);
-    if (row.conversationId !== meta.id || row.ordinal !== ordinal)
-      throw new ContractError("corrupt-selected");
-    return decodeId(row.turnId);
-  }
-  position(meta, turnId) {
-    const legacy = meta.turns.indexOf(turnId);
-    if (legacy >= 0)
-      return legacy;
-    const value = this.read(this.path(turnId, "position.json"), META_BYTES);
+  state(commandId) {
+    const live2 = this.active.get(commandId);
+    if (live2)
+      return live2.state;
+    const path = this.path(commandId, "state.json");
+    const key2 = observedFile(path);
+    const hit = this.states.get(commandId);
+    if (hit?.key === key2)
+      return hit.state;
+    const value = this.read(path);
     if (value === undefined)
-      return -1;
-    const row = closed(value, ["conversationId", "ordinal", "turnId"]);
-    if (row.turnId !== turnId)
       throw new ContractError("corrupt-selected");
-    const ordinal = integer(row.ordinal, 0);
-    if (row.conversationId !== meta.id || ordinal >= meta.count)
-      return -1;
-    return this.turnAt(meta, ordinal) === turnId ? ordinal : -1;
+    const decoded2 = decodeState2(value);
+    const state = LIVE.includes(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
+    if (this.states.size >= COMMAND_STATES)
+      this.states.clear();
+    this.states.set(commandId, { key: key2, state });
+    return state;
   }
-  contains(meta, turnId) {
-    return this.position(meta, turnId) >= 0;
-  }
-  turn(id) {
-    const live2 = this.active.get(id);
-    const turn = live2?.turn ?? decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
-    if (turn.id !== id)
-      throw new ContractError("corrupt-selected");
-    return !live2 && ["queued", "running"].includes(turn.status) ? {
-      ...turn,
-      status: "unknown",
-      notice: "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry."
-    } : turn;
+  liveFor(id) {
+    for (const live2 of this.active.values())
+      if (live2.accepted.session === id)
+        return live2;
+    return;
   }
   controlBound(id) {
-    const path = join28(this.root, "control-links", `${decodeId(id)}.json`);
-    const value = this.read(path, META_BYTES);
+    const value = this.read(this.controlPath(id));
     if (value === undefined)
       return false;
     const record2 = closed(value, ["schema", "conversationId"]);
@@ -25510,173 +26076,308 @@ class Conversations {
       throw new ContractError("corrupt-selected");
     return true;
   }
+  controlPath(id) {
+    return join31(this.legacy, "control-links", `${decodeSessionId(id)}.json`);
+  }
   controlKey(id) {
-    return observedFile(join28(this.root, "control-links", `${decodeId(id)}.json`));
+    return observedFile(this.controlPath(id));
   }
   bindControl(id) {
     if (!this.controlBound(id))
-      this.write(join28(this.root, "control-links", `${decodeId(id)}.json`), { schema: "cadence-conversation-control/1", conversationId: id }, META_BYTES);
-  }
-  hasTurn(id, turnId) {
-    const meta = this.metadata(id);
-    return !!meta && this.contains(meta, turnId);
-  }
-  summary(meta) {
-    const head = meta.head, turn = this.turn(head);
-    const accepted2 = closed(this.read(this.path(head, "accepted.json"), META_BYTES), ["command", "at"]);
-    const command = decodeWorkbenchCommand(accepted2.command);
-    if (command.kind !== "send" || command.commandId !== head || command.conversationId !== meta.id || command.model.epoch !== turn.epoch)
-      throw new ContractError("corrupt-selected");
-    return {
-      id: meta.id,
-      title: meta.title,
-      head,
-      status: turn.status,
-      updatedAt: integer(accepted2.at, 0)
-    };
-  }
-  headKey(head, id, count2) {
-    return [
-      this.path(head, "turn.json"),
-      this.path(head, "accepted.json"),
-      this.path(head, "position.json"),
-      this.slotPath(id, count2 - 1)
-    ].map(observedFile).join("|");
-  }
-  retainedSummary(id) {
-    return this.retained(id).summary;
-  }
-  retained(id) {
-    const base = [this.metadataPath(id), this.identityPath(id)].map(observedFile).join("|");
-    const hit = this.summaries.get(id);
-    if (hit && !this.active.has(hit.summary.head) && hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`)
-      return { summary: { ...hit.summary }, count: hit.count };
-    const meta = this.metadata(id);
-    if (!meta)
-      throw new ContractError("corrupt-selected");
-    const head = meta.head;
-    const key2 = `${base}|${this.headKey(head, id, meta.count)}`;
-    const summary2 = this.summary(meta);
-    this.summaries.delete(id);
-    if (!this.active.has(head) && !["queued", "running"].includes(summary2.status)) {
-      if (this.summaries.size >= SUMMARY_CACHE)
-        this.summaries.delete(this.summaries.keys().next().value);
-      this.summaries.set(id, {
-        key: key2,
-        summary: { ...summary2 },
-        count: meta.count
+      this.write(this.controlPath(id), {
+        schema: "cadence-conversation-control/1",
+        conversationId: id
       });
-    }
-    return { summary: summary2, count: meta.count };
   }
-  liveSummary(live2) {
+  hasCommand(id, commandId) {
+    return this.accepted(commandId)?.session === id;
+  }
+  latestCommand(id) {
+    this.o.owner.lease.assert();
+    const commandId = this.index(id).commands.at(-1);
+    return commandId ? { commandId, status: this.state(commandId).status } : null;
+  }
+  nativeLinks(runIds) {
+    if (!runIds.length)
+      return [];
+    const recorded = this.sessions.nativeRuns();
+    return runIds.flatMap((runId) => {
+      const conversationId = recorded.get(runId);
+      return conversationId ? [{ runId, conversationId }] : [];
+    });
+  }
+  summary(id, live2) {
+    const listed = this.sessions.find(id);
+    const secrets = this.readSecrets();
+    if (!listed) {
+      if (!live2)
+        return null;
+      return {
+        id,
+        title: live2.title,
+        leaf: null,
+        status: live2.state.status,
+        updatedAt: live2.accepted.at,
+        origin: "webui",
+        live: { commandId: live2.commandId, epoch: live2.epoch }
+      };
+    }
+    const s = listed.summary;
     return {
-      id: live2.conversationId,
-      title: live2.title,
-      head: live2.turn.id,
-      status: live2.turn.status,
-      updatedAt: live2.acceptedAt
+      id,
+      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") || "Conversation", 512, true),
+      leaf: s.leaf,
+      status: live2?.state.status ?? s.stop?.status ?? "completed",
+      updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
+      origin: s.webui ? "webui" : "terminal",
+      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {}
     };
   }
-  list(after = null, scan) {
+  list(after = null) {
     this.o.owner.lease.assert();
-    return this.history.read(after, scan);
+    const listed = this.sessions.list();
+    let start = 0;
+    if (after) {
+      start = listed.findIndex((l) => Math.trunc(l.mtimeMs) < after.updatedAt || Math.trunc(l.mtimeMs) === after.updatedAt && l.summary.id > after.id);
+      if (start < 0)
+        start = listed.length;
+    }
+    const page = listed.slice(start, start + PAGE);
+    const entries2 = page.flatMap((l) => {
+      const summary2 = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      return summary2 ? [summary2] : [];
+    });
+    const last = page.at(-1);
+    return {
+      kind: "conversations",
+      entries: entries2,
+      next: last && start + PAGE < listed.length ? { id: last.summary.id, updatedAt: Math.trunc(last.mtimeMs) } : null
+    };
   }
   activeConversations() {
     this.o.owner.lease.assert();
     return {
       kind: "conversation-active",
-      entries: [...this.active.values()].map((live2) => this.liveSummary(live2))
+      entries: [...this.active.values()].flatMap((live2) => {
+        const summary2 = this.summary(live2.accepted.session, live2);
+        return summary2 ? [summary2] : [];
+      })
     };
-  }
-  closeReads() {
-    this.history.close();
   }
   assertSettled() {
     this.o.owner.lease.assert();
-    const path = join28(this.root, "sessions");
-    if (!this.files.directory(path))
+    const sessions = join31(this.root, "sessions");
+    if (!this.files.directory(sessions))
       return;
-    const dir = opendirSync10(path);
+    const dir = opendirSync10(sessions);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isFile() || !e.name.endsWith(".json"))
           throw new ContractError("corrupt-selected");
-        if (this.retainedSummary(decodeId(e.name.slice(0, -5))).status === "unknown")
+        const latest = this.index(decodeSessionId(e.name.slice(0, -5))).commands.at(-1);
+        if (latest && this.state(latest).status === "unknown")
           throw new ContractError("quarantine");
       }
     } finally {
       dir.closeSync();
     }
   }
-  conversation(id) {
+  branch(id, leaf, exact) {
+    const session = this.sessions.session(id);
+    const running = this.liveFor(id);
+    let view;
+    if (exact || leaf !== null) {
+      if (leaf !== null && !session?.byId.has(leaf))
+        throw new ContractError("stale");
+      view = leaf;
+    } else
+      view = running ? running.accepted.parent : session?.current() ?? null;
+    const turns = session ? turnSpans(session.branch(view)) : [];
+    const live2 = running && running.accepted.parent === view ? running : undefined;
+    return { session, leaf: view, turns, live: live2 };
+  }
+  attempt(id, leaf) {
+    const commandId = this.index(id).commands.at(-1);
+    if (!commandId || this.active.has(commandId))
+      return null;
+    const accepted2 = this.accepted(commandId);
+    const state = this.state(commandId);
+    if (!accepted2 || state.user !== null || accepted2.parent !== leaf)
+      return null;
+    if (state.status === "unknown") {
+      const session = this.sessions.session(id);
+      if (session?.chain(accepted2.parent, accepted2.offset, accepted2.command.text).length)
+        return null;
+    }
+    return {
+      commandId,
+      text: accepted2.command.text,
+      status: state.status,
+      notice: state.notice
+    };
+  }
+  conversation(id, leaf, known) {
     this.o.owner.lease.assert();
-    if (observedFile(this.metadataPath(id)) === "absent") {
-      const live2 = [...this.active.values()].find((turn) => turn.conversationId === id);
+    const view = this.branch(id, leaf, false);
+    const summary2 = this.summary(id, view.live ?? this.liveFor(id));
+    const listed = this.sessions.find(id);
+    return {
+      kind: "conversation",
+      summary: summary2,
+      leaf: view.leaf,
+      continues: known === null || known === view.leaf || !!view.session?.contains(view.leaf, known),
+      turns: summary2 ? view.turns.length + (view.live ? 1 : 0) : 0,
+      branches: view.session?.leaves() ?? 0,
+      runs: listed?.summary.runs ?? [],
+      attempt: view.live ? null : this.attempt(id, view.leaf)
+    };
+  }
+  tree(id, leaf) {
+    this.o.owner.lease.assert();
+    const view = this.branch(id, leaf, false);
+    return {
+      kind: "conversation-tree",
+      conversationId: id,
+      ...view.session?.tree(view.leaf, this.readSecrets()) ?? {
+        nodes: [],
+        truncated: false
+      }
+    };
+  }
+  overlay(id, session) {
+    const out = new Map;
+    for (const commandId of this.index(id).commands) {
+      if (this.active.has(commandId))
+        continue;
+      const state = this.state(commandId);
+      if (state.status === "completed" && !state.notice)
+        continue;
+      let user = state.user;
+      if (user === null && state.status === "unknown" && session) {
+        const accepted2 = this.accepted(commandId);
+        user = accepted2 ? session.chain(accepted2.parent, accepted2.offset, accepted2.command.text)[0]?.id ?? null : null;
+      }
+      if (user !== null)
+        out.set(user, state);
+    }
+    return out;
+  }
+  built(id, leaf, ordinal) {
+    const view = this.branch(id, leaf, true);
+    const secrets = this.readSecrets();
+    if (ordinal < view.turns.length && view.session) {
+      const turn2 = this.sessions.turn(view.session, view.turns[ordinal], secrets);
+      const recorded = this.overlay(id, view.session).get(turn2.id);
       return {
-        kind: "conversation",
-        summary: live2 ? this.liveSummary(live2) : null,
-        turns: 0
+        turn: recorded ? {
+          ...turn2,
+          status: turn2.status === "completed" ? recorded.status : turn2.status,
+          notice: turn2.notice || recorded.notice,
+          omitted: {
+            thinking: turn2.omitted.thinking || recorded.omitted.thinking,
+            media: turn2.omitted.media || recorded.omitted.media,
+            other: turn2.omitted.other || recorded.omitted.other
+          }
+        } : turn2,
+        stable: turn2.steps.length
       };
     }
-    const { summary: summary2, count: count2 } = this.retained(id);
-    return { kind: "conversation", summary: summary2, turns: count2 };
-  }
-  turnSteps(id, ordinal, before) {
-    this.o.owner.lease.assert();
-    const meta = this.metadata(id);
-    if (!meta)
+    const live2 = view.live;
+    if (!live2 || ordinal !== view.turns.length)
       throw new ContractError("stale");
-    const turn = this.turn(this.turnAt(meta, ordinal));
-    const { steps, stable } = this.steps.list(turn);
-    const end = before ?? steps.length;
-    if (end > steps.length)
+    const chain = view.session ? view.session.chain(live2.accepted.parent, live2.accepted.offset, live2.accepted.command.text) : [];
+    const written = turnItems(chain, secrets);
+    const items = chain.length ? written.items : [
+      {
+        id: "user",
+        role: "user",
+        text: live2.accepted.command.text,
+        name: "",
+        args: "",
+        error: false
+      }
+    ];
+    const extended = live2.capture?.extend(items) ?? {
+      items,
+      stable: items.length
+    };
+    const omitted2 = live2.capture?.omitted;
+    const turn = listTurn({
+      id: chain[0]?.id ?? live2.commandId,
+      entry: null,
+      at: live2.accepted.at,
+      status: live2.state.status,
+      notice: live2.capture?.notice ?? "",
+      omitted: {
+        thinking: written.omitted.thinking || !!omitted2?.thinking,
+        media: written.omitted.media || !!omitted2?.media,
+        other: written.omitted.other || !!omitted2?.other
+      },
+      items: extended.items
+    });
+    return { turn, stable: extended.stable };
+  }
+  turnSteps(id, leaf, ordinal, before) {
+    this.o.owner.lease.assert();
+    const { turn, stable } = this.built(id, leaf, ordinal);
+    const end = before ?? turn.steps.length;
+    if (end > turn.steps.length)
       throw new ContractError("stale");
     const start = Math.max(0, end - STEP_READ);
     return {
       kind: "conversation-turn",
       conversationId: id,
+      leaf,
       ordinal,
       turn: {
         id: turn.id,
-        epoch: turn.epoch,
         status: turn.status,
         notice: turn.notice,
         omitted: { ...turn.omitted },
-        steps: steps.length,
-        stable
+        steps: turn.steps.length,
+        stable,
+        entry: turn.entry,
+        at: turn.at
       },
       start,
-      steps: steps.slice(start, end).map((row) => row.step)
+      steps: turn.steps.slice(start, end)
     };
   }
-  step(id, turnId, step, part2) {
+  step(id, leaf, turnId, step, part) {
     this.o.owner.lease.assert();
-    if (!this.hasTurn(id, turnId))
-      throw new ContractError("invalid");
+    const view = this.branch(id, leaf, true);
+    const ordinal = view.turns.findIndex((turn2) => turn2[0]?.id === turnId);
+    const { turn } = this.built(id, leaf, ordinal >= 0 ? ordinal : view.turns.length);
+    if (turn.id !== turnId)
+      throw new ContractError("stale");
+    const item = turn.parts[step]?.[part];
+    if (!item || part >= turn.steps[step].parts)
+      throw new ContractError("stale");
     return {
       kind: "conversation-step",
       conversationId: id,
+      leaf,
       turnId,
       step,
-      part: part2,
-      item: { ...this.steps.detail(this.turn(turnId), step, part2) }
+      part,
+      item
     };
   }
-  page(turnId, page) {
-    const value = this.read(this.path(turnId, `transcript/${integer(page, 0)}.json`), TRANSCRIPT_PAGE_BYTES);
+  origin(taskId2) {
+    this.o.owner.lease.assert();
+    const value = this.read(join31(this.legacy, "task-links", `${decodeId(taskId2)}.json`));
     if (value === undefined)
-      throw new ContractError("corrupt-selected");
-    const record2 = closed(value, ["turnId", "page", "items"]);
-    const items = list(record2.items, 1, decodeChatItem);
-    if (record2.turnId !== turnId || record2.page !== page || !items.length)
-      throw new ContractError("corrupt-selected");
-    return items[0];
+      return { kind: "task-origin", taskId: taskId2, conversationId: null };
+    const row = closed(value, ["conversationId"]);
+    return {
+      kind: "task-origin",
+      taskId: taskId2,
+      conversationId: decodeSessionId(row.conversationId)
+    };
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
-    const meta = this.metadata(conversationId);
-    return this.active.has(commandId) || this.files.directory(dirname19(this.path(commandId, "accepted.json"))) || !!meta && this.contains(meta, commandId) || !meta && !!this.files.read(this.identityPath(conversationId), META_BYTES);
+    return this.active.has(commandId) || this.files.directory(dirname20(this.path(commandId, "accepted.json"))) || this.index(conversationId).commands.includes(commandId);
   }
   command(input, reply) {
     return {
@@ -25686,11 +26387,10 @@ class Conversations {
   }
   receipt(input, reply = false) {
     this.o.owner.lease.assert();
-    const prior = this.read(this.path(input.commandId, "accepted.json"), META_BYTES);
-    if (prior === undefined)
+    const prior = this.accepted(input.commandId);
+    if (!prior)
       return;
-    const saved = closed(prior, ["command", "at"]);
-    if (canonicalJson(saved.command) !== canonicalJson(this.command(input, reply)))
+    if (canonicalJson(prior.command) !== canonicalJson(this.command(input, reply)))
       throw new ContractError("conflict");
     return { kind: "accepted", commandId: input.commandId };
   }
@@ -25700,7 +26400,7 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname19(this.path(input.commandId, "accepted.json"))))
+    if (this.files.directory(dirname20(this.path(input.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -25711,85 +26411,59 @@ class Conversations {
       this.o.models.assertCurrent(choice.selected);
     if (!this.currentDirectory())
       throw new ContractError("stale");
-    const beforeMeta = this.files.read(this.metadataPath(input.conversationId), META_BYTES);
-    const meta = this.metadata(input.conversationId);
-    this.files.assert(this.metadataPath(input.conversationId), beforeMeta, META_BYTES);
-    if (!meta && this.files.read(this.identityPath(input.conversationId), META_BYTES))
-      throw new ContractError("corrupt-selected");
-    if ((meta?.head ?? null) !== input.head)
-      throw new ContractError("stale");
-    if (meta && this.turn(input.head).status !== "completed" && (!control || ["queued", "running", "unknown"].includes(this.turn(input.head).status)))
+    if (this.liveFor(input.conversationId))
       throw new ContractError("conflict");
-    if (this.active.size >= 8 || meta && !Number.isSafeInteger(meta.count + 1))
+    const index = this.index(input.conversationId);
+    const session = this.sessions.session(input.conversationId);
+    if (input.head !== null && !session?.byId.has(input.head))
+      throw new ContractError("stale");
+    if (this.active.size >= 8)
       throw new ContractError("capacity");
     if (!input.text.trim())
       throw new ContractError("invalid");
     const space = statfsSync2(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
-    const turn = {
-      id: input.commandId,
-      epoch: input.model.epoch,
-      status: "queued",
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      items: [
-        {
-          id: "user",
-          role: "user",
-          text: command.text,
-          name: "",
-          args: "",
-          error: false
-        }
-      ]
+    const listed = session ? this.sessions.find(input.conversationId) : undefined;
+    const accepted2 = {
+      command,
+      at: Date.now(),
+      session: input.conversationId,
+      parent: input.head,
+      offset: session?.read?.size ?? 0
     };
-    const next = meta ?? {
-      id: input.conversationId,
-      title: [...command.text.trim()].slice(0, 100).join("") || "Conversation",
-      turns: [],
-      head: turn.id,
-      count: 0,
-      checkpoint: null
-    };
-    const previous = next.checkpoint ? this.path(next.checkpoint, "context.json") : null;
-    const previousFile = previous ? this.files.read(previous, CONTEXT_BYTES) : undefined;
-    if (previous && !previousFile)
-      throw new ContractError("corrupt-selected");
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve10) => {
-      begin = resolve10;
+    const ready2 = new Promise((resolve11) => {
+      begin = resolve11;
     });
-    const original = ready2.then(() => this.run(command, turn, previous, previousFile, next, abort, control));
     const live2 = {
-      turn,
+      accepted: accepted2,
+      commandId: input.commandId,
+      epoch: input.model.epoch,
+      title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
+      state: {
+        status: "queued",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        user: null
+      },
+      stateFile: null,
+      capture: null,
       abort,
-      original,
-      conversationId: next.id,
-      title: next.title,
-      acceptedAt: Date.now(),
-      turnFile: null,
-      metaFile: null
+      original: ready2.then(() => this.run(live2, control))
     };
     beforeAccept?.();
-    this.active.set(turn.id, live2);
-    this.o.owner.trackConversation(original, () => abort.abort());
+    this.active.set(input.commandId, live2);
+    this.o.owner.trackConversation(live2.original, () => abort.abort());
     try {
-      if (!meta)
-        this.write(this.identityPath(next.id), { schema: "cadence-conversation/1", id: next.id, cwd: this.cwd }, META_BYTES);
-      this.write(this.path(turn.id, "accepted.json"), { command, at: live2.acceptedAt }, META_BYTES);
-      live2.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES);
-      const position2 = {
-        conversationId: next.id,
-        ordinal: next.count,
-        turnId: turn.id
-      };
-      this.write(this.slotPath(next.id, next.count), position2, META_BYTES);
-      this.write(this.path(turn.id, "position.json"), position2, META_BYTES);
-      next.head = turn.id;
-      next.count++;
-      live2.metaFile = this.write(this.metadataPath(next.id), next, META_BYTES, beforeMeta);
+      this.write(this.path(input.commandId, "accepted.json"), accepted2);
+      live2.stateFile = this.write(this.path(input.commandId, "state.json"), live2.state);
+      this.write(this.indexPath(input.conversationId), {
+        schema: "cadence-session-commands/1",
+        id: input.conversationId,
+        commands: [...index.commands, input.commandId].slice(-INDEXED_COMMANDS)
+      }, META_BYTES2, index.file);
       control?.accept();
     } catch (error) {
       abort.abort();
@@ -25797,38 +26471,23 @@ class Conversations {
       throw error;
     }
     begin();
-    return { kind: "accepted", commandId: turn.id };
-  }
-  origin(taskId2) {
-    this.o.owner.lease.assert();
-    const value = this.read(join28(this.root, "task-links", `${decodeId(taskId2)}.json`), META_BYTES);
-    if (value === undefined)
-      return { kind: "task-origin", taskId: taskId2, conversationId: null };
-    const row = closed(value, ["conversationId"]);
-    return {
-      kind: "task-origin",
-      taskId: taskId2,
-      conversationId: decodeId(row.conversationId)
-    };
+    return { kind: "accepted", commandId: input.commandId };
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
     const live2 = this.active.get(turnId);
     if (live2) {
-      if (live2.conversationId !== id || live2.turn.epoch !== epoch)
+      if (live2.accepted.session !== id || live2.epoch !== epoch)
         throw new ContractError("stale");
       live2.abort.abort();
       return;
     }
-    const meta = this.metadata(id);
-    if (!meta || !this.contains(meta, turnId))
+    if (!this.hasCommand(id, turnId))
       throw new ContractError("invalid");
-    if (this.turn(turnId).epoch !== epoch)
-      throw new ContractError("stale");
-    this.active.get(turnId)?.abort.abort();
   }
-  async run(command, turn, previous, previousFile, meta, abort, control) {
-    let transcript;
+  async run(live2, control) {
+    const { accepted: accepted2, abort, state } = live2;
+    const commandId = live2.commandId;
     let barrier;
     let authSettled;
     let uncertain = false;
@@ -25848,42 +26507,35 @@ class Conversations {
         omissions: ["gap"]
       }
     };
-    const live2 = this.active.get(turn.id);
     const save = () => {
-      if (!live2?.turnFile)
+      if (!live2.stateFile)
         throw new ContractError("corrupt-selected");
-      live2.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES, live2.turnFile);
+      live2.stateFile = this.write(this.path(commandId, "state.json"), state, META_BYTES2, live2.stateFile);
     };
-    const current2 = () => {
-      if (abort.signal.aborted || this.o.owner.state !== "idle" || !this.currentDirectory())
-        return false;
-      if (previous)
-        this.files.assert(previous, previousFile, CONTEXT_BYTES);
-      return true;
-    };
+    const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory();
     try {
       if (!current2())
         throw new ContractError("stale");
       if (control?.reply) {
-        turn.status = "completed";
-        turn.notice = control.reply;
+        state.status = "completed";
+        state.notice = control.reply;
         return { status: "settled" };
       }
       if (!control) {
-        barrier = await this.o.gate.acquire(turn.id, abort.signal);
+        barrier = await this.o.gate.acquire(commandId, abort.signal);
         barrier.assertHeld();
       }
       if (!current2())
         throw new ContractError("stale");
       const choice = this.o.choice.snapshot(), selected2 = choice.selected;
-      if (!selected2 || command.model.epoch !== choice.version.epoch || command.model.configRev !== choice.version.configRev || command.model.catalogId !== choice.version.catalogId)
+      if (!selected2 || accepted2.command.model.epoch !== choice.version.epoch || accepted2.command.model.configRev !== choice.version.configRev || accepted2.command.model.catalogId !== choice.version.catalogId)
         throw new ContractError("stale");
       const request3 = decodeWorkerPublicRequest({
         protocol: 2,
-        taskId: meta.id,
+        taskId: randomUUID19(),
         taskKind: control ? "research" : "code",
-        runId: turn.id,
-        childRunId: randomUUID20(),
+        runId: commandId,
+        childRunId: randomUUID19(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -25893,62 +26545,51 @@ class Conversations {
         },
         context: "",
         instructions: control?.instructions ?? "Ordinary conversation.",
-        prompt: command.text,
+        prompt: accepted2.command.text,
         handoff: { graphRevision: 1, inputs: [] }
       });
       const auth = this.o.models.prepareTracked({
         request: request3,
-        operationId: randomUUID20(),
-        epoch: turn.epoch,
+        operationId: randomUUID19(),
+        epoch: live2.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
         current: current2,
         journal: {
-          preparation: (value) => this.write(this.path(turn.id, "auth-intent.json"), value, META_BYTES),
-          settlement: (value) => this.write(this.path(turn.id, "auth-settled.json"), value, META_BYTES)
+          preparation: (value) => this.write(this.path(commandId, "auth-intent.json"), value),
+          settlement: (value) => this.write(this.path(commandId, "auth-settled.json"), value)
         }
       });
       authSettled = auth.settled;
       const prepared = await auth.result;
       if (prepared.status !== "prepared" || !current2())
         throw new ContractError("auth-unavailable");
-      turn.status = "running";
+      state.status = "running";
       save();
-      this.write(this.path(turn.id, "launch.json"), { epoch: turn.epoch, childRunId: request3.childRunId }, META_BYTES);
-      let credentials = [];
-      let checkpoint = false, contextCount = 0;
-      let contextHead = null;
-      transcript = new ConversationTranscript(turn, (page) => {
-        const space = statfsSync2(this.o.coordination.directory);
-        if (space.bavail * space.bsize - TRANSCRIPT_PAGE_BYTES < LIMITS.freeSpaceFloorBytes)
-          throw new ContractError("capacity");
-        this.write(this.path(turn.id, `transcript/${page.page}.json`), page, TRANSCRIPT_PAGE_BYTES);
+      this.write(this.path(commandId, "launch.json"), {
+        epoch: live2.epoch,
+        childRunId: request3.childRunId
       });
-      const capture = new ConversationCapture(turn, save, () => [...this.o.secrets(), ...credentials], transcript);
+      let credentials = [];
+      const capture = new LiveCapture(() => [
+        ...this.readSecrets(),
+        ...credentials
+      ]);
+      live2.capture = capture;
+      const existing = this.sessions.find(accepted2.session);
       const running = Promise.resolve().then(() => launchConversation(prepared.prepared, {
-        previous,
+        session: {
+          id: accepted2.session,
+          dir: this.sessions.directory,
+          file: existing?.path ?? null,
+          head: accepted2.parent
+        },
         agentDir: this.o.agentDir,
         ...control ? { coordinator: true } : {}
       }, abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
-        onContext: (message) => {
-          const space = statfsSync2(this.o.coordination.directory);
-          if (space.bavail * space.bsize - CONTEXT_RECORD_BYTES < LIMITS.freeSpaceFloorBytes)
-            throw new ContractError("capacity");
-          const file = this.write(this.path(turn.id, `context-${contextCount}.json`), {
-            schema: "cadence-conversation-message/1",
-            index: contextCount,
-            previous: contextHead,
-            message
-          }, CONTEXT_RECORD_BYTES);
-          contextHead = file.identity;
-          contextCount++;
-        },
-        onContextEnd: () => {
-          checkpoint = true;
-        },
         maySignal: () => {
           try {
             this.o.owner.lease.assert();
@@ -25969,39 +26610,29 @@ class Conversations {
       this.o.owner.trackConversationProcess(tracked, () => abort.abort());
       const result = await running;
       uncertain = !result.closed;
-      turn.status = result.outcome;
-      if (result.outcome === "completed") {
-        if (!checkpoint)
-          throw new ContractError("corrupt-selected");
-        this.write(this.path(turn.id, "context.json"), {
-          schema: "cadence-conversation-context/2",
-          messages: contextCount,
-          head: contextHead
-        }, CONTEXT_BYTES);
-        meta.checkpoint = turn.id;
-        if (!live2?.metaFile)
-          throw new ContractError("corrupt-selected");
-        live2.metaFile = this.write(this.metadataPath(meta.id), meta, META_BYTES, live2.metaFile);
-      }
+      state.status = result.outcome;
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
-      turn.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
-      turn.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
+      state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
+      state.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
       await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
       if (uncertain)
-        turn.status = "unknown";
+        state.status = "unknown";
       try {
-        this.write(this.path(turn.id, "native.json"), native, META_BYTES);
-        transcript?.finish();
-        if (turn.status !== "completed")
-          turn.notice = [
-            turn.notice,
-            control ? "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint." : "Start a new conversation; incomplete context is not replayed."
-          ].filter(Boolean).join(`
-`);
+        this.write(this.path(commandId, "native.json"), native);
+        if (live2.capture) {
+          if (state.status !== "completed")
+            state.notice ||= live2.capture.notice;
+          state.omitted = { ...live2.capture.omitted };
+        }
+        try {
+          state.user = this.sessions.session(accepted2.session)?.chain(accepted2.parent, accepted2.offset, accepted2.command.text)[0]?.id ?? null;
+        } catch {
+          state.user = null;
+        }
         save();
       } catch {
         uncertain = true;
@@ -26010,7 +26641,7 @@ class Conversations {
         this.o.owner.quarantine();
       else if (this.o.owner.state === "idle")
         barrier?.release();
-      this.active.delete(turn.id);
+      this.active.delete(commandId);
     }
     return { status: uncertain ? "uncertain" : "settled" };
   }
@@ -26069,10 +26700,10 @@ class ConversationWorkflow {
   grants = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join29(o.coordination.directory, "conversation-workflows-v1");
+    this.root = join32(o.coordination.directory, "conversation-workflows-v1");
   }
   path(id) {
-    return join29(this.root, decodeId(id), "state.json");
+    return join32(this.root, decodeSessionId(id), "state.json");
   }
   read(id) {
     this.o.owner.lease.assert();
@@ -26081,7 +26712,7 @@ class ConversationWorkflow {
       const bound = this.o.conversations.controlBound(id);
       const file = this.o.coordination.files.read(path, BYTES);
       if (!file)
-        return bound || this.o.coordination.files.directory(dirname20(path)) ? unusable2(id) : { state: fresh2(id) };
+        return bound || this.o.coordination.files.directory(dirname21(path)) ? unusable2(id) : { state: fresh2(id) };
       const record2 = closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
         "schema",
         "state"
@@ -26089,7 +26720,7 @@ class ConversationWorkflow {
       const state = decodeCadenceConversation(record2.state);
       if (record2.schema !== SCHEMA || !bound || state.id !== id || state.notice !== undefined)
         return unusable2(id);
-      if (state.head && !this.o.conversations.hasTurn(id, state.head))
+      if (state.head && !this.o.conversations.hasCommand(id, state.head))
         return {
           state: { ...state, proposal: null, notice: UNRECORDED },
           problem: true
@@ -26177,7 +26808,7 @@ class ConversationWorkflow {
     return loaded.state;
   }
   runLink(runId) {
-    return join29(this.o.coordination.directory, "conversations-v1", "workflow-links", `${decodeId(runId)}.json`);
+    return join32(this.o.coordination.directory, "conversations-v1", "workflow-links", `${decodeId(runId)}.json`);
   }
   links(runIds) {
     this.o.owner.lease.assert();
@@ -26193,7 +26824,7 @@ class ConversationWorkflow {
         ]);
         if (row.runId !== runId)
           continue;
-        const conversationId = decodeId(row.conversationId);
+        const conversationId = decodeSessionId(row.conversationId);
         if (this.observe(conversationId).notice)
           continue;
         links.push({ runId, conversationId });
@@ -26214,7 +26845,7 @@ class ConversationWorkflow {
           ++seen;
           let id;
           try {
-            id = decodeId(e.name);
+            id = decodeSessionId(e.name);
           } catch {
             continue;
           }
@@ -26260,14 +26891,14 @@ class ConversationWorkflow {
     } catch {}
   }
   preview(run2, bytes, steps) {
-    const clip = (value, maximum) => diagnosticText(value, maximum, this.o.secrets());
+    const clip2 = (value, maximum) => diagnosticText(value, maximum, this.o.secrets());
     return {
       ...run2,
-      goal: clip(run2.goal, 320),
-      notice: clip(run2.notice, 512),
+      goal: clip2(run2.goal, 320),
+      notice: clip2(run2.notice, 512),
       stepsOmitted: Math.max(0, run2.steps.length - steps),
       steps: run2.steps.slice(-steps).map((s) => {
-        const text2 = clip(s.text, bytes);
+        const text2 = clip2(s.text, bytes);
         return { ...s, text: text2, truncated: s.truncated || text2 !== s.text };
       })
     };
@@ -26376,7 +27007,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }
     let published;
     try {
-      published = this.o.workflows.command(randomUUID21(), epoch, {
+      published = this.o.workflows.command(randomUUID20(), epoch, {
         action: "propose",
         plan,
         model
@@ -26420,7 +27051,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID21(), conversationId = current2.state.id;
+    const id = randomUUID20(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -26444,7 +27075,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }, current2.file);
     const cancel = () => {
       try {
-        this.o.workflows.command(randomUUID21(), epoch, {
+        this.o.workflows.command(randomUUID20(), epoch, {
           action: "cancel",
           runId: id
         });
@@ -26463,7 +27094,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join29(this.root, decodeId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join32(this.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -26505,8 +27136,8 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file } = this.usable(c.conversationId);
-    const view = this.o.conversations.conversation(c.conversationId);
-    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || view.kind !== "conversation" || view.summary?.head !== state.head || ["queued", "running", "unknown"].includes(view.summary.status) || this.active.has(c.conversationId))
+    const latest = this.o.conversations.latestCommand(c.conversationId);
+    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || ["queued", "running", "unknown"].includes(latest.status) || this.active.has(c.conversationId))
       throw new ContractError("stale");
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
@@ -26522,7 +27153,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID21();
+      const g = prepared.response, grant2 = randomUUID20();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -26587,28 +27218,28 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 import {
-  lstatSync as lstatSync21,
+  lstatSync as lstatSync22,
   opendirSync as opendirSync13,
   realpathSync as realpathSync12,
   rmdirSync,
   statfsSync as statfsSync3,
   writeFileSync as writeFileSync5
 } from "node:fs";
-import { basename as basename3, dirname as dirname22, join as join32, resolve as resolve11 } from "node:path";
+import { basename as basename3, dirname as dirname23, join as join35, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { createHash as createHash24 } from "node:crypto";
-import { lstatSync as lstatSync18, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join30, relative as relative8 } from "node:path";
+import { createHash as createHash26 } from "node:crypto";
+import { lstatSync as lstatSync19, readdirSync as readdirSync4, readlinkSync } from "node:fs";
+import { join as join33, relative as relative8 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash24("sha256");
+  const hash3 = createHash26("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -26646,8 +27277,8 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       return;
     }
     try {
-      const path = join30(root, name);
-      const st = lstatSync18(path);
+      const path = join33(root, name);
+      const st = lstatSync19(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync(path));
@@ -26666,7 +27297,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash24("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash26("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -26781,13 +27412,13 @@ ${data2.toString("utf8")}`);
       }
       let names2;
       try {
-        names2 = readdirSync3(dir).sort();
+        names2 = readdirSync4(dir).sort();
       } catch {
         complete = false;
         return;
       }
       for (const name of names2) {
-        const path = join30(dir, name);
+        const path = join33(dir, name);
         const rel = relative8(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
@@ -26796,7 +27427,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync18(path);
+          const st = lstatSync19(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -26821,22 +27452,142 @@ ${data2.toString("utf8")}`);
   return { fingerprint: hash3.digest("hex"), text: text2, complete, git: isGit };
 }
 
+// src/service/turn-capture.ts
+var TURN_BYTES = 384 * 1024;
+var OMITTED_FLAG2 = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other"
+};
+
+class TurnCapture {
+  turn;
+  save;
+  secrets;
+  details = new Map;
+  messageText = new Map;
+  constructor(turn, save, secrets) {
+    this.turn = turn;
+    this.save = save;
+    this.secrets = secrets;
+  }
+  item(id, role3) {
+    let item = this.turn.items.find((i) => i.id === id);
+    if (!item) {
+      if (this.turn.items.length >= 256)
+        throw new ContractError("capacity");
+      item = { id, role: role3, text: "", name: "", args: "", error: false };
+      this.turn.items.push(item);
+      try {
+        canonicalJson(this.turn, TURN_BYTES - 2048);
+      } catch (error) {
+        this.turn.items.pop();
+        this.turn.notice = "Conversation capture limit exceeded.";
+        throw error;
+      }
+    }
+    return item;
+  }
+  update(item, field, value, maximum, bytes = Buffer.byteLength(value)) {
+    const before = item[field];
+    try {
+      if (bytes > maximum)
+        throw new ContractError("capacity");
+      item[field] = value;
+      canonicalJson(this.turn, TURN_BYTES - 2048);
+    } catch (error) {
+      item[field] = before;
+      this.turn.notice = "Conversation capture limit exceeded.";
+      throw error;
+    }
+  }
+  accept(frame) {
+    const e = frame.event;
+    if (e.kind === "detail-begin") {
+      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+        return;
+      if (this.details.size >= 64)
+        throw new ContractError("capacity");
+      this.details.set(e.detailId, {
+        descriptor: e.descriptor,
+        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
+        text: "",
+        bytes: 0
+      });
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      const d = this.details.get(e.detailId);
+      if (!d)
+        return;
+      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      d.text += added;
+      d.bytes += Buffer.byteLength(added);
+      if (d.bytes > 256 * 1024)
+        throw new ContractError("capacity");
+      const o = d.descriptor.owner;
+      if (o.kind === "message") {
+        const role3 = this.turn.items.find((i) => i.id === o.messageId)?.role;
+        if (role3 === "assistant" && o.stage === "stream") {
+          this.messageText.set(o.blockId, {
+            messageId: o.messageId,
+            text: d.text,
+            bytes: d.bytes
+          });
+          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
+          this.update(this.item(o.messageId, "assistant"), "text", blocks.map((block) => block.text).join(""), 256 * 1024, blocks.reduce((size2, block) => size2 + block.bytes, 0));
+        }
+      } else if (o.kind === "message-final") {
+        const item = this.turn.items.find((i) => i.id === o.messageId);
+        if (item?.role === "assistant")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      } else if (o.kind === "tool") {
+        const item = this.item(o.callId, "tool");
+        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
+          this.update(item, "args", d.text, 64 * 1024, d.bytes);
+        if (o.stage === "result" || o.stage === "update-snapshot")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      }
+      if (e.kind === "detail-end")
+        this.details.delete(e.detailId);
+    } else if (e.kind === "message-start" && e.role === "assistant") {
+      this.item(e.messageId, "assistant");
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const item = this.item(e.callId, "tool");
+      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
+      if (e.kind === "tool-end")
+        item.error = e.isError;
+    } else if (e.kind === "worker-failure")
+      this.turn.notice = `worker-failure: ${e.code}`;
+    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.turn.omitted[OMITTED_FLAG2[e.block.reason]] = true;
+    if ([...this.details.values()].reduce((size2, detail) => size2 + detail.bytes + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
+      throw new ContractError("capacity");
+    canonicalJson(this.turn, TURN_BYTES);
+    if (e.kind === "message-end") {
+      for (const [id, block] of this.messageText)
+        if (block.messageId === e.messageId)
+          this.messageText.delete(id);
+    }
+    if (e.kind === "message-end" || e.kind === "tool-end")
+      this.save();
+  }
+}
+
 // src/service/workflow-git.ts
 import { spawn as spawn4, spawnSync as spawnSync6 } from "node:child_process";
-import { createHash as createHash25 } from "node:crypto";
+import { createHash as createHash27 } from "node:crypto";
 import {
-  closeSync as closeSync9,
-  constants as constants8,
-  fstatSync as fstatSync6,
-  lstatSync as lstatSync19,
-  openSync as openSync9,
-  readdirSync as readdirSync4,
+  closeSync as closeSync12,
+  constants as constants10,
+  fstatSync as fstatSync8,
+  lstatSync as lstatSync20,
+  openSync as openSync12,
+  readdirSync as readdirSync5,
   readlinkSync as readlinkSync2,
-  readSync as readSync5,
+  readSync as readSync7,
   realpathSync as realpathSync11
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute10, join as join31, relative as relative9, resolve as resolve10, sep as sep7 } from "node:path";
+import { dirname as dirname22, isAbsolute as isAbsolute11, join as join34, relative as relative9, resolve as resolve11, sep as sep7 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -26922,19 +27673,19 @@ async function gitHead(cwd) {
 }
 function contains2(root, path) {
   const within = relative9(root, path);
-  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute10(within);
+  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute11(within);
 }
 function nested(a, b) {
   return contains2(a, b) || contains2(b, a);
 }
 function safeWorkflowFile(cwd, name) {
   workflowPath(name);
-  const p = resolve10(cwd, name);
+  const p = resolve11(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync19(p);
+    const st = lstatSync20(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -26945,12 +27696,12 @@ function safeWorkflowFile(cwd, name) {
 }
 function declaredTarget(cwd, name) {
   workflowPath(name);
-  const p = resolve10(cwd, name);
+  const p = resolve11(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync19(p);
+    const st = lstatSync20(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -26976,21 +27727,21 @@ function fileIdentity(p, st, hashBytes) {
     return quick;
   let fd;
   try {
-    fd = openSync9(p, constants8.O_RDONLY | (constants8.O_NOFOLLOW ?? 0));
+    fd = openSync12(p, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
     throw e;
   }
   try {
-    if (!fstatSync6(fd).isFile())
+    if (!fstatSync8(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash25("sha256"), buffer = Buffer.alloc(CHUNK);
-    for (let n = readSync5(fd, buffer);n > 0; n = readSync5(fd, buffer))
+    const digest = createHash27("sha256"), buffer = Buffer.alloc(CHUNK);
+    for (let n = readSync7(fd, buffer);n > 0; n = readSync7(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
   } finally {
-    closeSync9(fd);
+    closeSync12(fd);
   }
 }
 async function fileIdentityAsync(p, st, hashBytes) {
@@ -27001,14 +27752,14 @@ async function fileIdentityAsync(p, st, hashBytes) {
     return quick;
   let handle;
   try {
-    handle = await open2(p, constants8.O_RDONLY | (constants8.O_NOFOLLOW ?? 0));
+    handle = await open2(p, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
     throw e;
   }
   try {
-    const digest = createHash25("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash27("sha256"), buffer = Buffer.alloc(CHUNK);
     for (;; ) {
       const { bytesRead } = await handle.read(buffer, 0, CHUNK, null);
       if (!bytesRead)
@@ -27025,13 +27776,13 @@ function directoryIdentity(root, name) {
   const rows = [];
   let count2 = 0;
   const visit = (directory, prefix) => {
-    for (const entry of readdirSync4(directory).sort()) {
+    for (const entry of readdirSync5(directory).sort()) {
       if (entry === ".git")
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join31(directory, entry), relative10 = `${prefix}${entry}`;
-      const st = lstatSync19(full);
+      const full = join34(directory, entry), relative10 = `${prefix}${entry}`;
+      const st = lstatSync20(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
         visit(full, `${relative10}/`);
@@ -27052,7 +27803,7 @@ async function directoryIdentityAsync(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join31(directory, entry), relative10 = `${prefix}${entry}`;
+      const full = join34(directory, entry), relative10 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
@@ -27066,12 +27817,12 @@ async function directoryIdentityAsync(root, name) {
 `))}`;
 }
 function pathIdentity(cwd, name, walk = true) {
-  const p = resolve10(cwd, name);
+  const p = resolve11(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
-    st = lstatSync19(p);
+    st = lstatSync20(p);
   } catch (e) {
     if (absent2(e))
       return null;
@@ -27082,7 +27833,7 @@ function pathIdentity(cwd, name, walk = true) {
   return fileIdentity(p, st, HASH_BYTES);
 }
 async function pathIdentityAsync(cwd, name) {
-  const p = resolve10(cwd, name);
+  const p = resolve11(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
@@ -27286,20 +28037,20 @@ ${block}
 async function assertWorktree(root, cwd) {
   if (!safeDirectory(cwd))
     throw new ContractError("stale");
-  const real = (p) => realpathSync11(resolve10(p));
+  const real = (p) => realpathSync11(resolve11(p));
   if (real((await gitText(cwd, ["rev-parse", "--show-toplevel"])).trim()) !== real(cwd))
     throw new ContractError("stale");
-  const common = async (p) => real(resolve10(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
+  const common = async (p) => real(resolve11(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
-  const marker2 = resolve10(cwd, ".git");
-  if (!lstatSync19(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
+  const marker2 = resolve11(cwd, ".git");
+  if (!lstatSync20(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
 }
 
 // src/service/workflow-history.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
-import { lstatSync as lstatSync20, opendirSync as opendirSync12 } from "node:fs";
+import { randomUUID as randomUUID21 } from "node:crypto";
+import { lstatSync as lstatSync21, opendirSync as opendirSync12 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -27310,7 +28061,7 @@ class WorkflowHistoryScanner {
     this.directory = directory;
   }
   incarnation() {
-    const st = lstatSync20(this.path, { bigint: true });
+    const st = lstatSync21(this.path, { bigint: true });
     if (!st.isDirectory() || st.isSymbolicLink())
       throw new ContractError("corrupt-selected");
     return `${st.dev}:${st.ino}`;
@@ -27362,7 +28113,7 @@ class WorkflowHistoryScanner {
         if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
           state.ids.pop();
       }
-      const scan = randomUUID22();
+      const scan = randomUUID21();
       state.timer = setTimeout(() => {
         this.scans.delete(scan);
         try {
@@ -27399,8 +28150,8 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.30",
-  build: "b3fc04e4cca290e462938b66a4d46f64b3d5986c1ef94e6679d7c5f5a91dc49e",
+  version: "2.0.31",
+  build: "b2e9f553ead7bbf1508624a3e834a8654557687cf2a3a26f2aa1161843abe5eb",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -27426,8 +28177,8 @@ class UnacceptedWorkflowCommand extends UnacceptedConversationCommand {
 
 class WorkflowFailure extends Error {
   outcome;
-  constructor(outcome, message) {
-    super(message);
+  constructor(outcome, message2) {
+    super(message2);
     this.outcome = outcome;
   }
 }
@@ -27504,7 +28255,7 @@ class WorkflowTranscript {
   constructor(turn, secrets) {
     this.turn = turn;
     this.secrets = secrets;
-    this.capture = new ConversationCapture(turn, () => {
+    this.capture = new TurnCapture(turn, () => {
       this.pending = true;
     }, secrets);
     this.latest = { ...structuredClone(turn), items: [] };
@@ -27544,7 +28295,7 @@ class WorkflowTranscript {
     if (e.kind === "message-start") {
       if (e.role === "assistant") {
         this.latest = { ...structuredClone(this.latest), items: [] };
-        this.final = new ConversationCapture(this.latest, () => {}, this.secrets);
+        this.final = new TurnCapture(this.latest, () => {}, this.secrets);
       }
       relevant = true;
     } else if (e.kind === "message-end")
@@ -27587,12 +28338,12 @@ class Workflows {
   grants = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join32(o.coordination.directory, "workflows-v1");
+    this.root = join35(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync12(o.coordination.store.root);
-    this.worktreeRoot = join32(o.coordination.stateHome, "cadence-worktrees-v1", basename3(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join32(this.root, "runs"), () => {
+    this.worktreeRoot = join35(o.coordination.stateHome, "cadence-worktrees-v1", basename3(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join35(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join32(this.root, "runs"));
+      return this.files.directory(join35(this.root, "runs"));
     });
     this.recover();
   }
@@ -27600,7 +28351,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join32(this.root, "runs", decodeId(id), name);
+    return join35(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES2) {
     this.o.owner.lease.assert();
@@ -27617,7 +28368,7 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join32(this.root, "runs");
+    const runs = join35(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
@@ -27728,7 +28479,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join32(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
+    const file = this.files.read(join35(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES2));
@@ -27882,8 +28633,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join32(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
-    return this.files.directory(join32(this.root, "runs", id));
+      return !!this.files.read(join35(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
+    return this.files.directory(join35(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -27912,7 +28663,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join32(this.root, "proposals", `${commandId}.json`);
+      const target3 = join35(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES2);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -27935,7 +28686,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID23(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID22(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -27963,7 +28714,7 @@ class Workflows {
         throw new ContractError("conflict");
       return { ...this.view(commandId), commandId };
     }
-    if (this.files.directory(dirname22(acceptedPath)))
+    if (this.files.directory(dirname23(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal;
     let target2;
@@ -28013,8 +28764,8 @@ class Workflows {
     };
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve12) => {
-      begin = resolve12;
+    const ready2 = new Promise((resolve13) => {
+      begin = resolve13;
     });
     const live2 = {
       run: run2,
@@ -28077,7 +28828,7 @@ class Workflows {
     if (live2.run.steps.length >= MAX_STEPS)
       throw new ContractError("capacity");
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID23()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID22()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       ...childRunId ? {
@@ -28129,11 +28880,11 @@ class Workflows {
       stepId: s.id,
       result
     });
-    const shown = preview ?? (result.text || result.output);
+    const shown2 = preview ?? (result.text || result.output);
     s.status = result.outcome;
-    s.text = diagnosticText(shown, s.kind === "research" ? 16384 : 1024, this.o.secrets());
+    s.text = diagnosticText(shown2, s.kind === "research" ? 16384 : 1024, this.o.secrets());
     s.exitCode = result.exitCode;
-    s.truncated = result.truncated || Buffer.byteLength(shown) > Buffer.byteLength(s.text);
+    s.truncated = result.truncated || Buffer.byteLength(shown2) > Buffer.byteLength(s.text);
     if (!result.closed)
       this.o.owner.quarantine();
     this.save(live2);
@@ -28141,12 +28892,12 @@ class Workflows {
   async worker(live2, cwd, id, prompt, readonly, version, roots) {
     this.assertRunning(live2);
     const model = this.model(version, true);
-    const role2 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
-    if (!role2)
+    const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
+    if (!role3)
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID23(), op = randomUUID23();
+    const childRunId = randomUUID22(), op = randomUUID22();
     const plan = live2.proposal?.plan;
     const request3 = decodeWorkerPublicRequest({
       protocol: 2,
@@ -28157,9 +28908,9 @@ class Workflows {
       assignmentId: id,
       purpose: readonly ? "research" : "edit",
       model,
-      role: { role: role2.role, sha256: role2.sha256 },
+      role: { role: role3.role, sha256: role3.sha256 },
       context: plan ? workflowContext(plan) : "Read applicable AGENTS.md and existing project documentation, including .cadence/project.md. Cite evidence and separate observations from assumptions.",
-      instructions: `${role2.content}
+      instructions: `${role3.content}
 Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, retry, mutate Git, install dependencies, publish or deploy. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification.`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
@@ -28223,7 +28974,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, cwd, live2.abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets(),
-        roots: roots?.length ? roots.map((p) => resolve11(cwd, p)) : [cwd],
+        roots: roots?.length ? roots.map((p) => resolve12(cwd, p)) : [cwd],
         onLifecycle: (event) => {
           if (!step.timing)
             return;
@@ -28304,7 +29055,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     const shell = "check" in operation;
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
-    const id = randomUUID23();
+    const id = randomUUID22();
     this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd,
       args: shell ? operation.check : operation.git
@@ -28318,7 +29069,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       command: shell ? process.platform === "win32" ? environment2.COMSPEC ?? "cmd.exe" : "/bin/sh" : "git",
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "-c",
-        `core.hooksPath=${join32(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join35(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -28431,7 +29182,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     if (await gitHead(cwd) !== before)
       throw new ContractError("stale");
   }
-  async commit(live2, cwd, allowed, message, before, title) {
+  async commit(live2, cwd, allowed, message2, before, title) {
     await this.unchangedHead(cwd, before);
     const changes = await assertWorkflowScope(cwd, allowed);
     if (!changes.length)
@@ -28451,7 +29202,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       ]);
       if (staged.code === 0)
         return null;
-      await git(["commit", "--no-verify", "-m", message]);
+      await git(["commit", "--no-verify", "-m", message2]);
       const commit = await gitHead(cwd);
       await assertWorkflowCommit(cwd, before, commit, allowed);
       return commit;
@@ -28460,7 +29211,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
   async review(live2, cwd, p) {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID23()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID22()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     this.success(result);
     const verdict = reviewVerdict(result.text);
@@ -28555,7 +29306,7 @@ ${changed.map((p) => `- ${p}`).join(`
   publish(live2, cwd, plan, names3, changed) {
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
-      if (!safeDirectory(dirname22(file), true))
+      if (!safeDirectory(dirname23(file), true))
         throw new ContractError("forbidden");
       writeFileSync5(file, this.documentBody(live2, cwd, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
@@ -28565,17 +29316,17 @@ ${changed.map((p) => `- ${p}`).join(`
   worktreeHome(id) {
     if (nested(this.cwd, this.worktreeRoot))
       throw new ContractError("unsupported-context");
-    for (const directory of [dirname22(this.worktreeRoot), this.worktreeRoot]) {
+    for (const directory of [dirname23(this.worktreeRoot), this.worktreeRoot]) {
       if (!safeDirectory(directory, true))
         throw new ContractError("forbidden");
-      const st = lstatSync21(directory);
+      const st = lstatSync22(directory);
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
-    const home = join32(this.worktreeRoot, decodeId(id));
+    const home = join35(this.worktreeRoot, decodeId(id));
     if (safeDirectory(home))
       throw new ContractError("conflict");
-    safeDirectory(join32(home, "tasks"), true);
+    safeDirectory(join35(home, "tasks"), true);
     return home;
   }
   async merge(live2, candidate) {
@@ -28643,7 +29394,7 @@ ${result.output}`}`);
     } finally {
       this.closeStep(live2, step);
     }
-    for (const directory of [join32(home, "tasks"), home])
+    for (const directory of [join35(home, "tasks"), home])
       try {
         rmdirSync(directory);
       } catch {}
@@ -28675,8 +29426,8 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       throw new ContractError("invalid");
     const base = target2.head;
     const home = this.worktreeHome(live2.run.id);
-    const taskHome = join32(home, "tasks");
-    const integration = join32(home, "integration");
+    const taskHome = join35(home, "tasks");
+    const integration = join35(home, "integration");
     await this.gitStep(live2, this.cwd, "worktree-integration", (git) => git(["worktree", "add", "--detach", integration, base]));
     await assertWorktree(this.cwd, integration);
     await this.setup(live2, integration, plan);
@@ -28693,7 +29444,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       live2.run.phase = "implementing";
       this.save(live2);
       const outcomes2 = await Promise.allSettled(batch.map(async (task) => {
-        const cwd = join32(taskHome, task.id);
+        const cwd = join35(taskHome, task.id);
         await this.gitStep(live2, this.cwd, `worktree-${task.id}`, (git) => git(["worktree", "add", "--detach", cwd, base]));
         const picks2 = workflowAncestors(plan.tasks, task.id).map((dep) => commits.get(dep.id)).filter((c) => !!c);
         if (picks2.length)
@@ -28758,7 +29509,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
         const file = safeWorkflowFile(this.cwd, name), before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
-        if (!safeDirectory(dirname22(file), true))
+        if (!safeDirectory(dirname23(file), true))
           throw new ContractError("unavailable");
         writeFileSync5(file, this.documentBody(live2, this.cwd, plan, name, [...live2.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }
@@ -28860,11 +29611,17 @@ class Workbench {
   files;
   workflows;
   cadence;
+  migration;
   projectRoot;
   opening = new Map;
   constructor(o) {
     this.o = o;
     this.conversations = new Conversations(o);
+    this.migration = new ConversationMigration({
+      ...o,
+      cwd: this.conversations.cwd,
+      sessions: this.conversations.sessions
+    });
     this.workflows = new Workflows(o);
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -28873,14 +29630,10 @@ class Workbench {
     });
     this.conversations.assertSettled();
     this.files = new WorkbenchFiles(o.cwd, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join33(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join36(o.coordination.files.namespace, "workbench-projects-v1");
   }
   closeReads() {
-    try {
-      this.workflows.closeHistory();
-    } finally {
-      this.conversations.closeReads();
-    }
+    this.workflows.closeHistory();
   }
   read(value) {
     const request3 = decodeWorkbenchRead(value);
@@ -28890,10 +29643,10 @@ class Workbench {
         return { kind: request3.kind, state: this.cadence.state(request3.id) };
       case "workflow-active": {
         const active2 = this.workflows.activeRuns();
-        return {
-          ...active2,
-          links: this.cadence.links(active2.runs.map((run2) => run2.id))
-        };
+        const ids = active2.runs.map((run2) => run2.id);
+        const browser = this.cadence.links(ids);
+        const terminal = this.conversations.nativeLinks(ids).filter((link) => !browser.some((b) => b.runId === link.runId));
+        return { ...active2, links: [...browser, ...terminal] };
       }
       case "workflow-history":
         return this.workflows.history(request3.after, request3.scan);
@@ -28907,7 +29660,7 @@ class Workbench {
         return this.conversations.origin(request3.taskId);
       case "conversation-active":
       case "conversations": {
-        const value2 = request3.kind === "conversation-active" ? this.conversations.activeConversations() : this.conversations.list(request3.after ?? null, request3.scan);
+        const value2 = request3.kind === "conversation-active" ? this.conversations.activeConversations() : this.conversations.list(request3.after ?? null);
         if (value2.kind !== "conversations" && value2.kind !== "conversation-active")
           return value2;
         return {
@@ -28919,11 +29672,15 @@ class Workbench {
         };
       }
       case "conversation":
-        return this.conversations.conversation(request3.id);
+        return this.conversations.conversation(request3.id, request3.leaf, request3.known);
       case "conversation-turn":
-        return this.conversations.turnSteps(request3.id, request3.ordinal, request3.before);
+        return this.conversations.turnSteps(request3.id, request3.leaf, request3.ordinal, request3.before);
       case "conversation-step":
-        return this.conversations.step(request3.id, request3.turnId, request3.step, request3.part);
+        return this.conversations.step(request3.id, request3.leaf, request3.turnId, request3.step, request3.part);
+      case "conversation-tree":
+        return this.conversations.tree(request3.id, request3.leaf);
+      case "conversation-legacy":
+        return { kind: request3.kind, pending: this.migration.pending() };
       case "files":
         return this.files.list(request3.path);
       case "file":
@@ -28979,7 +29736,7 @@ class Workbench {
       for (let e = directory.readSync();e; e = directory.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join33(this.projectRoot, e.name));
+        const saved = files.read(join36(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -29032,6 +29789,15 @@ class Workbench {
       this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
       return { kind: "accepted", commandId: request3.commandId };
     }
+    if (request3.kind === "conversation-migrate") {
+      if (!caller)
+        throw new ContractError("forbidden");
+      return {
+        kind: "conversation-migrated",
+        commandId: request3.commandId,
+        ...this.migration.migrate()
+      };
+    }
     this.o.owner.lease.assert();
     if (!this.o.projectsEnabled)
       throw new ContractError("unsupported-context");
@@ -29048,7 +29814,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join33(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join36(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -29066,7 +29832,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join33(this.projectRoot, `${hash2(root)}.json`);
+        const entry = join36(this.projectRoot, `${hash2(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -29096,7 +29862,7 @@ async function predecessorExited() {
     } catch {
       return;
     }
-    await new Promise((resolve12) => setTimeout(resolve12, 100));
+    await new Promise((resolve13) => setTimeout(resolve13, 100));
   }
 }
 async function healBeforeStart(c) {
@@ -29106,8 +29872,8 @@ async function healBeforeStart(c) {
   if (lock.status === "blocked" || lock.status === "live")
     throw new ContractError("registry-locked");
   await registry.sweep();
-  const own3 = await healProject(c, { responsive: async () => true });
-  if (own3.status === "blocked")
+  const own4 = await healProject(c, { responsive: async () => true });
+  if (own4.status === "blocked")
     throw new ContractError("quarantine");
 }
 function legacy(store, budget, reader) {
@@ -29134,8 +29900,8 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join34(store.tasks, entry.name, "task.json");
-      const size2 = lstatSync22(path).size;
+      const path = join37(store.tasks, entry.name, "task.json");
+      const size2 = lstatSync23(path).size;
       if (size2 > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size2);
@@ -29188,7 +29954,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "d0edc9d93f682dd7c637bd28cdb756b823ad8eafeabebc63479bee1bac5b2b55";
+  const embedded = "3305384b10bb0c658565426ec2291d0237533cb9ae7aeb1d63f42ac8824b0c82";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -29272,8 +30038,8 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         let timer;
         await Promise.race([
           owner?.idle(),
-          new Promise((resolve12) => {
-            timer = setTimeout(resolve12, FAULT_SETTLE_MS);
+          new Promise((resolve13) => {
+            timer = setTimeout(resolve13, FAULT_SETTLE_MS);
           })
         ]);
         clearTimeout(timer);

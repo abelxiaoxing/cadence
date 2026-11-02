@@ -1,4 +1,6 @@
-/** Private ordinary-chat context. No Pi session import, hidden thinking or provider envelopes. */
+/** Read-only access to the context checkpoints of browser conversations kept
+ * before Pi sessions became the shared conversation store, for their explicit
+ * migration (see service/conversation-migration.ts). Nothing writes them now. */
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -154,8 +156,7 @@ function readPrivateContext(path, maximum) {
     closeSync(fd);
   }
 }
-/** Old checkpoints remain readable without migration. New checkpoints hash-chain
- * private per-message records, so no aggregate JSON/pipe size is required. */
+/** Both checkpoint schemas: inline messages, or hash-chained per-message records. */
 export function* iterateConversationContext(path) {
   if (path === null) return;
   const source = readPrivateContext(path, CONTEXT_BYTES);
@@ -194,32 +195,4 @@ export function* iterateConversationContext(path) {
 }
 export function readConversationContext(path) {
   return [...iterateConversationContext(path)];
-}
-/** Anonymous pipe framing: each message is bounded, the stream is not. The
- * owner sanitizes each record again before persisting it and commits only on
- * the end marker plus original successful process closure. */
-export function* conversationContextRecords(messages, secrets = []) {
-  if (!Array.isArray(messages)) throw new Error("Invalid context");
-  let count = 0;
-  for (const message of messages) {
-    yield `${canonicalJson(
-      {
-        schema: "cadence-conversation-stream/1",
-        message: conversationMessages([message], secrets)[0],
-      },
-      CONTEXT_RECORD_BYTES - 4096,
-    )}\n`;
-    count++;
-  }
-  yield canonicalJson({ schema: "cadence-conversation-stream-end/1", count }) +
-    "\n";
-}
-export function encodeConversationContext(messages, secrets) {
-  return canonicalJson(
-    {
-      schema: "cadence-conversation-context/1",
-      messages: conversationMessages(messages, secrets),
-    },
-    CONTEXT_BYTES,
-  );
 }

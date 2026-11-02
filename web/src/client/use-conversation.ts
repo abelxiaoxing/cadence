@@ -11,7 +11,11 @@ export function useConversation(
   client: Pick<ServiceClient, "workbenchRead">,
   id: string,
   enabled: boolean,
-): ConversationView & { refresh(): void; loadEarlier(): void } {
+): ConversationView & {
+  refresh(): void;
+  loadEarlier(): void;
+  choose(leaf: string | null): void;
+} {
   const [reader, setReader] = useState<ConversationReader | null>(null);
   const [view, setView] = useState<ConversationView | null>(null);
   useEffect(() => {
@@ -26,6 +30,11 @@ export function useConversation(
   return {
     ...(view ?? {
       summary: undefined,
+      leaf: null,
+      pinned: false,
+      branches: 0,
+      runs: [],
+      attempt: null,
       count: 0,
       turns: [],
       earlier: false,
@@ -34,6 +43,7 @@ export function useConversation(
     }),
     refresh: reader?.refresh ?? noop,
     loadEarlier: reader?.loadEarlier ?? noop,
+    choose: reader?.choose ?? noop,
   };
 }
 function noop() {}

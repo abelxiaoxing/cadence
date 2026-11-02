@@ -74,10 +74,15 @@ it("persistent SDK coordinator investigates, clarifies, proposes without editing
               ? catalog.value.version
               : never(),
       });
-      head = commandId;
-      let view = await read({ kind: "conversation", id });
+      const current = {
+        kind: "conversation",
+        id,
+        leaf: null,
+        known: null,
+      } as const;
+      let view = await read(current);
       for (let i = 0; i < 750; i++) {
-        view = await read({ kind: "conversation", id });
+        view = await read(current);
         if (
           view.kind === "conversation" &&
           !["queued", "running"].includes(view.summary?.status ?? "queued")
@@ -89,6 +94,7 @@ it("persistent SDK coordinator investigates, clarifies, proposes without editing
         view.kind === "conversation" && view.summary?.status,
         JSON.stringify(view),
       ).toBe("completed");
+      if (view.kind === "conversation") head = view.leaf;
       return state();
     }
     f.mode("coordinator");
@@ -237,7 +243,7 @@ it("mode survives owner restart without replay or model restoration on reads; ex
       intent: "enter",
     });
     expect(accepted.kind).toBe("ok");
-    await settleTurn(client, id);
+    const entered = await settleTurn(client, id);
     const contacts = f.contacts();
     const restarted = await f.restart();
     client = restarted.client;
@@ -340,7 +346,7 @@ it("mode survives owner restart without replay or model restoration on reads; ex
       kind: "cadence-send",
       commandId: randomUUID(),
       conversationId: id,
-      head: commandId,
+      head: entered.leaf,
       text: "exit cadence",
       model: catalog.value.version,
       revision: mode.value.state.revision,
@@ -368,7 +374,12 @@ async function settleTurn(
 ) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const v = await client.workbenchRead({ kind: "conversation", id });
+    const v = await client.workbenchRead({
+      kind: "conversation",
+      id,
+      leaf: null,
+      known: null,
+    });
     if (
       v.kind === "ok" &&
       v.value.kind === "conversation" &&
@@ -422,7 +433,7 @@ it("grants bind the actual attachment; competing approvals admit once, exit deta
       intent: "enter",
     });
     expect(sent.kind).toBe("ok");
-    await settleTurn(f.client, id);
+    const planned = await settleTurn(f.client, id);
     const state = await f.client.workbenchRead({
       kind: "cadence-conversation",
       id,
@@ -504,7 +515,7 @@ it("grants bind the actual attachment; competing approvals admit once, exit deta
       kind: "cadence-exit",
       commandId: randomUUID(),
       conversationId: id,
-      head,
+      head: planned.leaf,
       revision: mode.value.state.revision,
     });
     expect(exit.kind).toBe("ok");
@@ -549,13 +560,14 @@ it("grants bind the actual attachment; competing approvals admit once, exit deta
     if (off.kind !== "ok" || off.value.kind !== "cadence-conversation")
       throw Error("off");
     const reentry = randomUUID();
+    const before = await settleTurn(f.client, id);
     expect(
       (
         await f.client.workbenchCommand({
           kind: "cadence-send",
           commandId: reentry,
           conversationId: id,
-          head: off.value.state.head,
+          head: before.leaf,
           text: "/cadence",
           revision: off.value.state.revision,
           model: selected.value.version,
@@ -563,7 +575,7 @@ it("grants bind the actual attachment; competing approvals admit once, exit deta
         })
       ).kind,
     ).toBe("ok");
-    await settleTurn(f.client, id);
+    const reentered = await settleTurn(f.client, id);
     const on = await f.client.workbenchRead({
       kind: "cadence-conversation",
       id,
@@ -579,7 +591,7 @@ it("grants bind the actual attachment; competing approvals admit once, exit deta
       kind: "cadence-exit",
       commandId: randomUUID(),
       conversationId: id,
-      head: reentry,
+      head: reentered.leaf,
       revision: on.value.state.revision,
     });
     expect(
@@ -623,13 +635,13 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
       model: selected.value.version,
     };
     expect((await f.client.workbenchCommand(enter)).kind).toBe("ok");
-    await settleTurn(f.client, id);
+    const entered = await settleTurn(f.client, id);
     const rejectedId = randomUUID(),
       contacts = f.contacts();
     const refused = await f.client.workbenchCommand({
       ...enter,
       commandId: rejectedId,
-      head: first,
+      head: entered.leaf,
       intent: "message",
       text: "new requirement",
       revision: 0,
@@ -638,11 +650,16 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
       kind: "error",
       error: { code: "stale", effect: "none", recovery: "fresh-confirmation" },
     });
-    const view = await f.client.workbenchRead({ kind: "conversation", id });
+    const view = await f.client.workbenchRead({
+      kind: "conversation",
+      id,
+      leaf: null,
+      known: null,
+    });
     expect(
       view.kind === "ok" &&
         view.value.kind === "conversation" &&
-        view.value.summary?.head === rejectedId,
+        view.value.summary?.live?.commandId === rejectedId,
     ).toBe(false);
     expect(f.contacts()).toBe(contacts);
     // A lost-reply retry observes the original acceptance; it never runs twice.
@@ -676,7 +693,7 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
       return list.value.entries;
     };
     expect(await listed()).toMatchObject([
-      { id, head: first, status: "completed", cadence: true },
+      { id, leaf: entered.leaf, status: "completed", cadence: true },
     ]);
     // Only a new explicit command proceeds; neither refusal replays anything.
     const next = randomUUID();
@@ -685,17 +702,18 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
         await f.client.workbenchCommand({
           ...enter,
           commandId: next,
-          head: first,
+          head: entered.leaf,
           intent: "message",
           revision: mode.value.state.revision,
         })
       ).kind,
     ).toBe("ok");
-    await settleTurn(f.client, id);
+    const continued = await settleTurn(f.client, id);
     expect(f.contacts()).toBe(contacts + 1);
-    // Cached list projections follow the new head once its files change.
+    expect(continued.leaf).not.toBe(entered.leaf);
+    // Listings follow the session's new leaf once Pi has written it.
     expect(await listed()).toMatchObject([
-      { id, head: next, status: "completed", cadence: true },
+      { id, leaf: continued.leaf, status: "completed", cadence: true },
     ]);
   } finally {
     await f.close();

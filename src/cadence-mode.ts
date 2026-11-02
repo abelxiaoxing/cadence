@@ -43,10 +43,12 @@ import {
   type PublicError,
   type Reply,
 } from "./service-contract.ts";
+import { CADENCE_MODE_ENTRY } from "./session-entries.mjs";
 import { diagnosticText } from "./verification-diagnostics.ts";
 import { effectiveWorkspace } from "./workspace.ts";
 
-export const CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
+export { CADENCE_MODE_ENTRY };
+
 const CONTEXT = "cadence-mode-context";
 const READY = "cadence-mode-ready";
 const TOOLS = [

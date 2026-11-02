@@ -18,6 +18,7 @@ import type { ChoiceVersion } from "./contracts/models.ts";
 import {
   type CadenceConversation,
   decodeCadenceConversation,
+  decodeSessionId,
   type WorkbenchCommand,
   type WorkbenchResult,
   type WorkflowLink,
@@ -157,7 +158,7 @@ export class ConversationWorkflow {
     this.root = join(o.coordination.directory, "conversation-workflows-v1");
   }
   private path(id: string) {
-    return join(this.root, decodeId(id), "state.json");
+    return join(this.root, decodeSessionId(id), "state.json");
   }
   /** Never throws for one record's problems: those degrade only that conversation. */
   private read(id: string): Loaded {
@@ -182,7 +183,7 @@ export class ConversationWorkflow {
         state.notice !== undefined
       )
         return unusable(id);
-      if (state.head && !this.o.conversations.hasTurn(id, state.head))
+      if (state.head && !this.o.conversations.hasCommand(id, state.head))
         return {
           state: { ...state, proposal: null, notice: UNRECORDED },
           problem: true,
@@ -300,7 +301,7 @@ export class ConversationWorkflow {
           "conversationId",
         ]);
         if (row.runId !== runId) continue;
-        const conversationId = decodeId(row.conversationId);
+        const conversationId = decodeSessionId(row.conversationId);
         if (this.observe(conversationId).notice) continue;
         links.push({ runId, conversationId });
         wanted.delete(runId);
@@ -323,7 +324,7 @@ export class ConversationWorkflow {
           ++seen;
           let id: string;
           try {
-            id = decodeId(e.name);
+            id = decodeSessionId(e.name);
           } catch {
             continue;
           }
@@ -644,7 +645,7 @@ export class ConversationWorkflow {
     if (!caller) throw new ContractError("forbidden");
     const evidence = join(
       this.root,
-      decodeId(c.conversationId),
+      decodeSessionId(c.conversationId),
       "approvals",
       `${decodeId(c.commandId)}.json`,
     );
@@ -708,16 +709,18 @@ export class ConversationWorkflow {
     recording: () => void,
   ): WorkbenchResult {
     const { state, file } = this.usable(c.conversationId);
-    const view = this.o.conversations.conversation(c.conversationId);
+    // The plan stays approvable only while the browser's last message to this
+    // conversation is the settled one that published it.
+    const latest = this.o.conversations.latestCommand(c.conversationId);
     if (
       !state.enabled ||
       c.revision !== state.revision ||
       !state.proposal ||
       state.proposal.id !== c.proposalId ||
       state.proposal.digest !== c.digest ||
-      view.kind !== "conversation" ||
-      view.summary?.head !== state.head ||
-      ["queued", "running", "unknown"].includes(view.summary.status) ||
+      !latest ||
+      latest.commandId !== state.head ||
+      ["queued", "running", "unknown"].includes(latest.status) ||
       this.active.has(c.conversationId)
     )
       throw new ContractError("stale");

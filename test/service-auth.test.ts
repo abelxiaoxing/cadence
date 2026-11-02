@@ -137,7 +137,7 @@ function actionFixture(f: Fixture) {
   const owner = { requestCancel: vi.fn() };
   // Actual current application port spy, not a second legacy admission engine.
   f.adapters.workbench = {
-    read: () => ({ kind: "conversations", entries: [] }),
+    read: () => ({ kind: "conversations", entries: [], next: null }),
     command: (request) => {
       effects.push(request.commandId);
       if (request.kind === "interrupt") owner.requestCancel();
