@@ -33,12 +33,16 @@ When an observation reply is lost, ask for status; do not infer that the action 
 ## Models and project knowledge
 
 The first native use defaults to the current Pi provider/model/API/thinking selection.
-The selected preference is remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) and reused across projects.
-Ask Cadence to change its model in Pi, or use the model button beside the browser composer; it shows the current model and thinking level, and choosing from its list or thinking row takes effect at once for every conversation in the project.
+Each conversation keeps its own working directory and exact provider/model/API/thinking preference.
+Ask Cadence to change its model in Pi, or use the model button beside the browser composer; it changes future messages and plans in that conversation, not other conversations or admitted runs.
+An explicit model choice is also remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) as the default for new conversations across projects; restoring an existing conversation does not replace that default.
 The browser restores an available saved preference on explicit Send and shows it dimmed until then; reads/login do not install a choice.
 With no choice and no saved preference, Send opens the model list and sends the message right after the choice.
 If no usable preference exists, choose once; an unreadable preference file falls back to the current Pi model, and choosing a model rewrites it.
-An accepted run keeps its original exact model.
+An accepted message or workflow keeps its original directory and exact model, including while queued.
+Different subdirectories of one repository can have independent conversations while sharing one checkout owner and execution gate.
+Tools and check commands use the conversation directory; a plan's declared write paths stay relative to the displayed checkout root, including in isolated Git worktrees.
+Changing the current conversation's model makes its older unaccepted plan require fresh planning/approval; changing another conversation's model does not.
 An unavailable remembered model is not silently substituted.
 Pi's original model and authentication sources remain authoritative; Cadence does not copy credentials.
 
@@ -117,7 +121,7 @@ Conversation response completion is distinct from workflow completion; read the 
 
 ### Research scope, timing and retained results
 
-Each research call accepts one or two questions and optional specific `roots` (default: the selected project directory).
+Each research call accepts one or two questions and optional specific `roots` (default: the conversation directory).
 Provide the actual investigation directory, especially for large mounted/backup trees; do not begin by enumerating `/` or broad parent directories.
 Research tools are readonly and bounded.
 Search limits and omitted coverage are reported explicitly; a partial search does not prove that no other matching file exists.

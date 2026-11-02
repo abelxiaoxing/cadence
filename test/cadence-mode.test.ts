@@ -121,9 +121,12 @@ function host(entries: any[] = []) {
   const refuse = new Map<string, unknown>();
   injected.epoch = epoch;
   injected.client = {
-    models: vi.fn(async () =>
+    models: vi.fn(async (_signal: unknown, location: unknown) =>
       ok({
-        version,
+        version: {
+          ...version,
+          ...(location ? { conversation: location } : {}),
+        },
         selected: model,
         status: "complete",
         entries: [],
@@ -133,6 +136,8 @@ function host(entries: any[] = []) {
     ),
     chooseModel: vi.fn(async () => ok({})),
     workbenchCommand: vi.fn(async (c: any) => {
+      if (c.kind === "restore-model")
+        return ok({ kind: "accepted", commandId: c.commandId });
       effects.push(c.request.action);
       const refused = refuse.get(c.request.action);
       if (refused) {
@@ -143,7 +148,10 @@ function host(entries: any[] = []) {
         run.id = c.commandId;
         known.add(run.id);
       }
-      if (c.request.action === "propose") proposal.id = c.commandId;
+      if (c.request.action === "propose") {
+        proposal.id = c.commandId;
+        proposal.model = c.request.model;
+      }
       const r =
         c.request.action === "propose"
           ? { type: "proposal", proposal }
@@ -158,6 +166,11 @@ function host(entries: any[] = []) {
       return ok({ kind: "workflow", commandId: c.commandId, response: r });
     }),
     workbenchRead: vi.fn(async (r: any) => {
+      if (r.kind === "conversation-context")
+        return ok({
+          kind: r.kind,
+          context: { ...r.location, revision: 0, model: null },
+        });
       if (r.kind === "workflow-active")
         return ok({
           kind: "workflow-active",
@@ -229,6 +242,7 @@ function host(entries: any[] = []) {
     })),
   };
   let idle = true;
+  const sessionId = randomUUID();
   const ctx: any = {
     cwd: root,
     mode: "tui",
@@ -238,7 +252,7 @@ function host(entries: any[] = []) {
     isIdle: () => idle,
     isProjectTrusted: () => true,
     hasPendingMessages: () => false,
-    sessionManager: { getBranch: () => entries },
+    sessionManager: { getBranch: () => entries, getSessionId: () => sessionId },
     ui: {
       onTerminalInput: (f: any) => {
         raw.add(f);
@@ -728,9 +742,10 @@ it("a model-selecting call never inherits an attach-only connection", async () =
       remembered: null,
     }),
   );
-  injected.client.chooseModel.mockImplementation(async (r: any) => {
-    selected = r.choice;
-    return ok({});
+  const command = injected.client.workbenchCommand.getMockImplementation();
+  injected.client.workbenchCommand.mockImplementation(async (r: any) => {
+    if (r.kind === "restore-model") selected = r.choice;
+    return command(r);
   });
   // The model picker attaches without selecting a model.
   const picking = h.call("cadence_model");
@@ -739,7 +754,12 @@ it("a model-selecting call never inherits an attach-only connection", async () =
   release();
   const settled = await Promise.allSettled([picking, planning]);
   expect(settled.map((s) => s.status)).toEqual(["fulfilled", "fulfilled"]);
-  expect(injected.client.chooseModel).toHaveBeenCalledTimes(1);
+  expect(
+    injected.client.workbenchCommand.mock.calls.filter(
+      ([c]: any[]) => c.kind === "restore-model",
+    ),
+  ).toHaveLength(1);
+  expect(injected.client.chooseModel).not.toHaveBeenCalled();
   expect(injected.attaches).toBe(1);
   await h.emit("session_shutdown");
 });
@@ -749,6 +769,10 @@ it("an unreadable preference does not block planning, and an explicit model choi
   mkdirSync(join(h.root, "agent", "cadence"), { recursive: true });
   writeFileSync(file, "{not json");
   await h.start();
+  const initialCatalog = await injected.client.models();
+  injected.client.models.mockResolvedValueOnce(
+    ok({ ...initialCatalog.value, selected: null }),
+  );
   await h.call("cadence_plan", plan());
   expect(h.notices.join("\n")).toContain("unreadable");
   expect(readFileSync(file, "utf8")).toBe("{not json");
@@ -1050,5 +1074,29 @@ it("a mutation resumed after navigation cannot dispatch into the new generation"
   await stale;
   expect(h.effects).toEqual(["propose"]);
   expect(h.last().runId).toBeNull();
+  await h.emit("session_shutdown");
+});
+
+it("native sessions own their model scope; tree navigation keeps it but a fork cannot approve its parent's proposal", async () => {
+  const h = host();
+  await h.start();
+  await h.call("cadence_plan", plan());
+  const scope = injected.client.models.mock.calls.at(-1)[1];
+  expect(scope.cwd).toBe(h.root);
+  await h.emit("session_before_tree");
+  await h.emit("session_tree");
+  await h.call("cadence_plan", plan());
+  expect(injected.client.models.mock.calls.at(-1)[1]).toEqual(scope);
+  await h.emit("session_before_switch");
+  const fork = randomUUID();
+  h.ctx.sessionManager.getSessionId = () => fork;
+  await h.emit("session_start", { reason: "fork" });
+  const before = h.effects.length;
+  await expect(h.call("cadence_start")).rejects.toThrow("No current plan");
+  expect(h.effects).toHaveLength(before);
+  await h.call("cadence_plan", plan());
+  const next = injected.client.models.mock.calls.at(-1)[1];
+  expect(next.cwd).toBe(scope.cwd);
+  expect(next.id).not.toBe(scope.id);
   await h.emit("session_shutdown");
 });

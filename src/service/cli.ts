@@ -416,15 +416,7 @@ export async function startService(
       throw new ContractError("conflict");
     return existing;
   }
-  return launchHost(
-    input,
-    c,
-    foreground,
-    hostUrl,
-    input.config.cwd,
-    env,
-    network,
-  );
+  return launchHost(input, c, foreground, hostUrl, c.store.root, env, network);
 }
 export async function launchHost(
   input: HostInput | import("./gateway-store.ts").GatewayInput,

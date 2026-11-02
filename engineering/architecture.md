@@ -23,12 +23,22 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `web/src/`                                                                                                 | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                   |
 | `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
-`src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination and same-origin project routing, not task execution.
+`src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution.
 `src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the npm upgrade with rollback; it stays SDK-free like the rest of management.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
+Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
 `src/service/{workbench,conversations,conversation-transcript,conversation-steps,conversation-history,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/{conversation-records,conversation-controls}.ts` owns readonly conversation, transcript and mode/plan decoding; it has no execution owner, SDK or write path.
+The live owner supplies its original turn map and lease assertion; `gateway-conversations.ts` supplies an exact stopped-owner observation instead, checked before and after each read.
+The gateway reads only associated stopped owners through these shared readers; a live, starting, quarantined or unresponsive owner is never replaced by an empty live map.
+A never-prepared selection with no private owner directory projects only an initial empty conversation, without claiming execution readiness; an established missing or unreadable store is never replaced this way.
+Retained conversation reads and browser draft identity no longer depend on an execution attachment; legacy task/workflow detail still uses its owner.
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
+The gateway preparation route cannot carry message text, select a model or grant plan consent; it reuses `openProjectDirectory`, also reached by native `project open`.
+Directory entries retain distinct cwd identities even when they resolve to the same checkout owner; old root-keyed entries remain readable without migration.
+Preparation binds the original Send's conversation location independently of its directory-navigation entry; it never replaces that entry's identity.
+Only successfully prepared epochs join whole-workbench Stop; browsing an independently running owner never adopts it, and directory aliases are joined once per exact owner epoch.
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and checkout gate.
 
 The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
@@ -36,15 +46,18 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
-`src/cadence-preferences.ts` stores credential-free global model preference.
+`src/service/conversation-contexts.ts` owns readonly context records and explicit per-conversation model installation/capture; it shares the existing bounded `OwnerModelContext` source cache, not one runtime per conversation.
+`src/conversation-identity.ts` supplies domain-separated stable native-session/context-version identities without importing the executor into Pi.
+`src/cadence-preferences.ts` stores only the credential-free default for new conversations.
 The readonly diagnostics path is `index → history-shell → native client → history/workflow readers`; it cannot create, approve, execute, check, review or select a model.
 `TaskActions`, `TaskScheduler`, `ActionAdmission`, the old graph executor and foreground `TaskController` are removed, along with their execution-only tests and prospective-plan helper.
 `Workbench`, `Workflows` and `Conversations` take `CheckoutGate` directly.
 A canceled waiter is removed; an aborted holder remains held until original settlement, and quarantine/Stop cannot refund it.
 `ServiceCoordination` owns a `CheckoutStore`, not task CRUD.
 Retained task readers/writers use an explicit `legacyTaskStore` adapter; current path/filesystem consumers import `workspace.ts` directly.
-Model choice revisions are owner-epoch-local and no longer reconstructed from task history.
-Configuration replacement checks the original owner activities, model preparations and the checkout gate.
+Conversation choice versions bind their durable preference revision, identity/cwd, live source selection, owner epoch and access generation; no model is reconstructed from task history.
+The explicit low-level unscoped model slot remains owner-local; changing it cannot evict retained conversation sources.
+Global configuration replacement checks the original owner activities, model preparations and the checkout gate; a conversation preference does not replace another conversation's configuration.
 The remaining retirement work is explicit: `host.ts` still initializes `HistoryWriter`/history identity for bootstrap, auth fallback and Stop; worker/client protocols still carry retired task shapes.
 Those persistence/recovery/transport dependencies are not yet a separate readonly archive layer and must not be described as fully retired.
 The readonly operator and independent research/startup modules must not gain service startup or execution side effects.

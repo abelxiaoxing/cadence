@@ -8,7 +8,7 @@ import {
   statfsSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefinitions } from "../agent-registry.ts";
 import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
@@ -28,6 +28,7 @@ import {
   gitEnvironment,
   resolveWorkspace,
   safeDirectory,
+  withinWorkspace,
 } from "../workspace.ts";
 import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
 import {
@@ -38,7 +39,7 @@ import {
   parseWireJson,
   text,
 } from "./contracts/core.ts";
-import type { ChoiceVersion } from "./contracts/models.ts";
+import type { ChoiceVersion, ExecutionContext } from "./contracts/models.ts";
 import {
   type ChatTurn,
   decodeChatTurn,
@@ -63,6 +64,7 @@ import {
   workflowCovers,
   workflowOrder,
 } from "./contracts/workflow.ts";
+import { ConversationContexts } from "./conversation-contexts.ts";
 import { ConversationCapture } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
@@ -125,6 +127,7 @@ const FINAL_UNAVAILABLE =
   "The final message exceeded the retained transcript bound and was not retained.";
 
 interface Options {
+  contexts?: ConversationContexts;
   coordination: ServiceCoordination;
   owner: ServiceOwner;
   models: OwnerModelContext;
@@ -136,6 +139,7 @@ interface Options {
   timeoutMs?: number;
 }
 interface Live {
+  execution: ExecutionContext;
   run: WorkflowRun;
   abort: AbortController;
   file?: FileSnapshot;
@@ -340,6 +344,7 @@ export class Workflows {
   private readonly historyScanner: WorkflowHistoryScanner;
   private readonly root: string;
   private readonly cwd: string;
+  private readonly contexts: ConversationContexts;
   private readonly worktreeRoot: string;
   private readonly active = new Map<string, Live>();
   private readonly grants = new Map<
@@ -347,6 +352,7 @@ export class Workflows {
     { commandId: string; proposalId: string; digest: string; expiresAt: number }
   >();
   constructor(private readonly o: Options) {
+    this.contexts = o.contexts ?? new ConversationContexts(o);
     this.root = join(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync(o.coordination.store.root);
     // Outside the private service namespace (access material, journals): a
@@ -500,7 +506,7 @@ export class Workflows {
     this.o.owner.lease.assert();
     if (
       this.o.owner.state !== "idle" ||
-      resolveWorkspace(this.o.cwd).root !== this.cwd
+      resolveWorkspace(this.o.coordination.store.root).root !== this.cwd
     )
       throw new ContractError("quarantine");
   }
@@ -509,20 +515,25 @@ export class Workflows {
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
   }
-  /** Exact model choice before admission; after admission access rotation is ignored. */
-  private model(version: ChoiceVersion, admitted = false) {
-    const state = this.o.choice.snapshot();
-    if (
-      !state.selected ||
-      (admitted
-        ? state.version.epoch !== version.epoch ||
-          state.version.configRev !== version.configRev ||
-          state.version.catalogId !== version.catalogId
-        : canonicalJson(state.version) !== canonicalJson(version))
-    )
-      throw new ContractError("stale");
-    this.o.models.assertCurrent(state.selected);
-    return state.selected;
+  /** Fresh conversation choice is checked only at admission. Accepted work uses
+   * its own snapshot through implementation, review, repairs and publication. */
+  private model(version: ChoiceVersion) {
+    const execution = this.contexts.capture(version);
+    if (!execution.model) throw new ContractError("stale");
+    return execution.model;
+  }
+  private executionCwd(live: Live, tree: string): string {
+    const cwd = resolve(tree, relative(this.cwd, live.execution.cwd));
+    if (!withinWorkspace(tree, cwd)) throw new ContractError("stale");
+    // Git does not track empty/untracked directories. Recreate only their
+    // empty location in an existing isolated tree, never copy source profiles
+    // or recreate a missing user checkout/worktree root.
+    if (tree !== this.cwd) {
+      if (!safeDirectory(tree)) throw new ContractError("stale");
+      safeDirectory(cwd, true);
+    }
+    if (realpathSync(cwd) !== cwd) throw new ContractError("stale");
+    return cwd;
   }
   private observation(plan: WorkflowPlan) {
     const source = workflowObservation(this.cwd, plan);
@@ -566,7 +577,8 @@ export class Workflows {
     if (
       p.epoch !== this.o.owner.lease.registration.epoch ||
       p.digest !== digest ||
-      p.cwd !== this.cwd ||
+      p.cwd !== this.contexts.capture(p.model).cwd ||
+      (p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd) ||
       observed.digest !== p.observation
     )
       throw new ContractError("stale");
@@ -797,7 +809,8 @@ export class Workflows {
         epoch,
         model: r.model,
         plan,
-        cwd: this.cwd,
+        cwd: this.contexts.capture(r.model).cwd,
+        checkoutRoot: this.cwd,
         observation: digest,
         display: {
           model: `${selected.provider}/${selected.model} · ${selected.thinking}`,
@@ -906,7 +919,16 @@ export class Workflows {
       this.model(request.model);
       this.capacity();
     } else throw new ContractError("invalid");
+    const execution = this.contexts.capture(
+      proposal?.model ??
+        (request.action === "research"
+          ? request.model
+          : (() => {
+              throw new ContractError("invalid");
+            })()),
+    );
     const run: WorkflowRun = {
+      execution,
       id: commandId,
       epoch,
       goal:
@@ -934,6 +956,7 @@ export class Workflows {
       begin = resolve;
     });
     const live: Live = {
+      execution,
       run,
       abort,
       original: ready.then(() => this.execute(live, request)),
@@ -994,7 +1017,17 @@ export class Workflows {
   private assertRunning(live: Live) {
     this.current();
     this.floor();
-    if (live.abort.signal.aborted) throw new ContractError("stale");
+    // current() already resolved the canonical checkout. Most conversations
+    // use that same cwd: do not spawn a second Git lookup at every worker,
+    // check and publication boundary. Distinct conversation paths still need
+    // their own fresh membership/identity check, even within one checkout.
+    if (
+      live.abort.signal.aborted ||
+      (live.execution.cwd !== this.cwd &&
+        (resolveWorkspace(live.execution.cwd).root !== this.cwd ||
+          realpathSync(live.execution.cwd) !== live.execution.cwd))
+    )
+      throw new ContractError("stale");
   }
   private step(
     live: Live,
@@ -1097,7 +1130,14 @@ export class Workflows {
     roots?: string[],
   ): Promise<{ result: RunResult; step: WorkflowStep }> {
     this.assertRunning(live);
-    const model = this.model(version, true);
+    const model = live.execution.model;
+    if (
+      !model ||
+      canonicalJson(version) !== canonicalJson(live.execution.version)
+    )
+      throw new ContractError("stale");
+    this.o.models.assertCurrent(model);
+    const runCwd = this.executionCwd(live, cwd);
     const role = loadAgentDefinitions().find(
       (r) =>
         r.role === (readonly ? "design-explorer" : "implementation-worker"),
@@ -1118,7 +1158,10 @@ export class Workflows {
       model,
       role: { role: role.role, sha256: role.sha256 },
       context: plan
-        ? workflowContext(plan)
+        ? `${workflowContext(plan)}
+Execution cwd: ${runCwd}
+Checkout root: ${cwd}
+Declared write paths are relative to that checkout root, not to the execution cwd.`
         : "Read applicable AGENTS.md and existing project documentation, including .cadence/project.md. Cite evidence and separate observations from assumptions.",
       instructions: `${role.content}\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, retry, mutate Git, install dependencies, publish or deploy. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification.`,
       prompt: text(prompt, 32768, true),
@@ -1146,6 +1189,7 @@ export class Workflows {
     let selectedMessageId: string | undefined;
     const auth = this.o.models.prepareTracked({
       request,
+      cwd: runCwd,
       operationId: op,
       epoch: live.run.epoch,
       timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
@@ -1169,7 +1213,7 @@ export class Workflows {
         this.save(live);
       }
       this.write(this.path(live.run.id, `launches/${childRunId}.json`), {
-        cwd,
+        cwd: runCwd,
         request,
       });
       const transcript: ChatTurn = {
@@ -1194,10 +1238,12 @@ export class Workflows {
         ...credentials,
       ]);
       const running = Promise.resolve().then(() =>
-        launchWorkflowWorker(prepared.prepared, cwd, live.abort.signal, {
+        launchWorkflowWorker(prepared.prepared, runCwd, live.abort.signal, {
           timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
           ownerSecrets: this.o.secrets(),
-          roots: roots?.length ? roots.map((p) => resolve(cwd, p)) : [cwd],
+          roots: roots?.length
+            ? roots.map((p) => resolve(runCwd, p))
+            : [live.run.phase === "research" ? runCwd : cwd],
           onLifecycle: (event) => {
             if (!step.timing) return;
             if (event.kind === "spawned") step.timing.startedAt = event.at;
@@ -1291,9 +1337,10 @@ export class Workflows {
     this.assertRunning(live);
     const shell = "check" in operation;
     if (cwd !== this.cwd && shell) await assertWorktree(this.cwd, cwd);
+    const runCwd = shell ? this.executionCwd(live, cwd) : cwd;
     const id = randomUUID();
     this.write(this.path(live.run.id, `operations/${id}-intent.json`), {
-      cwd,
+      cwd: runCwd,
       args: shell ? operation.check : operation.git,
     });
     let native: CheckNativeSettlement | undefined;
@@ -1325,7 +1372,7 @@ export class Workflows {
             ]),
         windowsVerbatimArguments:
           shell && process.platform === "win32" ? true : undefined,
-        cwd,
+        cwd: runCwd,
         env: shell ? environment : gitEnvironment(),
         // An uninterruptible operation is never tied to the run's cancellation.
         signal: options.uninterruptible
@@ -2016,8 +2063,12 @@ export class Workflows {
   /** Start only against the target the approval observed; unrelated changes are fine. */
   private async assertStartable(live: Live, p: WorkflowProposal) {
     this.current();
-    this.model(p.model, true);
-    if (p.epoch !== this.o.owner.lease.registration.epoch || p.cwd !== this.cwd)
+    if (!live.execution.model) throw new ContractError("stale");
+    this.o.models.assertCurrent(live.execution.model);
+    if (
+      p.epoch !== this.o.owner.lease.registration.epoch ||
+      p.cwd !== live.execution.cwd
+    )
       throw new ContractError("stale");
     const writes = p.plan.tasks.flatMap((t) => t.writes);
     if (live.target) await assertTarget(this.cwd, live.target, writes);

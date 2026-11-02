@@ -8,8 +8,10 @@ export function useWorkspace(
   api: BrowserClient,
   scope: Scope | null,
   enabled: boolean,
+  epoch?: string | null,
 ) {
   const observer = useMemo(() => new WorkspaceObserver(api), [api]);
+  const [revision, setRevision] = useState(0);
   const [state, setState] = useState<ViewerState>({
     actions: false,
     transportStatus: "closed",
@@ -18,6 +20,10 @@ export function useWorkspace(
   const kind = scope?.kind,
     id = scope?.id;
   useEffect(() => {
+    // A positively observed replacement owner gets a fresh attachment, not a
+    // replay. Keep the observer's serialized detach/acquire lifetime intact.
+    void epoch;
+    void revision;
     setState({
       actions: false,
       transportStatus: "closed",
@@ -25,9 +31,16 @@ export function useWorkspace(
     });
     if (!enabled) return;
     return observer.observe(kind && id ? { kind, id } : null, setState);
-  }, [observer, kind, id, enabled]);
+  }, [observer, kind, id, enabled, epoch, revision]);
   return {
     ...state,
     refresh: (capabilities = false) => observer.refresh(capabilities),
+    whenReady: (epoch: string, signal: AbortSignal, minimumVersion?: number) =>
+      observer.whenReady(epoch, signal, minimumVersion),
+    reconnect: () => {
+      const version = observer.nextObservation();
+      setRevision((v) => v + 1);
+      return version;
+    },
   };
 }

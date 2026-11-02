@@ -2,6 +2,47 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Context fixed at admission:": "接纳时固定的上下文：",
+  "Declared write paths use the checkout root:":
+    "声明的写入路径以此 checkout 根目录为基准：",
+  "No model": "未使用模型",
+  "The message was not sent ({code}). Its draft is kept.":
+    "消息尚未发送（{code}）。草稿已保留。",
+  "Execution is not ready to approve this plan. Send a message to refresh the conversation first; nothing was approved.":
+    "当前执行服务无法接受此计划审批。请先发送消息以刷新会话；未批准任何实施。",
+  "Execution was prepared, but the conversation was unreadable before Send. Review its restored context and send again; this message was not sent.":
+    "执行服务已准备就绪，但发送前无法读取会话。请查看恢复的上下文后再次发送；本次消息尚未发送。",
+  "Conversation context is unavailable. Send can prepare execution, but cannot submit this draft until the context is observed.":
+    "当前无法读取会话上下文。点击发送可准备执行服务，但在确认上下文之前不会提交此草稿。",
+
+  "Choose a working folder to see its conversation history.":
+    "选择工作目录后，即可查看它的历史会话。",
+  "Choose a working folder; its files become available when execution is prepared.":
+    "选择工作目录；执行服务就绪后即可浏览文件。",
+  "Choose working folder": "选择工作目录",
+  "Use this folder": "使用此目录",
+  "Selecting folder…": "正在选择目录…",
+  "Choose a folder…": "选择目录…",
+  "Choose a working folder to start chatting.": "选择工作目录后即可开始对话。",
+  "Choose a working folder. Execution is prepared only when you send.":
+    "选择工作目录；仅在发送消息时准备执行服务。",
+  "Conversations stay with their folder. Select one to read its history; Send prepares execution.":
+    "会话按目录保留。选择目录即可查看历史；发送时才准备执行服务。",
+  "Selecting a folder does not start execution. Send prepares it when needed.":
+    "选择目录不会启动执行服务；发送消息时才会按需准备。",
+  "Execution will be prepared when you send. Browsing does not start it.":
+    "发送消息时会按需准备执行服务，浏览不会启动服务。",
+  "Ready to prepare on Send": "发送时按需准备",
+  "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
+  "The message was not sent ({code}). Its draft is kept; preparation may have started an execution service.":
+    "消息尚未发送（{code}）。草稿已保留；准备过程中可能已启动执行服务。",
+  "Connection unavailable. Existing work may continue; no message is replayed automatically.":
+    "连接当前不可用。已接纳的工作可能仍在运行；不会自动重发任何消息。",
+
+  "Execution compatibility not observed": "尚未读取执行服务兼容性",
+  "Execution is stopped. Conversation history remains readable; open this folder to send a new message.":
+    "执行服务已停止。仍可查看历史会话；发送新消息前请打开此目录。",
+  "Execution stopped · history only": "执行已停止 · 仅查看历史",
   "Newer conversations": "较新的会话",
   "Latest conversations": "最近会话",
   "Reading conversation history…": "正在读取会话历史…",
@@ -808,8 +849,8 @@ export const zh = {
   "Disconnect this page": "断开此页面",
   "Started work keeps running.": "已开始的工作会继续运行。",
   "No conversations yet.": "还没有对话。",
-  "Your last project {name} is not running. Click it below to open it again.":
-    "上次的项目 {name} 未在运行，点击下方项目即可重新打开。",
+  "The retained conversations for {name} could not be observed. Choose a folder explicitly; nothing was started.":
+    "无法读取 {name} 的历史会话。请明确选择目录；没有启动任何服务。",
   "Conversations are kept with each project. Click a project to open it.":
     "对话按项目保存，点击项目即可打开。",
   "Opening…": "正在打开…",

@@ -1,11 +1,12 @@
 /** The last selected project, remembered only in this browser like the locale.
  * It holds the opaque owner key, never a path or token. Restoring it navigates
- * to an owner that is already running; it is never an Open and never starts one. */
+ * to retained conversations, even when execution is stopped; it is never an Open and never starts one. */
 import type {
   ProjectEntry,
   WorkbenchEntry,
 } from "../../../src/service/contracts/gateway.ts";
-import { browserClient } from "./browser";
+import { decodeProjectObservation } from "../../../src/service/contracts/gateway.ts";
+import { readJson } from "./service";
 
 export const LAST_PROJECT_STORAGE_KEY = "cadence-last-project";
 
@@ -30,18 +31,25 @@ export function restorableProject(
   const id = rememberedProject();
   return id ? entry.projects.find((p) => p.id === id) : undefined;
 }
-/** A readonly conversation listing through the gateway. It succeeds only while
- * the owner runs in its associated epoch; a stopped owner stays stopped. */
-export async function projectRunning(
+/** Observe existing history identity without allocating an execution attachment
+ * or a history scan. Restoring navigation never starts the execution owner. */
+export async function projectReadable(
   id: string,
   signal: AbortSignal,
 ): Promise<boolean> {
   try {
-    const reply = await browserClient(id).client.workbenchRead(
-      { kind: "conversation-active" },
+    const response = await fetch(`/workbench/v1/projects/${id}`, {
+      credentials: "same-origin",
+      redirect: "error",
+      cache: "no-store",
       signal,
+    });
+    if (!response.ok) return false;
+    const value = decodeProjectObservation(await readJson(response));
+    return (
+      (value.workspaceId !== null || value.status === "not-started") &&
+      !signal.aborted
     );
-    return reply.kind === "ok" && !signal.aborted;
   } catch {
     return false;
   }

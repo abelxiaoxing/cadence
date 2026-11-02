@@ -11,7 +11,12 @@ import {
   oneOf,
   text,
 } from "./core.ts";
-import { type ChoiceVersion, decodeChoiceVersion } from "./models.ts";
+import {
+  type ChoiceVersion,
+  decodeChoiceVersion,
+  decodeExecutionContext,
+  type ExecutionContext,
+} from "./models.ts";
 
 export const WORKFLOW_LIMITS = {
   tasks: 16,
@@ -59,6 +64,7 @@ export interface WorkflowProposal {
   model: ChoiceVersion;
   plan: WorkflowPlan;
   cwd: string;
+  checkoutRoot?: string;
   display?: { model: string; branch: string; baseCommit: string };
 }
 export interface WorkflowTiming {
@@ -103,6 +109,7 @@ export interface WorkflowStep {
   truncated: boolean;
 }
 export interface WorkflowRun {
+  execution?: ExecutionContext;
   diagnostics?: WorkflowDiagnostics;
   id: string;
   epoch: string;
@@ -355,6 +362,7 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
     "model",
     "plan",
     "cwd",
+    ...(Object.hasOwn(v ?? {}, "checkoutRoot") ? ["checkoutRoot"] : []),
     ...(modern ? ["display"] : []),
   ]);
   return {
@@ -365,6 +373,9 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
     model: decodeChoiceVersion(o.model),
     plan: decodeWorkflowPlan(o.plan),
     cwd: text(o.cwd, 4096, true),
+    ...(o.checkoutRoot === undefined
+      ? {}
+      : { checkoutRoot: text(o.checkoutRoot, 4096, true) }),
     ...(modern
       ? {
           display: (() => {
@@ -445,6 +456,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     "mergedCommit",
     "humanReviewed",
     ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
+    ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
   ]);
   const status = (x: unknown) =>
     oneOf(x, [
@@ -458,6 +470,9 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
   if (o.humanReviewed !== false)
     throw new Error("Automatic execution is not human review");
   return {
+    ...(o.execution === undefined
+      ? {}
+      : { execution: decodeExecutionContext(o.execution) }),
     ...(o.diagnostics === undefined
       ? {}
       : { diagnostics: decodeWorkflowDiagnostics(o.diagnostics) }),

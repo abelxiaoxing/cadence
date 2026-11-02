@@ -19,7 +19,8 @@ export interface ProjectEntry {
   id: string;
   path: string;
   cwd: string;
-  epoch: string;
+  /** null: directory selection only; no owner has been prepared here. */
+  epoch: string | null;
 }
 export function decodeProjectEntry(value: unknown): ProjectEntry {
   const o = closed(value, ["id", "path", "cwd", "epoch"]);
@@ -27,7 +28,29 @@ export function decodeProjectEntry(value: unknown): ProjectEntry {
     id: decodeHash(o.id),
     path: text(o.path, 4096, true),
     cwd: text(o.cwd, 4096, true),
-    epoch: decodeId(o.epoch),
+    epoch: o.epoch === null ? null : decodeId(o.epoch),
+  };
+}
+/** Connection readiness is not conversation identity or permission to act. */
+export interface ProjectObservation {
+  kind: "project-observation";
+  status: "running" | "stopped" | "not-started" | "unavailable";
+  epoch: string | null;
+  /** Stable existing history identity, also used by browser draft keys. */
+  workspaceId: string | null;
+}
+export function decodeProjectObservation(value: unknown): ProjectObservation {
+  const o = closed(value, ["kind", "status", "epoch", "workspaceId"]);
+  return {
+    kind: literal(o.kind, "project-observation"),
+    status: oneOf(o.status, [
+      "running",
+      "stopped",
+      "not-started",
+      "unavailable",
+    ]),
+    epoch: o.epoch === null ? null : decodeId(o.epoch),
+    workspaceId: o.workspaceId === null ? null : decodeId(o.workspaceId),
   };
 }
 export const RECOVERY_SCOPES = ["registry", "workbench", "project"] as const;

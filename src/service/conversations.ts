@@ -1,6 +1,6 @@
 /** Ordinary conversations owned by the persistent service, not Cadence tasks. */
 import { randomUUID } from "node:crypto";
-import { lstatSync, opendirSync, realpathSync, statfsSync } from "node:fs";
+import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   CONTEXT_BYTES,
@@ -22,25 +22,21 @@ import {
   canonicalJson,
   closed,
   decodeId,
-  integer,
-  list,
-  parseWireJson,
-  text,
 } from "./contracts/core.ts";
-import {
-  type ChatCursor,
-  type ChatItem,
-  type ChatSummary,
-  type ChatTurn,
-  decodeChatItem,
-  decodeChatTurn,
-  decodeWorkbenchCommand,
-  STEP_READ,
-  type WorkbenchCommand,
-  type WorkbenchResult,
+import type { ExecutionContext } from "./contracts/models.ts";
+import type {
+  ChatItem,
+  ChatTurn,
+  WorkbenchCommand,
+  WorkbenchResult,
 } from "./contracts/workbench.ts";
-import { ConversationHistory } from "./conversation-history.ts";
-import { ConversationSteps } from "./conversation-steps.ts";
+import { ConversationContexts } from "./conversation-contexts.ts";
+import {
+  ConversationRecords,
+  META_BYTES,
+  type SavedConversation,
+  TURN_BYTES,
+} from "./conversation-records.ts";
 import {
   ConversationTranscript,
   type FieldUpdate,
@@ -53,25 +49,14 @@ import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
 
-const TURN_BYTES = 384 * 1024;
-const META_BYTES = 64 * 1024;
-const SUMMARY_CACHE = 256; // Read cache only; never a retained conversation limit.
 const OMITTED_FLAG = {
   "hidden-thinking": "thinking",
   binary: "media",
   unsupported: "other",
 } as const satisfies Record<string, keyof ChatTurn["omitted"]>;
-interface SavedConversation {
-  id: string;
-  title: string;
-  /** Inline legacy prefix only. New turns live in immutable ordinal slots. */
-  turns: string[];
-  head: string;
-  count: number;
-  checkpoint: string | null;
-}
 type Send = Extract<WorkbenchCommand, { kind: "send" }>;
 interface Options {
+  contexts?: ConversationContexts;
   coordination: ServiceCoordination;
   owner: ServiceOwner;
   models: OwnerModelContext;
@@ -88,24 +73,6 @@ export interface ConversationControl {
   accept(): void;
   onTool: NonNullable<ProcessSpec["onCoordinator"]>;
   settle(): Promise<void>;
-}
-/** Cheap no-follow identity of a retained file ("absent" when missing). It
- * selects cached projections only; every miss re-reads through PrivateFiles. */
-export function observedFile(path: string): string {
-  try {
-    const s = lstatSync(path);
-    return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(
-      ":",
-    );
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error.code === "ENOENT" || error.code === "ENOTDIR")
-    )
-      return "absent";
-    throw error;
-  }
 }
 interface LiveTurn {
   conversationId: string;
@@ -294,52 +261,27 @@ export class ConversationCapture {
 }
 
 export class Conversations {
-  private readonly root: string;
-  private readonly history: ConversationHistory;
-  private readonly cwd: string;
+  readonly records: ConversationRecords;
+  private readonly contexts: ConversationContexts;
   private readonly active = new Map<string, LiveTurn>();
-  private readonly summaries = new Map<
-    string,
-    { key: string; summary: ChatSummary; count: number }
-  >();
-  private readonly steps = new ConversationSteps((turnId, page) =>
-    this.page(turnId, page),
-  );
   constructor(private readonly o: Options) {
-    this.root = join(o.coordination.directory, "conversations-v1");
-    this.cwd = realpathSync(o.cwd);
-    const sessions = join(this.root, "sessions");
-    this.history = new ConversationHistory(
-      sessions,
-      () => {
-        this.o.owner.lease.assert();
-        return this.files.directory(sessions);
-      },
-      (id) => this.retainedSummary(id),
-    );
+    this.contexts = o.contexts ?? new ConversationContexts(o);
+    this.records = new ConversationRecords({
+      directory: o.coordination.directory,
+      files: o.coordination.files,
+      cwd: o.coordination.store.root,
+      assertCurrent: () => o.owner.lease.assert(),
+      active: this.active,
+    });
   }
-  private currentDirectory(): boolean {
-    const current = resolveWorkspace(this.o.cwd);
+  private currentDirectory(cwd: string): boolean {
+    const current = resolveWorkspace(cwd);
     return (
-      current.root === this.o.coordination.store.root &&
-      current.cwd === this.cwd
+      current.root === this.o.coordination.store.root && current.cwd === cwd
     );
   }
   private get files() {
     return this.o.coordination.files;
-  }
-  private path(id: string, name: string) {
-    return join(this.root, "turns", decodeId(id), name);
-  }
-  private identityPath(id: string) {
-    return join(this.root, "identities", `${decodeId(id)}.json`);
-  }
-  private metadataPath(id: string) {
-    return join(this.root, "sessions", `${decodeId(id)}.json`);
-  }
-  private read(path: string, max: number): unknown | undefined {
-    const value = this.files.read(path, max);
-    return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
   }
   private write(
     path: string,
@@ -358,234 +300,20 @@ export class Conversations {
       throw error;
     }
   }
-  private metadata(id: string): SavedConversation | null {
-    const value = this.read(this.metadataPath(id), META_BYTES);
-    if (value === undefined) return null;
-    const identity = closed(this.read(this.identityPath(id), META_BYTES), [
-      "schema",
-      "id",
-      "cwd",
-    ]);
-    if (
-      identity.schema !== "cadence-conversation/1" ||
-      identity.id !== id ||
-      identity.cwd !== this.cwd
-    )
-      throw new ContractError("corrupt-selected");
-    const indexed =
-      value !== null &&
-      typeof value === "object" &&
-      Object.hasOwn(value, "count");
-    const m = closed(value, [
-      "id",
-      "title",
-      "turns",
-      "checkpoint",
-      ...(indexed ? ["head", "count"] : []),
-    ]);
-    // This bound reads only the immutable prefix written by older releases.
-    const turns = list(m.turns, 1000, decodeId);
-    const count = indexed
-      ? integer(m.count, Math.max(1, turns.length))
-      : turns.length;
-    const head = indexed ? decodeId(m.head) : turns.at(-1);
-    if (!head || !count || new Set(turns).size !== turns.length || m.id !== id)
-      throw new ContractError("corrupt-selected");
-    const meta: SavedConversation = {
-      id,
-      title: text(m.title, 512, true),
-      turns,
-      head,
-      count,
-      checkpoint: m.checkpoint === null ? null : decodeId(m.checkpoint),
-    };
-    if (
-      this.turnAt(meta, count - 1) !== head ||
-      (indexed && this.position(meta, head) !== count - 1) ||
-      (meta.checkpoint && !this.contains(meta, meta.checkpoint))
-    )
-      throw new ContractError("corrupt-selected");
-    return meta;
-  }
-  private slotPath(id: string, ordinal: number): string {
-    return join(
-      this.root,
-      "indices",
-      decodeId(id),
-      `${integer(ordinal, 0)}.json`,
-    );
-  }
-  private turnAt(meta: SavedConversation, ordinal: number): string {
-    if (ordinal < 0 || ordinal >= meta.count) throw new ContractError("stale");
-    if (ordinal < meta.turns.length) return meta.turns[ordinal];
-    const row = closed(this.read(this.slotPath(meta.id, ordinal), META_BYTES), [
-      "conversationId",
-      "ordinal",
-      "turnId",
-    ]);
-    if (row.conversationId !== meta.id || row.ordinal !== ordinal)
-      throw new ContractError("corrupt-selected");
-    return decodeId(row.turnId);
-  }
-  private position(meta: SavedConversation, turnId: string): number {
-    const legacy = meta.turns.indexOf(turnId);
-    if (legacy >= 0) return legacy;
-    const value = this.read(this.path(turnId, "position.json"), META_BYTES);
-    if (value === undefined) return -1;
-    const row = closed(value, ["conversationId", "ordinal", "turnId"]);
-    if (row.turnId !== turnId) throw new ContractError("corrupt-selected");
-    const ordinal = integer(row.ordinal, 0);
-    if (row.conversationId !== meta.id || ordinal >= meta.count) return -1;
-    return this.turnAt(meta, ordinal) === turnId ? ordinal : -1;
-  }
-  private contains(meta: SavedConversation, turnId: string): boolean {
-    return this.position(meta, turnId) >= 0;
-  }
-  private turn(id: string): ChatTurn {
-    const live = this.active.get(id);
-    const turn =
-      live?.turn ??
-      decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
-    if (turn.id !== id) throw new ContractError("corrupt-selected");
-    // Interrupted original work is not silently resumed or reported completed.
-    return !live && ["queued", "running"].includes(turn.status)
-      ? {
-          ...turn,
-          status: "unknown",
-          notice:
-            "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.",
-        }
-      : turn;
-  }
-  controlBound(id: string): boolean {
-    const path = join(this.root, "control-links", `${decodeId(id)}.json`);
-    const value = this.read(path, META_BYTES);
-    if (value === undefined) return false;
-    const record = closed(value, ["schema", "conversationId"]);
-    if (
-      record.schema !== "cadence-conversation-control/1" ||
-      record.conversationId !== id
-    )
-      throw new ContractError("corrupt-selected");
-    return true;
-  }
-  /** Cheap observation key for a control link; not a validation. */
-  controlKey(id: string): string {
-    return observedFile(
-      join(this.root, "control-links", `${decodeId(id)}.json`),
-    );
-  }
   bindControl(id: string): void {
-    if (!this.controlBound(id))
+    if (!this.records.controlBound(id))
       this.write(
-        join(this.root, "control-links", `${decodeId(id)}.json`),
+        join(this.records.root, "control-links", `${decodeId(id)}.json`),
         { schema: "cadence-conversation-control/1", conversationId: id },
         META_BYTES,
       );
-  }
-  hasTurn(id: string, turnId: string): boolean {
-    const meta = this.metadata(id);
-    return !!meta && this.contains(meta, turnId);
-  }
-  private summary(meta: SavedConversation): ChatSummary {
-    const head = meta.head,
-      turn = this.turn(head);
-    const accepted = closed(
-      this.read(this.path(head, "accepted.json"), META_BYTES),
-      ["command", "at"],
-    );
-    const command = decodeWorkbenchCommand(accepted.command);
-    if (
-      command.kind !== "send" ||
-      command.commandId !== head ||
-      command.conversationId !== meta.id ||
-      command.model.epoch !== turn.epoch
-    )
-      throw new ContractError("corrupt-selected");
-    return {
-      id: meta.id,
-      title: meta.title,
-      head,
-      status: turn.status,
-      updatedAt: integer(accepted.at, 0),
-    };
-  }
-  private headKey(head: string, id: string, count: number): string {
-    return [
-      this.path(head, "turn.json"),
-      this.path(head, "accepted.json"),
-      this.path(head, "position.json"),
-      this.slotPath(id, count - 1),
-    ]
-      .map(observedFile)
-      .join("|");
-  }
-  private retainedSummary(id: string): ChatSummary {
-    return this.retained(id).summary;
-  }
-  /** A settled summary is re-read only when one of its files changed: polls
-   * otherwise parse every head turn (up to 384 KiB each). Keys are taken
-   * before each read, so a concurrent change can only cause a later re-read. */
-  private retained(id: string): { summary: ChatSummary; count: number } {
-    const base = [this.metadataPath(id), this.identityPath(id)]
-      .map(observedFile)
-      .join("|");
-    const hit = this.summaries.get(id);
-    if (
-      hit &&
-      !this.active.has(hit.summary.head) &&
-      hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`
-    )
-      return { summary: { ...hit.summary }, count: hit.count };
-    const meta = this.metadata(id);
-    if (!meta) throw new ContractError("corrupt-selected");
-    const head = meta.head;
-    const key = `${base}|${this.headKey(head, id, meta.count)}`;
-    const summary = this.summary(meta);
-    this.summaries.delete(id);
-    if (
-      !this.active.has(head) &&
-      !["queued", "running"].includes(summary.status)
-    ) {
-      if (this.summaries.size >= SUMMARY_CACHE)
-        this.summaries.delete(this.summaries.keys().next().value as string);
-      this.summaries.set(id, {
-        key,
-        summary: { ...summary },
-        count: meta.count,
-      });
-    }
-    return { summary, count: meta.count };
-  }
-  private liveSummary(live: LiveTurn): ChatSummary {
-    return {
-      id: live.conversationId,
-      title: live.title,
-      head: live.turn.id,
-      status: live.turn.status,
-      updatedAt: live.acceptedAt,
-    };
-  }
-  list(after: ChatCursor | null = null, scan?: string): WorkbenchResult {
-    this.o.owner.lease.assert();
-    return this.history.read(after, scan);
-  }
-  activeConversations(): WorkbenchResult & { kind: "conversation-active" } {
-    this.o.owner.lease.assert();
-    return {
-      kind: "conversation-active",
-      entries: [...this.active.values()].map((live) => this.liveSummary(live)),
-    };
-  }
-  closeReads(): void {
-    this.history.close();
   }
   /** Startup checks every retained head without a lifetime-count ceiling.
    * Admission thereafter relies on the owner's original-work fence, not a
    * full-history scan on each Send. No record is repaired or reconstructed. */
   assertSettled(): void {
     this.o.owner.lease.assert();
-    const path = join(this.root, "sessions");
+    const path = join(this.records.root, "sessions");
     if (!this.files.directory(path)) return;
     const dir = opendirSync(path);
     try {
@@ -593,7 +321,7 @@ export class Conversations {
         if (!e.isFile() || !e.name.endsWith(".json"))
           throw new ContractError("corrupt-selected");
         if (
-          this.retainedSummary(decodeId(e.name.slice(0, -5))).status ===
+          this.records.retainedSummary(decodeId(e.name.slice(0, -5))).status ===
           "unknown"
         )
           throw new ContractError("quarantine");
@@ -602,92 +330,20 @@ export class Conversations {
       dir.closeSync();
     }
   }
-  /** The conversation's summary and turn count: what a viewer polls. */
-  conversation(id: string): WorkbenchResult {
-    this.o.owner.lease.assert();
-    if (observedFile(this.metadataPath(id)) === "absent") {
-      const live = [...this.active.values()].find(
-        (turn) => turn.conversationId === id,
-      );
-      return {
-        kind: "conversation",
-        summary: live ? this.liveSummary(live) : null,
-        turns: 0,
-      };
-    }
-    const { summary, count } = this.retained(id);
-    return { kind: "conversation", summary, turns: count };
-  }
-  /** One turn by position, with the steps that end at `before` (else the latest). */
-  turnSteps(
-    id: string,
-    ordinal: number,
-    before: number | null,
-  ): WorkbenchResult {
-    this.o.owner.lease.assert();
-    const meta = this.metadata(id);
-    if (!meta) throw new ContractError("stale");
-    const turn = this.turn(this.turnAt(meta, ordinal));
-    const { steps, stable } = this.steps.list(turn);
-    const end = before ?? steps.length;
-    if (end > steps.length) throw new ContractError("stale");
-    const start = Math.max(0, end - STEP_READ);
-    return {
-      kind: "conversation-turn",
-      conversationId: id,
-      ordinal,
-      turn: {
-        id: turn.id,
-        epoch: turn.epoch,
-        status: turn.status,
-        notice: turn.notice,
-        omitted: { ...turn.omitted },
-        steps: steps.length,
-        stable,
-      },
-      start,
-      steps: steps.slice(start, end).map((row) => row.step),
-    };
-  }
-  /** One stored part of a step's full item: arguments, output or whole text. */
-  step(
-    id: string,
-    turnId: string,
-    step: number,
-    part: number,
-  ): WorkbenchResult {
-    this.o.owner.lease.assert();
-    if (!this.hasTurn(id, turnId)) throw new ContractError("invalid");
-    return {
-      kind: "conversation-step",
-      conversationId: id,
-      turnId,
-      step,
-      part,
-      item: { ...this.steps.detail(this.turn(turnId), step, part) },
-    };
-  }
-  private page(turnId: string, page: number): ChatItem {
-    const value = this.read(
-      this.path(turnId, `transcript/${integer(page, 0)}.json`),
-      TRANSCRIPT_PAGE_BYTES,
-    );
-    if (value === undefined) throw new ContractError("corrupt-selected");
-    const record = closed(value, ["turnId", "page", "items"]);
-    const items = list(record.items, 1, decodeChatItem);
-    if (record.turnId !== turnId || record.page !== page || !items.length)
-      throw new ContractError("corrupt-selected");
-    return items[0];
-  }
   attempted(conversationId: string, commandId: string): boolean {
     this.o.owner.lease.assert();
-    const meta = this.metadata(conversationId);
+    const meta = this.records.metadata(conversationId);
     return (
       this.active.has(commandId) ||
-      this.files.directory(dirname(this.path(commandId, "accepted.json"))) ||
-      (!!meta && this.contains(meta, commandId)) ||
+      this.files.directory(
+        dirname(this.records.path(commandId, "accepted.json")),
+      ) ||
+      (!!meta && this.records.contains(meta, commandId)) ||
       (!meta &&
-        !!this.files.read(this.identityPath(conversationId), META_BYTES))
+        !!this.files.read(
+          this.records.identityPath(conversationId),
+          META_BYTES,
+        ))
     );
   }
   private command(input: Send, reply: boolean): Send {
@@ -700,8 +356,8 @@ export class Conversations {
    * Any caller-side freshness check must come after this lookup. */
   receipt(input: Send, reply = false): WorkbenchResult | undefined {
     this.o.owner.lease.assert();
-    const prior = this.read(
-      this.path(input.commandId, "accepted.json"),
+    const prior = this.records.read(
+      this.records.path(input.commandId, "accepted.json"),
       META_BYTES,
     );
     if (prior === undefined) return undefined;
@@ -722,41 +378,60 @@ export class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt) return receipt;
     if (
-      this.files.directory(dirname(this.path(input.commandId, "accepted.json")))
+      this.files.directory(
+        dirname(this.records.path(input.commandId, "accepted.json")),
+      )
     )
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
-    const choice = this.o.choice.snapshot();
     if (
-      (!choice.selected && !control?.reply) ||
-      canonicalJson(choice.version) !== canonicalJson(input.model)
+      !input.model.conversation &&
+      this.files.read(
+        this.contexts.records.path(input.conversationId),
+        META_BYTES,
+      )
     )
       throw new ContractError("stale");
-    if (choice.selected && !control?.reply)
-      this.o.models.assertCurrent(choice.selected);
-    if (!this.currentDirectory()) throw new ContractError("stale");
-    const beforeMeta = this.files.read(
-      this.metadataPath(input.conversationId),
+    if (
+      input.model.conversation &&
+      input.model.conversation.id !== input.conversationId
+    )
+      throw new ContractError("stale");
+    const execution = this.contexts.capture(input.model, !!control?.reply);
+    const existingIdentity = this.files.read(
+      this.records.identityPath(input.conversationId),
       META_BYTES,
     );
-    const meta = this.metadata(input.conversationId);
+    if (
+      existingIdentity &&
+      this.records.cwd(input.conversationId) !== execution.cwd
+    )
+      throw new ContractError("stale");
+    const beforeMeta = this.files.read(
+      this.records.metadataPath(input.conversationId),
+      META_BYTES,
+    );
+    const meta = this.records.metadata(input.conversationId);
     this.files.assert(
-      this.metadataPath(input.conversationId),
+      this.records.metadataPath(input.conversationId),
       beforeMeta,
       META_BYTES,
     );
     if (
       !meta &&
-      this.files.read(this.identityPath(input.conversationId), META_BYTES)
+      this.files.read(
+        this.records.identityPath(input.conversationId),
+        META_BYTES,
+      )
     )
       throw new ContractError("corrupt-selected");
     if ((meta?.head ?? null) !== input.head) throw new ContractError("stale");
     if (
       meta &&
-      this.turn(input.head as string).status !== "completed" &&
+      this.records.turn(input.head as string).status !== "completed" &&
       (!control ||
         ["queued", "running", "unknown"].includes(
-          this.turn(input.head as string).status,
+          this.records.turn(input.head as string).status,
         ))
     )
       throw new ContractError("conflict");
@@ -770,6 +445,7 @@ export class Conversations {
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
     const turn: ChatTurn = {
+      execution,
       id: input.commandId,
       epoch: input.model.epoch,
       status: "queued",
@@ -795,7 +471,7 @@ export class Conversations {
       checkpoint: null,
     };
     const previous = next.checkpoint
-      ? this.path(next.checkpoint, "context.json")
+      ? this.records.path(next.checkpoint, "context.json")
       : null;
     const previousFile = previous
       ? this.files.read(previous, CONTEXT_BYTES)
@@ -808,7 +484,16 @@ export class Conversations {
       begin = resolve;
     });
     const original = ready.then(() =>
-      this.run(command, turn, previous, previousFile, next, abort, control),
+      this.run(
+        command,
+        turn,
+        previous,
+        previousFile,
+        next,
+        abort,
+        execution,
+        control,
+      ),
     );
     const live: LiveTurn = {
       turn,
@@ -827,17 +512,17 @@ export class Conversations {
     try {
       if (!meta)
         this.write(
-          this.identityPath(next.id),
-          { schema: "cadence-conversation/1", id: next.id, cwd: this.cwd },
+          this.records.identityPath(next.id),
+          { schema: "cadence-conversation/1", id: next.id, cwd: execution.cwd },
           META_BYTES,
         );
       this.write(
-        this.path(turn.id, "accepted.json"),
+        this.records.path(turn.id, "accepted.json"),
         { command, at: live.acceptedAt },
         META_BYTES,
       );
       live.turnFile = this.write(
-        this.path(turn.id, "turn.json"),
+        this.records.path(turn.id, "turn.json"),
         turn,
         TURN_BYTES,
       );
@@ -846,12 +531,20 @@ export class Conversations {
         ordinal: next.count,
         turnId: turn.id,
       };
-      this.write(this.slotPath(next.id, next.count), position, META_BYTES);
-      this.write(this.path(turn.id, "position.json"), position, META_BYTES);
+      this.write(
+        this.records.slotPath(next.id, next.count),
+        position,
+        META_BYTES,
+      );
+      this.write(
+        this.records.path(turn.id, "position.json"),
+        position,
+        META_BYTES,
+      );
       next.head = turn.id;
       next.count++;
       live.metaFile = this.write(
-        this.metadataPath(next.id),
+        this.records.metadataPath(next.id),
         next,
         META_BYTES,
         beforeMeta,
@@ -867,21 +560,6 @@ export class Conversations {
     begin();
     return { kind: "accepted", commandId: turn.id };
   }
-  origin(taskId: string): WorkbenchResult & { kind: "task-origin" } {
-    this.o.owner.lease.assert();
-    const value = this.read(
-      join(this.root, "task-links", `${decodeId(taskId)}.json`),
-      META_BYTES,
-    );
-    if (value === undefined)
-      return { kind: "task-origin", taskId, conversationId: null };
-    const row = closed(value, ["conversationId"]);
-    return {
-      kind: "task-origin",
-      taskId,
-      conversationId: decodeId(row.conversationId),
-    };
-  }
   interrupt(id: string, turnId: string, epoch: string): void {
     this.o.owner.lease.assert();
     const live = this.active.get(turnId);
@@ -891,10 +569,11 @@ export class Conversations {
       live.abort.abort();
       return;
     }
-    const meta = this.metadata(id);
-    if (!meta || !this.contains(meta, turnId))
+    const meta = this.records.metadata(id);
+    if (!meta || !this.records.contains(meta, turnId))
       throw new ContractError("invalid");
-    if (this.turn(turnId).epoch !== epoch) throw new ContractError("stale");
+    if (this.records.turn(turnId).epoch !== epoch)
+      throw new ContractError("stale");
     this.active.get(turnId)?.abort.abort();
   }
   private async run(
@@ -904,6 +583,7 @@ export class Conversations {
     previousFile: FileSnapshot | undefined,
     meta: SavedConversation,
     abort: AbortController,
+    execution: ExecutionContext,
     control?: ConversationControl,
   ): Promise<AcceptedWorkResult> {
     let transcript: ConversationTranscript | undefined;
@@ -930,7 +610,7 @@ export class Conversations {
     const save = () => {
       if (!live?.turnFile) throw new ContractError("corrupt-selected");
       live.turnFile = this.write(
-        this.path(turn.id, "turn.json"),
+        this.records.path(turn.id, "turn.json"),
         turn,
         TURN_BYTES,
         live.turnFile,
@@ -940,7 +620,7 @@ export class Conversations {
       if (
         abort.signal.aborted ||
         this.o.owner.state !== "idle" ||
-        !this.currentDirectory()
+        !this.currentDirectory(execution.cwd)
       )
         return false;
       if (previous) this.files.assert(previous, previousFile, CONTEXT_BYTES);
@@ -958,17 +638,14 @@ export class Conversations {
         barrier.assertHeld();
       }
       if (!current()) throw new ContractError("stale");
-      const choice = this.o.choice.snapshot(),
-        selected = choice.selected;
-      // Access rotation revokes viewers, not already admitted work. The exact
-      // selected model/epoch remains pinned while this original is queued.
-      if (
-        !selected ||
-        command.model.epoch !== choice.version.epoch ||
-        command.model.configRev !== choice.version.configRev ||
-        command.model.catalogId !== choice.version.catalogId
-      )
-        throw new ContractError("stale");
+      // The admitted original owns its exact model/cwd, not a future picker
+      // choice. Access rotation and another conversation's choice cannot rebase it.
+      const selected = execution.model;
+      if (!selected) throw new ContractError("stale");
+      this.o.models.assertCurrent(selected);
+      const instructions = control
+        ? `${control.instructions}\nCONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow declared write paths are checkout-root-relative, not cwd-relative. Tools, relative investigation roots and check commands use this conversation cwd.`
+        : "Ordinary conversation.";
       const request = decodeWorkerPublicRequest({
         protocol: 2,
         taskId: meta.id,
@@ -980,15 +657,16 @@ export class Conversations {
         model: selected,
         role: {
           role: control ? "design-explorer" : "implementation-worker",
-          sha256: hash(control?.instructions ?? "Ordinary conversation."),
+          sha256: hash(instructions),
         },
         context: "",
-        instructions: control?.instructions ?? "Ordinary conversation.",
+        instructions,
         prompt: command.text,
         handoff: { graphRevision: 1, inputs: [] },
       });
       const auth = this.o.models.prepareTracked({
         request,
+        cwd: execution.cwd,
         operationId: randomUUID(),
         epoch: turn.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
@@ -997,13 +675,13 @@ export class Conversations {
         journal: {
           preparation: (value) =>
             this.write(
-              this.path(turn.id, "auth-intent.json"),
+              this.records.path(turn.id, "auth-intent.json"),
               value,
               META_BYTES,
             ),
           settlement: (value) =>
             this.write(
-              this.path(turn.id, "auth-settled.json"),
+              this.records.path(turn.id, "auth-settled.json"),
               value,
               META_BYTES,
             ),
@@ -1016,7 +694,7 @@ export class Conversations {
       turn.status = "running";
       save();
       this.write(
-        this.path(turn.id, "launch.json"),
+        this.records.path(turn.id, "launch.json"),
         { epoch: turn.epoch, childRunId: request.childRunId },
         META_BYTES,
       );
@@ -1032,7 +710,7 @@ export class Conversations {
         )
           throw new ContractError("capacity");
         this.write(
-          this.path(turn.id, `transcript/${page.page}.json`),
+          this.records.path(turn.id, `transcript/${page.page}.json`),
           page,
           TRANSCRIPT_PAGE_BYTES,
         );
@@ -1064,7 +742,7 @@ export class Conversations {
               )
                 throw new ContractError("capacity");
               const file = this.write(
-                this.path(turn.id, `context-${contextCount}.json`),
+                this.records.path(turn.id, `context-${contextCount}.json`),
                 {
                   schema: "cadence-conversation-message/1",
                   index: contextCount,
@@ -1105,7 +783,7 @@ export class Conversations {
       if (result.outcome === "completed") {
         if (!checkpoint) throw new ContractError("corrupt-selected");
         this.write(
-          this.path(turn.id, "context.json"),
+          this.records.path(turn.id, "context.json"),
           {
             schema: "cadence-conversation-context/2",
             messages: contextCount,
@@ -1116,7 +794,7 @@ export class Conversations {
         meta.checkpoint = turn.id;
         if (!live?.metaFile) throw new ContractError("corrupt-selected");
         live.metaFile = this.write(
-          this.metadataPath(meta.id),
+          this.records.metadataPath(meta.id),
           meta,
           META_BYTES,
           live.metaFile,
@@ -1138,7 +816,11 @@ export class Conversations {
       if (uncertain) turn.status = "unknown";
       try {
         // Preserve actual process closure even if final transcript publication fails.
-        this.write(this.path(turn.id, "native.json"), native, META_BYTES);
+        this.write(
+          this.records.path(turn.id, "native.json"),
+          native,
+          META_BYTES,
+        );
         transcript?.finish();
         if (turn.status !== "completed")
           turn.notice = [

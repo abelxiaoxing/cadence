@@ -133,9 +133,9 @@ it("a legacy 1000-turn conversation continues into constant-size indexed metadat
   expect(meta).toMatchObject({ count: 1003, head, turns: prefix });
   const cold = f.reopen();
   cold.assertSettled();
-  expect(cold.hasTurn(id, prefix[0])).toBe(true);
-  expect(cold.hasTurn(id, head)).toBe(true);
-  expect(cold.conversation(id)).toMatchObject({
+  expect(cold.records.hasTurn(id, prefix[0])).toBe(true);
+  expect(cold.records.hasTurn(id, head)).toBe(true);
+  expect(cold.records.conversation(id)).toMatchObject({
     kind: "conversation",
     turns: 1003,
     summary: { head },
@@ -146,12 +146,12 @@ it("a legacy 1000-turn conversation continues into constant-size indexed metadat
     [999, prefix.at(-1)],
     [1002, head],
   ] as const)
-    expect(cold.turnSteps(id, ordinal, null)).toMatchObject({
+    expect(cold.records.turnSteps(id, ordinal, null)).toMatchObject({
       kind: "conversation-turn",
       ordinal,
       turn: { id: turnId },
     });
-  expect(() => cold.turnSteps(id, 1003, null)).toThrow();
+  expect(() => cold.records.turnSteps(id, 1003, null)).toThrow();
   // A position alone does not admit a turn: its ordinal must also be committed
   // by this conversation's head/count and immutable slot.
   const orphan = randomUUID();
@@ -160,15 +160,15 @@ it("a legacy 1000-turn conversation continues into constant-size indexed metadat
     ordinal: 1003,
     turnId: orphan,
   });
-  expect(cold.hasTurn(id, orphan)).toBe(false);
+  expect(cold.records.hasTurn(id, orphan)).toBe(false);
   const slot = join(f.root, "indices", id, "1002.json");
   writeFileSync(
     slot,
     canonicalJson({ conversationId: id, ordinal: 1002, turnId: randomUUID() }),
   );
-  expect(() => cold.turnSteps(id, 1002, null)).toThrow();
-  f.conversations.closeReads();
-  cold.closeReads();
+  expect(() => cold.records.turnSteps(id, 1002, null)).toThrow();
+  f.conversations.records.closeReads();
+  cold.records.closeReads();
 });
 it("new conversations have no 200-record cap and list in finite recent-first pages", async () => {
   const f = fixture();
@@ -185,7 +185,7 @@ it("new conversations have no 200-record cap and list in finite recent-first pag
   let first = true,
     progress = 0;
   for (let reads = 0; reads < 1000; reads++) {
-    const result = cold.list(after, scan);
+    const result = cold.records.list(after, scan);
     decodeWorkbenchResult(result);
     if (result.kind === "conversations-progress") {
       progress++;
@@ -213,8 +213,8 @@ it("new conversations have no 200-record cap and list in finite recent-first pag
   );
   expect(meta.turns).toEqual([]);
   expect(meta.count).toBe(1);
-  f.conversations.closeReads();
-  cold.closeReads();
+  f.conversations.records.closeReads();
+  cold.records.closeReads();
 });
 it("history cursors are one-use, boundary-bound and closed on owner departure", () => {
   const root = mkdtempSync(join(tmpdir(), "chat-scan-"));

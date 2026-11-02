@@ -1,3 +1,4 @@
+import type { ConversationLocation } from "./service/contracts/models.ts";
 import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
@@ -143,10 +144,18 @@ export class ServiceClient {
     const request = decodeWorkbenchRead(input);
     try {
       if (!this.transport.workbenchRead) return unavailable(false);
-      return decodeReply(
+      const reply = decodeReply(
         await this.transport.workbenchRead(request, signal),
         decodeWorkbenchResult,
       );
+      if (
+        reply.kind === "ok" &&
+        request.kind === "conversation-context" &&
+        (reply.value.kind !== request.kind ||
+          reply.value.context.id !== request.location.id)
+      )
+        return unavailable(false);
+      return reply;
     } catch {
       return unavailable(false);
     }
@@ -221,8 +230,22 @@ export class ServiceClient {
       return unavailable(false);
     }
   }
-  async models(signal?: AbortSignal): Promise<Reply<ModelCatalog>> {
+  async models(
+    signal?: AbortSignal,
+    location?: ConversationLocation,
+  ): Promise<Reply<ModelCatalog>> {
     try {
+      if (location) {
+        const reply = await this.workbenchRead(
+          { kind: "conversation-models", location },
+          signal,
+        );
+        if (reply.kind === "error") return reply;
+        return reply.value.kind === "conversation-models" &&
+          reply.value.catalog.version.conversation?.id === location.id
+          ? { kind: "ok", value: reply.value.catalog }
+          : unavailable(false);
+      }
       if (!this.transport.models) return unavailable(false);
       return decodeReply(
         await this.transport.models(signal),
@@ -234,19 +257,38 @@ export class ServiceClient {
   }
   async chooseModel(
     input: ChooseModelRequest,
+    location?: ConversationLocation,
   ): Promise<Reply<ModelChoiceState>> {
     const request = decodeChooseModelRequest(input);
     try {
-      if (!this.transport.chooseModel) return unavailable(false);
-      const reply = decodeReply(
-        await this.transport.chooseModel(request),
-        decodeModelChoiceState,
-      );
+      let reply: Reply<ModelChoiceState>;
+      if (location) {
+        const result = await this.workbenchCommand({
+          kind: "conversation-model",
+          commandId: crypto.randomUUID(),
+          location,
+          ...request,
+        });
+        reply =
+          result.kind === "error"
+            ? result
+            : result.value.kind === "conversation-model"
+              ? { kind: "ok", value: result.value.choice }
+              : unavailable(true);
+      } else {
+        if (!this.transport.chooseModel) return unavailable(false);
+        reply = decodeReply(
+          await this.transport.chooseModel(request),
+          decodeModelChoiceState,
+        );
+      }
       if (reply.kind === "ok") {
         const { sourceSelectionId: _id, ...selector } =
           reply.value.selected ?? {};
         if (
           canonicalJson(selector) !== canonicalJson(request.choice) ||
+          canonicalJson(reply.value.version.conversation ?? null) !==
+            canonicalJson(request.expected.conversation ?? null) ||
           reply.value.version.epoch !== request.expected.epoch ||
           reply.value.version.accessGeneration !==
             request.expected.accessGeneration ||
@@ -254,8 +296,12 @@ export class ServiceClient {
             request.expected.configRev,
             request.expected.configRev + 1,
           ].includes(reply.value.version.configRev) ||
-          (reply.value.version.configRev === request.expected.configRev) !==
-            (reply.value.version.catalogId === request.expected.catalogId)
+          (!location &&
+            (reply.value.version.configRev === request.expected.configRev) !==
+              (reply.value.version.catalogId === request.expected.catalogId)) ||
+          (!!location &&
+            reply.value.version.configRev !== request.expected.configRev &&
+            reply.value.version.catalogId === request.expected.catalogId)
         )
           return unavailable(true);
       }

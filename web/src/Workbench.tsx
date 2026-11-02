@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  decodeProjectEntry,
   decodeWorkbenchEntry,
   type ProjectEntry,
   type WorkbenchEntry,
 } from "../../src/service/contracts/gateway.ts";
+import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../src/service-client.ts";
 import {
@@ -14,12 +14,12 @@ import {
 } from "../../src/service-contract.ts";
 import { App } from "./App";
 import { browserClient } from "./client/browser";
-import { localBuild } from "./client/build-identity";
 import {
-  projectRunning,
+  projectReadable,
   rememberProject,
   restorableProject,
 } from "./client/last-project";
+import { prepareDirectorySend, selectDirectory } from "./client/project-entry";
 import { currentProject } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
@@ -28,9 +28,10 @@ import { ServiceDialog } from "./components/workspace/ServiceDialog";
 import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
 import { useT } from "./i18n/locale";
 
-/** Entry discovery is readonly. Only an explicit Open starts/reuses a project.
+/** Entry discovery and directory selection never start execution. Only the
+ * current explicit Send prepares a project owner.
  * Scope changes remount the thin project client, detaching rather than stopping.
- * An unselected first entry returns to the last project only while it runs. */
+ * An unselected first entry returns to the last project without requiring a running execution owner. */
 export function Workbench() {
   const { t } = useT();
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
@@ -42,13 +43,13 @@ export function Workbench() {
   const [revision, refresh] = useState(0);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [restore, setRestore] = useState<{
-    status: "checking" | "stopped";
+    status: "checking" | "unavailable";
     path: string;
   } | null>(null);
   const hashes = useRef(new Map<string, string>());
   const firstEntry = useRef(!selected);
   const restoring = useRef<AbortController | null>(null);
-  // Clears a pending check; a "stopped" notice stays until navigation.
+  // Clears a pending check; an unavailable-history notice stays until navigation.
   const cancelRestore = useCallback(() => {
     if (!restoring.current) return;
     restoring.current.abort();
@@ -99,12 +100,12 @@ export function Workbench() {
     const abort = new AbortController();
     restoring.current = abort;
     setRestore({ status: "checking", path: project.cwd });
-    void projectRunning(project.id, abort.signal).then((running) => {
+    void projectReadable(project.id, abort.signal).then((readable) => {
       // Any explicit navigation, Open or folder choice meanwhile wins.
       if (abort.signal.aborted) return;
       restoring.current = null;
-      if (!running) {
-        setRestore({ status: "stopped", path: project.cwd });
+      if (!readable) {
+        setRestore({ status: "unavailable", path: project.cwd });
         return;
       }
       history.replaceState(null, "", `/app?project=${project.id}`);
@@ -116,62 +117,44 @@ export function Workbench() {
     (project: ProjectEntry | null) => {
       cancelRestore();
       setRestore(null);
-      if (selected) hashes.current.set(selected, window.location.hash);
+      if (
+        selected &&
+        history.state?.cadenceCwd ===
+          entry?.projects.find((p) => p.id === selected)?.cwd
+      )
+        hashes.current.set(selected, window.location.hash);
       history.pushState(
-        null,
+        { cadenceCwd: project?.cwd },
         "",
         project
-          ? `/app?project=${project.id}${hashes.current.get(project.id) ?? ""}`
+          ? `/app?project=${project.id}${hashes.current.get(project.id) ?? `#chat=${crypto.randomUUID()}`}`
           : "/app",
       );
       setSelected(project?.id ?? null);
       setPicker(null);
+      window.dispatchEvent(new PopStateEvent("popstate"));
     },
-    [selected, cancelRestore],
+    [selected, cancelRestore, entry],
   );
   const open = useCallback(
     async (path: string) => {
-      if (!entry || !localBuild) throw new Error("unavailable");
-      const commandId = crypto.randomUUID();
-      // No retry, even when the response is lost. A separately explicit Open is
-      // permitted; it observes/reuses the independently coordinated project owner.
-      const response = await fetch("/workbench/v1/open", {
-        method: "POST",
-        credentials: "same-origin",
-        redirect: "error",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Cadence-CSRF": entry.csrf,
-          "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
-        },
-        body: JSON.stringify({ commandId, path, epoch: entry.epoch }),
-      });
-      const value = await read(response);
-      if (
-        !response.ok ||
-        !value ||
-        typeof value !== "object" ||
-        !("kind" in value) ||
-        value.kind !== "project" ||
-        !("project" in value)
-      )
-        throw new Error(errorCode(value));
-      const project = decodeProjectEntry(value.project);
-      setEntry((previous) =>
-        previous
-          ? {
-              ...previous,
-              projects: [
-                ...previous.projects.filter((p) => p.id !== project.id),
-                project,
-              ],
-            }
-          : previous,
-      );
-      navigate(project);
+      const selected = await selectDirectory(path);
+      setEntry(selected.entry);
+      navigate(selected.project);
     },
-    [entry, navigate],
+    [navigate],
   );
+  const prepareSend = async (
+    signal: AbortSignal,
+    location?: ConversationLocation,
+  ) => {
+    const selectedProject = entry?.projects.find((p) => p.id === selected);
+    if (!selectedProject) throw new Error("unavailable");
+    const ready = await prepareDirectorySend(selectedProject, signal, location);
+    if (signal.aborted) throw new Error("stale");
+    setEntry(ready.entry);
+    return ready.project.epoch as string;
+  };
   const directories = useMemo<Pick<ServiceClient, "workbenchRead">>(
     () => ({
       async workbenchRead(request, signal) {
@@ -219,12 +202,35 @@ export function Workbench() {
     />
   );
   const openService = () => setServiceOpen(true);
+  const folderPicker = entry && picker !== null && (
+    <ProjectPicker
+      selectOnly
+      client={directories}
+      current=""
+      projects={entry.projects.map((p) => ({
+        path: p.cwd,
+        current: false,
+      }))}
+      initial={picker}
+      home={entry.home}
+      epoch={entry.epoch}
+      onClose={() => setPicker(null)}
+      onOpen={open}
+    />
+  );
   if (entry && project && api)
     return (
       <>
         <App
-          key={`${project.id}:${project.epoch}`}
+          key={project.id}
           api={api}
+          project={project}
+          directoryNamespaces={entry?.projects
+            .filter((p) => p.path === project.path)
+            .map((p) => p.id)
+            .sort()}
+          onPrepareSend={prepareSend}
+          onChooseFolder={(cwd) => setPicker(cwd ?? project.cwd)}
           onOpenProject={open}
           onWorkbenchHome={() => navigate(null)}
           workbenchHome={entry.home}
@@ -241,6 +247,7 @@ export function Workbench() {
           onOpenService={openService}
         />
         {service}
+        {folderPicker}
       </>
     );
   return (
@@ -257,7 +264,7 @@ export function Workbench() {
           setPicker(path ?? entry?.home ?? "");
         }}
         onOpenProject={(path) => {
-          // One click on a recent project is its explicit Open; a failure
+          // One click selects a recent directory without starting execution; a failure
           // names the folder and opens nothing else.
           if (opening) return;
           cancelRestore();
@@ -297,21 +304,7 @@ export function Workbench() {
           </p>
         )}
       </WorkbenchHome>
-      {entry && picker !== null && (
-        <ProjectPicker
-          client={directories}
-          current=""
-          projects={entry.projects.map((p) => ({
-            path: p.cwd,
-            current: false,
-          }))}
-          initial={picker}
-          home={entry.home}
-          epoch={entry.epoch}
-          onClose={() => setPicker(null)}
-          onOpen={open}
-        />
-      )}
+      {folderPicker}
       {service}
     </>
   );

@@ -209,6 +209,7 @@ function RetainedConversations({
 export function TaskSidebar({
   client,
   workspace,
+  executionStopped = false,
   taskId,
   scope,
   runs,
@@ -234,7 +235,8 @@ export function TaskSidebar({
   onCancelWorkflow,
 }: {
   client: ServiceClient;
-  workspace: WorkspaceBootstrap;
+  workspace?: WorkspaceBootstrap;
+  executionStopped?: boolean;
   taskId: string | null;
   scope: Scope | null;
   runs: RunProjection[];
@@ -261,20 +263,22 @@ export function TaskSidebar({
   onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
 }) {
   const { t, tx } = useT();
-  const request: ListRequest = {
-    reader: "tasks",
-    storeId: workspace.storeId,
-    scope: { kind: "workspace", id: workspace.workspaceId },
-    snapshotSeq: null,
-    after: null,
-    limit: 50,
-  };
+  const request: ListRequest | null = workspace
+    ? {
+        reader: "tasks",
+        storeId: workspace.storeId,
+        scope: { kind: "workspace", id: workspace.workspaceId },
+        snapshotSeq: null,
+        after: null,
+        limit: 50,
+      }
+    : null;
   const tasks = usePage(client, request);
   // Keep the retained read/Back stack in one stable owner when the selected task
   // moves from the running group into history, or a section is folded.
   const conversationPager = usePage(
     client,
-    taskId
+    taskId && request && workspace
       ? {
           ...request,
           reader: "runs",
@@ -383,95 +387,99 @@ export function TaskSidebar({
   return (
     <aside className="panel panel-left lp-panel">
       <ConversationActions onConversation={onNewConversation} />
-      <SidebarSection
-        title={t("Running conversations")}
-        count={
-          activeRuns?.status === "complete" &&
-          workflows &&
-          !workflowError &&
-          chatActivityKnown
-            ? String(active.length + liveChats.length + workflows.length)
-            : "?"
-        }
-        className="running-conversations"
-      >
-        {activeRuns?.status !== "complete" && (
-          <p className="panel-hint">
-            {t(
-              "Active roster unavailable; absence is not proof of settlement.",
-            )}
-          </p>
-        )}
-        {workflowError && (
-          <p className="panel-hint">
-            {t(
-              "Workflow activity unavailable; retained work may still be running.",
-            )}
-          </p>
-        )}
-        {!chatActivityKnown && (
-          <p className="panel-hint">
-            {t("Conversation activity unavailable.")}
-          </p>
-        )}
-        {liveChats.map(chatRow)}
-        {workflows?.map(workflowRow)}
-        {activeRuns?.status === "complete" &&
-          active.length === 0 &&
-          liveChats.length === 0 &&
-          workflows?.length === 0 &&
-          !workflowError &&
-          chatActivityKnown && (
-            <p className="panel-hint">{t("No active runs")}</p>
-          )}
-        {active.map((run) => {
-          const title = records.find(
-            (r) => r.owner.taskId === run.taskId,
-          )?.goal;
-          return (
-            <div key={run.runId} className="conversation-group">
-              <button
-                type="button"
-                className={`session-item${taskId === run.taskId && scope?.kind === "task" ? " active" : ""}`}
-                onClick={() => onTask(run.taskId, title)}
-                title={run.runId}
-              >
-                <span className="status-dot busy" aria-hidden="true" />
-                <span className="session-info">
-                  <span className="session-title">
-                    {title ?? t("Task {id}", { id: run.taskId.slice(0, 8) })}
-                  </span>
-                  <span className="session-sub">
-                    {tx(run.kind)} · {tx(run.stage)}
-                  </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="conversation-stop"
-                disabled={!cancelCompatible || canceling.has(run.runId)}
-                onClick={() => onCancel(run.runId)}
-              >
-                <FiSquare aria-hidden="true" />
-                {t("Cancel run — request stop")}
-              </button>
-              {taskId === run.taskId && (
-                <ConversationTree
-                  runs={runs.filter((r) => r.runId === run.runId)}
-                  scope={scope}
-                  onScope={onScope}
-                />
+      {!executionStopped && (
+        <SidebarSection
+          title={t("Running conversations")}
+          count={
+            activeRuns?.status === "complete" &&
+            workflows &&
+            !workflowError &&
+            chatActivityKnown
+              ? String(active.length + liveChats.length + workflows.length)
+              : "?"
+          }
+          className="running-conversations"
+        >
+          {activeRuns?.status !== "complete" && (
+            <p className="panel-hint">
+              {t(
+                "Active roster unavailable; absence is not proof of settlement.",
               )}
-            </div>
-          );
-        })}
-      </SidebarSection>
+            </p>
+          )}
+          {workflowError && (
+            <p className="panel-hint">
+              {t(
+                "Workflow activity unavailable; retained work may still be running.",
+              )}
+            </p>
+          )}
+          {!chatActivityKnown && (
+            <p className="panel-hint">
+              {t("Conversation activity unavailable.")}
+            </p>
+          )}
+          {liveChats.map(chatRow)}
+          {workflows?.map(workflowRow)}
+          {activeRuns?.status === "complete" &&
+            active.length === 0 &&
+            liveChats.length === 0 &&
+            workflows?.length === 0 &&
+            !workflowError &&
+            chatActivityKnown && (
+              <p className="panel-hint">{t("No active runs")}</p>
+            )}
+          {active.map((run) => {
+            const title = records.find(
+              (r) => r.owner.taskId === run.taskId,
+            )?.goal;
+            return (
+              <div key={run.runId} className="conversation-group">
+                <button
+                  type="button"
+                  className={`session-item${taskId === run.taskId && scope?.kind === "task" ? " active" : ""}`}
+                  onClick={() => onTask(run.taskId, title)}
+                  title={run.runId}
+                >
+                  <span className="status-dot busy" aria-hidden="true" />
+                  <span className="session-info">
+                    <span className="session-title">
+                      {title ?? t("Task {id}", { id: run.taskId.slice(0, 8) })}
+                    </span>
+                    <span className="session-sub">
+                      {tx(run.kind)} · {tx(run.stage)}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="conversation-stop"
+                  disabled={!cancelCompatible || canceling.has(run.runId)}
+                  onClick={() => onCancel(run.runId)}
+                >
+                  <FiSquare aria-hidden="true" />
+                  {t("Cancel run — request stop")}
+                </button>
+                {taskId === run.taskId && (
+                  <ConversationTree
+                    runs={runs.filter((r) => r.runId === run.runId)}
+                    scope={scope}
+                    onScope={onScope}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </SidebarSection>
+      )}
       <SidebarSection
         title={t("Conversation history")}
         count={
-          tasks.page && !("kind" in tasks.page)
-            ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
-            : "?"
+          !workspace
+            ? `${pastChats.length}${chatHistoryPartial ? "+" : ""}`
+            : tasks.page && !("kind" in tasks.page)
+              ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
+              : "?"
         }
         className="grow"
       >
@@ -511,7 +519,7 @@ export function TaskSidebar({
               <p className="panel-hint">{t("No conversations yet.")}</p>
             )}
           {chatHistoryControls}
-          <PageControls pager={tasks} compact />
+          {workspace && <PageControls pager={tasks} compact />}
         </nav>
         {!history.some((r) => r.owner.taskId === taskId) && conversations}
       </SidebarSection>

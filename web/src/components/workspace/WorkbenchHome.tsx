@@ -1,6 +1,6 @@
 /** Project-less conversation shell. No project client, task or Send is created.
  * History belongs to each project; one click on a recent project is its
- * explicit Open, and the central action opens the folder picker. */
+ * nonactivating selection, and the central action opens the folder picker. */
 import {
   type ReactNode,
   useCallback,
@@ -35,11 +35,11 @@ export function WorkbenchHome({
 }: {
   ready: boolean;
   projects?: readonly string[];
-  restore?: { status: "checking" | "stopped"; path: string } | null;
+  restore?: { status: "checking" | "unavailable"; path: string } | null;
   /** The recent project being opened, if any. */
   opening?: string | null;
   onOpenFolder(path?: string): void;
-  /** Explicit Open of a recent project; without it, a click preselects the picker. */
+  /** Select a recent directory; without it, a click preselects the picker. */
   onOpenProject?(path: string): void;
   /** The workbench's service restart and upgrade. */
   onOpenService?(): void;
@@ -166,17 +166,17 @@ export function WorkbenchHome({
                     ? t("Returning to your last project {name}…", {
                         name: name(restore.path),
                       })
-                    : restore?.status === "stopped"
+                    : restore?.status === "unavailable"
                       ? t(
-                          "Your last project {name} is not running. Click it below to open it again.",
+                          "The retained conversations for {name} could not be observed. Choose a folder explicitly; nothing was started.",
                           { name: name(restore.path) },
                         )
                       : projects.length
                         ? t(
-                            "Conversations are kept with each project. Click a project to open it.",
+                            "Conversations stay with their folder. Select one to read its history; Send prepares execution.",
                           )
                         : t(
-                            "Conversations are kept with each project. Open a working folder to see its history.",
+                            "Choose a working folder to see its conversation history.",
                           )}
                 </p>
                 {projects.map((path) => (
@@ -195,7 +195,7 @@ export function WorkbenchHome({
                     <span className="session-info">
                       <span className="session-title">{name(path)}</span>
                       <span className="session-sub">
-                        {opening === path ? t("Opening…") : path}
+                        {opening === path ? t("Selecting folder…") : path}
                       </span>
                     </span>
                   </button>
@@ -212,7 +212,7 @@ export function WorkbenchHome({
             <div className="chat-messages">
               <ChatWelcome
                 hint={t(
-                  "Open a working folder to start. Each project keeps its own conversations.",
+                  "Choose a working folder. Execution is prepared only when you send.",
                 )}
               >
                 <button
@@ -222,7 +222,7 @@ export function WorkbenchHome({
                   onClick={() => openFolder()}
                 >
                   <FiFolder aria-hidden="true" />
-                  {t("Open a folder…")}
+                  {t("Choose a folder…")}
                 </button>
               </ChatWelcome>
             </div>
@@ -231,7 +231,7 @@ export function WorkbenchHome({
                 disabled
                 aria-label={t("Message")}
                 rows={3}
-                placeholder={t("Open a working folder to start chatting.")}
+                placeholder={t("Choose a working folder to start chatting.")}
               />
               <div className="composer-toolbar">
                 <span className="composer-hint">

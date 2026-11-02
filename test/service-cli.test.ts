@@ -624,7 +624,15 @@ async function hostLine(f: F, config: Record<string, unknown>) {
 }
 it("the host refuses a server configuration that no longer names the selected port, or a reselection beyond port and token", async () => {
   const f = await started();
+  const ledger = join(
+    f.c.files.namespace,
+    "process-ledger-v1",
+    `${f.c.localAccess().epoch}.json`,
+  );
   expect((await run(f, "stop")).code).toBe(0);
+  // Registration release precedes the original host's final evidence cleanup.
+  // Snapshot only after that cleanup, not a race with an empty ledger removal.
+  await expect.poll(() => existsSync(ledger)).toBe(false);
   const old = readHostConfig(f.c)!;
   const port = await freePort();
   const path = serverConfig(

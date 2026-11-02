@@ -8,7 +8,7 @@ import {
 } from "../../src/service/contracts/workbench.ts";
 import {
   LAST_PROJECT_STORAGE_KEY,
-  projectRunning,
+  projectReadable,
   rememberedProject,
   rememberProject,
   restorableProject,
@@ -255,11 +255,13 @@ it("the project-less entry is a conversation shell with one central Open action 
   );
   expect(html).toContain('class="panel panel-left lp-panel"');
   // One central action opens the folder picker; no duplicate sidebar entry.
-  expect(html).toMatch(/class="primary welcome-action"[^>]*>.*Open a folder…/);
+  expect(html).toMatch(
+    /class="primary welcome-action"[^>]*>.*Choose a folder…/,
+  );
   expect(html).not.toContain("New conversation");
   expect(html).toContain("Conversation history");
   expect(html).toContain(
-    "Conversations are kept with each project. Open a working folder to see its history.",
+    "Choose a working folder to see its conversation history.",
   );
   expect(html).not.toContain("No conversations yet.");
   expect(html).toContain("What would you like to work on?");
@@ -281,8 +283,8 @@ it("the project-less entry is a conversation shell with one central Open action 
       <WorkbenchHome ready onOpenFolder={open} />
     </LocaleProvider>,
   );
-  expect(chinese).toContain("打开文件夹…");
-  expect(chinese).toContain("打开工作文件夹后即可开始对话");
+  expect(chinese).toContain("选择目录…");
+  expect(chinese).toContain("选择工作目录后即可开始对话");
   // The welcome and the composer no longer point in different directions.
   expect(chinese).not.toContain("右下角");
   expect(chinese).not.toContain("从左侧");
@@ -350,7 +352,7 @@ it("the entry sidebar explains per-project history and lists recent projects wit
     <WorkbenchHome ready projects={projects} onOpenFolder={open} />,
   );
   expect(html).toContain(
-    "Conversations are kept with each project. Click a project to open it.",
+    "Conversations stay with their folder. Select one to read its history; Send prepares execution.",
   );
   expect(html).toMatch(
     /class="session-item project-item" title="\/work\/alpha".*>alpha<.*\/work\/alpha</,
@@ -372,13 +374,13 @@ it("the entry sidebar explains per-project history and lists recent projects wit
       <WorkbenchHome
         ready
         projects={projects}
-        restore={{ status: "stopped", path: "/work/alpha" }}
+        restore={{ status: "unavailable", path: "/work/alpha" }}
         onOpenFolder={open}
       />
     </LocaleProvider>,
   );
-  expect(stopped).toContain("上次的项目 alpha 未在运行");
-  expect(stopped).toContain("历史对话");
+  expect(stopped).toContain("无法读取 alpha 的历史会话");
+  expect(stopped).toContain("历史会话");
   const loading = renderToStaticMarkup(
     <WorkbenchHome ready={false} projects={projects} onOpenFolder={open} />,
   );
@@ -395,7 +397,7 @@ it("the entry sidebar explains per-project history and lists recent projects wit
       onOpenProject={open}
     />,
   );
-  expect(opening).toContain("Opening…");
+  expect(opening).toContain("Selecting folder…");
   expect(opening).toMatch(/aria-busy="true"/);
   expect(opening.match(/project-item"[^>]*disabled=""/g)?.length).toBe(2);
   expect(open).not.toHaveBeenCalled();
@@ -451,43 +453,45 @@ it("the remembered project is an opaque associated key; unavailable storage neve
   expect(() => rememberProject(key("a"))).not.toThrow();
 });
 
-it("restoring checks a running owner with one readonly project listing, never Open", async () => {
+it("restoring observes retained identity even for a stopped owner, without a scan or Open", async () => {
   vi.stubGlobal("window", {
     location: new URL("http://127.0.0.1:17423/app"),
   });
   const requests: { url: string; method?: string }[] = [];
   let reply: unknown = {
-    kind: "ok",
-    value: { kind: "conversations", entries: [] },
+    kind: "project-observation",
+    status: "stopped",
+    epoch: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
   };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     requests.push({ url, method: init?.method });
     if (reply instanceof Error) throw reply;
     return new Response(JSON.stringify(reply));
   });
-  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
     true,
   );
   expect(requests).toHaveLength(1);
-  expect(requests[0].method).toBe("GET");
+  expect(requests[0].method).toBeUndefined();
   expect(requests[0].url).toMatch(
-    new RegExp(`^http://127\\.0\\.0\\.1:17423/projects/${key("a")}/`),
+    new RegExp(`^/workbench/v1/projects/${key("a")}$`),
   );
   expect(requests[0].url).not.toContain("open");
   reply = {
     kind: "error",
     error: { code: "unavailable", effect: "none", recovery: "operator" },
   };
-  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
     false,
   );
   reply = new Error("network");
-  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
     false,
   );
   const aborted = new AbortController();
   aborted.abort();
   reply = { kind: "ok", value: { kind: "conversations", entries: [] } };
-  expect(await projectRunning(key("a"), aborted.signal)).toBe(false);
-  expect(requests.every((request) => request.method === "GET")).toBe(true);
+  expect(await projectReadable(key("a"), aborted.signal)).toBe(false);
+  expect(requests.every((request) => !request.method)).toBe(true);
 });

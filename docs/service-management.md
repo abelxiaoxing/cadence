@@ -43,19 +43,28 @@ cadence project open /srv/project --agent-dir /root/.pi/agent --state-home /root
 Without a path, `project open` uses the current directory; a missing directory refuses unless `--create` was supplied.
 The project may be a Git checkout or an ordinary directory, including spaces and Unicode names; it need not be inside `~/cadence` or the package directory.
 The command explicitly starts a detached owner, or observes the already running exact owner; it never creates a task, chooses a model, renews a grant or starts a worker.
-New projects bind port0 and retain the resulting positive port, avoiding the default17423 collision; existing selections keep their exact port, cwd, agent sources and history.
-The JSON result reports the canonical workspace, actual task cwd and endpoint; the private entry link is printed separately to stderr, like `server install`.
+New projects bind port0 and retain the resulting positive port, avoiding the default17423 collision; existing selections keep their exact port, saved default cwd, agent sources and history.
+The JSON result reports the canonical checkout, saved default cwd and endpoint; each conversation supplies its own execution cwd, rather than changing this owner setting; the private entry link is printed separately to stderr, like `server install`.
 Keep that link private.
 Open Pi in the same project and use `/cadence` for the native client; explicit `cadence stop --workspace <path>` stops only that project.
 Opening another project never changes the cwd or cancels work in the former one.
+Different folders of one checkout share its owner and execution gate, but conversations keep independent directories and model choices; an admitted run keeps its original snapshot.
+The owner launches from the checkout root.
+A removed saved default subdirectory does not prevent other conversation directories from starting; no old conversation is redirected or rewritten.
 The default workbench routes all associated projects through one origin, including a configured HTTPS proxy.
-Its project picker browses directory names readonly (`~` names the service account's home); only **Open this folder**, or one click on a recent project, starts or reuses an owner, without admitting a task or model call.
+Its picker browses directory names readonly (`~` names the service account's home); **Use this folder**, or one click on a recent directory, only selects it.
+Send starts or reuses that directory's owner when needed; there is no separate Open step, boot installation or automatic message replay.
+If no usable saved model is available, that Send waits for an explicit model choice.
+Cancelling the choice or leaving the conversation does not send the waiting message.
+If the conversation cannot be read, Send can prepare execution but cannot infer its context: review the restored conversation and send again.
+Preparation failure keeps the draft; an owner may already have started, but the message was not sent.
+If the actual Send reply is lost instead, its original command is observed, never resubmitted automatically.
 Project navigation remounts only the browser client; the original owner's work continues.
 Browser proxy traffic keeps browser authority and the owner's own attachments, CSRF/build checks, grants and history proofs; native management routes and local-capability headers are not forwarded.
-The gateway also refuses the legacy project-level Open command, so every opening is associated through the workbench instead of returning an independent backend token link.
+The gateway also refuses the legacy project-level Open command, so every Send preparation is associated through the workbench instead of returning an independent backend token link.
 The gateway's token, backend cookies and native capabilities are never returned in project DTOs or stored in browser localStorage.
 Token rotation retires and detaches its exact browser attachments without cancelling admitted work.
-The private account state stores bounded project references and opening receipts, not copied worktrees, Pi profiles or imported transcripts.
+The private account state stores bounded directory references and startup/association preparation receipts, not copied worktrees, Pi profiles or imported transcripts.
 Private coordination/Pi credential directories and foreign-owned project selections are refused.
 Direct project entry links remain available as a compatibility route; that route alone still uses separate loopback project entries.
 Git subdirectories and aliases resolve to the same checkout, while overlapping parent/child owners still refuse.
@@ -101,9 +110,14 @@ A definition whose project directory was removed gets a readable refusal (exit78
 The `upgrade` command (Linux) installs the latest version, or exactly `--to VERSION`, with npm and restarts; see [Restart and upgrade from the WebUI](#restart-and-upgrade-from-the-webui) for its steps.
 Commands that change the service (`install`, `restart`, `stop`, `uninstall`, `upgrade`) refuse with `inside-service` when they run inside the service they would stop, for example from a tool of its own agent: stopping a systemd unit ends every process in it, so the command would die before it started the service again.
 Use the WebUI or a terminal outside the service instead.
-`stop` joins the workbench's accepted openings and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
+`stop` joins the workbench's accepted Send preparations and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
 An associated owner that is not running (or whose directory is gone) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still stops.
 Project-specific `stop --workspace <path>` remains scoped to that owner.
+While the unified entry is running, a stopped associated project's ordinary/Cadence conversation history and mode remain readable; this does not start the project, restore approval or resume interrupted work.
+Its page explains that Send prepares execution and retains drafts.
+Send the next message directly; a new owner connection does not clear the conversation or approve a saved plan.
+Selecting or browsing an independent running owner does not make whole-workbench Stop manage it; explicit Send preparation does.
+Direct project links, legacy task details and workflow details still require their project owner.
 The generated registration stays for the next boot or login.
 `uninstall` stops it orderly and deletes only what Cadence generated; workspace, state home, history, linger and Pi sources stay.
 Because npm runs no uninstall script, uninstall the service before `npm uninstall -g`; a left-behind definition fails to start once its CLI path disappears.
@@ -271,7 +285,7 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
 
 - `alive` requires an authenticated exact-epoch reply.
   It is not a PID probe.
-  `actions:false` can mean that no owner model has been explicitly selected yet.
+  `actions:false` can describe the unscoped owner model slot; conversation model readiness is separate, not permission to execute a plan.
 - Disconnect this page (the WebUI More menu), browser close and Pi quit detach clients; admitted work continues.
   Use the client's **Cancel** for a run or management **stop** for the service.
 - Stop closes admission and waits original processes, credential writes, history writes, already-started publication continuations, owned networking and listener closure before releasing fences.
@@ -287,12 +301,12 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
   Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
   `models.json` may use only fields the pinned SDK supports.
   `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
-  The owner model choice offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
+  The conversation model picker offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
   A model whose provider or model ID contains a known credential value is withheld from the catalog, since showing the ID would reveal that value; the catalog says how many models are withheld, and the rest stay selectable.
   Credential values are `auth.json` keys, `models.json` `apiKey` and header values (and the variables they name) and service-environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or `COOKIE`.
   The common Ollama placeholder `"apiKey": "ollama"` under a provider named `ollama` is such a case: give the placeholder a value that matches no provider or model ID (for example `"local-no-auth"`), then restart the service.
   The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
-  Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then choose the owner model again.
+  Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then explicitly Send or choose the conversation model again; retained preferences are not erased.
 - A foreground owner can be managed from another terminal.
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route: running work is interrupted, and the next start recovers the owner automatically.
   A recovered `stopped` registration records that the old owner was proven gone, not that its interrupted work completed.

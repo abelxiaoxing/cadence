@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
+import { HistoryFiles } from "../history/files.ts";
 import { loadWebAssets } from "../service-assets.ts";
 import {
   ContractError,
@@ -52,8 +53,21 @@ import {
   type MaintenanceJob,
   type ServiceEntry,
 } from "./contracts/gateway.ts";
-import { decodeWorkbenchCommand } from "./contracts/workbench.ts";
+import {
+  type ConversationLocation,
+  decodeConversationLocation,
+} from "./contracts/models.ts";
+import {
+  decodeWorkbenchCommand,
+  decodeWorkbenchRead,
+  decodeWorkbenchResult,
+} from "./contracts/workbench.ts";
+import { ConversationContextRecords } from "./conversation-contexts.ts";
 import { ServiceCoordination } from "./coordination.ts";
+import {
+  GatewayConversations,
+  unpreparedDirectory,
+} from "./gateway-conversations.ts";
 import {
   decodeGatewayInput,
   type GatewayInput,
@@ -73,7 +87,6 @@ import {
 } from "./maintenance.ts";
 import { encoded, hash, json } from "./private-files.ts";
 import { RecoveryLog } from "./recovery-log.ts";
-import { readHostConfig } from "./runtime.ts";
 import { healWorkbench, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
 import { WorkbenchFiles } from "./workbench-files.ts";
@@ -92,7 +105,11 @@ export async function joinProjectStops(
   stopProject: (project: GatewayProject) => Promise<void>,
 ): Promise<GatewayProject[]> {
   const unconfirmed: GatewayProject[] = [];
+  const seen = new Set<string>();
   for (const project of projects) {
+    const key = canonicalJson([project.path, project.epoch]);
+    if (seen.has(key)) continue;
+    seen.add(key);
     try {
       await stopProject(project);
     } catch {
@@ -137,13 +154,17 @@ export async function createGateway(
   const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
   const connections = new Set<Socket>(),
     relays = new Set<() => void>();
-  const opens = new Map<
+  const preparations = new Map<
     string,
     { identity: string; result: Promise<GatewayProject> }
   >();
   const retirements = new Set<Promise<void>>();
-  const attachments = new Map<string, string>();
-  const bindings = new Map<string, Promise<Binding>>();
+  const attachments = new Map<string, { projectId: string; epoch: string }>();
+  const bindings = new Map<
+    string,
+    { epoch: string; result: Promise<Binding> }
+  >();
+  const conversations = new GatewayConversations(input.stateHome);
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
@@ -154,7 +175,7 @@ export async function createGateway(
     stopping: Promise<void> | undefined;
   let auth: HttpAuthentication;
   let pending = 0;
-  let opening = false;
+  let preparing = false;
   const server = createServer(
     {
       maxHeaderSize: LIMITS.headerBytes,
@@ -203,18 +224,28 @@ export async function createGateway(
     acquired.access.onRevoke(() => {
       for (const close of relays) close();
       bindings.clear();
-      const grouped = new Map<string, string[]>();
-      for (const [id, project] of attachments)
-        grouped.set(project, [...(grouped.get(project) ?? []), id]);
+      conversations.close();
+      const grouped = new Map<
+        string,
+        { projectId: string; epoch: string; ids: string[] }
+      >();
+      for (const [id, target] of attachments) {
+        const key = `${target.projectId}:${target.epoch}`;
+        const group = grouped.get(key) ?? { ...target, ids: [] };
+        group.ids.push(id);
+        grouped.set(key, group);
+      }
       attachments.clear();
       const original = (async () => {
-        for (const [id, ids] of grouped) {
+        for (const { projectId: id, epoch, ids } of grouped.values()) {
           const project = store.projects().find((p) => p.id === id);
           if (!project) throw new ContractError("unavailable");
           const c = new ServiceCoordination(project.path, input.stateHome);
           if (c.inspect().status === "stopped") continue;
-          if (c.localAccess().epoch !== project.epoch)
+          if (c.localAccess().epoch !== epoch) {
+            if ((await binding(id)).project.epoch !== epoch) continue;
             throw new ContractError("stale");
+          }
           for (let offset = 0; offset < ids.length; offset += LIMITS.viewers) {
             const result = closed(
               await nativeCall(c, "detach-viewers", false, {
@@ -222,7 +253,7 @@ export async function createGateway(
               }),
               ["status", "epoch"],
             );
-            if (result.status !== "detached" || result.epoch !== project.epoch)
+            if (result.status !== "detached" || result.epoch !== epoch)
               throw new ContractError("unavailable");
           }
         }
@@ -264,7 +295,9 @@ export async function createGateway(
   /** Accepted work in associated running owners: what a restart stops. */
   async function associatedWork(): Promise<number> {
     const counts = await Promise.all(
-      store.associatedProjects().map(async (p) => {
+      [
+        ...new Map(store.associatedProjects().map((p) => [p.path, p])).values(),
+      ].map(async (p) => {
         try {
           const observed = await serviceStatus(
             new ServiceCoordination(p.path, input.stateHome),
@@ -355,33 +388,102 @@ export async function createGateway(
     if (clientBuild.kind !== "browser" || !compatibleBuild(build, clientBuild))
       throw new ContractError("unsupported-context");
   }
-  async function open(
-    path: string,
+  /** Selection updates only the authenticated workbench's directory reference.
+   * It never reserves a checkout, heals state, initializes Pi or starts an owner. */
+  function select(path: string, epoch: string): GatewayProject {
+    assert();
+    if (epoch !== auth.epoch) throw new ContractError("stale");
+    const directory = files.directory(path);
+    effectiveWorkspace(directory, input.stateHome);
+    const c = new ServiceCoordination(directory, input.stateHome);
+    const id =
+      store.projects().find((project) => project.cwd === directory)?.id ??
+      hash(`directory\0${directory}`);
+    const previous = store
+      .associatedProjects()
+      .find((project) => project.id === id);
+    const project = {
+      id,
+      path: c.store.root,
+      cwd: directory,
+      epoch: previous?.epoch ?? null,
+    };
+    store.saveProject(project);
+    return project;
+  }
+  /** One explicit Send may prepare its selected owner. This endpoint cannot
+   * accept a message, choose a model, grant approval or submit a workflow. */
+  async function prepareSend(
+    projectId: string,
     id: string,
     epoch: string,
+    current: () => void,
+    location?: ConversationLocation,
   ): Promise<GatewayProject> {
     assert();
     if (epoch !== auth.epoch) throw new ContractError("stale");
-    const identity = canonicalJson({ path, epoch }),
-      previous = opens.get(id);
-    if (previous) {
-      if (previous.identity !== identity) throw new ContractError("conflict");
-      return previous.result;
-    }
-    const intentPath = store.path(`commands/${id}.json`),
-      kept = store.files.read(intentPath);
-    if (kept) {
+    const selected = store
+      .projects()
+      .find((project) => project.id === projectId);
+    if (!selected) throw new ContractError("unavailable");
+    const context = location
+      ? new ConversationContextRecords(
+          new ServiceCoordination(selected.path, input.stateHome),
+        ).read(location).context
+      : null;
+    if (context && context.cwd !== location?.cwd)
+      throw new ContractError("stale");
+    const directory = files.directory(context?.cwd ?? selected.cwd);
+    effectiveWorkspace(directory, input.stateHome);
+    const observed = new ServiceCoordination(directory, input.stateHome);
+    if (observed.store.root !== selected.path) throw new ContractError("stale");
+    const identity = canonicalJson({
+      kind: "prepare-send",
+      projectId,
+      epoch,
+      ...(location ? { location } : {}),
+    });
+    const intentPath = store.path(`commands/${id}.json`);
+    const previous = (): Promise<GatewayProject> | undefined => {
+      const pending = preparations.get(id);
+      if (pending) {
+        if (pending.identity !== identity) throw new ContractError("conflict");
+        return pending.result;
+      }
+      const kept = store.files.read(intentPath);
+      if (!kept) return undefined;
       if (kept.bytes.toString("utf8") !== identity)
         throw new ContractError("conflict");
       const settled = store.files.read(
         store.path(`commands/${id}.result.json`),
       );
       if (!settled) throw new ContractError("receipt-inconclusive");
-      return decodeProjectEntry(json(settled));
+      return Promise.resolve(decodeProjectEntry(json(settled)));
+    };
+    const prior = previous();
+    if (prior) return prior;
+    const running = (await serviceStatus(observed)) as { status?: string };
+    current();
+    assert();
+    const concurrent = previous();
+    if (concurrent) return concurrent;
+    if (running.status === "alive") {
+      const access = observed.localAccess();
+
+      const project = { ...selected, epoch: access.epoch };
+      if (
+        store
+          .associatedProjects()
+          .some((p) => p.id === project.id && p.epoch === project.epoch)
+      ) {
+        bindings.delete(project.id);
+        return project;
+      }
     }
-    if (opening) throw new ContractError("capacity");
-    if (opens.size >= 128 || store.projects().length >= 128)
-      throw new ContractError("capacity");
+    if (running.status !== "alive" && process.env.CADENCE_AUTOSTART === "0")
+      throw new ContractError("unsupported-context");
+    if (preparing) throw new ContractError("capacity");
+    if (preparations.size >= 128) throw new ContractError("capacity");
     const commands = store.path("commands");
     if (store.files.directory(commands)) {
       const dir = opendirSync(commands);
@@ -393,12 +495,12 @@ export async function createGateway(
         dir.closeSync();
       }
     }
-    const directory = files.directory(path);
-    effectiveWorkspace(directory, input.stateHome);
+    current();
+    assert();
     store.files.create(intentPath, identity);
     // Register the original before the launch microtask; browser departure never
     // cancels this accepted operation, and Stop waits its safety publications.
-    opening = true;
+    preparing = true;
     const result = Promise.resolve().then(async () => {
       const opened = await openProjectDirectory(
         directory,
@@ -409,9 +511,9 @@ export async function createGateway(
       const c = new ServiceCoordination(opened.path, input.stateHome),
         access = c.localAccess();
       const project = {
-        id: hash(c.store.root),
+        id: selected.id,
         path: c.store.root,
-        cwd: readHostConfig(c)?.cwd ?? directory,
+        cwd: selected.cwd,
         epoch: access.epoch,
       };
       store.saveProject(project);
@@ -422,20 +524,20 @@ export async function createGateway(
       );
       return project;
     });
-    opens.set(id, { identity, result });
+    preparations.set(id, { identity, result });
     void result.then(
       () => {
-        opens.delete(id);
-        opening = false;
+        preparations.delete(id);
+        preparing = false;
       },
       () => {
-        opening = false;
+        preparing = false;
       },
     );
     return result;
   }
   function binding(id: string): Promise<Binding> {
-    let project = store.associatedProjects().find((p) => p.id === id);
+    let project = store.projects().find((p) => p.id === id);
     if (!project) throw new ContractError("unavailable");
     const c = new ServiceCoordination(project.path, input.stateHome),
       local = c.localAccess();
@@ -443,12 +545,14 @@ export async function createGateway(
     if (local.epoch !== project.epoch) {
       // The same project's owner restarted (after recovering from a fault or
       // a crash): follow it instead of stranding this project's page.
-      bindings.delete(id);
       project = { ...project, epoch: local.epoch };
-      store.saveProject(project);
+      // Merely reading a selected directory never adopts its owner's Stop
+      // lifetime. Only Send preparation associates an exact epoch.
+      if (store.associatedProjects().some((p) => p.id === id))
+        store.saveProject(project);
     }
     const previous = bindings.get(id);
-    if (previous) return previous;
+    if (previous?.epoch === local.epoch) return previous.result;
     const result = (async () => {
       const raw = closed(await nativeCall(c, "token-link", true), ["link"]),
         link = new URL(text(raw.link, 4096, true));
@@ -476,7 +580,7 @@ export async function createGateway(
         throw new ContractError("stale");
       return { project, endpoint: local.endpoint, cookie };
     })();
-    bindings.set(id, result);
+    bindings.set(id, { epoch: local.epoch, result });
     return result;
   }
   function stop(): void {
@@ -484,9 +588,9 @@ export async function createGateway(
     accepting = false;
     store.phase("stopping");
     stopping = (async () => {
-      // An Open in progress settles first; its owner (if any) is stopped
+      // An accepted Send preparation settles first; its owner (if any) is stopped
       // below like every other associated owner.
-      await Promise.allSettled([...opens.values()].map((o) => o.result));
+      await Promise.allSettled([...preparations.values()].map((o) => o.result));
       await Promise.allSettled([...retirements]);
       const targets = store.associatedProjects();
       // Owners share the short registry writer. Do not race their final release
@@ -510,6 +614,7 @@ export async function createGateway(
         if ((await stopService(c)).status !== "stopped")
           throw new ContractError("quarantine");
       });
+      conversations.close();
       store.release();
       for (const close of relays) close();
       wss.close();
@@ -546,12 +651,17 @@ export async function createGateway(
       maximum,
     );
   }
-  function reply(res: ServerResponse, code: number, value: unknown) {
+  function reply(
+    res: ServerResponse,
+    code: number,
+    value: unknown,
+    maximum = LIMITS.controlBytes,
+  ) {
     if (res.destroyed || res.writableEnded) return;
     fixedHeaders(res);
     res.statusCode = code;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(canonicalJson(value));
+    res.end(canonicalJson(value, maximum));
   }
   function target(raw: string): { id: string; tail: string } | null {
     const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
@@ -666,9 +776,46 @@ export async function createGateway(
       if (project) {
         const route = readRoute(project.tail, req.method ?? "");
         if (!route) throw new ContractError("invalid");
+        if (
+          req.headers["content-encoding"] ||
+          req.headers["transfer-encoding"] ||
+          Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes
+        )
+          throw new ContractError("oversize");
+        // Retained conversation reads use the workbench's access cookie, not
+        // an execution attachment. An old attachment can be gone after Stop;
+        // it cannot prevent reading, nor grant any authority on this route.
+        if (route.operation === "workbenchRead" && req.method === "GET") {
+          const selected = store.projects().find((p) => p.id === project.id);
+          if (!selected) throw new ContractError("unavailable");
+          const retained = conversations.read(
+            selected,
+            decodeWorkbenchRead(parseWireJson(route.input ?? "null")),
+          );
+          if (retained) {
+            auth.current(caller);
+            assert();
+            reply(
+              res,
+              200,
+              {
+                kind: "ok",
+                value: decodeWorkbenchResult(retained),
+              },
+              LIMITS.pageBytes,
+            );
+            return;
+          }
+        }
+        if (
+          route.operation === "session" &&
+          !store.associatedProjects().some((p) => p.id === project.id)
+        )
+          throw new ContractError("unavailable");
         const attachment = boundary.headers.get("x-cadence-attachment");
         if (
-          (attachment && attachments.get(attachment) !== project.id) ||
+          (attachment &&
+            attachments.get(attachment)?.projectId !== project.id) ||
           (req.method === "POST" && !attachment)
         )
           throw new ContractError("stale");
@@ -683,12 +830,25 @@ export async function createGateway(
           boundary.headers.get("origin") !== boundary.origin
         )
           throw new ContractError("forbidden");
-        if (
-          req.headers["content-encoding"] ||
-          req.headers["transfer-encoding"] ||
-          Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes
-        )
-          throw new ContractError("oversize");
+        const attached = attachment ? attachments.get(attachment) : undefined;
+        if (route.operation === "detach" && attachment && attached) {
+          const selected = store.projects().find((p) => p.id === project.id);
+          if (!selected) throw new ContractError("unavailable");
+          const observed = new ServiceCoordination(
+            selected.path,
+            input.stateHome,
+          ).inspect();
+          if (
+            observed.status === "stopped" &&
+            observed.epoch === attached.epoch
+          ) {
+            auth.current(caller);
+            assert();
+            attachments.delete(attachment);
+            reply(res, 200, { kind: "ok", value: null });
+            return;
+          }
+        }
         let commandBody: string | undefined;
         if (route.operation === "workbenchCommand") {
           const command = decodeWorkbenchCommand(
@@ -696,7 +856,7 @@ export async function createGateway(
           );
           // Legacy direct-project navigation returns an independent token link
           // and does not register that owner here. Never proxy it: all gateway
-          // openings must use /workbench/v1/open and join this workbench's Stop.
+          // owner preparation must use the workbench's explicit Send boundary.
           if (command.kind === "open-project")
             throw new ContractError("forbidden");
           commandBody = canonicalJson(command, LIMITS.controlBytes);
@@ -704,6 +864,26 @@ export async function createGateway(
         const b = await binding(project.id);
         auth.current(caller);
         assert();
+        // Do not forward an old epoch's CSRF/attachment through a new owner's
+        // cookie. The authenticated successor proves this viewer superseded,
+        // not that any earlier message was unaccepted or canceled.
+        if (attachment && attached && attached.epoch !== b.project.epoch) {
+          attachments.delete(attachment);
+          reply(
+            res,
+            route.operation === "detach" ? 200 : 409,
+            route.operation === "detach"
+              ? { kind: "ok", value: null }
+              : {
+                  kind: "error",
+                  error: publicError(
+                    "stale",
+                    req.method === "POST" ? "uncertain" : "none",
+                  ),
+                },
+          );
+          return;
+        }
         const headers: Record<string, string> = {
           Cookie: b.cookie,
           Origin: b.endpoint,
@@ -739,7 +919,7 @@ export async function createGateway(
                 try {
                   attachments.set(
                     decodeId(incoming.headers["x-cadence-attachment"]),
-                    project.id,
+                    { projectId: project.id, epoch: b.project.epoch as string },
                   );
                 } catch {
                   close();
@@ -799,6 +979,39 @@ export async function createGateway(
         });
         return;
       }
+      const observation = /^\/workbench\/v1\/projects\/([a-f0-9]{64})$/.exec(
+        raw,
+      );
+      if (observation && req.method === "GET") {
+        const project = store.projects().find((p) => p.id === observation[1]);
+        if (!project) throw new ContractError("unavailable");
+        const c = new ServiceCoordination(project.path, input.stateHome);
+        if (c.store.root !== project.path) throw new ContractError("stale");
+        const observed = await serviceStatus(c);
+        auth.current(caller);
+        assert();
+        const status =
+          observed && typeof observed === "object" && "status" in observed
+            ? observed.status
+            : "unavailable";
+        reply(res, 200, {
+          kind: "project-observation",
+          status:
+            status === "alive"
+              ? "running"
+              : status === "stopped"
+                ? "stopped"
+                : unpreparedDirectory(c, project)
+                  ? "not-started"
+                  : "unavailable",
+          epoch:
+            observed && typeof observed === "object" && "epoch" in observed
+              ? observed.epoch
+              : null,
+          workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null,
+        });
+        return;
+      }
       if (raw === "/workbench/v1" && req.method === "GET") {
         reply(res, 200, {
           kind: "workbench",
@@ -842,15 +1055,41 @@ export async function createGateway(
         reply(res, 200, { kind: "service-job", job });
         return;
       }
-      if (raw === "/workbench/v1/open" && req.method === "POST") {
+      if (raw === "/workbench/v1/select" && req.method === "POST") {
         browserBuild(boundary);
-        const o = closed(await body(req), ["commandId", "path", "epoch"]);
-        const id = decodeId(o.commandId),
-          path = text(o.path, 4096, true),
+        const o = closed(await body(req), ["path", "epoch"]);
+        const path = text(o.path, 4096, true),
           epoch = decodeId(o.epoch);
         auth.current(caller);
         effect = true;
-        const project = await open(path, id, epoch);
+        reply(res, 200, { kind: "project", project: select(path, epoch) });
+        return;
+      }
+      if (raw === "/workbench/v1/prepare-send" && req.method === "POST") {
+        browserBuild(boundary);
+        const value = await body(req);
+        const o = closed(value, [
+          "commandId",
+          "projectId",
+          "epoch",
+          ...(Object.hasOwn(value ?? {}, "location") ? ["location"] : []),
+        ]);
+        const id = decodeId(o.commandId),
+          projectId = decodeHash(o.projectId),
+          epoch = decodeId(o.epoch);
+        const location =
+          o.location === undefined
+            ? undefined
+            : decodeConversationLocation(o.location);
+        auth.current(caller);
+        effect = true;
+        const project = await prepareSend(
+          projectId,
+          id,
+          epoch,
+          () => auth.current(caller),
+          location,
+        );
         auth.current(caller);
         reply(res, 200, { kind: "project", project });
         return;
@@ -895,11 +1134,13 @@ export async function createGateway(
         const url = new URL(t.tail, endpoint),
           attachment = decodeId(url.searchParams.get("attachment"));
         if (
-          attachments.get(attachment) !== t.id ||
+          attachments.get(attachment)?.projectId !== t.id ||
           t.tail !== `${WS_PATH}?attachment=${attachment}`
         )
           throw new ContractError("invalid");
         const b = await binding(t.id);
+        if (attachments.get(attachment)?.epoch !== b.project.epoch)
+          throw new ContractError("stale");
         auth.current(caller);
         assert();
         const upstream = new WebSocket(

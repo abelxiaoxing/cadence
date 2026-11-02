@@ -12,7 +12,7 @@ import {
   ERROR_CODES,
   type ErrorCode,
 } from "../service-contract.ts";
-import { resolveWorkspace } from "../workspace.ts";
+import { ownerDefaultInCheckout, resolveWorkspace } from "../workspace.ts";
 
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, integer, literal, oneOf, text } from "./contracts/core.ts";
@@ -217,7 +217,7 @@ export function selectStart(
       resolve(options.tokenFile) !== selected.tokenFile) ||
     (env && selected.tokenSource !== "environment") ||
     (selected.tokenSource === "environment" && !env) ||
-    resolveWorkspace(selected.cwd).root !== workspace.root
+    !ownerDefaultInCheckout(workspace.root, selected.cwd)
   )
     throw new ContractError("conflict");
   return {

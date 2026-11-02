@@ -59,6 +59,7 @@ export function ProjectPicker({
   onClose,
   onOpen,
   projects = [],
+  selectOnly = false,
 }: {
   client: Pick<ServiceClient, "workbenchRead"> &
     Partial<Pick<ServiceClient, "workbenchCommand">>;
@@ -69,6 +70,7 @@ export function ProjectPicker({
   home?: string;
   epoch: string;
   onClose(): void;
+  selectOnly?: boolean;
   onOpen?(path: string): Promise<void>;
 }) {
   const { t, tx } = useT();
@@ -223,10 +225,15 @@ export function ProjectPicker({
       ? t(readProblems[problem.code])
       : tx(problem.code));
   return (
-    <ActionDialog title={t("Open working folder")} onClose={onClose}>
+    <ActionDialog
+      title={t(selectOnly ? "Choose working folder" : "Open working folder")}
+      onClose={onClose}
+    >
       <p>
         {t(
-          "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.",
+          selectOnly
+            ? "Selecting a folder does not start execution. Send prepares it when needed."
+            : "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.",
         )}
       </p>
       {projects.length > 0 && (
@@ -423,7 +430,9 @@ export function ProjectPicker({
           disabled={!canOpen}
           onClick={() => void open(target)}
         >
-          {busy ? t("Opening folder…") : t("Open this folder")}
+          {busy
+            ? t(selectOnly ? "Selecting folder…" : "Opening folder…")
+            : t(selectOnly ? "Use this folder" : "Open this folder")}
         </button>
       </footer>
     </ActionDialog>
