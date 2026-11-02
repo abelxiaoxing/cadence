@@ -20,6 +20,11 @@ Consumer data must never be imported, reset or cleaned incidentally; damaged or 
 
 ## Development
 
+Cadence is currently in internal development. Prioritize clean, readable code, clear module boundaries and straightforward designs that remain easy to extend and maintain; avoid unnecessary abstractions and speculative complexity.
+Prefer simplifying or replacing outdated designs within the affected scope over layering workarounds onto them. Do not retain obsolete APIs, compatibility shims, deprecated paths or duplicate implementations solely for historical compatibility unless an explicit requirement or a documented contract requires them.
+When replacing an implementation, remove superseded code within the affected scope and update its callers, tests and documentation together rather than leaving transitional scaffolding behind; preserve required behavior and regression coverage.
+These principles do not relax the data-preservation, security, consent or lifecycle contracts above, and do not authorize unrelated rewrites or cleanup.
+
 `engineering/` holds project architecture, executable contracts, limits, regression lessons and verification guidance, one file per area; `README.md` stays a short user guide.
 Before changing a boundary, read the area file the project index names and the affected source/tests; read `engineering/verification.md` before integrating.
 Keep each fact in one place: limits beside their constants, operations in `docs/`, and new release evidence appended to `engineering/releases.md`, which is not required reading.
