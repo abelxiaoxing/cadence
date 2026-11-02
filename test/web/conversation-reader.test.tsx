@@ -42,12 +42,18 @@ function owner(turns: Turn[]) {
           ? {
               id,
               title: "t",
-              head: head.id,
+              leaf: head.id,
               status: head.status,
               updatedAt: 0,
+              origin: "webui",
             }
           : null,
+        leaf: head?.id ?? null,
+        continues: true,
         turns: turns.length,
+        branches: turns.length ? 1 : 0,
+        runs: [],
+        attempt: null,
       };
     }
     if (request.kind === "conversation-turn") {
@@ -58,10 +64,12 @@ function owner(turns: Turn[]) {
       return {
         kind: "conversation-turn",
         conversationId: id,
+        leaf: request.leaf,
         ordinal: request.ordinal,
         turn: {
           id: turn.id,
-          epoch: turn.id,
+          entry: turn.id,
+          at: 0,
           status: turn.status,
           notice: "",
           omitted: { thinking: false, media: false, other: false },
@@ -76,6 +84,7 @@ function owner(turns: Turn[]) {
       return {
         kind: "conversation-step",
         conversationId: id,
+        leaf: request.leaf,
         turnId: request.turnId,
         step: request.step,
         part: request.part,
@@ -212,5 +221,59 @@ it("a new turn loading never hides the turns already shown", async () => {
   release();
   await vi.advanceTimersByTimeAsync(0);
   expect(reader.view().turns.map((t) => t.ordinal)).toEqual([0, 1, 2]);
+  reader.close();
+});
+
+it("follows the session's leaf: a moved leaf re-reads the last turn, another branch starts afresh, a chosen one is read as asked", async () => {
+  vi.useFakeTimers();
+  const turns = [settled(), settled()];
+  const o = owner(turns);
+  // The session's current leaf and whether it still continues the one shown.
+  let leaf = turns[1].id,
+    continues = true;
+  const read = o.client.workbenchRead;
+  o.client.workbenchRead = async (request: WorkbenchRead) => {
+    const reply = await read(request);
+    if (request.kind !== "conversation" || reply.value.kind !== "conversation")
+      return reply;
+    return {
+      ...reply,
+      value: { ...reply.value, continues, leaf: request.leaf ?? leaf },
+    };
+  };
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view()).toMatchObject({ leaf: turns[1].id, pinned: false });
+  // The branch grew inside its last turn: only that turn is read again.
+  turns[1] = { ...turns[1], steps: [...turns[1].steps, step(2)], stable: 3 };
+  leaf = "grown";
+  o.reads.length = 0;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(kinds(o.reads)).toEqual(["conversation", "turn 1/null"]);
+  expect(reader.view().turns.at(-1)?.steps).toHaveLength(3);
+  // The session moved to another branch: nothing shown is kept.
+  continues = false;
+  leaf = "elsewhere";
+  o.reads.length = 0;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(kinds(o.reads)).toEqual([
+    "conversation",
+    "turn 0/null",
+    "turn 1/null",
+  ]);
+  // A chosen branch is read by its leaf, and following resumes on request.
+  continues = true;
+  o.reads.length = 0;
+  reader.choose(turns[0].id);
+  expect(reader.view()).toMatchObject({ pinned: true, count: 0 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(o.reads[0]).toMatchObject({ kind: "conversation", leaf: turns[0].id });
+  for (const r of o.reads)
+    if (r.kind === "conversation-turn") expect(r.leaf).toBe(turns[0].id);
+  reader.choose(null);
+  expect(reader.view().pinned).toBe(false);
   reader.close();
 });

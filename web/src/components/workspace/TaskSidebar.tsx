@@ -370,6 +370,7 @@ export function TaskSidebar({
       <span className="session-info">
         <span className="session-title">{chat.title}</span>
         <span className="session-sub">
+          {chat.origin === "terminal" ? t("Terminal") : "WebUI"} ·{" "}
           {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
           {chat.cadence && ["running", "queued"].includes(chat.status)
             ? t("Discussing")

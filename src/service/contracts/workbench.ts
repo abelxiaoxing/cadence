@@ -51,7 +51,7 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     ...(degraded ? ["notice"] : []),
   ]);
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     revision: integer(o.revision, 0),
     enabled: bool(o.enabled),
     head: nullable(o.head, decodeId),
@@ -60,7 +60,20 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     ...(degraded ? { notice: text(o.notice, 1024, true) } : {}),
   };
 }
-/** Browser conversation that owns an active workflow; native runs have none. */
+/** A conversation's identity: the Pi session id shared with the terminal. */
+export function decodeSessionId(v: unknown): string {
+  const s = text(v, 128, true);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(s))
+    throw new ContractError("invalid");
+  return s;
+}
+/** One entry of a Pi session (eight hex characters when Pi writes it). */
+export function decodeEntryId(v: unknown): string {
+  const s = text(v, 64, true);
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) throw new ContractError("invalid");
+  return s;
+}
+/** The conversation (Pi session) that started an active workflow, browser or terminal. */
 export interface WorkflowLink {
   runId: string;
   conversationId: string;
@@ -73,12 +86,20 @@ export type WorkbenchRead =
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string }
   | { kind: "conversation-active" }
-  | { kind: "conversations"; after?: ChatCursor | null; scan?: string }
+  | { kind: "conversations"; after?: ChatCursor | null }
   | { kind: "task-origin"; taskId: string }
-  | { kind: "conversation"; id: string }
+  | {
+      kind: "conversation";
+      id: string;
+      /** The branch to read, by its last entry; null reads the session's current leaf. */
+      leaf: string | null;
+      /** The leaf read last: the reply says whether the branch still continues it. */
+      known: string | null;
+    }
   | {
       kind: "conversation-turn";
       id: string;
+      leaf: string | null;
       ordinal: number;
       /** Exclusive end of the steps to list; null lists the latest ones. */
       before: number | null;
@@ -86,10 +107,13 @@ export type WorkbenchRead =
   | {
       kind: "conversation-step";
       id: string;
+      leaf: string | null;
       turnId: string;
       step: number;
       part: number;
     }
+  | { kind: "conversation-tree"; id: string; leaf: string | null }
+  | { kind: "conversation-legacy" }
   | { kind: "files"; path: string }
   | { kind: "file"; path: string }
   | { kind: "directories"; path: string }
@@ -152,7 +176,8 @@ export type WorkbenchCommand =
       turnId: string;
       epoch: string;
     }
-  | { kind: "open-project"; commandId: string; path: string; epoch: string };
+  | { kind: "open-project"; commandId: string; path: string; epoch: string }
+  | { kind: "conversation-migrate"; commandId: string };
 export type ChatStatus =
   | "queued"
   | "running"
@@ -197,16 +222,43 @@ export interface ChatStep {
   /** Stored parts that hold the full item; 0 when nothing more is recorded. */
   parts: number;
 }
+/** One turn of a conversation branch: a user message and what followed it. */
 export interface ChatTurnHeader {
+  /** The user message's session entry id; a browser command id while Pi has not
+   * written that message yet. */
   id: string;
-  epoch: string;
   status: ChatStatus;
   notice: string;
   omitted: ChatTurn["omitted"];
   steps: number;
   /** Leading steps that can no longer change: all of them once settled. */
   stable: number;
+  /** The turn's last session entry: a new branch can continue from it. */
+  entry: string | null;
+  /** When the turn began (epoch ms), 0 when unrecorded. */
+  at: number;
 }
+/** A browser message that left nothing in the session, shown after the branch
+ * it was sent from: a refusal before any model call or a Cadence control reply. */
+export interface ChatAttempt {
+  commandId: string;
+  text: string;
+  status: ChatStatus;
+  notice: string;
+}
+/** A user message in a session's tree, linked to the nearest earlier one. */
+export interface ChatTreeNode {
+  id: string;
+  parent: string | null;
+  text: string;
+  at: number;
+  /** The newest entry below this message: reading it shows this branch. */
+  leaf: string;
+  /** On the branch the read named. */
+  current: boolean;
+}
+/** Nodes one `conversation-tree` read returns, newest kept when more exist. */
+export const TREE_NODES = 1000;
 /** Encoded bytes of message text a listed step keeps. */
 export const STEP_TEXT_BYTES = 16 * 1024;
 const TARGET_BYTES = 1024;
@@ -274,15 +326,21 @@ export interface ChatCursor {
 }
 function decodeChatCursor(value: unknown): ChatCursor {
   const o = closed(value, ["id", "updatedAt"]);
-  return { id: decodeId(o.id), updatedAt: integer(o.updatedAt, 0) };
+  return { id: decodeSessionId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
 export interface ChatSummary {
+  /** The Pi session id. */
   id: string;
   title: string;
-  head: string;
+  /** The session's current leaf entry; null before Pi has written any entry. */
+  leaf: string | null;
   status: ChatStatus;
   updatedAt: number;
+  /** Who created the session: the Pi terminal or the browser. */
+  origin: "terminal" | "webui";
   cadence?: boolean;
+  /** The browser reply in progress, which Stop interrupts. */
+  live?: { commandId: string; epoch: string };
 }
 export interface FileEntry {
   name: string;
@@ -320,12 +378,38 @@ export type WorkbenchResult =
   | { kind: "workflow"; commandId: string | null; response: WorkflowResponse }
   | { kind: "task-origin"; taskId: string; conversationId: string | null }
   | { kind: "conversation-active"; entries: ChatSummary[] }
-  | { kind: "conversations-progress"; after: ChatCursor | null; scan: string }
-  | { kind: "conversations"; entries: ChatSummary[]; next?: ChatCursor | null }
-  | { kind: "conversation"; summary: ChatSummary | null; turns: number }
+  | { kind: "conversations"; entries: ChatSummary[]; next: ChatCursor | null }
+  | {
+      kind: "conversation";
+      summary: ChatSummary | null;
+      /** The branch read, by its last entry (null: nothing written yet). */
+      leaf: string | null;
+      /** False when the branch read no longer contains the requested `known` leaf. */
+      continues: boolean;
+      turns: number;
+      /** Leaves in the whole session tree: more than one means branches. */
+      branches: number;
+      /** Workflows the terminal started in this session. */
+      runs: string[];
+      attempt: ChatAttempt | null;
+    }
+  | {
+      kind: "conversation-tree";
+      conversationId: string;
+      nodes: ChatTreeNode[];
+      truncated: boolean;
+    }
+  | { kind: "conversation-legacy"; pending: number }
+  | {
+      kind: "conversation-migrated";
+      commandId: string;
+      migrated: number;
+      skipped: number;
+    }
   | {
       kind: "conversation-turn";
       conversationId: string;
+      leaf: string | null;
       ordinal: number;
       turn: ChatTurnHeader;
       /** Index of the first listed step. */
@@ -335,6 +419,7 @@ export type WorkbenchResult =
   | {
       kind: "conversation-step";
       conversationId: string;
+      leaf: string | null;
       turnId: string;
       step: number;
       part: number;
@@ -375,27 +460,37 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
     case "conversation-turn": {
-      const o = closed(v, ["kind", "id", "ordinal", "before"]);
+      const o = closed(v, ["kind", "id", "leaf", "ordinal", "before"]);
       return {
         kind,
-        id: decodeId(o.id),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
         ordinal: integer(o.ordinal, 0),
         before: nullable(o.before, (b) => integer(b, 0)),
       };
     }
     case "conversation-step": {
-      const o = closed(v, ["kind", "id", "turnId", "step", "part"]);
+      const o = closed(v, ["kind", "id", "leaf", "turnId", "step", "part"]);
       return {
         kind,
-        id: decodeId(o.id),
-        turnId: decodeId(o.turnId),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        turnId: decodeEntryId(o.turnId),
         step: integer(o.step, 0),
         part: integer(o.part, 0),
       };
     }
     case "cadence-conversation": {
       const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      return { kind, id: decodeSessionId(o.id) };
+    }
+    case "conversation-tree": {
+      const o = closed(v, ["kind", "id", "leaf"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+      };
     }
     case "workflow-history": {
       const continued = Object.hasOwn(v as object, "scan");
@@ -419,20 +514,15 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       return { kind, id: decodeId(o.id) };
     }
     case "conversations": {
-      const after = Object.hasOwn(v as object, "after"),
-        scan = Object.hasOwn(v as object, "scan");
-      const o = closed(v, [
-        "kind",
-        ...(after ? ["after"] : []),
-        ...(scan ? ["scan"] : []),
-      ]);
+      const after = Object.hasOwn(v as object, "after");
+      const o = closed(v, ["kind", ...(after ? ["after"] : [])]);
       return {
         kind,
         ...(after ? { after: nullable(o.after, decodeChatCursor) } : {}),
-        ...(scan ? { scan: decodeId(o.scan) } : {}),
       };
     }
     case "conversation-active":
+    case "conversation-legacy":
     case "projects":
       closed(v, ["kind"]);
       return { kind };
@@ -441,8 +531,13 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       return { kind, taskId: decodeId(o.taskId) };
     }
     case "conversation": {
-      const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      const o = closed(v, ["kind", "id", "leaf", "known"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        known: nullable(o.known, decodeEntryId),
+      };
     }
     default: {
       const o = closed(v, ["kind", "path"]);
@@ -478,8 +573,8 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
     return {
       kind,
       commandId: decodeId(o.commandId),
-      conversationId: decodeId(o.conversationId),
-      head: nullable(o.head, decodeId),
+      conversationId: decodeSessionId(o.conversationId),
+      head: nullable(o.head, decodeEntryId),
       revision: integer(o.revision, 0),
     };
   }
@@ -497,8 +592,8 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
     return {
       kind,
       commandId: decodeId(o.commandId),
-      conversationId: decodeId(o.conversationId),
-      head: nullable(o.head, decodeId),
+      conversationId: decodeSessionId(o.conversationId),
+      head: nullable(o.head, decodeEntryId),
       text: text(o.text, 16384, true),
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
@@ -517,7 +612,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
     const o = closed(v, kind === "cadence-approve" ? [...keys, "grant"] : keys);
     const base = {
       commandId: decodeId(o.commandId),
-      conversationId: decodeId(o.conversationId),
+      conversationId: decodeSessionId(o.conversationId),
       revision: integer(o.revision, 0),
       proposalId: decodeId(o.proposalId),
       digest: decodeHash(o.digest),
@@ -548,8 +643,8 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
     return {
       kind,
       commandId: decodeId(o.commandId),
-      conversationId: decodeId(o.conversationId),
-      head: nullable(o.head, decodeId),
+      conversationId: decodeSessionId(o.conversationId),
+      head: nullable(o.head, decodeEntryId),
       text: text(o.text, 16 * 1024, true),
       model: decodeChoiceVersion(o.model),
     };
@@ -565,10 +660,14 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
     return {
       kind,
       commandId: decodeId(o.commandId),
-      conversationId: decodeId(o.conversationId),
+      conversationId: decodeSessionId(o.conversationId),
       turnId: decodeId(o.turnId),
       epoch: decodeId(o.epoch),
     };
+  }
+  if (kind === "conversation-migrate") {
+    const o = closed(v, ["kind", "commandId"]);
+    return { kind, commandId: decodeId(o.commandId) };
   }
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
@@ -649,18 +748,20 @@ function decodeChatStep(v: unknown): ChatStep {
 function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
   const o = closed(v, [
     "id",
-    "epoch",
     "status",
     "notice",
     "omitted",
     "steps",
     "stable",
+    "entry",
+    "at",
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
-    id: decodeId(o.id),
-    epoch: decodeId(o.epoch),
+    id: decodeEntryId(o.id),
+    entry: nullable(o.entry, decodeEntryId),
+    at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
     omitted: {
@@ -673,23 +774,55 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
   };
 }
 export function decodeChatSummary(v: unknown): ChatSummary {
-  const modern =
-    v !== null && typeof v === "object" && Object.hasOwn(v, "cadence");
+  const has = (key: string) =>
+    v !== null && typeof v === "object" && Object.hasOwn(v, key);
   const o = closed(v, [
     "id",
     "title",
-    "head",
+    "leaf",
     "status",
     "updatedAt",
-    ...(modern ? ["cadence"] : []),
+    "origin",
+    ...(has("cadence") ? ["cadence"] : []),
+    ...(has("live") ? ["live"] : []),
   ]);
+  const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
-    head: decodeId(o.head),
+    leaf: nullable(o.leaf, decodeEntryId),
     status: oneOf(o.status, statuses),
     updatedAt: integer(o.updatedAt, 0),
-    ...(modern ? { cadence: bool(o.cadence) } : {}),
+    origin: oneOf(o.origin, ["terminal", "webui"]),
+    ...(has("cadence") ? { cadence: bool(o.cadence) } : {}),
+    ...(live
+      ? {
+          live: {
+            commandId: decodeId(live.commandId),
+            epoch: decodeId(live.epoch),
+          },
+        }
+      : {}),
+  };
+}
+function decodeChatAttempt(v: unknown): ChatAttempt {
+  const o = closed(v, ["commandId", "text", "status", "notice"]);
+  return {
+    commandId: decodeId(o.commandId),
+    text: text(o.text, 16 * 1024),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024),
+  };
+}
+function decodeChatTreeNode(v: unknown): ChatTreeNode {
+  const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
+  return {
+    id: decodeEntryId(o.id),
+    parent: nullable(o.parent, decodeEntryId),
+    text: text(o.text, 1024),
+    at: integer(o.at, 0),
+    leaf: decodeEntryId(o.leaf),
+    current: bool(o.current),
   };
 }
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
@@ -743,7 +876,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
           const l = closed(value, ["runId", "conversationId"]);
           return {
             runId: decodeId(l.runId),
-            conversationId: decodeId(l.conversationId),
+            conversationId: decodeSessionId(l.conversationId),
           };
         })
       : [];
@@ -787,15 +920,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     return {
       kind,
       taskId: decodeId(o.taskId),
-      conversationId: nullable(o.conversationId, decodeId),
-    };
-  }
-  if (kind === "conversations-progress") {
-    const o = closed(v, ["kind", "after", "scan"]);
-    return {
-      kind,
-      after: nullable(o.after, decodeChatCursor),
-      scan: decodeId(o.scan),
+      conversationId: nullable(o.conversationId, decodeSessionId),
     };
   }
   if (kind === "conversation-active") {
@@ -803,25 +928,65 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     return { kind, entries: list(o.entries, 8, decodeChatSummary) };
   }
   if (kind === "conversations") {
-    const paged = Object.hasOwn(v as object, "next");
-    const o = closed(v, ["kind", "entries", ...(paged ? ["next"] : [])]);
+    const o = closed(v, ["kind", "entries", "next"]);
     return {
       kind,
       entries: list(o.entries, 200, decodeChatSummary),
-      ...(paged ? { next: nullable(o.next, decodeChatCursor) } : {}),
+      next: nullable(o.next, decodeChatCursor),
     };
   }
   if (kind === "conversation") {
-    const o = closed(v, ["kind", "summary", "turns"]);
+    const o = closed(v, [
+      "kind",
+      "summary",
+      "leaf",
+      "continues",
+      "turns",
+      "branches",
+      "runs",
+      "attempt",
+    ]);
     const summary = nullable(o.summary, decodeChatSummary),
       turns = integer(o.turns, 0);
     if (!summary && turns) throw new ContractError("invalid");
-    return { kind, summary, turns };
+    return {
+      kind,
+      summary,
+      leaf: nullable(o.leaf, decodeEntryId),
+      continues: bool(o.continues),
+      turns,
+      branches: integer(o.branches, 0),
+      runs: list(o.runs, 200, decodeId),
+      attempt: nullable(o.attempt, decodeChatAttempt),
+    };
+  }
+  if (kind === "conversation-tree") {
+    const o = closed(v, ["kind", "conversationId", "nodes", "truncated"]);
+    return {
+      kind,
+      conversationId: decodeSessionId(o.conversationId),
+      nodes: list(o.nodes, TREE_NODES, decodeChatTreeNode),
+      truncated: bool(o.truncated),
+    };
+  }
+  if (kind === "conversation-legacy") {
+    const o = closed(v, ["kind", "pending"]);
+    return { kind, pending: integer(o.pending, 0) };
+  }
+  if (kind === "conversation-migrated") {
+    const o = closed(v, ["kind", "commandId", "migrated", "skipped"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      migrated: integer(o.migrated, 0),
+      skipped: integer(o.skipped, 0),
+    };
   }
   if (kind === "conversation-turn") {
     const o = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "ordinal",
       "turn",
       "start",
@@ -833,7 +998,8 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     if (start + steps.length > turn.steps) throw new ContractError("invalid");
     return {
       kind,
-      conversationId: decodeId(o.conversationId),
+      conversationId: decodeSessionId(o.conversationId),
+      leaf: nullable(o.leaf, decodeEntryId),
       ordinal: integer(o.ordinal, 0),
       turn,
       start,
@@ -844,6 +1010,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     const o = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "turnId",
       "step",
       "part",
@@ -851,8 +1018,9 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     ]);
     return {
       kind,
-      conversationId: decodeId(o.conversationId),
-      turnId: decodeId(o.turnId),
+      conversationId: decodeSessionId(o.conversationId),
+      leaf: nullable(o.leaf, decodeEntryId),
+      turnId: decodeEntryId(o.turnId),
       step: integer(o.step, 0),
       part: integer(o.part, 0),
       item: decodeChatItem(o.item),

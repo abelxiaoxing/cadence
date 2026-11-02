@@ -5,10 +5,6 @@ import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
-  CONTEXT_RECORD_BYTES,
-  conversationMessages,
-} from "./conversation-context.mjs";
-import {
   networkSnapshot,
   safeChildEnv,
   sameNetwork,
@@ -33,7 +29,6 @@ import {
   decodeWorkerPublicRequest,
   LIMITS,
   type NativeSettlement,
-  parseWireJson,
   type RecordingLink,
   type WorkerCompletion,
   type WorkerPublicRequest,
@@ -89,11 +84,8 @@ export interface ProcessSpec {
   ) => void;
   secrets?: string[];
   onProgress?: (text: string) => void;
-  /** Ordinary-chat capture, separately persisted; never a task recording receipt. */
+  /** Ordinary-chat capture, a live preview only; never a task recording receipt. */
   onFrame?: (frame: CaptureFrame) => void;
-  /** One bounded checkpoint record at a time, never a raw spill file. */
-  onContext?: (source: string) => void;
-  onContextEnd?: () => void;
   onCoordinator?: (
     name: string,
     args: unknown,
@@ -177,18 +169,10 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...(spec.onContext || spec.onCoordinator
-          ? [spec.onContext ? ("pipe" as const) : ("ignore" as const)]
-          : []),
-        ...(spec.onCoordinator ? ["ipc" as const] : []),
+        // The coordinator channel keeps its slot after the unused fd 3.
+        ...(spec.onCoordinator ? ["ignore" as const, "ipc" as const] : []),
       ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
-    const contextStream = spec.onContext
-      ? (child.stdio[3] as Readable | null)
-      : null;
-    let contextEnded = false,
-      contextBytes = 0;
-    const contextChunks: Buffer[] = [];
     let settled = false;
     let nativeClosed = false;
     let launched = false;
@@ -305,7 +289,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         child.stdout.destroy();
         child.stderr.destroy();
         child.stdin?.destroy();
-        contextStream?.destroy();
         if (child.connected) child.disconnect();
       }
     };
@@ -500,34 +483,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         }
       }
     };
-    contextStream?.on("data", (chunk: Buffer) => {
-      if (settled || stopping) return;
-      try {
-        let offset = 0;
-        while (offset < chunk.length) {
-          const end = chunk.indexOf(10, offset);
-          const part = chunk.subarray(offset, end < 0 ? chunk.length : end);
-          contextBytes += part.length;
-          if (contextBytes > CONTEXT_RECORD_BYTES)
-            throw new Error("Checkpoint record too large");
-          contextChunks.push(part);
-          if (end < 0) break;
-          const source = new TextDecoder("utf-8", { fatal: true }).decode(
-            Buffer.concat(contextChunks, contextBytes),
-          );
-          contextChunks.length = 0;
-          contextBytes = 0;
-          spec.onContext?.(source);
-          offset = end + 1;
-        }
-      } catch {
-        stop("failed");
-      }
-    });
-    contextStream?.once("end", () => {
-      contextEnded = true;
-    });
-    contextStream?.on("error", () => stop("failed"));
     let stdoutWork = Promise.resolve();
     let stderrWork = Promise.resolve();
     let stdoutEnded = false,
@@ -588,15 +543,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       // Native close can race the final paused read's continuation. Never use
       // exit/EOF or a still-pending decoder as a substitute for either fact.
       const close = () => {
-        if (spec.onContext && !stopping && code === 0) {
-          try {
-            if (!contextEnded || contextBytes)
-              throw new Error("Context EOF missing");
-            spec.onContextEnd?.();
-          } catch {
-            stopping = "failed";
-          }
-        }
         if (!spec.protocol) output += stdoutDecoder.end();
         else {
           try {
@@ -740,8 +686,6 @@ function launchEncoded(
     | "onNative"
     | "maySignal"
     | "onFrame"
-    | "onContext"
-    | "onContextEnd"
     | "onCoordinator"
     | "secrets"
   > = {},
@@ -918,12 +862,21 @@ export function preparedWorker(
     },
   };
 }
+/** The Pi session a browser turn continues: `file` is null until Pi has
+ * written it, and `head` is the entry the message follows (null: a new root). */
+export interface ConversationSession {
+  id: string;
+  dir: string;
+  file: string | null;
+  head: string | null;
+}
 /** Same isolated native launcher, auth projection and closure rules as tasks.
- * The caller durably accepts a chat turn before this one-use launch. */
+ * The caller durably accepts a chat turn before this one-use launch. The
+ * worker's Pi session writes the turn; nothing returns through a side channel. */
 export function launchConversation(
   prepared: PreparedModelContext,
   conversation: {
-    previous: string | null;
+    session: ConversationSession;
     agentDir: string;
     coordinator?: true;
   },
@@ -934,8 +887,6 @@ export function launchConversation(
     onNative(native: NativeSettlement): void;
     onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
     ownerSecrets(): readonly string[];
-    onContext(message: unknown): void;
-    onContextEnd(): void;
     onCoordinator?: ProcessSpec["onCoordinator"];
   },
 ): Promise<RunResult> {
@@ -957,40 +908,11 @@ export function launchConversation(
       if (!encoded || encoded.input !== input)
         throw new Error("Invalid chat launch");
       const secrets = encoded.secrets;
-      let contextCount = 0,
-        contextComplete = false;
       return launchEncoded(encoded, signal, options.timeoutMs, {
         maySignal: options.maySignal,
         onNative: options.onNative,
         onCoordinator: options.onCoordinator,
         onFrame: (frame) => options.onFrame(frame, secrets),
-        onContext: (source) => {
-          if (contextComplete) throw new Error("Checkpoint after end");
-          const value = parseWireJson(source, CONTEXT_RECORD_BYTES) as {
-            schema?: string;
-          };
-          if (value.schema === "cadence-conversation-stream-end/1") {
-            const record = closed(value, ["schema", "count"]);
-            if (record.count !== contextCount)
-              throw new Error("Invalid checkpoint count");
-            contextComplete = true;
-            return;
-          }
-          const record = closed(value, ["schema", "message"]);
-          if (record.schema !== "cadence-conversation-stream/1")
-            throw new Error("Invalid checkpoint");
-          options.onContext(
-            conversationMessages(
-              [record.message],
-              [...options.ownerSecrets(), ...secrets],
-            )[0],
-          );
-          contextCount++;
-        },
-        onContextEnd: () => {
-          if (!contextComplete) throw new Error("Incomplete checkpoint");
-          options.onContextEnd();
-        },
       });
     },
   );

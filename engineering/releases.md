@@ -467,3 +467,26 @@ Earlier development runs failed only `service-history` and `service-owner` 5s bu
 A separate Bun pack contains 151 files; SHA-256 `f3f984aef1c10427e7a993d2a5e04ee51514de45412d9ad6d998de30e3b0de23`, SHA-1 `64f3f3b5f3a9932d153ff30d55b109b5257cfc2b`.
 Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
 Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Release 2.0.31 acceptance snapshot
+
+The WebUI kept browser conversations in its own `conversations-v1` store, so the Pi terminal and the browser had two unrelated histories, and a separate "Workflow history" sidebar section listed workflows in random run-ID order, duplicating what each conversation already showed.
+Browser conversations are now the project's Pi session files: the owner lists and reads them incrementally, never writing, repairing or deleting one, and a browser turn's SDK worker continues one through Pi's own `SessionManager` (a new session carries a `cadence-webui/1` entry), recording a changed model or thinking level so a terminal `/resume` keeps it.
+By the user's choice Pi stores content raw, as the terminal does; the owner redacts its credentials from every read, using the last observed literals while the model configuration is reloaded or edited and refusing rather than returning unredacted content when it has none.
+A Send names the session entry it continues; by the user's choice a message continuing an entry the session has since moved past (for example in a terminal holding the session) starts a branch, never a conflict or a rewrite.
+The WebUI follows Pi's current leaf, reads one branch by its last entry, shows the session tree and offers "Continue from here"; a browser turn's own entries are found by its exact text after its acceptance offset, so a terminal message sent from the same entry is never taken for it.
+Failed and interrupted turns stay in the session and can be continued; Stop and timeouts abort the worker's Pi session before the process ends.
+The owner keeps only each browser message's admission record (`conversation-commands-v1`); the checkpoint pipe, transcript pages, conversation metadata and their readers are removed, and pre-2.0.31 conversations move into Pi sessions with the same id only on an explicit sidebar request, leaving the old records untouched.
+Workflows belong to the conversation that started them, browser or terminal (terminal runs come from the session's `cadence-conversation-mode/1` entries); the sidebar section is removed while native `/cadence-history` keeps its reader.
+The Pi extension tells a terminal holding a session when the browser continued it and suggests `/resume`.
+Cadence mode and plan approval stay per surface: native mode state carries terminal-only tool restoration that the browser cannot write safely.
+The release also carries e3889e0 (a `CADENCE_TOKEN` of any non-empty length).
+The contract changes, so 2.0.30 and 2.0.31 clients and owners refuse each other; older versions cannot read the shared sessions or messages sent since.
+
+Against this host's data, the new reader parsed all nine real Pi 1.4.0 sessions of this checkout (including `context_edit` and system entries), and Pi 1.4.0's own `SessionManager` opened a session written by the 0.84.3 SDK worker with its fork, current leaf, context and model intact.
+A real Chromium run of the built WebUI in Chinese showed terminal sessions in the history, a new branch from "Continue from here" and the branch tree; screenshots are kept untracked in the main checkout under `预览图片/2026-11-02/共享历史/`.
+The release `verify` passed on its first full run: 1792 root/native tests in 89 files with 28 skipped, 152 WebUI tests in 16 files, seven browser scenarios in six files and the 152-member pack audit.
+During development, a run failed only because a test still sent a command ID as the conversation head, and `generated outputs deterministic` failed once because a source file changed while that run was going; no budget was changed.
+A separate Bun pack contains 152 files; SHA-256 `3930e8298eda4824f28748c4c579118c0a03bbb9ad4696a4630d36ddc5c6d244`, SHA-1 `93c4936d097cf592005e489e71de8c40dec84036`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14, Pi 1.4.0 installed globally beside the pinned 0.84.3 SDK, and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed, and no real terminal TUI session was driven against the new notice.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.

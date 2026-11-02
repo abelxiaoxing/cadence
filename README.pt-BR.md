@@ -15,6 +15,8 @@ Planeje uma tarefa de código, deixe os subagentes trabalharem nela, execute sua
   A saída dos subagentes, as execuções reais de verificação e a sua própria revisão permanecem separadas: a prosa do modelo ou um "Done" nunca contam como verificação aprovada, e resultados com falha, cancelados e desconhecidos permanecem distintos.
 - **Histórico completo.**
   Cada execução mantém suas mensagens, chamadas de ferramentas e saídas, com busca exata e exportação completa em Markdown/NDJSON; segredos conhecidos são redigidos.
+- **Um histórico compartilhado com o terminal.**
+  As conversas do navegador são as sessões do Pi do projeto: continue uma sessão do terminal no navegador ou uma do navegador com `/resume`, e leia os ramos do Pi em qualquer um dos dois.
 - **Um link para tudo.**
   A interface web (desktop e celular, inglês e chinês simplificado) também hospeda conversas comuns do Pi e alterna entre projetos, cada um com seu próprio owner e histórico.
 

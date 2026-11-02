@@ -82,7 +82,7 @@ A plan card persists across later messages until a new plan replaces it, the use
 Plans may be published while other workflows run; research is refused with an explanation only behind an approved implementation, and its run ID is recorded only once accepted.
 An unreadable or incomplete control record degrades only its own conversation: the read carries a notice, every Cadence command there refuses, and nothing is repaired; other conversations and owner startup are unaffected.
 Lost replies to Send or approval return the original receipt or run on a retry with the same command ID.
-One human plan approval binds the exact visible proposal, conversation revision/head, model, project observation, owner epoch and authenticated attachment/access generation.
+One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last message to that conversation, model, project observation, owner epoch and authenticated attachment/access generation.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
 Plan approval covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
@@ -91,7 +91,7 @@ Full plan cards and retained run/step details replace daily task/Save/Start/Chec
 Workflow progress is distinct from the ordinary/coordinator response status, including actual merge commits after failed post-merge checks.
 The independent project workflow roster includes native-started work; missing observations never render as an empty complete roster.
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
-Known closed failed coordinator turns may continue on a new explicit Send from the last complete checkpoint; no incomplete tool call is resumed.
+A failed or interrupted coordinator turn stays in the session; a new explicit Send continues that branch as Pi would (errored replies are skipped and orphaned tool calls closed); no incomplete tool call is resumed.
 A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
 The model catalog reports that preference read only as `remembered`, and only when it names a selectable entry of the same catalog, so the browser can show it as "used when you send" without installing it; an unreadable or no longer offered preference is simply absent.
 The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
@@ -103,17 +103,18 @@ Exit does not require a usable selected model.
 There is no Legacy task creation entry or task composer.
 Historical task-origin links still read, but cannot be created.
 The old task inspector is readonly content/check/change/review evidence, never an editor or execution control; no old task/history is rewritten into a new workflow.
-Native Pi session transcripts are not imported into browser conversations.
+Browser conversations are the project's Pi sessions, shared with the terminal rather than imported (see [Ordinary conversations](#ordinary-conversations)).
 All of this works without a live Pi terminal.
 A definite pre-acceptance Send refusal preserves the draft and permits another explicit Send or mode exit; it does not pin an impossible pending turn.
 A token grants workspace access, not action consent.
-Ordinary Send binds its exact text, conversation head, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
+Ordinary Send binds its exact text, the session entry it continues, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
 The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
 The composer's Cadence mode switch replaces the old mode select: off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
-The left sidebar provides New conversation alongside running/retained conversations and an on-demand Workflow history listing; Running conversations holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running conversations holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as a card; an active one is also listed under Running conversations.
 A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
 The dock is only as tall as its rows, up to its default height, until a drag sets one; it stays folded while empty unless opened, and its heading count leads the total with the queued or running agents (`2 active · 5 total`).
 A compact sidebar list notes only partial, redacted or omitted recording coverage; complete coverage needs no note there.
@@ -129,34 +130,41 @@ Error codes, identifiers, commands and recorded content stay untranslated.
 
 ## Ordinary conversations
 
-Ordinary conversations run through the same isolated SDK process launcher, exact model/auth sources and orderly Stop as tasks, with a separate private `service-v1/conversations-v1` store rather than fabricated task records or imported Pi sessions.
+Ordinary conversations run through the same isolated SDK process launcher, exact model/auth sources and orderly Stop as tasks.
+A conversation is one of the project's Pi sessions, the JSONL files the terminal writes: the WebUI lists and reads them, and a browser turn's worker continues one with Pi's own `SessionManager`, so the terminal and the browser share one history without copying or importing it.
+The session directory follows Pi's precedence: `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in the project's `.pi/settings.json` or the agent directory's `settings.json`, then `<agentDir>/sessions/--<cwd>--`; only sessions whose header names the project root are listed.
+A session started in a subdirectory, or by another account (a root service does not read a user's agent directory), is not part of the project's history.
+A browser-created session carries a `cadence-webui/1` custom entry, which Pi keeps out of the model context; the terminal resumes it with `/resume` or `pi --session <id>` like any other session.
+Pi writes each message when it ends, raw: thinking, signatures and tool output are stored as the terminal stores them, and the owner redacts its credentials from everything it returns instead.
+Read redaction uses the owner's current literals, or the last ones observed while the model configuration is reloaded or edited; without any, reads refuse rather than return unredacted content.
+The owner never rewrites, repairs or deletes a session file; its own private `service-v1/conversation-commands-v1` records each browser message's admission (command, the entry it continues, the file size then, status, auth journal and native closure), never content.
 Their tools operate on the host, not in a sandbox.
 Each turn holds the checkout's exclusive gate, so ordinary turns, Cadence children and parent checks cannot edit/read across one another's active write window; leaving a tab only detaches.
-Conversation identities are not recreated when their metadata disappears, unaccepted turn directories are never adopted, and rolling private writes compare their exact expected bytes.
-An active turn retains independent interruption authority even when its metadata is unavailable; readonly views do not reconstruct that metadata.
+An active turn retains independent interruption authority; Stop or a timeout signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
 Access-token rotation revokes viewers, not admitted queued turns.
-A completed turn retains sanitized text and tool exchanges for its next explicit Send.
-The checkpoint passes through an anonymous pipe one bounded message at a time and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
-A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced; turns saved before the flags decode with all three unset.
-Releases through 2.0.19 refuse a turn that carries the flags, so going back to one leaves conversations written since unreadable there.
-Assistant usage keeps only the counts every Pi message carries; optional provider breakdowns such as `reasoning` or `cacheWrite1h` are dropped, not refused.
-Failed, interrupted or over-budget turns remain visible but currently require a new conversation instead of replaying incomplete context.
-A restart never resumes pending turns; unknown work keeps fences.
-There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction.
-Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers.
+A Send names the entry it continues: the end of the branch the browser shows, or none for an empty session.
+The owner admits one browser message per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
+A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on.
+A browser turn's own entries are found by its exact text after the file size at acceptance, so a terminal message sent from the same entry is never taken for it.
+A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
+A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
+A restart never resumes pending turns; a turn whose closure is unknown keeps fences.
+There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction; a terminal `/compact` is honoured when the session is continued.
+Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers, so a terminal extension's tools are shown in history but not offered to a browser turn.
+When a turn's model or thinking level differs from the session's, the worker records the change, so a terminal resume keeps it.
 Conversation and per-conversation turn counts have no lifetime admission cap; only active-work concurrency is bounded.
-History is recent-first and paged, continuing readonly bounded scans as necessary; active conversations use a separate roster and never disappear merely because an older history page is selected.
-New turns append immutable ordinal slots while keeping a small expected-byte head/count manifest; old inline turn IDs remain a readable prefix, extended only by explicit Send without bulk migration.
-New ordinary/coordinator turns retain complete sanitized text and tool exchanges in immutable transcript pages, with a labelled latest preview of work in progress; 384KiB is a page/snapshot bound, not a whole-turn execution cutoff.
-Large fields continue across pages without losing Unicode or JSON-escaped text.
-A conversation reads as one continuous transcript, with no page to switch: the head read gives only the summary and turn count, each turn is read by position as listed steps, and a step's full item is read separately.
+History lists the project's sessions by last modification, newest first, 50 per page; active conversations use a separate roster and never disappear merely because an older history page is selected.
+Listing reads each file once and then only what Pi appends, ignoring a torn final line; a replaced or shortened file is read again from its start.
+A conversation reads one branch, named by its last entry, as one continuous transcript: the head read gives the summary, the branch end, whether it still continues the one shown before, the branch and leaf counts and the terminal's workflows; each turn (a user message and what followed it) is read by position as listed steps, and a step's full item is read separately in parts that each fit one reply.
+Without a chosen branch the WebUI follows Pi's current leaf, the entry appended last; a live browser turn ends the branch it was sent from until it settles.
 A listing never carries a tool's arguments or output and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
+Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps; thinking and images are flagged as omitted.
 The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
-It polls the small head every second only while a turn is queued or running, every ten seconds otherwise, and never reads a settled turn again; what is shown stays while a read is pending or the owner is briefly unavailable.
-Continuation checkpoints use hash-chained per-message records and a small committed manifest, so the former 2MiB aggregate pipe/file cap no longer ends otherwise successful replies.
-The separate conversation store has no aggregate byte or file-count quota and never evicts history; the free-space floor and per-record/process safety bounds remain (see `engineering/limits.md`).
-Old turns and checkpoints remain readable without migration.
-Older versions do not understand paged turns, indexed metadata or version-2 checkpoints; downgrading cannot resume those conversations.
+It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
+A branch tree (Pi's `/tree`, user messages only) chooses the branch to read; "Continue from here" shows a turn's end, and the next message starts a new branch there; nothing is moved or deleted.
+While a terminal holds a session, its extension notices entries it did not write and suggests `/resume`; a message sent there first continues from where the terminal is, as a new branch.
+Browser conversations kept before 2.0.31 (`service-v1/conversations-v1`) are copied into Pi sessions with the same id only on an explicit request in the history sidebar: each session holds the context of the conversation's last completed reply, and the old records stay untouched.
+Older versions read neither the shared sessions nor messages sent since; going back leaves those conversations unreadable there.
 Task history retains its existing independent bounds.
 File browsing lists at most 200 entries from 2000 directory entries and previews at most 128KiB of UTF-8 text.
 It refuses symlinks, hard-linked files, private state, Pi's agent directory (including its configured alias target), `.git`, `.env` variants, common credential directories such as `.ssh`/`.aws`, and credential/config filenames; limitations remain visible.

@@ -321,18 +321,14 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
       .locator(".conversation-badge")
       .filter({ hasText: "Cadence on" })
       .waitFor();
-    // Retained workflows are reachable without asking the coordinator/model.
+    // The retained workflow stays on its conversation's card after a reload.
     const historyContacts = f.contacts();
-    await page.locator(".workflow-history > summary").click();
     await page
-      .locator(".workflow-history .session-item")
+      .getByRole("article", { name: "Workflow progress" })
       .filter({ hasText: result.value.response.run.goal })
-      .click();
-    await page.getByLabel("Subagent context", { exact: true }).waitFor();
+      .first()
+      .waitFor();
     assert.equal(f.contacts(), historyContacts);
-    await page
-      .getByRole("button", { name: "Back to conversation", exact: true })
-      .click();
     await send("Next goal: explain the existing files");
     await page
       .getByText("Investigation complete. Should we write both files?", {

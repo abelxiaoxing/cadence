@@ -3438,6 +3438,7 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2",
       "conversations-v1",
+      "conversation-commands-v1",
       "conversation-workflows-v1",
       "workflows-v1"
     ]);

@@ -72,7 +72,7 @@ function fixture() {
     },
     controlKey: (id: string) => (links.has(id) ? "bound" : "absent"),
     bindControl: (id: string) => links.add(id),
-    hasTurn: (id: string, turn: string) => {
+    hasCommand: (id: string, turn: string) => {
       ++hasTurnCalls;
       return turns.get(id)?.includes(turn) ?? false;
     },
@@ -96,17 +96,10 @@ function fixture() {
       controls.set(input.commandId, control);
       return { kind: "accepted", commandId: input.commandId };
     },
-    conversation: (id: string) => ({
-      kind: "conversation",
-      summary: {
-        id,
-        title: "t",
-        head: turns.get(id)?.at(-1),
-        status: "completed",
-        updatedAt: 0,
-      },
-      turns: turns.get(id)?.length ?? 0,
-    }),
+    latestCommand: (id: string) => {
+      const commandId = turns.get(id)?.at(-1);
+      return commandId ? { commandId, status: "completed" } : null;
+    },
   };
   const runs = new Map<string, WorkflowRun>();
   const active: WorkflowRun[] = [];

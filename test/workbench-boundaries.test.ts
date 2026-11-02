@@ -10,10 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import {
-  conversationMessages,
-  encodeConversationContext,
-} from "../src/conversation-context.mjs";
+import { conversationMessages } from "../src/conversation-context.mjs";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
@@ -21,7 +18,7 @@ import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
 } from "../src/service/contracts/workbench.ts";
-import { ConversationCapture } from "../src/service/conversations.ts";
+import { TurnCapture } from "../src/service/turn-capture.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 import {
@@ -69,7 +66,7 @@ it("chat streams hold split secrets and keep finalized text separate from tool r
     items: [],
   };
   let saves = 0;
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {
       saves++;
@@ -129,7 +126,7 @@ it("chat streams hold split secrets and keep finalized text separate from tool r
   expect(JSON.stringify(turn)).not.toContain("private-literal");
   expect(saves).toBe(0);
 });
-it("continuation keeps tool exchanges but strips hidden/media/signatures and owner credentials", () => {
+it("old checkpoints keep tool exchanges but strip hidden/media/signatures and owner credentials", () => {
   const messages = [
     { role: "user", content: "hello", timestamp: 1 },
     {
@@ -183,7 +180,7 @@ it("continuation keeps tool exchanges but strips hidden/media/signatures and own
   expect(source).toContain("toolCall");
   expect(source).toContain("toolResult");
 });
-it("continuation accepts Pi usage breakdowns and stores only the common counts", () => {
+it("old checkpoints accept Pi usage breakdowns and keep only the common counts", () => {
   const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   const assistant = (usage: object) => [
     { role: "user", content: "hi", timestamp: 1 },
@@ -206,11 +203,11 @@ it("continuation accepts Pi usage breakdowns and stores only the common counts",
     totalTokens: 3,
   };
   // openai-completions/responses and google report reasoning; anthropic reports cacheWrite1h.
-  const plain = encodeConversationContext(assistant({ ...counts, cost }), []);
+  const encode = (messages: unknown[]) =>
+    JSON.stringify(conversationMessages(messages));
+  const plain = encode(assistant({ ...counts, cost }));
   for (const extra of [{ reasoning: 1 }, { cacheWrite1h: 0 }])
-    expect(
-      encodeConversationContext(assistant({ ...counts, ...extra, cost }), []),
-    ).toBe(plain);
+    expect(encode(assistant({ ...counts, ...extra, cost }))).toBe(plain);
   expect(plain).not.toMatch(/reasoning|cacheWrite1h/);
   let calls = 0;
   const getter = {
@@ -418,7 +415,7 @@ it("oversize tool arguments stop capture without poisoning the last readable tur
     omitted: { thinking: false, media: false, other: false },
     items: [],
   };
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {},
     () => [],
@@ -470,7 +467,7 @@ it("omitted thinking, media and unknown blocks are flags that never displace a t
     omitted: { thinking: false, media: false, other: false },
     items: [],
   };
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {},
     () => [],

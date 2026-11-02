@@ -458,7 +458,7 @@ it("restoring checks a running owner with one readonly project listing, never Op
   const requests: { url: string; method?: string }[] = [];
   let reply: unknown = {
     kind: "ok",
-    value: { kind: "conversations", entries: [] },
+    value: { kind: "conversations", entries: [], next: null },
   };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     requests.push({ url, method: init?.method });
@@ -487,7 +487,10 @@ it("restoring checks a running owner with one readonly project listing, never Op
   );
   const aborted = new AbortController();
   aborted.abort();
-  reply = { kind: "ok", value: { kind: "conversations", entries: [] } };
+  reply = {
+    kind: "ok",
+    value: { kind: "conversations", entries: [], next: null },
+  };
   expect(await projectRunning(key("a"), aborted.signal)).toBe(false);
   expect(requests.every((request) => request.method === "GET")).toBe(true);
 });

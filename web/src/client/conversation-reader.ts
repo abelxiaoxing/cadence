@@ -1,6 +1,9 @@
-/** Reads one conversation for display: a small head poll, every shown turn
- * once, and only an unsettled turn again. Earlier turns load on request. */
+/** Reads one conversation (a Pi session) for display: a small head poll, every
+ * shown turn of the branch once, and only an unsettled or growing turn again.
+ * Earlier turns load on request. It follows the session's current leaf unless
+ * a branch is chosen. */
 import type {
+  ChatAttempt,
   ChatStatus,
   ChatStep,
   ChatSummary,
@@ -28,7 +31,17 @@ export interface LoadedTurn extends TurnSource {
 export interface ConversationView {
   /** Undefined until the first observation; null for a conversation not started. */
   summary: ChatSummary | null | undefined;
-  /** Turns the conversation has. */
+  /** The branch shown, by its last entry; a message sent now continues it. */
+  leaf: string | null;
+  /** A branch was chosen instead of following the session's current leaf. */
+  pinned: boolean;
+  /** Leaves in the session tree: more than one means it has branches. */
+  branches: number;
+  /** Workflows the terminal started in this session. */
+  runs: string[];
+  /** A browser message that left nothing in the session, after this branch. */
+  attempt: ChatAttempt | null;
+  /** Turns the branch has. */
   count: number;
   /** Shown turns, oldest first: the most recent ones without gaps. */
   turns: LoadedTurn[];
@@ -51,6 +64,11 @@ class ReadError extends Error {}
 
 export class ConversationReader {
   private summary: ChatSummary | null | undefined = undefined;
+  private leaf: string | null = null;
+  private pinned: string | null = null;
+  private branches = 0;
+  private runs: string[] = [];
+  private attempt: ChatAttempt | null = null;
   private count = 0;
   private first: number | null = null;
   private readonly turns = new Map<number, LoadedTurn>();
@@ -92,6 +110,20 @@ export class ConversationReader {
   refresh = (): void => {
     void this.tick();
   };
+  /** Show the branch that ends at `leaf`; null follows the current leaf again. */
+  choose = (leaf: string | null): void => {
+    if (this.closed || this.pinned === leaf) return;
+    this.pinned = leaf;
+    this.forget();
+    this.publish();
+    void this.tick();
+  };
+  private forget(): void {
+    this.turns.clear();
+    this.details.clear();
+    this.first = null;
+    this.count = 0;
+  }
   loadEarlier = (): void => {
     if (this.closed || this.loadingEarlier || !this.first) return;
     this.first = Math.max(0, this.first - EARLIER_TURNS);
@@ -117,6 +149,11 @@ export class ConversationReader {
     }
     return {
       summary: this.summary,
+      leaf: this.leaf,
+      pinned: this.pinned !== null,
+      branches: this.branches,
+      runs: this.runs,
+      attempt: this.attempt,
       count: this.count,
       turns,
       earlier: (turns[0]?.ordinal ?? this.count) > 0,
@@ -156,13 +193,23 @@ export class ConversationReader {
     this.timer = setTimeout(() => void this.tick(), live ? LIVE_MS : IDLE_MS);
   }
   private async sync(): Promise<void> {
-    const head = await this.read({ kind: "conversation", id: this.id });
+    const pinned = this.pinned;
+    const head = await this.read({
+      kind: "conversation",
+      id: this.id,
+      leaf: pinned,
+      known: this.leaf,
+    });
     if (head.kind !== "conversation") throw new ReadError("invalid");
-    if (head.turns < this.count) {
-      // Never a shorter record of the same conversation: observe it afresh.
-      this.turns.clear();
-      this.first = null;
-    }
+    if (pinned !== this.pinned) return;
+    // Another branch, or never a shorter record of this one: observe it afresh.
+    if (!head.continues || head.turns < this.count) this.forget();
+    // A branch that moved on extends its last shown turn.
+    const grown = head.leaf !== this.leaf ? this.count - 1 : this.count;
+    this.leaf = head.leaf;
+    this.branches = head.branches;
+    this.runs = head.runs;
+    this.attempt = head.attempt;
     this.summary = head.summary;
     this.count = head.turns;
     this.first = Math.min(
@@ -175,6 +222,7 @@ export class ConversationReader {
       const turn = this.turns.get(o);
       if (
         !turn ||
+        o >= grown ||
         turn.header.stable < turn.header.steps ||
         unsettled(turn.header.status)
       )
@@ -183,6 +231,7 @@ export class ConversationReader {
     await Promise.all(wanted.map((ordinal) => this.load(ordinal)));
   }
   private async load(ordinal: number): Promise<void> {
+    const leaf = this.leaf;
     const prior = this.turns.get(ordinal);
     const latest = await this.turnRead(ordinal, null);
     const header = latest.turn;
@@ -212,22 +261,28 @@ export class ConversationReader {
       ordinal,
       header,
       steps: steps as ChatStep[],
-      detail: this.detail(header.id),
+      detail: this.detail(leaf, header.id),
     });
   }
   private async turnRead(ordinal: number, before: number | null) {
     const value = await this.read({
       kind: "conversation-turn",
       id: this.id,
+      leaf: this.leaf,
       ordinal,
       before,
     });
-    if (value.kind !== "conversation-turn" || value.ordinal !== ordinal)
+    if (
+      value.kind !== "conversation-turn" ||
+      value.ordinal !== ordinal ||
+      value.leaf !== this.leaf
+    )
       throw new ReadError("invalid");
     return value;
   }
-  private detail(turnId: string): TurnSource["detail"] {
-    let detail = this.details.get(turnId);
+  private detail(leaf: string | null, turnId: string): TurnSource["detail"] {
+    const key = `${leaf ?? ""}:${turnId}`;
+    let detail = this.details.get(key);
     if (!detail) {
       detail = async (step, parts, signal) => {
         const items = await Promise.all(
@@ -236,6 +291,7 @@ export class ConversationReader {
               {
                 kind: "conversation-step",
                 id: this.id,
+                leaf,
                 turnId,
                 step,
                 part,
@@ -252,7 +308,7 @@ export class ConversationReader {
           args: items.map((item) => item.args).join(""),
         };
       };
-      this.details.set(turnId, detail);
+      this.details.set(key, detail);
     }
     return detail;
   }

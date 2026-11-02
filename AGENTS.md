@@ -11,7 +11,7 @@ Client departure detaches, never cancels admitted work; explicit Cancel/Stop pre
 No terminal embedded executor, automatic replay or profile copying is allowed.
 Startup self-heals what a provably dead Cadence process left behind (an earlier boot, an absent or reused PID, then its leftover workers stopped by exact identity) and records what it did; a live, unresponsive, foreign-host or unidentifiable holder is never reclaimed without one explicit confirmation (`cadence doctor --fix`).
 This is not a sandbox, certified executor or transactional application system.
-Research/diagnosis are readonly; ordinary conversations remain independent and use direct host tools only on explicit Send, under the shared checkout gate.
+Research/diagnosis are readonly; ordinary conversations are the project's Pi sessions, shared with the terminal (Pi writes them; Cadence reads, continues and branches them, never rewrites or imports them), and use direct host tools only on explicit Send, under the shared checkout gate.
 Human-readable legacy summaries live under `.cadence/assistant/tasks`; new workflow notes use `.cadence/assistant/workflows` and managed project context uses `.cadence/project.md`; private history and coordination use `cadence-assistant-v1` outside the working copy.
 The unified workbench has no project cwd and never creates a default workspace; private-state ancestors are refused as project roots, never redirected.
 Explicit Open associates independent project owners behind one authenticated origin and follows an associated project's restarted owner; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.

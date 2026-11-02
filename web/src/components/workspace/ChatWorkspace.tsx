@@ -12,6 +12,8 @@ import {
 import {
   FiArrowDown,
   FiArrowUp,
+  FiCornerDownRight,
+  FiGitBranch,
   FiMessageSquare,
   FiSquare,
 } from "react-icons/fi";
@@ -33,6 +35,7 @@ import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
 import type { WorkflowAgent } from "./AgentDock";
+import { BranchTree } from "./BranchTree";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkflowPanel } from "./WorkflowPanel";
@@ -132,7 +135,10 @@ export function ChatWorkspace({
   const summary = conversation.summary ?? undefined;
   const running =
     summary && (summary.status === "queued" || summary.status === "running");
-  const blocked = !!summary && summary.status !== "completed" && !running;
+  // A failed or interrupted reply stays in the session; the next message
+  // continues the branch as it would in the terminal.
+  const settledBadly = !!summary && summary.status !== "completed" && !running;
+  const [branchesOpen, setBranchesOpen] = useState(false);
   const canExit =
     canInterrupt &&
     observed &&
@@ -164,6 +170,9 @@ export function ChatWorkspace({
   const alive = useRef(true);
   const observedHead = useRef("");
   const sentDraft = useRef(draft);
+  // The branch end a pending message was sent from: once the branch moves on
+  // without it live, its outcome is in the session (or its attempt record).
+  const pendingHead = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -200,7 +209,7 @@ export function ChatWorkspace({
     }
   }, [reference, onReferenceUsed]);
   useEffect(() => {
-    const signature = summary ? `${summary.head}:${summary.status}` : "";
+    const signature = summary ? `${summary.leaf}:${summary.status}` : "";
     if (signature && observedHead.current !== signature) {
       observedHead.current = signature;
       onChanged();
@@ -212,8 +221,10 @@ export function ChatWorkspace({
     }
     if (
       pending &&
-      (summary?.head === pending ||
-        turns.some((turn) => turn.header.id === pending))
+      (summary?.live?.commandId === pending ||
+        conversation.attempt?.commandId === pending ||
+        turns.some((turn) => turn.header.id === pending) ||
+        (summary && !summary.live && pendingHead.current !== conversation.leaf))
     ) {
       setPending("");
       setDraft((value) => (value === sentDraft.current ? "" : value));
@@ -221,7 +232,7 @@ export function ChatWorkspace({
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [summary, turns, pending, onChanged, state]);
+  }, [summary, turns, pending, onChanged, state, conversation]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
     () =>
@@ -276,7 +287,12 @@ export function ChatWorkspace({
       /* storage is advisory */
     }
   }, [draftKey]);
-  const runsKey = JSON.stringify(state?.runs.slice(-4) ?? []);
+  // Workflows of this session: the browser's and those the terminal started.
+  const runs = useMemo(
+    () => [...new Set([...conversation.runs, ...(state?.runs ?? [])])],
+    [conversation.runs, state?.runs],
+  );
+  const runsKey = JSON.stringify(runs.slice(-4));
   useEffect(() => {
     onWorkflowRuns?.(JSON.parse(runsKey));
   }, [runsKey, onWorkflowRuns]);
@@ -338,19 +354,19 @@ export function ChatWorkspace({
       );
       return;
     }
-    if (blocked && (!cadence || summary?.status === "unknown")) return;
     setBusy(true);
     setError("");
     try {
       if (cadence && cadenceExit(message) && state) {
         const commandId = crypto.randomUUID();
         sentDraft.current = message;
+        pendingHead.current = conversation.leaf;
         setPending(commandId);
         const reply = await client.workbenchCommand({
           kind: "cadence-exit",
           commandId,
           conversationId: id,
-          head: summary?.head ?? null,
+          head: conversation.leaf,
           revision: state.revision,
         });
         if (!alive.current) return;
@@ -399,10 +415,12 @@ export function ChatWorkspace({
         chooseFirst();
         return;
       }
+      // The message continues the branch shown: a session that moved on
+      // meanwhile (in the terminal, too) gains a branch.
       const common = {
         commandId: crypto.randomUUID(),
         conversationId: id,
-        head: summary?.head ?? null,
+        head: conversation.leaf,
         text: message,
         model: catalog.value.version,
       };
@@ -422,6 +440,7 @@ export function ChatWorkspace({
           : { kind: "send", ...common };
       decodeWorkbenchCommand(command); // Refuse invalid/oversize text before any pending-send state.
       sentDraft.current = message;
+      pendingHead.current = conversation.leaf;
       setPending(command.commandId);
       const reply = await client.workbenchCommand(command);
       if (!alive.current) return;
@@ -437,6 +456,8 @@ export function ChatWorkspace({
         if (command.kind === "cadence-send") {
           setMode("chat");
         }
+        // The new reply ends the branch: follow it as the session's latest.
+        conversation.choose(null);
       }
       workflow.refresh();
       conversation.refresh();
@@ -468,15 +489,15 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [resume]);
   const interrupt = async () => {
-    const turn = turns.find((row) => row.header.id === summary?.head)?.header;
-    if (!turn || busy) return;
+    const live = summary?.live;
+    if (!live || busy) return;
     setBusy(true);
     const result = await client.workbenchCommand({
       kind: "interrupt",
       commandId: crypto.randomUUID(),
       conversationId: id,
-      turnId: turn.id,
-      epoch: turn.epoch,
+      turnId: live.commandId,
+      epoch: live.epoch,
     });
     if (!alive.current) return;
     if (result.kind === "error") setError(result.error.code);
@@ -498,21 +519,62 @@ export function ChatWorkspace({
           <span className="conversation-badge">
             {cadence ? t("Cadence on") : t("Ordinary")}
           </span>
+          {summary && (
+            <span className="conversation-badge">
+              {summary.origin === "terminal"
+                ? t("Started in the terminal")
+                : t("Started in the WebUI")}
+            </span>
+          )}
         </div>
-        {summary && (
-          <span className={`ep-state ${summary.status}`}>
-            {cadence
-              ? running
-                ? t("Discussing")
-                : blocked
-                  ? tx(summary.status)
-                  : state?.proposal
-                    ? t("Awaiting plan approval")
-                    : t("Ready for conversation")
-              : tx(summary.status)}
-          </span>
-        )}
+        <div className="conversation-branch">
+          {(conversation.branches > 1 || conversation.pinned) && (
+            <button
+              type="button"
+              className="ghost"
+              aria-expanded={branchesOpen}
+              onClick={() => setBranchesOpen((open) => !open)}
+            >
+              <FiGitBranch aria-hidden="true" />
+              {t("Branches ({count})", { count: conversation.branches })}
+            </button>
+          )}
+          {conversation.pinned && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => conversation.choose(null)}
+            >
+              {t("Show the latest")}
+            </button>
+          )}
+          {summary && (
+            <span className={`ep-state ${summary.status}`}>
+              {cadence
+                ? running
+                  ? t("Discussing")
+                  : settledBadly
+                    ? tx(summary.status)
+                    : state?.proposal
+                      ? t("Awaiting plan approval")
+                      : t("Ready for conversation")
+                : tx(summary.status)}
+            </span>
+          )}
+        </div>
       </header>
+      {branchesOpen && (
+        <BranchTree
+          client={client}
+          id={id}
+          leaf={conversation.leaf}
+          onChoose={(leaf) => {
+            conversation.choose(leaf);
+            setBranchesOpen(false);
+          }}
+          onClose={() => setBranchesOpen(false)}
+        />
+      )}
       <div
         className="chat-messages"
         ref={scroll}
@@ -561,12 +623,41 @@ export function ChatWorkspace({
               toggled={toggles.current.get(id) ?? null}
               onToggle={rememberToggle}
             />
+            {turn.header.entry &&
+              turn.ordinal < conversation.count - 1 &&
+              !running && (
+                <button
+                  type="button"
+                  className="ghost turn-branch"
+                  title={t(
+                    "Show the conversation up to here. The next message starts a new branch; nothing is deleted.",
+                  )}
+                  onClick={() => conversation.choose(turn.header.entry)}
+                >
+                  <FiCornerDownRight aria-hidden="true" />
+                  {t("Continue from here")}
+                </button>
+              )}
           </LazyMount>
         ))}
+        {conversation.attempt && (
+          <article className="chat-attempt" aria-label={t("Message")}>
+            <p className="chat-attempt-text">{conversation.attempt.text}</p>
+            <p className="inspector-note">
+              <span className={`ep-state ${conversation.attempt.status}`}>
+                {tx(conversation.attempt.status)}
+              </span>{" "}
+              {conversation.attempt.notice
+                ? tx(conversation.attempt.notice)
+                : ""}
+            </p>
+          </article>
+        )}
         {state && (
           <WorkflowPanel
             client={client}
             state={state}
+            runs={runs}
             canApprove={
               canSend &&
               cadenceKnown &&
@@ -604,17 +695,10 @@ export function ChatWorkspace({
             </button>
           </p>
         )}
-        {blocked && cadence && summary?.status !== "unknown" && (
+        {conversation.pinned && !running && (
           <p className="inspector-note">
             {t(
-              "The last turn did not complete. A new message continues from the last complete checkpoint; incomplete work is not replayed.",
-            )}
-          </p>
-        )}
-        {blocked && !cadence && (
-          <p className="inspector-note">
-            {t(
-              "This turn has no complete continuation context. Start a new conversation; retained messages are preserved.",
+              "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.",
             )}
           </p>
         )}
@@ -743,8 +827,7 @@ export function ChatWorkspace({
               className="primary"
               disabled={
                 !(cadence && cadenceExit(draft) ? canExit : canSend) ||
-                !draft.trim() ||
-                (blocked && (!cadence || summary?.status === "unknown"))
+                !draft.trim()
               }
             >
               <FiArrowUp />

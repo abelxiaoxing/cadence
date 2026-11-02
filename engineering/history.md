@@ -63,20 +63,17 @@ Browser download requested is not UI-verified completion; native export verifies
 
 ## Ordinary conversation records
 
-Ordinary/coordinator transcripts use immutable `turns/<turn>/transcript/<page>.json` records, published by page count only after their durable write.
-The bounded `turn.json` is explicitly a latest preview; exact conversation/turn/step reads validate membership and never reconstruct missing pages.
-`src/service/conversation-steps.ts` lists a paged turn from its pages (consecutive pages of one item are one step) followed by preview items no page holds yet, caching the page index per turn because pages never change.
-Finalized items are retained in completion order, with oversized fields continued across pages; an interrupted turn keeps its sanitized partial observations and actual status.
-Version-2 continuation manifests bind `context-<index>.json` records by a hash chain.
-Each message crosses the anonymous pipe separately and is sanitized again by the owner before persistence.
-Only a counted end marker, original successful process closure and durable manifest publication advance the conversation checkpoint; a torn pipe or failed turn never adopts partial sidecars.
-Version-1 inline contexts and old inline turn records remain readonly-compatible; nothing migrates, cleans up or replays consumer data.
-
-Conversation metadata stores a fixed legacy prefix plus the committed head/count; new turns have immutable ordinal slots and reverse membership records.
-A reverse record without its matching committed ordinal slot is not a conversation member, and an abandoned acceptance is never adopted by a later Send.
-Startup checks every retained head for unknown work, whereas new admission relies on the original owner fence instead of rescanning all retained conversations.
-Client history scans keep one page plus lookahead, expire their readonly handles and close on owner teardown; source replacement, stale or consumed cursors refuse without rebuilding anything.
+Conversation content lives in the project's Pi session files, which Pi writes as the terminal does (see [clients](clients.md#ordinary-conversations)); the owner reads them and keeps no copy.
+`src/service/pi-sessions.ts` folds each file line by line into a listing summary and, for an opened session, an entry tree, reading only what was appended since and ignoring malformed or torn lines as Pi does; a replaced or shortened file is read from its start.
+A branch is the path from the root to one entry; it splits into turns at user messages, and each turn becomes chat items: text, tool calls paired with their results, terminal `!` commands, compaction and branch summaries and displayed extension messages.
+Built turns are cached by content and secret set; redaction applies to every returned field, and large fields split into parts by their exact encoded size.
+A live browser turn adds, by count, only the streamed messages and tool output its worker has not yet written to the session.
+The owner's `conversation-commands-v1` keeps per message `accepted.json` (command, session, parent entry, file size), an expected-byte `state.json` (status, notice, omitted flags, its user entry), the auth journal, `launch.json` and `native.json`, plus a per-session index of the last 64 messages.
+An accepted command ID is never admitted again; a lost reply observes its original record.
+Startup refuses while a session's latest browser message has an unknown closure; one that was queued or running when the owner stopped reads as interrupted.
+Old `conversations-v1` stores are read only by an explicit migration, through their verified checkpoint chain, and are never changed.
 New workflow-to-conversation links are retained separately, and a legacy link is saved there before leaving the bounded recent control projection; the recent window does not limit new investigations or approvals.
+The terminal's workflows are found from its `cadence-conversation-mode/1` entries in the session that started them.
 
 ## Conversation workflow records
 
@@ -93,10 +90,10 @@ No incidental migration or cleanup occurs.
 
 Browser control records use `service-v1/conversation-workflows-v1`, with immutable binding markers in the ordinary conversation namespace.
 Missing/deleted bound controls refuse instead of silently reverting to ordinary editing tools.
-Explicit activation binds an existing/new conversation without rewriting its original turns; no bulk migration or Pi-session import occurs.
-Control revision, accepted proposal and run-attempt identities are retained separately from the sanitized conversation checkpoint.
+Explicit activation binds an existing/new conversation without rewriting its session; nothing is imported or migrated incidentally.
+Control revision, accepted proposal and run-attempt identities are retained separately from the session.
 Approval evidence records the exact proposal/revision and authenticated caller, never a reusable grant or browser cookie.
-Ordinary and coordinator messages still use the existing capture sanitizer and record-bounded checkpoint pipe.
+Ordinary and coordinator live previews still use the existing capture sanitizer; their content is written by Pi to the session.
 A separate bounded IPC channel admits only named research/plan/status requests; it cannot carry a browser/native execution capability.
 
 ## Readonly diagnostics

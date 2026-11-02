@@ -2915,12 +2915,91 @@ summary.chat-steps-head:hover {
   margin: 0 auto;
 }
 
-.workflow-history {
-  flex: 0 0 auto;
-  max-height: 40%;
+/* ---- Shared Pi session branches: header controls, the tree panel, the
+ * per-turn "continue from here" action and a message that left no entry ---- */
+.conversation-branch {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.conversation-branch > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.branch-tree {
+  flex: none;
+  max-height: 45%;
   overflow: auto;
-  padding: 8px;
-  border-top: 1px solid var(--border-soft);
+  padding: 8px var(--chat-inset);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+}
+.branch-tree > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.branch-tree h3 {
+  margin: 0;
+  font-size: 12px;
+}
+.branch-rows {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.branch-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  text-align: start;
+  font-size: 12px;
+}
+.branch-row.current {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.branch-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branch-row time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.turn-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.chat-attempt {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+}
+.chat-attempt-text {
+  margin: 0 0 4px;
+  white-space: pre-wrap;
+}
+.legacy-migration {
+  margin: 6px 0;
 }
 
 /* ---- Composer model control: current model on the button, an anchored
