@@ -8,6 +8,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { Socket } from "node:net";
+import { gzipSync, constants as zlib } from "node:zlib";
 import { type WebSocket, WebSocketServer } from "ws";
 import {
   type ClientBuild,
@@ -151,11 +152,28 @@ export function fixedHeaders(response: ServerResponse): void {
     "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
   );
 }
-function send(response: ServerResponse, status: number, value: unknown): void {
+function send(
+  response: ServerResponse,
+  status: number,
+  value: unknown,
+  gzip = false,
+): void {
   if (response.destroyed || response.writableEnded) return;
   response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(canonicalJson(value, LIMITS.controlBytes));
+  const body = canonicalJson(value, LIMITS.controlBytes);
+  if (gzip && body.length >= 1024) {
+    response.setHeader("Content-Encoding", "gzip");
+    response.end(gzipSync(body, { level: zlib.Z_BEST_SPEED }));
+  } else response.end(body);
+}
+/** Whether a request accepts a gzip body (a zero quality refuses it). */
+export function acceptsGzip(header: string | undefined): boolean {
+  return (header ?? "").split(",").some((entry) => {
+    const [name, ...params] = entry.split(";").map((p) => p.trim());
+    const q = params.find((p) => p.toLowerCase().startsWith("q="));
+    return name.toLowerCase() === "gzip" && (!q || Number(q.slice(2)) > 0);
+  });
 }
 function unavailable(): never {
   throw new ContractError("unavailable");
@@ -657,7 +675,17 @@ export class ServiceHttpServer {
         "error" in value
           ? errorStatus(decodePublicError(value.error).code)
           : 200;
-      send(res, status, decoded);
+      // Only workbench reads are compressed: they carry recorded conversation
+      // and file text, never the session's CSRF challenge, and reads refuse
+      // cross-site requests, so their sizes give no oracle on a secret.
+      const compressible = route.operation === "workbenchRead";
+      if (compressible) res.setHeader("Vary", "Accept-Encoding");
+      send(
+        res,
+        status,
+        decoded,
+        compressible && acceptsGzip(boundary.headers.get("accept-encoding")),
+      );
     } catch (e) {
       // A failed initial session must not occupy a 12-hour slot that the client
       // never successfully acquired. Existing attachments are not reset on error.

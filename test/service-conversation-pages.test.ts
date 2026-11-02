@@ -47,7 +47,7 @@ it("a real SDK reply beyond both former caps completes, cold-pages losslessly an
     expect(accepted.kind).toBe("ok");
     async function settled() {
       for (let attempt = 0; attempt < 750; attempt++) {
-        const view = await read({ kind: "conversation", id, before: null });
+        const view = await read({ kind: "conversation", id });
         if (view.kind !== "conversation") throw Error("conversation");
         if (!["running", "queued"].includes(view.summary?.status ?? "queued"))
           return view;
@@ -57,29 +57,41 @@ it("a real SDK reply beyond both former caps completes, cold-pages losslessly an
     }
     const view = await settled();
     expect(view.summary?.status, JSON.stringify(view)).toBe("completed");
-    expect(view.turns[0].transcript?.pages).toBeGreaterThan(1);
-    const count = view.turns[0].transcript?.pages ?? 0;
+    expect(view.turns).toBe(1);
     client = (await f.restart()).client;
+    // A cold owner lists the turn from its pages; the answer's parts restore it.
+    const listed = await read({
+      kind: "conversation-turn",
+      id,
+      ordinal: 0,
+      before: null,
+    });
+    if (listed.kind !== "conversation-turn") throw Error("turn");
+    expect(listed.turn).toMatchObject({ id: first, status: "completed" });
+    expect(listed.turn.stable).toBe(listed.turn.steps);
+    const index = listed.steps.findIndex((step) => step.role === "assistant");
+    const answer = listed.steps[index];
+    expect(answer.clipped).toBe(true);
+    expect(answer.parts).toBeGreaterThan(1);
     let restored = "";
-    for (let page = 0; page < count; page++) {
+    for (let part = 0; part < answer.parts; part++) {
       const result = await read({
-        kind: "conversation-transcript",
+        kind: "conversation-step",
         id,
         turnId: first,
-        page,
+        step: listed.start + index,
+        part,
       });
-      if (result.kind !== "conversation-transcript") throw Error("transcript");
-      restored += result.turn.items
-        .filter((item) => item.role === "assistant")
-        .map((item) => item.text)
-        .join("");
+      if (result.kind !== "conversation-step") throw Error("step");
+      restored += result.item.text;
     }
     expect(restored).toBe(full);
     const outside = await client.workbenchRead({
-      kind: "conversation-transcript",
+      kind: "conversation-step",
       id: randomUUID(),
       turnId: first,
-      page: 0,
+      step: 0,
+      part: 0,
     });
     expect(outside.kind).toBe("error");
     f.reply("The explicit continuation completed.");

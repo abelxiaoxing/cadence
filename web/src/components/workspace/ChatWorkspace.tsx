@@ -1,7 +1,14 @@
 /* Adapted from pi-web-ui ChatInput/MessageList: bottom composer, streaming
  * transcript, folded tools and per-conversation drafts. MIT (c) 2026 xing-shuyin.
  * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FiArrowDown,
   FiArrowUp,
@@ -14,6 +21,7 @@ import {
   type WorkbenchCommand,
 } from "../../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
+import { useConversation } from "../../client/use-conversation";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import {
   approveWorkflow,
@@ -21,12 +29,16 @@ import {
   cadenceExit,
 } from "../../client/workflow-entry";
 import { describeError, useT } from "../../i18n/locale";
+import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { ModelPicker } from "../actions/ModelPicker";
+import { LazyMount } from "../transcript/LazyMount";
 import type { WorkflowAgent } from "./AgentDock";
-import { ChatTurnHistory } from "./ChatTurnHistory";
+import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkflowPanel } from "./WorkflowPanel";
 
+const NATIVE_ANCHORING =
+  typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
 function stored(key: string) {
   try {
     return sessionStorage.getItem(key) ?? "";
@@ -75,7 +87,6 @@ export function ChatWorkspace({
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
     stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
   );
-  const [before, setBefore] = useState<string | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [pending, setPending] = useState(() => stored(`${draftKey}:pending`));
@@ -84,12 +95,10 @@ export function ChatWorkspace({
   const [awaitingModel, setAwaitingModel] = useState(false);
   const [resume, setResume] = useState(false);
   const [modelReads, setModelReads] = useState(0);
-  const page = useWorkbench(
-    client,
-    available ? { kind: "conversation", id, before } : null,
-    1000,
-  );
-  const view = page.value?.kind === "conversation" ? page.value : undefined;
+  const conversation = useConversation(client, id, available);
+  const { turns } = conversation;
+  // Undefined until observed; null is a conversation not started yet.
+  const observed = conversation.summary !== undefined;
   const workflow = useWorkbench(
     client,
     available ? { kind: "cadence-conversation", id } : null,
@@ -114,21 +123,21 @@ export function ChatWorkspace({
   const input = cadenceInput(draft, cadence ? "cadence" : mode);
   const canSend =
     enabled &&
-    !!view &&
-    !page.error &&
+    observed &&
+    !conversation.error &&
     modeObserved &&
     !(cadence && (workflow.error || state?.notice)) &&
     !busy &&
     !pending;
-  const summary = view?.summary;
+  const summary = conversation.summary ?? undefined;
   const running =
     summary && (summary.status === "queued" || summary.status === "running");
   const blocked = !!summary && summary.status !== "completed" && !running;
   const canExit =
     canInterrupt &&
-    !!view &&
+    observed &&
     cadenceKnown &&
-    !page.error &&
+    !conversation.error &&
     !busy &&
     !pending &&
     !running;
@@ -191,9 +200,7 @@ export function ChatWorkspace({
     }
   }, [reference, onReferenceUsed]);
   useEffect(() => {
-    const signature = view?.summary
-      ? `${view.summary.head}:${view.summary.status}`
-      : "";
+    const signature = summary ? `${summary.head}:${summary.status}` : "";
     if (signature && observedHead.current !== signature) {
       observedHead.current = signature;
       onChanged();
@@ -203,14 +210,64 @@ export function ChatWorkspace({
       setApproving("");
       setError("");
     }
-    if (pending && view?.turns.some((turn) => turn.id === pending)) {
+    if (
+      pending &&
+      (summary?.head === pending ||
+        turns.some((turn) => turn.header.id === pending))
+    ) {
       setPending("");
       setDraft((value) => (value === sentDraft.current ? "" : value));
       onChanged();
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [view, pending, onChanged, state]);
+  }, [summary, turns, pending, onChanged, state]);
+  // Turns render lazily: those far outside the viewport keep only their height.
+  const rows = useMemo(
+    () =>
+      turns.map((turn) => ({
+        id: turn.header.id,
+        role: "assistant",
+        version: turn.steps.reduce(
+          (size, step) => size + step.text.length + 1,
+          turn.header.status.length,
+        ),
+        turn,
+      })),
+    [turns],
+  );
+  const lazy = useLazyWindow(scroll, rows);
+  // The user's own choice to open or fold a turn's steps outlives its remount.
+  const toggles = useRef(new Map<string, boolean>());
+  const rememberToggle = useCallback((turnId: string, open: boolean) => {
+    toggles.current.set(turnId, open);
+  }, []);
+  // Earlier turns load while the reader is near the top, on scroll and after
+  // each render (a short transcript fills itself); no page is ever switched.
+  const { earlier, loadEarlier } = conversation;
+  const nearTop = () => {
+    const el = scroll.current;
+    if (el && !hidden && earlier && el.scrollTop < 1200) loadEarlier();
+  };
+  useEffect(nearTop);
+  // Inserted earlier turns must not move what is being read. Scroll anchoring
+  // does this natively; without it the inserted height is skipped here.
+  const firstOrdinal = turns[0]?.ordinal;
+  const anchor = useRef<{ ordinal?: number; height: number }>({ height: 0 });
+  useLayoutEffect(() => {
+    const el = scroll.current;
+    if (!el) return;
+    const previous = anchor.current;
+    if (
+      !NATIVE_ANCHORING &&
+      !stick.current &&
+      previous.ordinal !== undefined &&
+      firstOrdinal !== undefined &&
+      firstOrdinal < previous.ordinal
+    )
+      el.scrollTop += el.scrollHeight - previous.height;
+    anchor.current = { ordinal: firstOrdinal, height: el.scrollHeight };
+  });
   useEffect(() => {
     try {
       // 2.0.21 kept an approval lock here that could outlive its request.
@@ -259,7 +316,7 @@ export function ChatWorkspace({
       if (alive.current) {
         setBusy(false);
         workflow.refresh();
-        page.refresh();
+        conversation.refresh();
         onChanged();
       }
     }
@@ -267,13 +324,7 @@ export function ChatWorkspace({
   const send = async (override?: string) => {
     const message = override ?? draft;
     const exiting = cadence && cadenceExit(message);
-    if (
-      !(exiting ? canExit : canSend) ||
-      running ||
-      !message.trim() ||
-      before !== null
-    )
-      return;
+    if (!(exiting ? canExit : canSend) || running || !message.trim()) return;
     if (!override && cadence && cadenceApproval(message)) {
       await approve();
       return;
@@ -312,7 +363,7 @@ export function ChatWorkspace({
           setDraft((value) => (value === message ? "" : value));
         }
         workflow.refresh();
-        page.refresh();
+        conversation.refresh();
         onChanged();
         return;
       }
@@ -388,7 +439,7 @@ export function ChatWorkspace({
         }
       }
       workflow.refresh();
-      page.refresh();
+      conversation.refresh();
       onChanged();
     } catch {
       if (alive.current)
@@ -417,7 +468,7 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [resume]);
   const interrupt = async () => {
-    const turn = view?.turns.find((row) => row.id === summary?.head);
+    const turn = turns.find((row) => row.header.id === summary?.head)?.header;
     if (!turn || busy) return;
     setBusy(true);
     const result = await client.workbenchCommand({
@@ -430,7 +481,7 @@ export function ChatWorkspace({
     if (!alive.current) return;
     if (result.kind === "error") setError(result.error.code);
     setBusy(false);
-    page.refresh();
+    conversation.refresh();
   };
   return (
     <section
@@ -472,47 +523,45 @@ export function ChatWorkspace({
             stick.current =
               el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             setAway(!stick.current);
+            nearTop();
           }
         }}
       >
-        {!summary && (
+        {conversation.summary === null && (
           <ChatWelcome
             hint={t(
               "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
             )}
           />
         )}
-        {view?.before && (
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              stick.current = false;
-              setBefore(view.before);
-            }}
-          >
-            {t("Earlier messages")}
-          </button>
+        {available &&
+          !conversation.error &&
+          (!observed || (turns.length === 0 && conversation.count > 0)) && (
+            <p className="inspector-note chat-reading" role="status">
+              {t("Reading this conversation…")}
+            </p>
+          )}
+        {turns.length > 0 && earlier && (
+          <div className="chat-earlier" role="status">
+            {conversation.loadingEarlier && t("Reading earlier messages…")}
+          </div>
         )}
-        {before && (
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              stick.current = true;
-              setBefore(null);
-            }}
+        {rows.map(({ id, version, turn }) => (
+          <LazyMount
+            key={id}
+            id={id}
+            show={!lazy.hidden.has(id)}
+            height={lazy.placeholder(id, version, 320)}
+            containerRef={scroll}
+            onMeasured={lazy.recordMeasured}
+            lazyRef={lazy.register(id)}
           >
-            {t("Latest messages")}
-          </button>
-        )}
-        {view?.turns.map((turn) => (
-          <ChatTurnHistory
-            key={turn.id}
-            client={client}
-            conversationId={id}
-            turn={turn}
-          />
+            <ChatTurnView
+              turn={turn}
+              toggled={toggles.current.get(id) ?? null}
+              onToggle={rememberToggle}
+            />
+          </LazyMount>
         ))}
         {state && (
           <WorkflowPanel
@@ -523,8 +572,7 @@ export function ChatWorkspace({
               cadenceKnown &&
               planApprovable &&
               !running &&
-              !approving &&
-              before === null
+              !approving
             }
             approvalHint={approvalHint}
             onApprove={() => void approve()}
@@ -540,15 +588,18 @@ export function ChatWorkspace({
             {tx(state.notice)}
           </p>
         )}
-        {(error || page.error || workflow.error) && (
+        {(error || conversation.error || workflow.error) && (
           <p role="alert" className="banner-notice">
-            {describeError(t, error || page.error || workflow.error || "")}
+            {describeError(
+              t,
+              error || conversation.error || workflow.error || "",
+            )}
           </p>
         )}
         {pending && (
           <p className="inspector-note">
             {t("Send outcome not yet observed:")} <code>{pending}</code>{" "}
-            <button type="button" onClick={page.refresh}>
+            <button type="button" onClick={conversation.refresh}>
               {t("Observe current state")}
             </button>
           </p>
@@ -593,9 +644,9 @@ export function ChatWorkspace({
           ref={textarea}
           disabled={
             (!enabled && !(cadence && canInterrupt)) ||
-            !view ||
+            !observed ||
             !modeObserved ||
-            !!page.error ||
+            !!conversation.error ||
             busy ||
             !!pending
           }
@@ -693,8 +744,7 @@ export function ChatWorkspace({
               disabled={
                 !(cadence && cadenceExit(draft) ? canExit : canSend) ||
                 !draft.trim() ||
-                (blocked && (!cadence || summary?.status === "unknown")) ||
-                before !== null
+                (blocked && (!cadence || summary?.status === "unknown"))
               }
             >
               <FiArrowUp />

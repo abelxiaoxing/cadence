@@ -370,6 +370,44 @@ it("workbench commands retain browser Origin/CSRF/build/attachment checks before
     await f.server.close();
   }
 });
+it("workbench reads are gzip-compressed only when accepted; session replies never are", async () => {
+  const f = await httpFixture();
+  const text = "retained conversation text ".repeat(400);
+  f.adapters.workbench = {
+    read: () => ({ kind: "file", path: "a.txt", text, limited: false }),
+    command: () => {
+      throw Error("no command");
+    },
+  };
+  try {
+    const bound = await session(f);
+    const path = `/api/v1/workbench/read?request=${encodeURIComponent(
+      JSON.stringify({ kind: "file", path: "a.txt" }),
+    )}`;
+    const plain = await request(f.origin, path, { headers: bound.headers });
+    expect(plain.status).toBe(200);
+    expect(plain.headers["content-encoding"]).toBeUndefined();
+    expect(plain.headers.vary).toBe("Accept-Encoding");
+    expect(JSON.parse(plain.text).value.text).toBe(text);
+    const refused = await request(f.origin, path, {
+      headers: { ...bound.headers, "accept-encoding": "gzip;q=0, identity" },
+    });
+    expect(refused.headers["content-encoding"]).toBeUndefined();
+    const zipped = await fetch(`${f.origin}${path}`, {
+      headers: { ...bound.headers, "accept-encoding": "gzip" },
+    });
+    expect(zipped.headers.get("content-encoding")).toBe("gzip");
+    const body = (await zipped.json()) as { value: { text: string } };
+    expect(body.value.text).toBe(text);
+    const bootstrap = await fetch(`${f.origin}/api/v1/session`, {
+      headers: { ...bound.headers, "accept-encoding": "gzip" },
+    });
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.headers.get("content-encoding")).toBeNull();
+  } finally {
+    await f.server.close();
+  }
+});
 
 it("oversize tool arguments stop capture without poisoning the last readable turn", () => {
   const turn: ChatTurn = {

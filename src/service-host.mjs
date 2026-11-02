@@ -4072,6 +4072,56 @@ function decodeCadenceConversation(v) {
     ...degraded ? { notice: text(o.notice, 1024, true) } : {}
   };
 }
+var STEP_TEXT_BYTES = 16 * 1024;
+var TARGET_BYTES = 1024;
+var STEP_READ = 24;
+function clipText(value, bytes) {
+  const size = (s) => new TextEncoder().encode(JSON.stringify(s)).length;
+  if (size(value) <= bytes)
+    return value;
+  let low = 0, high = Math.min(value.length, bytes);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (size(value.slice(0, mid)) <= bytes)
+      low = mid;
+    else
+      high = mid - 1;
+  }
+  return /[\uD800-\uDBFF]/u.test(value.slice(low - 1, low)) ? value.slice(0, low - 1) : value.slice(0, low);
+}
+function toolTarget(args) {
+  let value;
+  try {
+    value = JSON.parse(args);
+  } catch {
+    return "";
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return "";
+  const field = (name) => {
+    const v = Object.hasOwn(value, name) ? value[name] : undefined;
+    return typeof v === "string" ? v.trim() : "";
+  };
+  const command = field("command");
+  if (command)
+    return command.split(`
+`, 1)[0];
+  return [field("pattern"), field("path")].filter(Boolean).join("  ");
+}
+function chatStep(item, parts, more = false) {
+  const tool = item.role === "tool";
+  const text2 = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  return {
+    id: item.id,
+    role: item.role,
+    text: text2,
+    clipped: !tool && (more || text2 !== item.text),
+    name: item.name,
+    target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
+    error: item.error,
+    parts
+  };
+}
 function decodeChatCursor(value) {
   const o = closed(value, ["id", "updatedAt"]);
   return { id: decodeId(o.id), updatedAt: integer(o.updatedAt, 0) };
@@ -4088,13 +4138,23 @@ var statuses = [
 function decodeWorkbenchRead(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
-    case "conversation-transcript": {
-      const o = closed(v, ["kind", "id", "turnId", "page"]);
+    case "conversation-turn": {
+      const o = closed(v, ["kind", "id", "ordinal", "before"]);
+      return {
+        kind,
+        id: decodeId(o.id),
+        ordinal: integer(o.ordinal, 0),
+        before: nullable(o.before, (b) => integer(b, 0))
+      };
+    }
+    case "conversation-step": {
+      const o = closed(v, ["kind", "id", "turnId", "step", "part"]);
       return {
         kind,
         id: decodeId(o.id),
         turnId: decodeId(o.turnId),
-        page: integer(o.page, 0)
+        step: integer(o.step, 0),
+        part: integer(o.part, 0)
       };
     }
     case "cadence-conversation": {
@@ -4144,8 +4204,8 @@ function decodeWorkbenchRead(v) {
       return { kind, taskId: decodeId(o.taskId) };
     }
     case "conversation": {
-      const o = closed(v, ["kind", "id", "before"]);
-      return { kind, id: decodeId(o.id), before: nullable(o.before, decodeId) };
+      const o = closed(v, ["kind", "id"]);
+      return { kind, id: decodeId(o.id) };
     }
     default: {
       const o = closed(v, ["kind", "path"]);
@@ -4293,17 +4353,69 @@ function decodeChatTurn(v) {
       media: omitted ? bool(omitted.media) : false,
       other: omitted ? bool(omitted.other) : false
     },
-    items: list(o.items, 256, (v2) => {
-      const i = closed(v2, ["id", "role", "text", "name", "args", "error"]);
-      return {
-        id: text(i.id, 160, true),
-        role: oneOf(i.role, ["user", "assistant", "tool"]),
-        text: text(i.text, 256 * 1024),
-        name: text(i.name, 128),
-        args: text(i.args, 64 * 1024),
-        error: bool(i.error)
-      };
-    })
+    items: list(o.items, 256, decodeChatItem)
+  };
+}
+function decodeChatItem(v) {
+  const i = closed(v, ["id", "role", "text", "name", "args", "error"]);
+  return {
+    id: text(i.id, 160, true),
+    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    text: text(i.text, 256 * 1024),
+    name: text(i.name, 128),
+    args: text(i.args, 64 * 1024),
+    error: bool(i.error)
+  };
+}
+function decodeChatStep(v) {
+  const o = closed(v, [
+    "id",
+    "role",
+    "text",
+    "clipped",
+    "name",
+    "target",
+    "error",
+    "parts"
+  ]);
+  const step = {
+    id: text(o.id, 160, true),
+    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    text: text(o.text, STEP_TEXT_BYTES),
+    clipped: bool(o.clipped),
+    name: text(o.name, 128),
+    target: text(o.target, TARGET_BYTES),
+    error: bool(o.error),
+    parts: integer(o.parts, 0)
+  };
+  if (step.role === "tool" && (step.text || step.clipped))
+    throw new ContractError("invalid");
+  return step;
+}
+function decodeChatTurnHeader(v) {
+  const o = closed(v, [
+    "id",
+    "epoch",
+    "status",
+    "notice",
+    "omitted",
+    "steps",
+    "stable"
+  ]);
+  const omitted = closed(o.omitted, ["thinking", "media", "other"]);
+  const steps = integer(o.steps, 0);
+  return {
+    id: decodeId(o.id),
+    epoch: decodeId(o.epoch),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024),
+    omitted: {
+      thinking: bool(omitted.thinking),
+      media: bool(omitted.media),
+      other: bool(omitted.other)
+    },
+    steps,
+    stable: integer(o.stable, 0, steps)
   };
 }
 function decodeChatSummary(v) {
@@ -4328,13 +4440,6 @@ function decodeChatSummary(v) {
 function decodeWorkbenchResult(v) {
   canonicalJson(v, 512 * 1024);
   const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
-  if (k === "conversation-transcript") {
-    const o2 = closed(v, ["kind", "conversationId", "page", "turn"]);
-    const turn = decodeChatTurn(o2.turn), page = integer(o2.page, 0);
-    if (!turn.transcript || page >= turn.transcript.pages)
-      throw new ContractError("invalid");
-    return { kind: k, conversationId: decodeId(o2.conversationId), page, turn };
-  }
   if (k === "workflow-transcript") {
     const o2 = closed(v, ["kind", "runId", "stepId", "turn"]);
     return {
@@ -4442,12 +4547,49 @@ function decodeWorkbenchResult(v) {
     };
   }
   if (kind === "conversation") {
-    const o2 = closed(v, ["kind", "summary", "turns", "before"]);
+    const o2 = closed(v, ["kind", "summary", "turns"]);
+    const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
+    if (!summary && turns)
+      throw new ContractError("invalid");
+    return { kind, summary, turns };
+  }
+  if (kind === "conversation-turn") {
+    const o2 = closed(v, [
+      "kind",
+      "conversationId",
+      "ordinal",
+      "turn",
+      "start",
+      "steps"
+    ]);
+    const turn = decodeChatTurnHeader(o2.turn), start = integer(o2.start, 0), steps = list(o2.steps, STEP_READ, decodeChatStep);
+    if (start + steps.length > turn.steps)
+      throw new ContractError("invalid");
     return {
       kind,
-      summary: nullable(o2.summary, decodeChatSummary),
-      turns: list(o2.turns, 20, decodeChatTurn),
-      before: nullable(o2.before, decodeId)
+      conversationId: decodeId(o2.conversationId),
+      ordinal: integer(o2.ordinal, 0),
+      turn,
+      start,
+      steps
+    };
+  }
+  if (kind === "conversation-step") {
+    const o2 = closed(v, [
+      "kind",
+      "conversationId",
+      "turnId",
+      "step",
+      "part",
+      "item"
+    ]);
+    return {
+      kind,
+      conversationId: decodeId(o2.conversationId),
+      turnId: decodeId(o2.turnId),
+      step: integer(o2.step, 0),
+      part: integer(o2.part, 0),
+      item: decodeChatItem(o2.item)
     };
   }
   if (kind === "files" || kind === "directories") {
@@ -8852,6 +8994,7 @@ import { createHash as createHash6, randomUUID as randomUUID8 } from "node:crypt
 import {
   createServer
 } from "node:http";
+import { gzipSync, constants as zlib } from "node:zlib";
 import { WebSocketServer } from "ws";
 
 // src/service/workbench-send-refusal.ts
@@ -8872,12 +9015,24 @@ function fixedHeaders(response) {
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 }
-function send(response, status, value) {
+function send(response, status, value, gzip = false) {
   if (response.destroyed || response.writableEnded)
     return;
   response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(canonicalJson(value, LIMITS.controlBytes));
+  const body = canonicalJson(value, LIMITS.controlBytes);
+  if (gzip && body.length >= 1024) {
+    response.setHeader("Content-Encoding", "gzip");
+    response.end(gzipSync(body, { level: zlib.Z_BEST_SPEED }));
+  } else
+    response.end(body);
+}
+function acceptsGzip(header) {
+  return (header ?? "").split(",").some((entry) => {
+    const [name, ...params] = entry.split(";").map((p) => p.trim());
+    const q = params.find((p) => p.toLowerCase().startsWith("q="));
+    return name.toLowerCase() === "gzip" && (!q || Number(q.slice(2)) > 0);
+  });
 }
 function unavailable() {
   throw new ContractError("unavailable");
@@ -9263,7 +9418,10 @@ Content-Length: 0\r
         this.attachment(caller);
       const decoded2 = decodeHttpOutput(route.operation, value);
       const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
-      send(res, status, decoded2);
+      const compressible = route.operation === "workbenchRead";
+      if (compressible)
+        res.setHeader("Vary", "Accept-Encoding");
+      send(res, status, decoded2, compressible && acceptsGzip(boundary.headers.get("accept-encoding")));
     } catch (e) {
       if (createdAttachment)
         this.detach(createdAttachment);
@@ -10333,7 +10491,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "70b7d387e5677a43ff0a80f82aad39684362496916c796150a4e326cd7756b65",
+    contractHash: "d0edc9d93f682dd7c637bd28cdb756b823ad8eafeabebc63479bee1bac5b2b55",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -10801,6 +10959,7 @@ Content-Length: 0\r
           Origin: b.endpoint
         };
         for (const key of [
+          "accept-encoding",
           "content-type",
           "content-length",
           "x-cadence-build",
@@ -10834,7 +10993,9 @@ Content-Length: 0\r
             res.statusCode = incoming.statusCode ?? 502;
             for (const key of [
               "content-type",
+              "content-encoding",
               "content-disposition",
+              "vary",
               "x-cadence-attachment"
             ]) {
               const value2 = incoming.headers[key];
@@ -24843,17 +25004,102 @@ class ConversationHistory {
   }
 }
 
+// src/service/conversation-steps.ts
+var TARGET_ARGS = 1024 * 1024;
+var INDEXED_TURNS = 32;
+function itemStep(item) {
+  const step = chatStep(item, 0);
+  const more = step.clipped || item.role === "tool" && !!(item.args || item.text);
+  return { ...step, parts: more ? 1 : 0 };
+}
+
+class ConversationSteps {
+  page;
+  indexes = new Map;
+  constructor(page) {
+    this.page = page;
+  }
+  list(turn) {
+    const settled = !["queued", "running"].includes(turn.status);
+    if (!turn.transcript) {
+      const steps2 = turn.items.map((item, index2) => ({
+        step: itemStep(item),
+        source: { kind: "item", index: index2 }
+      }));
+      return { steps: steps2, stable: settled ? steps2.length : 0 };
+    }
+    const index = this.index(turn.id, turn.transcript.pages);
+    const steps = [
+      ...index.steps,
+      ...turn.items.filter((item) => !index.ids.has(item.id)).map((item) => ({
+        step: itemStep(item),
+        source: { kind: "preview", id: item.id }
+      }))
+    ];
+    return { steps, stable: settled ? steps.length : index.steps.length };
+  }
+  detail(turn, step, part) {
+    const listed = this.list(turn).steps[step];
+    if (!listed || part >= listed.step.parts)
+      throw new ContractError("stale");
+    const source = listed.source;
+    if (source.kind === "pages")
+      return this.page(turn.id, source.first + part);
+    const item = source.kind === "item" ? turn.items[source.index] : turn.items.find((i) => i.id === source.id);
+    if (!item)
+      throw new ContractError("stale");
+    return item;
+  }
+  index(turnId, pages) {
+    let index = this.indexes.get(turnId);
+    this.indexes.delete(turnId);
+    if (!index || index.pages > pages)
+      index = { pages: 0, steps: [], ids: new Set, last: null };
+    for (;index.pages < pages; index.pages++) {
+      const fragment = this.page(turnId, index.pages);
+      const last = index.last;
+      const tail = index.steps.at(-1);
+      if (last && tail && last.item.id === fragment.id) {
+        const text2 = last.item.text + fragment.text, head2 = clipText(text2, STEP_TEXT_BYTES);
+        last.more ||= head2.length < text2.length;
+        last.args = last.args !== null && last.args.length + fragment.args.length <= TARGET_ARGS ? last.args + fragment.args : null;
+        last.item = { ...fragment, text: head2, args: last.args ?? "" };
+        tail.step = chatStep(last.item, tail.step.parts + 1, last.more);
+        continue;
+      }
+      const head = clipText(fragment.text, STEP_TEXT_BYTES);
+      index.last = {
+        item: { ...fragment, text: head },
+        more: head.length < fragment.text.length,
+        args: fragment.args
+      };
+      index.steps.push({
+        step: chatStep(index.last.item, 1, index.last.more),
+        source: { kind: "pages", first: index.pages }
+      });
+      index.ids.add(fragment.id);
+    }
+    this.indexes.set(turnId, index);
+    if (this.indexes.size > INDEXED_TURNS)
+      this.indexes.delete(this.indexes.keys().next().value);
+    return index;
+  }
+}
+
 // src/service/conversation-transcript.ts
 var TRANSCRIPT_PAGE_BYTES = 384 * 1024;
 var PREVIEW_BYTES = 300 * 1024;
 var FIELD_CHARS = 16 * 1024;
 var PREVIEW_MARK = `
-[Preview only; open the full transcript.]`;
+[Preview only; the rest appears once this step completes.]`;
 function part(value, offset, chars = FIELD_CHARS) {
   let end = Math.min(value.length, offset + chars);
   if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1]))
     end--;
   return value.slice(offset, end);
+}
+function previewHead(head, added) {
+  return head.length > FIELD_CHARS ? head : head + added.slice(0, FIELD_CHARS + 1 - head.length);
 }
 
 class ConversationTranscript {
@@ -24861,6 +25107,7 @@ class ConversationTranscript {
   write;
   state = { pages: 0 };
   workingSizes = new Map;
+  fieldBytes = new Map;
   workingBytes = 0;
   sizes = new Map;
   bytes = 4096;
@@ -24888,19 +25135,28 @@ class ConversationTranscript {
   find(id) {
     return this.pending.get(id);
   }
-  preview(item) {
+  preview(item, known = {}) {
     if (this.pending.has(item.id)) {
-      const size3 = Buffer.byteLength(item.text) + Buffer.byteLength(item.args) + Buffer.byteLength(item.name);
+      const cached = this.fieldBytes.get(item.id);
+      const bytes = (field) => known[field]?.bytes ?? cached?.[field] ?? Buffer.byteLength(item[field]);
+      const fields2 = {
+        text: bytes("text"),
+        args: bytes("args"),
+        name: bytes("name")
+      };
+      this.fieldBytes.set(item.id, fields2);
+      const size3 = fields2.text + fields2.args + fields2.name;
       this.workingBytes += size3 - (this.workingSizes.get(item.id) ?? 0);
       this.workingSizes.set(item.id, size3);
       if (this.workingBytes > 2 * LIMITS.detailBytes)
         throw new ContractError("capacity");
     }
-    const clip = (value) => {
-      const prefix = part(value, 0);
+    const clip = (field) => {
+      const value = item[field];
+      const prefix = part(known[field]?.head ?? value, 0);
       return prefix.length < value.length ? prefix + PREVIEW_MARK : value;
     };
-    const preview = { ...item, text: clip(item.text), args: clip(item.args) };
+    const preview = { ...item, text: clip("text"), args: clip("args") };
     const size2 = Buffer.byteLength(canonicalJson(preview, PREVIEW_BYTES));
     this.bytes += size2 - (this.sizes.get(item.id) ?? 0);
     this.sizes.set(item.id, size2);
@@ -24924,6 +25180,7 @@ class ConversationTranscript {
     this.preview(item);
     this.archive(item);
     this.pending.delete(id);
+    this.fieldBytes.delete(id);
     this.workingBytes -= this.workingSizes.get(id) ?? 0;
     this.workingSizes.delete(id);
   }
@@ -25012,17 +25269,18 @@ class ConversationCapture {
     }
     return item;
   }
-  update(item, field, value, maximum) {
+  update(item, field, value, maximum, known = { bytes: Buffer.byteLength(value), head: value }) {
+    const bytes = known.bytes;
     if (this.transcript) {
-      if (Buffer.byteLength(value) > LIMITS.detailBytes)
+      if (bytes > LIMITS.detailBytes)
         throw new ContractError("capacity");
       item[field] = value;
-      this.transcript.preview(item);
+      this.transcript.preview(item, { [field]: known });
       return;
     }
     const before = item[field];
     try {
-      if (Buffer.byteLength(value) > maximum)
+      if (bytes > maximum)
         throw new ContractError("capacity");
       item[field] = value;
       canonicalJson(this.turn, TURN_BYTES - 2048);
@@ -25042,14 +25300,19 @@ class ConversationCapture {
       this.details.set(e.detailId, {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
-        text: ""
+        text: "",
+        bytes: 0,
+        head: ""
       });
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d)
         return;
-      d.text += e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
-      if (Buffer.byteLength(d.text) > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
+      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      d.text += added;
+      d.bytes += Buffer.byteLength(added);
+      d.head = previewHead(d.head, added);
+      if (d.bytes > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
         throw new ContractError("capacity");
       const o = d.descriptor.owner;
       if (o.kind === "message") {
@@ -25057,20 +25320,26 @@ class ConversationCapture {
         if (role2 === "assistant" && o.stage === "stream") {
           this.messageText.set(o.blockId, {
             messageId: o.messageId,
-            text: d.text
+            text: d.text,
+            bytes: d.bytes,
+            head: d.head
           });
-          this.update(this.item(o.messageId, "assistant"), "text", [...this.messageText.values()].filter((block) => block.messageId === o.messageId).map((block) => block.text).join(""), 256 * 1024);
+          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
+          this.update(this.item(o.messageId, "assistant"), "text", blocks.length === 1 ? blocks[0].text : blocks.map((block) => block.text).join(""), 256 * 1024, {
+            bytes: blocks.reduce((size2, block) => size2 + block.bytes, 0),
+            head: blocks.reduce((head, block) => previewHead(head, block.head), "")
+          });
         }
       } else if (o.kind === "message-final") {
         const item = this.transcript?.find(o.messageId) ?? this.turn.items.find((i) => i.id === o.messageId);
         if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024);
+          this.update(item, "text", d.text, 256 * 1024, d);
       } else if (o.kind === "tool") {
         const item = this.item(o.callId, "tool");
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024);
+          this.update(item, "args", d.text, 64 * 1024, d);
         if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024);
+          this.update(item, "text", d.text, 256 * 1024, d);
       }
       if (e.kind === "detail-end")
         this.details.delete(e.detailId);
@@ -25085,7 +25354,7 @@ class ConversationCapture {
       this.turn.notice = `worker-failure: ${e.code}`;
     else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
       this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    if ([...this.details.values()].reduce((size2, detail) => size2 + Buffer.byteLength(detail.text) + detail.sanitizer.retainedBytes, 0) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES))
+    if ([...this.details.values()].reduce((size2, detail) => size2 + detail.bytes + detail.sanitizer.retainedBytes, 0) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES))
       throw new ContractError("capacity");
     if (!this.transcript)
       canonicalJson(this.turn, TURN_BYTES);
@@ -25108,6 +25377,7 @@ class Conversations {
   cwd;
   active = new Map;
   summaries = new Map;
+  steps = new ConversationSteps((turnId, page) => this.page(turnId, page));
   constructor(o) {
     this.o = o;
     this.root = join28(o.coordination.directory, "conversations-v1");
@@ -25274,10 +25544,13 @@ class Conversations {
     ].map(observedFile).join("|");
   }
   retainedSummary(id) {
+    return this.retained(id).summary;
+  }
+  retained(id) {
     const base = [this.metadataPath(id), this.identityPath(id)].map(observedFile).join("|");
     const hit = this.summaries.get(id);
     if (hit && !this.active.has(hit.summary.head) && hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`)
-      return { ...hit.summary };
+      return { summary: { ...hit.summary }, count: hit.count };
     const meta = this.metadata(id);
     if (!meta)
       throw new ContractError("corrupt-selected");
@@ -25294,7 +25567,7 @@ class Conversations {
         count: meta.count
       });
     }
-    return summary2;
+    return { summary: summary2, count: meta.count };
   }
   liveSummary(live2) {
     return {
@@ -25336,63 +25609,69 @@ class Conversations {
       dir.closeSync();
     }
   }
-  view(id, before) {
+  conversation(id) {
     this.o.owner.lease.assert();
-    const meta = this.metadata(id);
-    if (!meta) {
-      const live2 = before === null ? [...this.active.values()].find((turn) => turn.conversationId === id) : undefined;
+    if (observedFile(this.metadataPath(id)) === "absent") {
+      const live2 = [...this.active.values()].find((turn) => turn.conversationId === id);
       return {
         kind: "conversation",
         summary: live2 ? this.liveSummary(live2) : null,
-        turns: live2 ? [
-          {
-            ...structuredClone(live2.turn),
-            notice: [
-              "Current metadata unavailable; showing the active turn only. No state was reconstructed.",
-              live2.turn.notice
-            ].filter(Boolean).join(`
-`)
-          }
-        ] : [],
-        before: null
+        turns: 0
       };
     }
-    let end = before === null ? meta.count : this.position(meta, before);
-    if (end < 0)
+    const { summary: summary2, count: count2 } = this.retained(id);
+    return { kind: "conversation", summary: summary2, turns: count2 };
+  }
+  turnSteps(id, ordinal, before) {
+    this.o.owner.lease.assert();
+    const meta = this.metadata(id);
+    if (!meta)
       throw new ContractError("stale");
-    const turns = [];
-    let bytes = 0;
-    while (end > 0 && turns.length < 20) {
-      const turn = this.turn(this.turnAt(meta, end - 1)), size2 = Buffer.byteLength(canonicalJson(turn, TURN_BYTES));
-      if (bytes + size2 > 400 * 1024)
-        break;
-      bytes += size2;
-      turns.unshift(structuredClone(turn));
-      --end;
-    }
+    const turn = this.turn(this.turnAt(meta, ordinal));
+    const { steps, stable } = this.steps.list(turn);
+    const end = before ?? steps.length;
+    if (end > steps.length)
+      throw new ContractError("stale");
+    const start = Math.max(0, end - STEP_READ);
     return {
-      kind: "conversation",
-      summary: this.summary(meta),
-      turns,
-      before: end > 0 ? turns[0].id : null
+      kind: "conversation-turn",
+      conversationId: id,
+      ordinal,
+      turn: {
+        id: turn.id,
+        epoch: turn.epoch,
+        status: turn.status,
+        notice: turn.notice,
+        omitted: { ...turn.omitted },
+        steps: steps.length,
+        stable
+      },
+      start,
+      steps: steps.slice(start, end).map((row) => row.step)
     };
   }
-  transcript(id, turnId, page) {
+  step(id, turnId, step, part2) {
     this.o.owner.lease.assert();
     if (!this.hasTurn(id, turnId))
       throw new ContractError("invalid");
-    const turn = this.turn(turnId);
-    if (!turn.transcript || page >= turn.transcript.pages)
-      throw new ContractError("stale");
-    const record2 = closed(this.read(this.path(turnId, `transcript/${page}.json`), TRANSCRIPT_PAGE_BYTES), ["turnId", "page", "items"]);
-    if (record2.turnId !== turnId || record2.page !== page)
-      throw new ContractError("corrupt-selected");
     return {
-      kind: "conversation-transcript",
+      kind: "conversation-step",
       conversationId: id,
-      page,
-      turn: decodeChatTurn({ ...turn, items: record2.items })
+      turnId,
+      step,
+      part: part2,
+      item: { ...this.steps.detail(this.turn(turnId), step, part2) }
     };
+  }
+  page(turnId, page) {
+    const value = this.read(this.path(turnId, `transcript/${integer(page, 0)}.json`), TRANSCRIPT_PAGE_BYTES);
+    if (value === undefined)
+      throw new ContractError("corrupt-selected");
+    const record2 = closed(value, ["turnId", "page", "items"]);
+    const items = list(record2.items, 1, decodeChatItem);
+    if (record2.turnId !== turnId || record2.page !== page || !items.length)
+      throw new ContractError("corrupt-selected");
+    return items[0];
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
@@ -26226,7 +26505,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file } = this.usable(c.conversationId);
-    const view = this.o.conversations.view(c.conversationId, null);
+    const view = this.o.conversations.conversation(c.conversationId);
     if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || view.kind !== "conversation" || view.summary?.head !== state.head || ["queued", "running", "unknown"].includes(view.summary.status) || this.active.has(c.conversationId))
       throw new ContractError("stale");
     const epoch = this.o.owner.lease.registration.epoch;
@@ -27120,8 +27399,8 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.29",
-  build: "159ebb3ba7182c899b19bd0e5349d74397c5f1bbb6ae29dc9f03848edd457b24",
+  version: "2.0.30",
+  build: "b33664958cc26420c95cd53aff826f4f0d87cc3edee145ccb9467cad93ec29e2",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -28639,10 +28918,12 @@ class Workbench {
           }))
         };
       }
-      case "conversation-transcript":
-        return this.conversations.transcript(request3.id, request3.turnId, request3.page);
       case "conversation":
-        return this.conversations.view(request3.id, request3.before);
+        return this.conversations.conversation(request3.id);
+      case "conversation-turn":
+        return this.conversations.turnSteps(request3.id, request3.ordinal, request3.before);
+      case "conversation-step":
+        return this.conversations.step(request3.id, request3.turnId, request3.step, request3.part);
       case "files":
         return this.files.list(request3.path);
       case "file":
@@ -28907,7 +29188,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "70b7d387e5677a43ff0a80f82aad39684362496916c796150a4e326cd7756b65";
+  const embedded = "d0edc9d93f682dd7c637bd28cdb756b823ad8eafeabebc63479bee1bac5b2b55";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -100,7 +100,7 @@
         "web/src/components/transcript/CollapsibleHead.tsx",
         "web/src/transcript/lazy-window.ts"
       ],
-      "modifications": "Direct lazy-window/height-hysteresis and collapsible card families; readonly Message/Tool composition narrowed to actual HistoryRecord owners/versions/associations. Independent server paging replaces full-array assumptions. No orphan suppression, inline-marker stripping, fork/reask/steer/retry, tool-kill, image/file preview bridge or prose-derived native status."
+      "modifications": "Direct lazy-window/height-hysteresis and collapsible card families; readonly Message/Tool composition narrowed to actual HistoryRecord owners/versions/associations. Independent server paging replaces full-array assumptions. No orphan suppression, inline-marker stripping, fork/reask/steer/retry, tool-kill, image/file preview bridge or prose-derived native status. The lazy-window wiring is shared through web/src/transcript/use-lazy-window.ts with the ordinary chat transcript."
     },
     {
       "id": "rich",
@@ -213,7 +213,7 @@
         "web/src/components/workspace/ProjectPicker.tsx",
         "web/src/components/workspace/ChatTurnView.tsx"
       ],
-      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; workflow cards link to that view instead of embedding the transcript. The subagent dock heading leads its total with the queued or running count. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer's model button opens an anchored, searchable model panel with a separate thinking row, a Send without a model waits there for one explicit choice, a Cadence mode switch replaces the mode select and the empty subagent dock stays folded. Whole-turn capture is now paged by the owner: ChatTurnHistory reads one immutable full-transcript page at a time while ChatTurnView retains a labelled latest preview. Checkpoints stream and persist per-message hash-chain records rather than a single capped context file; no consent, replay, migration or cleanup behavior is added. Conversation counts and turn counts no longer gate admission. The sidebar has bounded recent-first history scans/pages and a separate live roster; immutable ordinal slots keep metadata finite while extending old prefixes on explicit Send. Recent control links are a projection over durable workflow associations, not an attempt cap."
+      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; workflow cards link to that view instead of embedding the transcript. The subagent dock heading leads its total with the queued or running count. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer's model button opens an anchored, searchable model panel with a separate thinking row, a Send without a model waits there for one explicit choice, a Cadence mode switch replaces the mode select and the empty subagent dock stays folded. Whole-turn capture is paged by the owner; the chat transcript is one continuous, lazily mounted list of turns read by position, with tool detail read when a step opens, and no conversation or transcript page is switched. Checkpoints stream and persist per-message hash-chain records rather than a single capped context file; no consent, replay, migration or cleanup behavior is added. Conversation counts and turn counts no longer gate admission. The sidebar has bounded recent-first history scans/pages and a separate live roster; immutable ordinal slots keep metadata finite while extending old prefixes on explicit Send. Recent control links are a projection over durable workflow associations, not an attempt cap."
     }
   ],
   "newIntegrationFiles": [
@@ -295,7 +295,6 @@
     "test/workflow-history.test.ts",
     "test/web/workflow-history-browser.e2e.mjs",
     "src/service/conversation-transcript.ts",
-    "web/src/components/workspace/ChatTurnHistory.tsx",
     "test/conversation-pages.test.ts",
     "test/service-conversation-pages.test.ts",
     "src/service/conversation-history.ts",
@@ -304,7 +303,13 @@
     "test/service-conversation-retention.test.ts",
     "test/helpers/retained-conversations.ts",
     "test/web/conversation-history-browser.e2e.mjs",
-    "test/workbench-cadence-control.test.ts"
+    "test/workbench-cadence-control.test.ts",
+    "src/service/conversation-steps.ts",
+    "web/src/client/conversation-reader.ts",
+    "web/src/client/turn-source.ts",
+    "web/src/client/use-conversation.ts",
+    "web/src/transcript/use-lazy-window.ts",
+    "test/web/conversation-reader.test.tsx"
   ],
   "destinations": {
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
@@ -334,7 +339,7 @@
     "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
     "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
     "web/src/components/transcript/Message.tsx": "6826f2c82e9bb2a16d1761ffd7fb74b498581855aa16da8c948f439b998c7383",
-    "web/src/components/transcript/MessageList.tsx": "9299c177e0e9d7ac4d9648f2eb08a2a000f764a0e504a3e6a19026f3536f36b0",
+    "web/src/components/transcript/MessageList.tsx": "d4a46bee19db5796db55f00b5b5feecceae58e81e4644ed49405f8b93a205c75",
     "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
     "web/src/components/workspace/InspectorPanel.tsx": "480ac20284fdd4ac75a1915e542f6b0a30258e5de82b7a83bf0c388ee0bd1ded",
     "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
@@ -357,7 +362,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "588a29be23fc27f299ff65e474e48b0e203d709c784e930da62667fc6751a7e9",
+    "web/src/styles.css": "c92297035b56aabe19039b173d96b2364f4b3d527aa2d614eae47330f6c5e063",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -393,20 +398,20 @@
     "src/conversation-context.mjs": "f0a391d782941aa823d1fa29e7544df755a1c95a30a8df1e9bcb5e2dac46e882",
     "src/conversation-context.d.mts": "ee101cf1270498dbb1a63a2df97a9a9e64e3b686253f9835c1555077103543bc",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
-    "src/service/contracts/workbench.ts": "0bfc54e414feef434c41ee981fb853386b0024b81c3b1ffa5ae6d1ef307783ee",
-    "src/service/conversations.ts": "50f63afe9242e6b4fc9805242cddccaa7958808c4bb0f65e56348af0418b0b12",
+    "src/service/contracts/workbench.ts": "7938b1e66acd3697d102903199061e7389c6072182b301999962f5ff5cde7bf7",
+    "src/service/conversations.ts": "a1386a2eb070d8c984b4da70f7efa29ff4c492018a52e7a06bccd1cc187b8711",
     "src/service/workbench-files.ts": "03499ec86d55014cd5f1d7575424f2e9f12cca0cb1165d0a8c1a0e3343b6b7e1",
-    "src/service/workbench.ts": "9d0dbe733a1332add2e4333610afc27e9becd2eb4dbe9f53f64a7a619fdb3576",
+    "src/service/workbench.ts": "f71fedaa7f713e11e757f540dec7372343c6da5579ed7d76b7da8c326d9b1ade",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
-    "test/workbench-boundaries.test.ts": "137b1b141317e5ece5df4eb2e4b4fea704491bc3258479e3b7a628b41a29ad67",
-    "test/web/workbench.test.tsx": "3034313320a9ed73e134bbbdffcf30b9da98bd2864fc796455706251bdcf521a",
-    "test/web/workbench-browser.e2e.mjs": "a7863e870cf1d36a8f229b922f8b1777c21b399bd4d4261b90b09b1a11027857",
-    "web/src/components/workspace/ChatWorkspace.tsx": "db3b8a55698c00416ac0a86a0c5d97748a9ac5e23544f6380aa2c3c90ee0d988",
-    "web/src/components/workspace/ChatSteps.tsx": "c9bfb8549c78bd84257c314253b1faa7d49424ab0509a01342ad9f84757d955c",
+    "test/workbench-boundaries.test.ts": "6c562216afab66247fb0d6ce913fb7e701aa80fbe9b2984b46d4a1db37ede931",
+    "test/web/workbench.test.tsx": "12f94047520dc91182744db5744a8b5ff75439038512c6f928167163a47f0de0",
+    "test/web/workbench-browser.e2e.mjs": "c6146b74363c62cdfa3444ebb024a43aa24e876f513ef87e6b48114e6dc9846c",
+    "web/src/components/workspace/ChatWorkspace.tsx": "4581075dff7e0caf2062a44f52795b6affcae2292581841a6c8b9ebdf4c70194",
+    "web/src/components/workspace/ChatSteps.tsx": "2de2c6910c24208685c7ad106bae35e27c335c6712ba7b09b7f6ced1d346893b",
     "web/src/components/workspace/AgentDock.tsx": "5125396c4a9bbdf00ebd541c952ffac3e844773bf742170e1956e9e0d9577abc",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
     "web/src/components/workspace/ProjectPicker.tsx": "4e8cf614851d2a4d70c1675f34229835f88a52ceab4bae961d33948885216f0e",
-    "src/service/gateway.ts": "00f95503790f2622048bda441abcf055bdc8d796e517398c2f20bed0c39c88ad",
+    "src/service/gateway.ts": "f22c821e4d027d05224b0e9430d1d1491e2bcc2a7ba7e935ef9a202701f41b9a",
     "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
     "src/service/gateway-store.ts": "f8af7a883e8c5e8e62e368b0a1dac1784c461a1e2f713fe5047c82f5e877bcb8",
     "src/service/contracts/gateway.ts": "2e3ae5a3b3c252031004cdb5285ed257a3475b863384ff1e3283b199c61d6222",
@@ -422,31 +427,36 @@
     "web/src/client/last-project.ts": "77adeb05c21e588eb16599f286529c072d3e7edc61b2ab4c2d07984449e091fe",
     "src/cadence-instructions.ts": "aa02ce63605e53f80543d2a0f8738c1b82e8909f91d4bff15e73b97130c699e5",
     "src/coordinator-tools.mjs": "cedae26a4e2c7ed079d247dddb6dbe3fa9b5df14b8444ac80f70b82206543dbc",
-    "src/service/conversation-workflow.ts": "7e6ef4433706dfbfaccba04a4add144d769fdbc73ef1712081ba05d37981eb9f",
+    "src/service/conversation-workflow.ts": "c385ee2701050b76ec883f0ec26a3d9b934c8d89637673ac6b4e4fec339103de",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
     "web/src/components/workspace/WorkflowPanel.tsx": "f3c48edb6bd1e6320bae80c84e61447a6b3a9301181f34f9acef315f589c654a",
-    "web/src/components/workspace/ChatTurnView.tsx": "059f060115ee911976d3c92bcf69ea75052980fbaa44683820eaecf92b628217",
-    "test/service-conversation-workflow.test.ts": "d59ee42efd10fc00114d6af82240ef737598bb5bd2c8e171347c5fff6c25ef87",
+    "web/src/components/workspace/ChatTurnView.tsx": "61da3feab56c31e517dbc1bc7a871e7107ab50b17940e21ddefa399b98579e00",
+    "test/service-conversation-workflow.test.ts": "2910c52e3cf39e37d1650fb8bfb93cd1ad3f9fc989247c3056908633e55483d5",
     "test/web/workflow.test.tsx": "5caa49a11318685360dacac9c206e879b885ebb34b3b2308c983ce9c9374d71a",
     "test/web/cadence-browser.e2e.mjs": "602175575412de1d29d33403dcd461bc641ff99561671908f4fb0943338e3d83",
     "src/service/workbench-send-refusal.ts": "3f7481c2c07fc84bdece4ea843ccc6892495fb0ca5b7363aa6e897f0fca69878",
-    "web/src/components/workspace/WorkflowAgentView.tsx": "b3feb75cd3f0e48ff0d496f0f2879f9dd7b850d94bb84d378916b062f6d16733",
+    "web/src/components/workspace/WorkflowAgentView.tsx": "edb463b1d2ea1013df6b97818fa20fd680b692e7b837f1f4a332134b7d4aacfc",
     "web/src/components/workspace/WorkflowHistory.tsx": "4a3c73d6d34691c1a1ca681d7953e8e1d5b82c28aac8febc840f397a0cc86ba2",
     "src/service/workflow-history.ts": "d135a518a989bb2a5e34facc5b4613f976b034d35f3651e93e5b330cf65d928c",
     "test/workflow-history.test.ts": "2eb5e4de0b46b7ea5d9c4bc671fe6954fdbf0402d5d36ffd73a1c79baa740a66",
     "test/web/workflow-history-browser.e2e.mjs": "41a12c3a2d11618fb15f9658ba59cc23f88d8791e57b877b3e86f02c3c61d535",
     "web/src/components/actions/ModelPicker.tsx": "17dca6832046062b1726533765c6abfefd43723cf54501a1dc78f83086c86c02",
-    "src/service/conversation-transcript.ts": "e4c04de6888ce244ca8a60901177b3866145b9db1e3472fc1bb20f91e234760f",
-    "web/src/components/workspace/ChatTurnHistory.tsx": "c2d1d0a577945353639c8e66bc6cf85f23578795bfe44102a2e6411838f13f0d",
-    "test/conversation-pages.test.ts": "b60080e54c8fd1f2bb63dbb183f75be011fe41fdd0b2183818883720b2d87ec0",
-    "test/service-conversation-pages.test.ts": "5e46a8fc19f046fd7a4624095d35bf5d2cc2136e8ef258f7e3cda1ab129a6372",
+    "src/service/conversation-transcript.ts": "5f7ad4872a7b4679c37095f42d72e2c820e83564a0943cae8f3dfe2ce9c7696d",
+    "test/conversation-pages.test.ts": "9d20cfa34bd50bb11b933ae06d2090fd376d2c72abc1455fe01fddcaa32e93b7",
+    "test/service-conversation-pages.test.ts": "376269fa0e11fa595e6907c11437761b7f455f46ccbb4a4b3b8fc58911c5e6c6",
     "src/service/conversation-history.ts": "ab344af20675f0334d2bd585839c4120d7cbf116d4689e280c3081b4cbc4cca4",
     "web/src/client/use-conversation-history.ts": "81fba84213e6aff0ab8f0e978ac0c1a996026a9ed1f192b1b77622cb978d6dd2",
-    "test/conversation-retention.test.ts": "b48ee3c71a71f72aa1eca5fe449b081312bc19fc85126a7a97c3b085d8fbde18",
-    "test/service-conversation-retention.test.ts": "ea32d69c508bfb4ad87a20489fe696d062085736542ee73d2aad396ec15bcebd",
+    "test/conversation-retention.test.ts": "65a9d1c2b39a1e7f8228cdde4ecde5eea791e15fe40006e21dfdf48cd390678e",
+    "test/service-conversation-retention.test.ts": "f498804e7bd9c5450a89624627b3c6e28b4a8d5caef720ada22adddc40ff5403",
     "test/helpers/retained-conversations.ts": "1c0cfac1b8c3d37072670d6c09e5f3000ddf4bb18db7acc7efc03da31c4d2955",
     "test/web/conversation-history-browser.e2e.mjs": "f53f956777e48a71bf3ac3b1fd9fada224450caad26c467acabe06d2218d2095",
-    "test/workbench-cadence-control.test.ts": "21539023a56340583a64fc9f73b999298f4aa9993ea89c35619c3368b3451b15"
+    "test/workbench-cadence-control.test.ts": "7a3452ab6e184317f2f164241f79c3f852ed9a4870e55e41cb79aef343e4f754",
+    "src/service/conversation-steps.ts": "e7e1e71b6528bff95c9f944c3eb503dbde2f058a6b02693595fc801a2d26539d",
+    "web/src/client/conversation-reader.ts": "ef303e68c0563b889f1fea661eff033c38e1690c2d6abd73408d9cf8258cdd2e",
+    "web/src/client/turn-source.ts": "da679ea9a116fb5ce174286eccdce2a78123f12f069ef9c381b809f9a3429a9e",
+    "web/src/client/use-conversation.ts": "e30a1fc1fd5c930f03a602a11df209d2d1e64dd3b46ae1596dade082d7524994",
+    "web/src/transcript/use-lazy-window.ts": "b0fda000520898f4193c0c4539cea2c055bf4d9e7fd7b0fc089f5f9271498799",
+    "test/web/conversation-reader.test.tsx": "3c6723b83193febff6041c2d9a8545cdea1ce66769d0e69ac3a122f7a787c9db"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -734,6 +744,11 @@
       "id": "conversation-review-boundary-fixes",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned fixes: owner-aware retained-result sanitation, index/commit scope verification, server-proven no-effect conversation Send refusal, and disjoint task worktree names. Browser regression distinguishes definite rejection from lost accepted Send responses. No upstream pins or historical qualification were rewritten."
+    },
+    {
+      "id": "continuous-conversation-transcript",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned change: conversation reads list turns by position and steps without tool output, the WebUI loads earlier turns as the transcript scrolls and reads detail on demand, and workbench reads are gzip-compressed when accepted. No upstream pins were rewritten."
     }
   ],
   "testAdaptations": [

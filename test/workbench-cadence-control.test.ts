@@ -96,7 +96,7 @@ function fixture() {
       controls.set(input.commandId, control);
       return { kind: "accepted", commandId: input.commandId };
     },
-    view: (id: string) => ({
+    conversation: (id: string) => ({
       kind: "conversation",
       summary: {
         id,
@@ -105,8 +105,7 @@ function fixture() {
         status: "completed",
         updatedAt: 0,
       },
-      turns: [],
-      before: null,
+      turns: turns.get(id)?.length ?? 0,
     }),
   };
   const runs = new Map<string, WorkflowRun>();

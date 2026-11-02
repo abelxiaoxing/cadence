@@ -1,28 +1,42 @@
 /* Extracted from the pi-web-ui-adapted ChatWorkspace presentation. MIT (c) 2026 xing-shuyin. */
-import type { ChatTurn } from "../../../../src/service/contracts/workbench.ts";
+import { memo } from "react";
+import type { TurnSource } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
-import { Markdown } from "../rich/Markdown";
 import { StreamMarkdown } from "../rich/StreamMarkdown";
-import { ChatSteps, LEGACY_OMITTED_NOTICE, turnParts } from "./ChatSteps";
-export function ChatTurnView({ turn }: { turn: ChatTurn }) {
+import {
+  ChatSteps,
+  LEGACY_OMITTED_NOTICE,
+  StepText,
+  turnParts,
+} from "./ChatSteps";
+/** Memoized: a settled turn keeps its source, so polling never re-renders it. */
+export const ChatTurnView = memo(function ChatTurnView({
+  turn,
+  toggled,
+  onToggle,
+}: {
+  turn: TurnSource;
+  /** The user's choice for this turn's steps, kept across remounts. */
+  toggled?: boolean | null;
+  onToggle?(turnId: string, open: boolean): void;
+}) {
   const { t, tx } = useT();
-  const { steps, answer } = turnParts(turn.items);
-  const live = turn.status === "running" && answer.length === 0;
+  const { header } = turn;
+  const { user, steps, answer } = turnParts(turn.steps);
+  const live = header.status === "running" && answer.length === 0;
   const grouped =
-    steps.length > 0 || live || Object.values(turn.omitted).some(Boolean);
-  const notice = turn.notice
+    steps.length > 0 || live || Object.values(header.omitted).some(Boolean);
+  const notice = header.notice
     .split("\n")
     .filter((line) => line && line !== LEGACY_OMITTED_NOTICE);
   return (
     <section className="chat-turn" aria-label={t("Conversation turn")}>
-      {turn.items
-        .filter((item) => item.role === "user")
-        .map((item) => (
-          <article className="chat-message user" key={item.id}>
-            <div className="chat-message-role">{t("You")}</div>
-            <Markdown text={item.text} />
-          </article>
-        ))}
+      {user.map(({ step, index }) => (
+        <article className="chat-message user" key={index}>
+          <div className="chat-message-role">{t("You")}</div>
+          <StepText turn={turn} index={index} step={step} />
+        </article>
+      ))}
       {(grouped || answer.length > 0) && (
         <article className="chat-message assistant">
           <div className="chat-message-role">Cadence</div>
@@ -32,15 +46,23 @@ export function ChatTurnView({ turn }: { turn: ChatTurn }) {
               steps={steps}
               live={live}
               answered={answer.length > 0}
+              toggled={toggled}
+              onToggle={(open) => onToggle?.(header.id, open)}
             />
           )}
-          {answer.map((item) =>
-            turn.status === "running" ? (
-              <StreamMarkdown key={item.id} text={item.text} />
-            ) : (
-              <Markdown key={item.id} text={item.text} />
-            ),
-          )}
+          {answer.map(({ step, index }) => (
+            <StepText
+              key={index}
+              turn={turn}
+              index={index}
+              step={step}
+              render={
+                header.status === "running"
+                  ? (text) => <StreamMarkdown text={text} />
+                  : undefined
+              }
+            />
+          ))}
         </article>
       )}
       {notice.length > 0 && (
@@ -48,9 +70,9 @@ export function ChatTurnView({ turn }: { turn: ChatTurn }) {
           {notice.map((line) => tx(line)).join("\n")}
         </p>
       )}
-      {!["completed", "running", "queued"].includes(turn.status) && (
-        <p className={`ep-state ${turn.status}`}>{tx(turn.status)}</p>
+      {!["completed", "running", "queued"].includes(header.status) && (
+        <p className={`ep-state ${header.status}`}>{tx(header.status)}</p>
       )}
     </section>
   );
-}
+});

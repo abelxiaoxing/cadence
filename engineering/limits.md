@@ -63,7 +63,11 @@ These are cooperative I/O limits: outstanding filesystem operations and director
 Explicit investigation roots are limited to eight; omitted roots select the project cwd.
 
 Ordinary/coordinator conversation capture (`src/service/conversation-transcript.ts`, `src/service/conversations.ts`) has no lifetime transcript-byte/item cap: immutable pages and turn snapshots are at most 384KiB each.
-The latest preview budgets 300KiB/128 items and 16Ki UTF-16 code units per field (labelled when clipped); it never substitutes for the full transcript pages.
+The latest preview budgets 300KiB/128 items and 16Ki UTF-16 code units per field (labelled when clipped); it stands in only for items no page holds yet.
+Conversation reads have no turn-count or byte page: the head carries a summary and a count, and each read covers one turn or one stored part of one step.
+A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_BYTES` (16KiB) of encoded text and a 1KiB tool target, which always fits one 512KiB reply; the client reads further ranges itself (`src/service/contracts/workbench.ts`).
+The step index cache holds 32 turns and the WebUI keeps four reads in flight per conversation; neither bounds what is retained.
+Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
 Each full field has the existing 32MiB logical-detail bound; unfinished capture has at most 256 items/64MiB, plus 64 open details/64MiB of open-detail text and sanitizer state.
 `src/conversation-context.mjs` streams continuation messages in records bounded by that same 32MiB detail limit, with no aggregate 2MiB checkpoint cap; 2MiB remains only the legacy checkpoint/manifest reader bound.
 The former separate 512MiB/10,000-entry conversation-store admission quota is removed, without eviction or incidental cleanup; admission and page/checkpoint writes retain the 256MiB free-space floor.

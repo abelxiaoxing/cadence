@@ -708,7 +708,7 @@ export class ConversationWorkflow {
     recording: () => void,
   ): WorkbenchResult {
     const { state, file } = this.usable(c.conversationId);
-    const view = this.o.conversations.view(c.conversationId, null);
+    const view = this.o.conversations.conversation(c.conversationId);
     if (
       !state.enabled ||
       c.revision !== state.revision ||

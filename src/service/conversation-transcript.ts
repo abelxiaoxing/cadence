@@ -7,11 +7,25 @@ export const TRANSCRIPT_PAGE_BYTES = 384 * 1024;
 const PREVIEW_BYTES = 300 * 1024;
 // At most six JSON bytes per UTF-16 code unit; two fields still fit one page.
 const FIELD_CHARS = 16 * 1024;
-const PREVIEW_MARK = "\n[Preview only; open the full transcript.]";
+const PREVIEW_MARK =
+  "\n[Preview only; the rest appears once this step completes.]";
 function part(value: string, offset: number, chars = FIELD_CHARS): string {
   let end = Math.min(value.length, offset + chars);
   if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1])) end--;
   return value.slice(offset, end);
+}
+type Field = "text" | "args" | "name";
+/** A field just set: its encoded size and at least its first characters a
+ * preview can show, so a long growing stream is never rescanned or copied. */
+export interface FieldUpdate {
+  bytes: number;
+  head: string;
+}
+/** The characters of a growing text a preview can show, extended by `added`. */
+export function previewHead(head: string, added: string): string {
+  return head.length > FIELD_CHARS
+    ? head
+    : head + added.slice(0, FIELD_CHARS + 1 - head.length);
 }
 export interface TranscriptPage {
   turnId: string;
@@ -21,6 +35,8 @@ export interface TranscriptPage {
 export class ConversationTranscript {
   private readonly state = { pages: 0 };
   private readonly workingSizes = new Map<string, number>();
+  /** Encoded bytes of each unfinished item's fields, so a stream is not rescanned. */
+  private readonly fieldBytes = new Map<string, Record<Field, number>>();
   private workingBytes = 0;
   private readonly sizes = new Map<string, number>();
   private bytes = 4096;
@@ -49,22 +65,34 @@ export class ConversationTranscript {
   find(id: string): ChatItem | undefined {
     return this.pending.get(id);
   }
-  preview(item: ChatItem): void {
+  preview(
+    item: ChatItem,
+    known: Partial<Record<Field, FieldUpdate>> = {},
+  ): void {
     if (this.pending.has(item.id)) {
-      const size =
-        Buffer.byteLength(item.text) +
-        Buffer.byteLength(item.args) +
-        Buffer.byteLength(item.name);
+      const cached = this.fieldBytes.get(item.id);
+      const bytes = (field: Field) =>
+        known[field]?.bytes ??
+        cached?.[field] ??
+        Buffer.byteLength(item[field]);
+      const fields = {
+        text: bytes("text"),
+        args: bytes("args"),
+        name: bytes("name"),
+      };
+      this.fieldBytes.set(item.id, fields);
+      const size = fields.text + fields.args + fields.name;
       this.workingBytes += size - (this.workingSizes.get(item.id) ?? 0);
       this.workingSizes.set(item.id, size);
       if (this.workingBytes > 2 * LIMITS.detailBytes)
         throw new ContractError("capacity");
     }
-    const clip = (value: string) => {
-      const prefix = part(value, 0);
+    const clip = (field: "text" | "args") => {
+      const value = item[field];
+      const prefix = part(known[field]?.head ?? value, 0);
       return prefix.length < value.length ? prefix + PREVIEW_MARK : value;
     };
-    const preview = { ...item, text: clip(item.text), args: clip(item.args) };
+    const preview = { ...item, text: clip("text"), args: clip("args") };
     const size = Buffer.byteLength(canonicalJson(preview, PREVIEW_BYTES));
     this.bytes += size - (this.sizes.get(item.id) ?? 0);
     this.sizes.set(item.id, size);
@@ -90,6 +118,7 @@ export class ConversationTranscript {
     this.preview(item);
     this.archive(item);
     this.pending.delete(id);
+    this.fieldBytes.delete(id);
     this.workingBytes -= this.workingSizes.get(id) ?? 0;
     this.workingSizes.delete(id);
   }

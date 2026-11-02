@@ -14,12 +14,16 @@ import {
   encodeConversationContext,
   readConversationContext,
 } from "../src/conversation-context.mjs";
-import { canonicalJson } from "../src/service/contracts/core.ts";
+import { canonicalJson, LIMITS } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
+  chatStep,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
+  STEP_READ,
+  STEP_TEXT_BYTES,
 } from "../src/service/contracts/workbench.ts";
+import { ConversationSteps } from "../src/service/conversation-steps.ts";
 import {
   ConversationTranscript,
   TRANSCRIPT_PAGE_BYTES,
@@ -134,15 +138,122 @@ it("hundreds of tool exchanges retain every byte in finite pages, not a fatal tu
   expect(JSON.stringify(pages)).not.toContain("private-lit");
   expect(JSON.stringify(pages).length).toBeGreaterThan(384 * 1024);
   expect(current.items.at(-1)?.id).toBe("tool-299");
-  for (const p of pages) {
-    const reply = {
-      kind: "conversation-transcript",
-      conversationId: randomUUID(),
-      page: p.page,
-      turn: { ...current, items: p.items },
-    };
-    expect(decodeWorkbenchResult(reply)).toEqual(reply);
+  // Listing reads every page once; later reads extend the cached index.
+  let reads = 0;
+  const steps = new ConversationSteps((turnId, page) => {
+    expect(turnId).toBe(current.id);
+    reads++;
+    return pages[page].items[0];
+  });
+  const listed = steps.list({ ...current, status: "completed" });
+  expect(listed.steps).toHaveLength(301);
+  expect(listed.stable).toBe(301);
+  expect(reads).toBe(pages.length);
+  steps.list({ ...current, status: "completed" });
+  expect(reads).toBe(pages.length);
+  const tool = listed.steps[300].step;
+  expect(tool).toMatchObject({
+    id: "tool-299",
+    role: "tool",
+    text: "",
+    parts: 1,
+  });
+  expect(steps.detail(current, 300, 0).text).toContain("299: ");
+  expect(() => steps.detail(current, 300, 1)).toThrow();
+  // A full read of the latest steps decodes inside one reply.
+  const reply = {
+    kind: "conversation-turn",
+    conversationId: randomUUID(),
+    ordinal: 0,
+    turn: {
+      id: current.id,
+      epoch: current.epoch,
+      status: "completed",
+      notice: "",
+      omitted: current.omitted,
+      steps: 301,
+      stable: 301,
+    },
+    start: 301 - STEP_READ,
+    steps: listed.steps.slice(-STEP_READ).map((row) => row.step),
+  };
+  expect(decodeWorkbenchResult(reply)).toEqual(reply);
+});
+it("a long streamed answer is captured in linear work, never rescanned per chunk", () => {
+  const current = turn();
+  const transcript = new ConversationTranscript(current, () => {});
+  const capture = new ConversationCapture(
+    current,
+    () => {},
+    () => [],
+    transcript,
+  );
+  let sequence = 0;
+  const emit = (event: CaptureFrame["event"]) =>
+    capture.accept({
+      protocol: 2,
+      childRunId: "child",
+      workerSeq: ++sequence,
+      observedMs: 0,
+      event,
+    });
+  const full = "streamed answer 文字 ".repeat(60000);
+  emit({
+    kind: "message-start",
+    messageId: "m",
+    role: "assistant",
+    source: { disposition: "unavailable", value: null },
+    resultCallId: null,
+  });
+  emit({
+    kind: "detail-begin",
+    detailId: "d",
+    descriptor: {
+      owner: {
+        kind: "message",
+        messageId: "m",
+        blockId: "b",
+        index: 0,
+        stage: "stream",
+      },
+      encoding: "utf8",
+      field: "message",
+    },
+  });
+  const measure = Buffer.byteLength;
+  let scanned = 0;
+  Buffer.byteLength = ((value: string) => {
+    scanned += value.length;
+    return measure(value);
+  }) as typeof Buffer.byteLength;
+  try {
+    for (let at = 0, n = 0; at < full.length; at += 4096)
+      emit({
+        kind: "detail-chunk",
+        detailId: "d",
+        offset: n++,
+        text: full.slice(at, at + 4096),
+      });
+    emit({
+      kind: "detail-end",
+      detailId: "d",
+      bytes: 1,
+      sha256: "a".repeat(64),
+      coverage: {
+        observed: "complete",
+        source: "complete",
+        redacted: false,
+        omissions: [],
+      },
+    });
+  } finally {
+    Buffer.byteLength = measure;
   }
+  // Each chunk measures only itself and the bounded preview (~5x here); the
+  // former per-chunk rescans of the whole answer measured ~580x.
+  expect(scanned).toBeLessThan(10 * full.length);
+  expect(transcript.find("m")?.text).toBe(full);
+  expect(current.items.at(-1)?.text).toContain("Preview only");
 });
 it("a large individual item is losslessly split, including JSON escapes and surrogate pairs", () => {
   const current = turn(),
@@ -162,14 +273,107 @@ it("a large individual item is losslessly split, including JSON escapes and surr
   expect(retained.map((i) => i.text).join("")).toBe(item.text);
   expect(retained.map((i) => i.args).join("")).toBe(item.args);
   expect(current.items.at(-1)?.text).toContain("Preview only");
+  // A step lists its preview while it runs, then its pages; its parts join
+  // back into the whole item and a listing keeps only a bounded text prefix.
+  const answer = transcript.item("answer", "assistant");
+  answer.text = `${"长😀".repeat(200000)} END`;
+  transcript.preview(answer);
+  const steps = new ConversationSteps((_, page) => pages[page].items[0]);
+  const running = steps.list(current);
+  expect(running.steps.map((row) => row.step.id)).toEqual([
+    "user",
+    "large",
+    "answer",
+  ]);
+  expect(running.stable).toBe(2);
+  expect(running.steps[1].step).toMatchObject({
+    role: "tool",
+    text: "",
+    target: "",
+    parts: retained.length,
+  });
+  expect(running.steps[2].step).toMatchObject({ clipped: true, parts: 1 });
+  const joined = (step: number, parts: number) =>
+    Array.from({ length: parts }, (_, part) =>
+      steps.detail(current, step, part),
+    );
+  expect(
+    joined(1, retained.length)
+      .map((i) => i.args)
+      .join(""),
+  ).toBe(item.args);
+  transcript.complete("answer");
+  const done = steps.list({ ...current, status: "completed" });
+  expect(done.stable).toBe(3);
+  const listed = done.steps[2].step;
+  expect(listed.clipped).toBe(true);
+  expect(listed.parts).toBeGreaterThan(1);
+  expect(Buffer.byteLength(JSON.stringify(listed.text))).toBeLessThanOrEqual(
+    STEP_TEXT_BYTES,
+  );
+  expect(answer.text.startsWith(listed.text)).toBe(true);
+  expect(
+    joined(2, listed.parts)
+      .map((i) => i.text)
+      .join(""),
+  ).toBe(answer.text);
   expect(() =>
     decodeWorkbenchRead({
-      kind: "conversation-transcript",
+      kind: "conversation-step",
       id: current.id,
       turnId: current.id,
-      page: -1,
+      step: 0,
+      part: -1,
     }),
   ).toThrow();
+});
+it("a full step listing at every field's encoded worst case fits one read reply", () => {
+  const escaped = (bytes: number) => "\u0001".repeat(bytes);
+  const message = chatStep(
+    {
+      id: escaped(160),
+      role: "assistant",
+      text: escaped(100000),
+      name: escaped(128),
+      args: "",
+      error: true,
+    },
+    Number.MAX_SAFE_INTEGER,
+  );
+  const tool = chatStep(
+    {
+      id: escaped(160),
+      role: "tool",
+      text: escaped(100000),
+      name: escaped(128),
+      args: JSON.stringify({ command: escaped(100000) }),
+      error: true,
+    },
+    1,
+  );
+  expect(message.clipped).toBe(true);
+  expect(tool.text).toBe("");
+  expect(tool.target.length).toBeGreaterThan(0);
+  const value = {
+    kind: "conversation-turn",
+    conversationId: randomUUID(),
+    ordinal: Number.MAX_SAFE_INTEGER,
+    turn: {
+      id: randomUUID(),
+      epoch: randomUUID(),
+      status: "completed",
+      notice: escaped(1024),
+      omitted: { thinking: true, media: true, other: true },
+      steps: Number.MAX_SAFE_INTEGER,
+      stable: Number.MAX_SAFE_INTEGER,
+    },
+    start: Number.MAX_SAFE_INTEGER - STEP_READ,
+    steps: Array.from({ length: STEP_READ }, (_, i) =>
+      i % 2 ? tool : message,
+    ),
+  };
+  expect(decodeWorkbenchResult(value)).toEqual(value);
+  canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
 });
 it("context messages have no aggregate 2 MiB cap; the chain detects changed, missing and unsafe records", () => {
   const root = mkdtempSync(join(tmpdir(), "chat-context-")),

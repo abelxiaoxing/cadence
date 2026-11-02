@@ -75,9 +75,9 @@ it("persistent SDK coordinator investigates, clarifies, proposes without editing
               : never(),
       });
       head = commandId;
-      let view = await read({ kind: "conversation", id, before: null });
+      let view = await read({ kind: "conversation", id });
       for (let i = 0; i < 750; i++) {
-        view = await read({ kind: "conversation", id, before: null });
+        view = await read({ kind: "conversation", id });
         if (
           view.kind === "conversation" &&
           !["queued", "running"].includes(view.summary?.status ?? "queued")
@@ -368,11 +368,7 @@ async function settleTurn(
 ) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const v = await client.workbenchRead({
-      kind: "conversation",
-      id,
-      before: null,
-    });
+    const v = await client.workbenchRead({ kind: "conversation", id });
     if (
       v.kind === "ok" &&
       v.value.kind === "conversation" &&
@@ -642,15 +638,11 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
       kind: "error",
       error: { code: "stale", effect: "none", recovery: "fresh-confirmation" },
     });
-    const view = await f.client.workbenchRead({
-      kind: "conversation",
-      id,
-      before: null,
-    });
+    const view = await f.client.workbenchRead({ kind: "conversation", id });
     expect(
       view.kind === "ok" &&
         view.value.kind === "conversation" &&
-        view.value.turns.some((t) => t.id === rejectedId),
+        view.value.summary?.head === rejectedId,
     ).toBe(false);
     expect(f.contacts()).toBe(contacts);
     // A lost-reply retry observes the original acceptance; it never runs twice.

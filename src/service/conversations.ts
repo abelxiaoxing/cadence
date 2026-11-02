@@ -32,14 +32,19 @@ import {
   type ChatItem,
   type ChatSummary,
   type ChatTurn,
+  decodeChatItem,
   decodeChatTurn,
   decodeWorkbenchCommand,
+  STEP_READ,
   type WorkbenchCommand,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
 import { ConversationHistory } from "./conversation-history.ts";
+import { ConversationSteps } from "./conversation-steps.ts";
 import {
   ConversationTranscript,
+  type FieldUpdate,
+  previewHead,
   TRANSCRIPT_PAGE_BYTES,
 } from "./conversation-transcript.ts";
 import type { ServiceCoordination } from "./coordination.ts";
@@ -115,13 +120,21 @@ interface LiveTurn {
 
 /** Bounded stdout projection, with the same split-secret sanitizer as task capture. */
 export class ConversationCapture {
+  // Encoded sizes are kept beside each growing text: rescanning a long stream
+  // on every chunk made capture quadratic and stalled the owner's reads.
   private readonly details = new Map<
     string,
-    { descriptor: DetailDescriptor; sanitizer: DetailSanitizer; text: string }
+    {
+      descriptor: DetailDescriptor;
+      sanitizer: DetailSanitizer;
+      text: string;
+      bytes: number;
+      head: string;
+    }
   >();
   private readonly messageText = new Map<
     string,
-    { messageId: string; text: string }
+    { messageId: string; text: string; bytes: number; head: string }
   >();
   constructor(
     private readonly turn: ChatTurn,
@@ -151,18 +164,18 @@ export class ConversationCapture {
     field: "text" | "name" | "args",
     value: string,
     maximum: number,
+    known: FieldUpdate = { bytes: Buffer.byteLength(value), head: value },
   ): void {
+    const bytes = known.bytes;
     if (this.transcript) {
-      if (Buffer.byteLength(value) > LIMITS.detailBytes)
-        throw new ContractError("capacity");
+      if (bytes > LIMITS.detailBytes) throw new ContractError("capacity");
       item[field] = value;
-      this.transcript.preview(item);
+      this.transcript.preview(item, { [field]: known });
       return;
     }
     const before = item[field];
     try {
-      if (Buffer.byteLength(value) > maximum)
-        throw new ContractError("capacity");
+      if (bytes > maximum) throw new ContractError("capacity");
       item[field] = value;
       canonicalJson(this.turn, TURN_BYTES - 2048);
     } catch (error) {
@@ -184,18 +197,20 @@ export class ConversationCapture {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
         text: "",
+        bytes: 0,
+        head: "",
       });
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d) return;
-      d.text +=
+      const added =
         e.kind === "detail-chunk"
           ? d.sanitizer.write(e.text)
           : d.sanitizer.end();
-      if (
-        Buffer.byteLength(d.text) >
-        (this.transcript ? LIMITS.detailBytes : 256 * 1024)
-      )
+      d.text += added;
+      d.bytes += Buffer.byteLength(added);
+      d.head = previewHead(d.head, added);
+      if (d.bytes > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
         throw new ContractError("capacity");
       const o = d.descriptor.owner;
       if (o.kind === "message") {
@@ -207,15 +222,26 @@ export class ConversationCapture {
           this.messageText.set(o.blockId, {
             messageId: o.messageId,
             text: d.text,
+            bytes: d.bytes,
+            head: d.head,
           });
+          const blocks = [...this.messageText.values()].filter(
+            (block) => block.messageId === o.messageId,
+          );
           this.update(
             this.item(o.messageId, "assistant"),
             "text",
-            [...this.messageText.values()]
-              .filter((block) => block.messageId === o.messageId)
-              .map((block) => block.text)
-              .join(""),
+            blocks.length === 1
+              ? blocks[0].text
+              : blocks.map((block) => block.text).join(""),
             256 * 1024,
+            {
+              bytes: blocks.reduce((size, block) => size + block.bytes, 0),
+              head: blocks.reduce(
+                (head, block) => previewHead(head, block.head),
+                "",
+              ),
+            },
           );
         }
       } else if (o.kind === "message-final") {
@@ -223,13 +249,13 @@ export class ConversationCapture {
           this.transcript?.find(o.messageId) ??
           this.turn.items.find((i) => i.id === o.messageId);
         if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024);
+          this.update(item, "text", d.text, 256 * 1024, d);
       } else if (o.kind === "tool") {
         const item = this.item(o.callId, "tool");
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024);
+          this.update(item, "args", d.text, 64 * 1024, d);
         if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024);
+          this.update(item, "text", d.text, 256 * 1024, d);
       }
       if (e.kind === "detail-end") this.details.delete(e.detailId);
     } else if (e.kind === "message-start" && e.role === "assistant") {
@@ -249,10 +275,7 @@ export class ConversationCapture {
       this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
     if (
       [...this.details.values()].reduce(
-        (size, detail) =>
-          size +
-          Buffer.byteLength(detail.text) +
-          detail.sanitizer.retainedBytes,
+        (size, detail) => size + detail.bytes + detail.sanitizer.retainedBytes,
         0,
       ) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES)
     )
@@ -279,6 +302,9 @@ export class Conversations {
     string,
     { key: string; summary: ChatSummary; count: number }
   >();
+  private readonly steps = new ConversationSteps((turnId, page) =>
+    this.page(turnId, page),
+  );
   constructor(private readonly o: Options) {
     this.root = join(o.coordination.directory, "conversations-v1");
     this.cwd = realpathSync(o.cwd);
@@ -494,10 +520,13 @@ export class Conversations {
       .map(observedFile)
       .join("|");
   }
-  /** A settled summary is re-read only when one of its files changed: list
-   * polls otherwise parse every head turn (up to 384 KiB each). Keys are taken
-   * before each read, so a concurrent change can only cause a later re-read. */
   private retainedSummary(id: string): ChatSummary {
+    return this.retained(id).summary;
+  }
+  /** A settled summary is re-read only when one of its files changed: polls
+   * otherwise parse every head turn (up to 384 KiB each). Keys are taken
+   * before each read, so a concurrent change can only cause a later re-read. */
+  private retained(id: string): { summary: ChatSummary; count: number } {
     const base = [this.metadataPath(id), this.identityPath(id)]
       .map(observedFile)
       .join("|");
@@ -507,7 +536,7 @@ export class Conversations {
       !this.active.has(hit.summary.head) &&
       hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`
     )
-      return { ...hit.summary };
+      return { summary: { ...hit.summary }, count: hit.count };
     const meta = this.metadata(id);
     if (!meta) throw new ContractError("corrupt-selected");
     const head = meta.head;
@@ -526,7 +555,7 @@ export class Conversations {
         count: meta.count,
       });
     }
-    return summary;
+    return { summary, count: meta.count };
   }
   private liveSummary(live: LiveTurn): ChatSummary {
     return {
@@ -573,73 +602,82 @@ export class Conversations {
       dir.closeSync();
     }
   }
-  view(id: string, before: string | null): WorkbenchResult {
+  /** The conversation's summary and turn count: what a viewer polls. */
+  conversation(id: string): WorkbenchResult {
     this.o.owner.lease.assert();
-    const meta = this.metadata(id);
-    if (!meta) {
-      const live =
-        before === null
-          ? [...this.active.values()].find((turn) => turn.conversationId === id)
-          : undefined;
+    if (observedFile(this.metadataPath(id)) === "absent") {
+      const live = [...this.active.values()].find(
+        (turn) => turn.conversationId === id,
+      );
       return {
         kind: "conversation",
         summary: live ? this.liveSummary(live) : null,
-        turns: live
-          ? [
-              {
-                ...structuredClone(live.turn),
-                notice: [
-                  "Current metadata unavailable; showing the active turn only. No state was reconstructed.",
-                  live.turn.notice,
-                ]
-                  .filter(Boolean)
-                  .join("\n"),
-              },
-            ]
-          : [],
-        before: null,
+        turns: 0,
       };
     }
-    let end = before === null ? meta.count : this.position(meta, before);
-    if (end < 0) throw new ContractError("stale");
-    const turns: ChatTurn[] = [];
-    let bytes = 0;
-    while (end > 0 && turns.length < 20) {
-      const turn = this.turn(this.turnAt(meta, end - 1)),
-        size = Buffer.byteLength(canonicalJson(turn, TURN_BYTES));
-      if (bytes + size > 400 * 1024) break;
-      bytes += size;
-      turns.unshift(structuredClone(turn));
-      --end;
-    }
+    const { summary, count } = this.retained(id);
+    return { kind: "conversation", summary, turns: count };
+  }
+  /** One turn by position, with the steps that end at `before` (else the latest). */
+  turnSteps(
+    id: string,
+    ordinal: number,
+    before: number | null,
+  ): WorkbenchResult {
+    this.o.owner.lease.assert();
+    const meta = this.metadata(id);
+    if (!meta) throw new ContractError("stale");
+    const turn = this.turn(this.turnAt(meta, ordinal));
+    const { steps, stable } = this.steps.list(turn);
+    const end = before ?? steps.length;
+    if (end > steps.length) throw new ContractError("stale");
+    const start = Math.max(0, end - STEP_READ);
     return {
-      kind: "conversation",
-      summary: this.summary(meta),
-      turns,
-      before: end > 0 ? turns[0].id : null,
+      kind: "conversation-turn",
+      conversationId: id,
+      ordinal,
+      turn: {
+        id: turn.id,
+        epoch: turn.epoch,
+        status: turn.status,
+        notice: turn.notice,
+        omitted: { ...turn.omitted },
+        steps: steps.length,
+        stable,
+      },
+      start,
+      steps: steps.slice(start, end).map((row) => row.step),
     };
   }
-  transcript(id: string, turnId: string, page: number): WorkbenchResult {
+  /** One stored part of a step's full item: arguments, output or whole text. */
+  step(
+    id: string,
+    turnId: string,
+    step: number,
+    part: number,
+  ): WorkbenchResult {
     this.o.owner.lease.assert();
     if (!this.hasTurn(id, turnId)) throw new ContractError("invalid");
-    const turn = this.turn(turnId);
-    if (!turn.transcript || page >= turn.transcript.pages)
-      throw new ContractError("stale");
-    const record = closed(
-      this.read(
-        this.path(turnId, `transcript/${page}.json`),
-        TRANSCRIPT_PAGE_BYTES,
-      ),
-      ["turnId", "page", "items"],
-    );
-    if (record.turnId !== turnId || record.page !== page)
-      throw new ContractError("corrupt-selected");
     return {
-      kind: "conversation-transcript",
+      kind: "conversation-step",
       conversationId: id,
-      page,
-      turn: decodeChatTurn({ ...turn, items: record.items }),
+      turnId,
+      step,
+      part,
+      item: { ...this.steps.detail(this.turn(turnId), step, part) },
     };
+  }
+  private page(turnId: string, page: number): ChatItem {
+    const value = this.read(
+      this.path(turnId, `transcript/${integer(page, 0)}.json`),
+      TRANSCRIPT_PAGE_BYTES,
+    );
+    if (value === undefined) throw new ContractError("corrupt-selected");
+    const record = closed(value, ["turnId", "page", "items"]);
+    const items = list(record.items, 1, decodeChatItem);
+    if (record.turnId !== turnId || record.page !== page || !items.length)
+      throw new ContractError("corrupt-selected");
+    return items[0];
   }
   attempted(conversationId: string, commandId: string): boolean {
     this.o.owner.lease.assert();

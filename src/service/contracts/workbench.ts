@@ -72,16 +72,24 @@ export type WorkbenchRead =
   | { kind: "workflow-detail"; id: string; stepId: string }
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string }
-  | {
-      kind: "conversation-transcript";
-      id: string;
-      turnId: string;
-      page: number;
-    }
   | { kind: "conversation-active" }
   | { kind: "conversations"; after?: ChatCursor | null; scan?: string }
   | { kind: "task-origin"; taskId: string }
-  | { kind: "conversation"; id: string; before: string | null }
+  | { kind: "conversation"; id: string }
+  | {
+      kind: "conversation-turn";
+      id: string;
+      ordinal: number;
+      /** Exclusive end of the steps to list; null lists the latest ones. */
+      before: number | null;
+    }
+  | {
+      kind: "conversation-step";
+      id: string;
+      turnId: string;
+      step: number;
+      part: number;
+    }
   | { kind: "files"; path: string }
   | { kind: "file"; path: string }
   | { kind: "directories"; path: string }
@@ -173,6 +181,93 @@ export interface ChatTurn {
    * `other` is a block of a type Cadence does not recognize. */
   omitted: { thinking: boolean; media: boolean; other: boolean };
 }
+/** One recorded item of a turn as listed. A listing never carries a tool's
+ * arguments or output and keeps at most `STEP_TEXT_BYTES` of message text;
+ * the full item is read per step with `conversation-step`, one part at a time. */
+export interface ChatStep {
+  id: string;
+  role: ChatItem["role"];
+  /** User or assistant text, a prefix of it when `clipped`; empty for tools. */
+  text: string;
+  clipped: boolean;
+  name: string;
+  /** What a tool acted on: a command's first line, else its pattern and path. */
+  target: string;
+  error: boolean;
+  /** Stored parts that hold the full item; 0 when nothing more is recorded. */
+  parts: number;
+}
+export interface ChatTurnHeader {
+  id: string;
+  epoch: string;
+  status: ChatStatus;
+  notice: string;
+  omitted: ChatTurn["omitted"];
+  steps: number;
+  /** Leading steps that can no longer change: all of them once settled. */
+  stable: number;
+}
+/** Encoded bytes of message text a listed step keeps. */
+export const STEP_TEXT_BYTES = 16 * 1024;
+const TARGET_BYTES = 1024;
+/** Steps one `conversation-turn` read lists: as many as always fit its reply
+ * (512 KiB) at the encoded worst case of every field. */
+export const STEP_READ = 24;
+/** A string's prefix whose JSON encoding fits `bytes`, ending on a whole code point. */
+export function clipText(value: string, bytes: number): string {
+  const size = (s: string) =>
+    new TextEncoder().encode(JSON.stringify(s)).length;
+  if (size(value) <= bytes) return value;
+  let low = 0,
+    high = Math.min(value.length, bytes);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (size(value.slice(0, mid)) <= bytes) low = mid;
+    else high = mid - 1;
+  }
+  return /[\uD800-\uDBFF]/u.test(value.slice(low - 1, low))
+    ? value.slice(0, low - 1)
+    : value.slice(0, low);
+}
+/** What a tool acted on, from its recorded arguments: a command's first line,
+ * else a pattern and path. Partial or unparsable arguments name nothing. */
+export function toolTarget(args: string): string {
+  let value: unknown;
+  try {
+    value = JSON.parse(args);
+  } catch {
+    return "";
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const field = (name: string) => {
+    const v = Object.hasOwn(value, name)
+      ? (value as Record<string, unknown>)[name]
+      : undefined;
+    return typeof v === "string" ? v.trim() : "";
+  };
+  const command = field("command");
+  if (command) return command.split("\n", 1)[0];
+  return [field("pattern"), field("path")].filter(Boolean).join("  ");
+}
+/** The listed form of an item; `more` says its text continues beyond `item.text`. */
+export function chatStep(
+  item: ChatItem,
+  parts: number,
+  more = false,
+): ChatStep {
+  const tool = item.role === "tool";
+  const text = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  return {
+    id: item.id,
+    role: item.role,
+    text,
+    clipped: !tool && (more || text !== item.text),
+    name: item.name,
+    target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
+    error: item.error,
+    parts,
+  };
+}
 export interface ChatCursor {
   id: string;
   updatedAt: number;
@@ -195,12 +290,6 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
-  | {
-      kind: "conversation-transcript";
-      conversationId: string;
-      page: number;
-      turn: ChatTurn;
-    }
   | { kind: "workflow-history-progress"; after: string | null; scan: string }
   | {
       kind: "workflow-history";
@@ -233,11 +322,23 @@ export type WorkbenchResult =
   | { kind: "conversation-active"; entries: ChatSummary[] }
   | { kind: "conversations-progress"; after: ChatCursor | null; scan: string }
   | { kind: "conversations"; entries: ChatSummary[]; next?: ChatCursor | null }
+  | { kind: "conversation"; summary: ChatSummary | null; turns: number }
   | {
-      kind: "conversation";
-      summary: ChatSummary | null;
-      turns: ChatTurn[];
-      before: string | null;
+      kind: "conversation-turn";
+      conversationId: string;
+      ordinal: number;
+      turn: ChatTurnHeader;
+      /** Index of the first listed step. */
+      start: number;
+      steps: ChatStep[];
+    }
+  | {
+      kind: "conversation-step";
+      conversationId: string;
+      turnId: string;
+      step: number;
+      part: number;
+      item: ChatItem;
     }
   | {
       kind: "files" | "directories";
@@ -273,13 +374,23 @@ const statuses = [
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
-    case "conversation-transcript": {
-      const o = closed(v, ["kind", "id", "turnId", "page"]);
+    case "conversation-turn": {
+      const o = closed(v, ["kind", "id", "ordinal", "before"]);
+      return {
+        kind,
+        id: decodeId(o.id),
+        ordinal: integer(o.ordinal, 0),
+        before: nullable(o.before, (b) => integer(b, 0)),
+      };
+    }
+    case "conversation-step": {
+      const o = closed(v, ["kind", "id", "turnId", "step", "part"]);
       return {
         kind,
         id: decodeId(o.id),
         turnId: decodeId(o.turnId),
-        page: integer(o.page, 0),
+        step: integer(o.step, 0),
+        part: integer(o.part, 0),
       };
     }
     case "cadence-conversation": {
@@ -330,8 +441,8 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       return { kind, taskId: decodeId(o.taskId) };
     }
     case "conversation": {
-      const o = closed(v, ["kind", "id", "before"]);
-      return { kind, id: decodeId(o.id), before: nullable(o.before, decodeId) };
+      const o = closed(v, ["kind", "id"]);
+      return { kind, id: decodeId(o.id) };
     }
     default: {
       const o = closed(v, ["kind", "path"]);
@@ -496,17 +607,69 @@ export function decodeChatTurn(v: unknown): ChatTurn {
       media: omitted ? bool(omitted.media) : false,
       other: omitted ? bool(omitted.other) : false,
     },
-    items: list(o.items, 256, (v) => {
-      const i = closed(v, ["id", "role", "text", "name", "args", "error"]);
-      return {
-        id: text(i.id, 160, true),
-        role: oneOf(i.role, ["user", "assistant", "tool"]),
-        text: text(i.text, 256 * 1024),
-        name: text(i.name, 128),
-        args: text(i.args, 64 * 1024),
-        error: bool(i.error),
-      };
-    }),
+    items: list(o.items, 256, decodeChatItem),
+  };
+}
+export function decodeChatItem(v: unknown): ChatItem {
+  const i = closed(v, ["id", "role", "text", "name", "args", "error"]);
+  return {
+    id: text(i.id, 160, true),
+    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    text: text(i.text, 256 * 1024),
+    name: text(i.name, 128),
+    args: text(i.args, 64 * 1024),
+    error: bool(i.error),
+  };
+}
+function decodeChatStep(v: unknown): ChatStep {
+  const o = closed(v, [
+    "id",
+    "role",
+    "text",
+    "clipped",
+    "name",
+    "target",
+    "error",
+    "parts",
+  ]);
+  const step = {
+    id: text(o.id, 160, true),
+    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    text: text(o.text, STEP_TEXT_BYTES),
+    clipped: bool(o.clipped),
+    name: text(o.name, 128),
+    target: text(o.target, TARGET_BYTES),
+    error: bool(o.error),
+    parts: integer(o.parts, 0),
+  };
+  if (step.role === "tool" && (step.text || step.clipped))
+    throw new ContractError("invalid");
+  return step;
+}
+function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
+  const o = closed(v, [
+    "id",
+    "epoch",
+    "status",
+    "notice",
+    "omitted",
+    "steps",
+    "stable",
+  ]);
+  const omitted = closed(o.omitted, ["thinking", "media", "other"]);
+  const steps = integer(o.steps, 0);
+  return {
+    id: decodeId(o.id),
+    epoch: decodeId(o.epoch),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024),
+    omitted: {
+      thinking: bool(omitted.thinking),
+      media: bool(omitted.media),
+      other: bool(omitted.other),
+    },
+    steps,
+    stable: integer(o.stable, 0, steps),
   };
 }
 export function decodeChatSummary(v: unknown): ChatSummary {
@@ -532,14 +695,6 @@ export function decodeChatSummary(v: unknown): ChatSummary {
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
   canonicalJson(v, 512 * 1024);
   const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
-  if (k === "conversation-transcript") {
-    const o = closed(v, ["kind", "conversationId", "page", "turn"]);
-    const turn = decodeChatTurn(o.turn),
-      page = integer(o.page, 0);
-    if (!turn.transcript || page >= turn.transcript.pages)
-      throw new ContractError("invalid");
-    return { kind: k, conversationId: decodeId(o.conversationId), page, turn };
-  }
   if (k === "workflow-transcript") {
     const o = closed(v, ["kind", "runId", "stepId", "turn"]);
     return {
@@ -657,12 +812,50 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     };
   }
   if (kind === "conversation") {
-    const o = closed(v, ["kind", "summary", "turns", "before"]);
+    const o = closed(v, ["kind", "summary", "turns"]);
+    const summary = nullable(o.summary, decodeChatSummary),
+      turns = integer(o.turns, 0);
+    if (!summary && turns) throw new ContractError("invalid");
+    return { kind, summary, turns };
+  }
+  if (kind === "conversation-turn") {
+    const o = closed(v, [
+      "kind",
+      "conversationId",
+      "ordinal",
+      "turn",
+      "start",
+      "steps",
+    ]);
+    const turn = decodeChatTurnHeader(o.turn),
+      start = integer(o.start, 0),
+      steps = list(o.steps, STEP_READ, decodeChatStep);
+    if (start + steps.length > turn.steps) throw new ContractError("invalid");
     return {
       kind,
-      summary: nullable(o.summary, decodeChatSummary),
-      turns: list(o.turns, 20, decodeChatTurn),
-      before: nullable(o.before, decodeId),
+      conversationId: decodeId(o.conversationId),
+      ordinal: integer(o.ordinal, 0),
+      turn,
+      start,
+      steps,
+    };
+  }
+  if (kind === "conversation-step") {
+    const o = closed(v, [
+      "kind",
+      "conversationId",
+      "turnId",
+      "step",
+      "part",
+      "item",
+    ]);
+    return {
+      kind,
+      conversationId: decodeId(o.conversationId),
+      turnId: decodeId(o.turnId),
+      step: integer(o.step, 0),
+      part: integer(o.part, 0),
+      item: decodeChatItem(o.item),
     };
   }
   if (kind === "files" || kind === "directories") {

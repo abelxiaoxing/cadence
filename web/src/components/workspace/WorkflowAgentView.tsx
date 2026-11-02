@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FiCpu } from "react-icons/fi";
 import type { ServiceClient } from "../../../../src/service-client.ts";
+import { recordedTurn } from "../../client/turn-source";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
@@ -49,10 +50,14 @@ export function WorkflowAgentView({
       : null,
     live || !run ? 1000 : 0,
   );
-  const turn =
+  const recorded =
     transcript.value?.kind === "workflow-transcript"
       ? transcript.value.turn
       : null;
+  const turn = useMemo(
+    () => (recorded ? recordedTurn(recorded) : null),
+    [recorded],
+  );
   const [detail, setDetail] = useState(false);
   const result = useWorkbench(
     client,
@@ -63,7 +68,7 @@ export function WorkflowAgentView({
   const scroll = useRef<HTMLDivElement>(null),
     stick = useRef(true);
   // Follow a live transcript while the reader stays at its end.
-  const items = turn?.items.length ?? 0;
+  const items = turn?.steps.length ?? 0;
   useEffect(() => {
     if (items && stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
