@@ -38,7 +38,10 @@ it("native owner absence is readonly and never creates task/service state or a f
   expect(existsSync(join(root, "state"))).toBe(false);
   expect(existsSync(join(root, ".cadence"))).toBe(false);
 });
-it("native local capability never traverses an ambient provider proxy", async () => {
+it("native local capability never traverses an ambient provider proxy", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const f = await acceptingFixture("generated");
   vi.stubEnv("XDG_STATE_HOME", join(f.dir, "state"));
   if (process.platform === "win32")
@@ -79,7 +82,7 @@ it("native local capability never traverses an ambient provider proxy", async ()
       proxy.closeAllConnections();
     });
   }
-}, 20000);
+});
 it("native export verifies digest/EOF, refuses overwrites/links and preserves interrupted output", async () => {
   const root = mkdtempSync(join(tmpdir(), "native-export-"));
   const request: ExportRequest = {

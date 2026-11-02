@@ -147,7 +147,10 @@ async function draft(f: ReturnType<typeof historyFixture>, text: string) {
     })
   ).ownerDetails[0].content;
 }
-it("indexed UTF-8 pages revalidate selected bytes without opening unrelated artifact bodies", async () => {
+it("indexed UTF-8 pages revalidate selected bytes without opening unrelated artifact bodies", {
+  tags: ["slow"],
+  timeout: 15000,
+}, async () => {
   const f = historyFixture(),
     text = "😀".repeat(260000),
     content = await draft(f, text),
@@ -213,7 +216,7 @@ it("indexed UTF-8 pages revalidate selected bytes without opening unrelated arti
     reads.mockRestore();
     batches.mockRestore();
   }
-}, 15000);
+});
 it("legacy task context pages are readonly, byte/version drift invalidates continuations", async () => {
   const f = historyFixture();
   await f.writer.flush();
@@ -602,6 +605,7 @@ it.each([
   "borrowed-content",
 ] as const)(
   "separately admitted human review (%s) binds current obligations without changing blocked execution",
+  { tags: ["slow"] },
   async (mode) => {
     const observation = {
       identity: "a".repeat(64),
@@ -774,6 +778,7 @@ it.each([
 );
 it.each(["text", "range", "version"])(
   "handoff binds genuine committed source/range/text and refuses changed %s",
+  { tags: ["slow"] },
   async (change) => {
     const f = historyFixture(),
       plan = await draft(f, "Inspect one, then use its exact selected result"),

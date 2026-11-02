@@ -32,7 +32,9 @@ beforeAll(() => {
   expect(built.status, built.stderr).toBe(0);
 });
 
-it("submitted detail proof and selected source corruption never restart acceleration", async () => {
+it("submitted detail proof and selected source corruption never restart acceleration", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture(),
     { content } = await retainedText(f, "selected text");
   writeFileSync(

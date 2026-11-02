@@ -53,6 +53,34 @@ it("built browser pages all 205 terminal sessions, continues one as a new branch
     const rows = page
       .locator(".task-list button.session-item")
       .filter({ hasText: "Terminal question" });
+    // The first page is re-read every 2 s; a shown list stays in place and
+    // never flashes the reading hint, which belongs to a page with no rows yet.
+    await page
+      .getByRole("button", { name: /^Terminal question 204/ })
+      .waitFor();
+    await page.evaluate(() => {
+      const list = document.querySelector(".task-list");
+      const seen = { hint: 0, short: 0 };
+      window.__historyFlicker = seen;
+      new MutationObserver(() => {
+        if (list.textContent.includes("Reading conversation history"))
+          seen.hint++;
+        if (list.querySelectorAll("button.session-item").length < 50)
+          seen.short++;
+      }).observe(list, { subtree: true, childList: true, characterData: true });
+    });
+    const reread = () =>
+      page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/v1/workbench/read") &&
+          decodeURIComponent(response.url()).includes('"conversations"'),
+      );
+    await reread();
+    await reread();
+    assert.deepEqual(await page.evaluate(() => window.__historyFlicker), {
+      hint: 0,
+      short: 0,
+    });
     const seen = new Set();
     for (let n = 0; n < 5; n++) {
       const first = 204 - n * 50;

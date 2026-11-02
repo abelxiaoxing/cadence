@@ -24,7 +24,9 @@ import {
   storedTree,
 } from "./helpers/history-read-fixture.ts";
 
-it("review: list resumes a suspended final tail proof before reporting completion", async () => {
+it("review: list resumes a suspended final tail proof before reporting completion", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   await retainedText(f, "retained");
   appendFileSync(f.files.segmentPath(1), "x".repeat(200000));
@@ -87,7 +89,9 @@ it("review: list resumes a suspended final tail proof before reporting completio
   }
 });
 
-it("review: maximum ordered reference membership resumes cold without serialized rows or references", async () => {
+it("review: maximum ordered reference membership resumes cold without serialized rows or references", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   const events: SavedEvent[] = Array.from(
     { length: LIMITS.ownerQueueFrames },

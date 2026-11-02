@@ -22,7 +22,9 @@ import {
 import { selectLegacy } from "./helpers/history-publication-fixture.ts";
 import { readProjection, storedTree } from "./helpers/history-read-fixture.ts";
 
-it("subsequent candidate-less uncertainty survives reopened/finite projections and both complete exports without changing execution", async () => {
+it("subsequent candidate-less uncertainty survives reopened/finite projections and both complete exports without changing execution", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   selectLegacy(f);
   expect((await f.writer.commit(f.intent)).status).toBe("committed");

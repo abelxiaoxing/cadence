@@ -45,7 +45,9 @@ it("incremental text redacts split literals, heuristic values and terminal seque
     );
   }
 });
-it("heuristic suffix never emits a split Unicode pair through worker and owner projections", () => {
+it("heuristic suffix never emits a split Unicode pair through worker and owner projections", {
+  tags: ["slow"],
+}, () => {
   // Native PTY's long advisory text exposed a 64-code-unit tail cut at 🧪.
   // Each emission must be valid independently, not only after concatenation.
   const text = Array.from(
@@ -239,7 +241,10 @@ for (const partial of [
   });
 
 for (const tool of [false, true, "invalid-utf8" as const])
-  it(`actual v2 SDK/native capture and custom bash: tool=${tool}`, async () => {
+  it(`actual v2 SDK/native capture and custom bash: tool=${tool}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const root = mkdtempSync(join(tmpdir(), "cadence-w2-producer-"));
     const canary = "fabricated-capture-canary";
     let requests = 0;
@@ -415,7 +420,7 @@ for (const tool of [false, true, "invalid-utf8" as const])
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-  }, 20000);
+  });
 
 it("shared native decoder rejects changed hash, sequence, detail ownership and selected final", () => {
   const frames = v2Frames("exact final")
@@ -672,7 +677,9 @@ for (const callback of ["pending", "throws", "rejects"] as const)
     expect(ingress.frames).toBe(0);
     expect(queue.bytes).toBe(0);
   });
-it("custom bash accumulator participates in the shared bound before append; no spill/retry", async () => {
+it("custom bash accumulator participates in the shared bound before append; no spill/retry", {
+  tags: ["slow"],
+}, async () => {
   const queue = new CaptureQueue();
   let failed = 0,
     runs = 0,
@@ -814,7 +821,10 @@ it("ordinary simultaneous partial declarations do not spend megabyte leases on e
 });
 
 // Actual HTTP failure and public SDK, not an injected successful transcript.
-it("a provider HTTP error retains its error message and reports prompt failure, not capture corruption", async () => {
+it("a provider HTTP error retains its error message and reports prompt failure, not capture corruption", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "cadence-prompt-failure-"));
   const key = "fabricated-prompt-failure-canary";
   let contacts = 0;
@@ -910,4 +920,4 @@ it("a provider HTTP error retains its error message and reports prompt failure, 
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-}, 20000);
+});

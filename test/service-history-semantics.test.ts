@@ -911,7 +911,9 @@ it("data cannot consume episode control headroom; original failed native settlem
   });
 });
 
-it("owner operation metadata has a finite lifetime bound even when each begin lease has settled", async () => {
+it("owner operation metadata has a finite lifetime bound even when each begin lease has settled", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   for (let i = 0; i <= LIMITS.admissionCount; i++) {
     const input: OwnerRecordingInput = {
