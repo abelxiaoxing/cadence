@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
-import type {
-  ChatItem,
-  ChatTurn,
+import {
+  type ChatItem,
+  type ChatTurn,
+  toolTarget,
 } from "../../src/service/contracts/workbench.ts";
 import {
   LAST_PROJECT_STORAGE_KEY,
@@ -12,10 +13,10 @@ import {
   rememberProject,
   restorableProject,
 } from "../../web/src/client/last-project";
+import { recordedTurn } from "../../web/src/client/turn-source";
 import { cadenceInput } from "../../web/src/client/use-workbench";
 import {
   LEGACY_OMITTED_NOTICE,
-  toolTarget,
   turnParts,
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
@@ -55,47 +56,50 @@ it("only an explicit leading command selects Cadence; mentions, quoted commands 
     text: "explicit mode",
   });
 });
-it("ordinary messages use rich text and folded real tool results, not task success inference", () => {
-  const html = renderToStaticMarkup(
-    <ChatTurnView
-      turn={{
-        id: "turn",
-        epoch: "epoch",
-        status: "failed",
-        notice: "worker-failure: prompt",
-        omitted: { thinking: false, media: false, other: false },
-        items: [
-          {
-            id: "u",
-            role: "user",
-            text: "Hello",
-            name: "",
-            args: "",
-            error: false,
-          },
-          {
-            id: "t",
-            role: "tool",
-            text: "actual output",
-            name: "read",
-            args: '{"path":"file.txt"}',
-            error: false,
-          },
-          {
-            id: "a",
-            role: "assistant",
-            text: "**Visible** response",
-            name: "",
-            args: "",
-            error: false,
-          },
-        ],
-      }}
-    />,
-  );
+it("ordinary messages use rich text and folded real tool results, not task success inference", async () => {
+  const turn = recordedTurn({
+    id: "turn",
+    epoch: "epoch",
+    status: "failed",
+    notice: "worker-failure: prompt",
+    omitted: { thinking: false, media: false, other: false },
+    items: [
+      {
+        id: "u",
+        role: "user",
+        text: "Hello",
+        name: "",
+        args: "",
+        error: false,
+      },
+      {
+        id: "t",
+        role: "tool",
+        text: "actual output",
+        name: "read",
+        args: '{"path":"file.txt"}',
+        error: false,
+      },
+      {
+        id: "a",
+        role: "assistant",
+        text: "**Visible** response",
+        name: "",
+        args: "",
+        error: false,
+      },
+    ],
+  });
+  const html = renderToStaticMarkup(<ChatTurnView turn={turn} />);
   expect(html).toContain("<strong>Visible</strong>");
   expect(html).toContain('<details class="chat-tool">');
-  expect(html).toContain("actual output");
+  expect(html).toContain(">file.txt</span>");
+  // A tool's arguments and output are read only once its step is opened.
+  expect(html).not.toContain("actual output");
+  expect(await turn.detail(1, 1, new AbortController().signal)).toEqual({
+    text: "actual output",
+    args: '{"path":"file.txt"}',
+  });
   expect(html).toContain("worker-failure: prompt");
   expect(html).toContain("ep-state failed");
   expect(html).not.toContain("PASS");
@@ -116,14 +120,14 @@ const chatItem = (
 const renderTurn = (turn: Partial<ChatTurn> & Pick<ChatTurn, "items">) =>
   renderToStaticMarkup(
     <ChatTurnView
-      turn={{
+      turn={recordedTurn({
         id: "turn",
         epoch: "epoch",
         status: "completed",
         notice: "",
         omitted: { thinking: false, media: false, other: false },
         ...turn,
-      }}
+      })}
     />,
   );
 it("a turn's steps fold under one summary line and its answer keeps the only speaker label", () => {
@@ -149,8 +153,17 @@ it("a turn's steps fold under one summary line and its answer keeps the only spe
     chatItem("m3", "assistant"),
     chatItem("m4", "assistant", { text: "**Final** answer" }),
   ];
-  const parts = turnParts(items);
-  expect(parts.steps.map((item) => item.id)).toEqual([
+  const parts = turnParts(
+    recordedTurn({
+      id: "turn",
+      epoch: "epoch",
+      status: "completed",
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      items,
+    }).steps,
+  );
+  expect(parts.steps.map(({ step }) => step.id)).toEqual([
     "t1",
     "m2",
     "t2",
@@ -158,7 +171,7 @@ it("a turn's steps fold under one summary line and its answer keeps the only spe
     "t4",
     "t5",
   ]);
-  expect(parts.answer.map((item) => item.id)).toEqual(["m4"]);
+  expect(parts.answer.map(({ step }) => step.id)).toEqual(["m4"]);
   const html = renderTurn({
     notice: LEGACY_OMITTED_NOTICE,
     omitted: { thinking: true, media: false, other: false },
@@ -212,11 +225,11 @@ it("step summaries count model-named tools without reaching the prototype", () =
       tool("d", "powershell", '{"command":"Get-ChildItem"}'),
       tool("e", "ls"),
       tool("f", "ls", '{"limit":5}'),
-      tool("g", "ls", '{"path":'),
+      tool("g", "ls", '{"path":"src"}'),
       chatItem("z", "assistant", { text: "Done" }),
     ],
   });
-  // The working directory counts once; partial arguments name nothing.
+  // A listing without a path is the working directory and counts once.
   expect(html).toContain("Used 3 tools · Ran 1 command · Listed 2 directories");
 });
 it("each omitted content kind gets its own line and a title when no tool ran", () => {

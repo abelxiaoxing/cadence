@@ -446,3 +446,24 @@ The systemd lane passed with that final source.
 A separate Bun pack contains 151 files; SHA-256 `eae7f0915b086a7f4ad0f5cc793e71178718cba7cc1b017ff7a589df532209da`, SHA-1 `7eee8a5ef27127885b2b0b227b61c16f3a5b0be4`.
 Observed environment: Linux, systemd 259 user manager, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); system-scope units, macOS and Windows were not executed, and their WebUI restart and upgrade stay unavailable.
 Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Release 2.0.30 acceptance snapshot
+
+A remote WebUI conversation of only two turns opened on "Earlier messages"/"Latest messages" pages: the conversation read returned at most 20 turns within 400KiB, each turn carried all of its tool output inline (233KB and 391KB there), the page re-read about 383KiB uncompressed every second, and switching pages fell back to the new-conversation welcome while it loaded.
+Conversation reads no longer page by turns or bytes: `conversation` returns the summary and turn count, `conversation-turn` lists one turn's steps by position without tool arguments or output and with at most 16KiB of message text, and `conversation-step` returns one stored part of a step's full item; `conversation-transcript` and the `before` page are removed.
+A turn read lists at most 24 steps, the most that always fit one 512KiB reply at every field's encoded worst case; the client reads further ranges itself.
+Paged turns are listed from their immutable transcript pages through a cached per-turn index, followed by preview items no page holds yet; unpaged and older turns list their own items without migration.
+The WebUI reads a conversation as one continuous transcript: newest turns first, earlier ones as the top nears the viewport, distant turns as measured placeholders, tool detail when a step opens and a clipped message's rest when it is shown.
+It polls only the small head, every second while a turn is queued or running and every ten seconds otherwise, never reads a settled turn again, and keeps what is shown while a read is pending or the owner is briefly unavailable.
+Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it, also through the gateway; session replies never are.
+Streaming capture rescanned the whole accumulated answer on every chunk (about 2352Mi characters measured for a 2.5MiB reply), stalling the owner past its 5s keep-alive so that reads failed `unavailable` under load.
+Capture now keeps per-detail byte counts and preview heads incrementally (2.4s to 0.43s on Node for that reply); five concurrent `service-conversation-pages` runs failed 5/5 before and passed 5/5 after, resolving the load failure recorded for 2.0.29.
+The contract changes, so 2.0.29 and 2.0.30 clients and owners refuse each other as incompatible.
+
+Unit tests cover the step listing from pages and previews, the worst-case listing reply, linear capture work, gzip negotiation and the browser reader (settled turns read once, ranges assembled, shown turns kept while a new one loads); the browser scenario opens a tool's output on demand, observes no turn read while idle and loads the earliest turn by scrolling after a reload.
+A real Chromium run of the built WebUI in Chinese kept four turns continuous with no page control; screenshots are kept untracked in the main checkout under `预览图片/2026-11-01/chat-continuous-scroll/`.
+The release `verify` passed on its first run: 1790 root/native tests in 88 files with 28 skipped, 151 WebUI tests in 16 files, eight browser scenarios in seven files and the 151-member pack audit.
+Earlier development runs failed only `service-history` and `service-owner` 5s budgets at load, and both files pass alone; no budget was changed.
+A separate Bun pack contains 151 files; SHA-256 `f3f984aef1c10427e7a993d2a5e04ee51514de45412d9ad6d998de30e3b0de23`, SHA-1 `64f3f3b5f3a9932d153ff30d55b109b5257cfc2b`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.

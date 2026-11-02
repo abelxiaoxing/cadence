@@ -2351,6 +2351,13 @@ summary:focus-visible,
 .chat-messages > .empty-state {
   min-height: 40vh;
 }
+.chat-earlier,
+.chat-reading {
+  min-height: 24px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}
 .chat-turn {
   max-width: 920px;
   margin: 0 auto 20px;

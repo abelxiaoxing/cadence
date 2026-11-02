@@ -7,11 +7,6 @@ export const zh = {
   "Reading conversation history…": "正在读取会话历史…",
   "Older conversations": "更早的会话",
   "Conversation activity unavailable.": "当前无法读取会话运行状态。",
-  "Long messages and tool results continue on the next transcript page.":
-    "长消息和工具结果会在下一页记录中继续。",
-  "Transcript page {page} of {pages}": "记录第 {page} 页，共 {pages} 页",
-  "Full transcript ({pages} pages)": "完整记录（{pages} 页）",
-  "Turn transcript": "本轮完整记录",
   "Files / history": "文件 / 历史",
   "Files and history drawer": "文件与历史面板",
   History: "历史",
@@ -223,8 +218,10 @@ export const zh = {
   "Conversation turn": "对话轮次",
   You: "你",
   Tool: "工具",
-  "Earlier messages": "较早的消息",
   "Latest messages": "最新消息",
+  "Reading this conversation…": "正在读取对话…",
+  "Reading earlier messages…": "正在读取更早的消息…",
+  "Reading the rest of this message…": "正在读取这条消息的其余部分…",
   "Send outcome not yet observed:": "尚未观察到此次发送的结果：",
   "Observe this send before sending again. No automatic retry.":
     "请先观察此次发送的结果，不会自动重试。",

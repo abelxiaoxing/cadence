@@ -64,7 +64,8 @@ Browser download requested is not UI-verified completion; native export verifies
 ## Ordinary conversation records
 
 Ordinary/coordinator transcripts use immutable `turns/<turn>/transcript/<page>.json` records, published by page count only after their durable write.
-The bounded `turn.json` is explicitly a latest preview; exact conversation/turn/page reads validate membership and never reconstruct missing pages.
+The bounded `turn.json` is explicitly a latest preview; exact conversation/turn/step reads validate membership and never reconstruct missing pages.
+`src/service/conversation-steps.ts` lists a paged turn from its pages (consecutive pages of one item are one step) followed by preview items no page holds yet, caching the page index per turn because pages never change.
 Finalized items are retained in completion order, with oversized fields continued across pages; an interrupted turn keeps its sanitized partial observations and actual status.
 Version-2 continuation manifests bind `context-<index>.json` records by a hash chain.
 Each message crosses the anonymous pipe separately and is sanitized again by the owner before persistence.

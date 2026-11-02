@@ -84,6 +84,13 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
       await p.locator(".chat-steps-title").textContent(),
       "Read 1 file",
     );
+    // A tool's arguments and output are read only when its step is opened.
+    assert.equal(await p.locator("details.chat-tool pre").count(), 0);
+    await p.locator("details.chat-tool summary").click();
+    await p
+      .locator("details.chat-tool[open] pre")
+      .getByText("pre-existing dirt is preserved")
+      .waitFor();
     assert.equal(f.contacts(), 2);
     f.mode("single");
     await p
@@ -103,36 +110,58 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
           ?.textContent === "completed",
     );
     assert.equal(f.contacts(), base + 1);
-    // Full records are readonly pages, independent of the latest preview.
-    await p.getByRole("button", { name: "Full transcript (2 pages)" }).click();
-    await p.getByText("Transcript page 1 of 2", { exact: true }).waitFor();
+    // One continuous transcript: no page to switch, and a settled turn is
+    // never read again; only the small conversation head is observed.
     await p
       .locator(".chat-message.user")
       .getByText("Browser ordinary conversation", { exact: true })
       .waitFor();
-    await p.getByRole("button", { name: "Next page", exact: true }).click();
-    await p.getByText("Transcript page 2 of 2", { exact: true }).waitFor();
-    await p
-      .locator(".chat-message.assistant")
-      .getByText(/Advisory:/)
-      .waitFor();
-    await p.getByRole("button", { name: "Previous page", exact: true }).click();
-    await p
-      .locator(".chat-message.user")
-      .getByText("Browser ordinary conversation", { exact: true })
-      .waitFor();
-    await p
-      .getByRole("button", { name: "Latest messages", exact: true })
-      .click();
-    await p
-      .locator(".chat-message.assistant")
-      .getByText(/Advisory:/)
-      .waitFor();
+    assert.equal(
+      await p
+        .getByRole("button", { name: /Earlier messages|Full transcript/ })
+        .count(),
+      0,
+    );
+    await p.waitForTimeout(500);
+    const reads = [];
+    const track = (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.endsWith("/workbench/read"))
+        reads.push(JSON.parse(url.searchParams.get("request") ?? "{}").kind);
+    };
+    p.on("request", track);
+    await p.waitForTimeout(2500);
+    p.off("request", track);
+    assert.equal(
+      reads.filter((kind) =>
+        ["conversation-turn", "conversation-step"].includes(kind),
+      ).length,
+      0,
+      JSON.stringify(reads),
+    );
+    assert(reads.filter((kind) => kind === "conversation").length <= 1);
     assert.equal(
       f.contacts(),
       base + 1,
-      "paging never sends or replays a turn",
+      "observation never sends or replays a turn",
     );
+    const messages = [
+      "Browser ordinary conversation",
+      "Second message",
+      "Third message",
+    ];
+    for (const [n, text] of messages.entries()) {
+      if (n === 0) continue;
+      await input.fill(text);
+      await p.getByRole("button", { name: "Send", exact: true }).click();
+      await p
+        .locator(".chat-turn")
+        .nth(n)
+        .locator(".chat-message.assistant")
+        .getByText(/Advisory:/)
+        .waitFor();
+    }
+    assert.equal(f.contacts(), base + 3);
     const chatUrl = p.url();
     await p.getByRole("button", { name: "existing.txt", exact: true }).click();
     await p
@@ -161,10 +190,25 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
     );
     await p.reload();
     assert.equal(p.url(), chatUrl);
-    await p
-      .locator(".chat-message.assistant")
-      .getByText(/Advisory:/)
-      .waitFor();
+    // A fresh page shows the newest turns, then reads earlier ones as their
+    // place comes into view; nothing is clicked and no turn is read twice.
+    const turnReads = [];
+    const trackTurns = (request) => {
+      const url = new URL(request.url());
+      const read = url.pathname.endsWith("/workbench/read")
+        ? JSON.parse(url.searchParams.get("request") ?? "{}")
+        : null;
+      if (read?.kind === "conversation-turn") turnReads.push(read.ordinal);
+    };
+    p.on("request", trackTurns);
+    for (const text of messages)
+      await p
+        .locator(".chat-message.user")
+        .getByText(text, { exact: true })
+        .waitFor();
+    await p.waitForTimeout(1500);
+    p.off("request", trackTurns);
+    assert.deepEqual(turnReads.sort(), [0, 1, 2]);
     const drawer = async (side, open) =>
       p.waitForFunction(
         ({ side, open }) => {
@@ -220,11 +264,11 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
     await p
       .getByRole("dialog", { name: "Open working folder", exact: true })
       .waitFor();
-    assert.equal(f.contacts(), base + 1);
+    assert.equal(f.contacts(), base + 3);
     await p.keyboard.press("Escape");
     assert.equal(
       f.contacts(),
-      base + 1,
+      base + 3,
       "readonly navigation does not send or create tasks",
     );
     assert.deepEqual(errors, []);

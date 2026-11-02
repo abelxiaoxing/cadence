@@ -2,13 +2,12 @@
  * MessageList. MIT (c) 2026 xing-shuyin. One disclosure for a turn's intermediate
  * steps, so the answer leads; steps keep their recorded arguments and output and
  * nothing is inferred about success. */
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { FiChevronRight } from "react-icons/fi";
-import type {
-  ChatItem,
-  ChatTurn,
-} from "../../../../src/service/contracts/workbench.ts";
-import { type MessageKey, useT } from "../../i18n/locale";
+import type { ChatStep } from "../../../../src/service/contracts/workbench.ts";
+import type { TurnSource } from "../../client/conversation-reader";
+import { useStepDetail } from "../../client/turn-source";
+import { describeError, type MessageKey, useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
@@ -16,48 +15,26 @@ import { Markdown } from "../rich/Markdown";
 export const LEGACY_OMITTED_NOTICE =
   "Hidden thinking, signatures and media are not retained.";
 
+export interface IndexedStep {
+  step: ChatStep;
+  index: number;
+}
 /** Steps run through the last tool call; assistant text after it is the answer. */
-export function turnParts(items: readonly ChatItem[]): {
-  steps: ChatItem[];
-  answer: ChatItem[];
+export function turnParts(steps: readonly ChatStep[]): {
+  user: IndexedStep[];
+  steps: IndexedStep[];
+  answer: IndexedStep[];
 } {
-  const replies = items.filter((item) => item.role !== "user");
-  const last = replies.findLastIndex((item) => item.role === "tool");
-  const shown = (item: ChatItem) =>
-    item.role === "tool" || item.text.trim() !== "";
+  const indexed = steps.map((step, index) => ({ step, index }));
+  const replies = indexed.filter(({ step }) => step.role !== "user");
+  const last = replies.findLastIndex(({ step }) => step.role === "tool");
+  const shown = ({ step }: IndexedStep) =>
+    step.role === "tool" || step.text.trim() !== "";
   return {
+    user: indexed.filter(({ step }) => step.role === "user"),
     steps: replies.slice(0, last + 1).filter(shown),
     answer: replies.slice(last + 1).filter(shown),
   };
-}
-
-/** A tool's recorded arguments as an object; partial or unparsable ones are null. */
-function toolArgs(args: string): object | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(args);
-  } catch {
-    return null;
-  }
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : null;
-}
-
-/** What a tool acted on, from its recorded arguments: a command's first line,
- * else a pattern and path. Partial or unparsable arguments name nothing. */
-export function toolTarget(args: string): string {
-  const value = toolArgs(args);
-  if (!value) return "";
-  const field = (name: string) => {
-    const v = Object.hasOwn(value, name)
-      ? (value as Record<string, unknown>)[name]
-      : undefined;
-    return typeof v === "string" ? v.trim() : "";
-  };
-  const command = field("command");
-  if (command) return command.split("\n", 1)[0];
-  return [field("pattern"), field("path")].filter(Boolean).join("  ");
 }
 
 type Kind = "read" | "list" | "search" | "run" | "edit" | "other";
@@ -84,12 +61,11 @@ const PHRASES: Readonly<Record<Kind, readonly [MessageKey, MessageKey]>> = {
 };
 // Files and directories count once however often they are touched; calls count each time.
 const BY_TARGET: ReadonlySet<Kind> = new Set(["read", "list", "edit"]);
-function countKey(step: ChatItem, kind: Kind): string {
+function countKey(step: ChatStep, kind: Kind): string {
   if (!BY_TARGET.has(kind)) return step.id;
-  const target = toolTarget(step.args);
-  if (target) return target;
+  if (step.target) return step.target;
   // `ls` without a path lists the working directory.
-  return kind === "list" && toolArgs(step.args) ? "." : step.id;
+  return kind === "list" ? "." : step.id;
 }
 
 export function ChatSteps({
@@ -97,20 +73,27 @@ export function ChatSteps({
   steps,
   live,
   answered,
+  toggled = null,
+  onToggle,
 }: {
-  turn: ChatTurn;
-  steps: readonly ChatItem[];
+  turn: TurnSource;
+  steps: readonly IndexedStep[];
   live: boolean;
   answered: boolean;
+  /** The user's own choice, kept by the caller across remounts. */
+  toggled?: boolean | null;
+  onToggle?(open: boolean): void;
 }) {
   const { t } = useT();
   // A turn that ends without an answer opens, so its steps explain the outcome;
   // this follows the turn as it settles until the user toggles it themselves.
-  const [toggled, setToggled] = useState<boolean | null>(null);
-  const open = toggled ?? (!live && !answered);
-  const tools = steps.filter((step) => step.role === "tool");
+  const [own, setOwn] = useState<boolean | null>(toggled);
+  const open = own ?? (!live && !answered);
+  const tools = steps
+    .map(({ step }) => step)
+    .filter((step) => step.role === "tool");
   const failed = tools.filter((step) => step.error).length;
-  const { thinking, media, other } = turn.omitted;
+  const { thinking, media, other } = turn.header.omitted;
   const notes = [
     thinking && t("Thinking is not retained."),
     media && t("Media is not retained."),
@@ -120,7 +103,7 @@ export function ChatSteps({
   if (live) {
     const latest = tools.at(-1);
     title = latest
-      ? `${t("Working…")} ${latest.name || t("Tool")} ${toolTarget(latest.args)}`.trim()
+      ? `${t("Working…")} ${latest.name || t("Tool")} ${latest.target}`.trim()
       : t("Working…");
   } else {
     const seen = new Map<Kind, Set<string>>();
@@ -169,18 +152,23 @@ export function ChatSteps({
       className="chat-steps"
       aria-label={t("Working steps")}
       open={open}
-      onToggle={(event) => setToggled(event.currentTarget.open)}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        if (next === open) return;
+        setOwn(next);
+        onToggle?.(next);
+      }}
     >
       <summary className="chat-steps-head">{head}</summary>
       {steps.length > 0 && (
         <ol className="chat-steps-list">
-          {steps.map((step) => (
-            <li key={step.id}>
+          {steps.map(({ step, index }) => (
+            <li key={index}>
               {step.role === "tool" ? (
-                <ToolStep item={step} />
+                <ToolStep turn={turn} index={index} step={step} />
               ) : (
                 <div className="chat-step-note">
-                  <Markdown text={step.text} />
+                  <StepText turn={turn} index={index} step={step} />
                 </div>
               )}
             </li>
@@ -196,22 +184,76 @@ export function ChatSteps({
   );
 }
 
-function ToolStep({ item }: { item: ChatItem }) {
+/** A message's text. A clipped listing reads the whole text once the step can
+ * no longer change; until then only its preview exists. */
+export function StepText({
+  turn,
+  index,
+  step,
+  render = (text) => <Markdown text={text} />,
+}: {
+  turn: TurnSource;
+  index: number;
+  step: ChatStep;
+  render?(text: string): ReactNode;
+}) {
   const { t } = useT();
-  const target = toolTarget(item.args);
+  const settled = index < turn.header.stable;
+  const full = useStepDetail(turn, index, step, step.clipped && settled);
   return (
-    <details className="chat-tool">
+    <>
+      {render(full.value?.text ?? step.text)}
+      {step.clipped && settled && !full.value && (
+        <p className={full.error ? "banner-notice" : "inspector-note"}>
+          {full.error
+            ? describeError(t, full.error)
+            : t("Reading the rest of this message…")}
+        </p>
+      )}
+    </>
+  );
+}
+
+function ToolStep({
+  turn,
+  index,
+  step,
+}: {
+  turn: TurnSource;
+  index: number;
+  step: ChatStep;
+}) {
+  const { t } = useT();
+  // Arguments and output are read only once the step is opened.
+  const [open, setOpen] = useState(false);
+  const detail = useStepDetail(turn, index, step, open);
+  return (
+    <details
+      className="chat-tool"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>
-        <span className="chat-tool-name">{item.name || t("Tool")}</span>
-        {target && (
-          <span className="chat-tool-target" title={target}>
-            {target}
+        <span className="chat-tool-name">{step.name || t("Tool")}</span>
+        {step.target && (
+          <span className="chat-tool-target" title={step.target}>
+            {step.target}
           </span>
         )}
-        {item.error && <span className="ep-state failed">{t("failed")}</span>}
+        {step.error && <span className="ep-state failed">{t("failed")}</span>}
       </summary>
-      {item.args && <pre>{item.args}</pre>}
-      {item.text && <pre>{item.text}</pre>}
+      {open &&
+        step.parts > 0 &&
+        (detail.value ? (
+          <>
+            {detail.value.args && <pre>{detail.value.args}</pre>}
+            {detail.value.text && <pre>{detail.value.text}</pre>}
+          </>
+        ) : (
+          <p className={detail.error ? "banner-notice" : "inspector-note"}>
+            {detail.error ? describeError(t, detail.error) : t("Reading…")}
+          </p>
+        ))}
     </details>
   );
 }

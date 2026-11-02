@@ -147,8 +147,12 @@ Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.m
 Conversation and per-conversation turn counts have no lifetime admission cap; only active-work concurrency is bounded.
 History is recent-first and paged, continuing readonly bounded scans as necessary; active conversations use a separate roster and never disappear merely because an older history page is selected.
 New turns append immutable ordinal slots while keeping a small expected-byte head/count manifest; old inline turn IDs remain a readable prefix, extended only by explicit Send without bulk migration.
-New ordinary/coordinator turns retain complete sanitized text and tool exchanges in immutable transcript pages, with a labelled latest preview and readonly Previous/Next navigation; 384KiB is a page/snapshot bound, not a whole-turn execution cutoff.
-Large fields continue across pages without losing Unicode or JSON-escaped text; navigating pages never sends, retries or grows an unbounded client list.
+New ordinary/coordinator turns retain complete sanitized text and tool exchanges in immutable transcript pages, with a labelled latest preview of work in progress; 384KiB is a page/snapshot bound, not a whole-turn execution cutoff.
+Large fields continue across pages without losing Unicode or JSON-escaped text.
+A conversation reads as one continuous transcript, with no page to switch: the head read gives only the summary and turn count, each turn is read by position as listed steps, and a step's full item is read separately.
+A listing never carries a tool's arguments or output and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
+The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
+It polls the small head every second only while a turn is queued or running, every ten seconds otherwise, and never reads a settled turn again; what is shown stays while a read is pending or the owner is briefly unavailable.
 Continuation checkpoints use hash-chained per-message records and a small committed manifest, so the former 2MiB aggregate pipe/file cap no longer ends otherwise successful replies.
 The separate conversation store has no aggregate byte or file-count quota and never evicts history; the free-space floor and per-record/process safety bounds remain (see `engineering/limits.md`).
 Old turns and checkpoints remain readable without migration.

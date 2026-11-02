@@ -1,25 +1,11 @@
 /* Direct adaptation of pi-web-ui MessageList.tsx lazy-window/scroll-follow family.
  * MIT (c) 2026 xing-shuyin. Network paging is independent of DOM windowing.
  * Stable committed entity versions replace stream-ID guesses; orphan results are retained. */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useMemo, useRef } from "react";
 import { FiArrowDown } from "react-icons/fi";
 import { usePage } from "../../history/use-page";
 import { useT } from "../../i18n/locale";
-import {
-  applyPlan,
-  getPlaceholderHeight,
-  type HeightEntry,
-  pickAlways,
-  planWindow,
-  type WinRect,
-} from "../../transcript/lazy-window";
+import { useLazyWindow } from "../../transcript/use-lazy-window";
 import type { HistoryRecord, ListRequest, ServiceClient } from "../../types";
 import { PageControls } from "../history/PageControls";
 import { LazyMount } from "./LazyMount";
@@ -37,77 +23,17 @@ function WindowedMessages({
   const { t } = useT();
   const scrollRef = useRef<HTMLDivElement>(null),
     stickRef = useRef(true);
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
-  const hiddenRef = useRef(hidden);
-  hiddenRef.current = hidden;
-  const heightsRef = useRef(new Map<string, number>()),
-    heightMetaRef = useRef(new Map<string, HeightEntry>());
-  const elsRef = useRef(new Map<string, HTMLDivElement>()),
-    sweepRafRef = useRef(0);
   const rows = useMemo(
     () =>
       messages.map((message) => ({
         id: message.owner.entity.id,
         role: message.role,
+        version: message.version,
         message,
       })),
     [messages],
   );
-  const fpRef = useRef(new Map<string, number>());
-  fpRef.current = new Map(rows.map((r) => [r.id, r.message.version]));
-  const alwaysRef = useRef(new Set<string>());
-  alwaysRef.current = pickAlways(rows, heightsRef.current, 1800);
-  const recordMeasured = useCallback((id: string, h: number) => {
-    const len = fpRef.current.get(id);
-    if (len === undefined) return;
-    heightMetaRef.current.set(id, { h, len });
-    heightsRef.current.set(id, h);
-  }, []);
-  const sweep = useCallback(() => {
-    const root = scrollRef.current;
-    if (!root) return;
-    const bounds = root.getBoundingClientRect();
-    const items: WinRect[] = [];
-    for (const [id, el] of elsRef.current) {
-      const b = el.getBoundingClientRect();
-      items.push({ id, top: b.top, bottom: b.bottom });
-      if (!hiddenRef.current.has(id)) recordMeasured(id, b.height);
-    }
-    const plan = planWindow(
-      items,
-      { top: bounds.top - 1200, bottom: bounds.bottom + 1200 },
-      alwaysRef.current,
-      hiddenRef.current,
-      { top: bounds.top - 2400, bottom: bounds.bottom + 2400 },
-    );
-    for (const id of plan.hide) {
-      const el = elsRef.current.get(id);
-      if (el) recordMeasured(id, el.offsetHeight);
-    }
-    setHidden((prev) => applyPlan(prev, plan));
-  }, [recordMeasured]);
-  const scheduleSweep = useCallback(() => {
-    if (sweepRafRef.current) return;
-    sweepRafRef.current = requestAnimationFrame(() => {
-      sweepRafRef.current = 0;
-      sweep();
-    });
-  }, [sweep]);
-  useLayoutEffect(() => {
-    if (!rows.length) {
-      setHidden(new Set());
-      return;
-    }
-    sweep();
-  }, [sweep, rows]);
-  useEffect(() => {
-    const observer = new ResizeObserver(scheduleSweep);
-    if (scrollRef.current) observer.observe(scrollRef.current);
-    return () => {
-      observer.disconnect();
-      cancelAnimationFrame(sweepRafRef.current);
-    };
-  }, [scheduleSweep]);
+  const lazy = useLazyWindow(scrollRef, rows);
   return (
     <div className="messages-wrap">
       <div
@@ -117,26 +43,22 @@ function WindowedMessages({
           const el = e.currentTarget;
           stickRef.current =
             el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          scheduleSweep();
+          lazy.scheduleSweep();
         }}
       >
         {rows.map(({ id, role, message }) => (
           <LazyMount
             key={id}
             id={id}
-            show={!hidden.has(id)}
-            height={getPlaceholderHeight(
+            show={!lazy.hidden.has(id)}
+            height={lazy.placeholder(
               id,
               message.version,
-              heightMetaRef.current,
               role === "user" ? 100 : 280,
             )}
             containerRef={scrollRef}
-            onMeasured={recordMeasured}
-            lazyRef={(el) => {
-              if (el) elsRef.current.set(id, el);
-              else elsRef.current.delete(id);
-            }}
+            onMeasured={lazy.recordMeasured}
+            lazyRef={lazy.register(id)}
           >
             <Message message={message} client={client} seed={seed} />
           </LazyMount>

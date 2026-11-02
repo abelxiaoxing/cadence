@@ -47,11 +47,7 @@ it("a restarted generated owner continues turn 1001 and admits conversation 206 
       expect(sent.kind).toBe("ok");
       let settled = false;
       for (let n = 0; n < 750; n++) {
-        const view = await client.workbenchRead({
-          kind: "conversation",
-          id,
-          before: null,
-        });
+        const view = await client.workbenchRead({ kind: "conversation", id });
         if (view.kind !== "ok" || view.value.kind !== "conversation")
           throw Error(JSON.stringify(view));
         const status = view.value.summary?.status;

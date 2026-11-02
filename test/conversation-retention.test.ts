@@ -135,11 +135,23 @@ it("a legacy 1000-turn conversation continues into constant-size indexed metadat
   cold.assertSettled();
   expect(cold.hasTurn(id, prefix[0])).toBe(true);
   expect(cold.hasTurn(id, head)).toBe(true);
-  const view = cold.view(id, head);
-  expect(view.kind).toBe("conversation");
-  if (view.kind !== "conversation") throw Error("view");
-  expect(view.turns).toHaveLength(20);
-  expect(view.turns.some((row) => row.id === prefix.at(-1))).toBe(true);
+  expect(cold.conversation(id)).toMatchObject({
+    kind: "conversation",
+    turns: 1003,
+    summary: { head },
+  });
+  // Any turn reads by position, the legacy prefix included.
+  for (const [ordinal, turnId] of [
+    [0, prefix[0]],
+    [999, prefix.at(-1)],
+    [1002, head],
+  ] as const)
+    expect(cold.turnSteps(id, ordinal, null)).toMatchObject({
+      kind: "conversation-turn",
+      ordinal,
+      turn: { id: turnId },
+    });
+  expect(() => cold.turnSteps(id, 1003, null)).toThrow();
   // A position alone does not admit a turn: its ordinal must also be committed
   // by this conversation's head/count and immutable slot.
   const orphan = randomUUID();
@@ -154,7 +166,7 @@ it("a legacy 1000-turn conversation continues into constant-size indexed metadat
     slot,
     canonicalJson({ conversationId: id, ordinal: 1002, turnId: randomUUID() }),
   );
-  expect(() => cold.view(id, null)).toThrow();
+  expect(() => cold.turnSteps(id, 1002, null)).toThrow();
   f.conversations.closeReads();
   cold.closeReads();
 });

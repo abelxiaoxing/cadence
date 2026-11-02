@@ -127,14 +127,21 @@ export class Workbench implements WorkbenchPort {
           })),
         };
       }
-      case "conversation-transcript":
-        return this.conversations.transcript(
+      case "conversation":
+        return this.conversations.conversation(request.id);
+      case "conversation-turn":
+        return this.conversations.turnSteps(
+          request.id,
+          request.ordinal,
+          request.before,
+        );
+      case "conversation-step":
+        return this.conversations.step(
           request.id,
           request.turnId,
-          request.page,
+          request.step,
+          request.part,
         );
-      case "conversation":
-        return this.conversations.view(request.id, request.before);
       case "files":
         return this.files.list(request.path);
       case "file":

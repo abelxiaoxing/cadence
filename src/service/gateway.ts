@@ -709,6 +709,7 @@ export async function createGateway(
           Origin: b.endpoint,
         };
         for (const key of [
+          "accept-encoding",
           "content-type",
           "content-length",
           "x-cadence-build",
@@ -754,7 +755,9 @@ export async function createGateway(
               res.statusCode = incoming.statusCode ?? 502;
               for (const key of [
                 "content-type",
+                "content-encoding",
                 "content-disposition",
+                "vary",
                 "x-cadence-attachment",
               ]) {
                 const value = incoming.headers[key];
