@@ -490,3 +490,20 @@ During development, a run failed only because a test still sent a command ID as 
 A separate Bun pack contains 152 files; SHA-256 `3930e8298eda4824f28748c4c579118c0a03bbb9ad4696a4630d36ddc5c6d244`, SHA-1 `93c4936d097cf592005e489e71de8c40dec84036`.
 Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14, Pi 1.4.0 installed globally beside the pinned 0.84.3 SDK, and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed, and no real terminal TUI session was driven against the new notice.
 Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Release 2.0.32 acceptance snapshot
+
+The WebUI history sidebar re-read its first page every two seconds as a new request that counted as loading until the reply, so "Reading conversation history…" flashed, the count lost and regained its "+", and the paging buttons toggled.
+The first page now re-reads quietly: a list already shown stays in place until the next reply replaces it, only a page with no rows yet shows the reading hint, and a read error is still shown.
+The browser scenario observes two background re-reads without the hint and without a shorter list.
+Run in sequence, `verify` took about 305s (static checks 27s, root tests 153s, WebUI tests 14s, browser scenarios 109s); the root tests that start real owners, SDK workers, CLIs or crash children spent about 616s of worker time, the other ~1380 tests 46s.
+Those tests are tagged `slow` (14 whole files and about 80 single tests); `verify` (`scripts/verify.mjs`) runs every other check at once with incremental type checks, and `verify:full` runs the `slow` tests and the browser scenarios after it.
+No test was removed and no budget changed; `verify` needs no browser and reports that it did not run those lanes.
+`verify` passed in 24s to 28s on the shared host, about eleven times faster.
+The contract is unchanged, so 2.0.31 and 2.0.32 clients and owners accept each other.
+
+The release `verify:full` passed on its first run in 292.5s: the gate in 24.8s (1329 root/native tests in 76 files with 282 skipped, 152 WebUI tests in 16 files and the 152-member pack audit), then 463 `slow` root tests in 156.0s and seven browser scenarios in six files in 111.8s, 1792 root tests in all as in 2.0.31.
+During development one `verify:full` failed only `service-owner`'s `registry oversize uncertainty` 5s budget at a load average of about 12; it passed alone and in the next full run, and no budget was changed.
+A separate Bun pack contains 152 files; SHA-256 `95a5e5679e3f4fa6050a51b463b9fdd19494b80925e950566e5cdf6674a2210d`, SHA-1 `83f7dc164448300ac939064eec2abbe6737e5edb`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.

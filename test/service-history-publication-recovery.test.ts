@@ -169,7 +169,9 @@ it.each(["edit", "delete", "corrupt"])(
     expect(f.writer.accounting.episodes.count).toBe(1);
   },
 );
-it("creation cap refuses the 1001st acceptance without reserving a command or hiding old tasks", async () => {
+it("creation cap refuses the 1001st acceptance without reserving a command or hiding old tasks", {
+  tags: ["slow"],
+}, async () => {
   const f = createFixture();
   for (let i = 0; i < 1000; i++) {
     const id = randomUUID(),
@@ -296,6 +298,7 @@ it.each([
   "outcome-commit",
 ])(
   "original child crash at %s preserves honest publication state and v1 bytes",
+  { tags: ["slow"] },
   async (boundary) => {
     const f = crash(boundary),
       before = diskIdentity(f.dir);
@@ -349,7 +352,9 @@ it("torn FINAL bytes survive an automatic bridge; new monotonically separated ba
   // The bridged history is writable by the new owner.
   expect(new HistoryWriter(fact.lease).quarantined).toBe(false);
 });
-it("unmatched auth is independent of process closure and remains inspectable after recovery", async () => {
+it("unmatched auth is independent of process closure and remains inspectable after recovery", {
+  tags: ["slow"],
+}, async () => {
   const f = crash("auth");
   const original = [...f.files.scan()]
     .flatMap((b) => b.rows)
@@ -382,6 +387,7 @@ it("interior corruption cannot be repaired into success by a recovery append", a
 
 it.each(["rename-before", "rename-after"])(
   "original child dies at actual TaskStore %s boundary without repair",
+  { tags: ["slow"] },
   (boundary) => {
     const f = crash(boundary),
       dir = join(legacyTaskStore(f.c).tasks, f.selected.taskId),
@@ -475,7 +481,9 @@ it("reopened writer after a guarded bridge has no old dispatch authority (inject
   ).toBe(true);
   expect(() => reopened.capture(f.link)).toThrow();
 });
-it("explicit human closure preserves not-run and stale native-zero checks instead of upgrading execution", async () => {
+it("explicit human closure preserves not-run and stale native-zero checks instead of upgrading execution", {
+  tags: ["slow"],
+}, async () => {
   const observation = {
     identity: "a".repeat(64),
     complete: false,
@@ -862,6 +870,7 @@ it("final review: checksum-valid recovery cannot invent an uncommitted sequence 
 
 it.each(["journal", "commit"] as const)(
   "recovery pins exact key incarnation across %s boundary",
+  { tags: ["slow"] },
   async (boundary) => {
     const f = crash("tail");
     const key = join(f.files.directory, "read-proof-key.json"),
@@ -891,6 +900,7 @@ it.each([
   "previous",
 ] as const)(
   "original forward proof rejects checksum-valid forged bridge %s",
+  { tags: ["slow"] },
   async (field) => {
     const f = crash("tail"),
       prior = f.files.inspect();

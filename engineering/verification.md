@@ -12,17 +12,22 @@ bun run build:check
 bun run lint
 bun run check:agents
 bun run test:service
+bun run test:unit
+bun run test:slow
 bun run test:web
 CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run test:browser
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 CADENCE_SYSTEMD_E2E=1 bun run test test/service-maintenance-systemd.test.ts
 bun pm pack --destination /absolute/private-temp
 ```
 
 Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, on the checkout's disk filesystem rather than a nearly full tmpfs.
-`verify` includes native/unit tests, web tests, required real-browser scenarios and exact real-pack auditing; missing required browser is non-green, never an automatic download.
+`verify` runs every independent check at once (syntax, generated bundles, incremental type checks, the web build check, lint, Agent pins, the root tests not tagged `slow`, web tests and exact real-pack auditing) and reports each stage with its time.
+`verify:full` then runs the `slow`-tagged root tests and the required real-browser scenarios, one lane at a time; a missing browser is non-green, never an automatic download.
+Run `verify:full` before a release and after changing a real-process or browser path; `verify` never says those lanes passed.
 It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`).
-`verify` keeps short regressions and loopback browser scenarios; it runs no real PTY workflow, HTTPS-proxy browser lane or multi-MiB cold-history scan.
+`verify:full` keeps short regressions and loopback browser scenarios; it runs no HTTPS-proxy browser lane or multi-MiB cold-history scan.
 Fabricated loopback providers are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
 Those additional lanes remain unqualified unless their own receipts exist.
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
@@ -31,10 +36,11 @@ The systemd lane is opt-in: it needs a running user manager and adds a temporary
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
-Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
+Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run `verify` at stable integration boundaries.
 Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
-`bun run test` runs every root file in one parallel group; there are no serial groups or separate fast/integration lanes.
+`bun run test` runs every root file in one parallel group, `test:unit` skips the `slow` tag and `test:slow` runs only it.
 Its workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
+A root test is tagged `slow` (`{ tags: ["slow"] }`, or `// @module-tag slow` as a whole file's first line) when it takes about 0.4 s or more alone, usually because it starts real owners, SDK workers, CLIs or crash children; short process tests stay untagged, so `verify` keeps them and stays fast.
 Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
@@ -103,6 +109,7 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | models.json edited while the owner runs                        | Redact session reads with the last observed literals; never fail history or return it unredacted      |
 | A terminal message sent from the same entry as a browser turn  | Find the browser turn's entries by its exact text after its acceptance offset, never the first match  |
 | A turn's steps watched live, then failing without an answer    | Derive the fold from the settled turn on every render, not from mount-time state; user toggles win    |
+| A shown list re-read in the background (sidebar polling)       | Keep the rows in place; only a page with no rows yet shows its reading hint                           |
 | Power loss or shutdown while an owner runs (idle or busy)      | Next start proves the holder dead (boot ID, PID, start identity) and recovers; no typed confirmation  |
 | Systemd unit pointing at a removed project directory           | Readable refusal, exit78 (no restart loop); its dead reservation is released account-wide             |
 

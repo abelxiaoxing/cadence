@@ -108,7 +108,10 @@ async function maximumGraph() {
   return { f, graph, original, hash, identity, input };
 }
 
-it("escaped detail paging retains the unchanged 512KiB FULL Reply bound", async () => {
+it("escaped detail paging retains the unchanged 512KiB FULL Reply bound", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const f = historyFixture(),
     text = "\\".repeat(262144);
   const { content } = await retainedText(f, text);
@@ -156,7 +159,7 @@ it("escaped detail paging retains the unchanged 512KiB FULL Reply bound", async 
     await http.server.close();
     f.lease.release();
   }
-}, 20000);
+});
 
 it("unchanged encoded category limits reject oversize before shape decoding (no larger page or worker allowance)", () => {
   expect([
@@ -200,7 +203,10 @@ it("unchanged encoded category limits reject oversize before shape decoding (no 
   );
 });
 
-it("real HTTP client bounds the full graph Reply including wire whitespace at 1MiB, not only its valid graph body", async () => {
+it("real HTTP client bounds the full graph Reply including wire whitespace at 1MiB, not only its valid graph body", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const { f, graph, input } = await maximumGraph();
   const body = JSON.stringify({ kind: "ok", value: { request: input, graph } });
   const frame: ExportFrame = {
@@ -271,4 +277,4 @@ it("real HTTP client bounds the full graph Reply including wire whitespace at 1M
     );
     f.lease.release();
   }
-}, 20000);
+});

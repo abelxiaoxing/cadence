@@ -110,7 +110,10 @@ it("keeps explicit projects but refuses private-state ancestors without redirect
   expect(existsSync(f.landing)).toBe(false);
 });
 
-it("start without a project opens only the workbench; readonly/native/home requests never create ~/cadence", async () => {
+it("start without a project opens only the workbench; readonly/native/home requests never create ~/cadence", {
+  tags: ["slow"],
+  timeout: 30000,
+}, async () => {
   const f = fakeHome();
   expect(JSON.parse((await run(f, ["status"])).stdout)).toEqual({
     status: "absent",
@@ -166,4 +169,4 @@ it("start without a project opens only the workbench; readonly/native/home reque
       if (pid && process.platform === "win32") await ownerExit(pid);
     }
   }
-}, 30000);
+});

@@ -555,7 +555,9 @@ describe.skipIf(process.platform !== "linux")("systemd user service", () => {
     expect(autostartStatus(f.s)).toEqual({ status: "absent" });
   });
 
-  it("the management CLI exposes the server commands and refuses others without effects", () => {
+  it("the management CLI exposes the server commands and refuses others without effects", {
+    tags: ["slow"],
+  }, () => {
     const data = temporary("cadence-server-cli-");
     const cli = join(repository, "src", "service-cli.mjs");
     const env = { ...process.env, XDG_DATA_HOME: data };
@@ -1111,7 +1113,9 @@ describe("startup guidance", () => {
     expect(files).toEqual([join(".pi", "agent", "cadence", ".env")]);
   });
 
-  it("server install and restart keep a configured port and token; an unusable .env refuses before any change", () => {
+  it("server install and restart keep a configured port and token; an unusable .env refuses before any change", {
+    tags: ["slow"],
+  }, () => {
     const home = temporary("cadence-server-config-");
     const file = join(home, ".pi", "agent", "cadence", ".env");
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -1198,6 +1202,7 @@ describe("startup guidance", () => {
   // Mode bits and links are POSIX facts; Windows has neither check.
   it.skipIf(process.platform === "win32")(
     "a .env made by hand, under umask 002 or by a dotfiles manager is accepted like Pi's sources; only ownership and content refuse",
+    { tags: ["slow"] },
     () => {
       const missing = (home: string) => [
         "install",

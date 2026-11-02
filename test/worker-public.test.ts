@@ -1,3 +1,4 @@
+// @module-tag slow
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {

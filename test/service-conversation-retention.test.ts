@@ -1,3 +1,4 @@
+// @module-tag slow
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -1513,7 +1513,10 @@ it("lost retired-command HTTP refusal stays uncertain to the caller; receipt loo
   expect(a.effects).toHaveLength(0);
 });
 
-it("detached unresolved original snapshots retain bounded slots; established control/detach is independent", async () => {
+it("detached unresolved original snapshots retain bounded slots; established control/detach is independent", {
+  tags: ["slow"],
+  timeout: 10000,
+}, async () => {
   const f = await setup(),
     release = deferred();
   let calls = 0;
@@ -1561,7 +1564,7 @@ it("detached unresolved original snapshots retain bounded slots; established con
       ).status,
     ).toBe(200),
   );
-}, 10000);
+});
 
 it.each(["http", "upgrade"])(
   "overlapping %s pipelining closes only that connection, without accumulating private responses",

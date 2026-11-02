@@ -107,11 +107,12 @@ Cadence 不指定 Pi 版本范围；开发用的固定版本和已测试运行�
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 工程指导按领域拆分在 [engineering/](engineering/) 下；[AGENTS.md](AGENTS.md) 中的项目索引说明了哪个文件覆盖哪部分代码。
-`verify` 还需要官方 Node 构建、私有临时目录和已有的 Chromium；见[验证](engineering/verification.md)。
+`verify` 还需要官方 Node 构建和私有临时目录；`verify:full` 另外运行慢速测试和浏览器场景，需要已有的 Chromium；见[验证](engineering/verification.md)。
 
 ## 许可证
 

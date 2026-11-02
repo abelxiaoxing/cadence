@@ -17,6 +17,13 @@ export const shared = {
     HOME: isolatedHome,
     USERPROFILE: isolatedHome,
   },
+  tags: [
+    {
+      name: "slow",
+      description:
+        "Takes about 0.4 s or more, usually by starting real owners, SDK workers, CLIs or crash children. `verify` skips it; `verify:full` runs it.",
+    },
+  ],
 };
 
 export default defineConfig({

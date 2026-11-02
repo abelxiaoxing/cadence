@@ -9,7 +9,9 @@ const root = resolve(import.meta.dirname, "..");
 const members: string[] = JSON.parse(
   readFileSync(join(root, "provenance/package-members.json"), "utf8"),
 );
-it("reviewed package closes native and maintained worker imports without a terminal executor or bundled SDK", () => {
+it("reviewed package closes native and maintained worker imports without a terminal executor or bundled SDK", {
+  tags: ["slow"],
+}, () => {
   const visited = new Set<string>();
   function visit(name: string) {
     if (visited.has(name)) return;
@@ -139,18 +141,22 @@ it("reuse provenance pins every current adaptation and integration body, includi
   for (const name of policy.newIntegrationFiles)
     expect(Object.hasOwn(policy.destinations, name), name).toBe(true);
 });
-it("verify includes actual browser once, separate web tests, Agent checks and real pack; no consumer build", () => {
+it("verify runs static, unit, web and real-pack checks; verify:full adds slow tests and the browser once; no consumer build", () => {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  for (const route of [
-    "check:web",
-    "build:web:check",
-    "check:agents",
-    "test:web",
-    "test:browser",
-    "pack:check",
+  expect(pkg.scripts.verify).toBe("node scripts/verify.mjs");
+  expect(pkg.scripts["verify:full"]).toBe("node scripts/verify.mjs --full");
+  const verify = readFileSync(join(root, "scripts/verify.mjs"), "utf8");
+  for (const stage of [
+    '"web/tsconfig.json"',
+    '"scripts/build-web.mjs", "--check"',
+    '"scripts/check-agents.mjs"',
+    '"--tags-filter=!slow"',
+    '"web/vitest.config.ts"',
+    '"scripts/pack-check.mjs"',
+    'vitest("--tags-filter=slow")',
   ])
-    expect(pkg.scripts.verify).toContain(`bun run ${route}`);
-  expect(pkg.scripts.verify.match(/bun run test:browser/g)).toHaveLength(1);
+    expect(verify).toContain(stage);
+  expect(verify.match(/web\/browser\.config\.ts/g)).toHaveLength(1);
   // npm 12 and Bun skip dependency install scripts by default; none ship.
   for (const hook of ["preinstall", "install", "postinstall", "prepare"])
     expect(pkg.scripts[hook]).toBeUndefined();

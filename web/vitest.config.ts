@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     include: ["test/web/**/*.test.tsx"],
     environment: "node",
-    fileParallelism: false,
+    maxWorkers: 2,
     env: { HOME: home, USERPROFILE: home },
   },
   oxc: { jsx: { runtime: "automatic" } },

@@ -1,3 +1,4 @@
+// @module-tag slow
 import { createHash } from "node:crypto";
 import { ServerResponse } from "node:http";
 import { expect, it, vi } from "vitest";

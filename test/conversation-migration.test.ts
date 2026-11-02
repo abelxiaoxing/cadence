@@ -134,7 +134,9 @@ it("an explicit migration copies old browser conversations into Pi sessions with
     );
 });
 
-it("old checkpoints are read only through their verified record chain", () => {
+it("old checkpoints are read only through their verified record chain", {
+  tags: ["slow"],
+}, () => {
   const root = mkdtempSync(join(tmpdir(), "chat-context-")),
     files = new PrivateFiles(root);
   const messages = Array.from({ length: 300 }, (_, timestamp) => ({

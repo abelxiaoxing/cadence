@@ -13,7 +13,10 @@ import {
 } from "./helpers/history-read-fixture.ts";
 import { httpFixture, request } from "./helpers/service-http-fixture.ts";
 
-it("production issued proof crosses W1 readonlyPOST/client, requires current auth and survives renewed access", async () => {
+it("production issued proof crosses W1 readonlyPOST/client, requires current auth and survives renewed access", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const f = historyFixture();
   await retainedText(f, "target".repeat(100));
   renameSync(
@@ -70,4 +73,4 @@ it("production issued proof crosses W1 readonlyPOST/client, requires current aut
   } finally {
     await http.server.close();
   }
-}, 20000);
+});

@@ -144,6 +144,7 @@ it.each(["ndjson", "markdown"] as const)(
 
 it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
   "final review: native 16MiB private tmpfs ENOSPC preserves committed history and original handles (not admission bypass)",
+  { tags: ["slow"], timeout: 20000 },
   () => {
     const dir = mkdtempSync(join(tmpdir(), "cadence-history-enospc-")),
       bundle = join(dir, "fixture.mjs");
@@ -220,7 +221,6 @@ it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
     });
     console.log("native-history-enospc", JSON.stringify(receipt));
   },
-  20000,
 );
 
 it("final review: max-hit continuation preserves the selected field's source/redaction coverage", async () => {

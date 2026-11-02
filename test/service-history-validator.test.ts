@@ -74,6 +74,7 @@ async function firstProgress(
 }
 it.each(["predecessor", "same-key", "different-key", "format"])(
   "a genuinely issued checkpoint refuses changed active %s",
+  { tags: ["slow"] },
   async (change) => {
     const f = historyFixture();
     await retainedText(f, `target${"x".repeat(512 * 1024)}`);
@@ -148,7 +149,9 @@ it.each(["phase", "offset", "hash-count", "extra", "overlap"])(
     expect(storedTree(f.files.directory)).toEqual(before);
   },
 );
-it("finite original scan agrees with the independent administrative scanner; reachable checkpoints fit", async () => {
+it("finite original scan agrees with the independent administrative scanner; reachable checkpoints fit", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   await retainedText(f, "界target".repeat(9000));
   const expected = [...f.files.scan(undefined, false)].map(

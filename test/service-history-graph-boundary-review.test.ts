@@ -238,7 +238,10 @@ it("standalone graph and typed graph export independently enforce their existing
   }
 });
 
-it("real HTTP page/progress wire bytes cannot bypass 512KiB via JSON whitespace normalization", async () => {
+it("real HTTP page/progress wire bytes cannot bypass 512KiB via JSON whitespace normalization", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const cases: { operation: HttpOperation; input: unknown; value: unknown }[] =
     [
       { operation: "detail", input: cursor, value: detail },
@@ -340,4 +343,4 @@ it("real HTTP page/progress wire bytes cannot bypass 512KiB via JSON whitespace 
       server.close((error) => (error ? reject(error) : resolve())),
     );
   }
-}, 20000);
+});

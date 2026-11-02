@@ -1,3 +1,4 @@
+// @module-tag slow
 import { randomUUID } from "node:crypto";
 import {
   existsSync,

@@ -71,7 +71,10 @@ for (const lane of [
   "resolved-baseurl-null",
   "azure-env",
 ] as const) {
-  it(`actual SDK stdin/native resolver: ${lane}`, async () => {
+  it(`actual SDK stdin/native resolver: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const toolLane = lane === "key-tool" || lane === "xhigh-key-tool";
     const cwd = mkdtempSync(join(tmpdir(), "cadence-lw-sdk-"));
     const key =
@@ -447,7 +450,7 @@ for (const lane of [
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 20000);
+  });
 }
 
 const genericFailure = "SDK worker failed or returned an incomplete result.\n";
@@ -861,7 +864,10 @@ for (const lane of [
   "nonreasoning-xhigh",
   "reasoning-xhigh-missing-map",
 ] as const) {
-  it(`actual stock SDK effective-thinking refusal before ready: ${lane}`, async () => {
+  it(`actual stock SDK effective-thinking refusal before ready: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-refusal-"));
     let modelContacts = 0;
     let requests = 0;
@@ -928,7 +934,7 @@ for (const lane of [
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 20000);
+  });
 }
 
 for (const lane of [
@@ -938,7 +944,10 @@ for (const lane of [
   "unsupported-auth",
   "unsupported-model",
 ] as const) {
-  it(`raw native worker diagnostic before SDK request: ${lane}`, async () => {
+  it(`raw native worker diagnostic before SDK request: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-diagnostic-"));
     const request = fixtureRequest(cwd);
     if (lane === "invalid-request") request.kind = "refused";
@@ -975,7 +984,7 @@ for (const lane of [
     });
     expect(result.stderr).not.toContain("fabricated");
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 
 for (const lane of [
@@ -986,7 +995,10 @@ for (const lane of [
   "codex-http-error",
   "codex-local-error",
 ] as const) {
-  it(`raw native SDK diagnostic/strict final: ${lane}`, async () => {
+  it(`raw native SDK diagnostic/strict final: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-diagnostic-"));
     let calls = 0;
     const server = createServer(async (req, res) => {
@@ -1132,7 +1144,7 @@ for (const lane of [
         server.close((error) => (error ? reject(error) : resolve())),
       );
     }
-  }, 20000);
+  });
 }
 
 // Explicit public-boundary unit mocks. These are NOT native SDK/provider proofs.
@@ -1578,7 +1590,9 @@ for (const scenario of [
   "no-diagnostic-room",
   "diagnostic-write-throw",
 ]) {
-  it(`fixed diagnostic unit fault/cleanup/privacy: ${scenario}`, async () => {
+  it(`fixed diagnostic unit fault/cleanup/privacy: ${scenario}`, {
+    tags: ["slow"],
+  }, async () => {
     if (scenario === "no-diagnostic-room") {
       // v2's larger aggregate and strict metadata no longer allow the old
       // malformed tool-name flood. Exercise the unchanged live diagnostic writer
@@ -2268,7 +2282,10 @@ for (const thinkingLevel of [
   "xhigh",
   "max",
 ]) {
-  it(`PUBLIC BOUNDARY MOCK exact effective-thinking match: ${thinkingLevel}`, async () => {
+  it(`PUBLIC BOUNDARY MOCK exact effective-thinking match: ${thinkingLevel}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-mock-"));
     const result = await nativeWorker(
       cwd,
@@ -2282,7 +2299,7 @@ for (const thinkingLevel of [
       '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
     );
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 for (const lane of [
   "mismatch",
@@ -2293,7 +2310,10 @@ for (const lane of [
   "object",
   "throw",
 ]) {
-  it(`PUBLIC BOUNDARY MOCK effective-thinking refusal/no getter coercion: ${lane}`, async () => {
+  it(`PUBLIC BOUNDARY MOCK effective-thinking refusal/no getter coercion: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-mock-"));
     const result = await nativeWorker(
       cwd,
@@ -2319,7 +2339,7 @@ for (const lane of [
       cleanupSettled: true,
     });
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 
 it("raw native mock preserves first failure before unsettled cleanup", async () => {
@@ -2354,7 +2374,10 @@ it("raw native mock preserves first failure before unsettled cleanup", async () 
 
 for (const delivery of ["awaited", "independent"] as const) {
   for (const lane of [...eventFaults, "event-abort-reject"]) {
-    it(`raw native mock event boundary/no final: ${delivery}/${lane}`, async () => {
+    it(`raw native mock event boundary/no final: ${delivery}/${lane}`, {
+      tags: ["slow"],
+      timeout: 20000,
+    }, async () => {
       const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-mock-"));
       const result = await nativeWorker(
         cwd,
@@ -2381,7 +2404,7 @@ for (const delivery of ["awaited", "independent"] as const) {
         cleanupFailures: lane === "event-abort-reject" ? 2 : 0,
       });
       expect(readdirSync(cwd)).toEqual([]);
-    }, 20000);
+    });
   }
 }
 for (const lane of [
@@ -2393,7 +2416,10 @@ for (const lane of [
   "dispose-opaque",
   "dispose-reject-opaque",
 ]) {
-  it(`raw native mock first-fault/opaque exception/late cleanup: ${lane}`, async () => {
+  it(`raw native mock first-fault/opaque exception/late cleanup: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-mock-"));
     const result = await nativeWorker(
       cwd,
@@ -2434,7 +2460,7 @@ for (const lane of [
       preflight: lane === "preflight-resolve" ? "rejected" : "accepted",
     });
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 
 for (const mode of ["throw", "reject", "promise"] as const) {
@@ -2486,7 +2512,10 @@ for (const mode of ["throw", "reject", "promise"] as const) {
 // Offline routing controls through production runWorker + byte-identical SDK worker.
 // An expected SDK transport failure is never model inference or workflow qualification.
 for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
-  it(`actual runWorker/public pinned Codex native routing: ${mode}`, async () => {
+  it(`actual runWorker/public pinned Codex native routing: ${mode}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const feature =
       !!process.versions.node &&
       !process.versions.bun &&
@@ -2826,7 +2855,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         ),
       );
     }
-  }, 20000);
+  });
 }
 
 // PUBLIC RESOURCE BOUNDARY MOCKS ONLY. No native Undici API or SDK routing is
@@ -3060,7 +3089,10 @@ for (const lane of [
   "pending-abort",
   "pending-abort-close-reject",
 ]) {
-  it(`PUBLIC RESOURCE MOCK bootstrap/ownership/raw cleanup: ${lane}`, async () => {
+  it(`PUBLIC RESOURCE MOCK bootstrap/ownership/raw cleanup: ${lane}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-network-resource-mock-"));
     const request = fixtureRequest(cwd);
     // Literal scoped routes never become process routing, even in DIRECT.
@@ -3120,10 +3152,13 @@ for (const lane of [
         requestPrepared: false,
       });
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 for (let mask = 8; mask <= 15; mask++) {
-  it(`PUBLIC RESOURCE MOCK valid final cannot repair native nonzero cleanup bits=${mask}`, async () => {
+  it(`PUBLIC RESOURCE MOCK valid final cannot repair native nonzero cleanup bits=${mask}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-network-cleanup-mock-"));
     const result = await nativeWorker(
       cwd,
@@ -3144,13 +3179,16 @@ for (let mask = 8; mask <= 15; mask++) {
     });
     expect(result.stderr).not.toContain(rawCanary);
     expect(readdirSync(cwd)).toEqual([]);
-  }, 20000);
+  });
 }
 
 // NATIVE public SDK + public Undici, loopback fake completions only. The proxy
 // returns a fixed response itself: no forwarding, TLS override or fetch patch.
 for (const encoding of ["identity", "gzip"] as const) {
-  it(`actual runWorker/public HTTP proxy successful synthetic response: ${encoding}`, async () => {
+  it(`actual runWorker/public HTTP proxy successful synthetic response: ${encoding}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-proxy-response-"));
     let sinkContacts = 0;
     let requests = 0;
@@ -3411,5 +3449,5 @@ for (const encoding of ["identity", "gzip"] as const) {
         ),
       );
     }
-  }, 20000);
+  });
 }

@@ -123,12 +123,13 @@ Cadence는 Pi 버전 범위를 강제하지 않습니다.
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 엔지니어링 지침은 [engineering/](engineering/) 아래 영역별로 나뉘어 있습니다.
 [AGENTS.md](AGENTS.md)의 프로젝트 인덱스가 어느 파일이 어느 코드를 다루는지 설명합니다.
-`verify`에는 공식 Node 빌드, 개인 임시 디렉터리, 기존 Chromium도 필요합니다.
+`verify`에는 공식 Node 빌드와 개인 임시 디렉터리가 필요하고, 느린 테스트와 브라우저 시나리오를 더하는 `verify:full`에는 기존 Chromium도 필요합니다.
 [검증](engineering/verification.md)을 참조하세요.
 
 ## 라이선스

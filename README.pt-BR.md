@@ -107,11 +107,12 @@ O Cadence não impõe uma faixa de versões do Pi; fixações de desenvolvimento
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 As orientações de engenharia são divididas por área sob [engineering/](engineering/); o índice do projeto em [AGENTS.md](AGENTS.md) diz qual arquivo cobre qual código.
-`verify` também precisa de um build oficial do Node, um diretório temporário privado e um Chromium existente; veja [verificação](engineering/verification.md).
+`verify` também precisa de um build oficial do Node e de um diretório temporário privado; `verify:full` acrescenta os testes lentos e os cenários de navegador, que precisam de um Chromium existente; veja [verificação](engineering/verification.md).
 
 ## Licença
 
