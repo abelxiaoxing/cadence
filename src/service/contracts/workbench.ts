@@ -12,7 +12,21 @@ import {
   oneOf,
   text,
 } from "./core.ts";
-import { type ChoiceVersion, decodeChoiceVersion } from "./models.ts";
+import { decodeModelSelector, type ModelSelector } from "./domain.ts";
+import {
+  type ChoiceVersion,
+  type ConversationContext,
+  type ConversationLocation,
+  decodeChoiceVersion,
+  decodeConversationContext,
+  decodeConversationLocation,
+  decodeExecutionContext,
+  decodeModelCatalog,
+  decodeModelChoiceState,
+  type ExecutionContext,
+  type ModelCatalog,
+  type ModelChoiceState,
+} from "./models.ts";
 
 import {
   decodeWorkflowProposal,
@@ -66,6 +80,10 @@ export interface WorkflowLink {
   conversationId: string;
 }
 export type WorkbenchRead =
+  | {
+      kind: "conversation-context" | "conversation-models";
+      location: ConversationLocation;
+    }
   | { kind: "cadence-conversation"; id: string }
   | { kind: "workflow-active" }
   | { kind: "workflow-history"; after: string | null; scan?: string }
@@ -90,19 +108,36 @@ export type WorkbenchRead =
       step: number;
       part: number;
     }
-  | { kind: "files"; path: string }
-  | { kind: "file"; path: string }
+  | { kind: "files"; path: string; location?: ConversationLocation }
+  | { kind: "file"; path: string; location?: ConversationLocation }
   | { kind: "directories"; path: string }
   | { kind: "projects" };
+/** Maximum UTF-8 bytes of one explicit conversation Send. */
+export const CONVERSATION_SEND_BYTES = 16 * 1024;
 export type WorkbenchCommand =
   | {
+      kind: "conversation-model";
+      commandId: string;
+      location: ConversationLocation;
+      expected: ChoiceVersion;
+      choice: ModelSelector;
+    }
+  | {
       kind: "cadence-exit";
+      location?: ConversationLocation;
       commandId: string;
       conversationId: string;
       head: string | null;
       revision: number;
     }
-  | { kind: "restore-model"; commandId: string; epoch: string }
+  | {
+      kind: "restore-model";
+      commandId: string;
+      epoch: string;
+      location?: ConversationLocation;
+      expected?: ChoiceVersion;
+      choice?: ModelSelector;
+    }
   | {
       kind: "cadence-send";
       commandId: string;
@@ -170,6 +205,7 @@ export interface ChatItem {
   error: boolean;
 }
 export interface ChatTurn {
+  execution?: ExecutionContext;
   id: string;
   epoch: string;
   status: ChatStatus;
@@ -198,6 +234,7 @@ export interface ChatStep {
   parts: number;
 }
 export interface ChatTurnHeader {
+  execution?: ExecutionContext;
   id: string;
   epoch: string;
   status: ChatStatus;
@@ -290,6 +327,9 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
+  | { kind: "conversation-context"; context: ConversationContext }
+  | { kind: "conversation-models"; catalog: ModelCatalog }
+  | { kind: "conversation-model"; commandId: string; choice: ModelChoiceState }
   | { kind: "workflow-history-progress"; after: string | null; scan: string }
   | {
       kind: "workflow-history";
@@ -374,6 +414,11 @@ const statuses = [
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
+    case "conversation-context":
+    case "conversation-models": {
+      const o = closed(v, ["kind", "location"]);
+      return { kind, location: decodeConversationLocation(o.location) };
+    }
     case "conversation-turn": {
       const o = closed(v, ["kind", "id", "ordinal", "before"]);
       return {
@@ -445,26 +490,74 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       return { kind, id: decodeId(o.id) };
     }
     default: {
-      const o = closed(v, ["kind", "path"]);
+      const scoped =
+        (kind === "file" || kind === "files") &&
+        Object.hasOwn(v ?? {}, "location");
+      const o = closed(v, ["kind", "path", ...(scoped ? ["location"] : [])]);
       return {
         kind: oneOf(o.kind, ["files", "file", "directories"]),
         path: text(o.path, 4096),
+        ...(scoped ? { location: decodeConversationLocation(o.location) } : {}),
       };
     }
   }
 }
 export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (kind === "conversation-model") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "location",
+      "expected",
+      "choice",
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      location: decodeConversationLocation(o.location),
+      expected: decodeChoiceVersion(o.expected),
+      choice: decodeModelSelector(o.choice),
+    };
+  }
   if (kind === "restore-model" || kind === "workflow-cancel") {
     const o = closed(
       v,
       kind === "restore-model"
-        ? ["kind", "commandId", "epoch"]
+        ? [
+            "kind",
+            "commandId",
+            "epoch",
+            ...(Object.hasOwn(v ?? {}, "location") ? ["location"] : []),
+            ...(Object.hasOwn(v ?? {}, "expected") ||
+            Object.hasOwn(v ?? {}, "choice")
+              ? ["expected", "choice"]
+              : []),
+          ]
         : ["kind", "commandId", "epoch", "runId"],
     );
+    if (
+      (o.expected !== undefined || o.choice !== undefined) &&
+      o.location === undefined
+    )
+      throw new ContractError("invalid");
+    const restored =
+      Object.hasOwn(v ?? {}, "expected") || Object.hasOwn(v ?? {}, "choice");
     const base = { commandId: decodeId(o.commandId), epoch: decodeId(o.epoch) };
     return kind === "restore-model"
-      ? { kind, ...base }
+      ? {
+          kind,
+          ...base,
+          ...(o.location === undefined
+            ? {}
+            : { location: decodeConversationLocation(o.location) }),
+          ...(restored
+            ? {
+                expected: decodeChoiceVersion(o.expected),
+                choice: decodeModelSelector(o.choice),
+              }
+            : {}),
+        }
       : { kind, ...base, runId: decodeId(o.runId) };
   }
   if (kind === "cadence-exit") {
@@ -474,9 +567,13 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       "conversationId",
       "head",
       "revision",
+      ...(Object.hasOwn(v ?? {}, "location") ? ["location"] : []),
     ]);
     return {
       kind,
+      ...(o.location === undefined
+        ? {}
+        : { location: decodeConversationLocation(o.location) }),
       commandId: decodeId(o.commandId),
       conversationId: decodeId(o.conversationId),
       head: nullable(o.head, decodeId),
@@ -499,7 +596,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       commandId: decodeId(o.commandId),
       conversationId: decodeId(o.conversationId),
       head: nullable(o.head, decodeId),
-      text: text(o.text, 16384, true),
+      text: text(o.text, CONVERSATION_SEND_BYTES, true),
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
       intent: oneOf(o.intent, ["message", "enter", "exit"]),
@@ -550,7 +647,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       commandId: decodeId(o.commandId),
       conversationId: decodeId(o.conversationId),
       head: nullable(o.head, decodeId),
-      text: text(o.text, 16 * 1024, true),
+      text: text(o.text, CONVERSATION_SEND_BYTES, true),
       model: decodeChoiceVersion(o.model),
     };
   }
@@ -589,12 +686,16 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     ...keys,
     ...(current ? ["omitted"] : []),
     ...(paged ? ["transcript"] : []),
+    ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
   ]);
   const transcript = paged ? closed(o.transcript, ["pages"]) : null;
   const omitted = current
     ? closed(o.omitted, ["thinking", "media", "other"])
     : null;
   return {
+    ...(o.execution === undefined
+      ? {}
+      : { execution: decodeExecutionContext(o.execution) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
@@ -655,10 +756,14 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     "omitted",
     "steps",
     "stable",
+    ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
+    ...(o.execution === undefined
+      ? {}
+      : { execution: decodeExecutionContext(o.execution) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
@@ -695,6 +800,22 @@ export function decodeChatSummary(v: unknown): ChatSummary {
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
   canonicalJson(v, 512 * 1024);
   const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (k === "conversation-context") {
+    const o = closed(v, ["kind", "context"]);
+    return { kind: k, context: decodeConversationContext(o.context) };
+  }
+  if (k === "conversation-models") {
+    const o = closed(v, ["kind", "catalog"]);
+    return { kind: k, catalog: decodeModelCatalog(o.catalog) };
+  }
+  if (k === "conversation-model") {
+    const o = closed(v, ["kind", "commandId", "choice"]);
+    return {
+      kind: k,
+      commandId: decodeId(o.commandId),
+      choice: decodeModelChoiceState(o.choice),
+    };
+  }
   if (k === "workflow-transcript") {
     const o = closed(v, ["kind", "runId", "stepId", "turn"]);
     return {

@@ -5,6 +5,7 @@ import { networkKeys } from "../sdk-network.ts";
 import {
   assertWorkerEnvelopeSize,
   ContractError,
+  canonicalJson,
   decodeCommittedBatch,
   decodeId,
   decodeModelCandidate,
@@ -96,6 +97,8 @@ export interface ModelPreparationInput {
   epoch: string;
   timeoutMs: number;
   signal: AbortSignal;
+  /** Validated by the admitting conversation/workflow; never inferred from the owner default. */
+  cwd?: string;
   current: () => boolean;
   /** Ordinary chat has its own durable turn, not a fabricated task admission.
    * These synchronous private writes must flush before returning, and fence on
@@ -230,6 +233,7 @@ export class OwnerModelContext {
   #runtime?: ModelRuntime;
   #thinking?: (model: Model<Api>) => readonly string[];
   #selected = new Map<string, Selected>();
+  #retained = new Set<string>();
   #pending = 0;
   #loading = false;
   #tail: Promise<void> = Promise.resolve();
@@ -513,7 +517,8 @@ export class OwnerModelContext {
       if (JSON.stringify(previous) === JSON.stringify(selector)) {
         beforeInstall();
         for (const id of this.#selected.keys())
-          if (id !== old.selection.sourceSelectionId) this.#selected.delete(id);
+          if (id !== old.selection.sourceSelectionId && !this.#retained.has(id))
+            this.#selected.delete(id);
         return { ...old.selection };
       }
     }
@@ -534,7 +539,8 @@ export class OwnerModelContext {
     )
       throw new ContractError("stale");
     beforeInstall();
-    this.#selected.clear();
+    for (const id of this.#selected.keys())
+      if (!this.#retained.has(id)) this.#selected.delete(id);
     this.#selected.set(selection.sourceSelectionId, selected);
     return { ...selection };
   }
@@ -556,6 +562,7 @@ export class OwnerModelContext {
     runtimeOwners.set(this.#options.owner, this);
     this.#loading = true;
     this.#selected.clear();
+    this.#retained.clear();
     this.#runtime = undefined;
     ++this.#generation;
     try {
@@ -608,6 +615,36 @@ export class OwnerModelContext {
     } finally {
       this.#loading = false;
     }
+  }
+  /** Shared finite source cache; reads never install a conversation preference. */
+  retainedSelection(
+    input: ModelSelector,
+    onlyRetained = true,
+  ): ModelSelection | null {
+    const key = canonicalJson(decodeModelSelector(input));
+    for (const entry of this.#selected.values()) {
+      const { sourceSelectionId: _id, ...selector } = entry.selection;
+      if (
+        canonicalJson(selector) === key &&
+        (!onlyRetained || this.#retained.has(entry.selection.sourceSelectionId))
+      )
+        return { ...entry.selection };
+    }
+    return null;
+  }
+  /** Explicit conversation choice, independent of other conversations' work.
+   * Source IDs stay alive for accepted runs; distinct selectors share the
+   * existing bounded runtime cache rather than growing with conversation count. */
+  retainSelection(input: ModelSelector): ModelSelection {
+    const old = this.retainedSelection(input, false);
+    if (old) {
+      this.assertCurrent(old);
+      this.#retained.add(old.sourceSelectionId);
+      return old;
+    }
+    const selected = this.select(input);
+    this.#retained.add(selected.sourceSelectionId);
+    return selected;
   }
   /** Selection is an explicit local operation; sourceSelectionId is random, not
    * a credential/config digest. Callers bind this value into fresh confirmation. */
@@ -923,7 +960,7 @@ export class OwnerModelContext {
               this.authRoute(projected.env ?? {});
               material = {
                 request,
-                cwd: this.#options.cwd,
+                cwd: input.cwd ?? this.#options.cwd,
                 model: {
                   ...selected.model,
                   baseUrl: projected.baseUrl ?? selected.model.baseUrl,

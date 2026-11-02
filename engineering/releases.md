@@ -467,3 +467,38 @@ Earlier development runs failed only `service-history` and `service-owner` 5s bu
 A separate Bun pack contains 151 files; SHA-256 `f3f984aef1c10427e7a993d2a5e04ee51514de45412d9ad6d998de30e3b0de23`, SHA-1 `64f3f3b5f3a9932d153ff30d55b109b5257cfc2b`.
 Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
 Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Conversation-owned execution context — local 2.0.30 qualification
+
+Third-stage delivery separates conversation cwd/model preferences from the shared checkout owner.
+New ordinary/coordinator turns and workflows pin their admission context; tools/checks map that cwd into isolated worktrees while declared write paths and Git integration remain checkout-root-relative.
+Untracked/empty conversation directories are created empty only inside existing worktrees; no source profile or user history is copied.
+Native Pi session IDs and browser conversation IDs address independent preferences; the global selector is only a default for new conversations.
+Readonly legacy context/history stays unchanged, and restoring a saved selector neither rewrites its context record nor replaces the global default.
+Same-checkout directory entries share one owner, but keep scoped file views, exact Send bindings and a checkout/conversation draft namespace with in-place legacy lookup.
+A confirmed stopped/superseded proxy attachment is retired by its exact epoch; this does not claim earlier message absence, cancel work or replay commands.
+
+Qualification: `/home/mirako/t.ukgXSL/verify-5.log` completed root/web types, generated-byte checks, lint, Agent index, **1806 root tests passed / 28 skipped**, **156 Web unit tests**, **10 browser scenarios** and exact real-pack auditing.
+The scoped browser receipt `/home/mirako/t.ukgXSL/ctx-ui-pi9cTs/receipt.json` records six genuine SDK requests to the fabricated loopback provider (`fixed`, `fixed`, `alternate`, `alternate`, `fixed`, `alternate`), no browser errors and no cleanup errors.
+It covers independent subdirectories/models, same-cwd conversation defaults, another tab's choices during an admitted turn, cross-entry drafts, owner restart after its saved default subdirectory was moved, and refresh of a still-unsent conversation in the surviving directory.
+The scoped workflow regression covers stale-plan refusal, pinned implementation/review models, actual worktree/check cwd, preserved untracked profile bytes and a real local merge.
+The separately executed Bun pack route is `/home/mirako/t.ukgXSL/bun-pack.gquP7L/abelxiaoxing-cadence-2.0.30.tgz`: **152 files**, SHA1 `9750b110f0d99dbe67db3ffec2fccd1a6e3d2b8a`; its log is `/home/mirako/t.ukgXSL/bun-pack.log`.
+
+These are isolated Linux/Node 26.7.0/Bun 1.3.14 fixtures using the existing Chromium and installed public SDK 0.84.3, not paid-provider, physical-human, extra PTY, real service-manager installation, HTTPS-proxy or Windows/macOS qualification.
+No existing production service, personal history or credentials were installed, upgraded, migrated or cleaned; checkout changes remain uncommitted and unpublished.
+Earlier failed development fixtures remain failures, including the exact-identity forced teardown recorded in `/home/mirako/t.2jBkh2/failed-fixture-cleanup.json`; no failed receipt was recast as clean settlement.
+
+## Conversation context commit review
+
+Review fixed two recovery dead ends: an unreadable conversation with no draft now permits typing for preparation-only Send, and a failed first execution-readiness observation no longer hides independently readable conversations and drafts.
+Browser regressions first failed on the disabled/missing composer, then passed without sending or preparing work on observation alone.
+The same-checkout restart scenario now observes a stopped owner and successful cold head/context reads before its single Send, instead of racing Stop and expecting preparation-only admission to produce a reply.
+Workflow execution reuses its current checkout check when the pinned cwd is that exact root; an added regression proves one lookup at the root and independent validation/refusal for a removed conversation subdirectory.
+No timeout or execution gate was relaxed.
+
+Final verification on Linux, Node 26.7.0, Bun 1.3.14 and the existing Chromium passed: full `verify` (1807 root tests, 28 skipped; 156 Web tests; 10 real-browser scenarios; exact 152-member pack audit), the opt-in real systemd user-manager test, and a separate `bun pm pack` with exact body/member/Agent-pin auditing.
+Receipts are under `/home/mirako/abel/.cr.9AULlR/` (`verify-final4.log`, `systemd-final.log`, `bun-pack-final-audit.json`).
+Earlier failed attempts remain there: inherited proxy variables refused the source-host fixture before execution; a local provenance-format mismatch stopped lint; the cold-context browser scenario reached preparation-only Send; and one full run recorded a nonzero original fixture close during repair verification (`accepting-zDO6sl/receipt.json`).
+The latter retained a still-reviewing run interrupted during teardown; it is not reclassified as a clean close or assigned a retrospective single cause by the later green run.
+Final test processes used an explicitly direct network environment; production proxy checks were not changed.
+No paid provider, physical native terminal, macOS/Windows, publication or deployment qualification is claimed.

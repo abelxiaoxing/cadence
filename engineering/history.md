@@ -63,6 +63,12 @@ Browser download requested is not UI-verified completion; native export verifies
 
 ## Ordinary conversation records
 
+`conversation-records.ts` and `conversation-controls.ts` share the original decoders, membership checks, transcript paging and degraded-control rules between live owners and the authenticated workbench.
+A stopped-owner view pins its registration and selected configuration, checking both and the stopped coordination state before and after reads; it never repairs, migrates, opens an SDK session or reconstructs an execution lease.
+A live or inconclusive owner stays on its real transport.
+A cold reader's empty original-turn map must never turn live work into an inferred interruption.
+Workbench access rotation and Stop close retained view handles; an owner restart or view eviction invalidates their continuations without restarting a scan.
+
 Ordinary/coordinator transcripts use immutable `turns/<turn>/transcript/<page>.json` records, published by page count only after their durable write.
 The bounded `turn.json` is explicitly a latest preview; exact conversation/turn/step reads validate membership and never reconstruct missing pages.
 `src/service/conversation-steps.ts` lists a paged turn from its pages (consecutive pages of one item are one step) followed by preview items no page holds yet, caching the page index per turn because pages never change.
@@ -119,3 +125,12 @@ Worker READY reports its imported public SDK version and observed worker-source 
 These are diagnostic observations, not execution authority or an atomic proof against package replacement.
 Missing observations are labelled unrecorded, never reconstructed from a parent session's batched tool-result times or filesystem mtimes.
 Reads do not migrate retained records.
+
+## Conversation execution context
+
+`conversation-contexts.ts` keeps credential-free selectors, immutable cwd and a preference revision under `service-v1/conversations-v1/contexts/<id>.json`.
+Reading an absent context uses an existing conversation identity's cwd when present; it neither creates settings nor invents the model used by old turns.
+A context/identity mismatch or malformed record refuses only that context and preserves its bytes.
+An explicit choice compares the observed record; restoring unchanged settings installs only a live source and does not rewrite the record or the default for new conversations.
+New turn headers and workflow runs retain `ExecutionContext` (cwd, checkout root, bound version and selected model), never credentials or approval capabilities; old records omit it without migration.
+Stopped-owner reads use the same context decoder and exact registration/config snapshots as other retained conversation reads.

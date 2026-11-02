@@ -44,7 +44,7 @@ function fixture(
       choice: { snapshot: () => ({ version: model }) },
     },
     cadence: {
-      state: () => ({ head: null, enabled: kind !== "send" }),
+      records: { state: () => ({ head: null, enabled: kind !== "send" }) },
       send: (_request: unknown, accepting?: () => void) => refuse(accepting),
     },
     conversations: {

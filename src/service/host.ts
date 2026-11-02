@@ -26,7 +26,7 @@ import { legacyTaskStore, type TaskStore } from "../task-store.ts";
 import type { TaskRecord } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
-import { resolveWorkspace, safeDirectory } from "../workspace.ts";
+import { ownerDefaultInCheckout, safeDirectory } from "../workspace.ts";
 import {
   AccessMaterial,
   HttpAuthentication,
@@ -246,7 +246,9 @@ export async function createServiceHost(
   const launch = hostEnvironment(process.env);
   const network = new AuthNetwork(); // capture BEFORE SDK imports
   const c = new ServiceCoordination(input.workspace, input.stateHome);
-  if (resolveWorkspace(input.config.cwd).root !== c.store.root)
+  // The saved default cwd remains metadata for unscoped callers. Its removal
+  // cannot strand other conversations in this checkout; no default is rebased.
+  if (!ownerDefaultInCheckout(c.store.root, input.config.cwd))
     throw new ContractError("conflict");
   await healBeforeStart(c);
   const old = readHostConfig(c);
@@ -283,7 +285,7 @@ export async function createServiceHost(
   // never registers an owner that would quarantine. load() rereads them later.
   const home = launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir;
   const pi = refuseAt("pi-agent-directory", () =>
-    piSource(input.config.agentDir, home, input.config.cwd, launch),
+    piSource(input.config.agentDir, home, c.store.root, launch),
   );
   refuseAt("pi-auth", () => readPiAuth(pi));
   refuseAt("pi-models", () => readPiModels(pi));
@@ -420,7 +422,7 @@ export async function createServiceHost(
       network,
       home,
       agentDir: input.config.agentDir,
-      cwd: input.config.cwd,
+      cwd: c.store.root,
       environment: launch,
     });
     const preferences = new CadencePreferences(input.config.agentDir);

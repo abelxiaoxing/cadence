@@ -30,12 +30,15 @@ import {
   FiSquare,
   FiTool,
 } from "react-icons/fi";
+import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
+import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
+import { useProjectObservation } from "./client/use-project-observation";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
@@ -96,9 +99,11 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 export function WorkspaceNotice({
   error,
   observationError,
+  onDemand = false,
 }: {
   error?: string;
   observationError?: string;
+  onDemand?: boolean;
 }) {
   const { t, tx } = useT();
   if (!error && !observationError) return null;
@@ -111,6 +116,10 @@ export function WorkspaceNotice({
           {observationError === "stale" ? (
             t(
               "Context changed. Observe again and request a fresh confirmation.",
+            )
+          ) : onDemand ? (
+            t(
+              "Connection unavailable. Existing work may continue; no message is replayed automatically.",
             )
           ) : (
             <Template
@@ -138,8 +147,19 @@ export function App({
   projectEntries,
   notices,
   onOpenService,
+  project,
+  onChooseFolder,
+  onPrepareSend,
+  directoryNamespaces,
 }: {
   api?: BrowserClient;
+  project?: ProjectEntry;
+  directoryNamespaces?: string[];
+  onChooseFolder?(cwd?: string): void;
+  onPrepareSend?(
+    signal: AbortSignal,
+    location?: ConversationLocation,
+  ): Promise<string>;
   onOpenProject?(path: string): Promise<void>;
   onWorkbenchHome?(): void;
   workbenchHome?: string;
@@ -165,22 +185,69 @@ export function App({
     initial ? "task" : "files",
   );
   const [reference, setReference] = useState<string>();
+  const [chatLocation, setChatLocation] = useState<ConversationLocation>();
+  const [newConversationCwd, setNewConversationCwd] = useState<
+    string | undefined
+  >(() => {
+    const saved = typeof history === "undefined" ? null : history.state;
+    const chat = chatFromLocation();
+    return chat &&
+      saved?.cadenceConversationId === chat &&
+      typeof saved?.cadenceCwd === "string"
+      ? saved.cadenceCwd
+      : undefined;
+  });
+  const [filesConversationId] = useState(() => crypto.randomUUID());
   const clearReference = useCallback(() => setReference(undefined), []);
   const [scope, setScope] = useState<Scope | null>(
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
+  const execution = useProjectObservation(project?.id, project?.epoch);
+  const executionReady =
+    !project ||
+    (project.epoch !== null &&
+      !execution.error &&
+      execution.value?.status === "running");
+  const executionStopped =
+    !!project &&
+    !execution.error &&
+    (execution.value?.status === "stopped" ||
+      execution.value?.status === "not-started");
+  // A failed readiness read must not discard an existing safety attachment.
+  // Only a positive Stop or replacement epoch changes that lifetime.
+  const executionEpoch = useRef<string | null>(null);
+  if (execution.value?.status === "running" && execution.value.epoch)
+    executionEpoch.current = execution.value.epoch;
+  const observeExecution =
+    !project ||
+    (project.epoch !== null &&
+      !!execution.value &&
+      !["stopped", "not-started"].includes(execution.value.status));
   const workspace = useWorkspace(
     api,
     taskId ? { kind: "task", id: taskId } : null,
-    !detached,
+    !detached && observeExecution,
+    executionEpoch.current,
   );
+  // A readiness refusal is not a conversation identity failure. Keep readonly
+  // history and drafts reachable; only explicit Send can prepare execution.
+  const projectObserved = !!(project && (execution.value || execution.error));
+  const conversationAvailable =
+    !detached && !!(workspace.workspace || projectObserved);
   const chatWorkspace = useRef<string | null>(null);
-  if (workspace.workspace)
-    chatWorkspace.current = workspace.workspace.workspaceId;
-  const chats = useConversationHistory(
-    api.client,
-    !!workspace.workspace && !detached,
-  );
+  if (workspace.workspace || execution.value?.workspaceId)
+    chatWorkspace.current =
+      workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
+  const prepareSend = onPrepareSend
+    ? async (signal: AbortSignal, location?: ConversationLocation) => {
+        const epoch = await onPrepareSend(signal, location);
+        if (signal.aborted) throw new Error("stale");
+        execution.prepared(epoch);
+        const observation = workspace.reconnect();
+        await workspace.whenReady(epoch, signal, observation);
+      }
+    : undefined;
+  const chats = useConversationHistory(api.client, conversationAvailable);
   const chatActivity = useWorkbench(
     api.client,
     workspace.workspace && !detached ? { kind: "conversation-active" } : null,
@@ -216,12 +283,40 @@ export function App({
   );
   const projects = useWorkbench(
     api.client,
-    workspace.workspace && !detached ? { kind: "projects" } : null,
+    !project && workspace.workspace && !detached ? { kind: "projects" } : null,
   );
-  const workingFolder =
+  const initialCwd =
+    newConversationCwd ??
+    project?.cwd ??
     (projects.value?.kind === "projects"
       ? projects.value.entries.find((entry) => entry.current)?.path
-      : undefined) ?? workspace.workspace?.rootLabel;
+      : undefined);
+  const currentChatLocation =
+    chatLocation?.id === chatId ? chatLocation : undefined;
+  useEffect(() => {
+    if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
+      history.replaceState(
+        {
+          ...history.state,
+          cadenceCwd: currentChatLocation.cwd,
+          cadenceConversationId: currentChatLocation.id,
+        },
+        "",
+        location.href,
+      );
+  }, [currentChatLocation]);
+  const fileLocation = chatId
+    ? currentChatLocation
+    : initialCwd
+      ? { id: filesConversationId, cwd: initialCwd }
+      : undefined;
+  const workingFolder =
+    currentChatLocation?.cwd ??
+    initialCwd ??
+    (projects.value?.kind === "projects"
+      ? projects.value.entries.find((entry) => entry.current)?.path
+      : undefined) ??
+    workspace.workspace?.rootLabel;
   const taskOrigin = useWorkbench(
     api.client,
     taskId && workspace.workspace && !detached
@@ -313,9 +408,14 @@ export function App({
       lifetime.current.depart();
     };
   }, []);
-  const selectChat = (id: string = crypto.randomUUID()) => {
+  const selectChat = (selected?: string) => {
+    const id = selected ?? crypto.randomUUID();
+    if (!selected) setNewConversationCwd(workingFolder ?? initialCwd);
     setAgent(null);
-    if (id !== chatId) setChatRuns([]);
+    if (id !== chatId) {
+      setChatRuns([]);
+      setReference(undefined);
+    }
     lifetime.current.depart();
     setChatId(id);
     setTaskId(null);
@@ -329,7 +429,7 @@ export function App({
     setRightTab("files");
     closeDrawer();
     history.replaceState(
-      null,
+      { cadenceCwd: workingFolder ?? initialCwd, cadenceConversationId: id },
       "",
       `${location.pathname}${location.search}#chat=${id}`,
     );
@@ -365,6 +465,9 @@ export function App({
       if (!target) {
         const chat = chatFromLocation();
         if (chat) {
+          const cwd = history.state?.cadenceCwd;
+          if (typeof cwd === "string") setNewConversationCwd(cwd);
+          setReference(undefined);
           setAgent(null);
           setChatRuns([]);
           setChatId(chat);
@@ -394,7 +497,11 @@ export function App({
       closeDrawer();
     };
     window.addEventListener("hashchange", navigate);
-    return () => window.removeEventListener("hashchange", navigate);
+    window.addEventListener("popstate", navigate);
+    return () => {
+      window.removeEventListener("hashchange", navigate);
+      window.removeEventListener("popstate", navigate);
+    };
   }, [closeDrawer]);
   const selectScope = (value: Scope, snapshot?: string, label?: string) => {
     setAgent(null);
@@ -523,11 +630,13 @@ export function App({
   const activeRuns = roster?.status === "complete" ? roster.runs : [];
   const connection =
     observation.state?.connection ??
-    (!workspace.workspace
-      ? "Service unavailable"
-      : taskId
-        ? "Task snapshot not observed yet"
-        : "Chat ready");
+    (executionStopped
+      ? "Ready to prepare on Send"
+      : !workspace.workspace
+        ? "Service unavailable"
+        : taskId
+          ? "Task snapshot not observed yet"
+          : "Chat ready");
   return (
     <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
@@ -744,16 +853,19 @@ export function App({
                   </span>
                 </button>
                 <div
-                  className={`more-menu-build${workspace.compatible ? "" : " warn"}`}
+                  className={`more-menu-build${workspace.compatible === false ? " warn" : ""}`}
                   title={localBuild?.buildId ?? t("unbuilt source")}
                 >
                   <span>
                     {t("Shared compatibility: {state}.", {
-                      state: workspace.compatible
-                        ? t("compatible")
-                        : t(
-                            "unavailable / mismatch — reload built assets; normal actions disabled",
-                          ),
+                      state:
+                        workspace.compatible === undefined
+                          ? t("Execution compatibility not observed")
+                          : workspace.compatible
+                            ? t("compatible")
+                            : t(
+                                "unavailable / mismatch — reload built assets; normal actions disabled",
+                              ),
                     })}
                   </span>
                   <Template
@@ -814,7 +926,18 @@ export function App({
         </section>
       )}
       {notices}
-      <WorkspaceNotice error={error} observationError={workspace.error} />
+      {executionStopped && (
+        <p className="banner-notice" role="status">
+          {t(
+            "Execution will be prepared when you send. Browsing does not start it.",
+          )}
+        </p>
+      )}
+      <WorkspaceNotice
+        onDemand={!!prepareSend}
+        error={error || execution.error}
+        observationError={executionReady ? workspace.error : undefined}
+      />
       <div
         ref={layout}
         className="layout"
@@ -838,10 +961,11 @@ export function App({
           tabIndex={-1}
           inert={mobile && drawer !== "left"}
         >
-          {workspace.workspace && (
+          {conversationAvailable && (
             <TaskSidebar
               client={api.client}
               workspace={workspace.workspace}
+              executionStopped={executionStopped}
               taskId={taskId}
               scope={scope}
               runs={runs}
@@ -976,23 +1100,45 @@ export function App({
               onOpenAgent={setAgent}
             />
           )}
-          {chatId && (
+          {chatId && (!project || projectObserved) && (
             <ChatWorkspace
-              key={`${chatWorkspace.current ?? "connecting"}:${chatId}`}
+              key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}`}
               client={api.client}
               id={chatId}
+              initialCwd={initialCwd}
+              onLocation={setChatLocation}
               hidden={!!agent}
               onOpenAgent={setAgent}
               onWorkflowRuns={setChatRuns}
-              workspaceId={chatWorkspace.current ?? "connecting"}
-              available={!!workspace.workspace}
-              canInterrupt={!!workspace.cancelCompatible}
-              enabled={
+              workspaceId={
+                project
+                  ? `checkout:${project.path}`
+                  : (chatWorkspace.current ?? "connecting")
+              }
+              directoryNamespaces={directoryNamespaces}
+              legacyWorkspaceId={
+                project
+                  ? (execution.value?.workspaceId ?? undefined)
+                  : undefined
+              }
+              prepareForSend={prepareSend}
+              actionsReady={
+                executionReady &&
                 !!workspace.workspace &&
                 !!workspace.compatible &&
                 !workspace.error
               }
+              available={conversationAvailable}
+              canInterrupt={!!workspace.cancelCompatible}
+              enabled={
+                prepareSend
+                  ? conversationAvailable
+                  : !!workspace.workspace &&
+                    !!workspace.compatible &&
+                    !workspace.error
+              }
               modelEnabled={
+                executionReady &&
                 !!workspace.compatible &&
                 workspace.transportStatus === "current" &&
                 !workspace.error
@@ -1000,6 +1146,7 @@ export function App({
               onModelChanged={() => {
                 lifetime.current.depart();
                 workspace.refresh(true);
+                execution.refresh();
               }}
               onChanged={() => {
                 chats.refresh();
@@ -1203,11 +1350,19 @@ export function App({
             </nav>
             {rightTab === "files" ? (
               <FilesPanel
+                key={fileLocation?.cwd ?? "owner"}
+                location={fileLocation}
                 client={api.client}
-                enabled={!!workspace.workspace}
+                enabled={!!workspace.workspace && !!fileLocation}
                 onReference={(path) => {
-                  if (!chatId) selectChat(linkedChat ?? undefined);
-                  setReference(path);
+                  if (!chatId) selectChat(linkedChat ?? filesConversationId);
+                  // A reference opened from a legacy view may enter a conversation
+                  // in another subdirectory. Keep that reference's original base.
+                  const reference =
+                    !chatId && fileLocation
+                      ? `${fileLocation.cwd.replace(/[\\/]+$/, "")}${fileLocation.cwd.startsWith("/") ? "/" : "\\"}${path}`
+                      : path;
+                  setReference(reference);
                   closeDrawer();
                 }}
               />
@@ -1235,52 +1390,59 @@ export function App({
           >
             <span
               className={`status-dot ${
-                observation.error || !workspace.workspace
-                  ? "error"
-                  : observation.transportStatus !== "current"
-                    ? "busy"
-                    : !observation.state
-                      ? ""
-                      : observation.state.connection === "current"
-                        ? "ok"
-                        : "busy"
+                executionStopped
+                  ? ""
+                  : observation.error || !workspace.workspace
+                    ? "error"
+                    : observation.transportStatus !== "current"
+                      ? "busy"
+                      : !observation.state
+                        ? ""
+                        : observation.state.connection === "current"
+                          ? "ok"
+                          : "busy"
               }`}
               aria-hidden="true"
             />
             {tx(connection)}
-            {observation.transportStatus !== "current" &&
+            {!executionStopped &&
+              observation.transportStatus !== "current" &&
               t(" · transport {status}", {
                 status: tx(observation.transportStatus),
               })}
             {observation.error ? ` · ${tx(observation.error)}` : ""}
           </span>
-          {roster?.status === "complete" ? (
-            activeRuns.length > 0 && (
-              <span className="status-item warn">
-                {t(
-                  activeRuns.length === 1
-                    ? "{count} active run"
-                    : "{count} active runs",
-                  { count: activeRuns.length },
-                )}
-              </span>
-            )
-          ) : (
-            <span className="status-item faint">
-              {t(
-                "Active roster unavailable; absence is not proof of settlement.",
+          {roster?.status === "complete"
+            ? activeRuns.length > 0 && (
+                <span className="status-item warn">
+                  {t(
+                    activeRuns.length === 1
+                      ? "{count} active run"
+                      : "{count} active runs",
+                    { count: activeRuns.length },
+                  )}
+                </span>
+              )
+            : !executionStopped && (
+                <span className="status-item faint">
+                  {t(
+                    "Active roster unavailable; absence is not proof of settlement.",
+                  )}
+                </span>
               )}
-            </span>
-          )}
         </div>
         <div className="statusbar-right">
-          {workspace.workspace && (
+          {(workspace.workspace || project) && (
             <WorkingFolderButton
               path={workingFolder}
-              onClick={() => setProjectOpen("")}
+              onClick={() =>
+                onChooseFolder
+                  ? onChooseFolder(workingFolder)
+                  : setProjectOpen("")
+              }
             />
           )}
-          {!workspace.compatible && (
+          {workspace.compatible === false && (
             <span className="status-item warn">
               {t(
                 "unavailable / mismatch — reload built assets; normal actions disabled",

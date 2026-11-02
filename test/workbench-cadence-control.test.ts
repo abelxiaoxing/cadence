@@ -181,7 +181,15 @@ function fixture() {
     coordination: { directory, files },
     owner,
     choice: { snapshot: () => ({ version: model, selected: null }) },
-    conversations,
+    conversations: {
+      ...conversations,
+      records: {
+        controlBound: conversations.controlBound,
+        controlKey: conversations.controlKey,
+        hasTurn: conversations.hasTurn,
+        conversation: conversations.conversation,
+      },
+    },
     workflows,
     secrets: () => [],
   } as unknown as ConstructorParameters<typeof ConversationWorkflow>[0]);
@@ -199,7 +207,7 @@ function fixture() {
       head: turns.get(id)?.at(-1) ?? null,
       text,
       model,
-      revision: cw.state(id).revision,
+      revision: cw.records.state(id).revision,
       intent,
     });
     return commandId;
@@ -274,15 +282,15 @@ it("one unusable control record degrades only its conversation and is never repa
     proposal: null,
     runs: [runId],
   });
-  plant(f.root, unbound, { ...f.cw.state(good), id: unbound });
+  plant(f.root, unbound, { ...f.cw.records.state(good), id: unbound });
   plant(f.root, corrupt, "{");
   writeFileSync(join(f.root, "not-a-record.txt"), "junk", { mode: 0o600 });
   const before = snapshot(f.root);
   for (const id of [dangling, unbound, corrupt, linkOnly]) {
-    const state = f.cw.state(id);
+    const state = f.cw.records.state(id);
     expect(state.notice, id).toBeTruthy();
     expect(state).toMatchObject({ enabled: true, proposal: null });
-    expect(f.cw.observe(id).notice).toBeTruthy();
+    expect(f.cw.records.observe(id).notice).toBeTruthy();
     expect(() =>
       f.cw.send({
         kind: "cadence-send",
@@ -311,17 +319,17 @@ it("one unusable control record degrades only its conversation and is never repa
   }
   // Retained run evidence from the uncertain record still links its run.
   expect(f.cw.links([runId])).toEqual([{ runId, conversationId: dangling }]);
-  expect(f.cw.state(good)).toMatchObject({ enabled: true, head: turn });
-  expect(f.cw.state(good).notice).toBeUndefined();
+  expect(f.cw.records.state(good)).toMatchObject({ enabled: true, head: turn });
+  expect(f.cw.records.state(good).notice).toBeUndefined();
   expect(snapshot(f.root)).toEqual(before);
   // A projection notice is never accepted back as retained state.
   plant(f.root, unbound, {
-    ...f.cw.state(good),
+    ...f.cw.records.state(good),
     id: unbound,
     notice: "forged",
   });
   f.links.add(unbound);
-  expect(f.cw.state(unbound).notice).not.toBe("forged");
+  expect(f.cw.records.state(unbound).notice).not.toBe("forged");
 });
 
 it("a displayed plan survives discussion, exit retires it, and research is refused only behind an implementation", async () => {
@@ -342,21 +350,24 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
   const invalid = await f.tool(turn, "cadence_plan", { ...plan(), checks: [] });
   expect(invalid).toMatchObject({ refused: "invalid-plan" });
   await f.settle(turn);
-  const proposal = f.cw.state(id).proposal;
+  const proposal = f.cw.records.state(id).proposal;
   expect(proposal?.id).toBe(published.proposalId);
   // Investigations queue behind other investigations, not an implementation.
   f.active.splice(0, 1, f.run(randomUUID(), "research"));
   turn = f.send(id, "message", "what does task b do?");
-  expect(f.cw.state(id).proposal).toEqual(proposal);
+  expect(f.cw.records.state(id).proposal).toEqual(proposal);
   const research = await f.tool(turn, "cadence_research", {
     goal: "g",
     questions: ["q"],
   });
   expect(research).toMatchObject({ phase: "research" });
-  expect(f.cw.state(id).runs).toHaveLength(1);
+  expect(f.cw.records.state(id).runs).toHaveLength(1);
   await f.settle(turn);
   f.send(id, "exit", "exit cadence");
-  expect(f.cw.state(id)).toMatchObject({ enabled: false, proposal: null });
+  expect(f.cw.records.state(id)).toMatchObject({
+    enabled: false,
+    proposal: null,
+  });
 });
 
 it("coordinator turns are per conversation, and a lost cadence-send reply observes its receipt", async () => {
@@ -390,7 +401,7 @@ it("approval admits before consuming the plan: a definite refusal keeps it, and 
   await f.tool(turn, "cadence_plan", plan());
   await f.settle(turn);
   const approve = async (refuse?: ErrorCode) => {
-    const s = f.cw.state(id);
+    const s = f.cw.records.state(id);
     if (!s.proposal) throw Error("proposal");
     const base = {
       conversationId: id,
@@ -410,8 +421,8 @@ it("approval admits before consuming the plan: a definite refusal keeps it, and 
   expect(() =>
     f.cw.approval({ ...refused, commandId: randomUUID() }, caller),
   ).toThrow("stale");
-  expect(f.cw.state(id).proposal?.id).toBe(refused.proposalId);
-  expect(f.cw.state(id).runs).toEqual([]);
+  expect(f.cw.records.state(id).proposal?.id).toBe(refused.proposalId);
+  expect(f.cw.records.state(id).runs).toEqual([]);
   expect(f.runs.size).toBe(0);
   // Two tabs with separate grants: the first admission bumps the revision.
   const tab1 = await approve(),
@@ -424,7 +435,10 @@ it("approval admits before consuming the plan: a definite refusal keeps it, and 
   expect(() =>
     f.cw.approval({ ...tab2, commandId: randomUUID() }, caller),
   ).toThrow(UnacceptedConversationCommand);
-  expect(f.cw.state(id)).toMatchObject({ proposal: null, runs: [runId] });
+  expect(f.cw.records.state(id)).toMatchObject({
+    proposal: null,
+    runs: [runId],
+  });
   // The same approval command observes its run instead of executing again.
   expect(f.cw.approval({ ...tab1, commandId: runId }, caller)).toMatchObject({
     kind: "workflow",
@@ -437,12 +451,13 @@ it("list and link projections decode a record once per change and stay bounded",
   const f = fixture();
   const id = randomUUID();
   f.send(id, "enter", "/cadence");
-  f.cw.observe(id);
+  f.cw.records.observe(id);
   const calls = f.hasTurnCalls();
-  for (let i = 0; i < 5; i++) expect(f.cw.observe(id).enabled).toBe(true);
+  for (let i = 0; i < 5; i++)
+    expect(f.cw.records.observe(id).enabled).toBe(true);
   expect(f.hasTurnCalls()).toBe(calls);
   f.send(id, "exit", "exit cadence");
-  expect(f.cw.observe(id).enabled).toBe(false);
+  expect(f.cw.records.observe(id).enabled).toBe(false);
   const result = decodeWorkbenchResult({
     kind: "workflow-active",
     runs: [],
@@ -578,8 +593,8 @@ it("retained control directories never impose a lifetime conversation cap", () =
   for (let i = 0; i < 300; i++)
     mkdirSync(join(f.root, randomUUID()), { mode: 0o700 });
   expect(() => f.send(randomUUID(), "enter", "/cadence")).not.toThrow();
-  expect(f.cw.state(randomUUID())).toMatchObject({ enabled: false });
-  expect(f.cw.observe(existing).enabled).toBe(true);
+  expect(f.cw.records.state(randomUUID())).toMatchObject({ enabled: false });
+  expect(f.cw.records.observe(existing).enabled).toBe(true);
   expect(() => f.send(existing, "exit", "exit cadence")).not.toThrow();
 });
 
@@ -589,7 +604,7 @@ it("a refusal before admission never consumes the browser grant", async () => {
   const turn = f.send(id, "enter", "/cadence plan");
   await f.tool(turn, "cadence_plan", plan());
   await f.settle(turn);
-  const s = f.cw.state(id);
+  const s = f.cw.records.state(id);
   if (!s.proposal) throw Error("proposal");
   const base = {
     conversationId: id,
@@ -626,8 +641,8 @@ it("a refusal before admission never consumes the browser grant", async () => {
     f.cw.approval({ ...approve, grant, commandId: randomUUID() }, caller),
   ).toThrow();
   expect(f.runs.size).toBe(1);
-  expect(f.cw.state(id).runs).toHaveLength(200);
-  expect(f.cw.state(id).runs.at(-1)).toBe(runId);
+  expect(f.cw.records.state(id).runs).toHaveLength(200);
+  expect(f.cw.records.state(id).runs.at(-1)).toBe(runId);
   expect(f.cw.links([full.state.runs[0], runId])).toEqual([
     { runId: full.state.runs[0], conversationId: id },
     { runId, conversationId: id },
@@ -640,16 +655,18 @@ it("a transient read failure is reported as unavailable and never remembered", a
   const turn = f.send(id, "enter", "/cadence");
   await f.tool(turn, "cadence_research", { goal: "g", questions: ["q"] });
   await f.settle(turn);
-  const [runId] = f.cw.state(id).runs;
+  const [runId] = f.cw.records.state(id).runs;
   f.ioFault("EMFILE");
   // First observation of the record fails with an I/O error, not bad content.
-  expect(() => f.cw.state(id)).toThrow("unavailable");
-  expect(f.cw.observe(id).notice).toMatch(/could not be read just now/u);
+  expect(() => f.cw.records.state(id)).toThrow("unavailable");
+  expect(f.cw.records.observe(id).notice).toMatch(
+    /could not be read just now/u,
+  );
   expect(f.cw.links([runId])).toEqual([]);
   f.ioFault();
   // Unchanged record bytes: the next read is a fresh, usable observation.
-  expect(f.cw.observe(id)).toMatchObject({ enabled: true });
-  expect(f.cw.observe(id).notice).toBeUndefined();
-  expect(f.cw.state(id).notice).toBeUndefined();
+  expect(f.cw.records.observe(id)).toMatchObject({ enabled: true });
+  expect(f.cw.records.observe(id).notice).toBeUndefined();
+  expect(f.cw.records.state(id).notice).toBeUndefined();
   expect(f.cw.links([runId])).toEqual([{ runId, conversationId: id }]);
 });

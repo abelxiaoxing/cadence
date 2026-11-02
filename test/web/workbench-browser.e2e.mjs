@@ -48,12 +48,29 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
     await p.getByRole("textbox", { name: "Message", exact: true }).waitFor();
     assert(!p.url().includes("token="));
     assert.equal(f.contacts(), 0);
-    // With no model and no saved preference, the button asks for one and Send
-    // opens the model panel; one explicit choice then sends the waiting
-    // message without another click (here refused locally as oversized).
+    // Reject invalid text before startup/model choice, not after installing a
+    // model. Keep the exact draft and contact no provider.
     await p.getByRole("button", { name: "Model: Choose a model" }).waitFor();
     const input = p.getByRole("textbox", { name: "Message", exact: true });
-    await input.fill("x".repeat(16 * 1024 + 1));
+    const oversized = "x".repeat(16 * 1024 + 1);
+    await input.fill(oversized);
+    await p.getByRole("button", { name: "Send", exact: true }).click();
+    await p
+      .getByText("The message was not sent (oversize). Its draft is kept.", {
+        exact: true,
+      })
+      .waitFor();
+    assert.equal(await input.inputValue(), oversized);
+    assert.equal(
+      await p.getByRole("dialog", { name: "Choose a model" }).count(),
+      0,
+    );
+    await p.getByRole("button", { name: "Model: Choose a model" }).waitFor();
+    assert.equal(f.contacts(), 0);
+    // A valid Send with no selected/saved model opens the picker. One explicit
+    // choice completes that same message, without another Send click.
+    f.mode("read-then-fail");
+    await input.fill("Read existing.txt");
     await p.getByRole("button", { name: "Send", exact: true }).click();
     const picker = p.getByRole("dialog", { name: "Choose a model" });
     await picker
@@ -62,13 +79,8 @@ it("built workbench: ordinary chat, file reference, no legacy creation and respo
     assert.equal(await p.locator('[role="alert"]').count(), 0);
     await picker.getByRole("option", { name: /^fixed/ }).click();
     await picker.waitFor({ state: "hidden" });
-    await p.getByText(/Send unavailable.*16 KiB/).waitFor();
     await p.getByRole("button", { name: "Model: fixed · Off" }).waitFor();
-    assert.equal(f.contacts(), 0);
     // Steps watched live open by themselves once the turn fails without an answer.
-    f.mode("read-then-fail");
-    await input.fill("Read existing.txt");
-    await p.getByRole("button", { name: "Send", exact: true }).click();
     await p
       .locator(".chat-steps-live + .chat-steps-title")
       .getByText("Working… read existing.txt")

@@ -212,6 +212,22 @@ export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
     throw new Error("Git workspace lookup refused");
   return { root: actual, cwd: actual };
 }
+/** Lexical membership only: retained contexts can outlive their directory. */
+export function withinWorkspace(root: string, cwd: string): boolean {
+  const path = relative(root, cwd);
+  return !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`);
+}
+/** The owner is the checkout, not a saved conversation/default directory. A
+ * provably removed default may remain metadata while other directories work.
+ * Unreadable or foreign defaults are not classified as absent. */
+export function ownerDefaultInCheckout(root: string, cwd: string): boolean {
+  try {
+    return resolveWorkspace(cwd).root === root;
+  } catch (error) {
+    if (!absent(error)) throw error;
+    return withinWorkspace(root, canonicalAmbientRoot(cwd));
+  }
+}
 export function defaultStateHome(): string {
   const candidate =
     process.platform === "win32"

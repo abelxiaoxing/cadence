@@ -1921,6 +1921,19 @@ function resolveWorkspace(cwd) {
     throw new Error("Git workspace lookup refused");
   return { root: actual, cwd: actual };
 }
+function withinWorkspace(root, cwd) {
+  const path2 = relative(root, cwd);
+  return !isAbsolute(path2) && path2 !== ".." && !path2.startsWith(`..${sep}`);
+}
+function ownerDefaultInCheckout(root, cwd) {
+  try {
+    return resolveWorkspace(cwd).root === root;
+  } catch (error) {
+    if (!absent(error))
+      throw error;
+    return withinWorkspace(root, canonicalAmbientRoot(cwd));
+  }
+}
 function defaultStateHome() {
   const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
   if (candidate && !isAbsolute(candidate))
@@ -2902,7 +2915,7 @@ function decodeProjectEntry(value) {
     id: decodeHash(o.id),
     path: text(o.path, 4096, true),
     cwd: text(o.cwd, 4096, true),
-    epoch: decodeId(o.epoch)
+    epoch: o.epoch === null ? null : decodeId(o.epoch)
   };
 }
 var RECOVERY_SCOPES = ["registry", "workbench", "project"];
@@ -4396,7 +4409,7 @@ class GatewayStore {
         if (!file)
           throw new ContractError("corrupt-selected");
         const project = decodeGatewayProject(json(file));
-        if (entry.name !== `${project.id}.json` || hash(project.path) !== project.id)
+        if (entry.name !== `${project.id}.json` || hash(project.path) !== project.id && hash(`directory\x00${project.cwd}`) !== project.id)
           throw new ContractError("corrupt-selected");
         out.push(project);
       }
@@ -4406,7 +4419,7 @@ class GatewayStore {
     return out;
   }
   associatedProjects() {
-    const projects = this.projects(), recovery = this.read()?.recovery;
+    const projects = this.projects().filter((project) => project.epoch !== null), recovery = this.read()?.recovery;
     if (!recovery)
       return projects;
     const receipt = this.files.read(this.path(recovery.receipt), 65536);
@@ -5753,7 +5766,7 @@ function selectStart(options, ambient) {
       tokenFile: server
     });
   }
-  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve5(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve5(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
+  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve5(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve5(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || !ownerDefaultInCheckout(workspace.root, selected.cwd))
     throw new ContractError("conflict");
   return {
     workspace: workspace.root,
@@ -6804,7 +6817,7 @@ async function startService(options, foreground, hostUrl) {
       throw new ContractError("conflict");
     return existing;
   }
-  return launchHost(input, c, foreground, hostUrl, input.config.cwd, env, network);
+  return launchHost(input, c, foreground, hostUrl, c.store.root, env, network);
 }
 async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
   const serialized = `${JSON.stringify(input)}

@@ -15,12 +15,23 @@ import {
   FiMessageSquare,
   FiSquare,
 } from "react-icons/fi";
-import {
-  type ChatSummary,
-  decodeWorkbenchCommand,
-  type WorkbenchCommand,
-} from "../../../../src/service/contracts/workbench.ts";
+import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
+import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
+import {
+  type ModelSelector,
+  publicError,
+} from "../../../../src/service-contract.ts";
+import {
+  assertSendModel,
+  captureSend,
+  type PendingSend,
+  SEND_PREPARATION_MS,
+  draftKey as selectDraftKey,
+  selector,
+  sendCommand,
+  withSendModel,
+} from "../../client/conversation-send";
 import { useConversation } from "../../client/use-conversation";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import {
@@ -50,7 +61,13 @@ export function ChatWorkspace({
   client,
   id,
   workspaceId,
+  initialCwd,
+  onLocation,
   enabled,
+  actionsReady = enabled,
+  prepareForSend,
+  legacyWorkspaceId,
+  directoryNamespaces = [],
   available = enabled,
   canInterrupt = enabled,
   modelEnabled = enabled,
@@ -65,7 +82,16 @@ export function ChatWorkspace({
   client: ServiceClient;
   id: string;
   workspaceId: string;
+  initialCwd?: string;
+  onLocation?(location: ConversationLocation): void;
   enabled: boolean;
+  actionsReady?: boolean;
+  prepareForSend?(
+    signal: AbortSignal,
+    location?: ConversationLocation,
+  ): Promise<void>;
+  legacyWorkspaceId?: string;
+  directoryNamespaces?: string[];
   available?: boolean;
   canInterrupt?: boolean;
   /** Kept mounted (draft, scroll, observations) while a subagent view covers it. */
@@ -82,7 +108,9 @@ export function ChatWorkspace({
   onReferenceUsed(): void;
 }) {
   const { t, tx } = useT();
-  const draftKey = `cadence:draft:${workspaceId}:${id}`;
+  const [draftKey] = useState(() =>
+    selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
+  );
   const [draft, setDraft] = useState(() => stored(draftKey));
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
     stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
@@ -95,6 +123,49 @@ export function ChatWorkspace({
   const [awaitingModel, setAwaitingModel] = useState(false);
   const [resume, setResume] = useState(false);
   const [modelReads, setModelReads] = useState(0);
+  const waitingSend = useRef<PendingSend | null>(null);
+  const sending = useRef(false);
+  const departure = useRef(new AbortController());
+  const [preparing, setPreparing] = useState(false);
+  const contextRead = useWorkbench(
+    client,
+    available && initialCwd
+      ? { kind: "conversation-context", location: { id, cwd: initialCwd } }
+      : null,
+    1000,
+  );
+  const context =
+    contextRead.value?.kind === "conversation-context"
+      ? contextRead.value.context
+      : undefined;
+  const contextKnown = !!context && !contextRead.error;
+  const locationCwd = context?.cwd ?? initialCwd;
+  const observedModel = useRef<ModelSelector | null>(null);
+  const modelClient = useMemo<Pick<ServiceClient, "models" | "chooseModel">>(
+    () => ({
+      models: (signal) =>
+        locationCwd
+          ? client.models(signal, { id, cwd: locationCwd })
+          : Promise.resolve({
+              kind: "error",
+              error: publicError("unavailable"),
+            }),
+      chooseModel: (request) =>
+        locationCwd
+          ? client.chooseModel(request, { id, cwd: locationCwd })
+          : Promise.resolve({
+              kind: "error",
+              error: publicError("unavailable"),
+            }),
+    }),
+    [client, id, locationCwd],
+  );
+  const onLocationRef = useRef(onLocation);
+  onLocationRef.current = onLocation;
+  useEffect(() => {
+    if (contextKnown && locationCwd)
+      onLocationRef.current?.({ id, cwd: locationCwd });
+  }, [contextKnown, id, locationCwd]);
   const conversation = useConversation(client, id, available);
   const { turns } = conversation;
   // Undefined until observed; null is a conversation not started yet.
@@ -123,18 +194,33 @@ export function ChatWorkspace({
   const input = cadenceInput(draft, cadence ? "cadence" : mode);
   const canSend =
     enabled &&
+    contextKnown &&
     observed &&
     !conversation.error &&
     modeObserved &&
     !(cadence && (workflow.error || state?.notice)) &&
     !busy &&
+    !awaitingModel &&
     !pending;
   const summary = conversation.summary ?? undefined;
   const running =
     summary && (summary.status === "queued" || summary.status === "running");
   const blocked = !!summary && summary.status !== "completed" && !running;
+  // A failed read must not strand a half-started owner behind an unreadable
+  // conversation. Explicit Send may prepare it, but cannot infer or rebase the
+  // missing head: the user reviews the restored context and sends again.
+  const canPrepareOnly =
+    !!prepareForSend &&
+    enabled &&
+    (!!conversation.error || !!contextRead.error) &&
+    !state?.notice &&
+    !running &&
+    !busy &&
+    !pending &&
+    !awaitingModel;
   const canExit =
-    canInterrupt &&
+    (canInterrupt || !!prepareForSend) &&
+    contextKnown &&
     observed &&
     cadenceKnown &&
     !conversation.error &&
@@ -166,8 +252,11 @@ export function ChatWorkspace({
   const sentDraft = useRef(draft);
   useEffect(() => {
     alive.current = true;
+    if (departure.current.signal.aborted)
+      departure.current = new AbortController();
     return () => {
       alive.current = false;
+      departure.current.abort();
     };
   }, []);
   useEffect(() => {
@@ -285,7 +374,14 @@ export function ChatWorkspace({
       setError(t("No plan is awaiting approval."));
       return;
     }
-    if (!cadenceKnown || !canSend || running || approving || !planApprovable)
+    if (
+      !actionsReady ||
+      !cadenceKnown ||
+      !canSend ||
+      running ||
+      approving ||
+      !planApprovable
+    )
       return;
     const observed = state;
     setBusy(true);
@@ -321,16 +417,29 @@ export function ChatWorkspace({
       }
     }
   };
-  const send = async (override?: string) => {
-    const message = override ?? draft;
-    const exiting = cadence && cadenceExit(message);
-    if (!(exiting ? canExit : canSend) || running || !message.trim()) return;
-    if (!override && cadence && cadenceApproval(message)) {
-      await approve();
+  const send = async (override?: string, retained?: PendingSend) => {
+    const message = retained?.text ?? override ?? draft;
+    const exiting = retained
+      ? retained.command.kind === "cadence-exit"
+      : cadence && cadenceExit(message);
+    if (
+      (!(exiting ? canExit : canSend) && !canPrepareOnly) ||
+      running ||
+      !message.trim()
+    )
+      return;
+    if (!retained && !override && cadence && cadenceApproval(message)) {
+      if (!actionsReady)
+        setError(
+          t(
+            "Execution is not ready to approve this plan. Send a message to refresh the conversation first; nothing was approved.",
+          ),
+        );
+      else await approve();
       return;
     }
     const selecting = cadenceInput(message, mode).mode === "cadence";
-    if ((cadence || selecting) && !cadenceKnown) {
+    if (!canPrepareOnly && (cadence || selecting) && !cadenceKnown) {
       setError(
         t(
           "Cadence state unavailable. Observe the conversation before sending.",
@@ -339,20 +448,68 @@ export function ChatWorkspace({
       return;
     }
     if (blocked && (!cadence || summary?.status === "unknown")) return;
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setError("");
+    let dispatched = false;
+    let preparationAttempted = false;
+    const prepare = async (location?: ConversationLocation) => {
+      if (!prepareForSend) return;
+      preparationAttempted = true;
+      setPreparing(true);
+      await prepareForSend(
+        AbortSignal.any([
+          departure.current.signal,
+          AbortSignal.timeout(SEND_PREPARATION_MS),
+        ]),
+        location,
+      );
+      if (alive.current) {
+        setPreparing(false);
+        setModelReads((n) => n + 1);
+      }
+    };
     try {
-      if (cadence && cadenceExit(message) && state) {
-        const commandId = crypto.randomUUID();
+      if (canPrepareOnly) {
+        await prepare(context ? { id, cwd: context.cwd } : undefined);
+        if (!alive.current) return;
+        conversation.refresh();
+        contextRead.refresh();
+        workflow.refresh();
+        onChanged();
+        setError(
+          t(
+            "Execution was prepared, but the conversation was unreadable before Send. Review its restored context and send again; this message was not sent.",
+          ),
+        );
+        return;
+      }
+      let intent =
+        retained ??
+        captureSend({
+          id,
+          head: summary?.head ?? null,
+          text: message,
+          revision: state?.revision ?? 0,
+          location: context ? { id, cwd: context.cwd } : undefined,
+          model: observedModel.current ?? context?.model ?? undefined,
+          intent: exiting
+            ? "exit"
+            : cadence
+              ? "message"
+              : selecting
+                ? "enter"
+                : "ordinary",
+        });
+      await prepare(intent.location);
+      if (!alive.current) return;
+      if (intent.command.kind === "cadence-exit") {
+        const commandId = intent.command.commandId;
         sentDraft.current = message;
         setPending(commandId);
-        const reply = await client.workbenchCommand({
-          kind: "cadence-exit",
-          commandId,
-          conversationId: id,
-          head: summary?.head ?? null,
-          revision: state.revision,
-        });
+        dispatched = true;
+        const reply = await client.workbenchCommand(sendCommand(intent));
         if (!alive.current) return;
         if (reply.kind === "error") {
           setError(reply.error.code);
@@ -368,22 +525,34 @@ export function ChatWorkspace({
         return;
       }
       const chooseFirst = () => {
+        waitingSend.current = intent;
         setAwaitingModel(true);
         setModelOpen(true);
       };
-      let catalog = await client.models();
+      let catalog = await client.models(undefined, intent.location);
       if (!alive.current) return;
-      // Send installs the saved preference; with none, the model control
-      // opens and this message waits for one explicit choice.
-      if (
-        catalog.kind === "ok" &&
-        !catalog.value.selected &&
-        catalog.value.remembered
-      ) {
+      const offered =
+        catalog.kind === "ok"
+          ? (catalog.value.selected ?? catalog.value.remembered)
+          : null;
+      if (!intent.model && offered) intent = withSendModel(intent, offered);
+      // Restore only this Send's exact displayed choice, never a newer global
+      // default or another conversation's selection.
+      const restoreChoice =
+        intent.model ??
+        (catalog.kind === "ok" ? catalog.value.remembered : null);
+      if (catalog.kind === "ok" && !catalog.value.selected && restoreChoice) {
         const restored = await client.workbenchCommand({
           kind: "restore-model",
           commandId: crypto.randomUUID(),
           epoch: catalog.value.version.epoch,
+          ...(intent.location
+            ? {
+                location: intent.location,
+                expected: catalog.value.version,
+                choice: restoreChoice,
+              }
+            : {}),
         });
         if (!alive.current) return;
         if (restored.kind === "error") {
@@ -391,7 +560,7 @@ export function ChatWorkspace({
           chooseFirst();
           return;
         }
-        catalog = await client.models();
+        catalog = await client.models(undefined, intent.location);
         if (!alive.current) return;
         setModelReads((n) => n + 1);
       }
@@ -399,30 +568,11 @@ export function ChatWorkspace({
         chooseFirst();
         return;
       }
-      const common = {
-        commandId: crypto.randomUUID(),
-        conversationId: id,
-        head: summary?.head ?? null,
-        text: message,
-        model: catalog.value.version,
-      };
-      // A Cadence command was refused above without an observed mode record.
-      const command: WorkbenchCommand =
-        (cadence || selecting) && state
-          ? {
-              kind: "cadence-send",
-              ...common,
-              revision: state.revision,
-              intent: cadenceExit(message)
-                ? "exit"
-                : cadence
-                  ? "message"
-                  : "enter",
-            }
-          : { kind: "send", ...common };
-      decodeWorkbenchCommand(command); // Refuse invalid/oversize text before any pending-send state.
+      assertSendModel(intent, catalog.value.selected);
+      const command = sendCommand(intent, catalog.value.version);
       sentDraft.current = message;
       setPending(command.commandId);
+      dispatched = true;
       const reply = await client.workbenchCommand(command);
       if (!alive.current) return;
       if (reply.kind === "error") {
@@ -441,15 +591,28 @@ export function ChatWorkspace({
       workflow.refresh();
       conversation.refresh();
       onChanged();
-    } catch {
+    } catch (error) {
       if (alive.current)
         setError(
-          t(
-            "Send unavailable. Check the message limit (16 KiB); observe any pending command before sending again.",
-          ),
+          dispatched
+            ? t(
+                "Send unavailable. Check the message limit (16 KiB); observe any pending command before sending again.",
+              )
+            : t(
+                preparationAttempted
+                  ? "The message was not sent ({code}). Its draft is kept; preparation may have started an execution service."
+                  : "The message was not sent ({code}). Its draft is kept.",
+                {
+                  code: error instanceof Error ? error.message : "unavailable",
+                },
+              ),
         );
     } finally {
-      if (alive.current) setBusy(false);
+      sending.current = false;
+      if (alive.current) {
+        setBusy(false);
+        setPreparing(false);
+      }
     }
   };
   const sendLatest = useRef(send);
@@ -458,13 +621,18 @@ export function ChatWorkspace({
   useEffect(() => {
     if (resume && canSend && !running) {
       setResume(false);
-      void sendLatest.current();
+      const intent = waitingSend.current;
+      waitingSend.current = null;
+      if (intent) void sendLatest.current(undefined, intent);
     }
   }, [resume, canSend, running]);
   // Never a late surprise: if sending stays impossible, the message waits.
   useEffect(() => {
     if (!resume) return;
-    const timer = setTimeout(() => setResume(false), 10000);
+    const timer = setTimeout(() => {
+      setResume(false);
+      waitingSend.current = null;
+    }, 10000);
     return () => clearTimeout(timer);
   }, [resume]);
   const interrupt = async () => {
@@ -513,6 +681,23 @@ export function ChatWorkspace({
           </span>
         )}
       </header>
+      {contextRead.error && !canPrepareOnly && (
+        <p role="alert" className="inspector-note">
+          {contextRead.error}
+        </p>
+      )}
+      {canPrepareOnly && (
+        <p className="panel-hint" role="status">
+          {t(
+            "Conversation context is unavailable. Send can prepare execution, but cannot submit this draft until the context is observed.",
+          )}
+        </p>
+      )}
+      {preparing && (
+        <p className="panel-hint" role="status">
+          {t("Preparing execution for this Send…")}
+        </p>
+      )}
       <div
         className="chat-messages"
         ref={scroll}
@@ -568,6 +753,7 @@ export function ChatWorkspace({
             client={client}
             state={state}
             canApprove={
+              actionsReady &&
               canSend &&
               cadenceKnown &&
               planApprovable &&
@@ -644,9 +830,8 @@ export function ChatWorkspace({
           ref={textarea}
           disabled={
             (!enabled && !(cadence && canInterrupt)) ||
-            !observed ||
-            !modeObserved ||
-            !!conversation.error ||
+            (!canPrepareOnly &&
+              (!observed || !modeObserved || !!conversation.error)) ||
             busy ||
             !!pending
           }
@@ -702,8 +887,13 @@ export function ChatWorkspace({
             Cadence
           </button>
           <ModelPicker
-            client={client}
-            enabled={modelEnabled && available}
+            client={modelClient}
+            onObserved={(catalog) => {
+              observedModel.current = catalog.selected
+                ? selector(catalog.selected)
+                : catalog.remembered;
+            }}
+            enabled={modelEnabled && available && contextKnown}
             locked={!!running}
             refresh={String(modelReads)}
             open={modelOpen}
@@ -711,9 +901,13 @@ export function ChatWorkspace({
               setModelOpen(value);
               if (!value) setAwaitingModel(false);
             }}
-            onChanged={onModelChanged}
-            onChosen={() => {
-              if (!awaitingModel) return;
+            onChanged={() => {
+              contextRead.refresh();
+              onModelChanged();
+            }}
+            onChosen={(choice) => {
+              if (!awaitingModel || !waitingSend.current) return;
+              waitingSend.current = withSendModel(waitingSend.current, choice);
               setAwaitingModel(false);
               setError("");
               setResume(true);
@@ -742,7 +936,8 @@ export function ChatWorkspace({
               type="submit"
               className="primary"
               disabled={
-                !(cadence && cadenceExit(draft) ? canExit : canSend) ||
+                (!(cadence && cadenceExit(draft) ? canExit : canSend) &&
+                  !canPrepareOnly) ||
                 !draft.trim() ||
                 (blocked && (!cadence || summary?.status === "unknown"))
               }

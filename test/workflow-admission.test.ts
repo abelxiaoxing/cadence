@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { WorkflowRequest } from "../src/service/contracts/workflow.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
@@ -11,6 +12,7 @@ import {
   Workflows,
 } from "../src/service/workflows.ts";
 import { canonicalJson } from "../src/worker-public.mjs";
+import * as workspace from "../src/workspace.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 /** Admission only: the checkout gate never opens, so nothing runs. */
@@ -20,7 +22,8 @@ function owner() {
   mkdirSync(root, { mode: 0o700 });
   const coordination = new ServiceCoordination(root, join(dir, "state"));
   coordination.files.directory(coordination.directory, true);
-  const epoch = randomUUID();
+  const epoch = randomUUID(),
+    sourceSelectionId = randomUUID();
   const version = {
     epoch,
     accessGeneration: 1,
@@ -43,6 +46,7 @@ function owner() {
       snapshot: () => ({
         version,
         selected: {
+          sourceSelectionId,
           provider: "fixture",
           model: "fixed",
           api: "openai-completions",
@@ -50,17 +54,16 @@ function owner() {
         },
       }),
     },
-    actions: {
-      // The gate never opens; cancellation still releases a queued run.
-      scheduler: {
-        conversationBarrier: (_id: string, signal: AbortSignal) =>
-          new Promise((_resolve, reject) =>
+    gate: {
+      // The gate never opens; cancellation settles only this queued original.
+      acquire: (_id: string, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          if (signal.aborted) reject(Error("stale"));
+          else
             signal.addEventListener("abort", () => reject(Error("stale")), {
               once: true,
-            }),
-          ),
-      },
-      conversationBoundary() {},
+            });
+        }),
     },
     cwd: root,
     secrets: () => [],
@@ -73,6 +76,33 @@ function owner() {
   });
   return { workflows, host, epoch, version, research, coordination };
 }
+it("execution checks resolve a shared checkout/cwd once but still validate an independent conversation directory", () => {
+  const { workflows, coordination } = owner();
+  const root = coordination.store.root;
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  const cwd = join(root, "scoped");
+  mkdirSync(cwd);
+  const check = workflows as unknown as {
+    assertRunning(live: {
+      abort: AbortController;
+      execution: { cwd: string };
+    }): void;
+  };
+  const resolved = vi.spyOn(workspace, "resolveWorkspace");
+  const abort = new AbortController();
+  try {
+    check.assertRunning({ abort, execution: { cwd: root } });
+    expect(resolved.mock.calls).toEqual([[root]]);
+    resolved.mockClear();
+    check.assertRunning({ abort, execution: { cwd } });
+    expect(resolved.mock.calls).toEqual([[root], [cwd]]);
+    renameSync(cwd, join(root, "removed-scope"));
+    expect(() => check.assertRunning({ abort, execution: { cwd } })).toThrow();
+  } finally {
+    resolved.mockRestore();
+  }
+});
+
 const refusal = (run: () => unknown) => {
   try {
     run();

@@ -1,7 +1,7 @@
 /** Browser conversation control. A model can investigate/propose, never approve itself. */
 import { randomUUID } from "node:crypto";
 import { opendirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { CADENCE_INSTRUCTIONS } from "../cadence-instructions.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
@@ -27,11 +27,14 @@ import {
   type WorkflowPlan,
   type WorkflowRun,
 } from "./contracts/workflow.ts";
+import type { ConversationContexts } from "./conversation-contexts.ts";
 import {
-  type ConversationControl,
-  type Conversations,
-  observedFile,
-} from "./conversations.ts";
+  CONTROL_BYTES as BYTES,
+  ConversationControls,
+  CONTROL_SCHEMA as SCHEMA,
+  type Usable,
+} from "./conversation-controls.ts";
+import type { ConversationControl, Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { ServiceOwner } from "./owner.ts";
@@ -40,9 +43,7 @@ import type { FileSnapshot } from "./private-files.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import type { Workflows } from "./workflows.ts";
 
-const BYTES = 384 * 1024;
 const EVIDENCE_BYTES = 16384;
-const SCHEMA = "cadence-conversation-workflow/1";
 /** Concurrent coordinator turns, one per conversation. Conversations still
  * enforces the shared eight-turn total with ordinary chat. */
 const COORDINATORS = 8;
@@ -50,12 +51,6 @@ const COORDINATORS = 8;
 const RECENT_RUNS = 200;
 /** Bounded read-side directory scan; extra entries are ignored, never removed. */
 const SCAN = 256;
-const INCOMPLETE =
-  "Cadence control state for this conversation is missing, incomplete or unreadable. No mode, plan or run is inferred and nothing was repaired. Start a new conversation; preserve this state for local diagnosis.";
-const UNRECORDED =
-  "The last Cadence message of this conversation was not durably recorded. Its plan is not approvable and nothing was replayed or repaired. Start a new conversation; preserve this state for local diagnosis.";
-const UNAVAILABLE =
-  "Cadence control state for this conversation could not be read just now. Nothing is inferred; it is read again on the next request.";
 const PLAN_REFUSALS: Partial<Record<string, string>> = {
   stale:
     "The project, model selection or owner changed while publishing. No plan card was published; ask the user before trying again.",
@@ -83,55 +78,12 @@ type Approval = Extract<
   WorkbenchCommand,
   { kind: "cadence-prepare" | "cadence-approve" }
 >;
-interface Usable {
-  state: CadenceConversation;
-  file?: FileSnapshot;
-}
-interface Loaded extends Usable {
-  /** The record exists but is unusable; reads still project it. */
-  problem?: true;
-  /** This read failed with an I/O error, not because of the record's content:
-   * never cached, and reported as unavailable rather than as a bad record. */
-  transient?: true;
-}
 /** Explained, effect-free tool refusal the coordinator can relay. */
 const refusal = (refused: string, notice: string) => ({ refused, notice });
-function fresh(id: string): CadenceConversation {
-  return {
-    id,
-    revision: 0,
-    enabled: false,
-    head: null,
-    proposal: null,
-    runs: [],
-  };
-}
-/** A Node system error (EMFILE, EIO, ...) says nothing about record content. */
-function transient(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    !(error instanceof ContractError) &&
-    "code" in error &&
-    typeof error.code === "string" &&
-    /^E[A-Z0-9]+$/u.test(error.code)
-  );
-}
-function unusable(id: string): Loaded {
-  // Fail closed: an unknown mode is never treated as ordinary editing.
-  return {
-    state: { ...fresh(id), enabled: true, notice: INCOMPLETE },
-    problem: true,
-  };
-}
 export class ConversationWorkflow {
-  private readonly root: string;
+  readonly records: ConversationControls;
   /** conversationId -> active coordinator turn. */
   private readonly active = new Map<string, string>();
-  /** Read projection cache keyed by record/link identity; bounded below. */
-  private readonly cache = new Map<
-    string,
-    { key: string; state: CadenceConversation }
-  >();
   private readonly grants = new Map<
     string,
     {
@@ -149,61 +101,18 @@ export class ConversationWorkflow {
       coordination: ServiceCoordination;
       owner: ServiceOwner;
       choice: OwnerModelChoice;
+      contexts?: ConversationContexts;
       conversations: Conversations;
       workflows: Workflows;
       secrets(): readonly string[];
     },
   ) {
-    this.root = join(o.coordination.directory, "conversation-workflows-v1");
-  }
-  private path(id: string) {
-    return join(this.root, decodeId(id), "state.json");
-  }
-  /** Never throws for one record's problems: those degrade only that conversation. */
-  private read(id: string): Loaded {
-    this.o.owner.lease.assert();
-    const path = this.path(id);
-    try {
-      const bound = this.o.conversations.controlBound(id);
-      const file = this.o.coordination.files.read(path, BYTES);
-      if (!file)
-        return bound || this.o.coordination.files.directory(dirname(path))
-          ? unusable(id)
-          : { state: fresh(id) };
-      const record = closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
-        "schema",
-        "state",
-      ]);
-      const state = decodeCadenceConversation(record.state);
-      if (
-        record.schema !== SCHEMA ||
-        !bound ||
-        state.id !== id ||
-        state.notice !== undefined
-      )
-        return unusable(id);
-      if (state.head && !this.o.conversations.hasTurn(id, state.head))
-        return {
-          state: { ...state, proposal: null, notice: UNRECORDED },
-          problem: true,
-        };
-      return { state, file };
-    } catch (error) {
-      this.o.owner.lease.assert();
-      if (transient(error))
-        return {
-          state: { ...fresh(id), enabled: true, notice: UNAVAILABLE },
-          problem: true,
-          transient: true,
-        };
-      return unusable(id);
-    }
-  }
-  private usable(id: string): Usable {
-    const loaded = this.read(id);
-    if (loaded.transient) throw new ContractError("unavailable");
-    if (loaded.problem) throw new ContractError("corrupt-selected");
-    return loaded;
+    this.records = new ConversationControls({
+      directory: o.coordination.directory,
+      files: o.coordination.files,
+      conversations: o.conversations.records,
+      assertCurrent: () => o.owner.lease.assert(),
+    });
   }
   private save(state: CadenceConversation, file?: FileSnapshot) {
     this.o.owner.lease.assert();
@@ -240,43 +149,21 @@ export class ConversationWorkflow {
       }
       if (file)
         this.o.coordination.files.replace(
-          this.path(state.id),
+          this.records.path(state.id),
           file,
           body,
           BYTES,
         );
-      else this.o.coordination.files.create(this.path(state.id), body, BYTES);
+      else
+        this.o.coordination.files.create(
+          this.records.path(state.id),
+          body,
+          BYTES,
+        );
     } catch (e) {
       this.o.owner.quarantine();
       throw e;
     }
-  }
-  state(id: string): CadenceConversation {
-    const loaded = this.read(id);
-    if (loaded.transient) throw new ContractError("unavailable");
-    return loaded.state;
-  }
-  /** Cheap list/link projection: a record is re-decoded only when it or its
-   * control link changed. Its validity is only lost by a changed record. */
-  observe(id: string): CadenceConversation {
-    this.o.owner.lease.assert();
-    let key: string;
-    try {
-      key = `${observedFile(this.path(id))}|${this.o.conversations.controlKey(id)}`;
-    } catch {
-      return this.read(id).state;
-    }
-    const hit = this.cache.get(id);
-    if (hit?.key === key) return hit.state;
-    const loaded = this.read(id);
-    // A failed read is never remembered: the next observation reads again.
-    if (loaded.transient) {
-      this.cache.delete(id);
-      return loaded.state;
-    }
-    if (this.cache.size >= 2 * SCAN) this.cache.clear();
-    this.cache.set(id, { key, state: loaded.state });
-    return loaded.state;
   }
   private runLink(runId: string): string {
     return join(
@@ -301,7 +188,7 @@ export class ConversationWorkflow {
         ]);
         if (row.runId !== runId) continue;
         const conversationId = decodeId(row.conversationId);
-        if (this.observe(conversationId).notice) continue;
+        if (this.records.observe(conversationId).notice) continue;
         links.push({ runId, conversationId });
         wanted.delete(runId);
       } catch {
@@ -311,8 +198,8 @@ export class ConversationWorkflow {
     if (!wanted.size) return links;
     // Compatibility fallback for the at-most-200 records older owners wrote.
     try {
-      if (!this.o.coordination.files.directory(this.root)) return links;
-      const dir = opendirSync(this.root);
+      if (!this.o.coordination.files.directory(this.records.root)) return links;
+      const dir = opendirSync(this.records.root);
       try {
         let seen = 0;
         for (
@@ -328,7 +215,7 @@ export class ConversationWorkflow {
             continue;
           }
           if (!e.isDirectory()) continue;
-          for (const runId of this.observe(id).runs)
+          for (const runId of this.records.observe(id).runs)
             if (wanted.delete(runId)) links.push({ runId, conversationId: id });
         }
       } finally {
@@ -357,7 +244,7 @@ export class ConversationWorkflow {
   /** Best-effort link of an uncertain admission; never a retry. */
   private attach(conversationId: string, runId: string, consume: boolean) {
     try {
-      const current = this.usable(conversationId);
+      const current = this.records.usable(conversationId);
       if (current.state.runs.includes(runId)) return;
       this.save(
         {
@@ -399,7 +286,7 @@ export class ConversationWorkflow {
     // A lost reply observes its original acceptance before freshness checks.
     const receipt = this.o.conversations.receipt(input, !enabled);
     if (receipt) return receipt;
-    const { state, file } = this.usable(c.conversationId);
+    const { state, file } = this.records.usable(c.conversationId);
     if (
       c.revision !== state.revision ||
       (c.intent === "message" && !state.enabled)
@@ -446,7 +333,7 @@ export class ConversationWorkflow {
             this.active.get(c.conversationId) !== c.commandId
           )
             throw new ContractError("stale");
-          const current = this.usable(c.conversationId);
+          const current = this.records.usable(c.conversationId);
           if (!current.state.enabled || current.state.head !== c.commandId)
             throw new ContractError("stale");
           if (name === "cadence_status") {
@@ -467,7 +354,10 @@ export class ConversationWorkflow {
             };
           }
           const epoch = this.o.owner.lease.registration.epoch;
-          const model = this.o.choice.snapshot().version;
+          const model =
+            c.model.conversation && this.o.contexts
+              ? this.o.contexts.snapshot(c.model.conversation).version
+              : this.o.choice.snapshot().version;
           if (
             model.epoch !== c.model.epoch ||
             model.configRev !== c.model.configRev ||
@@ -643,7 +533,7 @@ export class ConversationWorkflow {
   approval(c: Approval, caller: Caller | undefined): WorkbenchResult {
     if (!caller) throw new ContractError("forbidden");
     const evidence = join(
-      this.root,
+      this.records.root,
       decodeId(c.conversationId),
       "approvals",
       `${decodeId(c.commandId)}.json`,
@@ -707,8 +597,8 @@ export class ConversationWorkflow {
     evidence: string,
     recording: () => void,
   ): WorkbenchResult {
-    const { state, file } = this.usable(c.conversationId);
-    const view = this.o.conversations.conversation(c.conversationId);
+    const { state, file } = this.records.usable(c.conversationId);
+    const view = this.o.conversations.records.conversation(c.conversationId);
     if (
       !state.enabled ||
       c.revision !== state.revision ||

@@ -73,6 +73,7 @@
     "src/service/contracts/workbench.ts",
     "src/cadence-mode.ts",
     "src/cadence-preferences.ts",
+    "src/conversation-identity.ts",
     "src/service/contracts/workflow.ts",
     "src/cadence-instructions.ts",
     "src/coordinator-tools.mjs",

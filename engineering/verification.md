@@ -38,16 +38,21 @@ Its workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spa
 Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
+The same-checkout restart browser scenario observes stopped readiness and successful cold conversation head/context reads before its one explicit Send; a read refusal racing Stop permits preparation only, not message admission.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
 Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
+The browser local-delivery scenario uses those distinct bounds: a consumed plan and a displayed result are UI observations (15s each); the accepted run is observed readonly under the original 120s scenario deadline, begun before setup, with its final action window reserved for UI/teardown.
+`test/helpers/workflow-observation.ts` never renews that deadline on progress or retries a mutation; a merge hash alone is not settlement, and every terminal non-success remains non-success.
+Its receipt records the latest run/read refusal and sampled state changes before fixture Stop, then records cleanup failures separately; observation timestamps are not native step timing.
+
 Preserve failed attempts; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
 Do not recreate the removed project workflow integration unless explicitly requested.
 Removing development tooling must never delete consumer `.cadence` data or private service state.
 
 ## Regression owners
 
-- `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, global model preference, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
-- `service-conversation-workflow`, `test/web/workflow.test.tsx`, `test/web/cadence-browser.e2e.mjs`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
+- `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
+- `service-conversation-workflow`, `workflow-observation`, `test/web/workflow.test.tsx`, `test/web/cadence-browser.e2e.mjs`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
 - `conversation-pages`, `service-conversation-pages`, `conversation-retention`, `service-conversation-retention`, `workbench-browser`, `conversation-history-browser`: complete transcript paging beyond the old turn cap, record-stream checkpointing beyond 2MiB, cold restart/continuation beyond 200 conversations and 1000 turns, split-secret/Unicode retention and torn-context refusal without erasing native closure.
 - `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
@@ -60,9 +65,12 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
 - `service-maintenance`, `service-maintenance-systemd`, `test/web/service-dialog.test.tsx`: cgroup and `InvocationID` proofs, the job record, upgrade fetch/stop/install/rollback order, and against a real user manager a child inside the service that is refused without change and a WebUI restart that a transient unit completes.
+- `service-conversation-context`, `service-workflow-context`, `conversation-context-browser`: same-checkout subdirectories and same-cwd conversations, queued/admitted model snapshots, exact stale-plan refusal, worktree/check cwd, restart/default preservation, legacy identity reads and two-tab model isolation.
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running, rotation of the token line, a runtime fault's worker stop/successor/recovering restart and the readable refusal for a removed project directory.
 - `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
-- `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, an Open that reclaims a dead registry lock and genuine multi-owner Stop over loopback.
+- `gateway-conversations`, `gateway-send`, `gateway-browser`, `send-entry-browser`, `test/web/{conversation-send,send-observation}.test.tsx`: stopped-owner history/mode/step reads without startup or writes, unchanged draft identity across selection/first startup/Stop/refresh, exact stopped-state guards and readonly restoration; real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, nonactivating selection followed by a Send that reclaims a provably dead registry lock and genuine multi-owner Stop over loopback.
+  Preparation needs fresh auth/build/CSRF, sends no message or approval, does not adopt a merely browsed independent owner, and adds no warm-Send receipt quota; lost preparation/Send replies and departure cannot replay or rebind a message.
+  Same-epoch re-entry waits for the new observation generation, never the previous attachment.
 
 ## Builds and packaging
 

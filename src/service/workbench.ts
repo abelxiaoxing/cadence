@@ -20,6 +20,7 @@ import {
   type WorkbenchRead,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
+import { ConversationContexts } from "./conversation-contexts.ts";
 import { ConversationWorkflow } from "./conversation-workflow.ts";
 import { Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
@@ -34,6 +35,7 @@ import { Workflows } from "./workflows.ts";
 
 export class Workbench implements WorkbenchPort {
   readonly conversations: Conversations;
+  readonly contexts: ConversationContexts;
   readonly files: WorkbenchFiles;
   readonly workflows: Workflows;
   readonly cadence: ConversationWorkflow;
@@ -58,10 +60,12 @@ export class Workbench implements WorkbenchPort {
       checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
     },
   ) {
-    this.conversations = new Conversations(o);
-    this.workflows = new Workflows(o);
+    this.contexts = new ConversationContexts(o);
+    this.conversations = new Conversations({ ...o, contexts: this.contexts });
+    this.workflows = new Workflows({ ...o, contexts: this.contexts });
     this.cadence = new ConversationWorkflow({
       ...o,
+      contexts: this.contexts,
       conversations: this.conversations,
       workflows: this.workflows,
     });
@@ -69,7 +73,7 @@ export class Workbench implements WorkbenchPort {
     // only its own conversation (see ConversationWorkflow.read).
     this.conversations.assertSettled();
     this.files = new WorkbenchFiles(
-      o.cwd,
+      o.coordination.store.root,
       [o.coordination.files.namespace, o.agentDir],
       o.secrets,
     );
@@ -82,15 +86,28 @@ export class Workbench implements WorkbenchPort {
     try {
       this.workflows.closeHistory();
     } finally {
-      this.conversations.closeReads();
+      this.conversations.records.closeReads();
     }
   }
   read(value: WorkbenchRead): WorkbenchResult {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();
     switch (request.kind) {
+      case "conversation-context":
+        return {
+          kind: request.kind,
+          context: this.contexts.records.read(request.location).context,
+        };
+      case "conversation-models":
+        return {
+          kind: request.kind,
+          catalog: this.contexts.catalog(request.location),
+        };
       case "cadence-conversation":
-        return { kind: request.kind, state: this.cadence.state(request.id) };
+        return {
+          kind: request.kind,
+          state: this.cadence.records.state(request.id),
+        };
       case "workflow-active": {
         const active = this.workflows.activeRuns();
         return {
@@ -107,13 +124,16 @@ export class Workbench implements WorkbenchPort {
       case "workflow":
         return this.workflows.view(request.id);
       case "task-origin":
-        return this.conversations.origin(request.taskId);
+        return this.conversations.records.origin(request.taskId);
       case "conversation-active":
       case "conversations": {
         const value =
           request.kind === "conversation-active"
-            ? this.conversations.activeConversations()
-            : this.conversations.list(request.after ?? null, request.scan);
+            ? this.conversations.records.activeConversations()
+            : this.conversations.records.list(
+                request.after ?? null,
+                request.scan,
+              );
         if (
           value.kind !== "conversations" &&
           value.kind !== "conversation-active"
@@ -123,29 +143,37 @@ export class Workbench implements WorkbenchPort {
           ...value,
           entries: value.entries.map((entry) => ({
             ...entry,
-            cadence: this.cadence.observe(entry.id).enabled,
+            cadence: this.cadence.records.observe(entry.id).enabled,
           })),
         };
       }
       case "conversation":
-        return this.conversations.conversation(request.id);
+        return this.conversations.records.conversation(request.id);
       case "conversation-turn":
-        return this.conversations.turnSteps(
+        return this.conversations.records.turnSteps(
           request.id,
           request.ordinal,
           request.before,
         );
       case "conversation-step":
-        return this.conversations.step(
+        return this.conversations.records.step(
           request.id,
           request.turnId,
           request.step,
           request.part,
         );
       case "files":
-        return this.files.list(request.path);
-      case "file":
-        return this.files.read(request.path);
+      case "file": {
+        const cwd = this.contexts.directory(request.location);
+        const files = new WorkbenchFiles(
+          cwd,
+          [this.o.coordination.files.namespace, this.o.agentDir],
+          this.o.secrets,
+        );
+        return request.kind === "files"
+          ? files.list(request.path)
+          : files.read(request.path);
+      }
       case "directories":
         return this.files.list(request.path, true);
       case "projects":
@@ -160,7 +188,7 @@ export class Workbench implements WorkbenchPort {
   ): WorkbenchResult {
     let mayHaveEffects = true;
     try {
-      const state = this.cadence.state(request.conversationId);
+      const state = this.cadence.records.state(request.conversationId);
       mayHaveEffects =
         this.o.owner.state !== "idle" ||
         state.head === request.commandId ||
@@ -182,7 +210,9 @@ export class Workbench implements WorkbenchPort {
             ...request,
             kind: "cadence-send",
             text: "exit cadence",
-            model: this.o.choice.snapshot().version,
+            model: request.location
+              ? this.contexts.snapshot(request.location).version
+              : this.o.choice.snapshot().version,
             intent: "exit",
           },
           accepting,
@@ -232,9 +262,27 @@ export class Workbench implements WorkbenchPort {
     caller?: Caller,
   ): WorkbenchResult | Promise<WorkbenchResult> {
     const request = decodeWorkbenchCommand(value);
+    if (request.kind === "conversation-model")
+      return {
+        kind: request.kind,
+        commandId: request.commandId,
+        choice: this.contexts.choose(
+          request.location,
+          request.expected,
+          request.choice,
+        ),
+      };
     if (request.kind === "restore-model") {
       if (request.epoch !== this.o.owner.lease.registration.epoch)
         throw new ContractError("stale");
+      if (request.location) {
+        this.contexts.restore(
+          request.location,
+          request.expected,
+          request.choice,
+        );
+        return { kind: "accepted", commandId: request.commandId };
+      }
       const before = this.o.choice.snapshot();
       if (!before.selected) {
         let choice: ReturnType<CadencePreferences["read"]>;

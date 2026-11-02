@@ -288,7 +288,8 @@ export class GatewayStore {
         const project = decodeGatewayProject(json(file));
         if (
           entry.name !== `${project.id}.json` ||
-          hash(project.path) !== project.id
+          (hash(project.path) !== project.id &&
+            hash(`directory\0${project.cwd}`) !== project.id)
         )
           throw new ContractError("corrupt-selected");
         out.push(project);
@@ -299,9 +300,11 @@ export class GatewayStore {
     return out;
   }
   /** Recovery retires exact old associations, not projects or outcomes. An
-   * explicit Open/save replaces the reference incarnation and associates it again. */
+   * explicit Send preparation replaces the reference incarnation and associates it again. */
   associatedProjects(): GatewayProject[] {
-    const projects = this.projects(),
+    const projects = this.projects().filter(
+        (project) => project.epoch !== null,
+      ),
       recovery = this.read()?.recovery;
     if (!recovery) return projects;
     const receipt = this.files.read(this.path(recovery.receipt), 65536);

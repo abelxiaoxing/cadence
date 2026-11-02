@@ -20,7 +20,46 @@ import {
   thinkingLevels,
 } from "./domain.ts";
 
+/** A conversation location is not an execution grant or a filesystem sandbox. */
+export interface ConversationLocation {
+  id: string;
+  cwd: string;
+}
+export interface ConversationContext extends ConversationLocation {
+  revision: number;
+  model: ModelSelector | null;
+}
+export interface ExecutionContext {
+  cwd: string;
+  checkoutRoot: string;
+  version: ChoiceVersion;
+  model: ModelSelection | null;
+}
+export function decodeConversationLocation(v: unknown): ConversationLocation {
+  const o = closed(v, ["id", "cwd"]);
+  return { id: decodeId(o.id), cwd: text(o.cwd, 4096, true) };
+}
+export function decodeConversationContext(v: unknown): ConversationContext {
+  const o = closed(v, ["id", "cwd", "revision", "model"]);
+  return {
+    id: decodeId(o.id),
+    cwd: text(o.cwd, 4096, true),
+    revision: integer(o.revision, 0, Number.MAX_SAFE_INTEGER - 1),
+    model: nullable(o.model, decodeModelSelector),
+  };
+}
+export function decodeExecutionContext(v: unknown): ExecutionContext {
+  const o = closed(v, ["cwd", "checkoutRoot", "version", "model"]);
+  return {
+    cwd: text(o.cwd, 4096, true),
+    checkoutRoot: text(o.checkoutRoot, 4096, true),
+    version: decodeChoiceVersion(o.version),
+    model: nullable(o.model, decodeModelSelection),
+  };
+}
 export interface ChoiceVersion {
+  /** Omitted only by explicit low-level native default-slot requests and retained records. */
+  conversation?: ConversationLocation;
   epoch: string;
   accessGeneration: number;
   configRev: number;
@@ -60,8 +99,12 @@ export function decodeChoiceVersion(value: unknown): ChoiceVersion {
     "accessGeneration",
     "configRev",
     "catalogId",
+    ...(Object.hasOwn(value ?? {}, "conversation") ? ["conversation"] : []),
   ]);
   return {
+    ...(o.conversation === undefined
+      ? {}
+      : { conversation: decodeConversationLocation(o.conversation) }),
     epoch: decodeId(o.epoch),
     accessGeneration: integer(o.accessGeneration, 1),
     configRev: integer(o.configRev, 1),

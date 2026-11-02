@@ -17,6 +17,7 @@ import {
 import { Type } from "typebox";
 import { CADENCE_INSTRUCTIONS as INSTRUCTIONS } from "./cadence-instructions.ts";
 import { CadencePreferences } from "./cadence-preferences.ts";
+import { conversationIdentity } from "./conversation-identity.ts";
 import {
   departure,
   NativeConnection,
@@ -44,7 +45,7 @@ import {
   type Reply,
 } from "./service-contract.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
-import { effectiveWorkspace } from "./workspace.ts";
+import { effectiveWorkspace, resolveWorkspace } from "./workspace.ts";
 
 export const CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
 const CONTEXT = "cadence-mode-context";
@@ -81,6 +82,9 @@ const idle = (): CadenceModeState => ({
   proposal: null,
   previousTools: [],
 });
+function readableProposal(proposal: WorkflowProposal): string {
+  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n\n${readableWorkflowPlan(proposal.plan)}`;
+}
 /** Session restoration restores mode/context, NEVER a grant, pending command or action replay. */
 export function restoreCadenceMode(
   entries: readonly { type: string; customType?: string; data?: unknown }[],
@@ -385,6 +389,15 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   const summarize = (run: WorkflowRun) =>
     `Cadence ${run.status} • ${run.goal}\nRun: ${run.id}\n${workflowDiagnostics(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
+  const conversation = (ctx: ExtensionContext) => {
+    const cwd = resolveWorkspace(ctx.cwd).cwd;
+    return {
+      id: conversationIdentity(
+        `cadence-native-session:${JSON.stringify([ctx.sessionManager.getSessionId(), cwd])}`,
+      ),
+      cwd,
+    };
+  };
   const launchOwner = async (ctx: ExtensionContext) => {
     if (process.env.CADENCE_AUTOSTART === "0")
       throw new Error(
@@ -483,13 +496,23 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     if (selecting) return selecting;
     const expected = generation;
     const operation = (async () => {
-      const catalog = value(await client().models());
+      const location = conversation(ctx);
+      const catalog = value(await client().models(undefined, location));
       if (generation !== expected) throw new ContractError("stale");
+      if (catalog.selected) return;
+      const observed = value(
+        await client().workbenchRead({
+          kind: "conversation-context",
+          location,
+        }),
+      );
+      if (generation !== expected || observed.kind !== "conversation-context")
+        throw new ContractError("stale");
       const preferences = new CadencePreferences(agentDir());
       let saved: ModelSelector | null = null,
         unreadable = false;
       try {
-        saved = preferences.read();
+        saved = observed.context.model ?? preferences.read();
       } catch {
         unreadable = true;
         if (!warnedPreferences) {
@@ -512,23 +535,17 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           : null);
       if (!selected)
         throw new Error("Choose a Pi model before entering Cadence.");
-      const same =
-        catalog.selected &&
-        canonicalJson({
-          provider: catalog.selected.provider,
-          model: catalog.selected.model,
-          api: catalog.selected.api,
-          thinking: catalog.selected.thinking,
-        }) === canonicalJson(selected);
-      if (!same) {
-        value(
-          await client().chooseModel({
-            expected: catalog.version,
-            choice: selected,
-          }),
-        );
-        if (generation !== expected) throw new ContractError("stale");
-      }
+      value(
+        await client().workbenchCommand({
+          kind: "restore-model",
+          commandId: randomUUID(),
+          epoch: catalog.version.epoch,
+          location,
+          expected: catalog.version,
+          choice: selected,
+        }),
+      );
+      if (generation !== expected) throw new ContractError("stale");
       if (!saved && !unreadable)
         try {
           preferences.save(selected);
@@ -964,7 +981,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         Type.Array(
           Type.String({
             description:
-              "Specific investigation directories; defaults to project cwd. Avoid filesystem roots and broad parent trees.",
+              "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees.",
           }),
           { minItems: 1, maxItems: 8 },
         ),
@@ -976,7 +993,9 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         await connect(ctx);
         claim.assertCurrent();
         const notice = await requireSettledRun(ctx, claim);
-        const model = value(await client().models()).version;
+        const model = value(
+          await client().models(undefined, conversation(ctx)),
+        ).version;
         const commandId = randomUUID(),
           before = state.runId;
         let sent = false,
@@ -1063,7 +1082,8 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           {
             action: "propose",
             plan,
-            model: value(await client().models()).version,
+            model: value(await client().models(undefined, conversation(ctx)))
+              .version,
           },
           undefined,
           undefined,
@@ -1073,7 +1093,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         state.proposal = response.proposal;
         persist();
         status("awaiting plan approval");
-        const shown = readableWorkflowPlan(response.proposal.plan);
+        const shown = readableProposal(response.proposal);
         const redacted =
           canonicalJson(response.proposal.plan) !== canonicalJson(plan);
         // The plan is displayed by this tool's own result: a message sent now
@@ -1125,6 +1145,11 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         const proposal = state.proposal;
         if (!proposal)
           throw new Error("No current plan. Clarify and propose it first.");
+        if (
+          canonicalJson(proposal.model.conversation ?? null) !==
+          canonicalJson(conversation(ctx))
+        )
+          throw new ContractError("stale");
         const expected = generation;
         const fromInput =
           permission?.id === proposal.id &&
@@ -1137,7 +1162,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           !(await confirm(
             ctx,
             "Implement this plan automatically?",
-            `${readableWorkflowPlan(proposal.plan)}\nProject: ${proposal.cwd}\nNo push or deployment. Keeping the discussion changes nothing.`,
+            `${readableProposal(proposal)}\nNo push or deployment. Keeping the discussion changes nothing.`,
             "Keep discussing (do not start)",
             "Start this exact plan",
           ))
@@ -1165,9 +1190,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         );
         if (
           prepared.type !== "grant" ||
-          canonicalJson(prepared.proposal.plan) !==
-            canonicalJson(proposal.plan) ||
-          prepared.proposal.cwd !== proposal.cwd
+          canonicalJson(prepared.proposal) !== canonicalJson(proposal)
         )
           throw new ContractError("stale");
         const commandId = randomUUID(),
@@ -1329,22 +1352,31 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_model",
     label: "Remember Cadence model",
     description:
-      "Change the global Cadence model preference through a real user selection. Ordinary usage reuses the remembered model.",
+      "Change this conversation's Cadence model through a real user selection; remember it as the default for new conversations. Accepted runs keep their original model.",
     parameters: Type.Object({}),
     async execute(_id, _input, _signal, _update, ctx) {
       active(ctx);
+      const expected = generation,
+        location = conversation(ctx);
+      const current = () => {
+        active(ctx);
+        if (generation !== expected) throw new ContractError("stale");
+      };
       // Preference selection must never block observation/cancellation or the picker.
       await connect(ctx, false);
-      const catalog = value(await client().models());
+      current();
+      const catalog = value(await client().models(undefined, location));
+      current();
       const models = catalog.entries.filter(
         (m) => m.eligibility === "candidate" && m.api,
       );
       const labels = models.map((m) => `${m.provider}/${m.model} (${m.api})`);
       const selected = await pick(
         ctx,
-        "Cadence model (remembered across projects)",
+        "Cadence model (this conversation; default for new conversations)",
         labels,
       );
+      current();
       if (!selected) return result("Model unchanged.");
       const model = models[labels.indexOf(selected)];
       const thinking = await pick(
@@ -1352,6 +1384,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         "Thinking",
         model.thinking.filter((t) => t.selectable).map((t) => t.level),
       );
+      current();
       if (!thinking) return result("Model unchanged.");
       const choice: ModelSelector = decodeModelSelector({
         provider: model.provider,
@@ -1360,11 +1393,15 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         thinking,
       });
       value(
-        await client().chooseModel({
-          expected: catalog.version,
-          choice,
-        }),
+        await client().chooseModel(
+          {
+            expected: catalog.version,
+            choice,
+          },
+          location,
+        ),
       );
+      current();
       // An explicit selection may atomically rewrite a corrupt preference.
       new CadencePreferences(agentDir()).choose(choice);
       warnedPreferences = false;

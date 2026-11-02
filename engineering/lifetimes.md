@@ -42,7 +42,7 @@ The remaining historical writer and transport coupling is documented in [archite
 ## Admission, execution and original lifetimes
 
 - One canonical checkout/state-home domain has one persistent owner, including while idle.
-  Explicit project launch uses a new port only for a new checkout selection; reopened projects retain exact cwd/port/history, and no project navigation changes another owner's execution.
+  Explicit project launch uses a new port only for a new checkout selection; reopened projects retain their saved default cwd/port/history, and no project navigation changes another owner's execution.
   Root Git observations require Git's own ownership check: reset `safe.directory` exceptions per command, drop inherited `SUDO_UID` and disable fsmonitor, without configuration writes or ownership changes.
   Merely selecting a foreign-owned repository cannot grant permission to run its clean/process filters; use its owning account instead.
   Ordinary-user Git trust behavior remains unchanged.
@@ -53,7 +53,11 @@ The remaining historical writer and transport coupling is documented in [archite
 - Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
-- Boot model choice is absent until selected; native mode resolves the remembered credential-free preference (or current Pi choice on first use) into a new exact owner selection.
+- Boot installs no conversation model.
+  Explicit Send/model choice restores its own credential-free preference (or the default/current Pi model for a new conversation) into a retained source selection.
+  Already admitted turns/workflows own immutable cwd/checkout/model snapshots; fresh proposals and approvals still validate the current conversation version.
+  The project process and model source runtime launch at the checkout root; a provably removed saved default cwd remains metadata and cannot strand other valid conversation directories.
+  Unscoped callers do not silently fall back to the root.
   Preserve exact provider/model/API/thinking/source identities; unsupported transport or thinking refuses without fallback or clamping.
   Choice changes refuse while accepted work, admissions, barriers or original operations are busy.
 - A120s one-use grant binds exact action, epoch/access/config/control/task raw bytes/graph/cwd/model/check-environment and relevant observations.
@@ -79,9 +83,12 @@ The remaining historical writer and transport coupling is documented in [archite
 ## Workbench Stop
 
 Workbench state lives separately under `<state-home>/cadence-assistant-v1/workbenches-v1/<configuration-hash>/`, not in a hidden substitute workspace.
-Whole-workbench Stop joins its accepted openings and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
+Whole-workbench Stop joins its accepted Send preparations and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
 An associated owner that is not running (stopped, crashed, restarted under a new epoch or its directory removed) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still releases its own registration.
 The gateway follows an associated project's restarted owner (same canonical path, new epoch) instead of refusing its page as stale.
+Selected-only directories have a null epoch and are not Stop associations; browsing their existing owner never changes that.
+A Send preparation registers its original before launching, so departure cannot abandon startup and Stop joins any owner it creates.
+Warm already-associated reuse writes no preparation receipt; a lost preparation response never submits a message.
 Service restart never resumes the old queue.
 
 ## Service restart and upgrade
@@ -116,7 +123,7 @@ Recovery never replays work: interrupted runs and turns settle as interrupted (`
 
 Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
 Queue time is outside the workflow/process budgets; ongoing tool/model activity never renews a worker's total deadline.
-Readonly investigations use bounded native filesystem tools at explicit roots (project cwd by default), not bash or an unbounded SDK search subprocess.
+Readonly investigations use bounded native filesystem tools at explicit roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
 They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
 Grep is explicitly literal-only.
 The final-report reserve refuses new tool calls without inventing a completed investigation or abandoning outstanding I/O.

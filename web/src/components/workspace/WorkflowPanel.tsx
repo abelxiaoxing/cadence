@@ -63,6 +63,10 @@ export function WorkflowPanel({
           <p>
             <code>{state.proposal.cwd}</code> · {state.proposal.display?.model}
           </p>
+          <p>
+            {t("Declared write paths use the checkout root:")}{" "}
+            <code>{state.proposal.checkoutRoot ?? state.proposal.cwd}</code>
+          </p>
           {state.proposal.display?.branch && (
             <p>
               <code>{state.proposal.display.branch}</code> ·{" "}
@@ -167,6 +171,14 @@ export function WorkflowCard({
         <p role="alert">
           {error || page.error} ·{" "}
           {t("State unavailable is not completion. No automatic resubmission.")}
+        </p>
+      )}
+      {run?.execution && (
+        <p className="inspector-note">
+          {t("Context fixed at admission:")} <code>{run.execution.cwd}</code> ·{" "}
+          {run.execution.model
+            ? `${run.execution.model.provider}/${run.execution.model.model} · ${run.execution.model.thinking}`
+            : t("No model")}
         </p>
       )}
       {run?.notice && <p>{run.notice}</p>}

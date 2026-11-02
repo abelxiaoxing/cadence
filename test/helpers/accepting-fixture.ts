@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nativeCall } from "../../src/service/cli.ts";
 import { ServiceCoordination } from "../../src/service/coordination.ts";
@@ -22,7 +22,7 @@ export async function acceptingFixture(
   mode: "source" | "generated",
   environment?: (env: NodeJS.ProcessEnv) => void,
   proxy: HostInput["config"]["http"]["proxy"] = null,
-  options: { rootName?: string; accessToken?: string } = {},
+  options: { rootName?: string; accessToken?: string; models?: string[] } = {},
 ) {
   const packageRoot = process.env.CADENCE_TEST_PACKAGE_ROOT;
   const dir = mkdtempSync(join(tmpdir(), "accepting-"));
@@ -47,7 +47,12 @@ export async function acceptingFixture(
     active = 0,
     maxActive = 0;
   const held: ServerResponse[] = [];
-  const workflowWrites: { res: ServerResponse; path: string }[] = [];
+  const modelRequests: string[] = [];
+  const workflowWrites: {
+    res: ServerResponse;
+    path: string;
+    declared: string;
+  }[] = [];
   const observations: { tools: string[]; mode: string; messages: unknown[] }[] =
     [];
   const longText = `Actual retained SDK result. ${"retained-detail-αβγ ".repeat(900)} END-RETAINED`;
@@ -109,6 +114,7 @@ export async function acceptingFixture(
     contacts++;
     active++;
     maxActive = Math.max(maxActive, active);
+    modelRequests.push(input.model);
     observations.push({
       tools: (input.tools ?? []).map(
         (t: { function: { name: string } }) => t.function.name,
@@ -195,24 +201,50 @@ export async function acceptingFixture(
       } else if (input.messages.at(-1)?.role === "tool")
         finish(res, "Implemented the declared file.");
       else {
-        const path = prompt.includes("Write only these exact files: a.txt")
-          ? "a.txt"
+        const messages = input.messages
+          .map((m: { content?: unknown }) =>
+            typeof m.content === "string"
+              ? m.content
+              : Array.isArray(m.content)
+                ? m.content
+                    .map((p: { text?: unknown }) =>
+                      typeof p.text === "string" ? p.text : "",
+                    )
+                    .join("\n")
+                : "",
+          )
+          .join("\n");
+        const requested =
+          /Write only these exact files: ([^(\n]+)/
+            .exec(messages)?.[1]
+            .trim()
+            .split(", ")[0] ?? "b.txt";
+        // This deliberately limited provider only implements a/b. Other write
+        // requests still produce b, preserving the outside-scope regression.
+        const declared = /(?:^|[\\/])[ab]\.txt$/.test(requested)
+          ? requested
           : "b.txt";
+        const scope = /Execution cwd: ([^\n]+)\nCheckout root: ([^\n]+)/.exec(
+          messages,
+        );
+        const path = scope
+          ? relative(scope[1], join(scope[2], declared))
+          : declared;
         if (
           providerMode === "workflow-parallel" &&
           prompt.includes("Write only these exact files:")
         ) {
-          workflowWrites.push({ res, path });
+          workflowWrites.push({ res, path, declared });
           if (workflowWrites.length === 2)
             for (const item of workflowWrites.splice(0))
               callTool(item.res, `workflow-${item.path}`, "write", {
                 path: item.path,
-                content: `implemented ${item.path}\n`,
+                content: `implemented ${item.declared}\n`,
               });
         } else
           callTool(res, `workflow-${path}`, "write", {
             path,
-            content: `implemented ${path}\n`,
+            content: `implemented ${declared}\n`,
           });
       }
       return;
@@ -270,7 +302,10 @@ export async function acceptingFixture(
         fixture: {
           baseUrl: `http://127.0.0.1:${address.port}/v1`,
           api: "openai-completions",
-          models: [{ id: "fixed", reasoning: false }],
+          models: (options.models ?? ["fixed"]).map((id) => ({
+            id,
+            reasoning: false,
+          })),
         },
       },
     }),
@@ -426,10 +461,14 @@ export async function acceptingFixture(
         r.end('{"error":{"message":"fabricated failure"}}');
       }
     },
+    release() {
+      for (const response of held.splice(0)) finish(response);
+    },
     held: () => held.length,
     contacts: () => contacts,
     maxActive: () => maxActive,
     observations,
+    modelRequests,
     rotate: () => nativeCall(c, "token-rotate"),
     async restart() {
       await transport.detach();

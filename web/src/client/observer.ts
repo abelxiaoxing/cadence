@@ -12,6 +12,7 @@ import type { BrowserClient } from "./browser";
 import { localBuild } from "./build-identity";
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
+  epoch?: string;
   activeRuns?: import("../types").ActiveRuns;
   actions: boolean;
   compatible?: boolean;
@@ -28,6 +29,47 @@ export class WorkspaceObserver {
   private version = 0;
   private stopCurrent: (() => void) | undefined;
   private pollCurrent: ((capabilities?: boolean) => void) | undefined;
+  private latest: ViewerState | undefined;
+  private readonly readiness = new Set<(state: ViewerState) => void>();
+  /** Wait for the existing observation owner; never allocate a second session.
+   * The current explicit Send owns the abort/deadline and its context claim. */
+  nextObservation(): number {
+    return this.version + 1;
+  }
+  whenReady(
+    epoch: string,
+    signal: AbortSignal,
+    minimumVersion = 0,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        this.readiness.delete(check);
+        signal.removeEventListener("abort", abort);
+        error ? reject(error) : resolve();
+      };
+      const check = (state: ViewerState) => {
+        if (this.version < minimumVersion || state.epoch !== epoch) return;
+        if (state.compatible === false)
+          finish(new Error("unsupported-context"));
+        else if (
+          state.workspace?.epoch === epoch &&
+          state.compatible &&
+          !state.error &&
+          state.transportStatus === "current"
+        )
+          finish();
+      };
+      const abort = () =>
+        finish(new Error(this.latest?.error ?? "unavailable"));
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      this.readiness.add(check);
+      signal.addEventListener("abort", abort, { once: true });
+      if (this.latest) check(this.latest);
+    });
+  }
   constructor(private readonly api: BrowserClient) {}
   refresh(capabilities = false): void {
     this.pollCurrent?.(capabilities);
@@ -59,9 +101,13 @@ export class WorkspaceObserver {
       transportStatus: "closed",
       attachmentVersion: 0,
     };
+    this.latest = state;
     const current = () => !disposed && version === this.version;
     const emit = () => {
-      if (current()) publish({ ...state, observation: tracker.state });
+      if (!current()) return;
+      this.latest = { ...state, observation: tracker.state };
+      publish(this.latest);
+      for (const check of this.readiness) check(this.latest);
     };
     const stop = () => {
       if (disposed) return;
@@ -226,6 +272,7 @@ export class WorkspaceObserver {
       abort = new AbortController();
       tracker = new ProjectionTracker();
       state = {
+        epoch: session.value.epoch,
         actions: session.value.capabilities.actions,
         transportStatus: "closed",
         attachmentVersion: state.attachmentVersion + 1,

@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { it } from "vitest";
+import { stopService } from "../../src/service/cli.ts";
+import { ServiceCoordination } from "../../src/service/coordination.ts";
 import { gatewayFixture } from "../helpers/gateway-fixture.ts";
 
 it("unified loopback workbench: no default project, same-origin switching, ordinary chat and task navigation survive refresh", async () => {
@@ -92,10 +94,10 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     );
     await service.getByRole("button", { name: /^Close dialog/ }).click();
     await page
-      .getByRole("button", { name: "Open a folder…", exact: true })
+      .getByRole("button", { name: "Choose a folder…", exact: true })
       .click();
     await page
-      .getByRole("dialog", { name: "Open working folder", exact: true })
+      .getByRole("dialog", { name: "Choose working folder", exact: true })
       .waitFor();
     assert.equal(
       g.store.projects().length,
@@ -103,14 +105,14 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       "the central action only offers folder selection",
     );
     const openProject = page.getByRole("button", {
-      name: "Open this folder",
+      name: "Use this folder",
       exact: true,
     });
     const waitForObservedFolder = () =>
       page.waitForFunction(() =>
         [...document.querySelectorAll("dialog button")].some(
           (button) =>
-            button.textContent === "Open this folder" && !button.disabled,
+            button.textContent === "Use this folder" && !button.disabled,
         ),
       );
     await waitForObservedFolder();
@@ -229,7 +231,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
         .getByRole("button", { name: "Switch working folder", exact: true })
         .click();
       await page
-        .getByRole("dialog", { name: "Open working folder", exact: true })
+        .getByRole("dialog", { name: "Choose working folder", exact: true })
         .waitFor();
       await page.keyboard.press("Escape");
       await page.locator("dialog[open]").waitFor({ state: "hidden" });
@@ -273,7 +275,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
             r.status() === 200,
         ),
         page
-          .getByRole("button", { name: "Open this folder", exact: true })
+          .getByRole("button", { name: "Use this folder", exact: true })
           .click(),
       ]);
       await page
@@ -305,10 +307,18 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       assert.equal(writer.status, 0, writer.stderr);
     }
     await open(paths[0]);
-    assert(!existsSync(lock));
+    if (process.platform !== "win32")
+      assert(existsSync(lock), "selection must not heal or start anything");
+    assert.equal(
+      new ServiceCoordination(paths[0], g.f.c.stateHome).inspect().status,
+      process.platform === "win32" ? "absent" : "unavailable",
+    );
     const projectB = new URL(page.url()).searchParams.get("project");
     assert(projectB);
-    await page.getByRole("button", { name: /^Model: / }).click();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Ordinary conversation in project B");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
     await page
       .getByRole("dialog", { name: "Choose a model" })
       .getByRole("option", { name: /^fixed/ })
@@ -316,10 +326,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     await page
       .getByRole("dialog", { name: "Choose a model" })
       .waitFor({ state: "hidden" });
-    await page
-      .getByRole("textbox", { name: "Message", exact: true })
-      .fill("Ordinary conversation in project B");
-    await page.getByRole("button", { name: "Send", exact: true }).click();
+    assert(!existsSync(lock));
     await page
       .locator(".chat-message.assistant")
       .getByText(/Advisory:/)
@@ -334,6 +341,18 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     await open(paths[1]);
     assert.notEqual(new URL(page.url()).searchParams.get("project"), projectB);
     assert.equal(g.f.contacts(), 1);
+    const ownerC = new ServiceCoordination(paths[1], g.f.c.stateHome);
+    assert.equal(ownerC.inspect().status, "absent");
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Ordinary conversation in project C");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page
+      .locator(".chat-message.assistant")
+      .getByText(/Advisory:/)
+      .waitFor();
+    assert.equal(g.f.contacts(), 2);
+    assert(ownerC.localAccess().epoch);
     // Recent projects live in the lower-right picker. One click on a recent
     // entry is its explicit Open, even while the picker's first read is
     // still pending, and the original chat returns.
@@ -377,7 +396,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .locator(".chat-message.assistant")
       .getByText(/Advisory:/)
       .waitFor();
-    assert.equal(g.f.contacts(), 1);
+    assert.equal(g.f.contacts(), 2);
     const chatUrl = page.url();
     assert.equal(
       await page
@@ -433,6 +452,97 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
     assert.equal(g.store.projects().length, associated);
     assert.equal(g.f.contacts(), contacts);
+    // A stopped execution owner is not a missing conversation. Keep the
+    // transcript, Cadence mode and the exact draft; navigation starts nothing.
+    await page.goto(chatUrl);
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("/cadence");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector(".chat-workspace .conversation-header .ep-state")
+          ?.textContent === "Ready for conversation",
+    );
+    const draft = "Keep this unsent draft across execution Stop and restart";
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill(draft);
+    const stoppedOwner = new ServiceCoordination(paths[0], g.f.c.stateHome);
+    const previousEpoch = stoppedOwner.localAccess().epoch;
+    assert.equal((await stopService(stoppedOwner)).status, "stopped");
+    const readonlyContacts = g.f.contacts();
+    const stoppedNotice = page.getByText(
+      "Execution will be prepared when you send. Browsing does not start it.",
+      { exact: true },
+    );
+    await stoppedNotice.waitFor();
+    assert.equal(
+      await page
+        .getByRole("textbox", { name: "Message", exact: true })
+        .inputValue(),
+      draft,
+    );
+    // The same stopped history also survives a cold generated gateway restart,
+    // not only an in-memory proxy whose project binding was already cached.
+    await g.restart();
+    await page.reload();
+    await stoppedNotice.waitFor();
+    await page
+      .locator(".conversation-badge")
+      .filter({ hasText: "Cadence on" })
+      .waitFor();
+    await page
+      .locator(".chat-message.assistant")
+      .getByText(/Advisory:/)
+      .waitFor();
+    assert.equal(
+      await page
+        .getByRole("textbox", { name: "Message", exact: true })
+        .inputValue(),
+      draft,
+    );
+    assert(
+      await page.getByRole("button", { name: "Send", exact: true }).isEnabled(),
+    );
+    assert.equal(await page.getByText(/explicit re-entry required/).count(), 0);
+    assert.equal(await page.getByText(/unavailable \/ mismatch/).count(), 0);
+    // The remembered folder also restores into a readable shell while stopped.
+    await page.goto(`${g.endpoint}/app`);
+    await stoppedNotice.waitFor();
+    await page
+      .locator(".panel-left .session-item")
+      .filter({ hasText: "Ordinary conversation in project B" })
+      .click();
+    await page
+      .locator(".conversation-badge")
+      .filter({ hasText: "Cadence on" })
+      .waitFor();
+    assert.equal(stoppedOwner.inspect().status, "stopped");
+    assert.equal(g.f.contacts(), readonlyContacts);
+    // Browsing/closing the gateway's folder picker is still readonly.
+    await page
+      .getByRole("button", { name: "Switch working folder", exact: true })
+      .click();
+    await page.getByRole("dialog", { name: "Choose working folder" }).waitFor();
+    await page.keyboard.press("Escape");
+    assert.equal(stoppedOwner.inspect().status, "stopped");
+    // One explicit Send, without Open, prepares a fresh epoch and submits the
+    // original draft exactly once. The first startup's saved preference is used.
+    g.f.mode("single");
+    g.f.reply("Resumed directly from Send.");
+    assert.equal(
+      await page
+        .getByRole("textbox", { name: "Message", exact: true })
+        .inputValue(),
+      draft,
+    );
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page
+      .getByText("Resumed directly from Send.", { exact: true })
+      .waitFor();
+    assert.notEqual(stoppedOwner.localAccess().epoch, previousEpoch);
+    assert.equal(g.f.contacts(), readonlyContacts + 1);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: join(root, "project-390.png") });
     assert(

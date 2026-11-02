@@ -86,9 +86,10 @@ export function ModelPicker({
   onOpenChange,
   onChanged,
   onChosen,
+  onObserved,
   awaitingSend = false,
 }: {
-  client: ServiceClient;
+  client: Pick<ServiceClient, "models" | "chooseModel">;
   /** A compatible, current owner; otherwise nothing is chosen here. */
   enabled: boolean;
   /** This conversation's reply is live; the owner refuses a change now. */
@@ -101,12 +102,15 @@ export function ModelPicker({
   /** An installed choice changed the owner configuration. */
   onChanged(): void;
   /** The panel closed on an installed choice. */
-  onChosen?(): void;
+  onChosen?(choice: ModelSelector): void;
+  onObserved?(catalog: ModelCatalog): void;
   /** A Send is waiting for this choice and continues after it. */
   awaitingSend?: boolean;
 }) {
   const { t } = useT();
   const label = useModelLabel();
+  const observed = useRef(onObserved);
+  observed.current = onObserved;
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [catalogError, setCatalogError] = useState("");
   const [error, setError] = useState("");
@@ -128,6 +132,7 @@ export function ModelPicker({
         if (abort.signal.aborted) return;
         if (reply.kind === "ok") {
           setCatalog(reply.value);
+          observed.current?.(reply.value);
           setCatalogError("");
         } else setCatalogError(reply.error.code);
       })
@@ -186,7 +191,7 @@ export function ModelPicker({
     });
     if (selected && same(selected, choice)) {
       close();
-      onChosen?.();
+      onChosen?.(choice);
       return;
     }
     setPending(true);
@@ -201,14 +206,16 @@ export function ModelPicker({
         reread();
         return;
       }
-      setCatalog({
+      const next = {
         ...catalog,
         version: reply.value.version,
         selected: reply.value.selected,
-      });
+      };
+      setCatalog(next);
+      observed.current?.(next);
       onChanged();
       close();
-      onChosen?.();
+      onChosen?.(choice);
     } catch {
       setError("uncertain");
       reread();

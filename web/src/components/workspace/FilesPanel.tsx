@@ -11,6 +11,7 @@ import {
   FiRefreshCw,
   FiX,
 } from "react-icons/fi";
+import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
@@ -18,20 +19,27 @@ import { copyTextToClipboard } from "../../rich/use-copy-feedback";
 export function FilesPanel({
   client,
   enabled,
+  location,
   onReference,
 }: {
   client: ServiceClient;
   enabled: boolean;
+  location?: ConversationLocation;
   onReference(path: string): void;
 }) {
   const { t } = useT();
   const [path, setPath] = useState(""),
     [selected, setSelected] = useState<string | null>(null),
     [notice, setNotice] = useState("");
-  const files = useWorkbench(client, enabled ? { kind: "files", path } : null);
+  const files = useWorkbench(
+    client,
+    enabled ? { kind: "files", path, ...(location ? { location } : {}) } : null,
+  );
   const preview = useWorkbench(
     client,
-    enabled && selected ? { kind: "file", path: selected } : null,
+    enabled && selected
+      ? { kind: "file", path: selected, ...(location ? { location } : {}) }
+      : null,
   );
   const listing = files.value?.kind === "files" ? files.value : undefined;
   const file = preview.value?.kind === "file" ? preview.value : undefined;

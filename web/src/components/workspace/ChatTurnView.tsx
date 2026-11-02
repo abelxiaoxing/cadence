@@ -65,6 +65,17 @@ export const ChatTurnView = memo(function ChatTurnView({
           ))}
         </article>
       )}
+      {header.execution && (
+        <details className="inspector-note">
+          <summary>{t("Context fixed at admission:")}</summary>
+          <p>
+            <code>{header.execution.cwd}</code> ·{" "}
+            {header.execution.model
+              ? `${header.execution.model.provider}/${header.execution.model.model} · ${header.execution.model.thinking}`
+              : t("No model")}
+          </p>
+        </details>
+      )}
       {notice.length > 0 && (
         <p className="inspector-note chat-turn-notice">
           {notice.map((line) => tx(line)).join("\n")}

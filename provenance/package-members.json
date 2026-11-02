@@ -39,6 +39,7 @@
   "package/src/cadence-preferences.ts",
   "package/src/cadence-service.mjs",
   "package/src/conversation-context.mjs",
+  "package/src/conversation-identity.ts",
   "package/src/conversation-resources.mjs",
   "package/src/coordinator-tools.mjs",
   "package/src/data-shapes.ts",

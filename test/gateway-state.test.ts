@@ -72,7 +72,7 @@ it("an unknown private workbench directory is preserved, never initialized or re
   );
 });
 
-it("a missing Pi login refuses project admission but does not prevent the no-project workbench from stopping cleanly", async () => {
+it("directory selection needs no Pi login; Send preparation refuses missing login without admitting a message", async () => {
   const g = await gatewayFixture();
   const auth = join(readHostConfig(g.f.c)!.agentDir, "auth.json"),
     saved = readFileSync(auth);
@@ -89,7 +89,7 @@ it("a missing Pi login refuses project admission but does not prevent the no-pro
     const project = join(g.f.dir, "no-login");
     mkdirSync(project);
     const manifest = loadWebAssets().manifest;
-    const response = await fetch(`${g.endpoint}/workbench/v1/open`, {
+    const select = await fetch(`${g.endpoint}/workbench/v1/select`, {
       method: "POST",
       headers: {
         ...headers,
@@ -104,12 +104,36 @@ it("a missing Pi login refuses project admission but does not prevent the no-pro
       },
       body: JSON.stringify({
         path: project,
+        epoch: state.epoch,
+      }),
+    });
+    expect(select.ok).toBe(true);
+    const selected = (await select.json()) as {
+      project: { id: string; epoch: null };
+    };
+    expect(selected.project.epoch).toBeNull();
+    const response = await fetch(`${g.endpoint}/workbench/v1/prepare-send`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+        "X-Cadence-CSRF": state.csrf,
+        "X-Cadence-Build": JSON.stringify({
+          kind: "browser",
+          sourceHash: manifest.sourceHash,
+          contractHash: manifest.contractHash,
+          buildId: manifest.buildId,
+        }),
+      },
+      body: JSON.stringify({
+        projectId: selected.project.id,
         commandId: randomUUID(),
         epoch: state.epoch,
       }),
     });
     expect(response.ok).toBe(false);
-    expect(g.store.projects()).toEqual([]);
+    expect(g.store.projects()).toHaveLength(1);
+    expect(g.store.associatedProjects()).toEqual([]);
     expect(g.f.contacts()).toBe(0);
     expect(existsSync(join(project, ".cadence"))).toBe(false);
     expect(existsSync(join(g.home, "cadence"))).toBe(false);
