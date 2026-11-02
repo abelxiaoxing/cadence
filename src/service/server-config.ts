@@ -2,7 +2,7 @@
  * the research settings in `~/.pi/agent/cadence/.env`:
  *
  *   CADENCE_PORT=17423
- *   CADENCE_TOKEN=<at least 32 characters>
+ *   CADENCE_TOKEN=<your private token>
  *
  * `cadence server install` and `restart` create the file when missing and add
  * either key when missing (port 17423, a random token), never changing an
@@ -26,7 +26,7 @@ import {
 import { dirname, join } from "node:path";
 import { parseEnvFile } from "../../skills/_shared/load-config.mjs";
 import { ensureUserConfig } from "../install-config.mjs";
-import { ContractError, utf8Bytes } from "../service-contract.ts";
+import { ContractError } from "../service-contract.ts";
 import { text } from "./contracts/core.ts";
 import { type FileSnapshot, PrivateFiles } from "./private-files.ts";
 
@@ -39,12 +39,14 @@ const HEADER = [
   "# Cadence WebUI for `cadence server install`: edit, then run `cadence server restart`.",
   "# The token admits anyone who has it to your workspace; keep it private.",
 ];
+/** The browser cookie holds the token itself, percent-encoded, within its
+ * 4 KiB budget. */
 export const TOKEN_BYTES = 1024;
-/** At least 32 UTF-8 bytes, without control or format characters. */
+/** Any non-empty token the user chooses, without control or format characters;
+ * no minimum length. The owner redacts it from recorded output at every length. */
 export function accessToken(value: unknown): string {
   const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
-    throw new ContractError("invalid");
+  if (/[\p{Cc}\p{Cf}]/u.test(result)) throw new ContractError("invalid");
   return result; // Never trim, normalize or interpolate secret bytes.
 }
 export interface ServerConfig {
@@ -138,7 +140,7 @@ function decode(source: string): ServerConfig {
     return { port: number, token: accessToken(t.value) };
   } catch {
     return unusable(
-      `has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`,
+      `has ${TOKEN_KEY} on line ${t.line} that is empty, over ${TOKEN_BYTES} bytes or with control characters`,
     );
   }
 }

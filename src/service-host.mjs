@@ -5222,7 +5222,7 @@ var CONFIG_BYTES = 64 * 1024;
 var TOKEN_BYTES = 1024;
 function accessToken(value) {
   const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
+  if (/[\p{Cc}\p{Cf}]/u.test(result))
     throw new ContractError("invalid");
   return result;
 }
@@ -5298,7 +5298,7 @@ function decode(source) {
   try {
     return { port: number, token: accessToken(t.value) };
   } catch {
-    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} that is empty, over ${TOKEN_BYTES} bytes or with control characters`);
   }
 }
 var code = (error) => error?.code ?? "error";
@@ -8742,7 +8742,7 @@ function managementExitCode(result, foreground = false) {
 }
 function serverConfigHint(error) {
   return `Cadence changed nothing: ${error.path} ${error.reason}.
-Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<a non-empty token>, one line each.
 `;
 }
 function registryGuidance(_workspace, stateHome) {
@@ -27400,7 +27400,7 @@ class WorkflowHistoryScanner {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.30",
-  build: "b33664958cc26420c95cd53aff826f4f0d87cc3edee145ccb9467cad93ec29e2",
+  build: "b3fc04e4cca290e462938b66a4d46f64b3d5986c1ef94e6679d7c5f5a91dc49e",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

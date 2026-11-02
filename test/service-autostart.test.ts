@@ -1115,10 +1115,9 @@ describe("startup guidance", () => {
     const home = temporary("cadence-server-config-");
     const file = join(home, ".pi", "agent", "cadence", ".env");
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-    // Only the token: the port is added after the existing lines, with their
-    // CRLF endings.
-    const own =
-      'GROK_API_KEY=k\r\nCADENCE_TOKEN="my-own-private-token-0123456789abcdef"\r\n';
+    // Only the token, shorter than a generated one: the port is added after
+    // the existing lines, with their CRLF endings.
+    const own = 'GROK_API_KEY=k\r\nCADENCE_TOKEN="my-own-private"\r\n';
     writeFileSync(file, own, { mode: 0o600 });
     const first = server(home, "install", "--workspace", join(home, "missing"));
     expect(first.stderr).toContain(
@@ -1154,8 +1153,8 @@ describe("startup guidance", () => {
         "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
       ],
       [
-        "CADENCE_PORT=17423\nCADENCE_TOKEN=short\n",
-        "has CADENCE_TOKEN on line 2 shorter than 32 characters or with control characters",
+        "CADENCE_PORT=17423\nCADENCE_TOKEN=\n",
+        "has CADENCE_TOKEN on line 2 that is empty, over 1024 bytes or with control characters",
       ],
       [
         `CADENCE_PORT=17423\n${token}\n\n${token}\n`,
