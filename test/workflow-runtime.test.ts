@@ -178,7 +178,9 @@ it("coordinator bridge refuses one call without stopping the coordinator and red
   });
 });
 
-it("an uninterruptible process is never signalled by timeout, cancellation or output bounds", async () => {
+it("an uninterruptible process is never signalled by timeout, cancellation or output bounds", {
+  tags: ["slow"],
+}, async () => {
   const late = new AbortController();
   const running = runProcess({
     command: process.execPath,

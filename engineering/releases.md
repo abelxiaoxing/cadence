@@ -502,3 +502,136 @@ Earlier failed attempts remain there: inherited proxy variables refused the sour
 The latter retained a still-reviewing run interrupted during teardown; it is not reclassified as a clean close or assigned a retrospective single cause by the later green run.
 Final test processes used an explicitly direct network environment; production proxy checks were not changed.
 No paid provider, physical native terminal, macOS/Windows, publication or deployment qualification is claimed.
+
+## Release 2.0.31 acceptance snapshot
+
+The WebUI kept browser conversations in its own `conversations-v1` store, so the Pi terminal and the browser had two unrelated histories, and a separate "Workflow history" sidebar section listed workflows in random run-ID order, duplicating what each conversation already showed.
+Browser conversations are now the project's Pi session files: the owner lists and reads them incrementally, never writing, repairing or deleting one, and a browser turn's SDK worker continues one through Pi's own `SessionManager` (a new session carries a `cadence-webui/1` entry), recording a changed model or thinking level so a terminal `/resume` keeps it.
+By the user's choice Pi stores content raw, as the terminal does; the owner redacts its credentials from every read, using the last observed literals while the model configuration is reloaded or edited and refusing rather than returning unredacted content when it has none.
+A Send names the session entry it continues; by the user's choice a message continuing an entry the session has since moved past (for example in a terminal holding the session) starts a branch, never a conflict or a rewrite.
+The WebUI follows Pi's current leaf, reads one branch by its last entry, shows the session tree and offers "Continue from here"; a browser turn's own entries are found by its exact text after its acceptance offset, so a terminal message sent from the same entry is never taken for it.
+Failed and interrupted turns stay in the session and can be continued; Stop and timeouts abort the worker's Pi session before the process ends.
+The owner keeps only each browser message's admission record (`conversation-commands-v1`); the checkpoint pipe, transcript pages, conversation metadata and their readers are removed, and pre-2.0.31 conversations move into Pi sessions with the same id only on an explicit sidebar request, leaving the old records untouched.
+Workflows belong to the conversation that started them, browser or terminal (terminal runs come from the session's `cadence-conversation-mode/1` entries); the sidebar section is removed while native `/cadence-history` keeps its reader.
+The Pi extension tells a terminal holding a session when the browser continued it and suggests `/resume`.
+Cadence mode and plan approval stay per surface: native mode state carries terminal-only tool restoration that the browser cannot write safely.
+The release also carries e3889e0 (a `CADENCE_TOKEN` of any non-empty length).
+The contract changes, so 2.0.30 and 2.0.31 clients and owners refuse each other; older versions cannot read the shared sessions or messages sent since.
+
+Against this host's data, the new reader parsed all nine real Pi 1.4.0 sessions of this checkout (including `context_edit` and system entries), and Pi 1.4.0's own `SessionManager` opened a session written by the 0.84.3 SDK worker with its fork, current leaf, context and model intact.
+A real Chromium run of the built WebUI in Chinese showed terminal sessions in the history, a new branch from "Continue from here" and the branch tree; screenshots are kept untracked in the main checkout under `预览图片/2026-11-02/共享历史/`.
+The release `verify` passed on its first full run: 1792 root/native tests in 89 files with 28 skipped, 152 WebUI tests in 16 files, seven browser scenarios in six files and the 152-member pack audit.
+During development, a run failed only because a test still sent a command ID as the conversation head, and `generated outputs deterministic` failed once because a source file changed while that run was going; no budget was changed.
+A separate Bun pack contains 152 files; SHA-256 `3930e8298eda4824f28748c4c579118c0a03bbb9ad4696a4630d36ddc5c6d244`, SHA-1 `93c4936d097cf592005e489e71de8c40dec84036`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14, Pi 1.4.0 installed globally beside the pinned 0.84.3 SDK, and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed, and no real terminal TUI session was driven against the new notice.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Release 2.0.32 acceptance snapshot
+
+The WebUI history sidebar re-read its first page every two seconds as a new request that counted as loading until the reply, so "Reading conversation history…" flashed, the count lost and regained its "+", and the paging buttons toggled.
+The first page now re-reads quietly: a list already shown stays in place until the next reply replaces it, only a page with no rows yet shows the reading hint, and a read error is still shown.
+The browser scenario observes two background re-reads without the hint and without a shorter list.
+Run in sequence, `verify` took about 305s (static checks 27s, root tests 153s, WebUI tests 14s, browser scenarios 109s); the root tests that start real owners, SDK workers, CLIs or crash children spent about 616s of worker time, the other ~1380 tests 46s.
+Those tests are tagged `slow` (14 whole files and about 80 single tests); `verify` (`scripts/verify.mjs`) runs every other check at once with incremental type checks, and `verify:full` runs the `slow` tests and the browser scenarios after it.
+No test was removed and no budget changed; `verify` needs no browser and reports that it did not run those lanes.
+`verify` passed in 24s to 28s on the shared host, about eleven times faster.
+The contract is unchanged, so 2.0.31 and 2.0.32 clients and owners accept each other.
+
+The release `verify:full` passed on its first run in 292.5s: the gate in 24.8s (1329 root/native tests in 76 files with 282 skipped, 152 WebUI tests in 16 files and the 152-member pack audit), then 463 `slow` root tests in 156.0s and seven browser scenarios in six files in 111.8s, 1792 root tests in all as in 2.0.31.
+During development one `verify:full` failed only `service-owner`'s `registry oversize uncertainty` 5s budget at a load average of about 12; it passed alone and in the next full run, and no budget was changed.
+A separate Bun pack contains 152 files; SHA-256 `95a5e5679e3f4fa6050a51b463b9fdd19494b80925e950566e5cdf6674a2210d`, SHA-1 `83f7dc164448300ac939064eec2abbe6737e5edb`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Conversation-first / shared-Pi-session integration (2026-11-03)
+
+Integrated local `1e36882` with remote `6b07d63` (2.0.32), retaining both behaviors rather than choosing one side of the owner/session boundary.
+`ConversationRecords` supplies the same readonly Pi session/branch and browser-command projection to the live owner and the gateway's proven-stopped or never-prepared views.
+Native and browser conversation keys use the public Pi session ID; session headers and retained context records bind each conversation's cwd independently of the owner's saved default.
+Model choices and accepted execution snapshots remain conversation-scoped; queued workers retain their original model, cwd, session path and branch parent.
+Directory selection and history/context reads never prepare execution; only the current explicit Send may do so.
+Explicit legacy migration preserves each retained conversation cwd and leaves all old files untouched; shared-session reads check the service account's file ownership and redact without loading Pi or refreshing credentials.
+Mode and confirmation authority remain per surface as required by the shared-history design.
+Directory-free discussion and changing an existing session's cwd in place are not added by this merge.
+
+Cross-feature regressions cover two terminal histories in different subdirectories, independent scoped models, pinned queued work, branching from an earlier terminal turn without replacing the other branch, cold history/step/context/control reads with unchanged retained bytes, and history before an owner was ever prepared.
+A lost browser Send is acknowledged only by its original command record: an unrelated terminal append cannot clear its pending ID or draft.
+Choosing a branch retires an unsent continuation; a terminal append moving the Pi leaf invalidates an existing browser approval grant.
+Distinct files with duplicate Pi session IDs are refused instead of mixing their cwd/model/history; configured parent aliases of one physical session directory are deduplicated.
+Existing checkout/Stop/recovery gates, exact-plan consent and automatic Agent review are unchanged.
+
+Remote verification remains authoritative: default `verify` runs its parallel fast gate; `verify:full` additionally runs slow tests and browser scenarios in sequence.
+New real-owner/context tests are tagged `slow`; no existing timeout or capacity budget was enlarged.
+The final full run passed in **343.7s**: fast gate **11.3s**, **1346 fast root tests**, **467 slow root tests**, **157 Web unit tests**, **9 browser scenarios**, generated bytes, types, lint, Agent pins and the real **153-member** pack audit.
+Receipts: `/home/mirako/abel/.cm.rnjZlt/verify-full3.log` and `verify-full3.exit` (`0`).
+A separate `bun pm pack --destination <private-temp>` passed exact member/body/Agent-pin auditing: `/home/mirako/abel/.cm.rnjZlt/bun-pack-qualified.gO28iw/audit.json`.
+Earlier development failures remain in that directory: stale old-store fixture expectations, a small inline step incorrectly requested as a separate detail part, and the first fast run's formatting error; they were not reclassified as passes.
+Qualification is Linux, Node 26.7.0, Bun 1.3.14, the installed public Pi SDK 0.84.3 and the existing Chromium (`chromium-1234`), with explicit direct-network test environments and fabricated loopback providers.
+No paid provider, physical-human terminal, additional real service-manager installation, Windows/macOS, publication or deployment qualification is claimed; no consumer history/profile was imported or cleaned by engineering work.
+
+## Release 2.0.33 acceptance snapshot
+
+In the WebUI chat a workflow's card stayed pinned below the newest message and listed every step, check and subagent, which repeated the Subagents dock, while the conversation header and sidebar row said the reply was done during a running implementation.
+Each workflow is now one line after the turn it started in: a live line shows its phase, the running steps and a Stop button, and a settled line shows the outcome, merge commit and duration, with the first notice line when it did not complete.
+The line opens the existing main-area workflow view of steps, checks, delivery and diagnostics; subagents stay in the dock, and a plan awaiting approval stays at the bottom of the conversation.
+The header and the sidebar row name a live workflow's phase, and a failed, interrupted or unknown reply keeps its own status.
+Runs are read four at a time, newest first, and settled runs are cached; the terminal and browser run lists each grow in windows of eight, and an ID that cannot be read yet, such as one left by a refused terminal attempt, is retried every 10s instead of holding the window or reporting a failure.
+WebUI unit tests cover the line in English and Chinese, its placement and the window growth; the browser scenario checks that each line stays after the turn it started in, and the gateway scenario reads the completed line.
+A temporary preview script pressed Stop against a fixture owner and the line settled as canceled with its reason; no kept test presses it.
+Placement follows start times, not the branch on screen, and a queued browser turn whose time changes can move a line; `engineering/clients.md` records the rule.
+The contract is unchanged, so 2.0.32 and 2.0.33 clients and owners accept each other.
+
+The release `verify:full` passed on its first run in 287.5s: the gate in 24.6s (1329 root/native tests in 76 files with 282 skipped, 156 WebUI tests in 16 files and the 152-member pack audit), then 463 `slow` root tests in 154.5s and seven browser scenarios in six files in 108.3s, 1792 root tests in all as in 2.0.32.
+Before the version change the same candidate had passed `verify:full` in 312.4s.
+A separate Bun pack contains 152 files; SHA-256 `1497e0bfbf1543af895f946cf25909c618c923b86baf3a469b73dbec65df4b6a`, SHA-1 `13ab8eccc72f11fb87a23f25812dbc937c1537dc`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## 2.0.33 integration with conversation-scoped execution
+
+Integrated remote `9a85e06` on top of the reviewed conversation-first/shared-Pi-session tree, without replacing its service-owned cwd/model snapshots, readonly cold history, explicit-Send preparation or branch-bound approval.
+The remote workflow line placement, live phase display, separate workflow detail view, bounded run observation and fast/full verification split are retained.
+The extracted plan card still states the conversation cwd and checkout-root write-path basis, and the workflow detail view still displays its recorded execution context.
+The relocated per-turn branch button now uses the same unsent-continuation retirement path as the branch tree; a browser regression holds the Send's scoped-model read, navigates to an earlier turn, and proves the draft is kept and no old Send is submitted.
+The Cadence browser regression retains its original whole-scenario observation deadline and independent closure receipts while checking workflow lines, detail navigation, actual merge/Agent-review outcome, plan authority and chronological placement.
+No test timeout or execution/storage budget was increased, and generated service/browser bytes and adaptation hashes were rebuilt rather than selected from one merge side.
+
+Qualification on Linux, Node 26.7.0, Bun 1.3.14, installed SDK 0.84.3 and existing Chromium (`chromium-1234`): the three directly affected browser scenarios passed, followed by `verify:full` in **358.8s** (fast gate **11.0s**, **1346 fast root tests**, **467 slow root tests**, **161 Web unit tests**, **9 browser scenarios**, types, generated bytes, lint, Agent pins and real pack audit).
+The slow/browser test processes used explicit direct-network environments and fabricated loopback providers.
+Receipts: `/home/mirako/abel/.m33.EoeSf5/browser-target.log`, `verify-full.log` and `verify-full.exit` (`0`).
+A separate real Bun pack passed exact auditing of **153 regular members**, all bodies and Agent pins: `/home/mirako/abel/.m33.EoeSf5/bun-pack.0RiE2D/audit.json`.
+No production service lifecycle operation, consumer history/profile import, paid provider, physical-human terminal, macOS/Windows, publication or deployment qualification is claimed.
+
+## 2.0.33 integration review fixes and old-conversation retirement (2026-11-03)
+
+Pre-Pi Cadence conversations are deliberately unsupported in this version: the migration UI/API, checkpoint codec, old task-origin navigation and control-directory link fallback are removed, not replaced with compatibility mappings.
+A readonly presence guard refuses their IDs as `retired-conversation`; old files are preserved, and ordinary Pi history and current context/binding metadata are not copied, reset or migrated.
+Oversized Pi files keep their bounded header identity and refuse Send without a second same-ID file or provider contact; unreadable or unsupported formats cannot prove absence, and a later readable replacement does not revive stale body caches.
+Browser workers record their actual user-entry identity and finalized prefix with Pi's public SessionManager, rather than matching text or claiming arbitrary descendants; a real queued-worker regression includes an identical terminal prompt from the same parent.
+Failed attempts and live previews apply current read-time credential redaction, and summaries/turns preserve their matching durable owner outcome rather than treating a Pi stop reason as native/auth/storage settlement.
+Workflow observation retains still-listed live runs through failed re-reads, and branch navigation aborts obsolete readonly requests and requires a fresh selected-head observation without cancelling admitted work.
+
+Linux qualification used Node 26.7.0, Bun 1.3.14, installed public SDK 0.84.3 and existing Chromium (`chromium-1234`), isolated homes, private disk-backed temporary directories and fabricated loopback providers.
+`verify:full` passed in **354.4s**: **1355 fast root tests**, **467 slow root tests**, **162 Web unit tests**, **9 browser scenarios**, plus types, generated bytes, lint, Agent pins and exact real-pack auditing.
+The reviewed SDK worker pin is `6974b1c0f4f6916406350246cd4fc9cf82378a81d5b8aff9cd8f4403316791fa`; its real DIRECT/VALIDATED_PROXY regressions passed.
+No deadline, output/storage ceiling or verification lane was enlarged; the scoped-workflow fixture polls at 100ms instead of 50ms while retaining its 20s deadline and complete settlement checks, and records its last observation before teardown on failure.
+Earlier failures remain failures: fixture/formatting mistakes, the stale worker pin, a browser navigation stall before read retirement, and a scoped workflow observed still running at its 20s bound (its retained run settled after about 21.4s) are preserved rather than reclassified from later cleanup.
+Receipts are under `/home/mirako/abel/.fix.XlphDO`, including `verify-full3.log` and `verify-full3.exit` (`0`); the qualified run used `/home/mirako/abel/.vfx.pgmkdy` for temporary state.
+A separate real Bun pack passed all **153 regular members**, every body and Agent pin: `/home/mirako/abel/.vfx.pgmkdy/pack.zshbYq/audit.json`, archive SHA-256 `c023a29b8904b93f7c4207cae6818f8e42aaed32bbc89cee213b2c9b92f6f51a`.
+No commit, push, consumer-data cleanup, production service operation, installation, publication or deployment was performed; paid providers, physical-human interaction, macOS/Windows and systemd qualification were not executed in this review-fix pass.
+
+## Release 2.0.34 qualification (2026-11-03)
+
+The user explicitly authorized committing the reviewed integration, pushing GitHub and publishing npm.
+Version 2.0.33 was already published; 2.0.34 is the new release, with canonical service/browser artifacts rebuilt from the reviewed conversation-first integration and fixes above.
+The staged audit confirmed one merge/release change, intentional source/test retirement, no credential or consumer-state files, and no unrelated unstaged work.
+Old Cadence conversations remain unsupported and preserved in place; this release does not import, reset or clean them.
+
+Fresh `verify:full` passed in **362.7s** with **1355 fast root tests**, **467 slow root tests**, **162 Web unit tests** and **9 browser scenarios**, including types, generated bytes, lint, Agent pins and real-pack auditing.
+The first attempt failed because the invoking harness inherited `CADENCE_SUBAGENT_CHILD=1`, correctly keeping native entry/configuration handlers inert; clearing that marker only for isolated test processes made all 46 directly affected tests pass before the full rerun.
+Production child guards, execution/storage limits and test budgets were not changed.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14, public SDK 0.84.3, existing Chromium (`chromium-1234`), isolated homes and fabricated loopback providers; no paid-provider, physical-human, macOS/Windows or systemd qualification is claimed.
+Receipts: `/home/mirako/abel/.rel.sl2nT7/verify-full2.log`, `verify-full2.exit` (`0`) and `native-guards.log`.
+The separate Bun tarball and npm 12.0.2 publish dry-run agree on all **153 regular members** and integrity; exact body, Agent-pin, notice and font auditing passed.
+Artifact: `/home/mirako/abel/.rel.sl2nT7/pack.x6BrXA/abelxiaoxing-cadence-2.0.34.tgz`; SHA-256 `780f3f31f74c888a77d3298efcb1208bbad005934feb29b4d8ec8ad339710a3b`, SHA-1 `d2dd6eab380ed0552332fba35599629acde47c10`.
+This is pre-publication qualification evidence, not a claim that the remote push or registry publication has already succeeded; publication must use this audited artifact and verify the remote outcome afterward.

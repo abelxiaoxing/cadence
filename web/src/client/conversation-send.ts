@@ -4,7 +4,6 @@
 import {
   ContractError,
   canonicalJson,
-  decodeId,
   integer,
   text,
 } from "../../../src/service/contracts/core.ts";
@@ -19,6 +18,8 @@ import {
 } from "../../../src/service/contracts/models.ts";
 import {
   CONVERSATION_SEND_BYTES,
+  decodeEntryId,
+  decodeSessionId,
   decodeWorkbenchCommand,
   type WorkbenchCommand,
 } from "../../../src/service/contracts/workbench.ts";
@@ -47,8 +48,8 @@ export function captureSend(input: {
 }): PendingSend {
   const common = {
     commandId: crypto.randomUUID(),
-    conversationId: decodeId(input.id),
-    head: input.head === null ? null : decodeId(input.head),
+    conversationId: decodeSessionId(input.id),
+    head: input.head === null ? null : decodeEntryId(input.head),
   };
   const location = input.location
     ? decodeConversationLocation(input.location)

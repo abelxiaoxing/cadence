@@ -1,107 +1,267 @@
-import { useEffect, useRef, useState } from "react";
-import type { CadenceConversation } from "../../../../src/service/contracts/workbench.ts";
+import { useEffect, useId, useRef, useState } from "react";
+import { FiSquare } from "react-icons/fi";
 import {
   readableWorkflowPlan,
+  type WorkflowProposal,
+  type WorkflowRun,
   workflowDiagnostics,
 } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
-import { useT } from "../../i18n/locale";
+import { describeError, type Translator, useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
 import { type WorkflowAgent, workflowAgentLabel } from "./AgentDock";
 
-export function WorkflowPanel({
+const LIVE = ["queued", "running"];
+export const workflowLive = (run: WorkflowRun) => LIVE.includes(run.status);
+/** When the owner accepted a run (its own clock); older records carry only
+ * their first child's creation, and some nothing at all. */
+export function workflowStartedAt(run: WorkflowRun): number | null {
+  return (
+    run.diagnostics?.acceptedAt ??
+    run.steps.find((step) => step.timing)?.timing?.createdAt ??
+    null
+  );
+}
+/** A live run's status word: what it is doing now. */
+export function workflowActivity(run: WorkflowRun): string {
+  if (run.status === "queued") return "queued";
+  return run.phase === "research" ? "researching" : run.phase;
+}
+/** Where each workflow line goes: after the newest turn shown that began
+ * before the run, or ahead of every turn when none did and no earlier turn is
+ * left to read (it waits while one is). An undated run ends the transcript,
+ * and nothing is placed before any turn is read. Workflows belong to the
+ * conversation, not to a branch: on any branch a line goes where its time falls. */
+export function placeWorkflows(
+  turns: readonly { header: { id: string; at: number } }[],
+  runs: Iterable<WorkflowRun>,
+  earlier: boolean,
+): {
+  start: WorkflowRun[];
+  after: ReadonlyMap<string, WorkflowRun[]>;
+  end: WorkflowRun[];
+} {
+  const start: WorkflowRun[] = [],
+    end: WorkflowRun[] = [];
+  const after = new Map<string, WorkflowRun[]>();
+  if (!turns.length) return { start, after, end };
+  const dated = turns.filter((turn) => turn.header.at > 0);
+  const begin = (run: WorkflowRun) =>
+    workflowStartedAt(run) ?? Number.MAX_SAFE_INTEGER;
+  for (const run of [...runs].sort((a, b) => begin(a) - begin(b))) {
+    const at = workflowStartedAt(run);
+    const holder =
+      at === null ? undefined : dated.findLast((turn) => turn.header.at <= at);
+    if (at === null || !dated.length) end.push(run);
+    else if (holder)
+      after.set(holder.header.id, [
+        ...(after.get(holder.header.id) ?? []),
+        run,
+      ]);
+    else if (!earlier) start.push(run);
+  }
+  return { start, after, end };
+}
+/** Workflows of one list read at first, and added each time the turns shown
+ * could hold older ones. */
+export const RUN_WINDOW = 8;
+/** The next number of a list's newest workflow IDs (oldest first) to read: it
+ * grows once every ID in the window was read or found unreadable while the
+ * oldest run read began after the oldest turn shown, or once all are shown. */
+export function nextRunWindow(
+  ids: readonly string[],
+  size: number,
+  runs: ReadonlyMap<string, WorkflowRun>,
+  unreadable: ReadonlySet<string>,
+  firstTurnAt: number | undefined,
+  allTurns: boolean,
+): number {
+  if (size >= ids.length) return size;
+  const window = ids.slice(-size);
+  if (window.some((id) => !runs.has(id) && !unreadable.has(id))) return size;
+  const starts = window.flatMap((id) => {
+    const run = runs.get(id);
+    const at = run ? workflowStartedAt(run) : null;
+    return at === null ? [] : [at];
+  });
+  const oldest = starts.length ? Math.min(...starts) : Number.POSITIVE_INFINITY;
+  return allTurns || (firstTurnAt !== undefined && oldest >= firstTurnAt)
+    ? size + RUN_WINDOW
+    : size;
+}
+/** Acceptance to settlement, both by the owner's clock; never the browser's. */
+function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
+  const start = run.diagnostics?.acceptedAt,
+    end = run.diagnostics?.settledAt;
+  if (!start || !end || end < start) return "";
+  const s = Math.round((end - start) / 1000);
+  if (s < 60) return t("{s}s", { s });
+  if (s < 3600) return t("{m}m {s}s", { m: Math.floor(s / 60), s: s % 60 });
+  return t("{h}h {m}m", {
+    h: Math.floor(s / 3600),
+    m: Math.floor((s % 3600) / 60),
+  });
+}
+/** One workflow in the conversation: what it is doing, or how it ended. Its
+ * steps, checks, delivery and diagnostics open in the main-area workflow view;
+ * its subagents are in the dock. */
+export function WorkflowLine({
   client,
-  state,
+  run,
+  onOpen,
+  onChanged,
+}: {
+  client: ServiceClient;
+  run: WorkflowRun;
+  onOpen(): void;
+  onChanged?(): void;
+}) {
+  const { t, tx } = useT();
+  const goal = useId();
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const live = workflowLive(run);
+  const meta = live
+    ? [
+        tx(workflowActivity(run)),
+        run.steps
+          .filter((step) => step.status === "running")
+          .map((step) => workflowAgentLabel(step.id))
+          .join(", "),
+      ]
+    : [
+        tx(run.status),
+        run.mergedCommit
+          ? t("merged {commit}", { commit: run.mergedCommit.slice(0, 7) })
+          : "",
+        workflowDuration(run, t),
+      ];
+  // Only an unsuccessful end needs its reason in the conversation.
+  const reason =
+    live || run.status === "completed"
+      ? ""
+      : (run.notice.split("\n").find((line) => line.trim()) ?? "");
+  const state = meta.filter(Boolean).join(" · ");
+  return (
+    <article className={`workflow-line ${run.status}`} aria-labelledby={goal}>
+      <button
+        type="button"
+        className="workflow-line-open"
+        title={t("Open workflow details")}
+        onClick={onOpen}
+      >
+        <span className={`agent-dot ${run.status}`} aria-hidden="true" />
+        <span className="workflow-line-goal" id={goal}>
+          {run.goal}
+        </span>
+        <span
+          className={`workflow-line-meta ep-state ${run.status}`}
+          title={state}
+        >
+          {state}
+        </span>
+      </button>
+      {live && (
+        <button
+          type="button"
+          className="ghost workflow-line-stop"
+          aria-label={t("Cancel workflow — request stop")}
+          title={t("Cancel workflow — request stop")}
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setError("");
+            void cancelWorkflow(client, run)
+              .then((code) => {
+                if (!alive.current) return;
+                setError(code);
+                onChanged?.();
+              })
+              .finally(() => {
+                if (alive.current) setBusy(false);
+              });
+          }}
+        >
+          <FiSquare aria-hidden="true" />
+          {t("Stop")}
+        </button>
+      )}
+      {error ? (
+        <p className="workflow-line-reason" role="alert">
+          {describeError(t, error)}
+        </p>
+      ) : (
+        reason && (
+          <p className="workflow-line-reason" title={reason}>
+            {tx(reason)}
+          </p>
+        )
+      )}
+    </article>
+  );
+}
+/** The plan awaiting approval: the conversation's one pending decision. */
+export function PlanCard({
+  proposal,
   canApprove,
   approvalHint,
   onApprove,
-  onChanged,
-  onOpenAgent,
 }: {
-  client: ServiceClient;
-  state: CadenceConversation;
+  proposal: WorkflowProposal;
   canApprove: boolean;
   /** Why approval is unavailable for the displayed plan, if known. */
   approvalHint?: string;
   onApprove(): void;
-  onChanged(): void;
-  onOpenAgent?(agent: WorkflowAgent): void;
 }) {
   const { t } = useT();
-  const [count, setCount] = useState(2);
-  const ids = [...new Set(state.runs)];
   return (
-    <section className="workflow-panel" aria-label={t("Cadence workflow")}>
-      {ids.length > count && (
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setCount((n) => n + 5)}
-        >
-          {t("Earlier workflow results")}
-        </button>
-      )}
-      {ids.slice(-count).map((id) => (
-        <WorkflowCard
-          key={id}
-          client={client}
-          id={id}
-          onChanged={onChanged}
-          onOpenAgent={onOpenAgent}
-        />
-      ))}
-      {state.enabled && state.proposal && (
-        <section
-          className="workflow-plan banner-notice"
-          aria-label={t("Current implementation plan")}
-        >
-          <h3>{t("Current implementation plan")}</h3>
-          <p>
-            {t("Tools and checks run on the service host, not in a sandbox.")}
-          </p>
-          <p>
-            <code>{state.proposal.cwd}</code> · {state.proposal.display?.model}
-          </p>
-          <p>
-            {t("Declared write paths use the checkout root:")}{" "}
-            <code>{state.proposal.checkoutRoot ?? state.proposal.cwd}</code>
-          </p>
-          {state.proposal.display?.branch && (
-            <p>
-              <code>{state.proposal.display.branch}</code> ·{" "}
-              <code>{state.proposal.display.baseCommit}</code>
-            </p>
-          )}
-          <p>
-            {t(
-              "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.",
-            )}
-          </p>
-          <Markdown text={readableWorkflowPlan(state.proposal.plan)} />
-          <button
-            type="button"
-            className="primary"
-            disabled={!canApprove}
-            onClick={onApprove}
-          >
-            {t("Implement this plan")}
-          </button>
-          {approvalHint && <p className="inspector-note">{approvalHint}</p>}
-          <p>
-            {t(
-              "To change the plan, continue the conversation. A changed plan requires fresh approval.",
-            )}
-          </p>
-        </section>
-      )}
-      {state.enabled && !state.proposal && ids.length === 0 && (
-        <p className="inspector-note">
-          {t(
-            "Cadence stays on for this conversation until you explicitly exit.",
-          )}
+    <section
+      className="workflow-plan banner-notice"
+      aria-label={t("Current implementation plan")}
+    >
+      <h3>{t("Current implementation plan")}</h3>
+      <p>{t("Tools and checks run on the service host, not in a sandbox.")}</p>
+      <p>
+        <code>{proposal.cwd}</code> · {proposal.display?.model}
+      </p>
+      <p>
+        {t("Declared write paths use the checkout root:")}{" "}
+        <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
+      </p>
+      {proposal.display?.branch && (
+        <p>
+          <code>{proposal.display.branch}</code> ·{" "}
+          <code>{proposal.display.baseCommit}</code>
         </p>
       )}
+      <p>
+        {t(
+          "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.",
+        )}
+      </p>
+      <Markdown text={readableWorkflowPlan(proposal.plan)} />
+      <button
+        type="button"
+        className="primary"
+        disabled={!canApprove}
+        onClick={onApprove}
+      >
+        {t("Implement this plan")}
+      </button>
+      {approvalHint && <p className="inspector-note">{approvalHint}</p>}
+      <p>
+        {t(
+          "To change the plan, continue the conversation. A changed plan requires fresh approval.",
+        )}
+      </p>
     </section>
   );
 }

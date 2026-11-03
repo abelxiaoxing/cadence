@@ -2859,13 +2859,79 @@ summary.chat-steps-head:hover {
   white-space: nowrap;
 }
 
-/* Conversation-first workflow records. No second task editor or terminal. */
-.workflow-panel {
-  display: grid;
-  gap: 14px;
+/* Conversation-first workflow records. No second task editor or terminal.
+ * A workflow is one line after the turn it started in; its steps, checks and
+ * delivery open in the main-area workflow view, its subagents in the dock. */
+.workflow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 4px;
+  max-width: 920px;
+  margin: -6px auto 16px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-elev);
+}
+.workflow-line-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
   min-width: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+.workflow-line-goal {
+  flex: 1 1 8em;
+  min-width: 6em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.workflow-line-meta.ep-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workflow-line .agent-dot.queued,
+.workflow-line .agent-dot.running {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: chat-steps-pulse 1.2s ease-in-out infinite;
+  }
+}
+.workflow-line-stop {
+  flex: none;
+  gap: 4px;
+  padding: 4px 10px;
+  color: var(--red-text);
+  font-size: 12px;
+}
+.workflow-line-reason {
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 0 12px 6px 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
 }
 .workflow-plan {
+  max-width: 920px;
+  margin: 0 auto 16px;
   overflow-wrap: anywhere;
 }
 .workflow-plan .primary {
@@ -2915,12 +2981,91 @@ summary.chat-steps-head:hover {
   margin: 0 auto;
 }
 
-.workflow-history {
-  flex: 0 0 auto;
-  max-height: 40%;
+/* ---- Shared Pi session branches: header controls, the tree panel, the
+ * per-turn "continue from here" action and a message that left no entry ---- */
+.conversation-branch {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.conversation-branch > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.branch-tree {
+  flex: none;
+  max-height: 45%;
   overflow: auto;
-  padding: 8px;
-  border-top: 1px solid var(--border-soft);
+  padding: 8px var(--chat-inset);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+}
+.branch-tree > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.branch-tree h3 {
+  margin: 0;
+  font-size: 12px;
+}
+.branch-rows {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.branch-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  text-align: start;
+  font-size: 12px;
+}
+.branch-row.current {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.branch-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.branch-row time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.turn-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.chat-attempt {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+}
+.chat-attempt-text {
+  margin: 0 0 4px;
+  white-space: pre-wrap;
+}
+.legacy-migration {
+  margin: 6px 0;
 }
 
 /* ---- Composer model control: current model on the button, an anchored

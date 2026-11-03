@@ -15,6 +15,8 @@ Cadence 把 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 
   子代理输出、真实的检查运行和你自己的审阅彼此独立：模型的文字或一句“Done”都不算检查通过，失败、取消和未知结果保持相互区分。
 - **完整历史。**
   新工作流保留脱敏后的子代理记录与实际进程结果；旧任务历史另支持精确搜索及 Markdown/NDJSON 导出。
+- **与终端共用一份历史。**
+  浏览器对话就是项目的 Pi 会话：可以在浏览器里继续终端会话，也可以用 `/resume` 在终端继续浏览器会话，两边都能查看 Pi 的分支。
 - **一个链接涵盖一切。**
   WebUI（桌面和手机，英文与简体中文）还承载普通的 Pi 对话，并可在项目间切换，每个项目都有自己的 owner 和历史。
 
@@ -105,11 +107,12 @@ Cadence 不指定 Pi 版本范围；开发用的固定版本和已测试运行�
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 工程指导按领域拆分在 [engineering/](engineering/) 下；[AGENTS.md](AGENTS.md) 中的项目索引说明了哪个文件覆盖哪部分代码。
-`verify` 还需要官方 Node 构建、私有临时目录和已有的 Chromium；见[验证](engineering/verification.md)。
+`verify` 还需要官方 Node 构建和私有临时目录；`verify:full` 另外运行慢速测试和浏览器场景，需要已有的 Chromium；见[验证](engineering/verification.md)。
 
 ## 许可证
 

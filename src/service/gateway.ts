@@ -164,7 +164,11 @@ export async function createGateway(
     string,
     { epoch: string; result: Promise<Binding> }
   >();
-  const conversations = new GatewayConversations(input.stateHome);
+  const conversations = new GatewayConversations(
+    input.stateHome,
+    input.agentDir,
+    () => acquired.access.redactionLiterals(),
+  );
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import type {
   ChatCursor,
   WorkbenchResult,
@@ -7,73 +7,44 @@ import type { ServiceClient } from "../../../src/service-client.ts";
 import { useWorkbench } from "./use-workbench";
 
 type Page = Extract<WorkbenchResult, { kind: "conversations" }>;
-/** Recent-first pages; progress resumes readonly scans, never an action. */
+/**
+ * The project's Pi sessions, most recently written first, in pages.
+ * The first page follows sessions the terminal or a Send writes by re-reading
+ * quietly: a list already shown stays in place until its next read replaces
+ * it, so only a page with nothing to show yet reports `loading`.
+ */
 export function useConversationHistory(
   client: ServiceClient,
   enabled: boolean,
 ) {
   const [after, setAfter] = useState<ChatCursor | null>(null);
-  const [scan, setScan] = useState<string>();
   const [back, setBack] = useState<(ChatCursor | null)[]>([]);
-  const [revision, setRevision] = useState(0);
-  const [saved, setSaved] = useState<{
-    key: string;
-    boundary: string;
-    page: Page;
-  }>();
-  const boundary = JSON.stringify(after);
-  const key = JSON.stringify([after, revision]);
   const request = useWorkbench(
     client,
-    enabled
-      ? { kind: "conversations", after, ...(scan ? { scan } : {}) }
-      : null,
+    enabled ? { kind: "conversations", after } : null,
+    after === null ? 2000 : 0,
   );
-  const refresh = useCallback(() => {
-    setScan(undefined);
-    setRevision((n) => n + 1);
-    request.refresh();
-  }, [request.refresh]);
-  useEffect(() => {
-    if (request.loading || request.error || !request.value) return;
-    if (request.value.kind === "conversations-progress")
-      setScan(request.value.scan);
-    else if (request.value.kind === "conversations")
-      setSaved({ key, boundary, page: request.value });
-  }, [request.value, request.error, request.loading, key, boundary]);
-  const loading =
-    enabled &&
-    !request.error &&
-    (request.loading ||
-      saved?.key !== key ||
-      request.value?.kind === "conversations-progress");
-  useEffect(() => {
-    if (!enabled || after !== null || loading) return;
-    const timer = setTimeout(refresh, 2000);
-    return () => clearTimeout(timer);
-  }, [enabled, after, loading, refresh]);
+  const page: Page | undefined =
+    request.value?.kind === "conversations" ? request.value : undefined;
   return {
-    value: saved?.boundary === boundary ? saved.page : undefined,
+    value: page,
     error: request.error,
-    loading,
-    refresh,
+    loading: enabled && !page && !request.error,
+    refresh: request.refresh,
     canPrevious: back.length > 0,
     first: () => {
       setAfter(null);
       setBack([]);
-      refresh();
     },
     previous: () => {
-      if (loading || !back.length) return;
+      if (!back.length) return;
       setAfter(back.at(-1) ?? null);
       setBack((rows) => rows.slice(0, -1));
-      setScan(undefined);
     },
     next: () => {
-      if (loading || !saved?.page.next) return;
+      if (!page?.next) return;
       setBack((rows) => [...rows, after]);
-      setAfter(saved.page.next);
-      setScan(undefined);
+      setAfter(page.next);
     },
   };
 }

@@ -1,7 +1,15 @@
 // Isolated SDK child, not Pi CLI startup. Task discovery stays disabled;
 // ordinary conversations explicitly load only context/skills, never extensions.
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeSync,
+} from "node:fs";
 import {
   createProvider,
   InMemoryCredentialStore,
@@ -16,13 +24,13 @@ import {
   SettingsManager,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
-import {
-  conversationContextRecords,
-  iterateConversationContext,
-} from "./conversation-context.mjs";
 import { conversationResources } from "./conversation-resources.mjs";
 import { coordinatorTools } from "./coordinator-tools.mjs";
 import { researchClock, researchTools } from "./research-tools.mjs";
+import {
+  BROWSER_COMMAND_ENTRY,
+  WEBUI_SESSION_ENTRY,
+} from "./session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
 import {
   closed,
@@ -125,6 +133,54 @@ const abortForFailure = () => {
     }
   })();
 };
+/** A torn final line (a writer killed mid-line) would swallow the next entry. */
+const terminateLastLine = (file) => {
+  const fd = openSync(
+    file,
+    constants.O_RDWR | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const size = fstatSync(fd).size;
+    const last = Buffer.alloc(1);
+    if (size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10)
+      writeSync(fd, "\n");
+  } finally {
+    closeSync(fd);
+  }
+};
+/** The project's Pi session a browser turn writes, as the terminal shares it:
+ * continued from the entry the browser showed, so a session that moved on
+ * meanwhile gains a branch. Pi records the model and thinking level only when
+ * a session starts; a continued one records a change so a resume keeps it. */
+const openConversation = (target, cwd, model, thinkingLevel) => {
+  let manager;
+  if (target.file === null) {
+    manager = SessionManager.create(cwd, target.dir, { id: target.id });
+    manager.appendCustomEntry(WEBUI_SESSION_ENTRY, {});
+  } else {
+    terminateLastLine(target.file);
+    manager = SessionManager.open(target.file, target.dir, cwd);
+    if (manager.getSessionId() !== target.id)
+      refuse("session", "session-mismatch");
+    if (target.head === null) manager.resetLeaf();
+    else if (!manager.getEntry(target.head)) refuse("session", "stale-head");
+    else manager.branch(target.head);
+  }
+  const context = manager.buildSessionContext();
+  if (context.messages.length) {
+    if (
+      context.model?.provider !== model.provider ||
+      context.model?.modelId !== model.id
+    )
+      manager.appendModelChange(model.provider, model.id);
+    if (
+      context.thinkingLevel !== thinkingLevel &&
+      manager.getBranch().some((e) => e.type === "thinking_level_change")
+    )
+      manager.appendThinkingLevelChange(thinkingLevel);
+  }
+  return manager;
+};
 const emitFailure = () => {
   // Construct from fixed labels/primitives only; never inspect exception text,
   // provider diagnostics, response headers, payloads, usage or tool contents.
@@ -213,17 +269,31 @@ try {
     envelope.conversation === undefined
       ? null
       : closed(envelope.conversation, [
-          "previous",
+          "session",
           "agentDir",
           ...(Object.hasOwn(envelope.conversation, "coordinator")
             ? ["coordinator"]
             : []),
         ]);
+  const target = conversation
+    ? closed(conversation.session, ["id", "dir", "file", "head"])
+    : null;
+  // Stop and timeout signal the process group. A browser turn aborts its Pi
+  // session first, so the session records the interrupted reply as Pi does.
+  if (conversation)
+    process.once("SIGTERM", () => {
+      if (!session) process.exit(143);
+      abortForFailure();
+    });
   if (
     conversation &&
-    ((conversation.previous !== null &&
-      typeof conversation.previous !== "string") ||
-      typeof conversation.agentDir !== "string")
+    (typeof conversation.agentDir !== "string" ||
+      typeof target.id !== "string" ||
+      !target.id ||
+      typeof target.dir !== "string" ||
+      !target.dir ||
+      !(target.file === null || typeof target.file === "string") ||
+      !(target.head === null || typeof target.head === "string"))
   )
     refuse("parse", "invalid-conversation");
   const investigation =
@@ -388,10 +458,9 @@ try {
   process.stdout.on("error", stdoutFailureListener);
   stage = "session";
   const requestedThinkingLevel = thinkingLevel ?? "off";
-  const manager = SessionManager.inMemory(cwd);
-  if (conversation)
-    for (const message of iterateConversationContext(conversation.previous))
-      manager.appendMessage(message);
+  const manager = conversation
+    ? openConversation(target, cwd, model, requestedThinkingLevel)
+    : SessionManager.inMemory(cwd);
   const coordinationTools = coordinator ? coordinatorTools() : undefined;
   ownsCoordinatorChannel = coordinator;
   const created = await createAgentSession({
@@ -495,6 +564,8 @@ try {
   if (session.agent.toolExecution !== "sequential")
     refuse("session", "capture-unsupported");
   session.agent.state.tools = ingress.wrap(session.agent.state.tools);
+  const initialLeaf = conversation ? manager.getLeafId() : null;
+  let recordedUser = null;
   unsubscribe = session.agent.subscribe(async (event) => {
     try {
       sdkEvents++;
@@ -512,6 +583,33 @@ try {
       }
       if (own(event, "type") === "message_end") {
         const message = own(event, "message");
+        if (
+          conversation &&
+          ["user", "assistant", "toolResult"].includes(own(message, "role"))
+        ) {
+          // Public core subscribers are awaited in registration order. The
+          // AgentSession's earlier subscriber has persisted this message.
+          // Each boundary names this worker's own prefix; a terminal append
+          // after it is never claimed by walking arbitrary descendants.
+          const entry = manager.getLeafEntry();
+          if (
+            entry?.type !== "message" ||
+            entry.message.role !== own(message, "role") ||
+            entry.id === initialLeaf
+          )
+            refuse("events", "event-projection-failed");
+          if (own(message, "role") === "user") {
+            if (recordedUser !== null)
+              refuse("events", "event-projection-failed");
+            recordedUser = entry.id;
+          }
+          if (recordedUser === null)
+            refuse("events", "event-projection-failed");
+          manager.appendCustomEntry(BROWSER_COMMAND_ENTRY, {
+            commandId: publicRequest.runId,
+            userId: recordedUser,
+          });
+        }
         if (own(message, "role") === "assistant") {
           const reason = own(message, "stopReason");
           terminalStopReason = [
@@ -579,13 +677,6 @@ try {
   stage = "assistant-final";
   if (failure || terminalStopReason !== "stop" || ingress.frames !== 0)
     refuse("assistant-final", "terminal-incomplete");
-  // Anonymous pipe only. The owner applies its access-secret sanitizer before
-  // any checkpoint reaches disk; worker output cannot contain owner credentials.
-  if (conversation) {
-    stage = "conversation-context";
-    for (const record of conversationContextRecords(session.messages, secrets))
-      writeFileSync(3, record);
-  }
   await capture.final();
   await emitter.drain();
 } catch {

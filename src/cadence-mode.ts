@@ -17,12 +17,12 @@ import {
 import { Type } from "typebox";
 import { CADENCE_INSTRUCTIONS as INSTRUCTIONS } from "./cadence-instructions.ts";
 import { CadencePreferences } from "./cadence-preferences.ts";
-import { conversationIdentity } from "./conversation-identity.ts";
 import {
   departure,
   NativeConnection,
   projectStopCommand,
 } from "./native-client.ts";
+import { decodeSessionId } from "./service/contracts/models.ts";
 import type { ChatTurn } from "./service/contracts/workbench.ts";
 import {
   decodeWorkflowPlan,
@@ -44,10 +44,12 @@ import {
   type PublicError,
   type Reply,
 } from "./service-contract.ts";
+import { CADENCE_MODE_ENTRY } from "./session-entries.mjs";
 import { diagnosticText } from "./verification-diagnostics.ts";
 import { effectiveWorkspace, resolveWorkspace } from "./workspace.ts";
 
-export const CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
+export { CADENCE_MODE_ENTRY };
+
 const CONTEXT = "cadence-mode-context";
 const READY = "cadence-mode-ready";
 const TOOLS = [
@@ -392,9 +394,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   const conversation = (ctx: ExtensionContext) => {
     const cwd = resolveWorkspace(ctx.cwd).cwd;
     return {
-      id: conversationIdentity(
-        `cadence-native-session:${JSON.stringify([ctx.sessionManager.getSessionId(), cwd])}`,
-      ),
+      id: decodeSessionId(ctx.sessionManager.getSessionId()),
       cwd,
     };
   };

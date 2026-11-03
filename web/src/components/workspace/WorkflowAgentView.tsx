@@ -113,7 +113,8 @@ export function WorkflowAgentView({
             )}
           </p>
         )}
-        {run && (
+        {/* A whole workflow's card heads itself with its goal and state. */}
+        {run && agent.stepId && (
           <p className="inspector-note workflow-agent-goal">
             {t("Workflow")}: {run.goal} · {tx(run.phase)} · {tx(run.status)}
           </p>

@@ -93,6 +93,7 @@ export const ERROR_CODES = [
   "expired-grant",
   "consumed-grant",
   "unsupported-context",
+  "retired-conversation",
   "quarantine",
   "capacity",
   "unavailable",
@@ -138,6 +139,7 @@ export function errorStatus(code) {
     case "expired-grant":
       return 410;
     case "unsupported-context":
+    case "retired-conversation":
       return 422;
     case "quarantine":
       return 423;

@@ -18,6 +18,8 @@ The optional WebUI supports the same persistent conversation workflow without a 
   Conversation workflows retain sanitized transcripts and actual process results; legacy task history also provides exact search and Markdown/NDJSON export.
 - **One link for everything.**
   The WebUI (desktop and phone, English and 简体中文) also hosts ordinary Pi conversations and switches between projects, each with its own owner and history.
+- **One history with the terminal.**
+  Browser conversations are the project's Pi sessions: continue a terminal session in the browser or a browser one with `/resume`, and read Pi's branches in either place.
 
 Cadence is a trusted assistant, **not a sandbox**: its agents edit your working copy directly with host tools, so use it on code you can review and recover.
 
@@ -107,11 +109,12 @@ Cadence does not impose a Pi version range; development pins and tested runtimes
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 Engineering guidance is split by area under [engineering/](engineering/); the project index in [AGENTS.md](AGENTS.md) says which file covers which code.
-`verify` also needs an official Node build, a private temporary directory and an existing Chromium; see [verification](engineering/verification.md).
+`verify` also needs an official Node build and a private temporary directory; `verify:full` adds the slow tests and browser scenarios, which need an existing Chromium; see [verification](engineering/verification.md).
 
 ## License
 

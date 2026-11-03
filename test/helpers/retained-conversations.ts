@@ -1,80 +1,74 @@
-/** Fabricated private history for scale regressions; never imports user state. */
+/** Fabricated conversation history for scale regressions; never
+ * imports user state. */
 import { randomUUID } from "node:crypto";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { encodeConversationContext } from "../../src/conversation-context.mjs";
-import { canonicalJson } from "../../src/service/contracts/core.ts";
-import type { ChoiceVersion } from "../../src/service/contracts/models.ts";
-import type { PrivateFiles } from "../../src/service/private-files.ts";
-export function seedConversations(
-  coordination: { directory: string; files: PrivateFiles },
+
+/** Pi session files as the terminal writes them: `count` sessions, the
+ * first with `longTurns` question/answer turns, modified oldest first. */
+export function seedPiSessions(
+  directory: string,
   cwd: string,
-  model: ChoiceVersion,
   count = 205,
   longTurns = 1,
 ) {
-  const root = join(coordination.directory, "conversations-v1"),
-    ids: string[] = [];
-  let longHead = "";
-  const put = (path: string, value: unknown) =>
-    coordination.files.create(
-      join(root, path),
-      canonicalJson(value, 64 * 1024),
-      64 * 1024,
-    );
+  mkdirSync(directory, { recursive: true });
+  const ids: string[] = [];
+  let longLeaf = "";
   for (let n = 0; n < count; n++) {
-    const id = randomUUID(),
-      title = `Archived conversation ${String(n).padStart(3, "0")}`;
+    const id = randomUUID();
     ids.push(id);
-    const turns = Array.from({ length: n === 0 ? longTurns : 1 }, () =>
-      randomUUID(),
-    );
-    put(`identities/${id}.json`, { schema: "cadence-conversation/1", id, cwd });
-    put(`sessions/${id}.json`, {
-      id,
-      title,
-      turns,
-      checkpoint: n === 0 ? turns.at(-1) : null,
-    });
-    for (const [index, turnId] of turns.entries()) {
-      put(`turns/${turnId}/turn.json`, {
-        id: turnId,
-        epoch: model.epoch,
-        status: "completed",
-        notice: "",
-        omitted: { thinking: false, media: false, other: false },
-        items: [
+    const at = new Date(n * 1000).toISOString();
+    const lines: unknown[] = [
+      { type: "session", version: 3, id, timestamp: at, cwd },
+    ];
+    let parentId: string | null = null;
+    const add = (message: unknown) => {
+      const entryId = (lines.length + n * 1_000_000)
+        .toString(16)
+        .padStart(8, "0");
+      lines.push({
+        type: "message",
+        id: entryId,
+        parentId,
+        timestamp: at,
+        message,
+      });
+      parentId = entryId;
+    };
+    for (let turn = 0; turn < (n === 0 ? longTurns : 1); turn++) {
+      add({
+        role: "user",
+        content: [
           {
-            id: "assistant",
-            role: "assistant",
-            text: `Saved reply ${n}`,
-            name: "",
-            args: "",
-            error: false,
+            type: "text",
+            text: `Terminal question ${String(n).padStart(3, "0")}.${turn}`,
           },
         ],
+        timestamp: n * 1000,
       });
-      put(`turns/${turnId}/accepted.json`, {
-        at: n,
-        command: {
-          kind: "send",
-          conversationId: id,
-          commandId: turnId,
-          head: turns[index - 1] ?? null,
-          text: title,
-          model,
+      add({
+        role: "assistant",
+        content: [{ type: "text", text: `Saved reply ${n}.${turn}` }],
+        api: "openai-completions",
+        provider: "fixture",
+        model: "fixed",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
+        stopReason: "stop",
+        timestamp: n * 1000,
       });
     }
-    if (n === 0) {
-      longHead = turns.at(-1) as string;
-      coordination.files.create(
-        join(root, "turns", longHead, "context.json"),
-        encodeConversationContext(
-          [{ role: "user", timestamp: 1, content: "seeded previous context" }],
-          [],
-        ),
-      );
-    }
+    if (n === 0) longLeaf = parentId as unknown as string;
+    const path = join(directory, `${at.replace(/[:.]/g, "-")}_${id}.jsonl`);
+    writeFileSync(path, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+    utimesSync(path, 1_000_000 + n, 1_000_000 + n);
   }
-  return { ids, longHead };
+  return { ids, longLeaf };
 }

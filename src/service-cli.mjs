@@ -266,6 +266,7 @@ var ERROR_CODES = [
   "expired-grant",
   "consumed-grant",
   "unsupported-context",
+  "retired-conversation",
   "quarantine",
   "capacity",
   "unavailable",
@@ -2304,7 +2305,7 @@ var HEADER = [
 var TOKEN_BYTES = 1024;
 function accessToken(value) {
   const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
+  if (/[\p{Cc}\p{Cf}]/u.test(result))
     throw new ContractError("invalid");
   return result;
 }
@@ -2380,7 +2381,7 @@ function decode(source) {
   try {
     return { port: number, token: accessToken(t.value) };
   } catch {
-    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} that is empty, over ${TOKEN_BYTES} bytes or with control characters`);
   }
 }
 var code = (error) => error?.code ?? "error";
@@ -3451,6 +3452,7 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2",
       "conversations-v1",
+      "conversation-commands-v1",
       "conversation-workflows-v1",
       "workflows-v1"
     ]);
@@ -6725,7 +6727,7 @@ function observedServerResult(result, service) {
 }
 function serverConfigHint(error) {
   return `Cadence changed nothing: ${error.path} ${error.reason}.
-Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<a non-empty token>, one line each.
 `;
 }
 function registryGuidance(_workspace, stateHome) {

@@ -89,6 +89,7 @@ export declare const ERROR_CODES: readonly [
   "expired-grant",
   "consumed-grant",
   "unsupported-context",
+  "retired-conversation",
   "quarantine",
   "capacity",
   "unavailable",

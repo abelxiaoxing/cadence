@@ -166,7 +166,7 @@ The background service reads two lines of the research configuration `~/.pi/agen
 
 ```sh
 CADENCE_PORT=17423
-CADENCE_TOKEN=<at least 32 characters, no control or format characters>
+CADENCE_TOKEN=<any non-empty token up to 1024 bytes, no control or format characters>
 ```
 
 The file keeps the research skills' syntax (`KEY=value` lines, `#` comments, one optional pair of quotes), and each of these keys may appear only once.
@@ -174,7 +174,7 @@ The file keeps the research skills' syntax (`KEY=value` lines, `#` comments, one
 They append a missing `CADENCE_PORT` (17423) or `CADENCE_TOKEN` (random, 43 characters) under a comment, in the file's own line endings, and never change an existing line.
 It is your own file, made by hand, by older docs (`mkdir -p ~/.pi/agent/cadence`) or by a dotfiles manager, so it is read like Pi's sources: its mode bits are not checked (0644, or 0664 under umask 002, work), links in its path and the file itself are followed, and a rewrite goes to the real file, written 0600, leaving the links in place.
 When other users can read it, `install` and `restart` add a note naming `chmod 600`, without refusing.
-Only a file that cannot be the user's own configuration makes them change nothing: missing or a link to nothing, not a regular file, not owned by you or in a directory you do not own, hard-linked, over 64 KiB or not UTF-8, a line the research skills would also refuse, a duplicate key, a port outside 1-65535 or a short token.
+Only a file that cannot be the user's own configuration makes them change nothing: missing or a link to nothing, not a regular file, not owned by you or in a directory you do not own, hard-linked, over 64 KiB or not UTF-8, a line the research skills would also refuse, a duplicate key, a port outside 1-65535 or an empty token.
 Each refusal names its reason and line number, never a byte of the file.
 A project's `.pi/cadence/.env`, which the research skills prefer, is never read for the service.
 `start --server-config <.env>` makes these lines authoritative.
@@ -182,6 +182,7 @@ The host reads them once before binding, like an environment token, so editing t
 A workspace whose token comes from the file follows it at every `start`, also without `--server-config`; a contradicting `--port`, `--token-file` or `CADENCE_WEB_TOKEN` refuses.
 `CADENCE_WEB_TOKEN` stays the separate process-environment source; sourcing the `.env` in a shell sets `CADENCE_PORT` and `CADENCE_TOKEN`, which Cadence never reads from its environment.
 The token never enters Cadence's state home, and status and diagnosis never print it.
+It has no minimum length, but the owner redacts its exact text from conversations, plans and checks, so a short or common word also hides every matching word there; a generated token is 43 random characters.
 `token-rotate` replaces only the `CADENCE_TOKEN` line's value with a new random token, keeping every other byte, and invalidates old links and cookies without stopping work.
 It refuses without any effect when that token was edited since the start, so a pending edit is never overwritten.
 

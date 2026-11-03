@@ -3,14 +3,14 @@ import { createRequire } from "node:module";
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/gateway.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
-import { opendirSync as opendirSync8 } from "node:fs";
+import { randomUUID as randomUUID11 } from "node:crypto";
+import { opendirSync as opendirSync7 } from "node:fs";
 import {
   createServer as createServer2,
   request as request2
 } from "node:http";
-import { homedir as homedir6 } from "node:os";
-import { dirname as dirname16 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname17 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
 
@@ -359,6 +359,7 @@ var ERROR_CODES = [
   "expired-grant",
   "consumed-grant",
   "unsupported-context",
+  "retired-conversation",
   "quarantine",
   "capacity",
   "unavailable",
@@ -400,6 +401,7 @@ function errorStatus(code) {
     case "expired-grant":
       return 410;
     case "unsupported-context":
+    case "retired-conversation":
       return 422;
     case "quarantine":
       return 423;
@@ -3695,14 +3697,20 @@ function decodeCurrentChanges(v) {
   return result;
 }
 // src/service/contracts/models.ts
+function decodeSessionId(v) {
+  const s = text(v, 128, true);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(s))
+    invalid();
+  return s;
+}
 function decodeConversationLocation(v) {
   const o = closed(v, ["id", "cwd"]);
-  return { id: decodeId(o.id), cwd: text(o.cwd, 4096, true) };
+  return { id: decodeSessionId(o.id), cwd: text(o.cwd, 4096, true) };
 }
 function decodeConversationContext(v) {
   const o = closed(v, ["id", "cwd", "revision", "model"]);
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     cwd: text(o.cwd, 4096, true),
     revision: integer(o.revision, 0, Number.MAX_SAFE_INTEGER - 1),
     model: nullable(o.model, decodeModelSelector)
@@ -5558,7 +5566,7 @@ function decodeCadenceConversation(v) {
     ...degraded ? ["notice"] : []
   ]);
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     revision: integer(o.revision, 0),
     enabled: bool(o.enabled),
     head: nullable(o.head, decodeId),
@@ -5567,7 +5575,14 @@ function decodeCadenceConversation(v) {
     ...degraded ? { notice: text(o.notice, 1024, true) } : {}
   };
 }
+function decodeEntryId(v) {
+  const s = text(v, 64, true);
+  if (!/^[A-Za-z0-9_-]+$/.test(s))
+    throw new ContractError("invalid");
+  return s;
+}
 var CONVERSATION_SEND_BYTES = 16 * 1024;
+var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
 var STEP_READ = 24;
@@ -5620,7 +5635,7 @@ function chatStep(item, parts, more = false) {
 }
 function decodeChatCursor(value) {
   const o = closed(value, ["id", "updatedAt"]);
-  return { id: decodeId(o.id), updatedAt: integer(o.updatedAt, 0) };
+  return { id: decodeSessionId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
 var statuses = [
   "queued",
@@ -5640,27 +5655,37 @@ function decodeWorkbenchRead(v) {
       return { kind, location: decodeConversationLocation(o.location) };
     }
     case "conversation-turn": {
-      const o = closed(v, ["kind", "id", "ordinal", "before"]);
+      const o = closed(v, ["kind", "id", "leaf", "ordinal", "before"]);
       return {
         kind,
-        id: decodeId(o.id),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
         ordinal: integer(o.ordinal, 0),
         before: nullable(o.before, (b) => integer(b, 0))
       };
     }
     case "conversation-step": {
-      const o = closed(v, ["kind", "id", "turnId", "step", "part"]);
+      const o = closed(v, ["kind", "id", "leaf", "turnId", "step", "part"]);
       return {
         kind,
-        id: decodeId(o.id),
-        turnId: decodeId(o.turnId),
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        turnId: decodeEntryId(o.turnId),
         step: integer(o.step, 0),
         part: integer(o.part, 0)
       };
     }
     case "cadence-conversation": {
       const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      return { kind, id: decodeSessionId(o.id) };
+    }
+    case "conversation-tree": {
+      const o = closed(v, ["kind", "id", "leaf"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId)
+      };
     }
     case "workflow-history": {
       const continued = Object.hasOwn(v, "scan");
@@ -5684,29 +5709,25 @@ function decodeWorkbenchRead(v) {
       return { kind, id: decodeId(o.id) };
     }
     case "conversations": {
-      const after = Object.hasOwn(v, "after"), scan = Object.hasOwn(v, "scan");
-      const o = closed(v, [
-        "kind",
-        ...after ? ["after"] : [],
-        ...scan ? ["scan"] : []
-      ]);
+      const after = Object.hasOwn(v, "after");
+      const o = closed(v, ["kind", ...after ? ["after"] : []]);
       return {
         kind,
-        ...after ? { after: nullable(o.after, decodeChatCursor) } : {},
-        ...scan ? { scan: decodeId(o.scan) } : {}
+        ...after ? { after: nullable(o.after, decodeChatCursor) } : {}
       };
     }
     case "conversation-active":
     case "projects":
       closed(v, ["kind"]);
       return { kind };
-    case "task-origin": {
-      const o = closed(v, ["kind", "taskId"]);
-      return { kind, taskId: decodeId(o.taskId) };
-    }
     case "conversation": {
-      const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      const o = closed(v, ["kind", "id", "leaf", "known"]);
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        known: nullable(o.known, decodeEntryId)
+      };
     }
     default: {
       const scoped = (kind === "file" || kind === "files") && Object.hasOwn(v ?? {}, "location");
@@ -5772,8 +5793,8 @@ function decodeWorkbenchCommand(v) {
       kind,
       ...o2.location === undefined ? {} : { location: decodeConversationLocation(o2.location) },
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       revision: integer(o2.revision, 0)
     };
   }
@@ -5791,8 +5812,8 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, CONVERSATION_SEND_BYTES, true),
       model: decodeChoiceVersion(o2.model),
       revision: integer(o2.revision, 0),
@@ -5811,7 +5832,7 @@ function decodeWorkbenchCommand(v) {
     const o2 = closed(v, kind === "cadence-approve" ? [...keys2, "grant"] : keys2);
     const base = {
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
       revision: integer(o2.revision, 0),
       proposalId: decodeId(o2.proposalId),
       digest: decodeHash(o2.digest)
@@ -5839,8 +5860,8 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
-      head: nullable(o2.head, decodeId),
+      conversationId: decodeSessionId(o2.conversationId),
+      head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, CONVERSATION_SEND_BYTES, true),
       model: decodeChoiceVersion(o2.model)
     };
@@ -5856,7 +5877,7 @@ function decodeWorkbenchCommand(v) {
     return {
       kind,
       commandId: decodeId(o2.commandId),
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
       turnId: decodeId(o2.turnId),
       epoch: decodeId(o2.epoch)
     };
@@ -5935,20 +5956,22 @@ function decodeChatStep(v) {
 function decodeChatTurnHeader(v) {
   const o = closed(v, [
     "id",
-    "epoch",
     "status",
     "notice",
     "omitted",
     "steps",
     "stable",
-    ...Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []
+    ...Object.hasOwn(v ?? {}, "execution") ? ["execution"] : [],
+    "entry",
+    "at"
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
     ...o.execution === undefined ? {} : { execution: decodeExecutionContext(o.execution) },
-    id: decodeId(o.id),
-    epoch: decodeId(o.epoch),
+    id: decodeEntryId(o.id),
+    entry: nullable(o.entry, decodeEntryId),
+    at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
     omitted: {
@@ -5961,22 +5984,52 @@ function decodeChatTurnHeader(v) {
   };
 }
 function decodeChatSummary(v) {
-  const modern = v !== null && typeof v === "object" && Object.hasOwn(v, "cadence");
+  const has = (key) => v !== null && typeof v === "object" && Object.hasOwn(v, key);
   const o = closed(v, [
     "id",
     "title",
-    "head",
+    "leaf",
     "status",
     "updatedAt",
-    ...modern ? ["cadence"] : []
+    "origin",
+    ...has("cadence") ? ["cadence"] : [],
+    ...has("live") ? ["live"] : []
   ]);
+  const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
-    head: decodeId(o.head),
+    leaf: nullable(o.leaf, decodeEntryId),
     status: oneOf(o.status, statuses),
     updatedAt: integer(o.updatedAt, 0),
-    ...modern ? { cadence: bool(o.cadence) } : {}
+    origin: oneOf(o.origin, ["terminal", "webui"]),
+    ...has("cadence") ? { cadence: bool(o.cadence) } : {},
+    ...live ? {
+      live: {
+        commandId: decodeId(live.commandId),
+        epoch: decodeId(live.epoch)
+      }
+    } : {}
+  };
+}
+function decodeChatAttempt(v) {
+  const o = closed(v, ["commandId", "text", "status", "notice"]);
+  return {
+    commandId: decodeId(o.commandId),
+    text: text(o.text, 16 * 1024),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024)
+  };
+}
+function decodeChatTreeNode(v) {
+  const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
+  return {
+    id: decodeEntryId(o.id),
+    parent: nullable(o.parent, decodeEntryId),
+    text: text(o.text, 1024),
+    at: integer(o.at, 0),
+    leaf: decodeEntryId(o.leaf),
+    current: bool(o.current)
   };
 }
 function decodeWorkbenchResult(v) {
@@ -6041,7 +6094,7 @@ function decodeWorkbenchResult(v) {
       const l = closed(value, ["runId", "conversationId"]);
       return {
         runId: decodeId(l.runId),
-        conversationId: decodeId(l.conversationId)
+        conversationId: decodeSessionId(l.conversationId)
       };
     }) : [];
     if (new Set(links.map((l) => l.runId)).size !== links.length || links.some((l) => !runs.some((r) => r.id === l.runId)))
@@ -6075,46 +6128,59 @@ function decodeWorkbenchResult(v) {
       response: decodeWorkflowResponse(o2.response)
     };
   }
-  if (kind === "task-origin") {
-    const o2 = closed(v, ["kind", "taskId", "conversationId"]);
-    return {
-      kind,
-      taskId: decodeId(o2.taskId),
-      conversationId: nullable(o2.conversationId, decodeId)
-    };
-  }
-  if (kind === "conversations-progress") {
-    const o2 = closed(v, ["kind", "after", "scan"]);
-    return {
-      kind,
-      after: nullable(o2.after, decodeChatCursor),
-      scan: decodeId(o2.scan)
-    };
-  }
   if (kind === "conversation-active") {
     const o2 = closed(v, ["kind", "entries"]);
     return { kind, entries: list(o2.entries, 8, decodeChatSummary) };
   }
   if (kind === "conversations") {
-    const paged = Object.hasOwn(v, "next");
-    const o2 = closed(v, ["kind", "entries", ...paged ? ["next"] : []]);
+    const o2 = closed(v, ["kind", "entries", "next"]);
     return {
       kind,
       entries: list(o2.entries, 200, decodeChatSummary),
-      ...paged ? { next: nullable(o2.next, decodeChatCursor) } : {}
+      next: nullable(o2.next, decodeChatCursor)
     };
   }
   if (kind === "conversation") {
-    const o2 = closed(v, ["kind", "summary", "turns"]);
+    const o2 = closed(v, [
+      "kind",
+      "summary",
+      "leaf",
+      "continues",
+      "turns",
+      "branches",
+      "runs",
+      "attempt",
+      ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []
+    ]);
     const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
     if (!summary && turns)
       throw new ContractError("invalid");
-    return { kind, summary, turns };
+    return {
+      kind,
+      ...o2.commands === undefined ? {} : { commands: list(o2.commands, 64, decodeId) },
+      summary,
+      leaf: nullable(o2.leaf, decodeEntryId),
+      continues: bool(o2.continues),
+      turns,
+      branches: integer(o2.branches, 0),
+      runs: list(o2.runs, 200, decodeId),
+      attempt: nullable(o2.attempt, decodeChatAttempt)
+    };
+  }
+  if (kind === "conversation-tree") {
+    const o2 = closed(v, ["kind", "conversationId", "nodes", "truncated"]);
+    return {
+      kind,
+      conversationId: decodeSessionId(o2.conversationId),
+      nodes: list(o2.nodes, TREE_NODES, decodeChatTreeNode),
+      truncated: bool(o2.truncated)
+    };
   }
   if (kind === "conversation-turn") {
     const o2 = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "ordinal",
       "turn",
       "start",
@@ -6125,7 +6191,8 @@ function decodeWorkbenchResult(v) {
       throw new ContractError("invalid");
     return {
       kind,
-      conversationId: decodeId(o2.conversationId),
+      conversationId: decodeSessionId(o2.conversationId),
+      leaf: nullable(o2.leaf, decodeEntryId),
       ordinal: integer(o2.ordinal, 0),
       turn,
       start,
@@ -6136,6 +6203,7 @@ function decodeWorkbenchResult(v) {
     const o2 = closed(v, [
       "kind",
       "conversationId",
+      "leaf",
       "turnId",
       "step",
       "part",
@@ -6143,8 +6211,9 @@ function decodeWorkbenchResult(v) {
     ]);
     return {
       kind,
-      conversationId: decodeId(o2.conversationId),
-      turnId: decodeId(o2.turnId),
+      conversationId: decodeSessionId(o2.conversationId),
+      leaf: nullable(o2.leaf, decodeEntryId),
+      turnId: decodeEntryId(o2.turnId),
       step: integer(o2.step, 0),
       part: integer(o2.part, 0),
       item: decodeChatItem(o2.item)
@@ -6534,7 +6603,7 @@ var CONFIG_BYTES = 64 * 1024;
 var TOKEN_BYTES = 1024;
 function accessToken(value) {
   const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
+  if (/[\p{Cc}\p{Cf}]/u.test(result))
     throw new ContractError("invalid");
   return result;
 }
@@ -6610,7 +6679,7 @@ function decode(source) {
   try {
     return { port: number, token: accessToken(t.value) };
   } catch {
-    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} that is empty, over ${TOKEN_BYTES} bytes or with control characters`);
   }
 }
 var code = (error) => error?.code ?? "error";
@@ -7895,6 +7964,7 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2",
       "conversations-v1",
+      "conversation-commands-v1",
       "conversation-workflows-v1",
       "workflows-v1"
     ]);
@@ -10054,7 +10124,7 @@ function managementExitCode(result, foreground = false) {
 }
 function serverConfigHint(error) {
   return `Cadence changed nothing: ${error.path} ${error.reason}.
-Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<a non-empty token>, one line each.
 `;
 }
 function registryGuidance(_workspace, stateHome) {
@@ -10303,7 +10373,7 @@ async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
 
 // src/service/conversation-contexts.ts
 import { randomUUID as randomUUID9 } from "node:crypto";
-import { join as join18, resolve as resolve8 } from "node:path";
+import { join as join20, resolve as resolve9 } from "node:path";
 
 // src/cadence-preferences.ts
 import { realpathSync as realpathSync6 } from "node:fs";
@@ -10834,34 +10904,1297 @@ class DetailSanitizer {
   }
 }
 
+// src/service/conversation-records.ts
+import { lstatSync as lstatSync12 } from "node:fs";
+import { join as join19 } from "node:path";
+
+// src/service/pi-sessions.ts
+import { createHash as createHash10 } from "node:crypto";
+import {
+  closeSync as closeSync6,
+  constants as constants6,
+  fstatSync as fstatSync5,
+  lstatSync as lstatSync11,
+  openSync as openSync6,
+  readdirSync as readdirSync2,
+  readSync as readSync4,
+  realpathSync as realpathSync7
+} from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { basename as basename3, isAbsolute as isAbsolute7, join as join18, resolve as resolve8 } from "node:path";
+
+// src/session-entries.mjs
+var CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
+var WEBUI_SESSION_ENTRY = "cadence-webui/1";
+var BROWSER_COMMAND_ENTRY = "cadence-browser-command/1";
+
+// src/service/pi-sessions.ts
+var SESSION_BYTES = 64 * 1024 * 1024;
+var LISTED_FILES = 1e4;
+var OPEN_SESSIONS = 8;
+var BUILT_TURNS = 64;
+var SESSION_DIRECTORIES = 256;
+var KNOWN_DIRECTORIES = 128;
+var HEADER_BYTES = 16 * 1024;
+var SETTINGS_BYTES = 1024 * 1024;
+var TITLE_CHARS = 100;
+var NOTICE_BYTES = 1024;
+var PART_TEXT_BYTES = 200 * 1024;
+var PART_ARGS_BYTES = 48 * 1024;
+var TARGET_ARGS = 1024 * 1024;
+function sessionDirectory(cwd, agentDir, env = process.env) {
+  const expand = (value) => {
+    const home = value === "~" ? homedir5() : value.startsWith("~/") ? join18(homedir5(), value.slice(2)) : value;
+    return isAbsolute7(home) ? resolve8(home) : resolve8(cwd, home);
+  };
+  const fromEnv = env.PI_CODING_AGENT_SESSION_DIR;
+  if (fromEnv)
+    return expand(fromEnv);
+  let configured;
+  for (const file of [
+    join18(agentDir, "settings.json"),
+    join18(cwd, ".pi", "settings.json")
+  ]) {
+    const value = settingsSessionDir(file);
+    if (value)
+      configured = value;
+  }
+  if (configured)
+    return expand(configured);
+  return join18(agentDir, "sessions", `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+}
+function settingsSessionDir(file) {
+  let fd;
+  try {
+    fd = openSync6(file, constants6.O_RDONLY | (constants6.O_NOFOLLOW ?? 0));
+    const st = fstatSync5(fd);
+    if (!st.isFile() || st.size > SETTINGS_BYTES)
+      return;
+    const buffer = Buffer.alloc(st.size);
+    readSync4(fd, buffer, 0, st.size, 0);
+    const value = JSON.parse(buffer.toString("utf8"));
+    const dir = value && typeof value === "object" && !Array.isArray(value) ? value.sessionDir : undefined;
+    return typeof dir === "string" && dir.trim() ? dir.trim() : undefined;
+  } catch {
+    return;
+  } finally {
+    if (fd !== undefined)
+      closeSync6(fd);
+  }
+}
+var own2 = (o, key) => Object.hasOwn(o, key) ? o[key] : undefined;
+function parseLine(text2, pos) {
+  let value;
+  try {
+    value = JSON.parse(text2);
+  } catch {
+    return;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return;
+  const o = value;
+  const type = own2(o, "type");
+  if (type === "session") {
+    const id2 = own2(o, "id"), cwd = own2(o, "cwd"), version = own2(o, "version"), timestamp3 = own2(o, "timestamp");
+    if (typeof id2 !== "string" || !id2)
+      return;
+    return {
+      kind: "header",
+      header: {
+        id: id2,
+        cwd: typeof cwd === "string" ? cwd : "",
+        version: typeof version === "number" ? version : 1,
+        timestamp: typeof timestamp3 === "string" ? timestamp3 : ""
+      }
+    };
+  }
+  const id = own2(o, "id"), parentId = own2(o, "parentId"), timestamp2 = own2(o, "timestamp");
+  if (typeof type !== "string" || typeof id !== "string" || !id || id.length > 64 || !/^[A-Za-z0-9_-]+$/.test(id) || !(parentId === null || typeof parentId === "string"))
+    return;
+  return {
+    kind: "entry",
+    entry: {
+      type,
+      id,
+      parentId,
+      timestamp: typeof timestamp2 === "string" ? timestamp2 : "",
+      pos,
+      raw: o
+    }
+  };
+}
+function assertSessionFile(st) {
+  if (!st.isFile() || typeof process.getuid === "function" && st.uid !== process.getuid())
+    throw new ContractError("forbidden");
+}
+function readLines(path, from, onLine) {
+  const fd = openSync6(path, constants6.O_RDONLY | (constants6.O_NOFOLLOW ?? 0));
+  try {
+    const st = fstatSync5(fd);
+    assertSessionFile(st);
+    if (st.size > SESSION_BYTES)
+      throw new ContractError("capacity");
+    const restarted = !from || from.ino !== st.ino || st.size < from.end;
+    const start = restarted ? 0 : from.end;
+    const length = st.size - start;
+    let end = start;
+    if (length > 0) {
+      const buffer = Buffer.allocUnsafe(length);
+      let read = 0;
+      while (read < length) {
+        const n = readSync4(fd, buffer, read, length - read, start + read);
+        if (n === 0)
+          break;
+        read += n;
+      }
+      let line = 0;
+      for (let i = buffer.indexOf(10);i >= 0 && i < read; ) {
+        const text2 = buffer.toString("utf8", line, i);
+        if (text2.trim())
+          onLine(text2, start + line);
+        line = i + 1;
+        i = buffer.indexOf(10, line);
+      }
+      end = start + line;
+    }
+    return { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, end, restarted };
+  } finally {
+    closeSync6(fd);
+  }
+}
+function sessionHeader(path) {
+  const fd = openSync6(path, constants6.O_RDONLY | (constants6.O_NOFOLLOW ?? 0));
+  try {
+    const st = fstatSync5(fd);
+    assertSessionFile(st);
+    const buffer = Buffer.alloc(Math.min(st.size, HEADER_BYTES));
+    let read = 0;
+    while (read < buffer.length) {
+      const size2 = readSync4(fd, buffer, read, buffer.length - read, read);
+      if (!size2)
+        break;
+      read += size2;
+      if (buffer.subarray(0, read).includes(10))
+        break;
+    }
+    const end = buffer.subarray(0, read).indexOf(10);
+    if (end < 0 && st.size >= HEADER_BYTES)
+      throw new ContractError("capacity");
+    const line = parseLine(buffer.toString("utf8", 0, end < 0 ? read : end), 0);
+    if (line?.kind !== "header")
+      throw new ContractError("corrupt-selected");
+    return line.header;
+  } finally {
+    closeSync6(fd);
+  }
+}
+var message = (entry) => {
+  if (entry.type !== "message")
+    return;
+  const m = own2(entry.raw, "message");
+  return m && typeof m === "object" && !Array.isArray(m) ? m : undefined;
+};
+var role2 = (entry) => {
+  const m = message(entry);
+  return m ? own2(m, "role") : undefined;
+};
+var isUser = (entry) => role2(entry) === "user";
+function contentText(content, omitted) {
+  if (typeof content === "string")
+    return content;
+  if (!Array.isArray(content))
+    return "";
+  const parts = [];
+  for (const block of content) {
+    const b = block && typeof block === "object" ? block : {};
+    const kind = own2(b, "type");
+    const value = own2(b, "text");
+    if (kind === "text" && typeof value === "string")
+      parts.push(value);
+    else if (omitted && kind === "image")
+      omitted.media = true;
+    else if (omitted)
+      omitted.other = true;
+  }
+  return parts.join(`
+`);
+}
+var firstLine = (value) => [...value.trim().split(`
+`, 1)[0] ?? ""].slice(0, TITLE_CHARS).join("");
+var time = (value) => {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && ms > 0 ? ms : 0;
+};
+function stopStatus(m) {
+  const reason = own2(m, "stopReason");
+  if (reason === "error") {
+    const error = own2(m, "errorMessage");
+    return {
+      status: "failed",
+      notice: typeof error === "string" ? error : "The model request failed."
+    };
+  }
+  if (reason === "aborted")
+    return { status: "canceled", notice: "" };
+  return { status: "completed", notice: "" };
+}
+function emptySummary() {
+  return {
+    id: "",
+    cwd: "",
+    version: 0,
+    created: 0,
+    name: null,
+    firstUser: null,
+    leaf: null,
+    webui: false,
+    runs: [],
+    cadence: false,
+    stop: null
+  };
+}
+function fold(summary, line) {
+  if (line.kind === "header") {
+    summary.id = line.header.id;
+    summary.cwd = line.header.cwd;
+    summary.version = line.header.version;
+    summary.created = time(line.header.timestamp);
+    return;
+  }
+  const entry = line.entry;
+  summary.leaf = entry.id;
+  if (entry.type === "session_info") {
+    const name = own2(entry.raw, "name");
+    summary.name = typeof name === "string" && name.trim() ? name : null;
+  } else if (entry.type === "custom") {
+    const kind = own2(entry.raw, "customType");
+    if (kind === WEBUI_SESSION_ENTRY)
+      summary.webui = true;
+    if (kind === CADENCE_MODE_ENTRY) {
+      const data = own2(entry.raw, "data");
+      const d = data && typeof data === "object" ? data : {};
+      const runId = own2(d, "runId");
+      summary.cadence = own2(d, "enabled") === true;
+      if (typeof runId === "string" && /^[0-9a-f-]{36}$/.test(runId) && !summary.runs.includes(runId) && summary.runs.length < 200)
+        summary.runs.push(runId);
+    }
+  } else {
+    const m = message(entry);
+    if (m && own2(m, "role") === "user" && summary.firstUser === null) {
+      const text2 = firstLine(contentText(own2(m, "content")));
+      if (text2)
+        summary.firstUser = text2;
+    }
+    if (m && own2(m, "role") === "assistant")
+      summary.stop = stopStatus(m);
+  }
+}
+
+class ParsedSession {
+  path;
+  entries = [];
+  byId = new Map;
+  children = new Map;
+  header = null;
+  read;
+  constructor(path) {
+    this.path = path;
+  }
+  refresh() {
+    const lines = [];
+    const next = readLines(this.path, this.read, (text2, pos) => {
+      const line = parseLine(text2, pos);
+      if (line)
+        lines.push(line);
+    });
+    if (next.restarted) {
+      this.entries.length = 0;
+      this.byId.clear();
+      this.children.clear();
+      this.header = null;
+    }
+    for (const line of lines) {
+      if (line.kind === "header") {
+        this.header ??= line.header;
+        continue;
+      }
+      const entry = line.entry;
+      if (this.byId.has(entry.id))
+        continue;
+      this.entries.push(entry);
+      this.byId.set(entry.id, entry);
+      const key = entry.parentId ?? "";
+      const siblings = this.children.get(key);
+      if (siblings)
+        siblings.push(entry);
+      else
+        this.children.set(key, [entry]);
+    }
+    this.read = next;
+    return this;
+  }
+  current() {
+    return this.entries.at(-1)?.id ?? null;
+  }
+  branch(leaf) {
+    const out = [];
+    let entry = leaf === null ? undefined : this.byId.get(leaf);
+    if (leaf !== null && !entry)
+      throw new ContractError("stale");
+    for (let n = 0;entry && n <= this.entries.length; n++) {
+      out.push(entry);
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    return out.reverse();
+  }
+  contains(leaf, ancestor) {
+    let entry = leaf === null ? undefined : this.byId.get(leaf);
+    for (let n = 0;entry && n <= this.entries.length; n++) {
+      if (entry.id === ancestor)
+        return true;
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    return false;
+  }
+  leaves() {
+    let count = 0;
+    for (const entry of this.entries)
+      if (!this.children.has(entry.id))
+        count++;
+    return count;
+  }
+  commandEntries(commandId, parent, offset) {
+    const markers = this.entries.filter((entry2) => entry2.type === "custom" && entry2.raw.customType === BROWSER_COMMAND_ENTRY && entry2.raw.data?.commandId === commandId);
+    if (!markers.length)
+      return [];
+    const marker2 = markers[0], data = marker2.raw.data;
+    const user = typeof data.userId === "string" ? this.byId.get(data.userId) : undefined;
+    if (!user || !isUser(user) || marker2.parentId !== user.id || user.pos < offset || marker2.pos <= user.pos)
+      throw new ContractError("corrupt-selected");
+    let entry = user;
+    let reaches = false;
+    for (let n = 0;entry && n <= this.entries.length && entry.pos >= offset; n++) {
+      if (entry.parentId === parent) {
+        reaches = true;
+        break;
+      }
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    if (!reaches)
+      throw new ContractError("stale");
+    const branch = this.branch(markers[markers.length - 1].id);
+    const start = branch.findIndex((entry2) => entry2.id === user.id);
+    const entries2 = new Set(branch.slice(start).map((entry2) => entry2.id));
+    if (start < 0 || markers.some((boundary) => !entries2.has(boundary.id) || boundary.raw.data.userId !== user.id))
+      throw new ContractError("corrupt-selected");
+    return branch.slice(start);
+  }
+  tree(leaf, secrets) {
+    const newest = new Map;
+    for (let i = this.entries.length - 1;i >= 0; i--) {
+      let entry = this.entries[i];
+      const leaf2 = entry;
+      for (let n = 0;entry && !newest.has(entry.id) && n <= i; n++) {
+        newest.set(entry.id, leaf2);
+        entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+      }
+    }
+    const onBranch = new Set(this.branch(leaf).map((entry) => entry.id));
+    const users = this.entries.filter(isUser);
+    const kept = users.slice(-TREE_NODES);
+    const keep = new Set(kept.map((entry) => entry.id));
+    const nodes = kept.map((entry) => {
+      let parent = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+      for (let n = 0;parent && !keep.has(parent.id) && n <= this.entries.length; n++)
+        parent = parent.parentId === null ? undefined : this.byId.get(parent.parentId);
+      const m = message(entry) ?? {};
+      return {
+        id: entry.id,
+        parent: parent?.id ?? null,
+        text: clipText(sanitizeText(firstLine(contentText(own2(m, "content"))), secrets), 512),
+        at: time(entry.timestamp),
+        leaf: (newest.get(entry.id) ?? entry).id,
+        current: onBranch.has(entry.id)
+      };
+    });
+    return { nodes, truncated: kept.length < users.length };
+  }
+}
+function turnSpans(path) {
+  const turns = [];
+  for (const entry of path) {
+    if (isUser(entry) || !turns.length)
+      turns.push([entry]);
+    else
+      turns[turns.length - 1].push(entry);
+  }
+  if (turns.length && !isUser(turns[0][0]) && !turns[0].some(shown))
+    turns.shift();
+  return turns;
+}
+function shown(entry) {
+  if (entry.type === "message")
+    return ["user", "assistant", "toolResult", "bashExecution"].includes(role2(entry));
+  if (entry.type === "custom_message")
+    return own2(entry.raw, "display") === true;
+  return entry.type === "compaction" || entry.type === "branch_summary";
+}
+var clip = (value, bytes) => clipText(value, bytes);
+function turnItems(entries2, secrets) {
+  const omitted = { thinking: false, media: false, other: false };
+  const items = [];
+  const tools = new Map;
+  let status = "completed", notice = "";
+  const add = (item) => {
+    items.push({
+      ...item,
+      id: clip(item.id, 160) || "item",
+      name: clip(sanitizeText(item.name, secrets), 128),
+      text: sanitizeText(item.text, secrets),
+      args: sanitizeText(item.args, secrets)
+    });
+    return items[items.length - 1];
+  };
+  const tool = (id, name, args, text2 = "", error = false) => add({ id, role: "tool", name, args, text: text2, error });
+  for (const entry of entries2) {
+    const m = message(entry);
+    if (m) {
+      const kind = own2(m, "role");
+      if (kind === "user")
+        add({
+          id: entry.id,
+          role: "user",
+          text: contentText(own2(m, "content"), omitted),
+          name: "",
+          args: "",
+          error: false
+        });
+      else if (kind === "assistant") {
+        let text2;
+        const content = own2(m, "content");
+        for (const block of Array.isArray(content) ? content : []) {
+          const b = block && typeof block === "object" ? block : {};
+          const type = own2(b, "type");
+          if (type === "text" && typeof own2(b, "text") === "string") {
+            const value = own2(b, "text");
+            if (text2 && items[items.length - 1] === text2)
+              text2.text += sanitizeText(`
+
+${value}`, secrets);
+            else
+              text2 = add({
+                id: `${entry.id}:${items.length}`,
+                role: "assistant",
+                text: value,
+                name: "",
+                args: "",
+                error: false
+              });
+          } else if (type === "toolCall") {
+            const id = own2(b, "id"), name = own2(b, "name");
+            let args = "";
+            try {
+              args = JSON.stringify(own2(b, "arguments") ?? {}) ?? "";
+            } catch {
+              omitted.other = true;
+            }
+            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${items.length}`, typeof name === "string" ? name : "tool", args);
+            if (typeof id === "string")
+              tools.set(id, call);
+          } else if (type === "thinking" || type === "redactedThinking")
+            omitted.thinking = true;
+          else if (type === "image")
+            omitted.media = true;
+          else
+            omitted.other = true;
+        }
+        ({ status, notice } = stopStatus(m));
+      } else if (kind === "toolResult") {
+        const id = own2(m, "toolCallId"), name = own2(m, "toolName");
+        const output = sanitizeText(contentText(own2(m, "content"), omitted), secrets);
+        const call = typeof id === "string" ? tools.get(id) : undefined;
+        if (call) {
+          call.text = output;
+          call.error = own2(m, "isError") === true;
+        } else
+          tool(typeof id === "string" && id ? id : entry.id, typeof name === "string" ? name : "tool", "", output, own2(m, "isError") === true);
+      } else if (kind === "bashExecution") {
+        const command = own2(m, "command"), output = own2(m, "output"), code2 = own2(m, "exitCode");
+        tool(entry.id, "bash", JSON.stringify({
+          command: typeof command === "string" ? command : ""
+        }), typeof output === "string" ? output : "", own2(m, "cancelled") === true || typeof code2 === "number" && code2 !== 0);
+      }
+    } else if (entry.type === "custom_message" && own2(entry.raw, "display") === true) {
+      const kind = own2(entry.raw, "customType");
+      tool(entry.id, typeof kind === "string" ? kind : "message", "", contentText(own2(entry.raw, "content"), omitted));
+    } else if (entry.type === "compaction" || entry.type === "branch_summary") {
+      const summary = own2(entry.raw, "summary");
+      tool(entry.id, entry.type === "compaction" ? "compaction" : "branch-summary", "", typeof summary === "string" ? summary : "");
+    }
+  }
+  const first = entries2.find(isUser) ?? entries2[0];
+  return {
+    id: first?.id ?? "",
+    entry: entries2.at(-1)?.id ?? null,
+    at: first ? time(first.timestamp) : 0,
+    status,
+    notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),
+    omitted,
+    items
+  };
+}
+function encodedChunks(value, bytes) {
+  const chunks = [];
+  let start = 0, size2 = 2;
+  for (let i = 0;i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    const pair = c >= 55296 && c <= 56319 && i + 1 < value.length;
+    const unit = c === 34 || c === 92 ? 2 : c < 32 ? [8, 9, 10, 12, 13].includes(c) ? 2 : 6 : c < 128 ? 1 : c < 2048 ? 2 : pair ? 4 : c >= 55296 && c <= 57343 ? 6 : 3;
+    if (size2 + unit > bytes && i > start) {
+      chunks.push(value.slice(start, i));
+      start = i;
+      size2 = 2;
+    }
+    size2 += unit;
+    if (pair)
+      i++;
+  }
+  if (start < value.length)
+    chunks.push(value.slice(start));
+  return chunks;
+}
+function itemParts(item) {
+  const text2 = encodedChunks(item.text, PART_TEXT_BYTES), args = encodedChunks(item.args, PART_ARGS_BYTES);
+  const count = Math.max(text2.length, args.length, 1);
+  return Array.from({ length: count }, (_, i) => ({
+    ...item,
+    text: text2[i] ?? "",
+    args: args[i] ?? ""
+  }));
+}
+function listTurn(turn) {
+  const parts = turn.items.map(itemParts);
+  const steps = turn.items.map((item, index) => {
+    const listed = chatStep(item.role === "tool" && item.args.length > TARGET_ARGS ? { ...item, args: "" } : item, 0);
+    const more = listed.clipped || item.role === "tool" && !!(item.args || item.text);
+    return { ...listed, parts: more ? parts[index].length : 0 };
+  });
+  return { ...turn, steps, parts };
+}
+
+class PiSessions {
+  directory;
+  cwd;
+  project;
+  listed = new Map;
+  open = new Map;
+  built = new Map;
+  incomplete;
+  constructor(directory, cwd, project) {
+    this.directory = directory;
+    this.cwd = cwd;
+    this.project = project;
+  }
+  directories = new Map;
+  directoryFor(cwd) {
+    if (!this.project) {
+      if (cwd !== this.cwd)
+        throw new ContractError("stale");
+      return this.directory;
+    }
+    if (resolve8(cwd) !== cwd || !withinWorkspace(this.cwd, cwd))
+      throw new ContractError("forbidden");
+    const path = this.project.sessionDir ?? sessionDirectory(cwd, this.project.agentDir);
+    this.directories.delete(cwd);
+    this.directories.set(cwd, path);
+    if (this.directories.size > KNOWN_DIRECTORIES)
+      this.directories.delete(this.directories.keys().next().value);
+    return path;
+  }
+  includes(cwd) {
+    return this.project ? resolve8(cwd) === cwd && withinWorkspace(this.cwd, cwd) : cwd === this.cwd;
+  }
+  roots() {
+    const paths = new Set([this.directory]);
+    if (this.project) {
+      paths.add(this.directoryFor(this.project.defaultCwd));
+      for (const path of this.directories.values())
+        paths.add(path);
+      const home = join18(this.project.agentDir, "sessions");
+      const prefix = `--${this.cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}`;
+      try {
+        for (const entry of readdirSync2(home, { withFileTypes: true }))
+          if (entry.isDirectory() && entry.name.startsWith(`${prefix}-`))
+            paths.add(join18(home, entry.name));
+      } catch (error) {
+        if (error.code !== "ENOENT")
+          throw new ContractError("unavailable");
+      }
+    }
+    if (paths.size > SESSION_DIRECTORIES)
+      throw new ContractError("capacity");
+    return [...paths];
+  }
+  close() {
+    this.listed.clear();
+    this.open.clear();
+    this.built.clear();
+    this.directories.clear();
+    this.incomplete = undefined;
+  }
+  list() {
+    this.incomplete = undefined;
+    const names2 = [];
+    const seenDirectories = new Set;
+    for (const directory of this.roots()) {
+      try {
+        if (!lstatSync11(directory).isDirectory() || lstatSync11(directory).isSymbolicLink())
+          throw new ContractError("forbidden");
+        const canonical = realpathSync7(directory);
+        if (seenDirectories.has(canonical))
+          continue;
+        seenDirectories.add(canonical);
+        for (const d of readdirSync2(canonical, { withFileTypes: true }))
+          if (d.isFile() && d.name.endsWith(".jsonl"))
+            names2.push(join18(canonical, d.name));
+      } catch (error) {
+        if (error.code !== "ENOENT")
+          throw new ContractError("unavailable");
+      }
+    }
+    names2.sort((a, b) => basename3(b).localeCompare(basename3(a)));
+    names2.splice(LISTED_FILES);
+    const seen = new Set;
+    const out = [];
+    for (const path of names2) {
+      seen.add(path);
+      try {
+        const listed = this.summary(path);
+        if (this.includes(listed.summary.cwd) && listed.summary.version >= 3)
+          out.push(listed);
+      } catch (error) {
+        this.listed.delete(path);
+        this.incomplete = error instanceof ContractError ? error : new ContractError("unavailable");
+      }
+    }
+    for (const path of this.listed.keys())
+      if (!seen.has(path))
+        this.listed.delete(path);
+    if (new Set(out.map((row) => row.summary.id)).size !== out.length)
+      throw new ContractError("conflict");
+    return out.sort((a, b) => b.mtimeMs - a.mtimeMs || (a.summary.id < b.summary.id ? -1 : 1));
+  }
+  summary(path) {
+    const st = lstatSync11(path);
+    assertSessionFile(st);
+    const cached = this.listed.get(path);
+    if (st.size > SESSION_BYTES) {
+      this.open.delete(path);
+      for (const key of this.built.keys())
+        if (key.startsWith(`${path}|`))
+          this.built.delete(key);
+      const summary2 = emptySummary();
+      fold(summary2, { kind: "header", header: sessionHeader(path) });
+      const listed2 = {
+        path,
+        ino: st.ino,
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+        end: 0,
+        summary: summary2
+      };
+      this.listed.set(path, listed2);
+      return listed2;
+    }
+    if (cached && cached.ino === st.ino && cached.size === st.size) {
+      cached.mtimeMs = st.mtimeMs;
+      return cached;
+    }
+    const prior = cached && cached.size <= SESSION_BYTES ? cached : undefined;
+    let summary = prior && prior.ino === st.ino && st.size >= prior.end ? { ...prior.summary, runs: [...prior.summary.runs] } : emptySummary();
+    const lines = [];
+    const read = readLines(path, prior, (text2, pos) => {
+      const line = parseLine(text2, pos);
+      if (line)
+        lines.push(line);
+    });
+    if (read.restarted)
+      summary = emptySummary();
+    for (const line of lines) {
+      if (line.kind === "header" && summary.id)
+        throw new ContractError("corrupt-selected");
+      fold(summary, line);
+    }
+    if (!summary.id)
+      throw new ContractError("corrupt-selected");
+    const listed = { path, ...read, summary };
+    this.listed.set(path, listed);
+    return listed;
+  }
+  find(id) {
+    const candidates = () => [...this.listed.values()].filter((listed2) => listed2.summary.id === id && this.includes(listed2.summary.cwd));
+    let matches = candidates();
+    if (matches.length !== 1) {
+      this.list();
+      matches = candidates();
+    }
+    if (matches.length > 1)
+      throw new ContractError("conflict");
+    const known = matches[0];
+    if (!known) {
+      if (this.incomplete)
+        throw this.incomplete;
+      return;
+    }
+    const listed = this.summary(known.path);
+    if (listed.summary.id !== id || !this.includes(listed.summary.cwd))
+      throw new ContractError("stale");
+    if (listed.summary.version < 3) {
+      this.listed.delete(listed.path);
+      throw new ContractError("unsupported-context");
+    }
+    return listed;
+  }
+  session(id) {
+    const listed = this.find(id);
+    if (!listed)
+      return;
+    let parsed = this.open.get(listed.path);
+    this.open.delete(listed.path);
+    parsed ??= new ParsedSession(listed.path);
+    parsed.refresh();
+    if (parsed.header?.id !== id)
+      throw new ContractError("corrupt-selected");
+    this.open.set(listed.path, parsed);
+    if (this.open.size > OPEN_SESSIONS)
+      this.open.delete(this.open.keys().next().value);
+    return parsed;
+  }
+  turn(session, entries2, secrets) {
+    const key = [
+      session.path,
+      entries2[0]?.id,
+      entries2.at(-1)?.id,
+      entries2.length,
+      createHash10("sha256").update(secrets.join("\x00")).digest("hex")
+    ].join("|");
+    const hit = this.built.get(key);
+    this.built.delete(key);
+    const turn = hit ?? listTurn(turnItems(entries2, secrets));
+    this.built.set(key, turn);
+    if (this.built.size > BUILT_TURNS)
+      this.built.delete(this.built.keys().next().value);
+    return turn;
+  }
+  nativeRuns() {
+    const out = new Map;
+    for (const listed of this.list())
+      for (const run2 of listed.summary.runs)
+        if (!out.has(run2))
+          out.set(run2, listed.summary.id);
+    return out;
+  }
+}
+function summaryTitle(summary) {
+  return summary.name ?? summary.firstUser ?? "Conversation";
+}
+function checkoutSessions(root, cwd, agentDir, sessionDir) {
+  return new PiSessions(sessionDir ?? sessionDirectory(cwd, agentDir), root, {
+    defaultCwd: cwd,
+    agentDir,
+    sessionDir
+  });
+}
+
+// src/service/conversation-records.ts
+var META_BYTES = 64 * 1024;
+var PAGE = 50;
+var INDEXED_COMMANDS = 64;
+var COMMAND_STATES = 512;
+var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
+var LIVE = ["queued", "running"];
+function observedFile(path) {
+  try {
+    const s = lstatSync12(path);
+    return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+      return "absent";
+    throw error;
+  }
+}
+function retiredConversation(c, id) {
+  decodeSessionId(id);
+  return ["identities", "sessions"].some((kind) => {
+    const directory = join19(c.directory, "conversations-v1", kind);
+    return c.files.directory(directory) && observedFile(join19(directory, `${id}.json`)) !== "absent";
+  });
+}
+function assertSupportedConversation(c, id) {
+  if (retiredConversation(c, id))
+    throw new ContractError("retired-conversation");
+}
+function decodeAccepted(value) {
+  const o = closed(value, [
+    "command",
+    "at",
+    "session",
+    "parent",
+    "offset",
+    ...Object.hasOwn(value ?? {}, "execution") ? ["execution", "directory", "file"] : []
+  ]);
+  const command = decodeWorkbenchCommand(o.command);
+  if (command.kind !== "send")
+    throw new ContractError("corrupt-selected");
+  return {
+    command,
+    ...o.execution === undefined ? {} : {
+      execution: decodeExecutionContext(o.execution),
+      directory: text(o.directory, 4096, true),
+      file: o.file === null ? null : text(o.file, 4096, true)
+    },
+    at: integer(o.at, 0),
+    session: decodeSessionId(o.session),
+    parent: o.parent === null ? null : decodeEntryId(o.parent),
+    offset: integer(o.offset, 0)
+  };
+}
+var statuses2 = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+function decodeState(value) {
+  const o = closed(value, ["status", "notice", "omitted", "user"]);
+  const omitted = closed(o.omitted, ["thinking", "media", "other"]);
+  return {
+    status: oneOf(o.status, statuses2),
+    notice: text(o.notice, 4096),
+    omitted: {
+      thinking: omitted.thinking === true,
+      media: omitted.media === true,
+      other: omitted.other === true
+    },
+    user: o.user === null ? null : decodeEntryId(o.user)
+  };
+}
+
+class ConversationRecords {
+  o;
+  root;
+  bindings;
+  sessions;
+  active;
+  knownSecrets;
+  states = new Map;
+  constructor(o) {
+    this.o = o;
+    this.root = join19(o.coordination.directory, "conversation-commands-v1");
+    this.bindings = join19(o.coordination.directory, "conversations-v1");
+    this.active = o.active ?? new Map;
+    this.sessions = checkoutSessions(o.coordination.store.root, o.cwd, o.agentDir, o.sessionDir);
+  }
+  get files() {
+    return this.o.coordination.files;
+  }
+  readSecrets() {
+    try {
+      this.knownSecrets = this.o.secrets();
+    } catch (error) {
+      if (!this.knownSecrets)
+        throw error instanceof ContractError ? error : new ContractError("unavailable");
+    }
+    return this.knownSecrets;
+  }
+  path(commandId, name) {
+    return join19(this.root, "commands", decodeId(commandId), name);
+  }
+  assertSupported(id) {
+    assertSupportedConversation(this.o.coordination, id);
+  }
+  indexPath(id) {
+    this.assertSupported(id);
+    return join19(this.root, "sessions", `${decodeSessionId(id)}.json`);
+  }
+  read(path, max = META_BYTES) {
+    const value = this.files.read(path, max);
+    return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
+  }
+  index(id) {
+    const file = this.files.read(this.indexPath(id), META_BYTES);
+    if (!file)
+      return { commands: [] };
+    const o = closed(parseWireJson(file.bytes.toString("utf8"), META_BYTES), [
+      "schema",
+      "id",
+      "commands"
+    ]);
+    if (o.schema !== "cadence-session-commands/1" || o.id !== id)
+      throw new ContractError("corrupt-selected");
+    return { file, commands: list(o.commands, INDEXED_COMMANDS, decodeId) };
+  }
+  accepted(commandId) {
+    const value = this.read(this.path(commandId, "accepted.json"));
+    return value === undefined ? undefined : decodeAccepted(value);
+  }
+  state(commandId) {
+    const live2 = this.active.get(commandId);
+    if (live2)
+      return live2.state;
+    const path = this.path(commandId, "state.json");
+    const key = observedFile(path);
+    const hit = this.states.get(commandId);
+    if (hit?.key === key)
+      return hit.state;
+    const value = this.read(path);
+    if (value === undefined)
+      throw new ContractError("corrupt-selected");
+    const decoded2 = decodeState(value);
+    const state = LIVE.includes(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
+    if (this.states.size >= COMMAND_STATES)
+      this.states.clear();
+    this.states.set(commandId, { key, state });
+    return state;
+  }
+  liveFor(id) {
+    for (const live2 of this.active.values())
+      if (live2.accepted.session === id)
+        return live2;
+    return;
+  }
+  controlBound(id) {
+    const value = this.read(this.controlPath(id));
+    if (value === undefined)
+      return false;
+    const record2 = closed(value, ["schema", "conversationId"]);
+    if (record2.schema !== "cadence-conversation-control/1" || record2.conversationId !== id)
+      throw new ContractError("corrupt-selected");
+    return true;
+  }
+  controlPath(id) {
+    this.assertSupported(id);
+    return join19(this.bindings, "control-links", `${decodeSessionId(id)}.json`);
+  }
+  controlKey(id) {
+    return observedFile(this.controlPath(id));
+  }
+  hasCommand(id, commandId) {
+    return this.accepted(commandId)?.session === id;
+  }
+  approvalHead(id, commandId) {
+    this.o.assertCurrent();
+    const accepted = this.accepted(commandId);
+    if (!accepted || accepted.session !== id)
+      throw new ContractError("stale");
+    const state = this.state(commandId);
+    const session = this.sessions.session(id);
+    const head = session?.current() ?? null;
+    if (state.user === null ? head !== accepted.parent : turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== state.user)
+      throw new ContractError("stale");
+    return head;
+  }
+  latestCommand(id) {
+    this.o.assertCurrent();
+    const commandId = this.index(id).commands.at(-1);
+    return commandId ? { commandId, status: this.state(commandId).status } : null;
+  }
+  nativeLinks(runIds) {
+    if (!runIds.length)
+      return [];
+    const recorded = this.sessions.nativeRuns();
+    return runIds.flatMap((runId) => {
+      const conversationId = recorded.get(runId);
+      return conversationId ? [{ runId, conversationId }] : [];
+    });
+  }
+  summary(id, live2) {
+    this.assertSupported(id);
+    const listed = this.sessions.find(id);
+    if (!listed) {
+      if (!live2)
+        return null;
+      return {
+        id,
+        title: sanitizeText(live2.title, this.readSecrets()) || "Conversation",
+        leaf: null,
+        status: live2.state.status,
+        updatedAt: live2.accepted.at,
+        origin: "webui",
+        live: { commandId: live2.commandId, epoch: live2.epoch }
+      };
+    }
+    const s = listed.summary;
+    const secrets = this.readSecrets();
+    let status = live2?.state.status ?? (listed.size > SESSION_BYTES ? "unknown" : s.stop?.status ?? "completed");
+    if (!live2 && listed.size <= SESSION_BYTES && this.index(id).commands.length) {
+      const session = this.sessions.session(id);
+      const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
+      const recorded = user ? this.overlay(id, session).get(user) : undefined;
+      status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
+    }
+    return {
+      id,
+      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") || "Conversation", 512, true),
+      leaf: s.leaf,
+      status,
+      updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
+      origin: s.webui ? "webui" : "terminal",
+      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {}
+    };
+  }
+  list(after = null) {
+    this.o.assertCurrent();
+    const listed = this.sessions.list().filter((row) => !retiredConversation(this.o.coordination, row.summary.id));
+    let start = 0;
+    if (after) {
+      start = listed.findIndex((l) => Math.trunc(l.mtimeMs) < after.updatedAt || Math.trunc(l.mtimeMs) === after.updatedAt && l.summary.id > after.id);
+      if (start < 0)
+        start = listed.length;
+    }
+    const page = listed.slice(start, start + PAGE);
+    const entries2 = page.flatMap((l) => {
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      return summary ? [summary] : [];
+    });
+    const last = page.at(-1);
+    return {
+      kind: "conversations",
+      entries: entries2,
+      next: last && start + PAGE < listed.length ? { id: last.summary.id, updatedAt: Math.trunc(last.mtimeMs) } : null
+    };
+  }
+  activeConversations() {
+    this.o.assertCurrent();
+    return {
+      kind: "conversation-active",
+      entries: [...this.active.values()].flatMap((live2) => {
+        const summary = this.summary(live2.accepted.session, live2);
+        return summary ? [summary] : [];
+      })
+    };
+  }
+  branch(id, leaf, exact) {
+    this.assertSupported(id);
+    const session = this.sessions.session(id);
+    const running = this.liveFor(id);
+    let view;
+    if (exact || leaf !== null) {
+      if (leaf !== null && !session?.byId.has(leaf))
+        throw new ContractError("stale");
+      view = leaf;
+    } else
+      view = running ? running.accepted.parent : session?.current() ?? null;
+    const turns = session ? turnSpans(session.branch(view)) : [];
+    const live2 = running && running.accepted.parent === view ? running : undefined;
+    return { session, leaf: view, turns, live: live2 };
+  }
+  attempt(id, leaf) {
+    const commandId = this.index(id).commands.at(-1);
+    if (!commandId || this.active.has(commandId))
+      return null;
+    const accepted = this.accepted(commandId);
+    const state = this.state(commandId);
+    if (!accepted || state.user !== null || accepted.parent !== leaf)
+      return null;
+    if (state.status === "unknown") {
+      const session = this.sessions.session(id);
+      if (session?.commandEntries(commandId, accepted.parent, accepted.offset).length)
+        return null;
+    }
+    return {
+      commandId,
+      text: sanitizeText(accepted.command.text, this.readSecrets()),
+      status: state.status,
+      notice: sanitizeText(state.notice, this.readSecrets())
+    };
+  }
+  conversation(id, leaf, known) {
+    this.o.assertCurrent();
+    const view = this.branch(id, leaf, false);
+    const summary = this.summary(id, view.live ?? this.liveFor(id));
+    const listed = this.sessions.find(id);
+    return {
+      kind: "conversation",
+      commands: this.index(id).commands,
+      summary,
+      leaf: view.leaf,
+      continues: known === null || known === view.leaf || !!view.session?.contains(view.leaf, known),
+      turns: summary ? view.turns.length + (view.live ? 1 : 0) : 0,
+      branches: view.session?.leaves() ?? 0,
+      runs: listed?.summary.runs ?? [],
+      attempt: view.live ? null : this.attempt(id, view.leaf)
+    };
+  }
+  tree(id, leaf) {
+    this.o.assertCurrent();
+    const view = this.branch(id, leaf, false);
+    return {
+      kind: "conversation-tree",
+      conversationId: id,
+      ...view.session?.tree(view.leaf, this.readSecrets()) ?? {
+        nodes: [],
+        truncated: false
+      }
+    };
+  }
+  overlay(id, session) {
+    const out = new Map;
+    for (const commandId of this.index(id).commands) {
+      if (this.active.has(commandId))
+        continue;
+      const state = this.state(commandId);
+      let user = state.user;
+      if (user === null && state.status === "unknown" && session) {
+        const accepted = this.accepted(commandId);
+        user = accepted ? session.commandEntries(commandId, accepted.parent, accepted.offset)[0]?.id ?? null : null;
+      }
+      if (user !== null)
+        out.set(user, {
+          ...state,
+          execution: this.accepted(commandId)?.execution
+        });
+    }
+    return out;
+  }
+  built(id, leaf, ordinal) {
+    const view = this.branch(id, leaf, true);
+    const secrets = this.readSecrets();
+    if (ordinal < view.turns.length && view.session) {
+      const turn2 = this.sessions.turn(view.session, view.turns[ordinal], secrets);
+      const recorded = this.overlay(id, view.session).get(turn2.id);
+      return {
+        turn: recorded ? {
+          ...turn2,
+          ...recorded.execution ? { execution: recorded.execution } : {},
+          status: recorded.status,
+          notice: turn2.notice || sanitizeText(recorded.notice, secrets),
+          omitted: {
+            thinking: turn2.omitted.thinking || recorded.omitted.thinking,
+            media: turn2.omitted.media || recorded.omitted.media,
+            other: turn2.omitted.other || recorded.omitted.other
+          }
+        } : turn2,
+        stable: turn2.steps.length
+      };
+    }
+    const live2 = view.live;
+    if (!live2 || ordinal !== view.turns.length)
+      throw new ContractError("stale");
+    const chain = view.session ? view.session.commandEntries(live2.commandId, live2.accepted.parent, live2.accepted.offset) : [];
+    const written = turnItems(chain, secrets);
+    const items = chain.length ? written.items : [
+      {
+        id: "user",
+        role: "user",
+        text: live2.accepted.command.text,
+        name: "",
+        args: "",
+        error: false
+      }
+    ];
+    const extended = live2.capture?.extend(items) ?? {
+      items,
+      stable: items.length
+    };
+    const omitted = live2.capture?.omitted;
+    const turn = listTurn({
+      id: chain[0]?.id ?? live2.commandId,
+      entry: null,
+      at: live2.accepted.at,
+      status: live2.state.status,
+      notice: sanitizeText(live2.capture?.notice ?? "", secrets),
+      omitted: {
+        thinking: written.omitted.thinking || !!omitted?.thinking,
+        media: written.omitted.media || !!omitted?.media,
+        other: written.omitted.other || !!omitted?.other
+      },
+      items: extended.items.map((item) => ({
+        ...item,
+        text: sanitizeText(item.text, secrets),
+        name: sanitizeText(item.name, secrets),
+        args: sanitizeText(item.args, secrets)
+      }))
+    });
+    return {
+      turn: { ...turn, execution: live2.execution },
+      stable: extended.stable
+    };
+  }
+  turnSteps(id, leaf, ordinal, before) {
+    this.o.assertCurrent();
+    const { turn, stable } = this.built(id, leaf, ordinal);
+    const end = before ?? turn.steps.length;
+    if (end > turn.steps.length)
+      throw new ContractError("stale");
+    const start = Math.max(0, end - STEP_READ);
+    return {
+      kind: "conversation-turn",
+      conversationId: id,
+      leaf,
+      ordinal,
+      turn: {
+        ...turn.execution ? { execution: turn.execution } : {},
+        id: turn.id,
+        status: turn.status,
+        notice: turn.notice,
+        omitted: { ...turn.omitted },
+        steps: turn.steps.length,
+        stable,
+        entry: turn.entry,
+        at: turn.at
+      },
+      start,
+      steps: turn.steps.slice(start, end)
+    };
+  }
+  step(id, leaf, turnId, step, part) {
+    this.o.assertCurrent();
+    const view = this.branch(id, leaf, true);
+    const ordinal = view.turns.findIndex((turn2) => turn2[0]?.id === turnId);
+    const { turn } = this.built(id, leaf, ordinal >= 0 ? ordinal : view.turns.length);
+    if (turn.id !== turnId)
+      throw new ContractError("stale");
+    const item = turn.parts[step]?.[part];
+    if (!item || part >= turn.steps[step].parts)
+      throw new ContractError("stale");
+    return {
+      kind: "conversation-step",
+      conversationId: id,
+      leaf,
+      turnId,
+      step,
+      part,
+      item
+    };
+  }
+  closeReads() {
+    this.sessions.close();
+    this.states.clear();
+  }
+}
+
 // src/service/conversation-contexts.ts
 var BYTES = 16 * 1024;
 var SCHEMA = "cadence-conversation-context/1";
 
 class ConversationContextRecords {
   c;
-  constructor(c) {
+  sessions;
+  constructor(c, sessions) {
     this.c = c;
+    this.sessions = sessions;
   }
   path(id) {
-    return join18(this.c.directory, "conversations-v1", "contexts", `${decodeId(id)}.json`);
+    return join20(this.c.directory, "conversations-v1", "contexts", `${decodeSessionId(id)}.json`);
   }
   read(location) {
     const input = decodeConversationLocation(location);
+    assertSupportedConversation(this.c, input.id);
     const file = this.c.files.read(this.path(input.id), BYTES);
-    const identityPath = join18(this.c.directory, "conversations-v1", "identities", `${input.id}.json`);
-    const identity = this.c.files.read(identityPath, BYTES);
-    let legacy;
-    if (identity) {
-      const v = closed(parseWireJson(identity.bytes.toString("utf8"), BYTES), [
-        "schema",
-        "id",
-        "cwd"
-      ]);
-      if (v.schema !== "cadence-conversation/1" || v.id !== input.id)
-        throw new ContractError("corrupt-selected");
-      legacy = decodeConversationLocation({ id: v.id, cwd: v.cwd }).cwd;
-    }
     let context;
     if (file) {
       const v = closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
@@ -10871,19 +12204,25 @@ class ConversationContextRecords {
       if (v.schema !== SCHEMA)
         throw new ContractError("corrupt-selected");
       context = decodeConversationContext(v.context);
-      if (context.id !== input.id || legacy && legacy !== context.cwd)
+      if (context.id !== input.id)
         throw new ContractError("corrupt-selected");
     } else
       context = {
         id: input.id,
-        cwd: legacy ?? input.cwd,
+        cwd: input.cwd,
         revision: 0,
         model: null
       };
-    if (resolve8(context.cwd) !== context.cwd || !withinWorkspace(this.c.store.root, context.cwd))
+    this.sessions?.directoryFor(context.cwd);
+    const session = this.sessions?.find(input.id);
+    if (session) {
+      if (file && context.cwd !== session.summary.cwd)
+        throw new ContractError("corrupt-selected");
+      context.cwd = session.summary.cwd;
+    }
+    if (resolve9(context.cwd) !== context.cwd || !withinWorkspace(this.c.store.root, context.cwd))
       throw new ContractError("forbidden");
     this.c.files.assert(this.path(input.id), file, BYTES);
-    this.c.files.assert(identityPath, identity, BYTES);
     return { context, file };
   }
 }
@@ -10894,7 +12233,7 @@ class ConversationContexts {
   seed = randomUUID9();
   constructor(o) {
     this.o = o;
-    this.records = new ConversationContextRecords(o.coordination);
+    this.records = new ConversationContextRecords(o.coordination, o.sessions);
   }
   current(cwd, checkSecrets = true) {
     this.o.owner.lease.assert();
@@ -11016,643 +12355,11 @@ class ConversationContexts {
   }
 }
 
-// src/service/conversation-controls.ts
-import { dirname as dirname14, join as join20 } from "node:path";
-
-// src/service/conversation-records.ts
-import { lstatSync as lstatSync12 } from "node:fs";
-import { join as join19, resolve as resolve9 } from "node:path";
-
-// src/service/conversation-history.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
-import { lstatSync as lstatSync11, opendirSync as opendirSync6 } from "node:fs";
-var CONVERSATION_PAGE = 50;
-var SCAN_ENTRIES = 8;
-var SCANS = 16;
-var IDLE_MS = 120000;
-var compareChats = (a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-
-class ConversationHistory {
-  path;
-  directory;
-  summary;
-  scans = new Map;
-  closed = false;
-  constructor(path, directory, summary) {
-    this.path = path;
-    this.directory = directory;
-    this.summary = summary;
-  }
-  incarnation() {
-    const st = lstatSync11(this.path, { bigint: true });
-    if (!st.isDirectory() || st.isSymbolicLink())
-      throw new ContractError("corrupt-selected");
-    return `${st.dev}:${st.ino}`;
-  }
-  read(after, cursor) {
-    if (this.closed)
-      throw new ContractError("unavailable");
-    let state;
-    if (cursor) {
-      const selected2 = this.scans.get(cursor);
-      if (!selected2 || selected2.after?.id !== after?.id || selected2.after?.updatedAt !== after?.updatedAt)
-        throw new ContractError("stale");
-      this.scans.delete(cursor);
-      clearTimeout(selected2.timer);
-      state = selected2;
-    } else {
-      if (!this.directory())
-        return { kind: "conversations", entries: [], next: null };
-      if (this.scans.size >= SCANS)
-        throw new ContractError("capacity");
-      const incarnation3 = this.incarnation();
-      state = {
-        dir: opendirSync6(this.path),
-        incarnation: incarnation3,
-        after,
-        entries: []
-      };
-    }
-    let suspended = false;
-    try {
-      if (!this.directory() || this.incarnation() !== state.incarnation)
-        throw new ContractError("stale");
-      const started = performance.now();
-      for (let n = 0;n < SCAN_ENTRIES; n++) {
-        if (n && performance.now() - started >= LIMITS.searchMs)
-          break;
-        const e = state.dir.readSync();
-        if (!e) {
-          const entries2 = state.entries.slice(0, CONVERSATION_PAGE);
-          const last = entries2.at(-1);
-          return {
-            kind: "conversations",
-            entries: entries2,
-            next: state.entries.length > entries2.length && last ? { id: last.id, updatedAt: last.updatedAt } : null
-          };
-        }
-        if (!e.isFile() || !e.name.endsWith(".json"))
-          throw new ContractError("corrupt-selected");
-        const summary = this.summary(decodeId(e.name.slice(0, -5)));
-        if (after && compareChats(summary, after) <= 0)
-          continue;
-        if (state.entries.some((row) => row.id === summary.id))
-          continue;
-        state.entries.push(summary);
-        state.entries.sort(compareChats);
-        if (state.entries.length > CONVERSATION_PAGE + 1)
-          state.entries.pop();
-      }
-      const scan = randomUUID10();
-      state.timer = setTimeout(() => {
-        this.scans.delete(scan);
-        try {
-          state.dir.closeSync();
-        } catch {
-          this.closed = true;
-        }
-      }, IDLE_MS);
-      state.timer.unref();
-      this.scans.set(scan, state);
-      suspended = true;
-      return { kind: "conversations-progress", after, scan };
-    } finally {
-      if (!suspended)
-        state.dir.closeSync();
-    }
-  }
-  close() {
-    this.closed = true;
-    let failed = false;
-    for (const state of this.scans.values()) {
-      clearTimeout(state.timer);
-      try {
-        state.dir.closeSync();
-      } catch {
-        failed = true;
-      }
-    }
-    this.scans.clear();
-    if (failed)
-      throw new ContractError("unavailable");
-  }
-}
-
-// src/service/conversation-steps.ts
-var TARGET_ARGS = 1024 * 1024;
-var INDEXED_TURNS = 32;
-function itemStep(item) {
-  const step = chatStep(item, 0);
-  const more = step.clipped || item.role === "tool" && !!(item.args || item.text);
-  return { ...step, parts: more ? 1 : 0 };
-}
-
-class ConversationSteps {
-  page;
-  indexes = new Map;
-  constructor(page) {
-    this.page = page;
-  }
-  list(turn) {
-    const settled = !["queued", "running"].includes(turn.status);
-    if (!turn.transcript) {
-      const steps2 = turn.items.map((item, index2) => ({
-        step: itemStep(item),
-        source: { kind: "item", index: index2 }
-      }));
-      return { steps: steps2, stable: settled ? steps2.length : 0 };
-    }
-    const index = this.index(turn.id, turn.transcript.pages);
-    const steps = [
-      ...index.steps,
-      ...turn.items.filter((item) => !index.ids.has(item.id)).map((item) => ({
-        step: itemStep(item),
-        source: { kind: "preview", id: item.id }
-      }))
-    ];
-    return { steps, stable: settled ? steps.length : index.steps.length };
-  }
-  detail(turn, step, part) {
-    const listed = this.list(turn).steps[step];
-    if (!listed || part >= listed.step.parts)
-      throw new ContractError("stale");
-    const source = listed.source;
-    if (source.kind === "pages")
-      return this.page(turn.id, source.first + part);
-    const item = source.kind === "item" ? turn.items[source.index] : turn.items.find((i) => i.id === source.id);
-    if (!item)
-      throw new ContractError("stale");
-    return item;
-  }
-  index(turnId, pages) {
-    let index = this.indexes.get(turnId);
-    this.indexes.delete(turnId);
-    if (!index || index.pages > pages)
-      index = { pages: 0, steps: [], ids: new Set, last: null };
-    for (;index.pages < pages; index.pages++) {
-      const fragment = this.page(turnId, index.pages);
-      const last = index.last;
-      const tail = index.steps.at(-1);
-      if (last && tail && last.item.id === fragment.id) {
-        const text2 = last.item.text + fragment.text, head2 = clipText(text2, STEP_TEXT_BYTES);
-        last.more ||= head2.length < text2.length;
-        last.args = last.args !== null && last.args.length + fragment.args.length <= TARGET_ARGS ? last.args + fragment.args : null;
-        last.item = { ...fragment, text: head2, args: last.args ?? "" };
-        tail.step = chatStep(last.item, tail.step.parts + 1, last.more);
-        continue;
-      }
-      const head = clipText(fragment.text, STEP_TEXT_BYTES);
-      index.last = {
-        item: { ...fragment, text: head },
-        more: head.length < fragment.text.length,
-        args: fragment.args
-      };
-      index.steps.push({
-        step: chatStep(index.last.item, 1, index.last.more),
-        source: { kind: "pages", first: index.pages }
-      });
-      index.ids.add(fragment.id);
-    }
-    this.indexes.set(turnId, index);
-    if (this.indexes.size > INDEXED_TURNS)
-      this.indexes.delete(this.indexes.keys().next().value);
-    return index;
-  }
-}
-
-// src/service/conversation-transcript.ts
-var TRANSCRIPT_PAGE_BYTES = 384 * 1024;
-var PREVIEW_BYTES = 300 * 1024;
-var FIELD_CHARS = 16 * 1024;
-var PREVIEW_MARK = `
-[Preview only; the rest appears once this step completes.]`;
-function part(value, offset, chars = FIELD_CHARS) {
-  let end = Math.min(value.length, offset + chars);
-  if (end < value.length && /[\uD800-\uDBFF]/u.test(value[end - 1]))
-    end--;
-  return value.slice(offset, end);
-}
-function previewHead(head, added) {
-  return head.length > FIELD_CHARS ? head : head + added.slice(0, FIELD_CHARS + 1 - head.length);
-}
-
-class ConversationTranscript {
-  turn;
-  write;
-  state = { pages: 0 };
-  workingSizes = new Map;
-  fieldBytes = new Map;
-  workingBytes = 0;
-  sizes = new Map;
-  bytes = 4096;
-  pending = new Map;
-  constructor(turn, write2) {
-    this.turn = turn;
-    this.write = write2;
-    turn.transcript = this.state;
-    for (const item of [...turn.items]) {
-      this.archive(item);
-      this.preview(item);
-    }
-  }
-  item(id, role2) {
-    let item = this.pending.get(id);
-    if (!item) {
-      if (this.pending.size >= 256)
-        throw new ContractError("capacity");
-      item = { id, role: role2, text: "", name: "", args: "", error: false };
-      this.pending.set(id, item);
-      this.preview(item);
-    }
-    return item;
-  }
-  find(id) {
-    return this.pending.get(id);
-  }
-  preview(item, known = {}) {
-    if (this.pending.has(item.id)) {
-      const cached = this.fieldBytes.get(item.id);
-      const bytes = (field) => known[field]?.bytes ?? cached?.[field] ?? Buffer.byteLength(item[field]);
-      const fields2 = {
-        text: bytes("text"),
-        args: bytes("args"),
-        name: bytes("name")
-      };
-      this.fieldBytes.set(item.id, fields2);
-      const size3 = fields2.text + fields2.args + fields2.name;
-      this.workingBytes += size3 - (this.workingSizes.get(item.id) ?? 0);
-      this.workingSizes.set(item.id, size3);
-      if (this.workingBytes > 2 * LIMITS.detailBytes)
-        throw new ContractError("capacity");
-    }
-    const clip = (field) => {
-      const value = item[field];
-      const prefix = part(known[field]?.head ?? value, 0);
-      return prefix.length < value.length ? prefix + PREVIEW_MARK : value;
-    };
-    const preview = { ...item, text: clip("text"), args: clip("args") };
-    const size2 = Buffer.byteLength(canonicalJson(preview, PREVIEW_BYTES));
-    this.bytes += size2 - (this.sizes.get(item.id) ?? 0);
-    this.sizes.set(item.id, size2);
-    const at = this.turn.items.findIndex((i) => i.id === item.id);
-    if (at < 0)
-      this.turn.items.push(preview);
-    else
-      this.turn.items[at] = preview;
-    while (this.bytes > PREVIEW_BYTES || this.turn.items.length > 128) {
-      if (this.turn.items.length <= 2)
-        throw new ContractError("oversize");
-      const [removed] = this.turn.items.splice(this.turn.items[0].role === "user" ? 1 : 0, 1);
-      this.bytes -= this.sizes.get(removed.id) ?? 0;
-      this.sizes.delete(removed.id);
-    }
-  }
-  complete(id) {
-    const item = this.pending.get(id);
-    if (!item)
-      return;
-    this.preview(item);
-    this.archive(item);
-    this.pending.delete(id);
-    this.fieldBytes.delete(id);
-    this.workingBytes -= this.workingSizes.get(id) ?? 0;
-    this.workingSizes.delete(id);
-  }
-  finish() {
-    for (const id of this.pending.keys())
-      this.complete(id);
-  }
-  archive(item) {
-    let text2 = 0, args = 0;
-    do {
-      let chars = 128 * 1024;
-      const fragment = { ...item, text: "", args: part(item.args, args) };
-      for (;; ) {
-        fragment.text = part(item.text, text2, chars);
-        try {
-          if (Buffer.byteLength(fragment.text) > 256 * 1024)
-            throw new ContractError("oversize");
-          canonicalJson(fragment, TRANSCRIPT_PAGE_BYTES - 4096);
-          break;
-        } catch (error) {
-          if (!(error instanceof ContractError) || error.code !== "oversize" || chars <= FIELD_CHARS)
-            throw error;
-          chars /= 2;
-        }
-      }
-      const page = this.state.pages;
-      if (!Number.isSafeInteger(page + 1))
-        throw new ContractError("capacity");
-      this.write({ turnId: this.turn.id, page, items: [fragment] });
-      this.state.pages = page + 1;
-      text2 += fragment.text.length;
-      args += fragment.args.length;
-    } while (text2 < item.text.length || args < item.args.length);
-  }
-}
-
-// src/service/conversation-records.ts
-var TURN_BYTES = 384 * 1024;
-var META_BYTES = 64 * 1024;
-var SUMMARY_CACHE = 256;
-function observedFile(path) {
-  try {
-    const s = lstatSync12(path);
-    return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
-      return "absent";
-    throw error;
-  }
-}
-
-class ConversationRecords {
-  o;
-  root;
-  history;
-  active;
-  summaries = new Map;
-  steps = new ConversationSteps((turnId, page) => this.page(turnId, page));
-  constructor(o) {
-    this.o = o;
-    this.root = join19(o.directory, "conversations-v1");
-    this.active = o.active ?? new Map;
-    const sessions = join19(this.root, "sessions");
-    this.history = new ConversationHistory(sessions, () => {
-      o.assertCurrent();
-      return this.files.directory(sessions);
-    }, (id) => this.retainedSummary(id));
-  }
-  get files() {
-    return this.o.files;
-  }
-  path(id, name) {
-    return join19(this.root, "turns", decodeId(id), name);
-  }
-  identityPath(id) {
-    return join19(this.root, "identities", `${decodeId(id)}.json`);
-  }
-  metadataPath(id) {
-    return join19(this.root, "sessions", `${decodeId(id)}.json`);
-  }
-  read(path, max) {
-    const value = this.files.read(path, max);
-    return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
-  }
-  cwd(id) {
-    const identity = closed(this.read(this.identityPath(id), META_BYTES), [
-      "schema",
-      "id",
-      "cwd"
-    ]);
-    if (identity.schema !== "cadence-conversation/1" || identity.id !== id || typeof identity.cwd !== "string" || resolve9(identity.cwd) !== identity.cwd || !withinWorkspace(this.o.cwd, identity.cwd))
-      throw new ContractError("corrupt-selected");
-    return identity.cwd;
-  }
-  metadata(id) {
-    const value = this.read(this.metadataPath(id), META_BYTES);
-    if (value === undefined)
-      return null;
-    this.cwd(id);
-    const indexed = value !== null && typeof value === "object" && Object.hasOwn(value, "count");
-    const m = closed(value, [
-      "id",
-      "title",
-      "turns",
-      "checkpoint",
-      ...indexed ? ["head", "count"] : []
-    ]);
-    const turns = list(m.turns, 1000, decodeId);
-    const count = indexed ? integer(m.count, Math.max(1, turns.length)) : turns.length;
-    const head = indexed ? decodeId(m.head) : turns.at(-1);
-    if (!head || !count || new Set(turns).size !== turns.length || m.id !== id)
-      throw new ContractError("corrupt-selected");
-    const meta = {
-      id,
-      title: text(m.title, 512, true),
-      turns,
-      head,
-      count,
-      checkpoint: m.checkpoint === null ? null : decodeId(m.checkpoint)
-    };
-    if (this.turnAt(meta, count - 1) !== head || indexed && this.position(meta, head) !== count - 1 || meta.checkpoint && !this.contains(meta, meta.checkpoint))
-      throw new ContractError("corrupt-selected");
-    return meta;
-  }
-  slotPath(id, ordinal) {
-    return join19(this.root, "indices", decodeId(id), `${integer(ordinal, 0)}.json`);
-  }
-  turnAt(meta, ordinal) {
-    if (ordinal < 0 || ordinal >= meta.count)
-      throw new ContractError("stale");
-    if (ordinal < meta.turns.length)
-      return meta.turns[ordinal];
-    const row = closed(this.read(this.slotPath(meta.id, ordinal), META_BYTES), [
-      "conversationId",
-      "ordinal",
-      "turnId"
-    ]);
-    if (row.conversationId !== meta.id || row.ordinal !== ordinal)
-      throw new ContractError("corrupt-selected");
-    return decodeId(row.turnId);
-  }
-  position(meta, turnId) {
-    const legacy = meta.turns.indexOf(turnId);
-    if (legacy >= 0)
-      return legacy;
-    const value = this.read(this.path(turnId, "position.json"), META_BYTES);
-    if (value === undefined)
-      return -1;
-    const row = closed(value, ["conversationId", "ordinal", "turnId"]);
-    if (row.turnId !== turnId)
-      throw new ContractError("corrupt-selected");
-    const ordinal = integer(row.ordinal, 0);
-    if (row.conversationId !== meta.id || ordinal >= meta.count)
-      return -1;
-    return this.turnAt(meta, ordinal) === turnId ? ordinal : -1;
-  }
-  contains(meta, turnId) {
-    return this.position(meta, turnId) >= 0;
-  }
-  turn(id) {
-    const live2 = this.active.get(id);
-    const turn = live2?.turn ?? decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
-    if (turn.id !== id)
-      throw new ContractError("corrupt-selected");
-    return !live2 && ["queued", "running"].includes(turn.status) ? {
-      ...turn,
-      status: "unknown",
-      notice: "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry."
-    } : turn;
-  }
-  controlBound(id) {
-    const path = join19(this.root, "control-links", `${decodeId(id)}.json`);
-    const value = this.read(path, META_BYTES);
-    if (value === undefined)
-      return false;
-    const record2 = closed(value, ["schema", "conversationId"]);
-    if (record2.schema !== "cadence-conversation-control/1" || record2.conversationId !== id)
-      throw new ContractError("corrupt-selected");
-    return true;
-  }
-  controlKey(id) {
-    return observedFile(join19(this.root, "control-links", `${decodeId(id)}.json`));
-  }
-  hasTurn(id, turnId) {
-    const meta = this.metadata(id);
-    return !!meta && this.contains(meta, turnId);
-  }
-  summary(meta) {
-    const head = meta.head, turn = this.turn(head);
-    const accepted = closed(this.read(this.path(head, "accepted.json"), META_BYTES), ["command", "at"]);
-    const command = decodeWorkbenchCommand(accepted.command);
-    if (command.kind !== "send" || command.commandId !== head || command.conversationId !== meta.id || command.model.epoch !== turn.epoch)
-      throw new ContractError("corrupt-selected");
-    return {
-      id: meta.id,
-      title: meta.title,
-      head,
-      status: turn.status,
-      updatedAt: integer(accepted.at, 0)
-    };
-  }
-  headKey(head, id, count) {
-    return [
-      this.path(head, "turn.json"),
-      this.path(head, "accepted.json"),
-      this.path(head, "position.json"),
-      this.slotPath(id, count - 1)
-    ].map(observedFile).join("|");
-  }
-  retainedSummary(id) {
-    return this.retained(id).summary;
-  }
-  retained(id) {
-    const base = [this.metadataPath(id), this.identityPath(id)].map(observedFile).join("|");
-    const hit = this.summaries.get(id);
-    if (hit && !this.active.has(hit.summary.head) && hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`)
-      return { summary: { ...hit.summary }, count: hit.count };
-    const meta = this.metadata(id);
-    if (!meta)
-      throw new ContractError("corrupt-selected");
-    const head = meta.head;
-    const key = `${base}|${this.headKey(head, id, meta.count)}`;
-    const summary = this.summary(meta);
-    this.summaries.delete(id);
-    if (!this.active.has(head) && !["queued", "running"].includes(summary.status)) {
-      if (this.summaries.size >= SUMMARY_CACHE)
-        this.summaries.delete(this.summaries.keys().next().value);
-      this.summaries.set(id, {
-        key,
-        summary: { ...summary },
-        count: meta.count
-      });
-    }
-    return { summary, count: meta.count };
-  }
-  liveSummary(live2) {
-    return {
-      id: live2.conversationId,
-      title: live2.title,
-      head: live2.turn.id,
-      status: live2.turn.status,
-      updatedAt: live2.acceptedAt
-    };
-  }
-  list(after = null, scan) {
-    this.o.assertCurrent();
-    return this.history.read(after, scan);
-  }
-  activeConversations() {
-    this.o.assertCurrent();
-    return {
-      kind: "conversation-active",
-      entries: [...this.active.values()].map((live2) => this.liveSummary(live2))
-    };
-  }
-  closeReads() {
-    this.history.close();
-  }
-  conversation(id) {
-    this.o.assertCurrent();
-    if (observedFile(this.metadataPath(id)) === "absent") {
-      const live2 = [...this.active.values()].find((turn) => turn.conversationId === id);
-      return {
-        kind: "conversation",
-        summary: live2 ? this.liveSummary(live2) : null,
-        turns: 0
-      };
-    }
-    const { summary, count } = this.retained(id);
-    return { kind: "conversation", summary, turns: count };
-  }
-  turnSteps(id, ordinal, before) {
-    this.o.assertCurrent();
-    const meta = this.metadata(id);
-    if (!meta)
-      throw new ContractError("stale");
-    const turn = this.turn(this.turnAt(meta, ordinal));
-    const { steps, stable } = this.steps.list(turn);
-    const end = before ?? steps.length;
-    if (end > steps.length)
-      throw new ContractError("stale");
-    const start = Math.max(0, end - STEP_READ);
-    return {
-      kind: "conversation-turn",
-      conversationId: id,
-      ordinal,
-      turn: {
-        ...turn.execution ? { execution: turn.execution } : {},
-        id: turn.id,
-        epoch: turn.epoch,
-        status: turn.status,
-        notice: turn.notice,
-        omitted: { ...turn.omitted },
-        steps: steps.length,
-        stable
-      },
-      start,
-      steps: steps.slice(start, end).map((row) => row.step)
-    };
-  }
-  step(id, turnId, step, part2) {
-    this.o.assertCurrent();
-    if (!this.hasTurn(id, turnId))
-      throw new ContractError("invalid");
-    return {
-      kind: "conversation-step",
-      conversationId: id,
-      turnId,
-      step,
-      part: part2,
-      item: { ...this.steps.detail(this.turn(turnId), step, part2) }
-    };
-  }
-  page(turnId, page) {
-    const value = this.read(this.path(turnId, `transcript/${integer(page, 0)}.json`), TRANSCRIPT_PAGE_BYTES);
-    if (value === undefined)
-      throw new ContractError("corrupt-selected");
-    const record2 = closed(value, ["turnId", "page", "items"]);
-    const items = list(record2.items, 1, decodeChatItem);
-    if (record2.turnId !== turnId || record2.page !== page || !items.length)
-      throw new ContractError("corrupt-selected");
-    return items[0];
-  }
-  origin(taskId2) {
-    this.o.assertCurrent();
-    const value = this.read(join19(this.root, "task-links", `${decodeId(taskId2)}.json`), META_BYTES);
-    if (value === undefined)
-      return { kind: "task-origin", taskId: taskId2, conversationId: null };
-    const row = closed(value, ["conversationId"]);
-    return {
-      kind: "task-origin",
-      taskId: taskId2,
-      conversationId: decodeId(row.conversationId)
-    };
-  }
-}
+// src/service/gateway-conversations.ts
+import { homedir as homedir6 } from "node:os";
 
 // src/service/conversation-controls.ts
+import { dirname as dirname14, join as join21 } from "node:path";
 var CONTROL_BYTES = 384 * 1024;
 var CONTROL_SCHEMA = "cadence-conversation-workflow/1";
 var CACHE = 512;
@@ -11689,10 +12396,11 @@ class ConversationControls {
   cache = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join20(o.directory, "conversation-workflows-v1");
+    this.root = join21(o.directory, "conversation-workflows-v1");
   }
   path(id) {
-    return join20(this.root, decodeId(id), "state.json");
+    this.o.conversations.assertSupported(id);
+    return join21(this.root, decodeSessionId(id), "state.json");
   }
   read(id) {
     this.o.assertCurrent();
@@ -11706,7 +12414,7 @@ class ConversationControls {
       const state = decodeCadenceConversation(record2.state);
       if (record2.schema !== CONTROL_SCHEMA || !bound || state.id !== id || state.notice !== undefined)
         return unusable2(id);
-      if (state.head && !this.o.conversations.hasTurn(id, state.head))
+      if (state.head && !this.o.conversations.hasCommand(id, state.head))
         return {
           state: { ...state, proposal: null, notice: UNRECORDED },
           problem: true
@@ -11764,6 +12472,588 @@ class ConversationControls {
   }
 }
 
+// src/service/model-config.ts
+import { lstatSync as lstatSync13, realpathSync as realpathSync8 } from "node:fs";
+import { dirname as dirname15, isAbsolute as isAbsolute8, join as join22, resolve as resolve10 } from "node:path";
+var CONFIG_BYTES2 = 1024 * 1024;
+var ENTRY_LIMIT = 256;
+function refuse() {
+  throw new ContractError("corrupt-selected");
+}
+function data(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    refuse();
+  if (![null, Object.prototype].includes(Object.getPrototypeOf(value)))
+    refuse();
+  const out = Object.create(null);
+  const keys2 = Reflect.ownKeys(value);
+  if (keys2.length > ENTRY_LIMIT)
+    refuse();
+  for (const key of keys2) {
+    const d = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== "string" || !d || !("value" in d) || !d.enumerable)
+      refuse();
+    if (["__proto__", "constructor", "prototype"].includes(key))
+      refuse();
+    out[key] = d.value;
+  }
+  return out;
+}
+function keys2(value, allowed) {
+  if (Object.keys(value).some((key) => !allowed.includes(key)))
+    refuse();
+}
+function string(value) {
+  if (typeof value !== "string" || !value || value.includes("\x00"))
+    refuse();
+  return value;
+}
+function environment(value) {
+  const out = Object.create(null);
+  for (const [name, entry] of Object.entries(data(value))) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      refuse();
+    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+      throw new ContractError("unsupported-context");
+    if (typeof entry !== "string" || entry.includes("\x00"))
+      refuse();
+    out[name] = entry;
+  }
+  return out;
+}
+function captureEnvironment(value) {
+  const out = Object.create(null);
+  const names2 = Reflect.ownKeys(value);
+  if (names2.length > 4096)
+    throw new ContractError("oversize");
+  let bytes = 0;
+  for (const name of names2) {
+    const d = Object.getOwnPropertyDescriptor(value, name);
+    if (typeof name !== "string" || !d || !("value" in d) || d.value !== undefined && typeof d.value !== "string")
+      refuse();
+    bytes += Buffer.byteLength(name) + Buffer.byteLength(d.value ?? "");
+    if (bytes > CONFIG_BYTES2)
+      throw new ContractError("oversize");
+    out[name] = d.value;
+  }
+  return Object.freeze(out);
+}
+function piSource(agentDir, home, cwd, env) {
+  if (!isAbsolute8(home) || !isAbsolute8(cwd))
+    refuse();
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join22(home, ".pi", "agent");
+  if (!selected2 || selected2.includes("\x00"))
+    refuse();
+  if (selected2 === "~" || selected2.startsWith("~/"))
+    selected2 = home + selected2.slice(1);
+  selected2 = resolve10(cwd, selected2);
+  const directory = join22(realpathSync8(dirname15(selected2)), selected2.slice(dirname15(selected2).length + 1));
+  if (!lstatSync13(directory).isDirectory() || lstatSync13(directory).isSymbolicLink())
+    refuse();
+  const files = new PrivateFiles(directory, false);
+  if (!files.directory(directory))
+    refuse();
+  return {
+    directory,
+    files,
+    authPath: join22(directory, "auth.json"),
+    modelsPath: join22(directory, "models.json")
+  };
+}
+function templateNames(value) {
+  const text2 = string(value);
+  if (text2.startsWith("!"))
+    throw new ContractError("unsupported-context");
+  const names2 = new Set;
+  for (let i = 0;i < text2.length; ) {
+    const dollar = text2.indexOf("$", i);
+    if (dollar < 0)
+      break;
+    const next = text2[dollar + 1];
+    if (next === "$" || next === "!") {
+      i = dollar + 2;
+    } else if (next === "{") {
+      const end = text2.indexOf("}", dollar + 2);
+      if (end < 0) {
+        i = dollar + 1;
+        continue;
+      }
+      const name = text2.slice(dollar + 2, end);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+        names2.add(name);
+      i = end + 1;
+    } else {
+      const name = text2.slice(dollar + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+      if (name)
+        names2.add(name);
+      i = dollar + 1 + (name?.length ?? 0);
+    }
+  }
+  return [...names2];
+}
+function headers(value) {
+  for (const [name, entry] of Object.entries(data(value))) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
+      refuse();
+    if (typeof entry !== "string" || /[\r\n\0]/.test(entry))
+      refuse();
+    if (entry)
+      templateNames(entry);
+  }
+}
+var modelKeys = [
+  "id",
+  "name",
+  "api",
+  "baseUrl",
+  "reasoning",
+  "thinkingLevelMap",
+  "input",
+  "cost",
+  "contextWindow",
+  "maxTokens",
+  "samplingParams",
+  "headers",
+  "compat"
+];
+function compat(value) {
+  const config = data(value);
+  const booleans = [
+    "supportsStore",
+    "supportsDeveloperRole",
+    "supportsReasoningEffort",
+    "supportsUsageInStreaming",
+    "supportsFinishReason",
+    "requiresToolResultName",
+    "requiresAssistantAfterToolResult",
+    "requiresThinkingAsText",
+    "requiresReasoningContentOnAssistantMessages",
+    "supportsOpenAIGrammarTools",
+    "supportsStrictMode",
+    "sendSessionAffinityHeaders",
+    "supportsLongCacheRetention",
+    "supportsAdditionalTools",
+    "supportsToolSearch",
+    "supportsEagerToolInputStreaming",
+    "supportsCacheControlOnTools",
+    "supportsTemperature",
+    "forceAdaptiveThinking",
+    "allowEmptySignature",
+    "supportsStrictTools",
+    "supportsToolReferences",
+    "supportsMidConvoSystemMessages"
+  ];
+  const enums = {
+    maxTokensField: ["max_completion_tokens", "max_tokens"],
+    thinkingFormat: [
+      "openai",
+      "openrouter",
+      "together",
+      "baseten",
+      "deepseek",
+      "zai",
+      "qwen",
+      "chat-template",
+      "qwen-chat-template",
+      "string-thinking",
+      "ant-ling"
+    ],
+    cacheControlFormat: ["anthropic"],
+    deferredToolsMode: ["kimi"],
+    sessionAffinityFormat: ["openai", "openai-nosession", "openrouter"]
+  };
+  keys2(config, [
+    ...booleans,
+    ...Object.keys(enums),
+    "chatTemplateKwargs",
+    "chatTemplateArgs",
+    "openRouterRouting",
+    "vercelGatewayRouting"
+  ]);
+  for (const key of booleans)
+    if (config[key] !== undefined && typeof config[key] !== "boolean")
+      refuse();
+  for (const [key, values] of Object.entries(enums))
+    if (config[key] !== undefined && !values.includes(config[key]))
+      refuse();
+  for (const key of ["chatTemplateKwargs", "chatTemplateArgs"]) {
+    if (config[key] === undefined)
+      continue;
+    for (const entry of Object.values(data(config[key]))) {
+      if (entry === null || ["string", "boolean", "number"].includes(typeof entry))
+        continue;
+      const variable = data(entry);
+      keys2(variable, ["$var", "omitWhenOff"]);
+      if (!["thinking.enabled", "thinking.effort"].includes(variable.$var) || variable.omitWhenOff !== undefined && typeof variable.omitWhenOff !== "boolean")
+        refuse();
+    }
+  }
+  const stringArray = (value2) => {
+    if (value2 !== undefined && (!Array.isArray(value2) || value2.some((v) => typeof v !== "string")))
+      refuse();
+  };
+  if (config.vercelGatewayRouting !== undefined) {
+    const routing = data(config.vercelGatewayRouting);
+    keys2(routing, ["only", "order"]);
+    for (const value2 of Object.values(routing))
+      stringArray(value2);
+  }
+  if (config.openRouterRouting !== undefined) {
+    const routing = data(config.openRouterRouting);
+    keys2(routing, [
+      "allow_fallbacks",
+      "require_parameters",
+      "data_collection",
+      "zdr",
+      "enforce_distillable_text",
+      "order",
+      "only",
+      "ignore",
+      "quantizations",
+      "sort",
+      "max_price",
+      "preferred_min_throughput",
+      "preferred_max_latency"
+    ]);
+    for (const key of [
+      "allow_fallbacks",
+      "require_parameters",
+      "zdr",
+      "enforce_distillable_text"
+    ])
+      if (routing[key] !== undefined && typeof routing[key] !== "boolean")
+        refuse();
+    if (routing.data_collection !== undefined && !["deny", "allow"].includes(routing.data_collection))
+      refuse();
+    for (const key of ["order", "only", "ignore", "quantizations"])
+      stringArray(routing[key]);
+    if (routing.sort !== undefined && typeof routing.sort !== "string") {
+      const sort = data(routing.sort);
+      keys2(sort, ["by", "partition"]);
+      if (sort.by !== undefined && typeof sort.by !== "string" || sort.partition !== undefined && sort.partition !== null && typeof sort.partition !== "string")
+        refuse();
+    }
+    if (routing.max_price !== undefined) {
+      const price = data(routing.max_price);
+      keys2(price, ["prompt", "completion", "image", "audio", "request"]);
+      for (const value2 of Object.values(price))
+        if (typeof value2 !== "number" && typeof value2 !== "string")
+          refuse();
+    }
+    for (const key of ["preferred_min_throughput", "preferred_max_latency"]) {
+      if (routing[key] === undefined || typeof routing[key] === "number")
+        continue;
+      const cutoffs = data(routing[key]);
+      keys2(cutoffs, ["p50", "p75", "p90", "p99"]);
+      for (const value2 of Object.values(cutoffs))
+        if (typeof value2 !== "number")
+          refuse();
+    }
+  }
+}
+function modelDefinition(value, override = false) {
+  const model = data(value);
+  keys2(model, override ? modelKeys.filter((k) => !["id", "api", "baseUrl"].includes(k)) : modelKeys);
+  if (!override)
+    string(model.id);
+  if (model.headers !== undefined)
+    headers(model.headers);
+  if (model.thinkingLevelMap !== undefined)
+    keys2(data(model.thinkingLevelMap), [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]);
+  if (model.cost !== undefined) {
+    const cost = data(model.cost);
+    keys2(cost, ["input", "output", "cacheRead", "cacheWrite", "tiers"]);
+    if (cost.tiers !== undefined) {
+      if (!Array.isArray(cost.tiers) || cost.tiers.length > ENTRY_LIMIT)
+        refuse();
+      for (const tier of cost.tiers)
+        keys2(data(tier), [
+          "inputTokensAbove",
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite"
+        ]);
+    }
+  }
+  if (model.compat !== undefined)
+    compat(model.compat);
+}
+function modelJson(snapshot) {
+  const input = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+  let stripped = "";
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0;i < input.length; i++) {
+    const char = input[i];
+    if (!quoted && char === "/" && input[i + 1] === "/") {
+      while (i < input.length && input[i] !== `
+`)
+        i++;
+      stripped += `
+`;
+      continue;
+    }
+    stripped += char;
+    if (quoted) {
+      if (escaped)
+        escaped = false;
+      else if (char === "\\")
+        escaped = true;
+      else if (char === '"')
+        quoted = false;
+    } else if (char === '"')
+      quoted = true;
+  }
+  let normalized = "";
+  quoted = false;
+  escaped = false;
+  for (let i = 0;i < stripped.length; i++) {
+    const char = stripped[i];
+    if (!quoted && char === ",") {
+      let next = i + 1;
+      while (/\s/.test(stripped[next] ?? "") && next < stripped.length)
+        next++;
+      if (stripped[next] === "}" || stripped[next] === "]")
+        continue;
+    }
+    normalized += char;
+    if (quoted) {
+      if (escaped)
+        escaped = false;
+      else if (char === "\\")
+        escaped = true;
+      else if (char === '"')
+        quoted = false;
+    } else if (char === '"')
+      quoted = true;
+  }
+  return parseWireJson(normalized, CONFIG_BYTES2);
+}
+function readPiSnapshot(source) {
+  const { auth, credentials } = readPiAuth(source);
+  const { models, providers } = readPiModels(source);
+  return { auth, models, credentials, providers };
+}
+function readPiAuth(source) {
+  const auth = source.files.read(source.authPath, CONFIG_BYTES2);
+  if (!auth)
+    refuse();
+  const credentials = Object.create(null);
+  for (const [provider, input] of Object.entries(data(json(auth, CONFIG_BYTES2)))) {
+    const credential = data(input);
+    if (credential.type === "api_key") {
+      keys2(credential, ["type", "key", "env"]);
+      if (credential.key !== undefined)
+        templateNames(credential.key);
+      if (credential.env !== undefined)
+        environment(credential.env);
+    } else if (credential.type === "oauth") {
+      string(credential.access);
+      string(credential.refresh);
+      if (typeof credential.expires !== "number" || !Number.isFinite(credential.expires))
+        refuse();
+      if (credential.env !== undefined)
+        environment(credential.env);
+    } else
+      refuse();
+    credentials[provider] = credential;
+  }
+  return { auth, credentials };
+}
+function readPiModels(source) {
+  const models = source.files.read(source.modelsPath, CONFIG_BYTES2);
+  const providers = Object.create(null);
+  if (models) {
+    const root = data(modelJson(models));
+    keys2(root, ["providers", "$schema"]);
+    for (const [id, value] of Object.entries(data(root.providers))) {
+      const provider = data(value);
+      keys2(provider, [
+        "name",
+        "baseUrl",
+        "apiKey",
+        "api",
+        "oauth",
+        "headers",
+        "compat",
+        "authHeader",
+        "models",
+        "modelOverrides"
+      ]);
+      if (provider.apiKey !== undefined)
+        templateNames(provider.apiKey);
+      if (provider.headers !== undefined)
+        headers(provider.headers);
+      if (provider.compat !== undefined)
+        compat(provider.compat);
+      if (provider.models !== undefined) {
+        if (!Array.isArray(provider.models) || provider.models.length > ENTRY_LIMIT)
+          refuse();
+        const ids = new Set;
+        for (const model of provider.models) {
+          modelDefinition(model);
+          const id2 = data(model).id;
+          if (ids.has(id2))
+            refuse();
+          ids.add(id2);
+        }
+      }
+      if (provider.modelOverrides !== undefined)
+        for (const model of Object.values(data(provider.modelOverrides)))
+          modelDefinition(model, true);
+      providers[id] = provider;
+    }
+  }
+  return { models, providers };
+}
+function sourceIdentity(snapshot, provider) {
+  const credential = snapshot.credentials[provider];
+  if (credential?.type === "oauth") {
+    const { access: _a, refresh: _r, expires: _e, ...identity } = credential;
+    return stablePrivate(identity);
+  }
+  return stablePrivate(credential ?? null);
+}
+function selectedEnvironment(snapshot, provider, model, launch) {
+  const credential = snapshot.credentials[provider];
+  const scoped = credential?.env === undefined ? {} : environment(credential.env);
+  const config = snapshot.providers[provider];
+  const values = [];
+  if (credential?.type === "api_key" && credential.key !== undefined)
+    values.push(credential.key);
+  if (config?.apiKey !== undefined)
+    values.push(config.apiKey);
+  if (config?.headers)
+    values.push(...Object.values(data(config.headers)));
+  const definition = Array.isArray(config?.models) ? config.models.find((m) => data(m).id === model) : undefined;
+  const override = config?.modelOverrides ? data(config.modelOverrides)[model] : undefined;
+  for (const entry of [definition, override])
+    if (entry && data(entry).headers)
+      values.push(...Object.values(data(data(entry).headers)));
+  const env = { ...scoped };
+  for (const value of values) {
+    if (value === "")
+      continue;
+    for (const name of templateNames(value)) {
+      if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+        throw new ContractError("unsupported-context");
+      const selected2 = scoped[name] || launch[name];
+      if (!selected2)
+        throw new ContractError("auth-unavailable");
+      env[name] = selected2;
+    }
+  }
+  return env;
+}
+function sameModels(a, b) {
+  return a.models?.identity === b.models?.identity && a.models?.stamp === b.models?.stamp;
+}
+function stablePrivate(value) {
+  const sorted = (v) => {
+    if (Array.isArray(v))
+      return v.map(sorted);
+    if (v && typeof v === "object")
+      return Object.fromEntries(Object.entries(data(v)).sort(([a], [b]) => a.localeCompare(b)).map(([k, entry]) => [k, sorted(entry)]));
+    return v;
+  };
+  return JSON.stringify(sorted(value));
+}
+function clonePrivate(value) {
+  let count = 0;
+  const visit = (v, depth) => {
+    if (++count > 16384 || depth > 32)
+      throw new ContractError("oversize");
+    if (v === undefined || v === null || typeof v === "boolean" || typeof v === "string")
+      return v;
+    if (typeof v === "number" && Number.isFinite(v))
+      return v;
+    if (Array.isArray(v)) {
+      if (v.length > 16384 || Reflect.ownKeys(v).length !== v.length + 1)
+        refuse();
+      const out2 = [];
+      for (let i = 0;i < v.length; i++) {
+        const d = Object.getOwnPropertyDescriptor(v, String(i));
+        if (!d || !("value" in d))
+          refuse();
+        out2.push(visit(d.value, depth + 1));
+      }
+      return out2;
+    }
+    const out = Object.create(null);
+    for (const [k, entry] of Object.entries(data(v)))
+      out[k] = visit(entry, depth + 1);
+    return out;
+  };
+  const encoded2 = JSON.stringify(visit(value, 0));
+  if (Buffer.byteLength(encoded2) > CONFIG_BYTES2)
+    throw new ContractError("oversize");
+  return parseWireJson(encoded2, CONFIG_BYTES2);
+}
+function snapshotLiterals(snapshot, launch, routes = []) {
+  const strings = (v, visit) => {
+    if (typeof v === "string") {
+      if (v)
+        visit(v);
+    } else if (v && typeof v === "object") {
+      for (const key of Object.keys(v))
+        strings(v[key], visit);
+    }
+  };
+  const literals = new Set;
+  let literalBytes = 0;
+  const add = (value) => {
+    if (literals.has(value))
+      return;
+    const size2 = Buffer.byteLength(value);
+    if (literalBytes + size2 > LIMITS.workerRequestBytes * 2)
+      throw new ContractError("oversize");
+    literalBytes += size2;
+    literals.add(value);
+  };
+  for (const route of routes)
+    add(route);
+  const templates = (value, provider) => {
+    const scoped = environment(snapshot.credentials[provider]?.env ?? {});
+    strings(value, (literal2) => {
+      add(literal2);
+      for (const name of templateNames(literal2)) {
+        const resolved = scoped[name] || launch[name];
+        if (resolved)
+          add(resolved);
+      }
+    });
+  };
+  for (const [provider, credential] of Object.entries(snapshot.credentials)) {
+    strings(credential.type === "api_key" ? credential.key : credential.access, add);
+    strings(credential.type === "oauth" ? credential.refresh : null, add);
+    strings(credential.env, add);
+    if (credential.type === "api_key")
+      templates(credential.key, provider);
+  }
+  for (const [provider, config] of Object.entries(snapshot.providers)) {
+    templates(config.apiKey, provider);
+    templates(config.headers, provider);
+    for (const model of Array.isArray(config.models) ? config.models : [])
+      templates(data(model).headers, provider);
+    if (config.modelOverrides)
+      for (const model of Object.values(data(config.modelOverrides)))
+        templates(data(model).headers, provider);
+  }
+  for (const [key, value] of Object.entries(launch))
+    if (/(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key) && value)
+      add(value);
+  return [...literals];
+}
+
 // src/service/gateway-conversations.ts
 var READERS2 = 16;
 function retainedConversationRead(request2) {
@@ -11773,7 +13063,8 @@ function retainedConversationRead(request2) {
     "conversation-turn",
     "conversation-step",
     "cadence-conversation",
-    "conversation-context"
+    "conversation-context",
+    "conversation-tree"
   ].includes(request2.kind);
 }
 function unpreparedDirectory(c, project) {
@@ -11782,9 +13073,13 @@ function unpreparedDirectory(c, project) {
 
 class GatewayConversations {
   stateHome;
+  agentDir;
+  secrets;
   views = new Map;
-  constructor(stateHome) {
+  constructor(stateHome, agentDir, secrets = () => []) {
     this.stateHome = stateHome;
+    this.agentDir = agentDir;
+    this.secrets = secrets;
   }
   forget(id) {
     const view = this.views.get(id);
@@ -11802,53 +13097,52 @@ class GatewayConversations {
     if (c.store.root !== project.path)
       throw new ContractError("stale");
     const status = c.inspect().status;
-    if (unpreparedDirectory(c, project)) {
-      this.forget(project.id);
-      switch (request2.kind) {
-        case "conversation-context":
-          return {
-            kind: request2.kind,
-            context: new ConversationContextRecords(c).read(request2.location).context
-          };
-        case "conversations":
-          if (request2.scan || request2.after)
-            throw new ContractError("stale");
-          return { kind: "conversations", entries: [], next: null };
-        case "conversation":
-          return { kind: "conversation", summary: null, turns: 0 };
-        case "cadence-conversation":
-          return {
-            kind: request2.kind,
-            state: freshCadenceConversation(request2.id)
-          };
-        default:
-          throw new ContractError("stale");
-      }
-    }
-    if (status !== "stopped") {
+    const fresh = unpreparedDirectory(c, project);
+    if (!fresh && status !== "stopped") {
       this.forget(project.id);
       return;
     }
     const registration2 = c.files.read(c.path("registration.json"));
     const selected2 = c.files.read(c.path("host-config.json"));
-    const config = readHostConfig(c);
-    if (!registration2 || !selected2 || !config)
+    const config = fresh ? null : readHostConfig(c);
+    if (!fresh && (!registration2 || !selected2 || !config))
       throw new ContractError("corrupt-selected");
-    const key = `${registration2.stamp}:${selected2.stamp}`;
+    const agentDir = config?.agentDir ?? this.agentDir;
+    if (!agentDir)
+      throw new ContractError("unavailable");
+    const key = `${registration2?.stamp ?? "new"}:${selected2?.stamp ?? "new"}:${project.cwd}`;
     let view = this.views.get(project.id);
     if (view?.key !== key) {
       this.forget(project.id);
       const assertCurrent = () => {
         c.files.assert(c.path("registration.json"), registration2);
         c.files.assert(c.path("host-config.json"), selected2);
-        if (c.inspect().status !== "stopped")
+        if (fresh ? !unpreparedDirectory(c, project) : c.inspect().status !== "stopped")
           throw new ContractError("stale");
+      };
+      const readSecrets = () => {
+        const environment2 = captureEnvironment(process.env);
+        const snapshot = readPiSnapshot(piSource(agentDir, homedir6(), c.store.root, environment2));
+        let access = [];
+        if (config) {
+          const source = config.tokenSource === "file" && config.tokenFile ? { tokenFile: config.tokenFile } : config.tokenSource === "config" && config.tokenFile ? {
+            serverConfig: config.tokenFile,
+            token: readServerConfig(config.tokenFile).config.token
+          } : config.tokenSource === "environment" && process.env.CADENCE_TOKEN ? { environment: process.env.CADENCE_TOKEN } : {};
+          access = new AccessMaterial(c.files, c.directory, source).redactionLiterals();
+        }
+        return [
+          ...this.secrets(),
+          ...access,
+          ...snapshotLiterals(snapshot, environment2)
+        ];
       };
       assertCurrent();
       const records = new ConversationRecords({
-        directory: c.directory,
-        files: c.files,
-        cwd: c.store.root,
+        coordination: c,
+        cwd: project.cwd,
+        agentDir,
+        secrets: readSecrets,
         assertCurrent
       });
       view = {
@@ -11872,11 +13166,11 @@ class GatewayConversations {
       case "conversation-context":
         result = {
           kind: request2.kind,
-          context: new ConversationContextRecords(c).read(request2.location).context
+          context: new ConversationContextRecords(c, view.records.sessions).read(request2.location).context
         };
         break;
       case "conversations": {
-        result = view.records.list(request2.after ?? null, request2.scan);
+        result = view.records.list(request2.after ?? null);
         if (result.kind === "conversations")
           result = {
             ...result,
@@ -11888,13 +13182,16 @@ class GatewayConversations {
         break;
       }
       case "conversation":
-        result = view.records.conversation(request2.id);
+        result = view.records.conversation(request2.id, request2.leaf, request2.known);
         break;
       case "conversation-turn":
-        result = view.records.turnSteps(request2.id, request2.ordinal, request2.before);
+        result = view.records.turnSteps(request2.id, request2.leaf, request2.ordinal, request2.before);
         break;
       case "conversation-step":
-        result = view.records.step(request2.id, request2.turnId, request2.step, request2.part);
+        result = view.records.step(request2.id, request2.leaf, request2.turnId, request2.step, request2.part);
+        break;
+      case "conversation-tree":
+        result = view.records.tree(request2.id, request2.leaf);
         break;
       case "cadence-conversation":
         result = { kind: request2.kind, state: view.controls.state(request2.id) };
@@ -11908,7 +13205,7 @@ class GatewayConversations {
 }
 
 // src/service/http.ts
-import { createHash as createHash10, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash11, randomUUID as randomUUID10 } from "node:crypto";
 import {
   createServer
 } from "node:http";
@@ -11997,7 +13294,7 @@ class ServiceHttpServer {
       this.assets.set(asset.path, {
         ...asset,
         bytes: Uint8Array.from(asset.bytes),
-        etag: `"${createHash10("sha256").update(asset.bytes).digest("hex")}"`
+        etag: `"${createHash11("sha256").update(asset.bytes).digest("hex")}"`
       });
     }
     this.server = createServer({
@@ -12086,14 +13383,14 @@ Content-Length: 0\r
   async listen() {
     if (this.origin || this.stopped)
       throw new ContractError("conflict");
-    await new Promise((resolve10, reject) => {
+    await new Promise((resolve11, reject) => {
       const failed = () => {
         this.server.off("listening", ready);
         reject(new ContractError("unavailable"));
       };
       const ready = () => {
         this.server.off("error", failed);
-        resolve10();
+        resolve11();
       };
       this.server.once("error", failed);
       this.server.once("listening", ready);
@@ -12123,13 +13420,13 @@ Content-Length: 0\r
   close() {
     if (this.closePromise)
       return this.closePromise;
-    let resolve10;
+    let resolve11;
     let reject;
     this.closePromise = new Promise((yes, no) => {
-      resolve10 = yes;
+      resolve11 = yes;
       reject = no;
     });
-    this.closeTransport().then(resolve10, () => reject(new ContractError("unavailable")));
+    this.closeTransport().then(resolve11, () => reject(new ContractError("unavailable")));
     return this.closePromise;
   }
   async closeTransport() {
@@ -12141,18 +13438,18 @@ Content-Length: 0\r
       request2.abort();
     for (const attachment of [...this.attachments.values()])
       this.detach(attachment);
-    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve10) => {
+    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve11) => {
       if (socket.closed)
-        resolve10();
+        resolve11();
       else {
-        socket.once("close", () => resolve10());
+        socket.once("close", () => resolve11());
         socket.destroy();
       }
     }));
-    const listener = new Promise((resolve10, reject) => {
-      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve10());
+    const listener = new Promise((resolve11, reject) => {
+      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve11());
     });
-    const upgrades = new Promise((resolve10) => this.wss.close(() => resolve10()));
+    const upgrades = new Promise((resolve11) => this.wss.close(() => resolve11()));
     await Promise.all([listener, upgrades, ...closedSockets]);
   }
   attachment(caller) {
@@ -12257,7 +13554,7 @@ Content-Length: 0\r
       if (!this.accepting)
         unavailable();
       const route = readRoute(target, req.method ?? "");
-      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID11();
+      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID10();
       const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32)
@@ -12372,7 +13669,7 @@ Content-Length: 0\r
     ].includes(operation ?? ""))
       throw new ContractError("invalid");
     const write2 = operation !== "status" && operation !== "diagnose";
-    const caller = this.options.auth.authenticate(boundary, randomUUID11(), write2);
+    const caller = this.options.auth.authenticate(boundary, randomUUID10(), write2);
     if (caller.authority !== "local")
       throw new ContractError("forbidden");
     if (req.method !== (write2 ? "POST" : "GET"))
@@ -12554,16 +13851,16 @@ Content-Length: 0\r
       res.setHeader("Content-Type", operation === "download" && request2.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request2.format === "markdown" ? "md" : "ndjson"}"`);
       let trailer;
-      const digest = createHash10("sha256");
+      const digest = createHash11("sha256");
       const write2 = async (frame) => {
-        const data = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
+        const data2 = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
 `);
-        for (let offset = 0;offset < data.length; offset += LIMITS.detailPageBytes) {
+        for (let offset = 0;offset < data2.length; offset += LIMITS.detailPageBytes) {
           this.options.auth.current(caller);
           if (signal.aborted || res.destroyed)
             unavailable();
-          const chunk = data.subarray(offset, offset + LIMITS.detailPageBytes);
-          await new Promise((resolve10, reject) => {
+          const chunk = data2.subarray(offset, offset + LIMITS.detailPageBytes);
+          await new Promise((resolve11, reject) => {
             const stop = () => {
               res.destroy();
               reject(new ContractError("unavailable"));
@@ -12571,7 +13868,7 @@ Content-Length: 0\r
             signal.addEventListener("abort", stop, { once: true });
             res.write(chunk, (error) => {
               signal.removeEventListener("abort", stop);
-              error ? reject(new ContractError("unavailable")) : resolve10();
+              error ? reject(new ContractError("unavailable")) : resolve11();
             });
           });
           activity2();
@@ -12619,12 +13916,12 @@ Content-Length: 0\r
     this.viewers.add(viewer);
     socket.on("error", () => this.closeViewer(viewer));
     socket.on("close", () => this.closeViewer(viewer));
-    socket.on("message", (data, binary) => {
+    socket.on("message", (data2, binary) => {
       try {
         this.attachment(attachment.caller);
-        if (binary || Array.isArray(data))
+        if (binary || Array.isArray(data2))
           throw new ContractError("invalid");
-        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+        const bytes = data2 instanceof ArrayBuffer ? new Uint8Array(data2) : data2;
         if (bytes.byteLength > LIMITS.wsClientFrameBytes)
           throw new ContractError("oversize");
         const command = decodeSocketInput(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), LIMITS.wsClientFrameBytes));
@@ -12657,12 +13954,12 @@ Content-Length: 0\r
   sendViewer(viewer, output) {
     try {
       this.attachment(viewer.attachment.caller);
-      const data = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data);
+      const data2 = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data2);
       if (viewer.closed || viewer.sentMessages + viewer.pending.length >= LIMITS.viewerMessages || viewer.sentBytes + viewer.bytes + bytes > LIMITS.viewerBytes || viewer.socket.bufferedAmount > LIMITS.viewerBytes)
         throw new ContractError("capacity");
       viewer.sentMessages++;
       viewer.sentBytes += bytes;
-      viewer.socket.send(data, (error) => {
+      viewer.socket.send(data2, (error) => {
         viewer.sentMessages--;
         viewer.sentBytes -= bytes;
         if (error)
@@ -12792,20 +14089,20 @@ Content-Length: 0\r
 
 // src/service/workbench-files.ts
 import {
-  closeSync as closeSync6,
-  constants as constants6,
-  fstatSync as fstatSync5,
-  lstatSync as lstatSync13,
-  opendirSync as opendirSync7,
-  openSync as openSync6,
-  readSync as readSync4,
-  realpathSync as realpathSync7
+  closeSync as closeSync7,
+  constants as constants7,
+  fstatSync as fstatSync6,
+  lstatSync as lstatSync14,
+  opendirSync as opendirSync6,
+  openSync as openSync7,
+  readSync as readSync5,
+  realpathSync as realpathSync9
 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { dirname as dirname15, isAbsolute as isAbsolute7, join as join21, relative as relative5, resolve as resolve10, sep as sep5 } from "node:path";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname16, isAbsolute as isAbsolute9, join as join23, relative as relative5, resolve as resolve11, sep as sep5 } from "node:path";
 function inside(root, path) {
   const r = relative5(root, path);
-  return r === "" || !isAbsolute7(r) && r !== ".." && !r.startsWith(`..${sep5}`);
+  return r === "" || !isAbsolute9(r) && r !== ".." && !r.startsWith(`..${sep5}`);
 }
 var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
 
@@ -12815,39 +14112,39 @@ class WorkbenchFiles {
   excluded;
   constructor(root, excluded, secrets) {
     this.secrets = secrets;
-    this.root = realpathSync7(root);
+    this.root = realpathSync9(root);
     this.excluded = excluded.flatMap((path) => [
-      resolve10(path),
+      resolve11(path),
       canonicalAmbientRoot(path)
     ]);
   }
   allowed(path) {
     if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
       throw new ContractError("forbidden");
-    const stat = lstatSync13(path);
+    const stat = lstatSync14(path);
     if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
       throw new ContractError("forbidden");
   }
   directory(path) {
-    if (!isAbsolute7(path) || !safeDirectory(path))
+    if (!isAbsolute9(path) || !safeDirectory(path))
       throw new ContractError("invalid");
-    const canonical = realpathSync7(path);
+    const canonical = realpathSync9(path);
     this.allowed(canonical);
     return canonical;
   }
   selected(path) {
-    if (isAbsolute7(path) || path.split(/[\\/]/).some((part2) => part2 === ".." || sensitive2(part2)))
+    if (isAbsolute9(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
       throw new ContractError("forbidden");
-    const target = resolve10(this.root, path);
-    if (!inside(this.root, target) || !safeDirectory(dirname15(target)))
+    const target = resolve11(this.root, path);
+    if (!inside(this.root, target) || !safeDirectory(dirname16(target)))
       throw new ContractError("forbidden");
     this.allowed(target);
-    if (lstatSync13(target).isSymbolicLink())
+    if (lstatSync14(target).isSymbolicLink())
       throw new ContractError("forbidden");
     return target;
   }
   browsed(path) {
-    const full = /^~(?:[\\/]|$)/.test(path) ? join21(homedir5(), path.slice(1)) : path || this.root;
+    const full = /^~(?:[\\/]|$)/.test(path) ? join23(homedir7(), path.slice(1)) : path || this.root;
     try {
       return this.directory(full);
     } catch (error) {
@@ -12860,7 +14157,7 @@ class WorkbenchFiles {
     const selected2 = directories ? this.browsed(path) : this.selected(path);
     if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
       throw new ContractError("forbidden");
-    const entries2 = [], dir = opendirSync7(selected2);
+    const entries2 = [], dir = opendirSync6(selected2);
     let limited = false, scanned = 0;
     try {
       for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -12870,7 +14167,7 @@ class WorkbenchFiles {
         }
         if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
           continue;
-        const absolute2 = join21(selected2, entry.name);
+        const absolute2 = join23(selected2, entry.name);
         try {
           this.allowed(absolute2);
         } catch {
@@ -12893,7 +14190,7 @@ class WorkbenchFiles {
       dir.closeSync();
     }
     entries2.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
-    const parent = dirname15(selected2);
+    const parent = dirname16(selected2);
     return {
       kind: directories ? "directories" : "files",
       path: directories ? selected2 : path,
@@ -12903,23 +14200,23 @@ class WorkbenchFiles {
     };
   }
   read(path) {
-    const selected2 = this.selected(path), before = lstatSync13(selected2);
+    const selected2 = this.selected(path), before = lstatSync14(selected2);
     if (!before.isFile())
       throw new ContractError("forbidden");
-    const fd = openSync6(selected2, constants6.O_RDONLY | (constants6.O_NOFOLLOW ?? 0));
+    const fd = openSync7(selected2, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
     try {
-      const opened = fstatSync5(fd);
+      const opened = fstatSync6(fd);
       if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
         throw new ContractError("stale");
       const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
       let at = 0;
       while (at < buffer.length) {
-        const n = readSync4(fd, buffer, at, buffer.length - at, at);
+        const n = readSync5(fd, buffer, at, buffer.length - at, at);
         if (!n)
           break;
         at += n;
       }
-      const after = fstatSync5(fd), current = lstatSync13(selected2);
+      const after = fstatSync6(fd), current = lstatSync14(selected2);
       if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
         throw new ContractError("stale");
       const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
@@ -12932,7 +14229,7 @@ class WorkbenchFiles {
         limited: at < opened.size
       };
     } finally {
-      closeSync6(fd);
+      closeSync7(fd);
     }
   }
 }
@@ -12958,7 +14255,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "932562f5483a98178abf9cf92a5d813186132d4c771b6aba3892e7e00eedbf53",
+    contractHash: "641cf7f91bc6f38839e9bb82e9db67d733ab0cded0a2eee0deb0d1ec29539ae1",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -12980,7 +14277,7 @@ async function createGateway(value, hostUrl, source) {
   const retirements = new Set;
   const attachments = new Map;
   const bindings = new Map;
-  const conversations = new GatewayConversations(input.stateHome);
+  const conversations = new GatewayConversations(input.stateHome, input.agentDir, () => acquired.access.redactionLiterals());
   const wss = new WebSocketServer2({
     noServer: true,
     clientTracking: false,
@@ -13011,11 +14308,11 @@ Content-Length: 0\r
 \r
 `));
   server.on("checkContinue", (_req, res) => reply(res, 400, { kind: "error", error: publicError("invalid") }));
-  await new Promise((resolve11, reject) => {
+  await new Promise((resolve12, reject) => {
     server.once("error", reject);
     server.listen(input.policy.port, input.policy.host, () => {
       server.off("error", reject);
-      resolve11();
+      resolve12();
     });
   });
   const address = server.address();
@@ -13069,13 +14366,13 @@ Content-Length: 0\r
     server.close();
     throw error;
   }
-  const files = new WorkbenchFiles(homedir6(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
+  const files = new WorkbenchFiles(homedir8(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
   const assert = () => {
     store.assert();
     if (!accepting)
       throw new ContractError("quarantine");
   };
-  const root = dirname16(dirname16(fileURLToPath3(hostUrl))), version = installedVersion(root), record2 = new MaintenanceRecord(store);
+  const root = dirname17(dirname17(fileURLToPath3(hostUrl))), version = installedVersion(root), record2 = new MaintenanceRecord(store);
   const managed = (() => {
     const s = supervisingUnit(process.env, (selection) => hostSystem(root, ownerControl, selection));
     return s && serviceConfigPath(s) === input.serverConfig ? s : undefined;
@@ -13130,7 +14427,7 @@ Content-Length: 0\r
       current();
       assert();
       const job2 = {
-        id: randomUUID12(),
+        id: randomUUID11(),
         action,
         from: version,
         to,
@@ -13237,7 +14534,7 @@ Content-Length: 0\r
       throw new ContractError("capacity");
     const commands = store.path("commands");
     if (store.files.directory(commands)) {
-      const dir = opendirSync8(commands);
+      const dir = opendirSync7(commands);
       let count = 0;
       try {
         while (dir.readSync())
@@ -13294,14 +14591,14 @@ Content-Length: 0\r
       const secret = link.searchParams.get("token");
       if (!secret)
         throw new ContractError("unavailable");
-      const cookie = await new Promise((resolve11, reject) => {
+      const cookie = await new Promise((resolve12, reject) => {
         const req = request2(`${local.endpoint}/?token=${encodeURIComponent(secret)}`, { agent: false }, (res) => {
           const cookie2 = res.headers["set-cookie"];
           res.resume();
           if (res.statusCode !== 303 || cookie2?.length !== 1)
             reject(new ContractError("unavailable"));
           else
-            resolve11(cookie2[0].split(";")[0]);
+            resolve12(cookie2[0].split(";")[0]);
         });
         req.setTimeout(2000, () => req.destroy(new Error));
         req.on("error", () => reject(new ContractError("unavailable")));
@@ -13413,7 +14710,7 @@ Content-Length: 0\r
         return;
       }
       if (raw.startsWith("/local/v1/admin/")) {
-        const caller2 = auth.authenticate(boundary, randomUUID12(), req.method === "POST");
+        const caller2 = auth.authenticate(boundary, randomUUID11(), req.method === "POST");
         if (caller2.authority !== "local")
           throw new ContractError("forbidden");
         const operation = raw.slice("/local/v1/admin/".length);
@@ -13466,7 +14763,7 @@ Content-Length: 0\r
       if (boundary.headers.has("x-cadence-local"))
         throw new ContractError("forbidden");
       const project = target(raw);
-      const caller = auth.authenticate(boundary, randomUUID12(), !project && req.method === "POST");
+      const caller = auth.authenticate(boundary, randomUUID11(), !project && req.method === "POST");
       if (project) {
         const route2 = readRoute(project.tail, req.method ?? "");
         if (!route2)
@@ -13529,7 +14826,7 @@ Content-Length: 0\r
           });
           return;
         }
-        const headers = {
+        const headers2 = {
           Cookie: b.cookie,
           Origin: b.endpoint
         };
@@ -13543,12 +14840,12 @@ Content-Length: 0\r
         ]) {
           const value2 = boundary.headers.get(key);
           if (value2 !== undefined)
-            headers[key] = value2;
+            headers2[key] = value2;
         }
         if (commandBody !== undefined)
-          headers["content-length"] = String(Buffer.byteLength(commandBody));
-        await new Promise((resolve11) => {
-          const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers, agent: false }, (incoming) => {
+          headers2["content-length"] = String(Buffer.byteLength(commandBody));
+        await new Promise((resolve12) => {
+          const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers: headers2, agent: false }, (incoming) => {
             try {
               auth.current(caller);
             } catch {
@@ -13585,7 +14882,7 @@ Content-Length: 0\r
             relays.delete(close);
             res.off("close", close);
             res.off("finish", done);
-            resolve11();
+            resolve12();
           }
           function close() {
             upstream.destroy();
@@ -13637,7 +14934,7 @@ Content-Length: 0\r
           kind: "workbench",
           epoch: auth.epoch,
           csrf: auth.csrf,
-          home: homedir6(),
+          home: homedir8(),
           projects: store.projects(),
           recoveries: new RecoveryLog(store.files).notices(),
           build: build2
@@ -13721,7 +15018,7 @@ Content-Length: 0\r
         assertRequestTarget(raw);
         if (boundary.headers.has("x-cadence-local"))
           throw new ContractError("forbidden");
-        const caller = auth.authenticate(boundary, randomUUID12(), false, true), t = target(raw);
+        const caller = auth.authenticate(boundary, randomUUID11(), false, true), t = target(raw);
         if (req.method !== "GET" || !t)
           throw new ContractError("invalid");
         const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
@@ -13757,18 +15054,18 @@ Content-Length: 0\r
             return;
           }
           wss.handleUpgrade(req, socket, head, (client) => {
-            const forward = (to, data, binary) => {
+            const forward = (to, data2, binary) => {
               try {
                 auth.current(caller);
                 if (to.bufferedAmount > LIMITS.controlBytes)
                   throw new Error;
-                to.send(data, { binary });
+                to.send(data2, { binary });
               } catch {
                 abort();
               }
             };
-            client.on("message", (data, binary) => forward(upstream, data, binary));
-            upstream.on("message", (data, binary) => forward(client, data, binary));
+            client.on("message", (data2, binary) => forward(upstream, data2, binary));
+            upstream.on("message", (data2, binary) => forward(client, data2, binary));
             client.on("error", abort);
             client.on("close", abort);
           });
@@ -13787,12 +15084,12 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn5 } from "node:child_process";
-import { lstatSync as lstatSync22, opendirSync as opendirSync15 } from "node:fs";
-import { join as join37 } from "node:path";
+import { lstatSync as lstatSync22, opendirSync as opendirSync13 } from "node:fs";
+import { join as join38 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/agent-registry.ts
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var AGENT_FILES = [
   "design-explorer.md",
@@ -13802,16 +15099,16 @@ var AGENT_FILES = [
 function loadAgentDefinitions() {
   return AGENT_FILES.map((fileName) => {
     const path = fileURLToPath4(new URL(`../agents/${fileName}`, import.meta.url));
-    const data = readBounded(path, 32768, true);
-    if (!data)
+    const data2 = readBounded(path, 32768, true);
+    if (!data2)
       throw new Error("Missing package Agent");
     return {
       role: fileName.replace(/\.md$/, ""),
       fileName,
       path,
-      sha256: createHash11("sha256").update(data).digest("hex"),
-      bytes: data.length,
-      content: data.toString("utf8")
+      sha256: createHash12("sha256").update(data2).digest("hex"),
+      bytes: data2.length,
+      content: data2.toString("utf8")
     };
   });
 }
@@ -14064,13 +15361,13 @@ class HistoryLive {
 }
 
 // src/history/navigation.ts
-import { createHash as createHash12 } from "node:crypto";
-import { lstatSync as lstatSync15 } from "node:fs";
-import { dirname as dirname17, join as join23 } from "node:path";
+import { createHash as createHash13 } from "node:crypto";
+import { lstatSync as lstatSync16 } from "node:fs";
+import { dirname as dirname18, join as join25 } from "node:path";
 
 // src/history/index-tree.ts
-import { lstatSync as lstatSync14 } from "node:fs";
-import { join as join22 } from "node:path";
+import { lstatSync as lstatSync15 } from "node:fs";
+import { join as join24 } from "node:path";
 var MAX_NODE = 16 * 1024;
 var ACTIVE_KEY = "active";
 function chainHash(seq, previous, previousHash) {
@@ -14113,7 +15410,7 @@ class IndexTree {
     this.files = files;
   }
   path(id) {
-    return join22(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
+    return join24(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
   }
   load(id, budget, unit) {
     decodeHash(id);
@@ -14128,7 +15425,7 @@ class IndexTree {
       if (budget) {
         const path = this.path(id);
         budget.reserve(0);
-        const selected2 = lstatSync14(path).size;
+        const selected2 = lstatSync15(path).size;
         if (selected2 > MAX_NODE)
           throw new ContractError("receipt-inconclusive");
         bytes = readRange(this.files, path, 0, selected2, budget);
@@ -14929,7 +16226,7 @@ class HistoryNavigation {
   cacheBytes = 0;
   blocks = new Map;
   block(path, at, size2, budget) {
-    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync15(path));
+    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync16(path));
     let old = this.blocks.get(key);
     if (!old || old.budget !== budget || old.stamp !== st) {
       const bytes = readRange(this.files, path, start, Math.min(1024 * 1024, size2 - start), budget);
@@ -14955,26 +16252,26 @@ class HistoryNavigation {
     const root = state.navigationRoot ?? null, heads = new Map, updates = new Map, auth = new Map(this.authRuns), seq = rows.at(-1)?.seq;
     if (!seq)
       throw new ContractError("invalid");
-    const keys2 = new Set;
+    const keys3 = new Set;
     for (const row of rows) {
       for (const key of navigationKeys(row))
-        keys2.add(key);
+        keys3.add(key);
       if (row.value.kind === "owner") {
         for (const e of row.value.events)
           if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
-            keys2.add(`roster:${row.value.link.taskId}`);
+            keys3.add(`roster:${row.value.link.taskId}`);
       }
       if (row.value.kind === "auth-preparation")
         auth.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run2 = auth.get(row.value.result.operationId);
         if (run2)
-          keys2.add(run2);
+          keys3.add(run2);
         auth.delete(row.value.result.operationId);
       }
     }
-    const previousHeads = this.tree.heads(root, [...keys2, ACTIVE_KEY]);
-    for (const id of keys2) {
+    const previousHeads = this.tree.heads(root, [...keys3, ACTIVE_KEY]);
+    for (const id of keys3) {
       const previous = previousHeads.get(id);
       const head = {
         seq,
@@ -15007,7 +16304,7 @@ class HistoryNavigation {
     }
   }
   indexPath(group, id) {
-    return join23(this.files.directory, "indexes", group, `${id}.json`);
+    return join25(this.files.directory, "indexes", group, `${id}.json`);
   }
   hintKey(group, id) {
     return `${this.files.directory}/${this.files.format.storeId}/${group}/${id}`;
@@ -15048,11 +16345,11 @@ class HistoryNavigation {
             });
           }
         }
-    for (const [key, { id, ...part2 }] of parts) {
-      put("parts", key, { pointer: batch.pointer, ...part2 });
+    for (const [key, { id, ...part }] of parts) {
+      put("parts", key, { pointer: batch.pointer, ...part });
       const old = sourceHints.get(this.hintKey("part-heads", id))?.value;
       put("part-heads", id, {
-        count: Math.max(old?.count ?? 0, part2.part + 1)
+        count: Math.max(old?.count ?? 0, part.part + 1)
       });
     }
   }
@@ -15064,9 +16361,9 @@ class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname17(path), false, budget.walks))
+      if (!this.files.files.directory(dirname18(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
-      const size2 = lstatSync15(path).size;
+      const size2 = lstatSync16(path).size;
       if (size2 > RECORD_BYTES)
         return source ? structuredClone(source.value) : undefined;
       return parseWireJson(readRange(this.files, path, 0, size2, budget).toString("utf8"), RECORD_BYTES);
@@ -15122,7 +16419,7 @@ class HistoryNavigation {
     }
     for (const [id, count] of partHeads)
       this.write(lease, "part-heads", id, { count }, charge, true);
-    const keys2 = new Set, runKeys = new Set, rosters = new Set;
+    const keys3 = new Set, runKeys = new Set, rosters = new Set;
     for (const row of rows) {
       const v = row.value;
       if (v.kind === "admission" && v.intent.runId)
@@ -15141,19 +16438,19 @@ class HistoryNavigation {
             rosters.add(v.link.taskId);
       }
       for (const key of navigationKeys(row))
-        keys2.add(key);
+        keys3.add(key);
       if (row.value.kind === "auth-preparation")
         this.authRuns.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run2 = this.authRuns.get(row.value.result.operationId);
         if (run2) {
-          keys2.add(run2);
+          keys3.add(run2);
           runKeys.add(run2);
         }
         this.authRuns.delete(row.value.result.operationId);
       }
     }
-    for (const key of keys2) {
+    for (const key of keys3) {
       const head = prepared?.heads.get(key);
       const old = head ? undefined : this.files.files.read(this.indexPath("entities", key));
       const previous = head?.previous ?? (old ? decodeSequence(closed(parseWireJson(old.bytes.toString("utf8")), ["seq"]).seq) : null);
@@ -15198,7 +16495,7 @@ class HistoryNavigation {
   }
   batch(p, budget) {
     const key = canonicalJson(p), cached = this.cache.get(key), path = this.files.segmentPath(p.segment);
-    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync15(path))) {
+    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync16(path))) {
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
       return cached.batch;
@@ -15209,7 +16506,7 @@ class HistoryNavigation {
       if (cached.identity !== identity)
         bad2();
       cached.budget = budget;
-      cached.stamp = stamp3(lstatSync15(path));
+      cached.stamp = stamp3(lstatSync16(path));
       this.files.assertPublished(p.segment, p.offset + p.bytes, p.seq);
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
@@ -15260,7 +16557,7 @@ class HistoryNavigation {
         identity,
         batch,
         bytes: bytes.length,
-        stamp: stamp3(lstatSync15(path)),
+        stamp: stamp3(lstatSync16(path)),
         budget
       });
       this.cacheBytes += bytes.length;
@@ -15277,7 +16574,7 @@ class HistoryNavigation {
       const path = this.files.segmentPath(segment);
       let size2;
       try {
-        size2 = lstatSync15(path).size;
+        size2 = lstatSync16(path).size;
       } catch (e) {
         if (e instanceof Error && "code" in e && e.code === "ENOENT")
           return null;
@@ -15291,7 +16588,7 @@ class HistoryNavigation {
         continue;
       }
       let pending = Buffer.alloc(0), at = offset, bodyBytes = 0;
-      const checksum = createHash12("sha256"), rows = [];
+      const checksum = createHash13("sha256"), rows = [];
       while (at < size2) {
         const chunk = this.block(path, at, size2, budget);
         at += chunk.length;
@@ -15668,15 +16965,15 @@ class HistoryNavigation {
         throw e;
     }
   }
-  partRange(id, part2, budget) {
+  partRange(id, part, budget) {
     decodeId(id);
-    const hint = this.index("parts", `${id}/${part2}`, budget);
+    const hint = this.index("parts", `${id}/${part}`, budget);
     if (!hint)
       throw new ContractError("receipt-inconclusive");
     try {
       const o = closed(hint, ["pointer", "first", "last", "part"]);
       pointer(o.pointer);
-      literal(o.part, part2);
+      literal(o.part, part);
       const first = integer(o.first, 0, LIMITS.detailBytes), last = integer(o.last, first + 1, LIMITS.detailBytes);
       return { first, last };
     } catch {
@@ -15693,18 +16990,18 @@ class HistoryNavigation {
       throw new ContractError("receipt-inconclusive");
     }
   }
-  part(id, part2, snapshot, budget) {
-    const hint = this.index("parts", `${id}/${part2}`, budget);
+  part(id, part, snapshot, budget) {
+    const hint = this.index("parts", `${id}/${part}`, budget);
     if (!hint)
       return;
     try {
       const o = closed(hint, ["pointer", "first", "last", "part"]), p = pointer(o.pointer);
       integer(o.first);
       integer(o.last);
-      literal(o.part, part2);
+      literal(o.part, part);
       if (BigInt(p.seq) > BigInt(snapshot))
         return;
-      const chunks = this.batch(p, budget).rows.flatMap((row) => row.value.kind === "owner" || row.value.kind === "capture" ? row.value.events.flatMap((e) => e.kind === "chunk" && e.artifact.artifactId === id && e.artifact.part === part2 ? [e] : []) : []);
+      const chunks = this.batch(p, budget).rows.flatMap((row) => row.value.kind === "owner" || row.value.kind === "capture" ? row.value.events.flatMap((e) => e.kind === "chunk" && e.artifact.artifactId === id && e.artifact.part === part ? [e] : []) : []);
       const last = chunks.at(-1);
       if (!last || chunks[0].offset !== o.first || last.offset + last.length !== o.last)
         bad2();
@@ -15716,85 +17013,85 @@ class HistoryNavigation {
   }
 }
 function navigationKeys(row) {
-  const v = row.value, keys2 = new Set;
+  const v = row.value, keys3 = new Set;
   if (v.kind === "admission") {
-    keys2.add(v.intent.commandId);
-    keys2.add(v.intent.operationId);
+    keys3.add(v.intent.commandId);
+    keys3.add(v.intent.operationId);
     if (v.intent.runId)
-      keys2.add(v.intent.runId);
+      keys3.add(v.intent.runId);
     if (v.intent.identity.kind === "action") {
       const t = v.intent.createdTaskId ?? v.intent.identity.expected.task?.id;
       if (t)
-        keys2.add(t);
+        keys3.add(t);
       if (v.intent.identity.action.kind === "create")
-        keys2.add(v.intent.identity.expected.workspaceId);
+        keys3.add(v.intent.identity.expected.workspaceId);
     }
   }
   if (v.kind === "auth-preparation") {
-    keys2.add(v.intent.runId);
-    keys2.add(v.intent.operationId);
+    keys3.add(v.intent.runId);
+    keys3.add(v.intent.operationId);
   }
   if (v.kind === "auth-settlement")
-    keys2.add(v.result.operationId);
+    keys3.add(v.result.operationId);
   if (v.kind === "launch" || v.kind === "settlement") {
-    keys2.add(v.link.runId);
-    keys2.add(v.link.childRunId);
+    keys3.add(v.link.runId);
+    keys3.add(v.link.childRunId);
   }
   if (v.kind === "owner") {
-    keys2.add(v.link.operationId);
+    keys3.add(v.link.operationId);
     if (v.events.some((e) => e.kind === "owner" && e.value.kind === "fact")) {
-      keys2.add(v.link.taskId);
+      keys3.add(v.link.taskId);
       if (v.link.runId)
-        keys2.add(v.link.runId);
+        keys3.add(v.link.runId);
     }
   }
   if (v.kind === "owner" || v.kind === "capture")
     for (const e of v.events) {
       if (e.kind === "end") {
         if (v.kind === "capture")
-          keys2.add(v.link.runId);
-        keys2.add(e.detail.owner.entity.id);
-        keys2.add(e.detail.content.recordId);
+          keys3.add(v.link.runId);
+        keys3.add(e.detail.owner.entity.id);
+        keys3.add(e.detail.content.recordId);
       }
       if (e.kind === "capture") {
         const event = e.value.event;
         if ("messageId" in event)
-          keys2.add(event.messageId);
+          keys3.add(event.messageId);
         if ("callId" in event)
-          keys2.add(event.callId);
+          keys3.add(event.callId);
         if (event.kind === "detail-begin" || event.kind === "omitted-block") {
           const o = event.kind === "detail-begin" ? event.descriptor.owner : event.block.owner;
           if ("messageId" in o)
-            keys2.add(o.messageId);
+            keys3.add(o.messageId);
           if ("callId" in o)
-            keys2.add(o.callId);
+            keys3.add(o.callId);
         }
         if (["ready", "final", "worker-failure", "capture-status"].includes(event.kind) && v.kind === "capture") {
-          keys2.add(v.link.runId);
-          keys2.add(v.link.childRunId);
+          keys3.add(v.link.runId);
+          keys3.add(v.link.childRunId);
         }
       }
       if (e.kind === "owner" && e.value.kind === "fact") {
         const f = e.value.fact;
         if (f.kind === "parent-admitted") {
           if (f.identity.graph)
-            keys2.add(f.identity.graph.recordId);
+            keys3.add(f.identity.graph.recordId);
           for (const a of f.identity.assignments)
-            keys2.add(a.childRunId);
+            keys3.add(a.childRunId);
         }
         if ("checkId" in f)
-          keys2.add(f.checkId);
+          keys3.add(f.checkId);
         if ("observationId" in f)
-          keys2.add(f.observationId);
+          keys3.add(f.observationId);
         if ("reviewId" in f)
-          keys2.add(f.reviewId);
+          keys3.add(f.reviewId);
       }
     }
-  return [...keys2];
+  return [...keys3];
 }
 
 // src/history/projection.ts
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash19 } from "node:crypto";
 
 // src/history/task-folds.ts
 var TASKS = 1024;
@@ -15941,10 +17238,10 @@ class CheckFold {
 function checkFold(files, taskId2, snapshot, budget, navigation = new HistoryNavigation(files)) {
   navigation.snapshot(snapshot, budget);
   const { base, batches } = resumeTaskFold(files, navigation, taskId2, snapshot, budget, (state) => state.checks);
-  const fold = new CheckFold(base);
+  const fold2 = new CheckFold(base);
   for (const b of batches)
-    fold.apply(b, taskId2);
-  return fold;
+    fold2.apply(b, taskId2);
+  return fold2;
 }
 function currentChecks(files, taskId2, configured, current, snapshotSeq) {
   const budget = HistoryReadBudget.authority(), navigation = new HistoryNavigation(files);
@@ -16137,22 +17434,22 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash16, randomUUID as randomUUID13 } from "node:crypto";
+import { createHash as createHash17, randomUUID as randomUUID12 } from "node:crypto";
 import { readFileSync as readFileSync4 } from "node:fs";
 
 // src/history/search.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 
 // src/history/read-proof.ts
 import {
   createCipheriv,
   createDecipheriv,
-  createHash as createHash13,
+  createHash as createHash14,
   randomBytes as randomBytes5
 } from "node:crypto";
 var PREFIX = "rp1.";
 var READ_PROOF_PLAINTEXT_BYTES = 6000;
-function refuse() {
+function refuse2() {
   throw new ContractError("corrupt-selected");
 }
 
@@ -16168,12 +17465,12 @@ class HistoryReadProof {
     const completion = new HistoryReadBudget;
     completion.reserve = (bytes) => {
       if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > remaining)
-        refuse();
+        refuse2();
       remaining -= bytes;
     };
     const once = () => {
       if (used)
-        refuse();
+        refuse2();
       used = true;
     };
     return {
@@ -16190,7 +17487,7 @@ class HistoryReadProof {
   aad(context, material) {
     const request3 = context.purpose === "list" ? decodeListRequest(context.request) : context.purpose === "entity" ? decodeEntityReadRequest(context.request) : context.purpose === "graph" ? decodeGraphReadRequest(context.request) : decodeCursor(context.request);
     if (request3.storeId !== this.files.format.storeId || !["list", "search", "detail", "graph", "entity"].includes(context.purpose))
-      refuse();
+      refuse2();
     return Buffer.from(canonicalJson({
       domain: "cadence-history-read-progress/1",
       purpose: context.purpose,
@@ -16199,13 +17496,13 @@ class HistoryReadProof {
       root: this.files.format.rootIdentity,
       format: material.formatStamp,
       key: material.keyStamp,
-      request: createHash13("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
+      request: createHash14("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
     }));
   }
   seal(context, plaintext, budget) {
     try {
       if (!plaintext.byteLength || plaintext.byteLength > READ_PROOF_PLAINTEXT_BYTES)
-        refuse();
+        refuse2();
       const material = this.files.readProofMaterial(budget), nonce = randomBytes5(12);
       const cipher = createCipheriv("aes-256-gcm", material.key, nonce, {
         authTagLength: 16
@@ -16217,22 +17514,22 @@ class HistoryReadProof {
       ]);
       const token = PREFIX + Buffer.concat([nonce, encrypted, cipher.getAuthTag()]).toString("base64url");
       if (token.length > LIMITS.navigationBytes)
-        refuse();
+        refuse2();
       this.files.readProofMaterial(budget);
       return token;
     } catch (error) {
       if (error instanceof ContractError && error.code === "receipt-inconclusive")
         throw error;
-      return refuse();
+      return refuse2();
     }
   }
   open(context, token, budget) {
     try {
       if (typeof token !== "string" || token.length > LIMITS.navigationBytes || !token.startsWith(PREFIX) || !/^[A-Za-z0-9_-]+$/.test(token.slice(PREFIX.length)))
-        refuse();
+        refuse2();
       const encoded2 = token.slice(PREFIX.length), packed = Buffer.from(encoded2, "base64url");
       if (packed.length < 29 || packed.length > READ_PROOF_PLAINTEXT_BYTES + 28 || packed.toString("base64url") !== encoded2)
-        refuse();
+        refuse2();
       const material = this.files.readProofMaterial(budget);
       const decipher = createDecipheriv("aes-256-gcm", material.key, packed.subarray(0, 12), { authTagLength: 16 });
       decipher.setAAD(this.aad(context, material));
@@ -16244,7 +17541,7 @@ class HistoryReadProof {
     } catch (error) {
       if (error instanceof ContractError && error.code === "receipt-inconclusive")
         throw error;
-      return refuse();
+      return refuse2();
     }
   }
 }
@@ -16656,14 +17953,14 @@ class ForwardValidator {
             s.phase = "eof";
             break;
           }
-          const part2 = this.locate(s.at, budget);
-          s.raw = new ResumableSha256(s.raw).update(part2.bytes).snapshot();
-          s.at = part2.end;
-          if (part2.newline) {
-            s.end = part2.end;
+          const part = this.locate(s.at, budget);
+          s.raw = new ResumableSha256(s.raw).update(part.bytes).snapshot();
+          s.at = part.end;
+          if (part.newline) {
+            s.end = part.end;
             s.phase = "decode";
           }
-          if (part2.newline && s.end - s.line > RECORD_BYTES)
+          if (part.newline && s.end - s.line > RECORD_BYTES)
             bad4();
           break;
         }
@@ -16723,9 +18020,9 @@ class ForwardValidator {
           }
           if (s.memberEnd === s.member || !this.rowCache || this.rowCache.at !== s.member || this.rowCache.segment !== s.segment) {
             if (s.memberEnd === s.member || this.range(s.memberEnd - 1, 1, budget)[0] !== 10) {
-              const part2 = this.locate(s.memberEnd, budget);
-              s.memberEnd = part2.end;
-              if (!part2.newline)
+              const part = this.locate(s.memberEnd, budget);
+              s.memberEnd = part.end;
+              if (!part.newline)
                 break;
             }
             const row2 = this.decoded(s.member, s.memberEnd, budget);
@@ -16971,11 +18268,11 @@ function decodeRetainedProgress(value) {
 }
 
 // src/history/retained-traversal.ts
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 function bad5() {
   throw new ContractError("corrupt-selected");
 }
-var fingerprint = (v) => createHash14("sha256").update(canonicalJson(v)).digest("hex");
+var fingerprint = (v) => createHash15("sha256").update(canonicalJson(v)).digest("hex");
 var ready = (v) => {
   const s = v.state;
   if (s.phase !== "ready")
@@ -17267,10 +18564,10 @@ class RetainedTraversal {
             continue;
           if (next.detailId !== e.detailId || next.offset !== w.offset || next.artifact.runId !== e.artifact.runId || !((row.kind === "owner" || row.kind === "capture") && canonicalJson(row.link) === canonicalJson(sourceLink)))
             bad5();
-          const prior = Buffer.from(w.overlap, "base64url"), part2 = bytes(next).subarray(0, length - prior.length);
-          const joined = Buffer.concat([prior, part2]);
+          const prior = Buffer.from(w.overlap, "base64url"), part = bytes(next).subarray(0, length - prior.length);
+          const joined = Buffer.concat([prior, part]);
           w.overlap = joined.toString("base64url");
-          w.offset += part2.length;
+          w.offset += part.length;
           if (joined.length === length) {
             this.stopWork();
             return joined;
@@ -17331,11 +18628,11 @@ var digits = (id) => {
   return s.slice(0, 12) + s.slice(13, 16) + s.slice(17);
 };
 var publicTextRef = (id, label, text2, field, batch, row, slot) => ({
-  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash15("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
+  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash16("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
   version: batch.rows.indexOf(row) * EVENT_SLOTS + slot + 1,
   field,
   bytes: Buffer.byteLength(text2),
-  sha256: createHash15("sha256").update(text2).digest("hex")
+  sha256: createHash16("sha256").update(text2).digest("hex")
 });
 var initial = () => ({
   pos: { segment: 1, offset: 0 },
@@ -17351,7 +18648,7 @@ function scanCursor(base, p) {
   const snapshot = p.snapshot.toString(16).padStart(14, "0");
   if (snapshot.length !== 14)
     throw new ContractError("capacity");
-  const binding = createHash15("sha256").update(canonicalJson({
+  const binding = createHash16("sha256").update(canonicalJson({
     ...readIdentity(base),
     recordId: null,
     recordVersion: version,
@@ -17692,7 +18989,7 @@ class RetainedScan {
             graph: {
               recordId: v.intent.operationId,
               revision: graph.revision,
-              sha256: createHash15("sha256").update(canonicalJson(graph)).digest("hex")
+              sha256: createHash16("sha256").update(canonicalJson(graph)).digest("hex")
             }
           },
           graph
@@ -17991,14 +19288,14 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash16("sha256").update(readFileSync4(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash17("sha256").update(readFileSync4(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
   if (signal.aborted)
     throw new ContractError("unavailable");
 }
-var yieldTurn = () => new Promise((resolve11) => setImmediate(resolve11));
+var yieldTurn = () => new Promise((resolve12) => setImmediate(resolve12));
 function* textChunks(text2) {
   const bytes = Buffer.from(text2);
   for (let at = 0;at < bytes.length; ) {
@@ -18051,7 +19348,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID13(), digest = createHash16("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID12(), digest = createHash17("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -18120,7 +19417,7 @@ async function* exportHistory(projection, input, signal) {
       const { detail, owner } = item, original = open2.get(detail.content.recordId);
       if (detail.content.bytes ? !original || original.bytes !== detail.content.bytes || original.content !== canonicalJson(detail.content) : original !== undefined)
         throw new ContractError("corrupt-selected");
-      if ((original?.hash ?? createHash16("sha256")).digest("hex") !== detail.content.sha256)
+      if ((original?.hash ?? createHash17("sha256")).digest("hex") !== detail.content.sha256)
         throw new ContractError("corrupt-selected");
       open2.delete(detail.content.recordId);
       const events = [];
@@ -18151,7 +19448,7 @@ async function* exportHistory(projection, input, signal) {
     coverage = combineCoverage(coverage, item.coverage);
     const length = Buffer.byteLength(item.text);
     if (item.inline) {
-      if (item.start !== 0 || length !== item.content.bytes || createHash16("sha256").update(item.text).digest("hex") !== item.content.sha256)
+      if (item.start !== 0 || length !== item.content.bytes || createHash17("sha256").update(item.text).digest("hex") !== item.content.sha256)
         throw new ContractError("corrupt-selected");
     } else {
       let original = open2.get(item.content.recordId);
@@ -18161,7 +19458,7 @@ async function* exportHistory(projection, input, signal) {
         original = {
           bytes: 0,
           content: canonicalJson(item.content),
-          hash: createHash16("sha256")
+          hash: createHash17("sha256")
         };
         open2.set(item.content.recordId, original);
       }
@@ -18276,7 +19573,7 @@ async function* exportHistory(projection, input, signal) {
 }
 
 // src/history/list-progress.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash18 } from "node:crypto";
 
 // src/history/detail-progress.ts
 function bad7() {
@@ -18677,7 +19974,7 @@ function fresh(request3) {
     legacyIdentity: null
   };
 }
-function decodeState(value) {
+function decodeState2(value) {
   const o = closed(value, [
     "phase",
     "traversal",
@@ -18750,7 +20047,7 @@ function fits(link, scope) {
   return scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
 }
 function nextAfter(request3, n) {
-  const h = createHash17("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
+  const h = createHash18("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
   return {
     recordId: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     version: 1,
@@ -18867,7 +20164,7 @@ async function read(p, request3, entity) {
   const context = (r) => ("reader" in r) ? { purpose: "list", request: r } : { purpose: "entity", request: r };
   let s = fresh(request3);
   if (request3.navigation)
-    s = decodeState(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open(context(request3), request3.navigation, budget)), 6000));
+    s = decodeState2(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open(context(request3), request3.navigation, budget)), 6000));
   if (request3.storeId !== p.reader.storeId || "reader" in request3 && request3.scope.kind === "workspace" && request3.scope.id !== p.reader.files.format.workspaceId)
     bad9();
   const sources = new SourceRows(p.reader.files, budget);
@@ -19134,7 +20431,7 @@ async function read(p, request3, entity) {
       const tasks = [...p.environment.legacyTasks(budget)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
-      const sum = createHash17("sha256");
+      const sum = createHash18("sha256");
       for (const task2 of tasks) {
         budget.reserve(0);
         sum.update(JSON.stringify({
@@ -19147,7 +20444,7 @@ async function read(p, request3, entity) {
       if (s.legacy > tasks.length)
         bad9();
       if (!s.legacyIdentity && request3.after?.version === Number.MAX_SAFE_INTEGER) {
-        const h = createHash17("sha256").update(canonicalJson({
+        const h = createHash18("sha256").update(canonicalJson({
           ...readIdentity(request3),
           after: null,
           legacy: s.legacy === 0 ? "begin" : identity,
@@ -19248,9 +20545,9 @@ class HistoryProjection {
       this.snapshotObservers.delete(callback);
     };
   }
-  constructor(reader, environment) {
+  constructor(reader, environment2) {
     this.reader = reader;
-    this.environment = environment;
+    this.environment = environment2;
     this.navigation = new HistoryNavigation(reader.files);
   }
   session = async () => {
@@ -19316,18 +20613,18 @@ class HistoryProjection {
     const state = freshEntity(kind, id, version ?? null);
     const selected2 = new Map;
     const remember2 = (batch, row) => {
-      const keys2 = [
+      const keys3 = [
         state.first,
         state.last,
         state.result,
         state.detail
       ].flatMap((source2) => source2 ? [`${source2.segment}/${source2.offset}`] : []);
       for (const key3 of selected2.keys())
-        if (!keys2.includes(key3))
+        if (!keys3.includes(key3))
           selected2.delete(key3);
       const source = sourceAt(batch, row);
       const key2 = `${source.segment}/${source.offset}`;
-      if (keys2.includes(key2))
+      if (keys3.includes(key2))
         selected2.set(key2, { batch, row });
     };
     const sources = new SourceRows(this.reader.files, budget, (source) => {
@@ -19427,7 +20724,7 @@ class HistoryProjection {
   };
   cursor(request3, pos, row, item) {
     const offset = pos.offset * (LIMITS.segmentRecords + 1) * ROW_SLOTS + row * ROW_SLOTS + item;
-    const digest = createHash18("sha256").update(canonicalJson({
+    const digest = createHash19("sha256").update(canonicalJson({
       ...readIdentity(request3),
       after: null,
       position: { ...pos, row, item }
@@ -19618,7 +20915,7 @@ class HistoryProjection {
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
     const cursor = (offset2, identity2) => {
-      const digest2 = createHash18("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
+      const digest2 = createHash19("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
       return {
         recordId: `${digest2.slice(0, 8)}-${digest2.slice(8, 12)}-4${digest2.slice(13, 16)}-8${digest2.slice(17, 20)}-${digest2.slice(20, 32)}`,
         version: legacyVersion,
@@ -19645,7 +20942,7 @@ class HistoryProjection {
     }
     if (legacy.length > 1000)
       throw new ContractError("capacity");
-    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash18("sha256");
+    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash19("sha256");
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
@@ -19835,9 +21132,9 @@ class HistoryProjection {
 }
 
 // src/history/reader.ts
-import { createHash as createHash19 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
 import { existsSync as existsSync2 } from "node:fs";
-import { join as join24 } from "node:path";
+import { join as join26 } from "node:path";
 
 // src/history/saved-graph-state.ts
 var freshSavedGraph = () => ({
@@ -20095,20 +21392,20 @@ class PlanFold {
         throw new ContractError("invalid");
       lineage = TaskPublicationLineage.resumed(row ? row.intent : null, state.lineage.progress);
     }
-    const fold = new PlanFold(lineage);
-    fold.lineageAt = state.lineage.at;
-    fold.graphIdentity = state.graphIdentity;
+    const fold2 = new PlanFold(lineage);
+    fold2.lineageAt = state.lineage.at;
+    fold2.graphIdentity = state.graphIdentity;
     if (!state.savePlan) {
       if (state.graphIdentity !== "")
         throw new ContractError("invalid");
-      return fold;
+      return fold2;
     }
     const v = read2(state.savePlan.at).value;
     if (v.kind !== "admission" || v.intent.identity.kind !== "action" || v.intent.identity.action.kind !== "save-plan" || hash(canonicalJson(v.intent.identity.action.graph)) !== state.graphIdentity)
       throw new ContractError("invalid");
-    fold.operation = OperationState.resumed(v.intent.operationId, { intent: v.intent, record: v.record }, state.savePlan);
-    fold.savePlanAt = state.savePlan.at;
-    return fold;
+    fold2.operation = OperationState.resumed(v.intent.operationId, { intent: v.intent, record: v.record }, state.savePlan);
+    fold2.savePlanAt = state.savePlan.at;
+    return fold2;
   }
 }
 function planFold(files, taskId2, snapshot, budget, navigation, withLineage) {
@@ -20122,10 +21419,10 @@ function planFold(files, taskId2, snapshot, budget, navigation, withLineage) {
     return row;
   };
   const { base, batches } = resumeTaskFold(files, navigation, taskId2, snapshot, budget, (state) => PlanFold.resumed(state.plan, withLineage, read2));
-  const fold = base ?? new PlanFold(withLineage ? new TaskPublicationLineage : null);
+  const fold2 = base ?? new PlanFold(withLineage ? new TaskPublicationLineage : null);
   for (const batch of batches)
-    fold.apply(batch, taskId2);
-  return fold;
+    fold2.apply(batch, taskId2);
+  return fold2;
 }
 function latestTaskRun(files, taskId2, snapshot, budget, navigation = new HistoryNavigation(files)) {
   navigation.snapshot(snapshot, budget);
@@ -20171,8 +21468,8 @@ class HistoryReader {
     decodeId(taskId2);
     decodeSequence(snapshotSeq);
     const budget = HistoryReadBudget.authority();
-    const fold = planFold(this.files, taskId2, snapshotSeq, budget, this.navigation, !!current2);
-    const { operation, lineage } = fold;
+    const fold2 = planFold(this.files, taskId2, snapshotSeq, budget, this.navigation, !!current2);
+    const { operation, lineage } = fold2;
     if (!operation)
       return null;
     const command = operation.command;
@@ -20483,8 +21780,8 @@ class HistoryReader {
       let end = 0;
       if (detail.content.bytes) {
         const count2 = nav.partCount(id, budget);
-        for (let part2 = 0;part2 < count2; part2++) {
-          const chunks = nav.part(id, part2, cursor.snapshotSeq, budget);
+        for (let part = 0;part < count2; part++) {
+          const chunks = nav.part(id, part, cursor.snapshotSeq, budget);
           if (!chunks?.length)
             return;
           const bytes = this.files.readArtifact(chunks[0].artifact, budget);
@@ -20497,7 +21794,7 @@ class HistoryReader {
         }
       }
       const text2 = Buffer.concat(pieces);
-      if (end !== detail.content.bytes || createHash19("sha256").update(text2).digest("hex") !== detail.content.sha256)
+      if (end !== detail.content.bytes || createHash20("sha256").update(text2).digest("hex") !== detail.content.sha256)
         return;
       return { detail, bytes: text2 };
     } catch {
@@ -20532,7 +21829,7 @@ class HistoryReader {
       if (!current2 || current2.length < expected.bytes || hash(current2.subarray(0, expected.bytes)) !== expected.identity)
         throw new ContractError("corrupt-selected");
     }
-    const checksum = createHash19("sha256");
+    const checksum = createHash20("sha256");
     let bytes = 0;
     let cached;
     for (const e of locator.chunks) {
@@ -20546,10 +21843,10 @@ class HistoryReader {
         cached = { key: key2, bytes: this.files.readArtifact(e.artifact, budget) };
       if (e.start + e.length > cached.bytes.length)
         throw new ContractError("corrupt-selected");
-      const part2 = cached.bytes.subarray(e.start, e.start + e.length);
+      const part = cached.bytes.subarray(e.start, e.start + e.length);
       if (!range2)
-        checksum.update(part2);
-      yield { offset: e.offset, bytes: part2 };
+        checksum.update(part);
+      yield { offset: e.offset, bytes: part };
     }
     if (bytes !== detail.content.bytes || !range2 && checksum.digest("hex") !== detail.content.sha256)
       throw new ContractError("corrupt-selected");
@@ -20605,7 +21902,7 @@ class HistoryReader {
   }
   async readDetail(value) {
     const cursor = decodeCursor(value);
-    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join24(this.files.directory, "indexes", "heads", "latest.json")))
+    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join26(this.files.directory, "indexes", "heads", "latest.json")))
       return readRetainedDetail(this, cursor);
     if (this.files.format.schema !== FORMAT)
       return this.detail(cursor);
@@ -20639,22 +21936,22 @@ class HistoryReader {
     const pieces = [];
     let bytes = 0, pageFull = false;
     try {
-      for (const part2 of this.parts(detail, cursor.snapshotSeq, budget, {
+      for (const part of this.parts(detail, cursor.snapshotSeq, budget, {
         start: cursor.offset,
         end: Math.min(detail.content.bytes, cursor.offset + LIMITS.detailPageBytes)
       })) {
-        if (part2.offset + part2.bytes.length <= cursor.offset || pageFull || bytes >= LIMITS.detailPageBytes)
+        if (part.offset + part.bytes.length <= cursor.offset || pageFull || bytes >= LIMITS.detailPageBytes)
           continue;
-        const from = Math.max(0, cursor.offset - part2.offset);
-        if (from < part2.bytes.length && (part2.bytes[from] & 192) === 128)
+        const from = Math.max(0, cursor.offset - part.offset);
+        if (from < part.bytes.length && (part.bytes[from] & 192) === 128)
           throw new ContractError("invalid");
-        let to = Math.min(part2.bytes.length, from + LIMITS.detailPageBytes - bytes);
-        while (to < part2.bytes.length && to > from && (part2.bytes[to] & 192) === 128)
+        let to = Math.min(part.bytes.length, from + LIMITS.detailPageBytes - bytes);
+        while (to < part.bytes.length && to > from && (part.bytes[to] & 192) === 128)
           to--;
-        const selected2 = part2.bytes.subarray(from, to);
+        const selected2 = part.bytes.subarray(from, to);
         pieces.push(selected2);
         bytes += selected2.length;
-        if (to < part2.bytes.length)
+        if (to < part.bytes.length)
           pageFull = true;
       }
     } catch (error) {
@@ -20678,8 +21975,8 @@ class HistoryReader {
     let end = cursor.offset;
     if (detail.content.bytes) {
       const count2 = nav.partCount(detail.content.recordId, budget);
-      const load2 = (part2) => {
-        const c = nav.part(detail.content.recordId, part2, cursor.snapshotSeq, budget);
+      const load2 = (part) => {
+        const c = nav.part(detail.content.recordId, part, cursor.snapshotSeq, budget);
         if (!c)
           throw new ContractError("receipt-inconclusive");
         return c;
@@ -20693,10 +21990,10 @@ class HistoryReader {
           hi = mid;
       }
       let full = false;
-      for (let part2 = lo;part2 < count2 && !full && end - cursor.offset < LIMITS.detailPageBytes; part2++) {
+      for (let part = lo;part < count2 && !full && end - cursor.offset < LIMITS.detailPageBytes; part++) {
         let chunks, bytes;
         try {
-          chunks = load2(part2);
+          chunks = load2(part);
           const last = chunks.at(-1);
           if (!last || chunks[0].offset > end || last.offset + last.length <= end || last.offset + last.length > detail.content.bytes)
             throw new ContractError("corrupt-selected");
@@ -20806,27 +22103,27 @@ class HistoryReader {
 }
 
 // src/history/recovery.ts
-import { createHash as createHash23, randomUUID as randomUUID17 } from "node:crypto";
-import { lstatSync as lstatSync16, opendirSync as opendirSync9 } from "node:fs";
-import { join as join28, relative as relative7 } from "node:path";
+import { createHash as createHash24, randomUUID as randomUUID16 } from "node:crypto";
+import { lstatSync as lstatSync17, opendirSync as opendirSync8 } from "node:fs";
+import { join as join30, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
-import { createHash as createHash22, randomUUID as randomUUID16 } from "node:crypto";
-import { join as join27 } from "node:path";
+import { createHash as createHash23, randomUUID as randomUUID15 } from "node:crypto";
+import { join as join29 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash20, randomUUID as randomUUID14 } from "node:crypto";
+import { createHash as createHash21, randomUUID as randomUUID13 } from "node:crypto";
 import {
-  closeSync as closeSync7,
+  closeSync as closeSync8,
   fsyncSync as fsyncSync4,
-  openSync as openSync7,
-  readdirSync as readdirSync2,
+  openSync as openSync8,
+  readdirSync as readdirSync3,
   renameSync as renameSync4,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { hostname as hostname6 } from "node:os";
-import { join as join25 } from "node:path";
+import { join as join27 } from "node:path";
 // src/task-types.ts
 var TASK_SCHEMA = "cadence-workflow-assistant/1";
 var MAX_RECORD_BYTES = 128 * 1024;
@@ -20903,7 +22200,7 @@ function recordText(record2) {
 `;
 }
 function contentIdentity(text2) {
-  return createHash20("sha256").update(text2).digest("hex");
+  return createHash21("sha256").update(text2).digest("hex");
 }
 function savedRecordIdentity(record2) {
   return contentIdentity(recordText(record2));
@@ -20913,7 +22210,7 @@ class TaskStore extends CheckoutStore {
   tasks;
   constructor(root, stateHome = defaultStateHome()) {
     super(root, stateHome);
-    this.tasks = join25(this.root, ".cadence", "assistant", "tasks");
+    this.tasks = join27(this.root, ".cadence", "assistant", "tasks");
   }
   recover(expected, acknowledgeEscapedProcesses) {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname6())
@@ -20936,21 +22233,21 @@ class TaskStore extends CheckoutStore {
   loadSnapshot(id) {
     if (!validId(id))
       throw new Error("Invalid task id");
-    const directory = join25(this.tasks, id);
-    if (safeDirectory(directory) && readdirSync2(directory).some((name) => name !== "task.json"))
+    const directory = join27(this.tasks, id);
+    if (safeDirectory(directory) && readdirSync3(directory).some((name) => name !== "task.json"))
       throw new Error("Unknown task directory content; preserved without reset");
-    const data = readBounded(join25(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
-    if (!data)
+    const data2 = readBounded(join27(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
+    if (!data2)
       return;
-    const record2 = decodeTask(parseRecord(data));
+    const record2 = decodeTask(parseRecord(data2));
     if (record2.id !== id)
       throw new Error("Task identity mismatch");
-    return { record: record2, identity: contentIdentity(data) };
+    return { record: record2, identity: contentIdentity(data2) };
   }
   list() {
     if (!safeDirectory(this.tasks))
       return [];
-    const entries2 = readdirSync2(this.tasks);
+    const entries2 = readdirSync3(this.tasks);
     if (entries2.length > 1000)
       throw new Error("Task listing limit exceeded");
     return entries2.map((id) => {
@@ -20977,25 +22274,25 @@ class TaskStore extends CheckoutStore {
         throw new Error("Revision conflict");
       if (current2?.identity !== expectedIdentity)
         throw new Error("Task content changed; reopen it");
-      const dir = join25(this.tasks, next.id);
+      const dir = join27(this.tasks, next.id);
       safeDirectory(dir, true);
-      if (!current2 && readdirSync2(dir).length)
+      if (!current2 && readdirSync3(dir).length)
         throw new Error("Unknown task directory");
-      const temporary = join25(dir, `task.${randomUUID14()}.tmp`);
-      const fd = openSync7(temporary, "wx", 384);
+      const temporary = join27(dir, `task.${randomUUID13()}.tmp`);
+      const fd = openSync8(temporary, "wx", 384);
       try {
         writeFileSync4(fd, text2);
         fsyncSync4(fd);
       } finally {
-        closeSync7(fd);
+        closeSync8(fd);
       }
       this.assertOwner(lock);
-      const latest = readBounded(join25(dir, "task.json"), MAX_RECORD_BYTES);
+      const latest = readBounded(join27(dir, "task.json"), MAX_RECORD_BYTES);
       if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
         throw new Error("Task content changed; replacement preserved without overwrite");
-      retryWindowsFileOperation(() => renameSync4(temporary, join25(dir, "task.json")), () => {
+      retryWindowsFileOperation(() => renameSync4(temporary, join27(dir, "task.json")), () => {
         this.assertOwner(lock);
-        const now = readBounded(join25(dir, "task.json"), MAX_RECORD_BYTES);
+        const now = readBounded(join27(dir, "task.json"), MAX_RECORD_BYTES);
         if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
           throw new Error("Task content changed; replacement preserved without overwrite");
       });
@@ -21006,10 +22303,10 @@ class TaskStore extends CheckoutStore {
     }
   }
   checks() {
-    const data = readBounded(join25(this.root, ".cadence", "assistant", "config.json"), 32768);
-    if (!data)
+    const data2 = readBounded(join27(this.root, ".cadence", "assistant", "config.json"), 32768);
+    if (!data2)
       return [];
-    const value = parseRecord(data);
+    const value = parseRecord(data2);
     if (!object(value) || value.schema !== TASK_CONFIG_SCHEMA || !Array.isArray(value.checks) || value.checks.length > 32 || Object.keys(value).some((key2) => !["schema", "checks"].includes(key2)))
       throw new Error("Unknown check configuration");
     const checks = value.checks.map(decodeCheck);
@@ -21020,16 +22317,16 @@ class TaskStore extends CheckoutStore {
   readLog(name) {
     if (!/^[a-f0-9-]{36}\.log$/.test(name))
       throw new Error("Invalid diagnostic name");
-    this.inspectPrivateFile(join25(this.privateRoot, name), 65536);
-    const data = readBounded(join25(this.privateRoot, name), 65536);
-    return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
+    this.inspectPrivateFile(join27(this.privateRoot, name), 65536);
+    const data2 = readBounded(join27(this.privateRoot, name), 65536);
+    return data2 ? diagnosticText(data2.toString("utf8"), 65536) : "Private diagnostic unavailable";
   }
   writeLog(lock, output) {
     if (lock.pid !== process.pid || lock.host !== hostname6())
       throw new Error("Not the lock owner");
     this.assertOwner(lock);
-    const name = `${randomUUID14()}.log`;
-    writeFileSync4(join25(this.privateRoot, name), diagnosticText(output, 65536), {
+    const name = `${randomUUID13()}.log`;
+    writeFileSync4(join27(this.privateRoot, name), diagnosticText(output, 65536), {
       flag: "wx",
       mode: 384
     });
@@ -21048,15 +22345,15 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash21, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash22, randomUUID as randomUUID14 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash21("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash22("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
-  const detailId = randomUUID15();
+  const detailId = randomUUID14();
   const input = {
     link: { epoch, taskId: graph.taskId, runId: null, operationId },
     observedMs: 0,
@@ -21106,13 +22403,13 @@ function planRecording(plan, graph, operationId, epoch) {
 
 // src/history/publication.ts
 import {
-  closeSync as closeSync8,
-  constants as constants7,
+  closeSync as closeSync9,
+  constants as constants8,
   fsyncSync as fsyncSync5,
-  openSync as openSync8,
-  realpathSync as realpathSync8
+  openSync as openSync9,
+  realpathSync as realpathSync10
 } from "node:fs";
-import { dirname as dirname18, isAbsolute as isAbsolute8, join as join26, relative as relative6, sep as sep6 } from "node:path";
+import { dirname as dirname19, isAbsolute as isAbsolute10, join as join28, relative as relative6, sep as sep6 } from "node:path";
 function summary(text2, maximum, runId) {
   const label = `[Cadence summary${runId ? `; run ${runId}` : ""}; retained history is separate]
 `;
@@ -21161,8 +22458,8 @@ function publicationRecord(store, reader, intent, link, run2, request3, expected
   else {
     if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
-    const cwd = realpathSync8(request3.cwd), within = relative6(store.root, cwd);
-    if (isAbsolute8(within) || within === ".." || within.startsWith(`..${sep6}`))
+    const cwd = realpathSync10(request3.cwd), within = relative6(store.root, cwd);
+    if (isAbsolute10(within) || within === ".." || within.startsWith(`..${sep6}`))
       bad11();
     record2 = {
       schema: TASK_SCHEMA,
@@ -21198,12 +22495,12 @@ function publicationRecord(store, reader, intent, link, run2, request3, expected
     } else if (!run2 || ![...run2.children.values()].some((c) => c.completion?.recording.status === "committed" && canonicalJson(c.completion.recording.detail.content) === canonicalJson(ref)))
       bad11();
     let preview = "";
-    for (const part2 of reader.parts(detail, snapshotSeq))
+    for (const part of reader.parts(detail, snapshotSeq))
       if (Buffer.byteLength(preview) < 32768) {
-        let end = Math.min(part2.bytes.length, 32768 - Buffer.byteLength(preview));
-        while (end > 0 && end < part2.bytes.length && (part2.bytes[end] & 192) === 128)
+        let end = Math.min(part.bytes.length, 32768 - Buffer.byteLength(preview));
+        while (end > 0 && end < part.bytes.length && (part.bytes[end] & 192) === 128)
           end--;
-        preview += part2.bytes.subarray(0, end).toString("utf8");
+        preview += part.bytes.subarray(0, end).toString("utf8");
       }
     return preview;
   };
@@ -21297,18 +22594,18 @@ ${result}`;
 function syncTaskPublication(store, taskId2) {
   if (process.platform === "win32")
     return;
-  for (let path = join26(store.tasks, taskId2);; path = dirname18(path)) {
+  for (let path = join28(store.tasks, taskId2);; path = dirname19(path)) {
     if (!safeDirectory(path))
       throw new ContractError("conflict");
-    const fd = openSync8(path, constants7.O_RDONLY | constants7.O_DIRECTORY);
+    const fd = openSync9(path, constants8.O_RDONLY | constants8.O_DIRECTORY);
     try {
       fsyncSync5(fd);
     } finally {
-      closeSync8(fd);
+      closeSync9(fd);
     }
     if (path === store.root)
       return;
-    if (dirname18(path) === path)
+    if (dirname19(path) === path)
       throw new ContractError("conflict");
   }
 }
@@ -21646,7 +22943,7 @@ class HistoryWriter {
             kind: "fact",
             fact: {
               kind: "publication-settled",
-              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID16(),
+              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID15(),
               status: "uncertain",
               observed: null
             }
@@ -21702,9 +22999,9 @@ class HistoryWriter {
       settled?.();
       return Promise.resolve(failure(false));
     }
-    let resolve11;
+    let resolve12;
     const original = new Promise((yes) => {
-      resolve11 = yes;
+      resolve12 = yes;
     });
     this.originals.add(original);
     original.then(() => {
@@ -21716,7 +23013,7 @@ class HistoryWriter {
       this.options.onOriginal?.(original, safety || continuation);
     } catch {
       this.fence();
-      resolve11(failure(false));
+      resolve12(failure(false));
       return original;
     }
     if (this.queue.length && this.queue.reduce((n, j) => n + j.bytes, 0) + bytes > LIMITS.progressBatchBytes)
@@ -21724,7 +23021,7 @@ class HistoryWriter {
     this.queue.push({
       build: build2,
       bytes,
-      resolve: resolve11,
+      resolve: resolve12,
       safety,
       continuation,
       control: immediate
@@ -21776,7 +23073,7 @@ class HistoryWriter {
             const row = {
               kind: "record",
               seq: seq2,
-              id: randomUUID16(),
+              id: randomUUID15(),
               value
             };
             rows.push(row);
@@ -21805,11 +23102,11 @@ class HistoryWriter {
               this.files.readAdmission(runId, candidate.admission);
           }
           this.assertReviews(rows);
-          for (const part2 of this.partWrites) {
-            const text2 = part2.text.join("");
-            part2.artifact.sha256 = hash(text2);
-            this.charge(part2.artifact.bytes, part2.artifact.runId, false);
-            this.files.writeArtifact(this.lease, part2.artifact, text2);
+          for (const part of this.partWrites) {
+            const text2 = part.text.join("");
+            part.artifact.sha256 = hash(text2);
+            this.charge(part.artifact.bytes, part.artifact.runId, false);
+            this.files.writeArtifact(this.lease, part.artifact, text2);
           }
           this.pendingParts.clear();
           this.partWrites = [];
@@ -22050,7 +23347,7 @@ class HistoryWriter {
     try {
       const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
-      const directoryExists = this.files.files.directory(join27(this.files.directory, "commands", commandId));
+      const directoryExists = this.files.files.directory(join29(this.files.directory, "commands", commandId));
       const wanted = intent ? decodeAdmissionIntent(json(intent, RECORD_BYTES)) : null;
       let found = null;
       let run2 = null;
@@ -22196,8 +23493,8 @@ class HistoryWriter {
       this.assertOrdinary();
       const bytes = encoded(intent);
       this.charge(Buffer.byteLength(bytes), intent.runId, true);
-      this.files.files.create(join27(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
-      this.files.syncParents(join27(this.files.directory, "commands", intent.commandId, "intent.json"));
+      this.files.files.create(join29(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
+      this.files.syncParents(join29(this.files.directory, "commands", intent.commandId, "intent.json"));
       await this.options.observeWrite?.("intent");
       const policy = this.resourcePolicy(intent.identity.kind === "action" ? intent.identity.expected.configRev : 1);
       return { kind: "admission", intent, record: record2, policy };
@@ -22227,7 +23524,7 @@ class HistoryWriter {
     }
     let begun = false;
     let refused2;
-    const refuse2 = (code2) => {
+    const refuse3 = (code2) => {
       refused2 = {
         status: "refused",
         durability: "none",
@@ -22242,15 +23539,15 @@ class HistoryWriter {
         operation = readOperationStateForPublication(this.files, operationId);
       } catch (error) {
         if (error instanceof ContractError && error.code === "conflict")
-          return refuse2("conflict");
+          return refuse3("conflict");
         throw error;
       }
       const { intent, state } = operation;
       if (operation.recovered || intent.identity.kind !== "action" || intent.identity.expected.epoch !== this.lease.registration.epoch)
-        return refuse2("stale");
+        return refuse3("stale");
       const { action, expected } = intent.identity;
       if (intent.runId !== null || action.kind !== "save-plan" || !expected.task || action.taskId !== expected.task.id || state.receipt()?.receipt.publication !== "pending")
-        return refuse2("conflict");
+        return refuse3("conflict");
       const current2 = this.contexts.get(action.taskId);
       const selected2 = legacyTaskStore(this.lease.coordination).loadSnapshot(action.taskId);
       if (!current2 || canonicalJson({
@@ -22260,14 +23557,14 @@ class HistoryWriter {
         ...expected,
         controlRev: expected.controlRev + 1
       }) || !selected2 || selected2.identity !== expected.task.identity || selected2.record.revision !== expected.task.revision || action.graph.taskKind !== expected.task.kind || action.graph.taskRevision !== expected.task.revision + 1 || action.graph.revision !== (expected.task.graphRevision ?? 0) + 1)
-        return refuse2("stale");
+        return refuse3("stale");
       try {
         assertPlanContent(action.plan, action.graph.plan, []);
         if (sanitizer.write(action.plan, true) !== action.plan)
-          return refuse2("invalid");
+          return refuse3("invalid");
       } catch (error) {
         if (error instanceof ContractError && error.code === "invalid")
-          return refuse2("invalid");
+          return refuse3("invalid");
         throw error;
       }
       const ref = action.graph.plan;
@@ -22276,7 +23573,7 @@ class HistoryWriter {
         ...[...this.children.values()].map((c) => c.details)
       ].some((details) => [...details.values()].some((d) => d.recordId === ref.recordId));
       if (collision || this.prior((v) => v.kind === "admission" && v.intent.operationId !== operationId && v.intent.identity.kind === "action" && v.intent.identity.action.kind === "save-plan" && v.intent.identity.action.graph.plan.recordId === ref.recordId || (v.kind === "owner" || v.kind === "capture") && v.events.some((e) => e.kind === "end" && e.detail.content.recordId === ref.recordId || e.kind === "chunk" && e.artifact.artifactId === ref.recordId)))
-        return refuse2("conflict");
+        return refuse3("conflict");
       const input = planRecording(action.plan, action.graph, operationId, expected.epoch);
       const decoded2 = lease.beginOwner(input);
       begun = true;
@@ -22362,7 +23659,7 @@ class HistoryWriter {
       };
     }
     this.publishing.add(request3.operationId);
-    const publicationId = randomUUID16();
+    const publicationId = randomUUID15();
     let link;
     let record2;
     let expected;
@@ -22714,10 +24011,10 @@ class HistoryWriter {
       owner,
       descriptor,
       field,
-      recordId: randomUUID16(),
+      recordId: randomUUID15(),
       version: 1,
       bytes: 0,
-      hash: createHash22("sha256"),
+      hash: createHash23("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -22727,9 +24024,9 @@ class HistoryWriter {
     if (detail.ended || detail.bytes + Buffer.byteLength(text2) > LIMITS.detailBytes || !text2)
       throw new ContractError("invalid");
     const length = Buffer.byteLength(text2);
-    let part2 = this.pendingParts.get(detail.recordId);
-    if (!part2 || part2.artifact.bytes + length > LIMITS.artifactPartBytes) {
-      part2 = {
+    let part = this.pendingParts.get(detail.recordId);
+    if (!part || part.artifact.bytes + length > LIMITS.artifactPartBytes) {
+      part = {
         artifact: {
           runId,
           artifactId: detail.recordId,
@@ -22739,19 +24036,19 @@ class HistoryWriter {
         },
         text: []
       };
-      this.pendingParts.set(detail.recordId, part2);
-      this.partWrites.push(part2);
+      this.pendingParts.set(detail.recordId, part);
+      this.partWrites.push(part);
     }
-    const start = part2.artifact.bytes;
-    part2.artifact.bytes += length;
-    part2.text.push(text2);
+    const start = part.artifact.bytes;
+    part.artifact.bytes += length;
+    part.text.push(text2);
     const offset = detail.bytes;
     detail.bytes += length;
     detail.hash.update(text2);
     return {
       kind: "chunk",
       detailId: detail.detailId,
-      artifact: part2.artifact,
+      artifact: part.artifact,
       source,
       offset,
       start,
@@ -22837,7 +24134,7 @@ class HistoryWriter {
           throw new ContractError("invalid");
         child.final = { messageId: event.messageId, detailId: event.detailId };
       }
-      events.push({ kind: "capture", id: randomUUID16(), value: item });
+      events.push({ kind: "capture", id: randomUUID15(), value: item });
     }
     return { kind: "capture", link: input.link, source: input.source, events };
   }
@@ -22963,12 +24260,12 @@ class HistoryWriter {
         candidate.apply({
           kind: "record",
           seq: "1",
-          id: randomUUID16(),
+          id: randomUUID15(),
           value: {
             kind: "owner",
             link: value.link,
             observedMs: value.observedMs,
-            events: [{ kind: "owner", id: randomUUID16(), value: event }]
+            events: [{ kind: "owner", id: randomUUID15(), value: event }]
           }
         }, this.state.committedSeq);
         const children = new Set(identity.assignments.map((a) => a.childRunId));
@@ -23050,7 +24347,7 @@ class HistoryWriter {
           events.push(ended);
         }
       } else
-        events.push({ kind: "owner", id: randomUUID16(), value: event });
+        events.push({ kind: "owner", id: randomUUID15(), value: event });
     }
     return {
       kind: "owner",
@@ -23095,15 +24392,15 @@ function readOperationStateForPublication(files, operationId) {
 // src/history/recovery.ts
 function digestHistory(files, exclude) {
   files.assertFormat();
-  const digest = createHash23("sha256");
+  const digest = createHash24("sha256");
   let count2 = 0;
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
       throw new ContractError("corrupt-selected");
-    const directory = lstatSync16(path);
+    const directory = lstatSync17(path);
     digest.update(`incarnation:${directory.dev}:${directory.ino}
 `);
-    const dir = opendirSync9(path), names2 = [];
+    const dir = opendirSync8(path), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count2 > LIMITS.dataFrames)
@@ -23114,11 +24411,11 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join28(path, name);
+      const selected2 = join30(path, name);
       if (selected2 === exclude)
         continue;
       const rel = relative7(files.directory, selected2);
-      if (lstatSync16(selected2).isDirectory()) {
+      if (lstatSync17(selected2).isDirectory()) {
         digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
 `);
         walk(selected2, depth + 1);
@@ -23140,7 +24437,7 @@ async function appendRecoveryBridge(lease, files, observeWrite) {
   const state = files.inspect();
   const bridge = {
     kind: "recovery",
-    recoveryId: randomUUID17(),
+    recoveryId: randomUUID16(),
     epoch: lease.registration.epoch,
     coordinationDigest: hash(encoded({ automatic: true, epoch: lease.registration.epoch })),
     historyDigest: digestHistory(files),
@@ -23156,7 +24453,7 @@ async function appendRecoveryBridge(lease, files, observeWrite) {
   };
   const row = {
     kind: "record",
-    id: randomUUID17(),
+    id: randomUUID16(),
     seq: String(BigInt(bridge.previous.highSeq) + 1n),
     value: bridge
   };
@@ -23175,7 +24472,7 @@ function damaged(error) {
 }
 async function healHistory(lease, log) {
   lease.assert();
-  const c = lease.coordination, directory = join28(c.directory, "history-v2");
+  const c = lease.coordination, directory = join30(c.directory, "history-v2");
   let files;
   let broken = false;
   try {
@@ -23207,100 +24504,11 @@ async function healHistory(lease, log) {
 
 // src/subagent-process.ts
 import { spawn as spawn3 } from "node:child_process";
-import { join as join29 } from "node:path";
+import { join as join31 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
-
-// src/conversation-context.mjs
-var CONTEXT_BYTES = 2 * 1024 * 1024;
-var CONTEXT_RECORD_BYTES = LIMITS.detailBytes;
-var clean = (s, secrets, max = CONTEXT_RECORD_BYTES) => sanitizeText(text(s, max), secrets);
-function argumentsData(value, secrets) {
-  const sanitizer = new DetailSanitizer("canonical-json", secrets);
-  const source = sanitizer.write(canonicalJson(value, CONTEXT_RECORD_BYTES)) + sanitizer.end();
-  if (sanitizer.limited)
-    throw new Error("Unsupported context arguments");
-  return parseWireJson(source, CONTEXT_RECORD_BYTES);
-}
-function own2(value, key2) {
-  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
-  if (!d || !("value" in d))
-    throw new Error("Invalid usage");
-  return d.value;
-}
-function counts(value, keys2) {
-  const out = Object.create(null);
-  for (const key2 of keys2) {
-    const n = own2(value, key2);
-    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
-      throw new Error("Invalid usage");
-    out[key2] = n;
-  }
-  return out;
-}
-function conversationMessages(messages, secrets = []) {
-  return list(messages, 4096, (message) => {
-    if (!message || typeof message !== "object")
-      throw new Error("Invalid context");
-    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
-    const timestamp2 = integer(message.timestamp, 0);
-    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
-      if (block.type === "text")
-        return { type: "text", text: clean(block.text, secrets) };
-      if (role2 === "assistant" && block.type === "toolCall")
-        return {
-          type: "toolCall",
-          id: clean(block.id, secrets, 512),
-          name: clean(block.name, secrets, 128),
-          arguments: argumentsData(block.arguments, secrets)
-        };
-      return null;
-    }).filter(Boolean);
-    if (role2 === "user")
-      return { role: role2, timestamp: timestamp2, content };
-    if (role2 === "toolResult")
-      return {
-        role: role2,
-        timestamp: timestamp2,
-        content,
-        toolCallId: clean(message.toolCallId, secrets, 512),
-        toolName: clean(message.toolName, secrets, 128),
-        isError: message.isError === true
-      };
-    const usage = counts(message.usage, [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "totalTokens"
-    ]);
-    usage.cost = counts(own2(message.usage, "cost"), [
-      "input",
-      "output",
-      "cacheRead",
-      "cacheWrite",
-      "total"
-    ]);
-    return {
-      role: role2,
-      timestamp: timestamp2,
-      content,
-      api: clean(message.api, secrets, 128),
-      provider: clean(message.provider, secrets, 128),
-      model: clean(message.model, secrets, 256),
-      usage,
-      stopReason: oneOf(message.stopReason, [
-        "stop",
-        "length",
-        "toolUse",
-        "error",
-        "aborted"
-      ])
-    };
-  });
-}
 // src/worker-capture.mjs
-import { createHash as createHash24, randomUUID as randomUUID18 } from "node:crypto";
+import { createHash as createHash25, randomUUID as randomUUID17 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -23351,7 +24559,7 @@ class CaptureState {
     this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
     if (++this[control ? "controlFrames" : "dataFrames"] > (control ? LIMITS.controlFrames : LIMITS.dataFrames) || this.bytes > LIMITS.childProtocolBytes - (control ? 0 : LIMITS.ownerControlBytes))
       throw new ContractError("oversize");
-    const message = (id) => {
+    const message2 = (id) => {
       const m = this.messages.get(id);
       requireFact2(m);
       return m;
@@ -23365,7 +24573,7 @@ class CaptureState {
     };
     const owner = (o) => {
       if (o.kind === "message" || o.kind === "message-final")
-        requireFact2(!message(o.messageId).ended);
+        requireFact2(!message2(o.messageId).ended);
       if (o.blockId) {
         const previous = this.blocks.get(o.blockId);
         const key2 = canonicalJson(o);
@@ -23386,7 +24594,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash24("sha256"),
+          finalHash: createHash25("sha256"),
           finalBytes: 0,
           finalIndex: -1
         });
@@ -23406,14 +24614,14 @@ class CaptureState {
           this.handoffs.add(o.dependencyIndex);
         }
         if (e.descriptor.owner.kind === "message" && e.descriptor.owner.stage === "final") {
-          const m = message(e.descriptor.owner.messageId);
+          const m = message2(e.descriptor.owner.messageId);
           requireFact2(e.descriptor.owner.index > m.finalIndex && !m.finalIndices.has(e.descriptor.owner.index));
           m.finalIndex = e.descriptor.owner.index;
           m.finalIndices.add(e.descriptor.owner.index);
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash24("sha256"),
+          hash: createHash25("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -23425,7 +24633,7 @@ class CaptureState {
         d.bytes += utf8Bytes(e.text);
         d.hash.update(e.text);
         if (d.descriptor.owner.kind === "message" && d.descriptor.owner.stage === "final") {
-          const m = message(d.descriptor.owner.messageId);
+          const m = message2(d.descriptor.owner.messageId);
           m.finalHash.update(e.text);
           m.finalBytes += utf8Bytes(e.text);
         }
@@ -23437,7 +24645,7 @@ class CaptureState {
         const d = this.details.get(e.detailId);
         requireFact2(d && !d.ended && d.bytes === e.bytes && d.hash.digest("hex") === e.sha256);
         if (d.descriptor.owner.kind === "message-final") {
-          const m = message(d.descriptor.owner.messageId);
+          const m = message2(d.descriptor.owner.messageId);
           requireFact2(m.finalBytes === e.bytes && m.finalHash.copy().digest("hex") === e.sha256);
         }
         d.hash = null;
@@ -23448,11 +24656,11 @@ class CaptureState {
       case "message-text": {
         const d = this.details.get(e.detailId);
         const o = d?.descriptor.owner;
-        requireFact2(!message(e.messageId).ended && d && o.kind === "message" && o.messageId === e.messageId && o.blockId === e.blockId);
+        requireFact2(!message2(e.messageId).ended && d && o.kind === "message" && o.messageId === e.messageId && o.blockId === e.blockId);
         break;
       }
       case "call-declaration": {
-        const m = message(e.declaration.messageId);
+        const m = message2(e.declaration.messageId);
         requireFact2(!m.ended && m.role === "assistant");
         const old = this.calls.get(e.callId);
         requireFact2(!old || !old.started && !old.ended && old.stage === "partial" && canonicalJson(old.declaration) === canonicalJson(e.declaration));
@@ -23495,7 +24703,7 @@ class CaptureState {
         break;
       }
       case "message-end": {
-        const m = message(e.messageId);
+        const m = message2(e.messageId);
         requireFact2(!m.ended);
         if (e.finalDetailId) {
           const d = detail(e.finalDetailId, "final-text", e.messageId);
@@ -23516,7 +24724,7 @@ class CaptureState {
       case "omitted-block":
         owner(e.block.owner);
         if (e.block.owner.kind === "message" && e.block.owner.stage === "final") {
-          const m = message(e.block.owner.messageId);
+          const m = message2(e.block.owner.messageId);
           requireFact2(!m.finalIndices.has(e.block.owner.index));
           m.finalIndices.add(e.block.owner.index);
         }
@@ -23542,7 +24750,7 @@ class CaptureState {
             "role",
             "effective-system"
           ].every((name) => this.contexts.has(name)) && this.handoffs.size === this.request.handoff.inputs.length);
-        const m = message(e.messageId);
+        const m = message2(e.messageId);
         requireFact2(!this.failed && m.ended && m.role === "assistant" && m.stopReason === "stop" && m.final === e.detailId && this.coverage.observed === "complete");
         requireFact2([...this.details.values()].every((d) => d.ended) && [...this.messages.values()].every((v) => v.ended) && [...this.calls.values()].every((c) => !c.started || c.ended));
         detail(e.detailId, "final-text", e.messageId);
@@ -23815,11 +25023,11 @@ class WorkerRecording {
       try {
         await Promise.race([
           ...this.pending,
-          new Promise((resolve11) => {
-            abort = resolve11;
+          new Promise((resolve12) => {
+            abort = resolve12;
             signal.addEventListener("abort", abort, { once: true });
             if (signal.aborted)
-              resolve11();
+              resolve12();
           })
         ]);
       } finally {
@@ -23847,11 +25055,11 @@ class WorkerRecording {
     let timer;
     await Promise.race([
       Promise.all([...this.pending]),
-      new Promise((resolve11) => {
+      new Promise((resolve12) => {
         timer = setTimeout(() => {
           this.failure = "uncertain";
           this.stop();
-          resolve11();
+          resolve12();
         }, LIMITS.recordingStallMs);
       })
     ]);
@@ -23881,7 +25089,7 @@ class WorkerRecording {
 // src/subagent-process.ts
 function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
-  const taskkill = spawn3(root ? join29(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  const taskkill = spawn3(root ? join31(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
   taskkill.once("close", (code2) => {
     if (code2 !== 0)
@@ -23919,7 +25127,7 @@ function runProcess(spec) {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
-  return new Promise((resolve11) => {
+  return new Promise((resolve12) => {
     const child = spawn3(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env ?? safeChildEnv(),
@@ -23930,13 +25138,9 @@ function runProcess(spec) {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...spec.onContext || spec.onCoordinator ? [spec.onContext ? "pipe" : "ignore"] : [],
-        ...spec.onCoordinator ? ["ipc"] : []
+        ...spec.onCoordinator ? ["ignore", "ipc"] : []
       ]
     });
-    const contextStream = spec.onContext ? child.stdio[3] : null;
-    let contextEnded = false, contextBytes = 0;
-    const contextChunks = [];
     let settled = false;
     let nativeClosed = false;
     let launched = false;
@@ -23972,7 +25176,7 @@ function runProcess(spec) {
     const stderrDecoder = new StringDecoder("utf8");
     let killTimer;
     let unknownTimer;
-    const clean2 = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
+    const clean = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
     const finish = (closed2, exitCode, signal) => {
       if (settled)
         return;
@@ -24009,14 +25213,14 @@ function runProcess(spec) {
           omissions: ["gap"]
         }
       }, capture);
-      resolve11({
+      resolve12({
         outcome,
         closed: closed2,
         exitCode,
         signal,
         durationMs: Date.now() - started,
-        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
-        output: clean2(output),
+        text: clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
+        output: clean(output),
         truncated
       });
       if (!closed2) {
@@ -24024,7 +25228,6 @@ function runProcess(spec) {
         child.stdout.destroy();
         child.stderr.destroy();
         child.stdin?.destroy();
-        contextStream?.destroy();
         if (child.connected)
           child.disconnect();
       }
@@ -24061,13 +25264,13 @@ function runProcess(spec) {
     let bridgeCalls = 0;
     let bridgeBusy = false;
     if (spec.onCoordinator)
-      child.on("message", (message) => {
+      child.on("message", (message2) => {
         if (settled || stopping)
           return;
         (async () => {
           let row;
           try {
-            row = closed(message, ["id", "name", "args"]);
+            row = closed(message2, ["id", "name", "args"]);
             if (!Number.isSafeInteger(row.id) || row.id < 1 || typeof row.name !== "string")
               throw new Error("Invalid coordinator frame");
           } catch {
@@ -24075,12 +25278,12 @@ function runProcess(spec) {
             return;
           }
           const id = row.id;
-          const refuse2 = () => {
+          const refuse3 = () => {
             if (child.connected && !settled && !stopping)
               child.send({ id, ok: false }, () => {});
           };
-          if (++bridgeCalls > 16 || bridgeBusy || Buffer.byteLength(JSON.stringify(message)) > 65536) {
-            refuse2();
+          if (++bridgeCalls > 16 || bridgeBusy || Buffer.byteLength(JSON.stringify(message2)) > 65536) {
+            refuse3();
             return;
           }
           bridgeBusy = true;
@@ -24098,7 +25301,7 @@ function runProcess(spec) {
             if (!settled && !stopping && child.connected)
               child.send(reply, () => {});
           } catch {
-            refuse2();
+            refuse3();
           } finally {
             bridgeBusy = false;
           }
@@ -24125,7 +25328,7 @@ function runProcess(spec) {
           spec.onProgress?.("Agent ready");
         }
         if (decoded2.event.kind === "tool-start")
-          spec.onProgress?.(clean2(`Tool: ${decoded2.event.name}`, 128));
+          spec.onProgress?.(clean(`Tool: ${decoded2.event.name}`, 128));
         if (decoded2.event.kind === "final")
           final = capture.preview;
         if (lease) {
@@ -24165,7 +25368,7 @@ function runProcess(spec) {
         if (Buffer.byteLength(output) > 256 * 1024) {
           truncated = true;
           if (spec.uninterruptible)
-            output = clean2(output, 256 * 1024);
+            output = clean(output, 256 * 1024);
           else
             stop("failed");
         }
@@ -24197,34 +25400,6 @@ function runProcess(spec) {
         }
       }
     };
-    contextStream?.on("data", (chunk) => {
-      if (settled || stopping)
-        return;
-      try {
-        let offset = 0;
-        while (offset < chunk.length) {
-          const end = chunk.indexOf(10, offset);
-          const part2 = chunk.subarray(offset, end < 0 ? chunk.length : end);
-          contextBytes += part2.length;
-          if (contextBytes > CONTEXT_RECORD_BYTES)
-            throw new Error("Checkpoint record too large");
-          contextChunks.push(part2);
-          if (end < 0)
-            break;
-          const source = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(contextChunks, contextBytes));
-          contextChunks.length = 0;
-          contextBytes = 0;
-          spec.onContext?.(source);
-          offset = end + 1;
-        }
-      } catch {
-        stop("failed");
-      }
-    });
-    contextStream?.once("end", () => {
-      contextEnded = true;
-    });
-    contextStream?.on("error", () => stop("failed"));
     let stdoutWork = Promise.resolve();
     let stderrWork = Promise.resolve();
     let stdoutEnded = false, stderrEnded = false;
@@ -24277,15 +25452,6 @@ function runProcess(spec) {
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
       const close = () => {
-        if (spec.onContext && !stopping && code2 === 0) {
-          try {
-            if (!contextEnded || contextBytes)
-              throw new Error("Context EOF missing");
-            spec.onContextEnd?.();
-          } catch {
-            stopping = "failed";
-          }
-        }
         if (!spec.protocol)
           output += stdoutDecoder.end();
         else {
@@ -24384,34 +25550,11 @@ function launchConversation(prepared, conversation, signal, options) {
     if (!encoded2 || encoded2.input !== input)
       throw new Error("Invalid chat launch");
     const secrets = encoded2.secrets;
-    let contextCount = 0, contextComplete = false;
     return launchEncoded(encoded2, signal, options.timeoutMs, {
       maySignal: options.maySignal,
       onNative: options.onNative,
       onCoordinator: options.onCoordinator,
-      onFrame: (frame) => options.onFrame(frame, secrets),
-      onContext: (source) => {
-        if (contextComplete)
-          throw new Error("Checkpoint after end");
-        const value = parseWireJson(source, CONTEXT_RECORD_BYTES);
-        if (value.schema === "cadence-conversation-stream-end/1") {
-          const record3 = closed(value, ["schema", "count"]);
-          if (record3.count !== contextCount)
-            throw new Error("Invalid checkpoint count");
-          contextComplete = true;
-          return;
-        }
-        const record2 = closed(value, ["schema", "message"]);
-        if (record2.schema !== "cadence-conversation-stream/1")
-          throw new Error("Invalid checkpoint");
-        options.onContext(conversationMessages([record2.message], [...options.ownerSecrets(), ...secrets])[0]);
-        contextCount++;
-      },
-      onContextEnd: () => {
-        if (!contextComplete)
-          throw new Error("Incomplete checkpoint");
-        options.onContextEnd();
-      }
+      onFrame: (frame) => options.onFrame(frame, secrets)
     });
   });
 }
@@ -24539,7 +25682,7 @@ class CheckoutGate {
       throw new ContractError("conflict");
     if (this.waiting.length >= CHECKOUT_WAITERS)
       throw new ContractError("capacity");
-    const result = new Promise((resolve11, reject) => {
+    const result = new Promise((resolve12, reject) => {
       const abort = () => {
         const at = this.waiting.indexOf(waiter);
         if (at >= 0)
@@ -24549,7 +25692,7 @@ class CheckoutGate {
         id,
         resolve: (permit) => {
           signal.removeEventListener("abort", abort);
-          resolve11(permit);
+          resolve12(permit);
         },
         reject: (error) => {
           signal.removeEventListener("abort", abort);
@@ -24597,14 +25740,14 @@ class CheckoutGate {
 }
 
 // src/service/model-choice.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID19();
+  catalogId = randomUUID18();
   installing = false;
   constructor(options) {
     this.options = options;
@@ -24667,7 +25810,7 @@ class OwnerModelChoice {
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID19();
+        this.catalogId = randomUUID18();
         this.options.owner.configurationInstalled();
       }
       try {
@@ -24680,535 +25823,8 @@ class OwnerModelChoice {
   }
 }
 
-// src/service/model-config.ts
-import { lstatSync as lstatSync17, realpathSync as realpathSync9 } from "node:fs";
-import { dirname as dirname19, isAbsolute as isAbsolute9, join as join30, resolve as resolve11 } from "node:path";
-var CONFIG_BYTES2 = 1024 * 1024;
-var ENTRY_LIMIT = 256;
-function refuse2() {
-  throw new ContractError("corrupt-selected");
-}
-function data(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    refuse2();
-  if (![null, Object.prototype].includes(Object.getPrototypeOf(value)))
-    refuse2();
-  const out = Object.create(null);
-  const keys2 = Reflect.ownKeys(value);
-  if (keys2.length > ENTRY_LIMIT)
-    refuse2();
-  for (const key2 of keys2) {
-    const d = Object.getOwnPropertyDescriptor(value, key2);
-    if (typeof key2 !== "string" || !d || !("value" in d) || !d.enumerable)
-      refuse2();
-    if (["__proto__", "constructor", "prototype"].includes(key2))
-      refuse2();
-    out[key2] = d.value;
-  }
-  return out;
-}
-function keys2(value, allowed) {
-  if (Object.keys(value).some((key2) => !allowed.includes(key2)))
-    refuse2();
-}
-function string(value) {
-  if (typeof value !== "string" || !value || value.includes("\x00"))
-    refuse2();
-  return value;
-}
-function environment(value) {
-  const out = Object.create(null);
-  for (const [name, entry] of Object.entries(data(value))) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-      refuse2();
-    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
-      throw new ContractError("unsupported-context");
-    if (typeof entry !== "string" || entry.includes("\x00"))
-      refuse2();
-    out[name] = entry;
-  }
-  return out;
-}
-function captureEnvironment(value) {
-  const out = Object.create(null);
-  const names2 = Reflect.ownKeys(value);
-  if (names2.length > 4096)
-    throw new ContractError("oversize");
-  let bytes = 0;
-  for (const name of names2) {
-    const d = Object.getOwnPropertyDescriptor(value, name);
-    if (typeof name !== "string" || !d || !("value" in d) || d.value !== undefined && typeof d.value !== "string")
-      refuse2();
-    bytes += Buffer.byteLength(name) + Buffer.byteLength(d.value ?? "");
-    if (bytes > CONFIG_BYTES2)
-      throw new ContractError("oversize");
-    out[name] = d.value;
-  }
-  return Object.freeze(out);
-}
-function piSource(agentDir, home, cwd, env) {
-  if (!isAbsolute9(home) || !isAbsolute9(cwd))
-    refuse2();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join30(home, ".pi", "agent");
-  if (!selected2 || selected2.includes("\x00"))
-    refuse2();
-  if (selected2 === "~" || selected2.startsWith("~/"))
-    selected2 = home + selected2.slice(1);
-  selected2 = resolve11(cwd, selected2);
-  const directory = join30(realpathSync9(dirname19(selected2)), selected2.slice(dirname19(selected2).length + 1));
-  if (!lstatSync17(directory).isDirectory() || lstatSync17(directory).isSymbolicLink())
-    refuse2();
-  const files = new PrivateFiles(directory, false);
-  if (!files.directory(directory))
-    refuse2();
-  return {
-    directory,
-    files,
-    authPath: join30(directory, "auth.json"),
-    modelsPath: join30(directory, "models.json")
-  };
-}
-function templateNames(value) {
-  const text2 = string(value);
-  if (text2.startsWith("!"))
-    throw new ContractError("unsupported-context");
-  const names2 = new Set;
-  for (let i = 0;i < text2.length; ) {
-    const dollar = text2.indexOf("$", i);
-    if (dollar < 0)
-      break;
-    const next = text2[dollar + 1];
-    if (next === "$" || next === "!") {
-      i = dollar + 2;
-    } else if (next === "{") {
-      const end = text2.indexOf("}", dollar + 2);
-      if (end < 0) {
-        i = dollar + 1;
-        continue;
-      }
-      const name = text2.slice(dollar + 2, end);
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-        names2.add(name);
-      i = end + 1;
-    } else {
-      const name = text2.slice(dollar + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
-      if (name)
-        names2.add(name);
-      i = dollar + 1 + (name?.length ?? 0);
-    }
-  }
-  return [...names2];
-}
-function headers(value) {
-  for (const [name, entry] of Object.entries(data(value))) {
-    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
-      refuse2();
-    if (typeof entry !== "string" || /[\r\n\0]/.test(entry))
-      refuse2();
-    if (entry)
-      templateNames(entry);
-  }
-}
-var modelKeys = [
-  "id",
-  "name",
-  "api",
-  "baseUrl",
-  "reasoning",
-  "thinkingLevelMap",
-  "input",
-  "cost",
-  "contextWindow",
-  "maxTokens",
-  "samplingParams",
-  "headers",
-  "compat"
-];
-function compat(value) {
-  const config = data(value);
-  const booleans = [
-    "supportsStore",
-    "supportsDeveloperRole",
-    "supportsReasoningEffort",
-    "supportsUsageInStreaming",
-    "supportsFinishReason",
-    "requiresToolResultName",
-    "requiresAssistantAfterToolResult",
-    "requiresThinkingAsText",
-    "requiresReasoningContentOnAssistantMessages",
-    "supportsOpenAIGrammarTools",
-    "supportsStrictMode",
-    "sendSessionAffinityHeaders",
-    "supportsLongCacheRetention",
-    "supportsAdditionalTools",
-    "supportsToolSearch",
-    "supportsEagerToolInputStreaming",
-    "supportsCacheControlOnTools",
-    "supportsTemperature",
-    "forceAdaptiveThinking",
-    "allowEmptySignature",
-    "supportsStrictTools",
-    "supportsToolReferences",
-    "supportsMidConvoSystemMessages"
-  ];
-  const enums = {
-    maxTokensField: ["max_completion_tokens", "max_tokens"],
-    thinkingFormat: [
-      "openai",
-      "openrouter",
-      "together",
-      "baseten",
-      "deepseek",
-      "zai",
-      "qwen",
-      "chat-template",
-      "qwen-chat-template",
-      "string-thinking",
-      "ant-ling"
-    ],
-    cacheControlFormat: ["anthropic"],
-    deferredToolsMode: ["kimi"],
-    sessionAffinityFormat: ["openai", "openai-nosession", "openrouter"]
-  };
-  keys2(config, [
-    ...booleans,
-    ...Object.keys(enums),
-    "chatTemplateKwargs",
-    "chatTemplateArgs",
-    "openRouterRouting",
-    "vercelGatewayRouting"
-  ]);
-  for (const key2 of booleans)
-    if (config[key2] !== undefined && typeof config[key2] !== "boolean")
-      refuse2();
-  for (const [key2, values] of Object.entries(enums))
-    if (config[key2] !== undefined && !values.includes(config[key2]))
-      refuse2();
-  for (const key2 of ["chatTemplateKwargs", "chatTemplateArgs"]) {
-    if (config[key2] === undefined)
-      continue;
-    for (const entry of Object.values(data(config[key2]))) {
-      if (entry === null || ["string", "boolean", "number"].includes(typeof entry))
-        continue;
-      const variable = data(entry);
-      keys2(variable, ["$var", "omitWhenOff"]);
-      if (!["thinking.enabled", "thinking.effort"].includes(variable.$var) || variable.omitWhenOff !== undefined && typeof variable.omitWhenOff !== "boolean")
-        refuse2();
-    }
-  }
-  const stringArray = (value2) => {
-    if (value2 !== undefined && (!Array.isArray(value2) || value2.some((v) => typeof v !== "string")))
-      refuse2();
-  };
-  if (config.vercelGatewayRouting !== undefined) {
-    const routing = data(config.vercelGatewayRouting);
-    keys2(routing, ["only", "order"]);
-    for (const value2 of Object.values(routing))
-      stringArray(value2);
-  }
-  if (config.openRouterRouting !== undefined) {
-    const routing = data(config.openRouterRouting);
-    keys2(routing, [
-      "allow_fallbacks",
-      "require_parameters",
-      "data_collection",
-      "zdr",
-      "enforce_distillable_text",
-      "order",
-      "only",
-      "ignore",
-      "quantizations",
-      "sort",
-      "max_price",
-      "preferred_min_throughput",
-      "preferred_max_latency"
-    ]);
-    for (const key2 of [
-      "allow_fallbacks",
-      "require_parameters",
-      "zdr",
-      "enforce_distillable_text"
-    ])
-      if (routing[key2] !== undefined && typeof routing[key2] !== "boolean")
-        refuse2();
-    if (routing.data_collection !== undefined && !["deny", "allow"].includes(routing.data_collection))
-      refuse2();
-    for (const key2 of ["order", "only", "ignore", "quantizations"])
-      stringArray(routing[key2]);
-    if (routing.sort !== undefined && typeof routing.sort !== "string") {
-      const sort = data(routing.sort);
-      keys2(sort, ["by", "partition"]);
-      if (sort.by !== undefined && typeof sort.by !== "string" || sort.partition !== undefined && sort.partition !== null && typeof sort.partition !== "string")
-        refuse2();
-    }
-    if (routing.max_price !== undefined) {
-      const price = data(routing.max_price);
-      keys2(price, ["prompt", "completion", "image", "audio", "request"]);
-      for (const value2 of Object.values(price))
-        if (typeof value2 !== "number" && typeof value2 !== "string")
-          refuse2();
-    }
-    for (const key2 of ["preferred_min_throughput", "preferred_max_latency"]) {
-      if (routing[key2] === undefined || typeof routing[key2] === "number")
-        continue;
-      const cutoffs = data(routing[key2]);
-      keys2(cutoffs, ["p50", "p75", "p90", "p99"]);
-      for (const value2 of Object.values(cutoffs))
-        if (typeof value2 !== "number")
-          refuse2();
-    }
-  }
-}
-function modelDefinition(value, override = false) {
-  const model = data(value);
-  keys2(model, override ? modelKeys.filter((k) => !["id", "api", "baseUrl"].includes(k)) : modelKeys);
-  if (!override)
-    string(model.id);
-  if (model.headers !== undefined)
-    headers(model.headers);
-  if (model.thinkingLevelMap !== undefined)
-    keys2(data(model.thinkingLevelMap), [
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-    ]);
-  if (model.cost !== undefined) {
-    const cost = data(model.cost);
-    keys2(cost, ["input", "output", "cacheRead", "cacheWrite", "tiers"]);
-    if (cost.tiers !== undefined) {
-      if (!Array.isArray(cost.tiers) || cost.tiers.length > ENTRY_LIMIT)
-        refuse2();
-      for (const tier of cost.tiers)
-        keys2(data(tier), [
-          "inputTokensAbove",
-          "input",
-          "output",
-          "cacheRead",
-          "cacheWrite"
-        ]);
-    }
-  }
-  if (model.compat !== undefined)
-    compat(model.compat);
-}
-function modelJson(snapshot) {
-  const input = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
-  let stripped = "";
-  let quoted = false;
-  let escaped = false;
-  for (let i = 0;i < input.length; i++) {
-    const char = input[i];
-    if (!quoted && char === "/" && input[i + 1] === "/") {
-      while (i < input.length && input[i] !== `
-`)
-        i++;
-      stripped += `
-`;
-      continue;
-    }
-    stripped += char;
-    if (quoted) {
-      if (escaped)
-        escaped = false;
-      else if (char === "\\")
-        escaped = true;
-      else if (char === '"')
-        quoted = false;
-    } else if (char === '"')
-      quoted = true;
-  }
-  let normalized = "";
-  quoted = false;
-  escaped = false;
-  for (let i = 0;i < stripped.length; i++) {
-    const char = stripped[i];
-    if (!quoted && char === ",") {
-      let next = i + 1;
-      while (/\s/.test(stripped[next] ?? "") && next < stripped.length)
-        next++;
-      if (stripped[next] === "}" || stripped[next] === "]")
-        continue;
-    }
-    normalized += char;
-    if (quoted) {
-      if (escaped)
-        escaped = false;
-      else if (char === "\\")
-        escaped = true;
-      else if (char === '"')
-        quoted = false;
-    } else if (char === '"')
-      quoted = true;
-  }
-  return parseWireJson(normalized, CONFIG_BYTES2);
-}
-function readPiSnapshot(source) {
-  const { auth, credentials } = readPiAuth(source);
-  const { models, providers } = readPiModels(source);
-  return { auth, models, credentials, providers };
-}
-function readPiAuth(source) {
-  const auth = source.files.read(source.authPath, CONFIG_BYTES2);
-  if (!auth)
-    refuse2();
-  const credentials = Object.create(null);
-  for (const [provider, input] of Object.entries(data(json(auth, CONFIG_BYTES2)))) {
-    const credential = data(input);
-    if (credential.type === "api_key") {
-      keys2(credential, ["type", "key", "env"]);
-      if (credential.key !== undefined)
-        templateNames(credential.key);
-      if (credential.env !== undefined)
-        environment(credential.env);
-    } else if (credential.type === "oauth") {
-      string(credential.access);
-      string(credential.refresh);
-      if (typeof credential.expires !== "number" || !Number.isFinite(credential.expires))
-        refuse2();
-      if (credential.env !== undefined)
-        environment(credential.env);
-    } else
-      refuse2();
-    credentials[provider] = credential;
-  }
-  return { auth, credentials };
-}
-function readPiModels(source) {
-  const models = source.files.read(source.modelsPath, CONFIG_BYTES2);
-  const providers = Object.create(null);
-  if (models) {
-    const root = data(modelJson(models));
-    keys2(root, ["providers", "$schema"]);
-    for (const [id, value] of Object.entries(data(root.providers))) {
-      const provider = data(value);
-      keys2(provider, [
-        "name",
-        "baseUrl",
-        "apiKey",
-        "api",
-        "oauth",
-        "headers",
-        "compat",
-        "authHeader",
-        "models",
-        "modelOverrides"
-      ]);
-      if (provider.apiKey !== undefined)
-        templateNames(provider.apiKey);
-      if (provider.headers !== undefined)
-        headers(provider.headers);
-      if (provider.compat !== undefined)
-        compat(provider.compat);
-      if (provider.models !== undefined) {
-        if (!Array.isArray(provider.models) || provider.models.length > ENTRY_LIMIT)
-          refuse2();
-        const ids = new Set;
-        for (const model of provider.models) {
-          modelDefinition(model);
-          const id2 = data(model).id;
-          if (ids.has(id2))
-            refuse2();
-          ids.add(id2);
-        }
-      }
-      if (provider.modelOverrides !== undefined)
-        for (const model of Object.values(data(provider.modelOverrides)))
-          modelDefinition(model, true);
-      providers[id] = provider;
-    }
-  }
-  return { models, providers };
-}
-function sourceIdentity(snapshot, provider) {
-  const credential = snapshot.credentials[provider];
-  if (credential?.type === "oauth") {
-    const { access: _a, refresh: _r, expires: _e, ...identity } = credential;
-    return stablePrivate(identity);
-  }
-  return stablePrivate(credential ?? null);
-}
-function selectedEnvironment(snapshot, provider, model, launch) {
-  const credential = snapshot.credentials[provider];
-  const scoped = credential?.env === undefined ? {} : environment(credential.env);
-  const config = snapshot.providers[provider];
-  const values = [];
-  if (credential?.type === "api_key" && credential.key !== undefined)
-    values.push(credential.key);
-  if (config?.apiKey !== undefined)
-    values.push(config.apiKey);
-  if (config?.headers)
-    values.push(...Object.values(data(config.headers)));
-  const definition = Array.isArray(config?.models) ? config.models.find((m) => data(m).id === model) : undefined;
-  const override = config?.modelOverrides ? data(config.modelOverrides)[model] : undefined;
-  for (const entry of [definition, override])
-    if (entry && data(entry).headers)
-      values.push(...Object.values(data(data(entry).headers)));
-  const env = { ...scoped };
-  for (const value of values) {
-    if (value === "")
-      continue;
-    for (const name of templateNames(value)) {
-      if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
-        throw new ContractError("unsupported-context");
-      const selected2 = scoped[name] || launch[name];
-      if (!selected2)
-        throw new ContractError("auth-unavailable");
-      env[name] = selected2;
-    }
-  }
-  return env;
-}
-function sameModels(a, b) {
-  return a.models?.identity === b.models?.identity && a.models?.stamp === b.models?.stamp;
-}
-function stablePrivate(value) {
-  const sorted = (v) => {
-    if (Array.isArray(v))
-      return v.map(sorted);
-    if (v && typeof v === "object")
-      return Object.fromEntries(Object.entries(data(v)).sort(([a], [b]) => a.localeCompare(b)).map(([k, entry]) => [k, sorted(entry)]));
-    return v;
-  };
-  return JSON.stringify(sorted(value));
-}
-function clonePrivate(value) {
-  let count2 = 0;
-  const visit = (v, depth) => {
-    if (++count2 > 16384 || depth > 32)
-      throw new ContractError("oversize");
-    if (v === undefined || v === null || typeof v === "boolean" || typeof v === "string")
-      return v;
-    if (typeof v === "number" && Number.isFinite(v))
-      return v;
-    if (Array.isArray(v)) {
-      if (v.length > 16384 || Reflect.ownKeys(v).length !== v.length + 1)
-        refuse2();
-      const out2 = [];
-      for (let i = 0;i < v.length; i++) {
-        const d = Object.getOwnPropertyDescriptor(v, String(i));
-        if (!d || !("value" in d))
-          refuse2();
-        out2.push(visit(d.value, depth + 1));
-      }
-      return out2;
-    }
-    const out = Object.create(null);
-    for (const [k, entry] of Object.entries(data(v)))
-      out[k] = visit(entry, depth + 1);
-    return out;
-  };
-  const encoded2 = JSON.stringify(visit(value, 0));
-  if (Buffer.byteLength(encoded2) > CONFIG_BYTES2)
-    throw new ContractError("oversize");
-  return parseWireJson(encoded2, CONFIG_BYTES2);
-}
-
 // src/service/model-context.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -25434,59 +26050,7 @@ class OwnerModelContext {
     return current2;
   }
   catalogLiterals(snapshot) {
-    const strings = (v, visit) => {
-      if (typeof v === "string") {
-        if (v)
-          visit(v);
-      } else if (v && typeof v === "object") {
-        for (const key2 of Object.keys(v))
-          strings(v[key2], visit);
-      }
-    };
-    const literals = new Set;
-    let literalBytes = 0;
-    const add = (value) => {
-      if (literals.has(value))
-        return;
-      const size2 = Buffer.byteLength(value);
-      if (literalBytes + size2 > LIMITS.workerRequestBytes * 2)
-        throw new ContractError("oversize");
-      literalBytes += size2;
-      literals.add(value);
-    };
-    for (const route of this.#options.network?.literals ?? [])
-      add(route);
-    const templates = (value, provider) => {
-      const scoped = environment(snapshot.credentials[provider]?.env ?? {});
-      strings(value, (literal2) => {
-        add(literal2);
-        for (const name of templateNames(literal2)) {
-          const resolved = scoped[name] || this.#launch[name];
-          if (resolved)
-            add(resolved);
-        }
-      });
-    };
-    for (const [provider, credential] of Object.entries(snapshot.credentials)) {
-      strings(credential.type === "api_key" ? credential.key : credential.access, add);
-      strings(credential.type === "oauth" ? credential.refresh : null, add);
-      strings(credential.env, add);
-      if (credential.type === "api_key")
-        templates(credential.key, provider);
-    }
-    for (const [provider, config] of Object.entries(snapshot.providers)) {
-      templates(config.apiKey, provider);
-      templates(config.headers, provider);
-      for (const model of Array.isArray(config.models) ? config.models : [])
-        templates(data(model).headers, provider);
-      if (config.modelOverrides)
-        for (const model of Object.values(data(config.modelOverrides)))
-          templates(data(model).headers, provider);
-    }
-    for (const [key2, value] of Object.entries(this.#launch))
-      if (/(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key2) && value)
-        add(value);
-    return [...literals];
+    return snapshotLiterals(snapshot, this.#launch, this.#options.network?.literals ?? []);
   }
   isPublicIdentifier(value, literals) {
     return !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && diagnosticText(value, 512, literals) === value && sanitizeText(value, literals) === value;
@@ -25514,7 +26078,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID20(), ...selector };
+    const selection = { sourceSelectionId: randomUUID19(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -25619,7 +26183,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID20(), ...selector };
+    const selection = { sourceSelectionId: randomUUID19(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -26227,13 +26791,12 @@ class ServiceOwner {
 }
 
 // src/service/workbench.ts
-import { opendirSync as opendirSync14 } from "node:fs";
-import { join as join36 } from "node:path";
+import { opendirSync as opendirSync12 } from "node:fs";
+import { join as join37 } from "node:path";
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
-import { opendirSync as opendirSync10 } from "node:fs";
-import { join as join31 } from "node:path";
+import { randomUUID as randomUUID20 } from "node:crypto";
+import { join as join32 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
@@ -26247,7 +26810,6 @@ During accepted work answer questions, report actual retained progress, and let 
 var EVIDENCE_BYTES = 16384;
 var COORDINATORS = 8;
 var RECENT_RUNS = 200;
-var SCAN = 256;
 var PLAN_REFUSALS = {
   stale: "The project, model selection or owner changed while publishing. No plan card was published; ask the user before trying again.",
   conflict: "The current project state conflicts with this plan (for example uncommitted changes in a declared target or its project context). No plan card was published; explain this to the user.",
@@ -26292,8 +26854,8 @@ class ConversationWorkflow {
         "schema",
         "state"
       ]).state).runs : [];
-      for (const [index, runId] of state.runs.entries()) {
-        if (index >= state.runs.length - RECENT_RUNS && prior.includes(runId))
+      for (const runId of state.runs) {
+        if (prior.includes(runId))
           continue;
         const path = this.runLink(runId);
         const old = this.o.coordination.files.read(path);
@@ -26314,11 +26876,11 @@ class ConversationWorkflow {
     }
   }
   runLink(runId) {
-    return join31(this.o.coordination.directory, "conversations-v1", "workflow-links", `${decodeId(runId)}.json`);
+    return join32(this.o.coordination.directory, "conversations-v1", "workflow-links", `${decodeId(runId)}.json`);
   }
   links(runIds) {
     this.o.owner.lease.assert();
-    const wanted = new Set(runIds), links = [];
+    const links = [];
     for (const runId of runIds) {
       try {
         const file = this.o.coordination.files.read(this.runLink(runId));
@@ -26330,42 +26892,12 @@ class ConversationWorkflow {
         ]);
         if (row.runId !== runId)
           continue;
-        const conversationId = decodeId(row.conversationId);
-        if (this.records.observe(conversationId).notice)
-          continue;
+        const conversationId = decodeSessionId(row.conversationId);
+        this.o.conversations.records.assertSupported(conversationId);
         links.push({ runId, conversationId });
-        wanted.delete(runId);
       } catch {
         this.o.owner.lease.assert();
       }
-    }
-    if (!wanted.size)
-      return links;
-    try {
-      if (!this.o.coordination.files.directory(this.records.root))
-        return links;
-      const dir = opendirSync10(this.records.root);
-      try {
-        let seen = 0;
-        for (let e = dir.readSync();e && seen < SCAN && wanted.size; e = dir.readSync()) {
-          ++seen;
-          let id;
-          try {
-            id = decodeId(e.name);
-          } catch {
-            continue;
-          }
-          if (!e.isDirectory())
-            continue;
-          for (const runId of this.records.observe(id).runs)
-            if (wanted.delete(runId))
-              links.push({ runId, conversationId: id });
-        }
-      } finally {
-        dir.closeSync();
-      }
-    } catch {
-      this.o.owner.lease.assert();
     }
     return links;
   }
@@ -26397,14 +26929,14 @@ class ConversationWorkflow {
     } catch {}
   }
   preview(run2, bytes, steps) {
-    const clip = (value, maximum) => diagnosticText(value, maximum, this.o.secrets());
+    const clip2 = (value, maximum) => diagnosticText(value, maximum, this.o.secrets());
     return {
       ...run2,
-      goal: clip(run2.goal, 320),
-      notice: clip(run2.notice, 512),
+      goal: clip2(run2.goal, 320),
+      notice: clip2(run2.notice, 512),
       stepsOmitted: Math.max(0, run2.steps.length - steps),
       steps: run2.steps.slice(-steps).map((s) => {
-        const text2 = clip(s.text, bytes);
+        const text2 = clip2(s.text, bytes);
         return { ...s, text: text2, truncated: s.truncated || text2 !== s.text };
       })
     };
@@ -26513,7 +27045,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }
     let published;
     try {
-      published = this.o.workflows.command(randomUUID21(), epoch, {
+      published = this.o.workflows.command(randomUUID20(), epoch, {
         action: "propose",
         plan,
         model
@@ -26557,7 +27089,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID21(), conversationId = current2.state.id;
+    const id = randomUUID20(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -26581,7 +27113,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }, current2.file);
     const cancel = () => {
       try {
-        this.o.workflows.command(randomUUID21(), epoch, {
+        this.o.workflows.command(randomUUID20(), epoch, {
           action: "cancel",
           runId: id
         });
@@ -26600,7 +27132,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join31(this.records.root, decodeId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join32(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -26642,9 +27174,10 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file } = this.records.usable(c.conversationId);
-    const view = this.o.conversations.records.conversation(c.conversationId);
-    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || view.kind !== "conversation" || view.summary?.head !== state.head || ["queued", "running", "unknown"].includes(view.summary.status) || this.active.has(c.conversationId))
+    const latest = this.o.conversations.records.latestCommand(c.conversationId);
+    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || ["queued", "running", "unknown"].includes(latest.status) || this.active.has(c.conversationId))
       throw new ContractError("stale");
+    const head = this.o.conversations.records.approvalHead(c.conversationId, latest.commandId);
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
       for (const [id, g2] of this.grants)
@@ -26659,7 +27192,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID21();
+      const g = prepared.response, grant2 = randomUUID20();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -26667,7 +27200,8 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         proposalId: c.proposalId,
         digest: c.digest,
         expiresAt: g.expiresAt,
-        nativeGrant: g.grant
+        nativeGrant: g.grant,
+        head
       });
       return {
         kind: "cadence-grant",
@@ -26681,7 +27215,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const grant = this.grants.get(c.grant);
     if (grant && grant.expiresAt < Date.now())
       this.grants.delete(c.grant);
-    if (!grant || grant.caller !== canonicalJson(caller) || grant.expiresAt < Date.now() || grant.revision !== c.revision || grant.conversationId !== c.conversationId || grant.proposalId !== c.proposalId || grant.digest !== c.digest)
+    if (!grant || grant.caller !== canonicalJson(caller) || grant.expiresAt < Date.now() || grant.revision !== c.revision || grant.conversationId !== c.conversationId || grant.proposalId !== c.proposalId || grant.digest !== c.digest || grant.head !== head)
       throw new ContractError("expired-grant");
     recording();
     this.grants.delete(c.grant);
@@ -26724,145 +27258,142 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
-import { opendirSync as opendirSync11, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname20, join as join32 } from "node:path";
+import { randomUUID as randomUUID21 } from "node:crypto";
+import { opendirSync as opendirSync9, statfsSync as statfsSync2 } from "node:fs";
+import { dirname as dirname20, join as join33 } from "node:path";
+var META_BYTES2 = 64 * 1024;
+var PREVIEW_BYTES = 64 * 1024;
+var RECENT_PREVIEWS = 8;
+var PREVIEW_MARK = `
+[Preview truncated; the rest appears once it is written.]`;
 var OMITTED_FLAG = {
   "hidden-thinking": "thinking",
   binary: "media",
   unsupported: "other"
 };
 
-class ConversationCapture {
-  turn;
-  save;
+class LiveCapture {
   secrets;
-  transcript;
+  omitted = { thinking: false, media: false, other: false };
+  notice = "";
+  assistants = [];
+  tools = [];
   details = new Map;
-  messageText = new Map;
-  constructor(turn, save, secrets, transcript) {
-    this.turn = turn;
-    this.save = save;
+  blocks = new Map;
+  constructor(secrets) {
     this.secrets = secrets;
-    this.transcript = transcript;
   }
-  item(id, role2) {
-    if (this.transcript)
-      return this.transcript.item(id, role2);
-    let item = this.turn.items.find((i) => i.id === id);
-    if (!item) {
-      if (this.turn.items.length >= 256)
-        throw new ContractError("capacity");
-      item = { id, role: role2, text: "", name: "", args: "", error: false };
-      this.turn.items.push(item);
-      try {
-        canonicalJson(this.turn, TURN_BYTES - 2048);
-      } catch (error) {
-        this.turn.items.pop();
-        this.turn.notice = "Conversation capture limit exceeded.";
-        throw error;
-      }
-    }
-    return item;
+  bounded(value) {
+    return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
   }
-  update(item, field, value, maximum, known = { bytes: Buffer.byteLength(value), head: value }) {
-    const bytes = known.bytes;
-    if (this.transcript) {
-      if (bytes > LIMITS.detailBytes)
-        throw new ContractError("capacity");
-      item[field] = value;
-      this.transcript.preview(item, { [field]: known });
-      return;
+  tool(callId) {
+    let tool = this.tools.find((t) => t.id === callId);
+    if (!tool) {
+      tool = { id: callId, name: "", args: "", text: "", error: false };
+      this.tools.push(tool);
+      const stale = this.tools[this.tools.length - 1 - RECENT_PREVIEWS];
+      if (stale)
+        stale.args = stale.text = "";
     }
-    const before = item[field];
-    try {
-      if (bytes > maximum)
-        throw new ContractError("capacity");
-      item[field] = value;
-      canonicalJson(this.turn, TURN_BYTES - 2048);
-    } catch (error) {
-      item[field] = before;
-      this.turn.notice = "Conversation capture limit exceeded.";
-      throw error;
-    }
+    return tool;
   }
   accept(frame) {
     const e = frame.event;
-    if (e.kind === "detail-begin") {
-      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+    if (e.kind === "message-start" && e.role === "assistant") {
+      if (!this.assistants.some((a) => a.id === e.messageId)) {
+        this.assistants.push({ id: e.messageId, text: "" });
+        const stale = this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
+        if (stale)
+          stale.text = "";
+      }
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const tool = this.tool(e.callId);
+      tool.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      if (e.kind === "tool-end")
+        tool.error = e.isError;
+    } else if (e.kind === "detail-begin") {
+      const kind = e.descriptor.owner.kind;
+      if (kind === "context" || kind === "handoff")
         return;
       if (this.details.size >= 64)
-        throw new ContractError("capacity");
+        return;
       this.details.set(e.detailId, {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
-        text: "",
-        bytes: 0,
-        head: ""
+        text: ""
       });
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d)
         return;
       const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
-      d.text += added;
-      d.bytes += Buffer.byteLength(added);
-      d.head = previewHead(d.head, added);
-      if (d.bytes > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
-        throw new ContractError("capacity");
+      if (Buffer.byteLength(d.text) <= PREVIEW_BYTES)
+        d.text += added;
       const o = d.descriptor.owner;
-      if (o.kind === "message") {
-        const role2 = (this.transcript?.find(o.messageId) ?? this.turn.items.find((i) => i.id === o.messageId))?.role;
-        if (role2 === "assistant" && o.stage === "stream") {
-          this.messageText.set(o.blockId, {
-            messageId: o.messageId,
-            text: d.text,
-            bytes: d.bytes,
-            head: d.head
-          });
-          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
-          this.update(this.item(o.messageId, "assistant"), "text", blocks.length === 1 ? blocks[0].text : blocks.map((block) => block.text).join(""), 256 * 1024, {
-            bytes: blocks.reduce((size2, block) => size2 + block.bytes, 0),
-            head: blocks.reduce((head, block) => previewHead(head, block.head), "")
-          });
-        }
+      if (o.kind === "message" && o.stage === "stream") {
+        this.blocks.set(o.blockId, { messageId: o.messageId, text: d.text });
+        const message2 = this.assistants.find((a) => a.id === o.messageId);
+        if (message2)
+          message2.text = this.bounded([...this.blocks.values()].filter((b) => b.messageId === o.messageId).map((b) => b.text).join(""));
       } else if (o.kind === "message-final") {
-        const item = this.transcript?.find(o.messageId) ?? this.turn.items.find((i) => i.id === o.messageId);
-        if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024, d);
+        const message2 = this.assistants.find((a) => a.id === o.messageId);
+        if (message2)
+          message2.text = this.bounded(d.text);
       } else if (o.kind === "tool") {
-        const item = this.item(o.callId, "tool");
+        const tool = this.tool(o.callId);
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024, d);
+          tool.args = this.bounded(d.text);
         if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024, d);
+          tool.text = this.bounded(d.text);
       }
       if (e.kind === "detail-end")
         this.details.delete(e.detailId);
-    } else if (e.kind === "message-start" && e.role === "assistant") {
-      this.item(e.messageId, "assistant");
-    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
-      const item = this.item(e.callId, "tool");
-      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-end")
-        item.error = e.isError;
-    } else if (e.kind === "worker-failure")
-      this.turn.notice = `worker-failure: ${e.code}`;
-    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
-      this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    if ([...this.details.values()].reduce((size2, detail) => size2 + detail.bytes + detail.sanitizer.retainedBytes, 0) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES))
-      throw new ContractError("capacity");
-    if (!this.transcript)
-      canonicalJson(this.turn, TURN_BYTES);
-    if (e.kind === "message-end") {
-      for (const [id, block] of this.messageText)
+    } else if (e.kind === "message-end") {
+      for (const [id, block] of this.blocks)
         if (block.messageId === e.messageId)
-          this.messageText.delete(id);
-    }
-    if (e.kind === "message-end" || e.kind === "tool-end") {
-      this.transcript?.complete(e.kind === "message-end" ? e.messageId : e.callId);
-      this.save();
-    }
+          this.blocks.delete(id);
+    } else if (e.kind === "worker-failure")
+      this.notice = `worker-failure: ${e.code}`;
+    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.omitted[OMITTED_FLAG[e.block.reason]] = true;
+  }
+  extend(items) {
+    const out = items.map((item) => ({ ...item }));
+    const written = out.filter((i) => i.role === "assistant").length;
+    const calls = out.filter((i) => i.role === "tool");
+    const results = calls.filter((i) => i.text || i.error).length;
+    let stable = out.length;
+    this.tools.forEach((tool, index) => {
+      if (index < results)
+        return;
+      const item = index < calls.length ? calls[index] : (() => {
+        const added = {
+          id: tool.id,
+          role: "tool",
+          name: tool.name,
+          args: tool.args,
+          text: "",
+          error: false
+        };
+        out.push(added);
+        return added;
+      })();
+      item.text = tool.text;
+      item.error = tool.error;
+      stable = Math.min(stable, out.indexOf(item));
+    });
+    this.assistants.slice(written).forEach((message2) => {
+      stable = Math.min(stable, out.length);
+      out.push({
+        id: message2.id,
+        role: "assistant",
+        text: message2.text,
+        name: "",
+        args: "",
+        error: false
+      });
+    });
+    return { items: out, stable };
   }
 }
 
@@ -26873,14 +27404,12 @@ class Conversations {
   active = new Map;
   constructor(o) {
     this.o = o;
-    this.contexts = o.contexts ?? new ConversationContexts(o);
     this.records = new ConversationRecords({
-      directory: o.coordination.directory,
-      files: o.coordination.files,
-      cwd: o.coordination.store.root,
+      ...o,
       assertCurrent: () => o.owner.lease.assert(),
       active: this.active
     });
+    this.contexts = o.contexts ?? new ConversationContexts({ ...o, sessions: this.records.sessions });
   }
   currentDirectory(cwd) {
     const current2 = resolveWorkspace(cwd);
@@ -26889,7 +27418,7 @@ class Conversations {
   get files() {
     return this.o.coordination.files;
   }
-  write(path, value, max, expected) {
+  write(path, value, max = META_BYTES2, expected) {
     this.o.owner.lease.assert();
     const source = canonicalJson(value, max);
     try {
@@ -26901,19 +27430,23 @@ class Conversations {
   }
   bindControl(id) {
     if (!this.records.controlBound(id))
-      this.write(join32(this.records.root, "control-links", `${decodeId(id)}.json`), { schema: "cadence-conversation-control/1", conversationId: id }, META_BYTES);
+      this.write(this.records.controlPath(id), {
+        schema: "cadence-conversation-control/1",
+        conversationId: id
+      });
   }
   assertSettled() {
     this.o.owner.lease.assert();
-    const path = join32(this.records.root, "sessions");
-    if (!this.files.directory(path))
+    const sessions = join33(this.records.root, "sessions");
+    if (!this.files.directory(sessions))
       return;
-    const dir = opendirSync11(path);
+    const dir = opendirSync9(sessions);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isFile() || !e.name.endsWith(".json"))
           throw new ContractError("corrupt-selected");
-        if (this.records.retainedSummary(decodeId(e.name.slice(0, -5))).status === "unknown")
+        const latest = this.records.index(decodeSessionId(e.name.slice(0, -5))).commands.at(-1);
+        if (latest && this.records.state(latest).status === "unknown")
           throw new ContractError("quarantine");
       }
     } finally {
@@ -26922,8 +27455,7 @@ class Conversations {
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
-    const meta = this.records.metadata(conversationId);
-    return this.active.has(commandId) || this.files.directory(dirname20(this.records.path(commandId, "accepted.json"))) || !!meta && this.records.contains(meta, commandId) || !meta && !!this.files.read(this.records.identityPath(conversationId), META_BYTES);
+    return this.active.has(commandId) || this.files.directory(dirname20(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
   }
   command(input, reply) {
     return {
@@ -26933,11 +27465,10 @@ class Conversations {
   }
   receipt(input, reply = false) {
     this.o.owner.lease.assert();
-    const prior = this.records.read(this.records.path(input.commandId, "accepted.json"), META_BYTES);
-    if (prior === undefined)
+    const prior = this.records.accepted(input.commandId);
+    if (!prior)
       return;
-    const saved = closed(prior, ["command", "at"]);
-    if (canonicalJson(saved.command) !== canonicalJson(this.command(input, reply)))
+    if (canonicalJson(prior.command) !== canonicalJson(this.command(input, reply)))
       throw new ContractError("conflict");
     return { kind: "accepted", commandId: input.commandId };
   }
@@ -26947,98 +27478,77 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname20(this.records.path(input.commandId, "accepted.json"))))
+    if (this.files.directory(dirname20(this.records.path(input.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
-    if (!input.model.conversation && this.files.read(this.contexts.records.path(input.conversationId), META_BYTES))
-      throw new ContractError("stale");
     if (input.model.conversation && input.model.conversation.id !== input.conversationId)
       throw new ContractError("stale");
     const execution = this.contexts.capture(input.model, !!control?.reply);
-    const existingIdentity = this.files.read(this.records.identityPath(input.conversationId), META_BYTES);
-    if (existingIdentity && this.records.cwd(input.conversationId) !== execution.cwd)
+    const context = this.contexts.records.read({
+      id: input.conversationId,
+      cwd: execution.cwd
+    }).context;
+    if (context.cwd !== execution.cwd || !input.model.conversation && context.model)
       throw new ContractError("stale");
-    const beforeMeta = this.files.read(this.records.metadataPath(input.conversationId), META_BYTES);
-    const meta = this.records.metadata(input.conversationId);
-    this.files.assert(this.records.metadataPath(input.conversationId), beforeMeta, META_BYTES);
-    if (!meta && this.files.read(this.records.identityPath(input.conversationId), META_BYTES))
-      throw new ContractError("corrupt-selected");
-    if ((meta?.head ?? null) !== input.head)
-      throw new ContractError("stale");
-    if (meta && this.records.turn(input.head).status !== "completed" && (!control || ["queued", "running", "unknown"].includes(this.records.turn(input.head).status)))
+    this.records.sessions.directoryFor(execution.cwd);
+    if (this.records.liveFor(input.conversationId))
       throw new ContractError("conflict");
-    if (this.active.size >= 8 || meta && !Number.isSafeInteger(meta.count + 1))
+    const index = this.records.index(input.conversationId);
+    const session = this.records.sessions.session(input.conversationId);
+    if (input.head !== null && !session?.byId.has(input.head))
+      throw new ContractError("stale");
+    if (this.active.size >= 8)
       throw new ContractError("capacity");
     if (!input.text.trim())
       throw new ContractError("invalid");
     const space = statfsSync2(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
-    const turn = {
+    const listed = session ? this.records.sessions.find(input.conversationId) : undefined;
+    const accepted2 = {
       execution,
-      id: input.commandId,
-      epoch: input.model.epoch,
-      status: "queued",
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      items: [
-        {
-          id: "user",
-          role: "user",
-          text: command.text,
-          name: "",
-          args: "",
-          error: false
-        }
-      ]
+      directory: this.records.sessions.directoryFor(execution.cwd),
+      file: listed?.path ?? null,
+      command,
+      at: Date.now(),
+      session: input.conversationId,
+      parent: input.head,
+      offset: session?.read?.size ?? 0
     };
-    const next = meta ?? {
-      id: input.conversationId,
-      title: [...command.text.trim()].slice(0, 100).join("") || "Conversation",
-      turns: [],
-      head: turn.id,
-      count: 0,
-      checkpoint: null
-    };
-    const previous = next.checkpoint ? this.records.path(next.checkpoint, "context.json") : null;
-    const previousFile = previous ? this.files.read(previous, CONTEXT_BYTES) : undefined;
-    if (previous && !previousFile)
-      throw new ContractError("corrupt-selected");
     const abort = new AbortController;
     let begin;
     const ready2 = new Promise((resolve12) => {
       begin = resolve12;
     });
-    const original = ready2.then(() => this.run(command, turn, previous, previousFile, next, abort, execution, control));
     const live2 = {
-      turn,
+      execution,
+      accepted: accepted2,
+      commandId: input.commandId,
+      epoch: input.model.epoch,
+      title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
+      state: {
+        status: "queued",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        user: null
+      },
+      stateFile: null,
+      capture: null,
       abort,
-      original,
-      conversationId: next.id,
-      title: next.title,
-      acceptedAt: Date.now(),
-      turnFile: null,
-      metaFile: null
+      original: ready2.then(() => this.run(live2, control))
     };
     beforeAccept?.();
-    this.active.set(turn.id, live2);
-    this.o.owner.trackConversation(original, () => abort.abort());
+    this.active.set(input.commandId, live2);
+    this.o.owner.trackConversation(live2.original, () => abort.abort());
     try {
-      if (!meta)
-        this.write(this.records.identityPath(next.id), { schema: "cadence-conversation/1", id: next.id, cwd: execution.cwd }, META_BYTES);
-      this.write(this.records.path(turn.id, "accepted.json"), { command, at: live2.acceptedAt }, META_BYTES);
-      live2.turnFile = this.write(this.records.path(turn.id, "turn.json"), turn, TURN_BYTES);
-      const position2 = {
-        conversationId: next.id,
-        ordinal: next.count,
-        turnId: turn.id
-      };
-      this.write(this.records.slotPath(next.id, next.count), position2, META_BYTES);
-      this.write(this.records.path(turn.id, "position.json"), position2, META_BYTES);
-      next.head = turn.id;
-      next.count++;
-      live2.metaFile = this.write(this.records.metadataPath(next.id), next, META_BYTES, beforeMeta);
+      this.write(this.records.path(input.commandId, "accepted.json"), accepted2);
+      live2.stateFile = this.write(this.records.path(input.commandId, "state.json"), live2.state);
+      this.write(this.records.indexPath(input.conversationId), {
+        schema: "cadence-session-commands/1",
+        id: input.conversationId,
+        commands: [...index.commands, input.commandId].slice(-INDEXED_COMMANDS)
+      }, META_BYTES2, index.file);
       control?.accept();
     } catch (error) {
       abort.abort();
@@ -27046,26 +27556,23 @@ class Conversations {
       throw error;
     }
     begin();
-    return { kind: "accepted", commandId: turn.id };
+    return { kind: "accepted", commandId: input.commandId };
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
     const live2 = this.active.get(turnId);
     if (live2) {
-      if (live2.conversationId !== id || live2.turn.epoch !== epoch)
+      if (live2.accepted.session !== id || live2.epoch !== epoch)
         throw new ContractError("stale");
       live2.abort.abort();
       return;
     }
-    const meta = this.records.metadata(id);
-    if (!meta || !this.records.contains(meta, turnId))
+    if (!this.records.hasCommand(id, turnId))
       throw new ContractError("invalid");
-    if (this.records.turn(turnId).epoch !== epoch)
-      throw new ContractError("stale");
-    this.active.get(turnId)?.abort.abort();
   }
-  async run(command, turn, previous, previousFile, meta, abort, execution, control) {
-    let transcript;
+  async run(live2, control) {
+    const { accepted: accepted2, abort, state } = live2;
+    const commandId = live2.commandId;
     let barrier;
     let authSettled;
     let uncertain = false;
@@ -27085,45 +27592,38 @@ class Conversations {
         omissions: ["gap"]
       }
     };
-    const live2 = this.active.get(turn.id);
     const save = () => {
-      if (!live2?.turnFile)
+      if (!live2.stateFile)
         throw new ContractError("corrupt-selected");
-      live2.turnFile = this.write(this.records.path(turn.id, "turn.json"), turn, TURN_BYTES, live2.turnFile);
+      live2.stateFile = this.write(this.records.path(commandId, "state.json"), state, META_BYTES2, live2.stateFile);
     };
-    const current2 = () => {
-      if (abort.signal.aborted || this.o.owner.state !== "idle" || !this.currentDirectory(execution.cwd))
-        return false;
-      if (previous)
-        this.files.assert(previous, previousFile, CONTEXT_BYTES);
-      return true;
-    };
+    const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
     try {
       if (!current2())
         throw new ContractError("stale");
       if (control?.reply) {
-        turn.status = "completed";
-        turn.notice = control.reply;
+        state.status = "completed";
+        state.notice = control.reply;
         return { status: "settled" };
       }
       if (!control) {
-        barrier = await this.o.gate.acquire(turn.id, abort.signal);
+        barrier = await this.o.gate.acquire(commandId, abort.signal);
         barrier.assertHeld();
       }
       if (!current2())
         throw new ContractError("stale");
-      const selected2 = execution.model;
+      const selected2 = live2.execution.model;
       if (!selected2)
         throw new ContractError("stale");
       this.o.models.assertCurrent(selected2);
       const instructions = control ? `${control.instructions}
-CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow declared write paths are checkout-root-relative, not cwd-relative. Tools, relative investigation roots and check commands use this conversation cwd.` : "Ordinary conversation.";
+CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.` : "Ordinary conversation.";
       const request3 = decodeWorkerPublicRequest({
         protocol: 2,
-        taskId: meta.id,
+        taskId: randomUUID21(),
         taskKind: control ? "research" : "code",
-        runId: turn.id,
-        childRunId: randomUUID22(),
+        runId: commandId,
+        childRunId: randomUUID21(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -27133,63 +27633,54 @@ CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.che
         },
         context: "",
         instructions,
-        prompt: command.text,
+        prompt: accepted2.command.text,
         handoff: { graphRevision: 1, inputs: [] }
       });
       const auth = this.o.models.prepareTracked({
         request: request3,
-        cwd: execution.cwd,
-        operationId: randomUUID22(),
-        epoch: turn.epoch,
+        cwd: live2.execution.cwd,
+        operationId: randomUUID21(),
+        epoch: live2.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
         current: current2,
         journal: {
-          preparation: (value) => this.write(this.records.path(turn.id, "auth-intent.json"), value, META_BYTES),
-          settlement: (value) => this.write(this.records.path(turn.id, "auth-settled.json"), value, META_BYTES)
+          preparation: (value) => this.write(this.records.path(commandId, "auth-intent.json"), value),
+          settlement: (value) => this.write(this.records.path(commandId, "auth-settled.json"), value)
         }
       });
       authSettled = auth.settled;
       const prepared = await auth.result;
       if (prepared.status !== "prepared" || !current2())
         throw new ContractError("auth-unavailable");
-      turn.status = "running";
+      state.status = "running";
       save();
-      this.write(this.records.path(turn.id, "launch.json"), { epoch: turn.epoch, childRunId: request3.childRunId }, META_BYTES);
-      let credentials = [];
-      let checkpoint = false, contextCount = 0;
-      let contextHead = null;
-      transcript = new ConversationTranscript(turn, (page) => {
-        const space = statfsSync2(this.o.coordination.directory);
-        if (space.bavail * space.bsize - TRANSCRIPT_PAGE_BYTES < LIMITS.freeSpaceFloorBytes)
-          throw new ContractError("capacity");
-        this.write(this.records.path(turn.id, `transcript/${page.page}.json`), page, TRANSCRIPT_PAGE_BYTES);
+      this.write(this.records.path(commandId, "launch.json"), {
+        epoch: live2.epoch,
+        childRunId: request3.childRunId
       });
-      const capture = new ConversationCapture(turn, save, () => [...this.o.secrets(), ...credentials], transcript);
+      let credentials = [];
+      const capture = new LiveCapture(() => [
+        ...this.records.readSecrets(),
+        ...credentials
+      ]);
+      live2.capture = capture;
+      const existing = this.records.sessions.find(accepted2.session);
+      if ((existing?.path ?? null) !== accepted2.file)
+        throw new ContractError("stale");
       const running = Promise.resolve().then(() => launchConversation(prepared.prepared, {
-        previous,
+        session: {
+          id: accepted2.session,
+          dir: accepted2.directory,
+          file: existing?.path ?? null,
+          head: accepted2.parent
+        },
         agentDir: this.o.agentDir,
         ...control ? { coordinator: true } : {}
       }, abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
-        onContext: (message) => {
-          const space = statfsSync2(this.o.coordination.directory);
-          if (space.bavail * space.bsize - CONTEXT_RECORD_BYTES < LIMITS.freeSpaceFloorBytes)
-            throw new ContractError("capacity");
-          const file = this.write(this.records.path(turn.id, `context-${contextCount}.json`), {
-            schema: "cadence-conversation-message/1",
-            index: contextCount,
-            previous: contextHead,
-            message
-          }, CONTEXT_RECORD_BYTES);
-          contextHead = file.identity;
-          contextCount++;
-        },
-        onContextEnd: () => {
-          checkpoint = true;
-        },
         maySignal: () => {
           try {
             this.o.owner.lease.assert();
@@ -27210,39 +27701,29 @@ CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.che
       this.o.owner.trackConversationProcess(tracked, () => abort.abort());
       const result = await running;
       uncertain = !result.closed;
-      turn.status = result.outcome;
-      if (result.outcome === "completed") {
-        if (!checkpoint)
-          throw new ContractError("corrupt-selected");
-        this.write(this.records.path(turn.id, "context.json"), {
-          schema: "cadence-conversation-context/2",
-          messages: contextCount,
-          head: contextHead
-        }, CONTEXT_BYTES);
-        meta.checkpoint = turn.id;
-        if (!live2?.metaFile)
-          throw new ContractError("corrupt-selected");
-        live2.metaFile = this.write(this.records.metadataPath(meta.id), meta, META_BYTES, live2.metaFile);
-      }
+      state.status = result.outcome;
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
-      turn.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
-      turn.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
+      state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
+      state.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
       await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
       if (uncertain)
-        turn.status = "unknown";
+        state.status = "unknown";
       try {
-        this.write(this.records.path(turn.id, "native.json"), native, META_BYTES);
-        transcript?.finish();
-        if (turn.status !== "completed")
-          turn.notice = [
-            turn.notice,
-            control ? "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint." : "Start a new conversation; incomplete context is not replayed."
-          ].filter(Boolean).join(`
-`);
+        this.write(this.records.path(commandId, "native.json"), native);
+        if (live2.capture) {
+          if (state.status !== "completed")
+            state.notice ||= live2.capture.notice;
+          state.omitted = { ...live2.capture.omitted };
+        }
+        try {
+          state.user = this.records.sessions.session(accepted2.session)?.commandEntries(commandId, accepted2.parent, accepted2.offset)[0]?.id ?? null;
+        } catch {
+          state.user = null;
+        }
         save();
       } catch {
         uncertain = true;
@@ -27251,35 +27732,35 @@ CONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.che
         this.o.owner.quarantine();
       else if (this.o.owner.state === "idle")
         barrier?.release();
-      this.active.delete(turn.id);
+      this.active.delete(commandId);
     }
     return { status: uncertain ? "uncertain" : "settled" };
   }
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 import {
   lstatSync as lstatSync21,
-  opendirSync as opendirSync13,
-  realpathSync as realpathSync11,
+  opendirSync as opendirSync11,
+  realpathSync as realpathSync12,
   rmdirSync,
   statfsSync as statfsSync3,
   writeFileSync as writeFileSync5
 } from "node:fs";
-import { basename as basename3, dirname as dirname22, join as join35, relative as relative10, resolve as resolve13 } from "node:path";
+import { basename as basename4, dirname as dirname22, join as join36, relative as relative10, resolve as resolve13 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { createHash as createHash25 } from "node:crypto";
-import { lstatSync as lstatSync18, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join33, relative as relative8 } from "node:path";
+import { createHash as createHash26 } from "node:crypto";
+import { lstatSync as lstatSync18, readdirSync as readdirSync4, readlinkSync } from "node:fs";
+import { join as join34, relative as relative8 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash25("sha256");
+  const hash3 = createHash26("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -27317,7 +27798,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       return;
     }
     try {
-      const path = join33(root, name);
+      const path = join34(root, name);
       const st = lstatSync18(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
@@ -27337,7 +27818,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash25("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash26("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -27452,13 +27933,13 @@ ${data2.toString("utf8")}`);
       }
       let names2;
       try {
-        names2 = readdirSync3(dir).sort();
+        names2 = readdirSync4(dir).sort();
       } catch {
         complete = false;
         return;
       }
       for (const name of names2) {
-        const path = join33(dir, name);
+        const path = join34(dir, name);
         const rel = relative8(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
@@ -27492,22 +27973,142 @@ ${data2.toString("utf8")}`);
   return { fingerprint: hash3.digest("hex"), text: text2, complete, git: isGit };
 }
 
+// src/service/turn-capture.ts
+var TURN_BYTES = 384 * 1024;
+var OMITTED_FLAG2 = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other"
+};
+
+class TurnCapture {
+  turn;
+  save;
+  secrets;
+  details = new Map;
+  messageText = new Map;
+  constructor(turn, save, secrets) {
+    this.turn = turn;
+    this.save = save;
+    this.secrets = secrets;
+  }
+  item(id, role3) {
+    let item = this.turn.items.find((i) => i.id === id);
+    if (!item) {
+      if (this.turn.items.length >= 256)
+        throw new ContractError("capacity");
+      item = { id, role: role3, text: "", name: "", args: "", error: false };
+      this.turn.items.push(item);
+      try {
+        canonicalJson(this.turn, TURN_BYTES - 2048);
+      } catch (error) {
+        this.turn.items.pop();
+        this.turn.notice = "Conversation capture limit exceeded.";
+        throw error;
+      }
+    }
+    return item;
+  }
+  update(item, field, value, maximum, bytes = Buffer.byteLength(value)) {
+    const before = item[field];
+    try {
+      if (bytes > maximum)
+        throw new ContractError("capacity");
+      item[field] = value;
+      canonicalJson(this.turn, TURN_BYTES - 2048);
+    } catch (error) {
+      item[field] = before;
+      this.turn.notice = "Conversation capture limit exceeded.";
+      throw error;
+    }
+  }
+  accept(frame) {
+    const e = frame.event;
+    if (e.kind === "detail-begin") {
+      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+        return;
+      if (this.details.size >= 64)
+        throw new ContractError("capacity");
+      this.details.set(e.detailId, {
+        descriptor: e.descriptor,
+        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
+        text: "",
+        bytes: 0
+      });
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      const d = this.details.get(e.detailId);
+      if (!d)
+        return;
+      const added = e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      d.text += added;
+      d.bytes += Buffer.byteLength(added);
+      if (d.bytes > 256 * 1024)
+        throw new ContractError("capacity");
+      const o = d.descriptor.owner;
+      if (o.kind === "message") {
+        const role3 = this.turn.items.find((i) => i.id === o.messageId)?.role;
+        if (role3 === "assistant" && o.stage === "stream") {
+          this.messageText.set(o.blockId, {
+            messageId: o.messageId,
+            text: d.text,
+            bytes: d.bytes
+          });
+          const blocks = [...this.messageText.values()].filter((block) => block.messageId === o.messageId);
+          this.update(this.item(o.messageId, "assistant"), "text", blocks.map((block) => block.text).join(""), 256 * 1024, blocks.reduce((size2, block) => size2 + block.bytes, 0));
+        }
+      } else if (o.kind === "message-final") {
+        const item = this.turn.items.find((i) => i.id === o.messageId);
+        if (item?.role === "assistant")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      } else if (o.kind === "tool") {
+        const item = this.item(o.callId, "tool");
+        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
+          this.update(item, "args", d.text, 64 * 1024, d.bytes);
+        if (o.stage === "result" || o.stage === "update-snapshot")
+          this.update(item, "text", d.text, 256 * 1024, d.bytes);
+      }
+      if (e.kind === "detail-end")
+        this.details.delete(e.detailId);
+    } else if (e.kind === "message-start" && e.role === "assistant") {
+      this.item(e.messageId, "assistant");
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const item = this.item(e.callId, "tool");
+      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
+      if (e.kind === "tool-end")
+        item.error = e.isError;
+    } else if (e.kind === "worker-failure")
+      this.turn.notice = `worker-failure: ${e.code}`;
+    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.turn.omitted[OMITTED_FLAG2[e.block.reason]] = true;
+    if ([...this.details.values()].reduce((size2, detail) => size2 + detail.bytes + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
+      throw new ContractError("capacity");
+    canonicalJson(this.turn, TURN_BYTES);
+    if (e.kind === "message-end") {
+      for (const [id, block] of this.messageText)
+        if (block.messageId === e.messageId)
+          this.messageText.delete(id);
+    }
+    if (e.kind === "message-end" || e.kind === "tool-end")
+      this.save();
+  }
+}
+
 // src/service/workflow-git.ts
 import { spawn as spawn4, spawnSync as spawnSync6 } from "node:child_process";
-import { createHash as createHash26 } from "node:crypto";
+import { createHash as createHash27 } from "node:crypto";
 import {
-  closeSync as closeSync9,
-  constants as constants8,
-  fstatSync as fstatSync6,
+  closeSync as closeSync10,
+  constants as constants9,
+  fstatSync as fstatSync7,
   lstatSync as lstatSync19,
-  openSync as openSync9,
-  readdirSync as readdirSync4,
+  openSync as openSync10,
+  readdirSync as readdirSync5,
   readlinkSync as readlinkSync2,
-  readSync as readSync5,
-  realpathSync as realpathSync10
+  readSync as readSync6,
+  realpathSync as realpathSync11
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute10, join as join34, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute11, join as join35, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -27593,7 +28194,7 @@ async function gitHead(cwd) {
 }
 function contains2(root, path) {
   const within = relative9(root, path);
-  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute10(within);
+  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute11(within);
 }
 function nested(a, b) {
   return contains2(a, b) || contains2(b, a);
@@ -27647,21 +28248,21 @@ function fileIdentity(p, st, hashBytes) {
     return quick;
   let fd;
   try {
-    fd = openSync9(p, constants8.O_RDONLY | (constants8.O_NOFOLLOW ?? 0));
+    fd = openSync10(p, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
     throw e;
   }
   try {
-    if (!fstatSync6(fd).isFile())
+    if (!fstatSync7(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash26("sha256"), buffer = Buffer.alloc(CHUNK);
-    for (let n = readSync5(fd, buffer);n > 0; n = readSync5(fd, buffer))
+    const digest = createHash27("sha256"), buffer = Buffer.alloc(CHUNK);
+    for (let n = readSync6(fd, buffer);n > 0; n = readSync6(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
   } finally {
-    closeSync9(fd);
+    closeSync10(fd);
   }
 }
 async function fileIdentityAsync(p, st, hashBytes) {
@@ -27672,14 +28273,14 @@ async function fileIdentityAsync(p, st, hashBytes) {
     return quick;
   let handle;
   try {
-    handle = await open2(p, constants8.O_RDONLY | (constants8.O_NOFOLLOW ?? 0));
+    handle = await open2(p, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
     throw e;
   }
   try {
-    const digest = createHash26("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash27("sha256"), buffer = Buffer.alloc(CHUNK);
     for (;; ) {
       const { bytesRead } = await handle.read(buffer, 0, CHUNK, null);
       if (!bytesRead)
@@ -27696,12 +28297,12 @@ function directoryIdentity(root, name) {
   const rows = [];
   let count2 = 0;
   const visit = (directory, prefix) => {
-    for (const entry of readdirSync4(directory).sort()) {
+    for (const entry of readdirSync5(directory).sort()) {
       if (entry === ".git")
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join34(directory, entry), relative10 = `${prefix}${entry}`;
+      const full = join35(directory, entry), relative10 = `${prefix}${entry}`;
       const st = lstatSync19(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
@@ -27723,7 +28324,7 @@ async function directoryIdentityAsync(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join34(directory, entry), relative10 = `${prefix}${entry}`;
+      const full = join35(directory, entry), relative10 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
         rows.push(`${relative10}/`);
@@ -27957,7 +28558,7 @@ ${block}
 async function assertWorktree(root, cwd) {
   if (!safeDirectory(cwd))
     throw new ContractError("stale");
-  const real = (p) => realpathSync10(resolve12(p));
+  const real = (p) => realpathSync11(resolve12(p));
   if (real((await gitText(cwd, ["rev-parse", "--show-toplevel"])).trim()) !== real(cwd))
     throw new ContractError("stale");
   const common = async (p) => real(resolve12(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
@@ -27969,8 +28570,8 @@ async function assertWorktree(root, cwd) {
 }
 
 // src/service/workflow-history.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
-import { lstatSync as lstatSync20, opendirSync as opendirSync12 } from "node:fs";
+import { randomUUID as randomUUID22 } from "node:crypto";
+import { lstatSync as lstatSync20, opendirSync as opendirSync10 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -28007,7 +28608,7 @@ class WorkflowHistoryScanner {
       if (this.scans.size >= WORKFLOW_LIMITS.historyScans)
         throw new ContractError("capacity");
       const incarnation3 = this.incarnation();
-      state = { dir: opendirSync12(this.path), incarnation: incarnation3, after, ids: [] };
+      state = { dir: opendirSync10(this.path), incarnation: incarnation3, after, ids: [] };
     }
     let suspended = false;
     try {
@@ -28033,7 +28634,7 @@ class WorkflowHistoryScanner {
         if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
           state.ids.pop();
       }
-      const scan = randomUUID23();
+      const scan = randomUUID22();
       state.timer = setTimeout(() => {
         this.scans.delete(scan);
         try {
@@ -28070,8 +28671,8 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.30",
-  build: "1f69bd7b480d8eb22807cc022f9140c69d381bab6d12e194f164df79f1dabf51",
+  version: "2.0.34",
+  build: "f229191f19ecc4ccdf44b258718084e012a399e8927d04061fcf0ed19139753c",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -28097,8 +28698,8 @@ class UnacceptedWorkflowCommand extends UnacceptedConversationCommand {
 
 class WorkflowFailure extends Error {
   outcome;
-  constructor(outcome, message) {
-    super(message);
+  constructor(outcome, message2) {
+    super(message2);
     this.outcome = outcome;
   }
 }
@@ -28175,7 +28776,7 @@ class WorkflowTranscript {
   constructor(turn, secrets) {
     this.turn = turn;
     this.secrets = secrets;
-    this.capture = new ConversationCapture(turn, () => {
+    this.capture = new TurnCapture(turn, () => {
       this.pending = true;
     }, secrets);
     this.latest = { ...structuredClone(turn), items: [] };
@@ -28215,7 +28816,7 @@ class WorkflowTranscript {
     if (e.kind === "message-start") {
       if (e.role === "assistant") {
         this.latest = { ...structuredClone(this.latest), items: [] };
-        this.final = new ConversationCapture(this.latest, () => {}, this.secrets);
+        this.final = new TurnCapture(this.latest, () => {}, this.secrets);
       }
       relevant = true;
     } else if (e.kind === "message-end")
@@ -28260,12 +28861,12 @@ class Workflows {
   constructor(o) {
     this.o = o;
     this.contexts = o.contexts ?? new ConversationContexts(o);
-    this.root = join35(o.coordination.directory, "workflows-v1");
-    this.cwd = realpathSync11(o.coordination.store.root);
-    this.worktreeRoot = join35(o.coordination.stateHome, "cadence-worktrees-v1", basename3(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join35(this.root, "runs"), () => {
+    this.root = join36(o.coordination.directory, "workflows-v1");
+    this.cwd = realpathSync12(o.coordination.store.root);
+    this.worktreeRoot = join36(o.coordination.stateHome, "cadence-worktrees-v1", basename4(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join36(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join35(this.root, "runs"));
+      return this.files.directory(join36(this.root, "runs"));
     });
     this.recover();
   }
@@ -28273,7 +28874,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join35(this.root, "runs", decodeId(id), name);
+    return join36(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES2) {
     this.o.owner.lease.assert();
@@ -28290,11 +28891,11 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join35(this.root, "runs");
+    const runs = join36(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
-    const dir = opendirSync13(runs);
+    const dir = opendirSync11(runs);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isDirectory())
@@ -28398,7 +28999,7 @@ class Workflows {
         throw new ContractError("stale");
       safeDirectory(cwd, true);
     }
-    if (realpathSync11(cwd) !== cwd)
+    if (realpathSync12(cwd) !== cwd)
       throw new ContractError("stale");
     return cwd;
   }
@@ -28413,7 +29014,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join35(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
+    const file = this.files.read(join36(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES2));
@@ -28508,12 +29109,12 @@ class Workflows {
       throw new ContractError("corrupt-selected");
     if (turn) {
       const secrets = this.o.secrets();
-      const clean2 = (value, maximum) => clipBytes(sanitizeText(value, secrets), maximum);
-      turn.notice = clean2(turn.notice, 1024);
+      const clean = (value, maximum) => clipBytes(sanitizeText(value, secrets), maximum);
+      turn.notice = clean(turn.notice, 1024);
       for (const item of turn.items) {
-        item.text = clean2(item.text, 256 * 1024);
-        item.name = clean2(item.name, 128);
-        item.args = clean2(item.args, 64 * 1024);
+        item.text = clean(item.text, 256 * 1024);
+        item.name = clean(item.name, 128);
+        item.args = clean(item.args, 64 * 1024);
       }
       if (turn.status === "running" && step.status !== "running") {
         turn.status = "unknown";
@@ -28567,8 +29168,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join35(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
-    return this.files.directory(join35(this.root, "runs", id));
+      return !!this.files.read(join36(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
+    return this.files.directory(join36(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -28598,7 +29199,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join35(this.root, "proposals", `${commandId}.json`);
+      const target3 = join36(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES2);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -28621,7 +29222,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID24(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID23(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -28761,14 +29362,14 @@ class Workflows {
   assertRunning(live2) {
     this.current();
     this.floor();
-    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync11(live2.execution.cwd) !== live2.execution.cwd))
+    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync12(live2.execution.cwd) !== live2.execution.cwd))
       throw new ContractError("stale");
   }
   step(live2, id, kind, childRunId) {
     if (live2.run.steps.length >= MAX_STEPS)
       throw new ContractError("capacity");
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID24()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID23()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       ...childRunId ? {
@@ -28820,11 +29421,11 @@ class Workflows {
       stepId: s.id,
       result
     });
-    const shown = preview ?? (result.text || result.output);
+    const shown2 = preview ?? (result.text || result.output);
     s.status = result.outcome;
-    s.text = diagnosticText(shown, s.kind === "research" ? 16384 : 1024, this.o.secrets());
+    s.text = diagnosticText(shown2, s.kind === "research" ? 16384 : 1024, this.o.secrets());
     s.exitCode = result.exitCode;
-    s.truncated = result.truncated || Buffer.byteLength(shown) > Buffer.byteLength(s.text);
+    s.truncated = result.truncated || Buffer.byteLength(shown2) > Buffer.byteLength(s.text);
     if (!result.closed)
       this.o.owner.quarantine();
     this.save(live2);
@@ -28836,12 +29437,12 @@ class Workflows {
       throw new ContractError("stale");
     this.o.models.assertCurrent(model);
     const runCwd = this.executionCwd(live2, cwd);
-    const role2 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
-    if (!role2)
+    const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
+    if (!role3)
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID24(), op = randomUUID24();
+    const childRunId = randomUUID23(), op = randomUUID23();
     const plan = live2.proposal?.plan;
     const request3 = decodeWorkerPublicRequest({
       protocol: 2,
@@ -28852,12 +29453,12 @@ class Workflows {
       assignmentId: id,
       purpose: readonly ? "research" : "edit",
       model,
-      role: { role: role2.role, sha256: role2.sha256 },
+      role: { role: role3.role, sha256: role3.sha256 },
       context: plan ? `${workflowContext(plan)}
 Execution cwd: ${runCwd}
 Checkout root: ${cwd}
 Declared write paths are relative to that checkout root, not to the execution cwd.` : "Read applicable AGENTS.md and existing project documentation, including .cadence/project.md. Cite evidence and separate observations from assumptions.",
-      instructions: `${role2.content}
+      instructions: `${role3.content}
 Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, retry, mutate Git, install dependencies, publish or deploy. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification.`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
@@ -29004,7 +29605,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
     const runCwd = shell ? this.executionCwd(live2, cwd) : cwd;
-    const id = randomUUID24();
+    const id = randomUUID23();
     this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd: runCwd,
       args: shell ? operation.check : operation.git
@@ -29018,7 +29619,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       command: shell ? process.platform === "win32" ? environment2.COMSPEC ?? "cmd.exe" : "/bin/sh" : "git",
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "-c",
-        `core.hooksPath=${join35(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join36(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -29131,7 +29732,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     if (await gitHead(cwd) !== before)
       throw new ContractError("stale");
   }
-  async commit(live2, cwd, allowed, message, before, title) {
+  async commit(live2, cwd, allowed, message2, before, title) {
     await this.unchangedHead(cwd, before);
     const changes = await assertWorkflowScope(cwd, allowed);
     if (!changes.length)
@@ -29151,7 +29752,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       ]);
       if (staged.code === 0)
         return null;
-      await git(["commit", "--no-verify", "-m", message]);
+      await git(["commit", "--no-verify", "-m", message2]);
       const commit = await gitHead(cwd);
       await assertWorkflowCommit(cwd, before, commit, allowed);
       return commit;
@@ -29160,7 +29761,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
   async review(live2, cwd, p) {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID24()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID23()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     this.success(result);
     const verdict = reviewVerdict(result.text);
@@ -29272,10 +29873,10 @@ ${changed.map((p) => `- ${p}`).join(`
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
-    const home = join35(this.worktreeRoot, decodeId(id));
+    const home = join36(this.worktreeRoot, decodeId(id));
     if (safeDirectory(home))
       throw new ContractError("conflict");
-    safeDirectory(join35(home, "tasks"), true);
+    safeDirectory(join36(home, "tasks"), true);
     return home;
   }
   async merge(live2, candidate) {
@@ -29343,7 +29944,7 @@ ${result.output}`}`);
     } finally {
       this.closeStep(live2, step);
     }
-    for (const directory of [join35(home, "tasks"), home])
+    for (const directory of [join36(home, "tasks"), home])
       try {
         rmdirSync(directory);
       } catch {}
@@ -29375,8 +29976,8 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       throw new ContractError("invalid");
     const base = target2.head;
     const home = this.worktreeHome(live2.run.id);
-    const taskHome = join35(home, "tasks");
-    const integration = join35(home, "integration");
+    const taskHome = join36(home, "tasks");
+    const integration = join36(home, "integration");
     await this.gitStep(live2, this.cwd, "worktree-integration", (git) => git(["worktree", "add", "--detach", integration, base]));
     await assertWorktree(this.cwd, integration);
     await this.setup(live2, integration, plan);
@@ -29393,7 +29994,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       live2.run.phase = "implementing";
       this.save(live2);
       const outcomes2 = await Promise.allSettled(batch.map(async (task) => {
-        const cwd = join35(taskHome, task.id);
+        const cwd = join36(taskHome, task.id);
         await this.gitStep(live2, this.cwd, `worktree-${task.id}`, (git) => git(["worktree", "add", "--detach", cwd, base]));
         const picks2 = workflowAncestors(plan.tasks, task.id).map((dep) => commits.get(dep.id)).filter((c) => !!c);
         if (picks2.length)
@@ -29567,8 +30168,8 @@ class Workbench {
   opening = new Map;
   constructor(o) {
     this.o = o;
-    this.contexts = new ConversationContexts(o);
-    this.conversations = new Conversations({ ...o, contexts: this.contexts });
+    this.conversations = new Conversations(o);
+    this.contexts = this.conversations.contexts;
     this.workflows = new Workflows({ ...o, contexts: this.contexts });
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -29578,14 +30179,11 @@ class Workbench {
     });
     this.conversations.assertSettled();
     this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join36(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join37(o.coordination.files.namespace, "workbench-projects-v1");
   }
   closeReads() {
-    try {
-      this.workflows.closeHistory();
-    } finally {
-      this.conversations.records.closeReads();
-    }
+    this.workflows.closeHistory();
+    this.conversations.records.closeReads();
   }
   read(value) {
     const request3 = decodeWorkbenchRead(value);
@@ -29608,10 +30206,10 @@ class Workbench {
         };
       case "workflow-active": {
         const active2 = this.workflows.activeRuns();
-        return {
-          ...active2,
-          links: this.cadence.links(active2.runs.map((run2) => run2.id))
-        };
+        const ids = active2.runs.map((run2) => run2.id);
+        const browser = this.cadence.links(ids);
+        const terminal = this.conversations.records.nativeLinks(ids).filter((link) => !browser.some((b) => b.runId === link.runId));
+        return { ...active2, links: [...browser, ...terminal] };
       }
       case "workflow-history":
         return this.workflows.history(request3.after, request3.scan);
@@ -29621,11 +30219,9 @@ class Workbench {
         return this.workflows.detail(request3.id, request3.stepId);
       case "workflow":
         return this.workflows.view(request3.id);
-      case "task-origin":
-        return this.conversations.records.origin(request3.taskId);
       case "conversation-active":
       case "conversations": {
-        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null, request3.scan);
+        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null);
         if (value2.kind !== "conversations" && value2.kind !== "conversation-active")
           return value2;
         return {
@@ -29637,11 +30233,13 @@ class Workbench {
         };
       }
       case "conversation":
-        return this.conversations.records.conversation(request3.id);
+        return this.conversations.records.conversation(request3.id, request3.leaf, request3.known);
       case "conversation-turn":
-        return this.conversations.records.turnSteps(request3.id, request3.ordinal, request3.before);
+        return this.conversations.records.turnSteps(request3.id, request3.leaf, request3.ordinal, request3.before);
       case "conversation-step":
-        return this.conversations.records.step(request3.id, request3.turnId, request3.step, request3.part);
+        return this.conversations.records.step(request3.id, request3.leaf, request3.turnId, request3.step, request3.part);
+      case "conversation-tree":
+        return this.conversations.records.tree(request3.id, request3.leaf);
       case "files":
       case "file": {
         const cwd = this.contexts.directory(request3.location);
@@ -29694,12 +30292,12 @@ class Workbench {
     const entries2 = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
     if (!files.directory(this.projectRoot))
       return { kind: "projects", entries: entries2 };
-    const directory = opendirSync14(this.projectRoot);
+    const directory = opendirSync12(this.projectRoot);
     try {
       for (let e = directory.readSync();e; e = directory.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join36(this.projectRoot, e.name));
+        const saved = files.read(join37(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -29778,7 +30376,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join36(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join37(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -29796,7 +30394,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join36(this.projectRoot, `${hash(root)}.json`);
+        const entry = join37(this.projectRoot, `${hash(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -29855,7 +30453,7 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync15(store.tasks), records = [];
+  const dir = opendirSync13(store.tasks), records = [];
   let entries2 = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -29864,7 +30462,7 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join37(store.tasks, entry.name, "task.json");
+      const path = join38(store.tasks, entry.name, "task.json");
       const size2 = lstatSync22(path).size;
       if (size2 > 128 * 1024)
         throw new ContractError("corrupt-selected");
@@ -29918,7 +30516,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "932562f5483a98178abf9cf92a5d813186132d4c771b6aba3892e7e00eedbf53";
+  const embedded = "641cf7f91bc6f38839e9bb82e9db67d733ab0cded0a2eee0deb0d1ec29539ae1";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

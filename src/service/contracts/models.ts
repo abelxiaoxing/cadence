@@ -20,6 +20,13 @@ import {
   thinkingLevels,
 } from "./domain.ts";
 
+/** A conversation's identity: the Pi session id shared with the terminal. */
+export function decodeSessionId(v: unknown): string {
+  const s = text(v, 128, true);
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(s)) invalid();
+  return s;
+}
+
 /** A conversation location is not an execution grant or a filesystem sandbox. */
 export interface ConversationLocation {
   id: string;
@@ -37,12 +44,12 @@ export interface ExecutionContext {
 }
 export function decodeConversationLocation(v: unknown): ConversationLocation {
   const o = closed(v, ["id", "cwd"]);
-  return { id: decodeId(o.id), cwd: text(o.cwd, 4096, true) };
+  return { id: decodeSessionId(o.id), cwd: text(o.cwd, 4096, true) };
 }
 export function decodeConversationContext(v: unknown): ConversationContext {
   const o = closed(v, ["id", "cwd", "revision", "model"]);
   return {
-    id: decodeId(o.id),
+    id: decodeSessionId(o.id),
     cwd: text(o.cwd, 4096, true),
     revision: integer(o.revision, 0, Number.MAX_SAFE_INTEGER - 1),
     model: nullable(o.model, decodeModelSelector),

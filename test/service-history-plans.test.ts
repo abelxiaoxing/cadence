@@ -284,7 +284,9 @@ it("duplicate retention and a different accepted operation cannot reuse a conten
   expect(storedTree(f.dir)).toEqual(accepted);
 });
 
-it("ordinary content remains randomly allocated at version1 and cannot be adopted as accepted-plan membership", async () => {
+it("ordinary content remains randomly allocated at version1 and cannot be adopted as accepted-plan membership", {
+  tags: ["slow"],
+}, async () => {
   const f = await created(),
     original = await retainedText(f, "same text", "plan", 3);
   expect(original.content.version).toBe(1);
@@ -364,7 +366,9 @@ it("accepted Create is not authority to retain a caller-supplied plan", async ()
   expect(f.writer.quarantined).toBe(false);
 });
 
-it("retains maximum legal graph and maximum legal plan together without duplicate identity expansion", async () => {
+it("retains maximum legal graph and maximum legal plan together without duplicate identity expansion", {
+  tags: ["slow"],
+}, async () => {
   const f = await created(),
     p = proposal(f, "p".repeat(32768));
   const base = p.graph.assignments[0];

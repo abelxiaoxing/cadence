@@ -316,7 +316,7 @@ export function observedServerResult<T extends AutostartResult>(
 }
 /** The specific reason, naming only the path, keys and line numbers. */
 function serverConfigHint(error: ServerConfigRefusal): string {
-  return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.\n`;
+  return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<a non-empty token>, one line each.\n`;
 }
 function registryGuidance(_workspace: string, stateHome: string): string {
   return `Another Cadence process is updating the shared project registry right now. Try again in a moment; if this persists: cadence doctor --state-home ${JSON.stringify(stateHome)}\n`;

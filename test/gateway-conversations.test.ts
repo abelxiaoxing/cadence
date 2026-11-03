@@ -1,3 +1,4 @@
+// @module-tag slow
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -19,10 +20,12 @@ import {
 } from "../src/service/contracts/workbench.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { GatewayConversations } from "../src/service/gateway-conversations.ts";
+import { sessionDirectory } from "../src/service/pi-sessions.ts";
+import { readHostConfig } from "../src/service/runtime.ts";
 import { loadWebAssets } from "../src/service-assets.ts";
 import { wireUrl } from "../src/service-wire.ts";
 import { gatewayFixture } from "./helpers/gateway-fixture.ts";
-import { seedConversations } from "./helpers/retained-conversations.ts";
+import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 /** Hash fixture bytes and names, not access times. Reads must not publish,
  * repair, migrate or recreate any private state (secrets never enter output). */
@@ -90,30 +93,52 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       configRev: 1,
       catalogId: randomUUID(),
     };
-    const seed = seedConversations(c, project.cwd, model, 12, 2);
-    const id = seed.ids[0];
-    const turnPath = join(
-      c.directory,
-      "conversations-v1",
-      "turns",
-      seed.longHead,
-      "turn.json",
+    const sessionDir = sessionDirectory(
+      project.cwd,
+      readHostConfig(c)!.agentDir,
     );
-    const turn = JSON.parse(readFileSync(turnPath, "utf8"));
+    const seed = seedPiSessions(sessionDir, project.cwd, 12, 2);
+    const sessionFile = join(
+      sessionDir,
+      readdirSync(sessionDir).find((name) =>
+        name.endsWith(`${seed.ids[0]}.jsonl`),
+      )!,
+    );
+    const lines = readFileSync(sessionFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    lines.at(-1).message.content[0].text =
+      `Saved reply 0.1 ${"x".repeat(20000)} fabricated-accepting-key`;
+    writeFileSync(
+      sessionFile,
+      `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+    );
+    const sessionBytes = tree(sessionDir);
+    const id = seed.ids[0],
+      controlCommand = randomUUID();
     c.files.create(
       join(
         c.directory,
-        "conversations-v1",
-        "turns",
-        seed.longHead,
-        "transcript",
-        "0.json",
+        "conversation-commands-v1",
+        "commands",
+        controlCommand,
+        "accepted.json",
       ),
-      JSON.stringify({ turnId: seed.longHead, page: 0, items: turn.items }),
-    );
-    writeFileSync(
-      turnPath,
-      JSON.stringify({ ...turn, items: [], transcript: { pages: 1 } }),
+      JSON.stringify({
+        command: {
+          kind: "send",
+          commandId: controlCommand,
+          conversationId: id,
+          head: null,
+          text: "seed",
+          model,
+        },
+        at: 0,
+        session: id,
+        parent: null,
+        offset: 0,
+      }),
     );
     c.files.create(
       join(c.directory, "conversations-v1", "control-links", `${id}.json`),
@@ -136,7 +161,7 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
           id,
           revision: 1,
           enabled: true,
-          head: seed.longHead,
+          head: controlCommand,
           proposal: null,
           runs: [],
         },
@@ -163,9 +188,9 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       );
     const before = await observe();
     expect(before.status).toBe("running");
-    expect((await read({ kind: "conversation", id })).kind).toBe(
-      "conversation",
-    );
+    expect(
+      (await read({ kind: "conversation", leaf: null, known: null, id })).kind,
+    ).toBe("conversation");
     expect((await stopService(c)).status).toBe("stopped");
     await expect
       .poll(() =>
@@ -176,61 +201,67 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       .toBe(false);
     const snapshot = tree(c.files.namespace);
     expect(await observe()).toEqual({ ...before, status: "stopped" });
-    let scan: string | undefined;
-    let listed: string[] = [];
-    for (let n = 0; n < 10; n++) {
-      const page = await read({
-        kind: "conversations",
-        ...(scan ? { scan } : {}),
-      });
-      if (page.kind === "conversations-progress") {
-        scan = page.scan;
-        continue;
-      }
-      if (page.kind !== "conversations") throw Error("listing");
-      listed = page.entries.map((row) => row.id);
-      expect(page.entries.find((row) => row.id === id)?.cadence).toBe(true);
-      break;
-    }
-    expect(listed.sort()).toEqual([...seed.ids].sort());
+    const page = await read({ kind: "conversations" });
+    if (page.kind !== "conversations") throw Error("listing");
+    expect(page.entries.find((row) => row.id === id)?.cadence).toBe(true);
+    expect(page.entries.map((row) => row.id).sort()).toEqual(
+      [...seed.ids].sort(),
+    );
     expect(
       await read(
-        { kind: "conversation", id },
+        { kind: "conversation", leaf: null, known: null, id },
         { "X-Cadence-Attachment": randomUUID() },
       ),
     ).toMatchObject({
       kind: "conversation",
+      leaf: seed.longLeaf,
       turns: 2,
-      summary: { status: "completed", head: seed.longHead },
+      summary: { status: "completed", leaf: seed.longLeaf },
     });
     expect(
-      await read({ kind: "conversation-turn", id, ordinal: 1, before: null }),
+      await read({
+        kind: "conversation-turn",
+        id,
+        leaf: seed.longLeaf,
+        ordinal: 1,
+        before: null,
+      }),
     ).toMatchObject({
       kind: "conversation-turn",
-      turn: { id: seed.longHead, status: "completed" },
-      steps: [{ text: "Saved reply 0" }],
+      turn: { id: "00000003", status: "completed" },
+      steps: [
+        { text: "Terminal question 000.1" },
+        { text: expect.stringContaining("Saved reply 0.1") },
+      ],
     });
     expect(
       await read({
         kind: "conversation-step",
         id,
-        turnId: seed.longHead,
-        step: 0,
+        leaf: seed.longLeaf,
+        turnId: "00000003",
+        step: 1,
         part: 0,
       }),
     ).toMatchObject({
       kind: "conversation-step",
-      item: { text: "Saved reply 0" },
+      item: { text: expect.stringContaining("Saved reply 0.1") },
     });
     expect(await read({ kind: "cadence-conversation", id })).toMatchObject({
       state: { enabled: true, revision: 1 },
     });
-    expect((await fetch(path({ kind: "conversation", id }))).status).toBe(401);
+    expect(
+      (await fetch(path({ kind: "conversation", leaf: null, known: null, id })))
+        .status,
+    ).toBe(401);
     expect(
       (
-        await fetch(path({ kind: "conversation", id }), {
-          headers: { ...headers, "X-Cadence-Local": "injected" },
-        })
+        await fetch(
+          path({ kind: "conversation", leaf: null, known: null, id }),
+          {
+            headers: { ...headers, "X-Cadence-Local": "injected" },
+          },
+        )
       ).status,
     ).toBe(403);
     const mutation = await fetch(
@@ -245,17 +276,40 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
     expect(c.inspect().status).toBe("stopped");
     expect(tree(c.files.namespace)).toBe(snapshot);
     expect(g.f.contacts()).toBe(0);
+    expect(tree(sessionDir)).toBe(sessionBytes);
+    expect(
+      JSON.stringify(
+        await read({
+          kind: "conversation-step",
+          id,
+          leaf: seed.longLeaf,
+          turnId: "00000003",
+          step: 1,
+          part: 0,
+        }),
+      ),
+    ).not.toContain("fabricated-accepting-key");
 
     // A cold reader must never substitute an empty live map for an uncertain owner.
     const cold = new GatewayConversations(c.stateHome);
-    expect(cold.read(project, { kind: "conversation", id })).toMatchObject({
+    expect(
+      cold.read(project, { kind: "conversation", leaf: null, known: null, id }),
+    ).toMatchObject({
       kind: "conversation",
+      leaf: seed.longLeaf,
     });
     const inspect = vi
       .spyOn(ServiceCoordination.prototype, "inspect")
       .mockReturnValue({ status: "unavailable" });
     try {
-      expect(cold.read(project, { kind: "conversation", id })).toBeUndefined();
+      expect(
+        cold.read(project, {
+          kind: "conversation",
+          leaf: null,
+          known: null,
+          id,
+        }),
+      ).toBeUndefined();
     } finally {
       inspect.mockRestore();
       cold.close();
@@ -268,9 +322,14 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
     expect(await read({ kind: "cadence-conversation", id })).toMatchObject({
       state: { enabled: true, notice: expect.any(String) },
     });
-    expect(await read({ kind: "conversation", id: seed.ids[1] })).toMatchObject(
-      { summary: { status: "completed" } },
-    );
+    expect(
+      await read({
+        kind: "conversation",
+        leaf: null,
+        known: null,
+        id: seed.ids[1],
+      }),
+    ).toMatchObject({ summary: { status: "completed" } });
     expect(tree(c.files.namespace)).toBe(damaged);
     // Restore only this deliberately corrupted fixture before explicit Open.
     writeFileSync(
@@ -281,7 +340,7 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
           id,
           revision: 1,
           enabled: true,
-          head: seed.longHead,
+          head: controlCommand,
           proposal: null,
           runs: [],
         },
@@ -290,7 +349,9 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
     const reopened = await open();
     expect(reopened.epoch).not.toBe(project.epoch);
     expect((await observe()).status).toBe("running");
-    expect(await read({ kind: "conversation", id })).toMatchObject({
+    expect(
+      await read({ kind: "conversation", leaf: null, known: null, id }),
+    ).toMatchObject({
       turns: 2,
       summary: { status: "completed" },
     });

@@ -12,7 +12,6 @@ import {
   ContractError,
   canonicalJson,
   closed,
-  decodeId,
   parseWireJson,
 } from "./contracts/core.ts";
 import { decodeModelSelector, type ModelSelector } from "./contracts/domain.ts";
@@ -23,26 +22,32 @@ import {
   catalogOffers,
   decodeConversationContext,
   decodeConversationLocation,
+  decodeSessionId,
   type ExecutionContext,
   type ModelCatalog,
   type ModelChoiceState,
 } from "./contracts/models.ts";
+import { assertSupportedConversation } from "./conversation-records.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { ServiceOwner } from "./owner.ts";
+import type { PiSessions } from "./pi-sessions.ts";
 import type { FileSnapshot } from "./private-files.ts";
 
 const BYTES = 16 * 1024;
 const SCHEMA = "cadence-conversation-context/1";
 export class ConversationContextRecords {
-  constructor(private readonly c: ServiceCoordination) {}
+  constructor(
+    private readonly c: ServiceCoordination,
+    private readonly sessions?: PiSessions,
+  ) {}
   path(id: string) {
     return join(
       this.c.directory,
       "conversations-v1",
       "contexts",
-      `${decodeId(id)}.json`,
+      `${decodeSessionId(id)}.json`,
     );
   }
   read(location: ConversationLocation): {
@@ -50,25 +55,8 @@ export class ConversationContextRecords {
     file?: FileSnapshot;
   } {
     const input = decodeConversationLocation(location);
+    assertSupportedConversation(this.c, input.id);
     const file = this.c.files.read(this.path(input.id), BYTES);
-    const identityPath = join(
-      this.c.directory,
-      "conversations-v1",
-      "identities",
-      `${input.id}.json`,
-    );
-    const identity = this.c.files.read(identityPath, BYTES);
-    let legacy: string | undefined;
-    if (identity) {
-      const v = closed(parseWireJson(identity.bytes.toString("utf8"), BYTES), [
-        "schema",
-        "id",
-        "cwd",
-      ]);
-      if (v.schema !== "cadence-conversation/1" || v.id !== input.id)
-        throw new ContractError("corrupt-selected");
-      legacy = decodeConversationLocation({ id: v.id, cwd: v.cwd }).cwd;
-    }
     let context: ConversationContext;
     if (file) {
       const v = closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
@@ -77,22 +65,27 @@ export class ConversationContextRecords {
       ]);
       if (v.schema !== SCHEMA) throw new ContractError("corrupt-selected");
       context = decodeConversationContext(v.context);
-      if (context.id !== input.id || (legacy && legacy !== context.cwd))
-        throw new ContractError("corrupt-selected");
+      if (context.id !== input.id) throw new ContractError("corrupt-selected");
     } else
       context = {
         id: input.id,
-        cwd: legacy ?? input.cwd,
+        cwd: input.cwd,
         revision: 0,
         model: null,
       };
+    this.sessions?.directoryFor(context.cwd);
+    const session = this.sessions?.find(input.id);
+    if (session) {
+      if (file && context.cwd !== session.summary.cwd)
+        throw new ContractError("corrupt-selected");
+      context.cwd = session.summary.cwd;
+    }
     if (
       resolve(context.cwd) !== context.cwd ||
       !withinWorkspace(this.c.store.root, context.cwd)
     )
       throw new ContractError("forbidden");
     this.c.files.assert(this.path(input.id), file, BYTES);
-    this.c.files.assert(identityPath, identity, BYTES);
     return { context, file };
   }
 }
@@ -107,10 +100,11 @@ export class ConversationContexts {
       choice: OwnerModelChoice;
       cwd: string;
       agentDir?: string;
+      sessions?: PiSessions;
       secrets(): readonly string[];
     },
   ) {
-    this.records = new ConversationContextRecords(o.coordination);
+    this.records = new ConversationContextRecords(o.coordination, o.sessions);
   }
   private current(cwd: string, checkSecrets = true) {
     this.o.owner.lease.assert();

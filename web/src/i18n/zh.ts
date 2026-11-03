@@ -55,13 +55,6 @@ export const zh = {
   "Select retained history to inspect": "选择保留的历史记录查看",
   "History is readonly. Start new work in a conversation with /cadence.":
     "历史记录只读。请在对话中通过 /cadence 开始新工作。",
-  "Scanning retained workflow IDs; no complete page yet.":
-    "正在扫描保留的工作流 ID；尚未形成完整页面。",
-  "Continue reading history": "继续读取历史",
-  "Workflow history": "工作流历史",
-  "ID order; refresh to observe new runs. Unreadable records are not removed.":
-    "按 ID 排序；刷新查看新运行。无法读取的记录不会被删除。",
-  "No retained workflows on this page.": "此页没有保留的工作流。",
   Next: "下一页",
 
   "Cadence research, implementation and review agents appear here.":
@@ -82,8 +75,6 @@ export const zh = {
   "No plan is awaiting approval.": "当前没有等待批准的计划。",
   "Cadence state unavailable. Observe the conversation before sending.":
     "暂时无法获取 Cadence 状态。请先刷新观察会话再发送。",
-  "The last turn did not complete. A new message continues from the last complete checkpoint; incomplete work is not replayed.":
-    "上一轮未完成。新消息会从最近一次完整的检查点继续；未完成的工作不会被重放。",
   "No retained transcript observed yet; absence is not proof of no activity.":
     "暂未观察到保留记录；这不代表没有活动。",
   "Tools and checks run on the service host, not in a sandbox.":
@@ -100,7 +91,6 @@ export const zh = {
   "Cadence stays on. Confirm one plan before implementation.":
     "Cadence 将持续开启。确认一次计划后开始实施。",
   "Cadence workflow": "Cadence 工作流",
-  "Earlier workflow results": "较早的工作流结果",
   "Current implementation plan": "当前实施计划",
   "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.":
     "批准仅覆盖本计划中的实施、检查、有限修复和所列的本地交付。不包含推送、发布或部署。",
@@ -110,6 +100,13 @@ export const zh = {
   "Cadence stays on for this conversation until you explicitly exit.":
     "本对话将持续使用 Cadence，直到你明确退出。",
   "Workflow progress": "工作流进度",
+  "Open workflow details": "打开工作流详情",
+  Stop: "停止",
+  researching: "调研中",
+  "merged {commit}": "合并 {commit}",
+  "{s}s": "{s} 秒",
+  "{m}m {s}s": "{m} 分 {s} 秒",
+  "{h}h {m}m": "{h} 小时 {m} 分",
   "Observing workflow": "正在观察工作流",
   "State unavailable is not completion. No automatic resubmission.":
     "状态不可用不代表已经完成。不会自动重新提交。",
@@ -266,8 +263,6 @@ export const zh = {
   "Send outcome not yet observed:": "尚未观察到此次发送的结果：",
   "Observe this send before sending again. No automatic retry.":
     "请先观察此次发送的结果，不会自动重试。",
-  "This turn has no complete continuation context. Start a new conversation; retained messages are preserved.":
-    "此轮没有完整的续聊上下文。请新建对话，已记录的消息会保留。",
   Subagents: "子代理",
   "{active} active · {total} total": "{active} 个进行中 · 共 {total} 个",
   "Subagent roster unavailable": "暂时无法观察子代理列表",
@@ -925,4 +920,20 @@ export const zh = {
   "The service was not changed; this page stays connected.":
     "服务没有改动；此页面保持连接。",
   Close: "关闭",
+  "Conversation branches": "对话分支",
+  "Each line is a message; indented lines are branches. Choose one to read that branch. The terminal shares this tree (/tree in Pi).":
+    "每行是一条消息，缩进的是分支。选择一行即可查看那条分支。终端里看到的是同一棵树（Pi 中的 /tree）。",
+  "Only the newest messages are listed.": "只列出了最新的消息。",
+  "Started in the terminal": "在终端中开始",
+  "Started in the WebUI": "在 WebUI 中开始",
+  "Branches ({count})": "分支（{count}）",
+  "Show the latest": "查看最新",
+  "Show the conversation up to here. The next message starts a new branch; nothing is deleted.":
+    "只显示到这里为止的对话。下一条消息会从这里开始一个新分支，不会删除任何内容。",
+  "Continue from here": "从这里继续",
+  "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.":
+    "你正在查看这段对话较早的位置。现在发送的消息会从这里开始一个新分支，其余内容仍保留在会话中。",
+  Terminal: "终端",
+  "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).":
+    "此版本不再支持这类旧 Cadence 会话。请新建会话；原有文件会保留（{code}）。",
 } satisfies Record<string, string>;

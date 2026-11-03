@@ -16,12 +16,13 @@ export function recordedTurn(turn: ChatTurn): TurnSource {
   return {
     header: {
       id: turn.id,
-      epoch: turn.epoch,
       status: turn.status,
       notice: turn.notice,
       omitted: turn.omitted,
       steps: steps.length,
       stable: steps.length,
+      entry: null,
+      at: 0,
     },
     steps,
     detail: async (step) => ({

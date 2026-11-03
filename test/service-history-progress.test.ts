@@ -600,7 +600,9 @@ describe("new-only format3 and private read proof primitive", () => {
 });
 
 describe("standard portable SHA-256 continuation versus native crypto", () => {
-  it("matches known, block/padding, random and full8MiB vectors across serialized splits", () => {
+  it("matches known, block/padding, random and full8MiB vectors across serialized splits", {
+    tags: ["slow"],
+  }, () => {
     const vectors = [
       Buffer.alloc(0),
       Buffer.from("abc"),

@@ -72,7 +72,7 @@ function fixture() {
     },
     controlKey: (id: string) => (links.has(id) ? "bound" : "absent"),
     bindControl: (id: string) => links.add(id),
-    hasTurn: (id: string, turn: string) => {
+    hasCommand: (id: string, turn: string) => {
       ++hasTurnCalls;
       return turns.get(id)?.includes(turn) ?? false;
     },
@@ -96,17 +96,10 @@ function fixture() {
       controls.set(input.commandId, control);
       return { kind: "accepted", commandId: input.commandId };
     },
-    conversation: (id: string) => ({
-      kind: "conversation",
-      summary: {
-        id,
-        title: "t",
-        head: turns.get(id)?.at(-1),
-        status: "completed",
-        updatedAt: 0,
-      },
-      turns: turns.get(id)?.length ?? 0,
-    }),
+    latestCommand: (id: string) => {
+      const commandId = turns.get(id)?.at(-1);
+      return commandId ? { commandId, status: "completed" } : null;
+    },
   };
   const runs = new Map<string, WorkflowRun>();
   const active: WorkflowRun[] = [];
@@ -184,10 +177,12 @@ function fixture() {
     conversations: {
       ...conversations,
       records: {
+        assertSupported() {},
         controlBound: conversations.controlBound,
         controlKey: conversations.controlKey,
-        hasTurn: conversations.hasTurn,
-        conversation: conversations.conversation,
+        hasCommand: conversations.hasCommand,
+        latestCommand: conversations.latestCommand,
+        approvalHead: () => null,
       },
     },
     workflows,
@@ -272,7 +267,7 @@ it("one unusable control record degrades only its conversation and is never repa
   const runId = randomUUID();
   f.runs.set(runId, f.run(runId, "implementing"));
   f.active.push(f.runs.get(runId) as WorkflowRun);
-  // 2.0.21 could persist a head before its conversation turn was recorded.
+  // A partial control record never authorizes execution.
   for (const id of [dangling, corrupt, linkOnly]) f.links.add(id);
   plant(f.root, dangling, {
     id: dangling,
@@ -317,8 +312,8 @@ it("one unusable control record degrades only its conversation and is never repa
       ),
     ).toThrow(UnacceptedConversationCommand);
   }
-  // Retained run evidence from the uncertain record still links its run.
-  expect(f.cw.links([runId])).toEqual([{ runId, conversationId: dangling }]);
+  // Missing durable membership is not reconstructed by scanning old state.
+  expect(f.cw.links([runId])).toEqual([]);
   expect(f.cw.records.state(good)).toMatchObject({ enabled: true, head: turn });
   expect(f.cw.records.state(good).notice).toBeUndefined();
   expect(snapshot(f.root)).toEqual(before);
@@ -627,11 +622,24 @@ it("a refusal before admission never consumes the browser grant", async () => {
     ),
   ).toThrow(UnacceptedConversationCommand);
   // The recent 200-run projection is not an admission cap. Its oldest link
-  // is archived before the projection advances; the grant remains exact.
+  // remains in the independent link store; the grant remains exact.
   const record = join(f.root, id, "state.json");
   const full = JSON.parse(readFileSync(record, "utf8"));
   full.state.runs = Array.from({ length: 200 }, () => randomUUID());
   writeFileSync(record, JSON.stringify(full));
+  const linkDirectory = join(
+    f.root,
+    "..",
+    "conversations-v1",
+    "workflow-links",
+  );
+  mkdirSync(linkDirectory, { recursive: true, mode: 0o700 });
+  for (const runId of full.state.runs)
+    writeFileSync(
+      join(linkDirectory, `${runId}.json`),
+      JSON.stringify({ runId, conversationId: id }),
+      { mode: 0o600 },
+    );
   const runId = randomUUID();
   expect(
     f.cw.approval({ ...approve, grant, commandId: runId }, caller),
@@ -662,7 +670,7 @@ it("a transient read failure is reported as unavailable and never remembered", a
   expect(f.cw.records.observe(id).notice).toMatch(
     /could not be read just now/u,
   );
-  expect(f.cw.links([runId])).toEqual([]);
+  expect(f.cw.links([runId])).toEqual([{ runId, conversationId: id }]);
   f.ioFault();
   // Unchanged record bytes: the next read is a fresh, usable observation.
   expect(f.cw.records.observe(id)).toMatchObject({ enabled: true });

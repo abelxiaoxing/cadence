@@ -1,6 +1,9 @@
-/** Reads one conversation for display: a small head poll, every shown turn
- * once, and only an unsettled turn again. Earlier turns load on request. */
+/** Reads one conversation (a Pi session) for display: a small head poll, every
+ * shown turn of the branch once, and only an unsettled or growing turn again.
+ * Earlier turns load on request. It follows the session's current leaf unless
+ * a branch is chosen. */
 import type {
+  ChatAttempt,
   ChatStatus,
   ChatStep,
   ChatSummary,
@@ -28,7 +31,18 @@ export interface LoadedTurn extends TurnSource {
 export interface ConversationView {
   /** Undefined until the first observation; null for a conversation not started. */
   summary: ChatSummary | null | undefined;
-  /** Turns the conversation has. */
+  /** The branch shown, by its last entry; a message sent now continues it. */
+  leaf: string | null;
+  /** A branch was chosen instead of following the session's current leaf. */
+  pinned: boolean;
+  /** Leaves in the session tree: more than one means it has branches. */
+  branches: number;
+  /** Workflows the terminal started in this session. */
+  runs: string[];
+  /** A browser message that left nothing in the session, after this branch. */
+  attempt: ChatAttempt | null;
+  commands: string[];
+  /** Turns the branch has. */
   count: number;
   /** Shown turns, oldest first: the most recent ones without gaps. */
   turns: LoadedTurn[];
@@ -51,6 +65,12 @@ class ReadError extends Error {}
 
 export class ConversationReader {
   private summary: ChatSummary | null | undefined = undefined;
+  private leaf: string | null = null;
+  private pinned: string | null = null;
+  private branches = 0;
+  private runs: string[] = [];
+  private attempt: ChatAttempt | null = null;
+  private commands: string[] = [];
   private count = 0;
   private first: number | null = null;
   private readonly turns = new Map<number, LoadedTurn>();
@@ -62,7 +82,7 @@ export class ConversationReader {
   private closed = false;
   private active = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private readonly abort = new AbortController();
+  private abort = new AbortController();
   private reads = 0;
   private readonly queue: (() => void)[] = [];
   private snapshot: ConversationView;
@@ -92,6 +112,26 @@ export class ConversationReader {
   refresh = (): void => {
     void this.tick();
   };
+  /** Show the branch that ends at `leaf`; null follows the current leaf again. */
+  choose = (leaf: string | null): void => {
+    if (this.closed || this.pinned === leaf) return;
+    // Navigation retires reads, never an admitted Send or owner operation.
+    // A retained summary is not a fresh observation of the selected branch.
+    this.abort.abort();
+    this.abort = new AbortController();
+    this.pinned = leaf;
+    this.summary = undefined;
+    this.error = "";
+    this.forget();
+    this.publish();
+    void this.tick();
+  };
+  private forget(): void {
+    this.turns.clear();
+    this.details.clear();
+    this.first = null;
+    this.count = 0;
+  }
   loadEarlier = (): void => {
     if (this.closed || this.loadingEarlier || !this.first) return;
     this.first = Math.max(0, this.first - EARLIER_TURNS);
@@ -117,6 +157,12 @@ export class ConversationReader {
     }
     return {
       summary: this.summary,
+      leaf: this.leaf,
+      pinned: this.pinned !== null,
+      branches: this.branches,
+      runs: this.runs,
+      attempt: this.attempt,
+      commands: this.commands,
       count: this.count,
       turns,
       earlier: (turns[0]?.ordinal ?? this.count) > 0,
@@ -133,12 +179,14 @@ export class ConversationReader {
     this.running = true;
     clearTimeout(this.timer);
     const earlier = this.loadingEarlier;
+    const selection = this.abort;
     try {
-      await this.sync();
-      this.error = "";
+      await this.sync(selection.signal);
+      if (selection === this.abort) this.error = "";
     } catch (error) {
       if (this.closed) return;
-      this.error = error instanceof ReadError ? error.message : "unavailable";
+      if (selection === this.abort)
+        this.error = error instanceof ReadError ? error.message : "unavailable";
     } finally {
       this.running = false;
     }
@@ -155,14 +203,28 @@ export class ConversationReader {
       [...this.turns.values()].some((turn) => unsettled(turn.header.status));
     this.timer = setTimeout(() => void this.tick(), live ? LIVE_MS : IDLE_MS);
   }
-  private async sync(): Promise<void> {
-    const head = await this.read({ kind: "conversation", id: this.id });
+  private async sync(signal: AbortSignal): Promise<void> {
+    const pinned = this.pinned;
+    const head = await this.read(
+      {
+        kind: "conversation",
+        id: this.id,
+        leaf: pinned,
+        known: this.leaf,
+      },
+      signal,
+    );
+    if (signal.aborted) return;
     if (head.kind !== "conversation") throw new ReadError("invalid");
-    if (head.turns < this.count) {
-      // Never a shorter record of the same conversation: observe it afresh.
-      this.turns.clear();
-      this.first = null;
-    }
+    // Another branch, or never a shorter record of this one: observe it afresh.
+    if (!head.continues || head.turns < this.count) this.forget();
+    // A branch that moved on extends its last shown turn.
+    const grown = head.leaf !== this.leaf ? this.count - 1 : this.count;
+    this.leaf = head.leaf;
+    this.branches = head.branches;
+    this.runs = head.runs;
+    this.attempt = head.attempt;
+    this.commands = head.commands ?? [];
     this.summary = head.summary;
     this.count = head.turns;
     this.first = Math.min(
@@ -175,16 +237,23 @@ export class ConversationReader {
       const turn = this.turns.get(o);
       if (
         !turn ||
+        o >= grown ||
         turn.header.stable < turn.header.steps ||
         unsettled(turn.header.status)
       )
         wanted.push(o);
     }
-    await Promise.all(wanted.map((ordinal) => this.load(ordinal)));
+    await Promise.all(
+      wanted.map((ordinal) => this.load(ordinal, head.leaf, signal)),
+    );
   }
-  private async load(ordinal: number): Promise<void> {
+  private async load(
+    ordinal: number,
+    leaf: string | null,
+    signal: AbortSignal,
+  ): Promise<void> {
     const prior = this.turns.get(ordinal);
-    const latest = await this.turnRead(ordinal, null);
+    const latest = await this.turnRead(ordinal, null, leaf, signal);
     const header = latest.turn;
     const steps: (ChatStep | undefined)[] = Array.from({
       length: header.steps,
@@ -201,33 +270,52 @@ export class ConversationReader {
     const ends: number[] = [];
     for (let end = latest.start; end > kept; end -= STEP_READ) ends.push(end);
     for (const range of await Promise.all(
-      ends.map((end) => this.turnRead(ordinal, end)),
+      ends.map((end) => this.turnRead(ordinal, end, leaf, signal)),
     ))
       range.steps.forEach((step, i) => {
         const at = range.start + i;
         if (at >= kept && at < latest.start) steps[at] = step;
       });
+    if (signal.aborted) return;
     if (steps.some((step) => !step)) throw new ReadError("stale");
     this.turns.set(ordinal, {
       ordinal,
       header,
       steps: steps as ChatStep[],
-      detail: this.detail(header.id),
+      detail: this.detail(leaf, header.id, signal),
     });
   }
-  private async turnRead(ordinal: number, before: number | null) {
-    const value = await this.read({
-      kind: "conversation-turn",
-      id: this.id,
-      ordinal,
-      before,
-    });
-    if (value.kind !== "conversation-turn" || value.ordinal !== ordinal)
+  private async turnRead(
+    ordinal: number,
+    before: number | null,
+    leaf: string | null,
+    signal: AbortSignal,
+  ) {
+    const value = await this.read(
+      {
+        kind: "conversation-turn",
+        id: this.id,
+        leaf,
+        ordinal,
+        before,
+      },
+      signal,
+    );
+    if (
+      value.kind !== "conversation-turn" ||
+      value.ordinal !== ordinal ||
+      value.leaf !== leaf
+    )
       throw new ReadError("invalid");
     return value;
   }
-  private detail(turnId: string): TurnSource["detail"] {
-    let detail = this.details.get(turnId);
+  private detail(
+    leaf: string | null,
+    turnId: string,
+    selection: AbortSignal,
+  ): TurnSource["detail"] {
+    const key = `${leaf ?? ""}:${turnId}`;
+    let detail = this.details.get(key);
     if (!detail) {
       detail = async (step, parts, signal) => {
         const items = await Promise.all(
@@ -236,11 +324,12 @@ export class ConversationReader {
               {
                 kind: "conversation-step",
                 id: this.id,
+                leaf,
                 turnId,
                 step,
                 part,
               },
-              signal,
+              AbortSignal.any([selection, signal]),
             );
             if (value.kind !== "conversation-step" || value.part !== part)
               throw new ReadError("invalid");
@@ -252,24 +341,20 @@ export class ConversationReader {
           args: items.map((item) => item.args).join(""),
         };
       };
-      this.details.set(turnId, detail);
+      this.details.set(key, detail);
     }
     return detail;
   }
   private async read(
     request: WorkbenchRead,
-    signal?: AbortSignal,
+    signal: AbortSignal = this.abort.signal,
   ): Promise<WorkbenchResult> {
     if (this.reads >= READS)
       await new Promise<void>((resolve) => this.queue.push(resolve));
     this.reads++;
     try {
-      const reply = await this.client.workbenchRead(
-        request,
-        signal
-          ? AbortSignal.any([signal, this.abort.signal])
-          : this.abort.signal,
-      );
+      if (this.closed || signal.aborted) throw new ReadError("stale");
+      const reply = await this.client.workbenchRead(request, signal);
       if (reply.kind === "error") throw new ReadError(reply.error.code);
       return reply.value;
     } finally {

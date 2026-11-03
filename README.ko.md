@@ -20,6 +20,9 @@ Cadence는 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)�
 - **완전한 역사.**
   모든 실행은 메시지, 도구 호출, 출력을 보관하며, 정확한 검색과 완전한 Markdown/NDJSON 내보내기를 지원합니다.
   알려진 비밀은 마스킹됩니다.
+- **터미널과 공유하는 기록.**
+  브라우저 대화는 프로젝트의 Pi 세션 그 자체입니다.
+  터미널 세션을 브라우저에서 이어 가거나 브라우저 세션을 `/resume`으로 이어 갈 수 있고, Pi의 분기는 양쪽에서 모두 볼 수 있습니다.
 - **모든 것을 위한 하나의 링크.**
   WebUI(데스크톱과 전화, 영어와 간체 중국어)는 일반 Pi 대화도 호스트하며 프로젝트 간 전환이 가능하고, 각 프로젝트는 자체 owner와 역사를 가집니다.
 
@@ -120,12 +123,13 @@ Cadence는 Pi 버전 범위를 강제하지 않습니다.
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 엔지니어링 지침은 [engineering/](engineering/) 아래 영역별로 나뉘어 있습니다.
 [AGENTS.md](AGENTS.md)의 프로젝트 인덱스가 어느 파일이 어느 코드를 다루는지 설명합니다.
-`verify`에는 공식 Node 빌드, 개인 임시 디렉터리, 기존 Chromium도 필요합니다.
+`verify`에는 공식 Node 빌드와 개인 임시 디렉터리가 필요하고, 느린 테스트와 브라우저 시나리오를 더하는 `verify:full`에는 기존 Chromium도 필요합니다.
 [검증](engineering/verification.md)을 참조하세요.
 
 ## 라이선스

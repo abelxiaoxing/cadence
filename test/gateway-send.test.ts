@@ -1,3 +1,4 @@
+// @module-tag slow
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -8,9 +9,11 @@ import {
 } from "../src/service/contracts/gateway.ts";
 import type { WorkbenchRead } from "../src/service/contracts/workbench.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
+import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { loadWebAssets } from "../src/service-assets.ts";
 import { wireUrl } from "../src/service-wire.ts";
 import { gatewayFixture } from "./helpers/gateway-fixture.ts";
+import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 it("selection stays inert; one explicit Send preparation acquires an owner but never a message, model or execution grant", async () => {
   const g = await gatewayFixture();
@@ -59,7 +62,12 @@ it("selection stays inert; one explicit Send preparation acquires an owner but n
         )
       ).json();
     expect(
-      await read({ kind: "conversation", id: randomUUID() }),
+      await read({
+        kind: "conversation",
+        leaf: null,
+        known: null,
+        id: randomUUID(),
+      }),
     ).toMatchObject({ kind: "ok", value: { summary: null, turns: 0 } });
     expect(
       await read({ kind: "cadence-conversation", id: randomUUID() }),
@@ -78,6 +86,25 @@ it("selection stays inert; one explicit Send preparation acquires an owner but n
       status: "not-started",
       epoch: null,
       workspaceId: null,
+    });
+    expect(existsSync(c.directory)).toBe(false);
+    // Existing terminal history is readable even before this directory has an
+    // owner registration. Reading neither starts an owner nor imports a copy.
+    const native = seedPiSessions(
+      sessionDirectory(workspace, join(g.f.dir, "agent")),
+      workspace,
+      1,
+    );
+    expect(
+      await read({
+        kind: "conversation",
+        id: native.ids[0],
+        leaf: null,
+        known: null,
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      value: { turns: 1, summary: { id: native.ids[0], origin: "terminal" } },
     });
     expect(existsSync(c.directory)).toBe(false);
     const prepare = { projectId: project.id, commandId: randomUUID() };

@@ -41,6 +41,8 @@ const ERROR_TEXT: Readonly<Record<string, MessageKey>> = {
     "This page was out of date ({code}) and has been read again. Try once more.",
   "auth-unavailable":
     "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.",
+  "retired-conversation":
+    "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).",
   "unsupported-context": "This is not supported here ({code}).",
   capacity: "A limit was reached ({code}).",
 };

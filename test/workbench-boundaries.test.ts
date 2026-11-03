@@ -10,10 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import {
-  conversationMessages,
-  encodeConversationContext,
-} from "../src/conversation-context.mjs";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
@@ -21,7 +17,7 @@ import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
 } from "../src/service/contracts/workbench.ts";
-import { ConversationCapture } from "../src/service/conversations.ts";
+import { TurnCapture } from "../src/service/turn-capture.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 import {
@@ -69,7 +65,7 @@ it("chat streams hold split secrets and keep finalized text separate from tool r
     items: [],
   };
   let saves = 0;
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {
       saves++;
@@ -128,107 +124,6 @@ it("chat streams hold split secrets and keep finalized text separate from tool r
   expect(turn.items[0].text).toContain("answer");
   expect(JSON.stringify(turn)).not.toContain("private-literal");
   expect(saves).toBe(0);
-});
-it("continuation keeps tool exchanges but strips hidden/media/signatures and owner credentials", () => {
-  const messages = [
-    { role: "user", content: "hello", timestamp: 1 },
-    {
-      role: "assistant",
-      content: [
-        { type: "thinking", thinking: "HIDDEN" },
-        {
-          type: "text",
-          text: "visible owner-literal",
-          textSignature: "OPAQUE",
-        },
-        {
-          type: "toolCall",
-          id: "c",
-          name: "read",
-          arguments: { path: "a", secret: "owner-literal" },
-          thoughtSignature: "OPAQUE",
-        },
-      ],
-      timestamp: 2,
-      api: "openai-completions",
-      provider: "fixture",
-      model: "fixed",
-      stopReason: "toolUse",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-    },
-    {
-      role: "toolResult",
-      toolCallId: "c",
-      toolName: "read",
-      isError: false,
-      timestamp: 3,
-      content: [
-        { type: "text", text: "file owner-literal" },
-        { type: "image", data: "MEDIA" },
-      ],
-      details: { raw: "RAW" },
-    },
-  ];
-  const result = conversationMessages(messages, ["owner-literal"]),
-    source = JSON.stringify(result);
-  for (const secret of ["HIDDEN", "OPAQUE", "MEDIA", "RAW", "owner-literal"])
-    expect(source).not.toContain(secret);
-  expect(source).toContain("toolCall");
-  expect(source).toContain("toolResult");
-});
-it("continuation accepts Pi usage breakdowns and stores only the common counts", () => {
-  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-  const assistant = (usage: object) => [
-    { role: "user", content: "hi", timestamp: 1 },
-    {
-      role: "assistant",
-      content: [{ type: "text", text: "hi" }],
-      timestamp: 2,
-      api: "openai-completions",
-      provider: "fixture",
-      model: "fixed",
-      stopReason: "stop",
-      usage,
-    },
-  ];
-  const counts = {
-    input: 1,
-    output: 2,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 3,
-  };
-  // openai-completions/responses and google report reasoning; anthropic reports cacheWrite1h.
-  const plain = encodeConversationContext(assistant({ ...counts, cost }), []);
-  for (const extra of [{ reasoning: 1 }, { cacheWrite1h: 0 }])
-    expect(
-      encodeConversationContext(assistant({ ...counts, ...extra, cost }), []),
-    ).toBe(plain);
-  expect(plain).not.toMatch(/reasoning|cacheWrite1h/);
-  let calls = 0;
-  const getter = {
-    ...counts,
-    cost,
-    get output() {
-      calls++;
-      return 2;
-    },
-  };
-  for (const usage of [
-    { ...counts, totalTokens: -1, cost },
-    { ...counts, cost: { ...cost, total: Number.NaN } },
-    { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost },
-    getter,
-  ])
-    expect(() => conversationMessages(assistant(usage))).toThrow();
-  expect(calls).toBe(0);
 });
 it("file previews do not flush a truncated credential prefix or browse private state", () => {
   const root = mkdtempSync(join(tmpdir(), "wb-files-")),
@@ -418,7 +313,7 @@ it("oversize tool arguments stop capture without poisoning the last readable tur
     omitted: { thinking: false, media: false, other: false },
     items: [],
   };
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {},
     () => [],
@@ -470,7 +365,7 @@ it("omitted thinking, media and unknown blocks are flags that never displace a t
     omitted: { thinking: false, media: false, other: false },
     items: [],
   };
-  const capture = new ConversationCapture(
+  const capture = new TurnCapture(
     turn,
     () => {},
     () => [],

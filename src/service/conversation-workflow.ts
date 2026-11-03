@@ -1,6 +1,5 @@
 /** Browser conversation control. A model can investigate/propose, never approve itself. */
 import { randomUUID } from "node:crypto";
-import { opendirSync } from "node:fs";
 import { join } from "node:path";
 import { CADENCE_INSTRUCTIONS } from "../cadence-instructions.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
@@ -18,6 +17,7 @@ import type { ChoiceVersion } from "./contracts/models.ts";
 import {
   type CadenceConversation,
   decodeCadenceConversation,
+  decodeSessionId,
   type WorkbenchCommand,
   type WorkbenchResult,
   type WorkflowLink,
@@ -49,8 +49,6 @@ const EVIDENCE_BYTES = 16384;
 const COORDINATORS = 8;
 /** Recent control projection only. Every run link is retained separately. */
 const RECENT_RUNS = 200;
-/** Bounded read-side directory scan; extra entries are ignored, never removed. */
-const SCAN = 256;
 const PLAN_REFUSALS: Partial<Record<string, string>> = {
   stale:
     "The project, model selection or owner changed while publishing. No plan card was published; ask the user before trying again.",
@@ -94,6 +92,7 @@ export class ConversationWorkflow {
       digest: string;
       expiresAt: number;
       nativeGrant: string;
+      head: string | null;
     }
   >();
   constructor(
@@ -135,10 +134,8 @@ export class ConversationWorkflow {
             ]).state,
           ).runs
         : [];
-      for (const [index, runId] of state.runs.entries()) {
-        // Preserve a legacy link before it leaves the recent projection.
-        if (index >= state.runs.length - RECENT_RUNS && prior.includes(runId))
-          continue;
+      for (const runId of state.runs) {
+        if (prior.includes(runId)) continue;
         const path = this.runLink(runId);
         const old = this.o.coordination.files.read(path);
         const value = canonicalJson({ runId, conversationId: state.id });
@@ -176,8 +173,7 @@ export class ConversationWorkflow {
   /** Browser owners of the given runs. Partial when records are unusable. */
   links(runIds: readonly string[]): WorkflowLink[] {
     this.o.owner.lease.assert();
-    const wanted = new Set(runIds),
-      links: WorkflowLink[] = [];
+    const links: WorkflowLink[] = [];
     for (const runId of runIds) {
       try {
         const file = this.o.coordination.files.read(this.runLink(runId));
@@ -187,42 +183,12 @@ export class ConversationWorkflow {
           "conversationId",
         ]);
         if (row.runId !== runId) continue;
-        const conversationId = decodeId(row.conversationId);
-        if (this.records.observe(conversationId).notice) continue;
+        const conversationId = decodeSessionId(row.conversationId);
+        this.o.conversations.records.assertSupported(conversationId);
         links.push({ runId, conversationId });
-        wanted.delete(runId);
       } catch {
         this.o.owner.lease.assert();
       }
-    }
-    if (!wanted.size) return links;
-    // Compatibility fallback for the at-most-200 records older owners wrote.
-    try {
-      if (!this.o.coordination.files.directory(this.records.root)) return links;
-      const dir = opendirSync(this.records.root);
-      try {
-        let seen = 0;
-        for (
-          let e = dir.readSync();
-          e && seen < SCAN && wanted.size;
-          e = dir.readSync()
-        ) {
-          ++seen;
-          let id: string;
-          try {
-            id = decodeId(e.name);
-          } catch {
-            continue;
-          }
-          if (!e.isDirectory()) continue;
-          for (const runId of this.records.observe(id).runs)
-            if (wanted.delete(runId)) links.push({ runId, conversationId: id });
-        }
-      } finally {
-        dir.closeSync();
-      }
-    } catch {
-      this.o.owner.lease.assert();
     }
     return links;
   }
@@ -534,7 +500,7 @@ export class ConversationWorkflow {
     if (!caller) throw new ContractError("forbidden");
     const evidence = join(
       this.records.root,
-      decodeId(c.conversationId),
+      decodeSessionId(c.conversationId),
       "approvals",
       `${decodeId(c.commandId)}.json`,
     );
@@ -598,19 +564,23 @@ export class ConversationWorkflow {
     recording: () => void,
   ): WorkbenchResult {
     const { state, file } = this.records.usable(c.conversationId);
-    const view = this.o.conversations.records.conversation(c.conversationId);
+    const latest = this.o.conversations.records.latestCommand(c.conversationId);
     if (
       !state.enabled ||
       c.revision !== state.revision ||
       !state.proposal ||
       state.proposal.id !== c.proposalId ||
       state.proposal.digest !== c.digest ||
-      view.kind !== "conversation" ||
-      view.summary?.head !== state.head ||
-      ["queued", "running", "unknown"].includes(view.summary.status) ||
+      !latest ||
+      latest.commandId !== state.head ||
+      ["queued", "running", "unknown"].includes(latest.status) ||
       this.active.has(c.conversationId)
     )
       throw new ContractError("stale");
+    const head = this.o.conversations.records.approvalHead(
+      c.conversationId,
+      latest.commandId,
+    );
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
       for (const [id, g] of this.grants)
@@ -633,6 +603,7 @@ export class ConversationWorkflow {
         digest: c.digest,
         expiresAt: g.expiresAt,
         nativeGrant: g.grant,
+        head,
       });
       return {
         kind: "cadence-grant",
@@ -654,7 +625,8 @@ export class ConversationWorkflow {
       grant.revision !== c.revision ||
       grant.conversationId !== c.conversationId ||
       grant.proposalId !== c.proposalId ||
-      grant.digest !== c.digest
+      grant.digest !== c.digest ||
+      grant.head !== head
     )
       throw new ContractError("expired-grant");
     // Retained human-action evidence is separate from an ephemeral grant and cannot restore it.

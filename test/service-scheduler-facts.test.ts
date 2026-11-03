@@ -15,7 +15,9 @@ import {
 } from "./helpers/history-fixture.ts";
 import { readProjection } from "./helpers/history-read-fixture.ts";
 
-it("per-reservation gates and unstarted reasons survive the shared finite historical projection", async () => {
+it("per-reservation gates and unstarted reasons survive the shared finite historical projection", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture(),
     second = randomUUID();
   expect((await f.writer.commit(f.intent)).status).toBe("committed");

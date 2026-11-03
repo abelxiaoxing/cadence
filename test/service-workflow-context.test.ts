@@ -1,3 +1,4 @@
+// @module-tag slow
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -160,27 +161,38 @@ it("scoped consent binds cwd/model; admitted Git worktrees, review and checks ke
     // Change the conversation's FUTURE model before the run's first SDK worker.
     await choose("alternate");
     let run: WorkflowRun | undefined;
-    await expect
-      .poll(
-        async () => {
-          const r = await f.client.workbenchRead({
-            kind: "workflow",
-            id: runId,
-          });
-          if (
-            r.kind !== "ok" ||
-            r.value.kind !== "workflow" ||
-            r.value.response.type !== "run"
-          )
-            return "unobserved";
-          run = r.value.response.run;
-          return ["queued", "running"].includes(run.status)
-            ? "running"
-            : "settled";
-        },
-        { timeout: 20000 },
-      )
-      .toBe("settled");
+    try {
+      await expect
+        .poll(
+          async () => {
+            const r = await f.client.workbenchRead({
+              kind: "workflow",
+              id: runId,
+            });
+            if (
+              r.kind !== "ok" ||
+              r.value.kind !== "workflow" ||
+              r.value.response.type !== "run"
+            )
+              return "unobserved";
+            run = r.value.response.run;
+            return ["queued", "running"].includes(run.status)
+              ? "running"
+              : "settled";
+          },
+          // Reading the full native/auth/storage snapshot at 20 Hz competes
+          // with the real owner under the slow lane's parallel process load.
+          // Keep the same deadline and settlement predicate, not a merge shortcut.
+          { timeout: 20000, interval: 100 },
+        )
+        .toBe("settled");
+    } catch (error) {
+      writeFileSync(
+        join(f.dir, "scope-observation.json"),
+        JSON.stringify({ observedAt: Date.now(), run }, null, 2),
+      );
+      throw error;
+    }
     expect(run?.status, JSON.stringify(run)).toBe("completed");
     expect(run?.mergedCommit).toBe(git("rev-parse", "HEAD"));
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe(
