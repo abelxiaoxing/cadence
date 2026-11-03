@@ -24,6 +24,7 @@ import type {
 } from "../../types";
 import { PageControls } from "../history/PageControls";
 import { ConversationActions } from "./ConversationActions";
+import { workflowActivity } from "./WorkflowPanel";
 
 type OpenScope = (scope: Scope, snapshot?: string, label?: string) => void;
 
@@ -356,31 +357,46 @@ export function TaskSidebar({
     (chat) => chat.status === "running" || chat.status === "queued",
   );
   const pastChats = chats.filter((chat) => !liveChats.includes(chat));
-  const chatRow = (chat: ChatSummary) => (
-    <button
-      type="button"
-      key={chat.id}
-      className={`session-item${chat.id === conversationId ? " active" : ""}`}
-      onClick={() => onConversation?.(chat.id)}
-      title={chat.title}
-    >
-      <span className="session-icon">
-        <FiMessageSquare />
-      </span>
-      <span className="session-info">
-        <span className="session-title">{chat.title}</span>
-        <span className="session-sub">
-          {chat.origin === "terminal" ? t("Terminal") : "WebUI"} ·{" "}
-          {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
-          {chat.cadence && ["running", "queued"].includes(chat.status)
-            ? t("Discussing")
-            : chat.cadence && chat.status === "completed"
-              ? t("Ready for conversation")
-              : tx(chat.status)}
+  // A conversation's live workflow is what it is doing, unless its reply ended
+  // badly: that status stays (the workflow is listed under Running anyway).
+  const liveWorkflow = (chat: ChatSummary) =>
+    workflows?.findLast((run) =>
+      workflowLinks.some(
+        (link) => link.runId === run.id && link.conversationId === chat.id,
+      ),
+    );
+  const chatRow = (chat: ChatSummary) => {
+    const flow = ["running", "queued", "completed"].includes(chat.status)
+      ? liveWorkflow(chat)
+      : undefined;
+    return (
+      <button
+        type="button"
+        key={chat.id}
+        className={`session-item${chat.id === conversationId ? " active" : ""}`}
+        onClick={() => onConversation?.(chat.id)}
+        title={chat.title}
+      >
+        <span className="session-icon">
+          <FiMessageSquare />
         </span>
-      </span>
-    </button>
-  );
+        <span className="session-info">
+          <span className="session-title">{chat.title}</span>
+          <span className="session-sub">
+            {chat.origin === "terminal" ? t("Terminal") : "WebUI"} ·{" "}
+            {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
+            {flow
+              ? tx(workflowActivity(flow))
+              : chat.cadence && ["running", "queued"].includes(chat.status)
+                ? t("Discussing")
+                : chat.cadence && chat.status === "completed"
+                  ? t("Ready for conversation")
+                  : tx(chat.status)}
+          </span>
+        </span>
+      </button>
+    );
+  };
   return (
     <aside className="panel panel-left lp-panel">
       <ConversationActions onConversation={onNewConversation} />

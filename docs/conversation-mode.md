@@ -24,7 +24,7 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
 
 Native mode is branch-aware; browser mode follows its server-owned conversation identity.
 The browser and the terminal share the conversation itself (it is the same Pi session), but each keeps its own Cadence mode and plan approval: entering Cadence in one does not enter it in the other.
-A workflow started in either place appears as a card in that conversation in the browser.
+A workflow started in either place appears in that conversation in the browser as one line after the turn it started in.
 A saved native mode is active only in a trusted interactive terminal; print/RPC sessions keep ordinary tools and can still exit with `/cadence exit`.
 In Pi, the agent panel lists workflow subagents and opens their transcripts; `cadence_status` can read one step's transcript.
 Resume and compaction retain the mode/context, not execution grants.
@@ -105,7 +105,8 @@ System-service installation and remote access remain separate explicit operation
 
 `/cadence-history [run-id]` provides readonly diagnostics without model calls or service startup; see [History and diagnostics](history.md).
 The WebUI uses the same execution engine with a separate, context-bound browser confirmation path.
-Its main composer stays in the same conversation; the plan card, workflow progress and actual merge outcomes appear inline.
+Its main composer stays in the same conversation; the plan card appears inline, and each workflow is one line after the turn it started in, showing what it is doing (with **Stop**) or how it ended: its merge commit, or the reason it did not complete.
+Select the line to open the workflow's steps, checks, delivery and diagnostics in the main area; while it runs, the conversation's status names its phase.
 Research, implementation and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
 Active workflows are listed under **Running conversations** with **Cancel workflow — request stop**; this includes native-started workflows, and an unavailable observation is not proof of no work.
 The old task creation/Save/Start/check/human-Review controls are retired on both clients and refused by the service.
@@ -115,7 +116,7 @@ Approval grants are neither stored in the browser nor restored after restart.
 Losing a response only observes its original command/run identity; it never retries execution.
 Exit does not stop accepted work, and **Cancel workflow — request stop** remains independent of conversation mode.
 There is no generic browser shell/PTY, service management/recovery or checkpoint pause/resume feature.
-Conversation response completion is distinct from workflow completion; read the workflow card for actual delivery/check outcomes.
+Conversation response completion is distinct from workflow completion; read the workflow's line and view for actual delivery/check outcomes.
 
 ### Research scope, timing and retained results
 

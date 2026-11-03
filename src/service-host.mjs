@@ -28150,7 +28150,7 @@ class WorkflowHistoryScanner {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.32",
+  version: "2.0.33",
   build: "b2e9f553ead7bbf1508624a3e834a8654557687cf2a3a26f2aa1161843abe5eb",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,

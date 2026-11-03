@@ -169,18 +169,36 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
         exact: true,
       })
       .waitFor();
-    await page
-      .getByText("Owner timing and runtime", { exact: true })
-      .first()
+    // The investigation is one line after its turn; its steps and owner
+    // diagnostics open in the workflow's own view, not in the chat.
+    const workflowLine = (goal) =>
+      page
+        .locator(".chat-workspace")
+        .getByRole("article", { name: goal, exact: true });
+    await workflowLine("Inspect fixture")
+      .getByText(/^completed · \d+s$/)
+      .waitFor();
+    assert.equal(
+      await page.locator(".chat-workspace .workflow-card").count(),
+      0,
+    );
+    await workflowLine("Inspect fixture")
+      .getByTitle("Open workflow details")
       .click();
-    const diagnostics = await page
+    const context = page.getByLabel("Subagent context", { exact: true });
+    await context
+      .getByText("Owner timing and runtime", { exact: true })
+      .click();
+    const diagnostics = await context
       .locator(".workflow-card pre.workflow-detail")
-      .first()
       .innerText();
     assert(diagnostics.includes("Owner: Cadence"));
     assert(diagnostics.includes("checkout acquired:"));
     assert(diagnostics.includes("worker SDK"));
     assert(diagnostics.includes("service-host.mjs"));
+    await page
+      .getByRole("button", { name: "Back to conversation", exact: true })
+      .click();
     assert.equal(sendAttempts, 2);
     assert.equal(new Set(sendIds).size, 2);
     await page.unroute("**/api/v1/workbench/command");
@@ -221,9 +239,8 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
     await page
       .getByRole("button", { name: "Implement this plan", exact: true })
       .click();
-    await page
-      .getByText("Actual local merge commit:", { exact: false })
-      .first()
+    await workflowLine("Two independent outputs")
+      .getByText(/^completed · merged [0-9a-f]{7} · \d+s$/)
       .waitFor();
     assert.equal(approveCalls, 1, "lost reply is observed, never replayed");
     assert(acceptedId);
@@ -278,7 +295,15 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
       result.value.response.run.mergedCommit,
     );
     assert(readFileSync(join(f.root, "a.txt"), "utf8").includes("implemented"));
-    const childSummary = page
+    // Steps, checks and the merge are in the workflow's view, which links to
+    // each subagent's context in the main area.
+    await workflowLine("Two independent outputs")
+      .getByTitle("Open workflow details")
+      .click();
+    await context
+      .getByText("Actual local merge commit:", { exact: false })
+      .waitFor();
+    const childSummary = context
       .locator(".workflow-card details > summary")
       .filter({ hasText: /^implementation/ })
       .first();
@@ -287,8 +312,6 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
     await child
       .getByRole("button", { name: "Open subagent context", exact: true })
       .click();
-    // The subagent's context opens in the main area, not inside the chat.
-    const context = page.getByLabel("Subagent context", { exact: true });
     await context
       .getByRole("region", { name: "Conversation turn" })
       .getByText("Implemented the declared file.", { exact: true })
@@ -323,11 +346,7 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
       .waitFor();
     // The retained workflow stays on its conversation's card after a reload.
     const historyContacts = f.contacts();
-    await page
-      .getByRole("article", { name: "Workflow progress" })
-      .filter({ hasText: result.value.response.run.goal })
-      .first()
-      .waitFor();
+    await workflowLine(result.value.response.run.goal).waitFor();
     assert.equal(f.contacts(), historyContacts);
     await send("Next goal: explain the existing files");
     await page
@@ -336,6 +355,32 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
       })
       .last()
       .waitFor();
+    // Each workflow stays after the turn it started in; later turns follow it.
+    const order = () =>
+      page.evaluate(() => {
+        const next = [...document.querySelectorAll(".chat-message.user")].find(
+          (m) =>
+            m.textContent?.includes("Next goal: explain the existing files"),
+        );
+        return [
+          ...document.querySelectorAll(".chat-workspace .workflow-line-goal"),
+        ].map(
+          (goal) =>
+            `${goal.textContent}:${next && goal.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING ? "before" : "after"}`,
+        );
+      });
+    const expected = [
+      "Inspect fixture:before",
+      "Two independent outputs:before",
+      "Inspect fixture:after",
+    ];
+    const settle = Date.now() + 15000;
+    while (
+      JSON.stringify(await order()) !== JSON.stringify(expected) &&
+      Date.now() < settle
+    )
+      await page.waitForTimeout(100);
+    assert.deepEqual(await order(), expected);
     assert.equal(page.url(), chatUrl);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: join(root, "mobile.png"), fullPage: true });
