@@ -107,7 +107,10 @@ it("only a pure time stall is repeatable, at most STALL_RETRIES times", async ()
   expect(calls).toBe(2);
 });
 
-it("one stalled quantum no longer refuses an export or a detail page", async () => {
+it("one stalled quantum no longer refuses an export or a detail page", {
+  tags: ["slow"],
+  timeout: 30000,
+}, async () => {
   const f = historyFixture(),
     saved = await retainedText(f, "x".repeat(400000));
   const expected = await exported(f);
@@ -132,9 +135,12 @@ it("one stalled quantum no longer refuses an export or a detail page", async () 
   } finally {
     again.mockRestore();
   }
-}, 30000);
+});
 
-it("a read that never progresses still refuses after bounded fresh quanta", async () => {
+it("a read that never progresses still refuses after bounded fresh quanta", {
+  tags: ["slow"],
+  timeout: 30000,
+}, async () => {
   const f = historyFixture();
   await retainedText(f, "x".repeat(400000));
   const always = stallAfterPrepare(() => true);
@@ -147,7 +153,7 @@ it("a read that never progresses still refuses after bounded fresh quanta", asyn
   } finally {
     always.mockRestore();
   }
-}, 30000);
+});
 
 it("owner-internal authority reads are bounded by bytes, never by a stalled clock", () => {
   const cooperative = new HistoryReadBudget(),

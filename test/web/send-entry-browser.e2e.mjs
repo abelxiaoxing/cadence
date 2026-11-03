@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { it } from "vitest";
+import { sessionDirectory } from "../../src/service/pi-sessions.ts";
 import { gatewayFixture } from "../helpers/gateway-fixture.ts";
 
 it("Send entry: a lost preparation reply sends nothing; refresh and departure never replay or rebind the message", async () => {
@@ -251,6 +259,57 @@ it("Send entry: a lost preparation reply sends nothing; refresh and departure ne
       "Draft survives an unavailable readiness observation",
     );
     await page.unroute(readiness);
+    await page.reload();
+    let refusedCommand;
+    await page.route("**/api/v1/workbench/command", async (route) => {
+      if (route.request().postDataJSON()?.kind !== "send")
+        return route.continue();
+      // No owner receipt: losing this request is not acceptance. A terminal
+      // subsequently extending the same branch cannot acknowledge this ID.
+      refusedCommand = route.request().postDataJSON().commandId;
+      await route.abort("failed");
+    });
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page
+      .getByText("Send outcome not yet observed:", { exact: false })
+      .waitFor();
+    assert(refusedCommand);
+    const sessions = sessionDirectory(directories[1], join(g.f.dir, "agent"));
+    const file = join(
+      sessions,
+      readdirSync(sessions).find((name) =>
+        name.endsWith(`${commands[1].conversationId}.jsonl`),
+      ),
+    );
+    const entries = readFileSync(file, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const parentId = entries.at(-1).id;
+    appendFileSync(
+      file,
+      `${JSON.stringify({ type: "message", id: "terminal_added", parentId, timestamp: new Date().toISOString(), message: { role: "user", content: "Unrelated terminal continuation", timestamp: Date.now() } })}\n`,
+    );
+    await page
+      .getByRole("button", { name: "Observe current state", exact: true })
+      .click();
+    await page
+      .getByText("Unrelated terminal continuation", { exact: true })
+      .waitFor();
+    await page.getByText(refusedCommand, { exact: true }).waitFor();
+    assert.equal(
+      await message.inputValue(),
+      "Draft survives an unavailable readiness observation",
+    );
+    assert.equal(
+      await page
+        .getByRole("button", { name: "Send", exact: true })
+        .isDisabled(),
+      true,
+    );
+    assert.equal(g.f.contacts(), 2);
+    assert.equal(commands.length, 3);
+    await page.unroute("**/api/v1/workbench/command");
     assert.deepEqual(errors, []);
   } catch (error) {
     if (page)

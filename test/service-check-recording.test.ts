@@ -133,7 +133,9 @@ it("additive literal updates retain both pending prefixes and old secrets within
   expect(bounded.write("b".repeat(128 * 1024), true)).toBe("[redacted]");
 });
 
-it("service raw aggregate is inclusive16MiB, over-limit and failed literal refresh remain non-success with no fabricated sink", async () => {
+it("service raw aggregate is inclusive16MiB, over-limit and failed literal refresh remain non-success with no fabricated sink", {
+  tags: ["slow"],
+}, async () => {
   const pool = new CaptureBudgetPool();
   let changed: (() => void) | undefined,
     unsubscribed = false;

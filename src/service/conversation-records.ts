@@ -1,54 +1,54 @@
-/** Retained conversation records. No SDK, execution owner, recovery or writes.
- * The caller supplies a current-view assertion and, only for a live owner, its
- * original turn observations. A cold view is valid only for a proven stopped
- * owner; absence from another process's memory is never proof of interruption. */
-
+/** Shared readonly Pi session and browser-command records. No SDK, execution owner or writes. */
 import { lstatSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { withinWorkspace } from "../workspace.ts";
+import { join } from "node:path";
+import { sanitizeText } from "../worker-redaction.mjs";
 import {
   ContractError,
   closed,
   decodeId,
   integer,
   list,
+  oneOf,
   parseWireJson,
   text,
 } from "./contracts/core.ts";
+import type { ExecutionContext } from "./contracts/models.ts";
+import { decodeExecutionContext } from "./contracts/models.ts";
 import {
+  type ChatAttempt,
   type ChatCursor,
-  type ChatItem,
+  type ChatStatus,
   type ChatSummary,
-  type ChatTurn,
-  decodeChatItem,
-  decodeChatTurn,
+  decodeEntryId,
+  decodeSessionId,
   decodeWorkbenchCommand,
   STEP_READ,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
-import { ConversationHistory } from "./conversation-history.ts";
-import { ConversationSteps } from "./conversation-steps.ts";
-import { TRANSCRIPT_PAGE_BYTES } from "./conversation-transcript.ts";
-import type { PrivateFiles } from "./private-files.ts";
+import type { Accepted, CommandState, LiveTurn } from "./conversations.ts";
+import type { ServiceCoordination } from "./coordination.ts";
+import {
+  type BuiltTurn,
+  checkoutSessions,
+  listTurn,
+  type ParsedSession,
+  type PiSessions,
+  SESSION_BYTES,
+  type SessionEntry,
+  summaryTitle,
+  turnItems,
+  turnSpans,
+} from "./pi-sessions.ts";
+import type { FileSnapshot } from "./private-files.ts";
 
-export const TURN_BYTES = 384 * 1024;
-export const META_BYTES = 64 * 1024;
-const SUMMARY_CACHE = 256;
-export interface SavedConversation {
-  id: string;
-  title: string;
-  /** Inline legacy prefix only. New turns live in immutable ordinal slots. */
-  turns: string[];
-  head: string;
-  count: number;
-  checkpoint: string | null;
-}
-export interface ObservedConversationTurn {
-  conversationId: string;
-  title: string;
-  acceptedAt: number;
-  turn: ChatTurn;
-}
+const META_BYTES = 64 * 1024;
+const PAGE = 50;
+/** Recent browser command overlays, not a session lifetime admission limit. */
+export const INDEXED_COMMANDS = 64;
+const COMMAND_STATES = 512;
+const INTERRUPTED =
+  "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
+const LIVE: ChatStatus[] = ["queued", "running"];
 /** Cheap no-follow identity of a retained file ("absent" when missing). It
  * selects cached projections only; every miss re-reads through PrivateFiles. */
 export function observedFile(path: string): string {
@@ -67,163 +67,183 @@ export function observedFile(path: string): string {
     throw error;
   }
 }
+
+/** Old Cadence transcript identities are not Pi sessions. Presence is enough
+ * to refuse reuse; no old decoder, import, repair or deletion is performed. */
+export function retiredConversation(
+  c: ServiceCoordination,
+  id: string,
+): boolean {
+  decodeSessionId(id);
+  return ["identities", "sessions"].some((kind) => {
+    const directory = join(c.directory, "conversations-v1", kind);
+    return (
+      c.files.directory(directory) &&
+      observedFile(join(directory, `${id}.json`)) !== "absent"
+    );
+  });
+}
+export function assertSupportedConversation(
+  c: ServiceCoordination,
+  id: string,
+): void {
+  if (retiredConversation(c, id))
+    throw new ContractError("retired-conversation");
+}
+
+function decodeAccepted(value: unknown): Accepted {
+  const o = closed(value, [
+    "command",
+    "at",
+    "session",
+    "parent",
+    "offset",
+    ...(Object.hasOwn(value ?? {}, "execution")
+      ? ["execution", "directory", "file"]
+      : []),
+  ]);
+  const command = decodeWorkbenchCommand(o.command);
+  if (command.kind !== "send") throw new ContractError("corrupt-selected");
+  return {
+    command,
+    ...(o.execution === undefined
+      ? {}
+      : {
+          execution: decodeExecutionContext(o.execution),
+          directory: text(o.directory, 4096, true),
+          file: o.file === null ? null : text(o.file, 4096, true),
+        }),
+    at: integer(o.at, 0),
+    session: decodeSessionId(o.session),
+    parent: o.parent === null ? null : decodeEntryId(o.parent),
+    offset: integer(o.offset, 0),
+  };
+}
+const statuses: ChatStatus[] = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown",
+];
+function decodeState(value: unknown): CommandState {
+  const o = closed(value, ["status", "notice", "omitted", "user"]);
+  const omitted = closed(o.omitted, ["thinking", "media", "other"]);
+  return {
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 4096),
+    omitted: {
+      thinking: omitted.thinking === true,
+      media: omitted.media === true,
+      other: omitted.other === true,
+    },
+    user: o.user === null ? null : decodeEntryId(o.user),
+  };
+}
+
 export class ConversationRecords {
   readonly root: string;
-  private readonly history: ConversationHistory;
-  private readonly active: ReadonlyMap<string, ObservedConversationTurn>;
-  private readonly summaries = new Map<
+  private readonly bindings: string;
+  readonly sessions: PiSessions;
+  private readonly active: ReadonlyMap<string, LiveTurn>;
+  private knownSecrets: readonly string[] | undefined;
+  private readonly states = new Map<
     string,
-    { key: string; summary: ChatSummary; count: number }
+    { key: string; state: CommandState }
   >();
-  private readonly steps = new ConversationSteps((turnId, page) =>
-    this.page(turnId, page),
-  );
   constructor(
     private readonly o: {
-      directory: string;
-      files: Pick<PrivateFiles, "read" | "directory">;
+      coordination: ServiceCoordination;
       cwd: string;
+      agentDir: string;
+      sessionDir?: string;
+      secrets(): readonly string[];
       assertCurrent(): void;
-      active?: ReadonlyMap<string, ObservedConversationTurn>;
+      active?: ReadonlyMap<string, LiveTurn>;
     },
   ) {
-    this.root = join(o.directory, "conversations-v1");
+    this.root = join(o.coordination.directory, "conversation-commands-v1");
+    this.bindings = join(o.coordination.directory, "conversations-v1");
     this.active = o.active ?? new Map();
-    const sessions = join(this.root, "sessions");
-    this.history = new ConversationHistory(
-      sessions,
-      () => {
-        o.assertCurrent();
-        return this.files.directory(sessions);
-      },
-      (id) => this.retainedSummary(id),
+    this.sessions = checkoutSessions(
+      o.coordination.store.root,
+      o.cwd,
+      o.agentDir,
+      o.sessionDir,
     );
   }
   private get files() {
-    return this.o.files;
+    return this.o.coordination.files;
   }
-  path(id: string, name: string) {
-    return join(this.root, "turns", decodeId(id), name);
+  readSecrets(): readonly string[] {
+    try {
+      this.knownSecrets = this.o.secrets();
+    } catch (error) {
+      if (!this.knownSecrets)
+        throw error instanceof ContractError
+          ? error
+          : new ContractError("unavailable");
+    }
+    return this.knownSecrets;
   }
-  identityPath(id: string) {
-    return join(this.root, "identities", `${decodeId(id)}.json`);
+  path(commandId: string, name: string) {
+    return join(this.root, "commands", decodeId(commandId), name);
   }
-  metadataPath(id: string) {
-    return join(this.root, "sessions", `${decodeId(id)}.json`);
+  assertSupported(id: string): void {
+    assertSupportedConversation(this.o.coordination, id);
   }
-  read(path: string, max: number): unknown | undefined {
+  indexPath(id: string) {
+    this.assertSupported(id);
+    return join(this.root, "sessions", `${decodeSessionId(id)}.json`);
+  }
+  read(path: string, max = META_BYTES): unknown | undefined {
     const value = this.files.read(path, max);
     return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
   }
-  /** Retained cwd is identity data; reading never resolves a removed directory. */
-  cwd(id: string): string {
-    const identity = closed(this.read(this.identityPath(id), META_BYTES), [
+  index(id: string): { file?: FileSnapshot; commands: string[] } {
+    const file = this.files.read(this.indexPath(id), META_BYTES);
+    if (!file) return { commands: [] };
+    const o = closed(parseWireJson(file.bytes.toString("utf8"), META_BYTES), [
       "schema",
       "id",
-      "cwd",
+      "commands",
     ]);
-    if (
-      identity.schema !== "cadence-conversation/1" ||
-      identity.id !== id ||
-      typeof identity.cwd !== "string" ||
-      resolve(identity.cwd) !== identity.cwd ||
-      !withinWorkspace(this.o.cwd, identity.cwd)
-    )
+    if (o.schema !== "cadence-session-commands/1" || o.id !== id)
       throw new ContractError("corrupt-selected");
-    return identity.cwd as string;
+    return { file, commands: list(o.commands, INDEXED_COMMANDS, decodeId) };
   }
-  metadata(id: string): SavedConversation | null {
-    const value = this.read(this.metadataPath(id), META_BYTES);
-    if (value === undefined) return null;
-    this.cwd(id);
-    const indexed =
-      value !== null &&
-      typeof value === "object" &&
-      Object.hasOwn(value, "count");
-    const m = closed(value, [
-      "id",
-      "title",
-      "turns",
-      "checkpoint",
-      ...(indexed ? ["head", "count"] : []),
-    ]);
-    // This bound reads only the immutable prefix written by older releases.
-    const turns = list(m.turns, 1000, decodeId);
-    const count = indexed
-      ? integer(m.count, Math.max(1, turns.length))
-      : turns.length;
-    const head = indexed ? decodeId(m.head) : turns.at(-1);
-    if (!head || !count || new Set(turns).size !== turns.length || m.id !== id)
-      throw new ContractError("corrupt-selected");
-    const meta: SavedConversation = {
-      id,
-      title: text(m.title, 512, true),
-      turns,
-      head,
-      count,
-      checkpoint: m.checkpoint === null ? null : decodeId(m.checkpoint),
-    };
-    if (
-      this.turnAt(meta, count - 1) !== head ||
-      (indexed && this.position(meta, head) !== count - 1) ||
-      (meta.checkpoint && !this.contains(meta, meta.checkpoint))
-    )
-      throw new ContractError("corrupt-selected");
-    return meta;
+  accepted(commandId: string): Accepted | undefined {
+    const value = this.read(this.path(commandId, "accepted.json"));
+    return value === undefined ? undefined : decodeAccepted(value);
   }
-  slotPath(id: string, ordinal: number): string {
-    return join(
-      this.root,
-      "indices",
-      decodeId(id),
-      `${integer(ordinal, 0)}.json`,
-    );
+  state(commandId: string): CommandState {
+    const live = this.active.get(commandId);
+    if (live) return live.state;
+    const path = this.path(commandId, "state.json");
+    const key = observedFile(path);
+    const hit = this.states.get(commandId);
+    if (hit?.key === key) return hit.state;
+    const value = this.read(path);
+    if (value === undefined) throw new ContractError("corrupt-selected");
+    const decoded = decodeState(value);
+    // Work that was queued or running when the owner stopped did not finish
+    // here; it is never resumed or reported complete.
+    const state = LIVE.includes(decoded.status)
+      ? { ...decoded, status: "unknown" as const, notice: INTERRUPTED }
+      : decoded;
+    if (this.states.size >= COMMAND_STATES) this.states.clear();
+    this.states.set(commandId, { key, state });
+    return state;
   }
-  private turnAt(meta: SavedConversation, ordinal: number): string {
-    if (ordinal < 0 || ordinal >= meta.count) throw new ContractError("stale");
-    if (ordinal < meta.turns.length) return meta.turns[ordinal];
-    const row = closed(this.read(this.slotPath(meta.id, ordinal), META_BYTES), [
-      "conversationId",
-      "ordinal",
-      "turnId",
-    ]);
-    if (row.conversationId !== meta.id || row.ordinal !== ordinal)
-      throw new ContractError("corrupt-selected");
-    return decodeId(row.turnId);
-  }
-  private position(meta: SavedConversation, turnId: string): number {
-    const legacy = meta.turns.indexOf(turnId);
-    if (legacy >= 0) return legacy;
-    const value = this.read(this.path(turnId, "position.json"), META_BYTES);
-    if (value === undefined) return -1;
-    const row = closed(value, ["conversationId", "ordinal", "turnId"]);
-    if (row.turnId !== turnId) throw new ContractError("corrupt-selected");
-    const ordinal = integer(row.ordinal, 0);
-    if (row.conversationId !== meta.id || ordinal >= meta.count) return -1;
-    return this.turnAt(meta, ordinal) === turnId ? ordinal : -1;
-  }
-  contains(meta: SavedConversation, turnId: string): boolean {
-    return this.position(meta, turnId) >= 0;
-  }
-  turn(id: string): ChatTurn {
-    const live = this.active.get(id);
-    const turn =
-      live?.turn ??
-      decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
-    if (turn.id !== id) throw new ContractError("corrupt-selected");
-    // Interrupted original work is not silently resumed or reported completed.
-    return !live && ["queued", "running"].includes(turn.status)
-      ? {
-          ...turn,
-          status: "unknown",
-          notice:
-            "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.",
-        }
-      : turn;
+  liveFor(id: string): LiveTurn | undefined {
+    for (const live of this.active.values())
+      if (live.accepted.session === id) return live;
+    return undefined;
   }
   controlBound(id: string): boolean {
-    const path = join(this.root, "control-links", `${decodeId(id)}.json`);
-    const value = this.read(path, META_BYTES);
+    const value = this.read(this.controlPath(id));
     if (value === undefined) return false;
     const record = closed(value, ["schema", "conversationId"]);
     if (
@@ -233,200 +253,399 @@ export class ConversationRecords {
       throw new ContractError("corrupt-selected");
     return true;
   }
-  /** Cheap observation key for a control link; not a validation. */
+  controlPath(id: string) {
+    this.assertSupported(id);
+    return join(this.bindings, "control-links", `${decodeSessionId(id)}.json`);
+  }
   controlKey(id: string): string {
-    return observedFile(
-      join(this.root, "control-links", `${decodeId(id)}.json`),
-    );
+    return observedFile(this.controlPath(id));
   }
-  hasTurn(id: string, turnId: string): boolean {
-    const meta = this.metadata(id);
-    return !!meta && this.contains(meta, turnId);
+  hasCommand(id: string, commandId: string): boolean {
+    return this.accepted(commandId)?.session === id;
   }
-  private summary(meta: SavedConversation): ChatSummary {
-    const head = meta.head,
-      turn = this.turn(head);
-    const accepted = closed(
-      this.read(this.path(head, "accepted.json"), META_BYTES),
-      ["command", "at"],
-    );
-    const command = decodeWorkbenchCommand(accepted.command);
-    if (
-      command.kind !== "send" ||
-      command.commandId !== head ||
-      command.conversationId !== meta.id ||
-      command.model.epoch !== turn.epoch
-    )
-      throw new ContractError("corrupt-selected");
-    return {
-      id: meta.id,
-      title: meta.title,
-      head,
-      status: turn.status,
-      updatedAt: integer(accepted.at, 0),
-    };
-  }
-  private headKey(head: string, id: string, count: number): string {
-    return [
-      this.path(head, "turn.json"),
-      this.path(head, "accepted.json"),
-      this.path(head, "position.json"),
-      this.slotPath(id, count - 1),
-    ]
-      .map(observedFile)
-      .join("|");
-  }
-  retainedSummary(id: string): ChatSummary {
-    return this.retained(id).summary;
-  }
-  /** A settled summary is re-read only when one of its files changed: polls
-   * otherwise parse every head turn (up to 384 KiB each). Keys are taken
-   * before each read, so a concurrent change can only cause a later re-read. */
-  private retained(id: string): { summary: ChatSummary; count: number } {
-    const base = [this.metadataPath(id), this.identityPath(id)]
-      .map(observedFile)
-      .join("|");
-    const hit = this.summaries.get(id);
-    if (
-      hit &&
-      !this.active.has(hit.summary.head) &&
-      hit.key === `${base}|${this.headKey(hit.summary.head, id, hit.count)}`
-    )
-      return { summary: { ...hit.summary }, count: hit.count };
-    const meta = this.metadata(id);
-    if (!meta) throw new ContractError("corrupt-selected");
-    const head = meta.head;
-    const key = `${base}|${this.headKey(head, id, meta.count)}`;
-    const summary = this.summary(meta);
-    this.summaries.delete(id);
-    if (
-      !this.active.has(head) &&
-      !["queued", "running"].includes(summary.status)
-    ) {
-      if (this.summaries.size >= SUMMARY_CACHE)
-        this.summaries.delete(this.summaries.keys().next().value as string);
-      this.summaries.set(id, {
-        key,
-        summary: { ...summary },
-        count: meta.count,
-      });
-    }
-    return { summary, count: meta.count };
-  }
-  private liveSummary(live: ObservedConversationTurn): ChatSummary {
-    return {
-      id: live.conversationId,
-      title: live.title,
-      head: live.turn.id,
-      status: live.turn.status,
-      updatedAt: live.acceptedAt,
-    };
-  }
-  list(after: ChatCursor | null = null, scan?: string): WorkbenchResult {
+  /** A grant binds the current Pi branch, including external terminal appends.
+   * A later browser command without a written user entry still binds its exact parent. */
+  approvalHead(id: string, commandId: string): string | null {
     this.o.assertCurrent();
-    return this.history.read(after, scan);
+    const accepted = this.accepted(commandId);
+    if (!accepted || accepted.session !== id) throw new ContractError("stale");
+    const state = this.state(commandId);
+    const session = this.sessions.session(id);
+    const head = session?.current() ?? null;
+    if (
+      state.user === null
+        ? head !== accepted.parent
+        : turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== state.user
+    )
+      throw new ContractError("stale");
+    return head;
+  }
+  latestCommand(id: string): { commandId: string; status: ChatStatus } | null {
+    this.o.assertCurrent();
+    const commandId = this.index(id).commands.at(-1);
+    return commandId
+      ? { commandId, status: this.state(commandId).status }
+      : null;
+  }
+  nativeLinks(
+    runIds: readonly string[],
+  ): { runId: string; conversationId: string }[] {
+    if (!runIds.length) return [];
+    const recorded = this.sessions.nativeRuns();
+    return runIds.flatMap((runId) => {
+      const conversationId = recorded.get(runId);
+      return conversationId ? [{ runId, conversationId }] : [];
+    });
+  }
+  summary(id: string, live: LiveTurn | undefined): ChatSummary | null {
+    this.assertSupported(id);
+    const listed = this.sessions.find(id);
+    if (!listed) {
+      if (!live) return null;
+      return {
+        id,
+        title: sanitizeText(live.title, this.readSecrets()) || "Conversation",
+        leaf: null,
+        status: live.state.status,
+        updatedAt: live.accepted.at,
+        origin: "webui",
+        live: { commandId: live.commandId, epoch: live.epoch },
+      };
+    }
+    const s = listed.summary;
+    const secrets = this.readSecrets();
+    let status: ChatStatus =
+      live?.state.status ??
+      (listed.size > SESSION_BYTES
+        ? "unknown"
+        : (s.stop?.status ?? "completed"));
+    // Pi's stop reason is model evidence, not the owner's native/auth/storage
+    // settlement. Match only the displayed branch's user, never another branch.
+    if (
+      !live &&
+      listed.size <= SESSION_BYTES &&
+      this.index(id).commands.length
+    ) {
+      const session = this.sessions.session(id);
+      const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
+      const recorded = user ? this.overlay(id, session).get(user) : undefined;
+      status = this.attempt(id, s.leaf)?.status ?? recorded?.status ?? status;
+    }
+    return {
+      id,
+      title: text(
+        [...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") ||
+          "Conversation",
+        512,
+        true,
+      ),
+      leaf: s.leaf,
+      status,
+      updatedAt: Math.max(Math.trunc(listed.mtimeMs), live?.accepted.at ?? 0),
+      origin: s.webui ? "webui" : "terminal",
+      ...(live
+        ? { live: { commandId: live.commandId, epoch: live.epoch } }
+        : {}),
+    };
+  }
+  list(after: ChatCursor | null = null): WorkbenchResult {
+    this.o.assertCurrent();
+    const listed = this.sessions
+      .list()
+      .filter(
+        (row) => !retiredConversation(this.o.coordination, row.summary.id),
+      );
+    let start = 0;
+    if (after) {
+      start = listed.findIndex(
+        (l) =>
+          Math.trunc(l.mtimeMs) < after.updatedAt ||
+          (Math.trunc(l.mtimeMs) === after.updatedAt &&
+            l.summary.id > after.id),
+      );
+      if (start < 0) start = listed.length;
+    }
+    const page = listed.slice(start, start + PAGE);
+    const entries = page.flatMap((l) => {
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      return summary ? [summary] : [];
+    });
+    const last = page.at(-1);
+    return {
+      kind: "conversations",
+      entries,
+      next:
+        last && start + PAGE < listed.length
+          ? { id: last.summary.id, updatedAt: Math.trunc(last.mtimeMs) }
+          : null,
+    };
   }
   activeConversations(): WorkbenchResult & { kind: "conversation-active" } {
     this.o.assertCurrent();
     return {
       kind: "conversation-active",
-      entries: [...this.active.values()].map((live) => this.liveSummary(live)),
+      entries: [...this.active.values()].flatMap((live) => {
+        const summary = this.summary(live.accepted.session, live);
+        return summary ? [summary] : [];
+      }),
     };
   }
-  closeReads(): void {
-    this.history.close();
+  branch(
+    id: string,
+    leaf: string | null,
+    exact: boolean,
+  ): {
+    session: ParsedSession | undefined;
+    leaf: string | null;
+    turns: SessionEntry[][];
+    live: LiveTurn | undefined;
+  } {
+    this.assertSupported(id);
+    const session = this.sessions.session(id);
+    const running = this.liveFor(id);
+    let view: string | null;
+    if (exact || leaf !== null) {
+      if (leaf !== null && !session?.byId.has(leaf))
+        throw new ContractError("stale");
+      view = leaf;
+    } else
+      view = running ? running.accepted.parent : (session?.current() ?? null);
+    const turns = session ? turnSpans(session.branch(view)) : [];
+    const live =
+      running && running.accepted.parent === view ? running : undefined;
+    return { session, leaf: view, turns, live };
   }
-  /** The conversation's summary and turn count: what a viewer polls. */
-  conversation(id: string): WorkbenchResult {
+  attempt(id: string, leaf: string | null): ChatAttempt | null {
+    const commandId = this.index(id).commands.at(-1);
+    if (!commandId || this.active.has(commandId)) return null;
+    const accepted = this.accepted(commandId);
+    const state = this.state(commandId);
+    if (!accepted || state.user !== null || accepted.parent !== leaf)
+      return null;
+    if (state.status === "unknown") {
+      // An interrupted message may still have reached the session.
+      const session = this.sessions.session(id);
+      if (
+        session?.commandEntries(commandId, accepted.parent, accepted.offset)
+          .length
+      )
+        return null;
+    }
+    return {
+      commandId,
+      text: sanitizeText(accepted.command.text, this.readSecrets()),
+      status: state.status,
+      notice: sanitizeText(state.notice, this.readSecrets()),
+    };
+  }
+  conversation(
+    id: string,
+    leaf: string | null,
+    known: string | null,
+  ): WorkbenchResult {
     this.o.assertCurrent();
-    if (observedFile(this.metadataPath(id)) === "absent") {
-      const live = [...this.active.values()].find(
-        (turn) => turn.conversationId === id,
+    const view = this.branch(id, leaf, false);
+    const summary = this.summary(id, view.live ?? this.liveFor(id));
+    const listed = this.sessions.find(id);
+    return {
+      kind: "conversation",
+      commands: this.index(id).commands,
+      summary,
+      leaf: view.leaf,
+      continues:
+        known === null ||
+        known === view.leaf ||
+        !!view.session?.contains(view.leaf, known),
+      turns: summary ? view.turns.length + (view.live ? 1 : 0) : 0,
+      branches: view.session?.leaves() ?? 0,
+      runs: listed?.summary.runs ?? [],
+      attempt: view.live ? null : this.attempt(id, view.leaf),
+    };
+  }
+  tree(id: string, leaf: string | null): WorkbenchResult {
+    this.o.assertCurrent();
+    const view = this.branch(id, leaf, false);
+    return {
+      kind: "conversation-tree",
+      conversationId: id,
+      ...(view.session?.tree(view.leaf, this.readSecrets()) ?? {
+        nodes: [],
+        truncated: false,
+      }),
+    };
+  }
+  overlay(id: string, session: ParsedSession | undefined) {
+    const out = new Map<
+      string,
+      CommandState & { execution?: ExecutionContext }
+    >();
+    for (const commandId of this.index(id).commands) {
+      if (this.active.has(commandId)) continue;
+      const state = this.state(commandId);
+
+      let user = state.user;
+      if (user === null && state.status === "unknown" && session) {
+        const accepted = this.accepted(commandId);
+        user = accepted
+          ? (session.commandEntries(
+              commandId,
+              accepted.parent,
+              accepted.offset,
+            )[0]?.id ?? null)
+          : null;
+      }
+      if (user !== null)
+        out.set(user, {
+          ...state,
+          execution: this.accepted(commandId)?.execution,
+        });
+    }
+    return out;
+  }
+  built(
+    id: string,
+    leaf: string | null,
+    ordinal: number,
+  ): { turn: BuiltTurn & { execution?: ExecutionContext }; stable: number } {
+    const view = this.branch(id, leaf, true);
+    const secrets = this.readSecrets();
+    if (ordinal < view.turns.length && view.session) {
+      const turn = this.sessions.turn(
+        view.session,
+        view.turns[ordinal],
+        secrets,
       );
+      const recorded = this.overlay(id, view.session).get(turn.id);
       return {
-        kind: "conversation",
-        summary: live ? this.liveSummary(live) : null,
-        turns: 0,
+        turn: recorded
+          ? {
+              ...turn,
+              ...(recorded.execution ? { execution: recorded.execution } : {}),
+              status: recorded.status,
+              notice: turn.notice || sanitizeText(recorded.notice, secrets),
+              omitted: {
+                thinking: turn.omitted.thinking || recorded.omitted.thinking,
+                media: turn.omitted.media || recorded.omitted.media,
+                other: turn.omitted.other || recorded.omitted.other,
+              },
+            }
+          : turn,
+        stable: turn.steps.length,
       };
     }
-    const { summary, count } = this.retained(id);
-    return { kind: "conversation", summary, turns: count };
+    const live = view.live;
+    if (!live || ordinal !== view.turns.length)
+      throw new ContractError("stale");
+    const chain = view.session
+      ? view.session.commandEntries(
+          live.commandId,
+          live.accepted.parent,
+          live.accepted.offset,
+        )
+      : [];
+    const written = turnItems(chain, secrets);
+    const items = chain.length
+      ? written.items
+      : [
+          {
+            id: "user",
+            role: "user" as const,
+            text: live.accepted.command.text,
+            name: "",
+            args: "",
+            error: false,
+          },
+        ];
+    const extended = live.capture?.extend(items) ?? {
+      items,
+      stable: items.length,
+    };
+    const omitted = live.capture?.omitted;
+    const turn = listTurn({
+      id: chain[0]?.id ?? live.commandId,
+      entry: null,
+      at: live.accepted.at,
+      status: live.state.status,
+      notice: sanitizeText(live.capture?.notice ?? "", secrets),
+      omitted: {
+        thinking: written.omitted.thinking || !!omitted?.thinking,
+        media: written.omitted.media || !!omitted?.media,
+        other: written.omitted.other || !!omitted?.other,
+      },
+      items: extended.items.map((item) => ({
+        ...item,
+        text: sanitizeText(item.text, secrets),
+        name: sanitizeText(item.name, secrets),
+        args: sanitizeText(item.args, secrets),
+      })),
+    });
+    return {
+      turn: { ...turn, execution: live.execution },
+      stable: extended.stable,
+    };
   }
-  /** One turn by position, with the steps that end at `before` (else the latest). */
   turnSteps(
     id: string,
+    leaf: string | null,
     ordinal: number,
     before: number | null,
   ): WorkbenchResult {
     this.o.assertCurrent();
-    const meta = this.metadata(id);
-    if (!meta) throw new ContractError("stale");
-    const turn = this.turn(this.turnAt(meta, ordinal));
-    const { steps, stable } = this.steps.list(turn);
-    const end = before ?? steps.length;
-    if (end > steps.length) throw new ContractError("stale");
+    const { turn, stable } = this.built(id, leaf, ordinal);
+    const end = before ?? turn.steps.length;
+    if (end > turn.steps.length) throw new ContractError("stale");
     const start = Math.max(0, end - STEP_READ);
     return {
       kind: "conversation-turn",
       conversationId: id,
+      leaf,
       ordinal,
       turn: {
         ...(turn.execution ? { execution: turn.execution } : {}),
         id: turn.id,
-        epoch: turn.epoch,
         status: turn.status,
         notice: turn.notice,
         omitted: { ...turn.omitted },
-        steps: steps.length,
+        steps: turn.steps.length,
         stable,
+        entry: turn.entry,
+        at: turn.at,
       },
       start,
-      steps: steps.slice(start, end).map((row) => row.step),
+      steps: turn.steps.slice(start, end),
     };
   }
-  /** One stored part of a step's full item: arguments, output or whole text. */
   step(
     id: string,
+    leaf: string | null,
     turnId: string,
     step: number,
     part: number,
   ): WorkbenchResult {
     this.o.assertCurrent();
-    if (!this.hasTurn(id, turnId)) throw new ContractError("invalid");
+    const view = this.branch(id, leaf, true);
+    const ordinal = view.turns.findIndex((turn) => turn[0]?.id === turnId);
+    const { turn } = this.built(
+      id,
+      leaf,
+      ordinal >= 0 ? ordinal : view.turns.length,
+    );
+    if (turn.id !== turnId) throw new ContractError("stale");
+    const item = turn.parts[step]?.[part];
+    if (!item || part >= turn.steps[step].parts)
+      throw new ContractError("stale");
     return {
       kind: "conversation-step",
       conversationId: id,
+      leaf,
       turnId,
       step,
       part,
-      item: { ...this.steps.detail(this.turn(turnId), step, part) },
+      item,
     };
   }
-  private page(turnId: string, page: number): ChatItem {
-    const value = this.read(
-      this.path(turnId, `transcript/${integer(page, 0)}.json`),
-      TRANSCRIPT_PAGE_BYTES,
-    );
-    if (value === undefined) throw new ContractError("corrupt-selected");
-    const record = closed(value, ["turnId", "page", "items"]);
-    const items = list(record.items, 1, decodeChatItem);
-    if (record.turnId !== turnId || record.page !== page || !items.length)
-      throw new ContractError("corrupt-selected");
-    return items[0];
-  }
-  origin(taskId: string): WorkbenchResult & { kind: "task-origin" } {
-    this.o.assertCurrent();
-    const value = this.read(
-      join(this.root, "task-links", `${decodeId(taskId)}.json`),
-      META_BYTES,
-    );
-    if (value === undefined)
-      return { kind: "task-origin", taskId, conversationId: null };
-    const row = closed(value, ["conversationId"]);
-    return {
-      kind: "task-origin",
-      taskId,
-      conversationId: decodeId(row.conversationId),
-    };
+  closeReads(): void {
+    this.sessions.close();
+    this.states.clear();
   }
 }

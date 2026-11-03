@@ -1338,7 +1338,10 @@ describe("bounded real process owner", () => {
     expect(safeChildEnv()).not.toHaveProperty("NODE_OPTIONS");
     expect(safeChildEnv()).not.toHaveProperty("OPENAI_API_KEY");
   });
-  it("active output does not renew the process deadline; lifecycle observations retain actual closure", async () => {
+  it("active output does not renew the process deadline; lifecycle observations retain actual closure", {
+    tags: ["slow"],
+    timeout: 10000,
+  }, async () => {
     const events: { kind: string; at: number; reason?: string }[] = [];
     const result = await node(
       "setInterval(()=>process.stdout.write('active\\n'),5)",
@@ -1364,7 +1367,7 @@ describe("bounded real process owner", () => {
       },
     });
     expect(failed).toMatchObject({ outcome: "failed", closed: true });
-  }, 10000);
+  });
   it("late native close cannot revise an already unconfirmed lifecycle observation", async () => {
     const child = lifecycleChild();
     const events: string[] = [];
@@ -1412,7 +1415,10 @@ describe("bounded real process owner", () => {
       vi.useRealTimers();
     }
   });
-  it("abort and timeout settle within declared stop bound even with TERM ignored", async () => {
+  it("abort and timeout settle within declared stop bound even with TERM ignored", {
+    tags: ["slow"],
+    timeout: 10000,
+  }, async () => {
     const abort = new AbortController();
     const run = node("process.on('SIGTERM',()=>{});setInterval(()=>{},1000)", {
       signal: abort.signal,
@@ -1424,7 +1430,7 @@ describe("bounded real process owner", () => {
     expect(result.durationMs).toBeLessThan(3500);
     const timed = await node("setInterval(()=>{},1000)", { timeoutMs: 100 });
     expect(timed.outcome).toBe("timeout");
-  }, 10000);
+  });
 });
 
 describe("readonly dirty/change observations", () => {

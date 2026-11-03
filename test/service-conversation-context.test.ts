@@ -1,6 +1,14 @@
+// @module-tag slow
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { CadencePreferences } from "../src/cadence-preferences.ts";
@@ -8,8 +16,11 @@ import type {
   ConversationLocation,
   ModelCatalog,
 } from "../src/service/contracts/models.ts";
+import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import type { ServiceClient } from "../src/service-client.ts";
+import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
+import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 const chosen = (model: string) => ({
   provider: "fixture",
@@ -46,8 +57,11 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
   try {
     expect((await f.client.session()).kind).toBe("ok");
     execFileSync("git", ["init", "-q"], { cwd: f.root });
-    const a = { id: randomUUID(), cwd: join(f.root, "a") },
-      b = { id: randomUUID(), cwd: join(f.root, "b") };
+    const a: ConversationLocation = {
+        id: randomUUID(),
+        cwd: join(f.root, "a"),
+      },
+      b: ConversationLocation = { id: randomUUID(), cwd: join(f.root, "b") };
     for (const scope of [a, b]) {
       mkdirSync(scope.cwd);
       mkdirSync(join(scope.cwd, ".pi"));
@@ -56,6 +70,46 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         `Scoped resource: ${scope.cwd}`,
       );
     }
+    // Existing terminal histories in two subdirectories are the browser's
+    // same sessions, not imported copies or the owner's saved default cwd.
+    const terminalA = seedPiSessions(
+      sessionDirectory(a.cwd, join(f.dir, "agent")),
+      a.cwd,
+      1,
+    );
+    const terminalB = seedPiSessions(
+      sessionDirectory(b.cwd, join(f.dir, "agent")),
+      b.cwd,
+      1,
+    );
+    a.id = terminalA.ids[0];
+    b.id = terminalB.ids[0];
+    const listed = await f.client.workbenchRead({ kind: "conversations" });
+    expect(listed).toMatchObject({
+      kind: "ok",
+      value: {
+        entries: expect.arrayContaining([
+          {
+            id: a.id,
+            origin: "terminal",
+            title: expect.any(String),
+            leaf: terminalA.longLeaf,
+            status: "completed",
+            updatedAt: expect.any(Number),
+            cadence: false,
+          },
+          {
+            id: b.id,
+            origin: "terminal",
+            title: expect.any(String),
+            leaf: terminalB.longLeaf,
+            status: "completed",
+            updatedAt: expect.any(Number),
+            cadence: false,
+          },
+        ]),
+      },
+    });
     const contextPath = (location: ConversationLocation) =>
       join(
         f.c.directory,
@@ -91,8 +145,8 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         location: { id: legacy.id, cwd: b.cwd },
       }),
     ).toMatchObject({
-      kind: "ok",
-      value: { context: { ...legacy, revision: 0, model: null } },
+      kind: "error",
+      error: { code: "retired-conversation" },
     });
     expect(readFileSync(identity, "utf8")).toBe(bytes);
     expect(existsSync(contextPath(legacy))).toBe(false);
@@ -112,7 +166,7 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         kind: "send",
         commandId: ra,
         conversationId: a.id,
-        head: null,
+        head: terminalA.longLeaf,
         text: "Hold this original",
         model: ca.version,
       }),
@@ -123,11 +177,50 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         kind: "send",
         commandId: rb,
         conversationId: b.id,
-        head: null,
-        text: "Queued in B",
+        head: terminalB.longLeaf,
+        text: "continue",
         model: cb.version,
       }),
     ).toMatchObject({ kind: "ok" });
+    // A holds the gate, so B has not opened its SDK manager yet. A terminal
+    // sends the exact same text from B's captured parent first.
+    const bDirectory = sessionDirectory(b.cwd, join(f.dir, "agent"), {});
+    const bFile = join(bDirectory, readdirSync(bDirectory)[0]);
+    const oldEntries = readFileSync(bFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const terminalUser = randomUUID().slice(0, 8),
+      terminalReply = randomUUID().slice(0, 8),
+      now = new Date().toISOString();
+    appendFileSync(
+      bFile,
+      [
+        {
+          type: "message",
+          id: terminalUser,
+          parentId: terminalB.longLeaf,
+          timestamp: now,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "continue" }],
+            timestamp: Date.now(),
+          },
+        },
+        {
+          type: "message",
+          id: terminalReply,
+          parentId: terminalUser,
+          timestamp: now,
+          message: {
+            ...oldEntries.at(-1).message,
+            content: [{ type: "text", text: "Terminal duplicate reply" }],
+          },
+        },
+      ]
+        .map((line) => `${JSON.stringify(line)}\n`)
+        .join(""),
+    );
     // No global quiescence requirement. This changes future B sends, not rb.
     await choose(f.client, b, "fixed");
     expect((await catalog(f.client, a)).version).toEqual(ca.version);
@@ -138,6 +231,8 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         async () => {
           const r = await f.client.workbenchRead({
             kind: "conversation",
+            leaf: null,
+            known: null,
             id: b.id,
           });
           return r.kind === "ok" && r.value.kind === "conversation"
@@ -148,15 +243,76 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
       )
       .toBe("completed");
     expect(f.modelRequests).toEqual(["fixed", "alternate"]);
+    const bState = JSON.parse(
+      readFileSync(
+        join(
+          f.c.directory,
+          "conversation-commands-v1",
+          "commands",
+          rb,
+          "state.json",
+        ),
+        "utf8",
+      ),
+    );
+    const entries = readFileSync(bFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const marker = entries.find(
+      (entry) =>
+        entry.type === "custom" &&
+        entry.customType === BROWSER_COMMAND_ENTRY &&
+        entry.data.commandId === rb,
+    );
+    expect(marker).toBeDefined();
+    expect(bState.user).toBe(marker.data.userId);
+    expect(bState.user).not.toBe(terminalUser);
+    const terminalTurn = await f.client.workbenchRead({
+      kind: "conversation-turn",
+      id: b.id,
+      leaf: terminalReply,
+      ordinal: 1,
+      before: null,
+    });
+    if (
+      terminalTurn.kind !== "ok" ||
+      terminalTurn.value.kind !== "conversation-turn"
+    )
+      throw Error("terminal turn");
+    expect(terminalTurn.value.turn.id).toBe(terminalUser);
+    expect(terminalTurn.value.turn.execution).toBeUndefined();
+
+    expect(
+      entries.filter(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message.role === "user" &&
+          entry.message.content[0]?.text === "continue",
+      ),
+    ).toHaveLength(2);
+
     const turnA = JSON.parse(
       readFileSync(
-        join(f.c.directory, "conversations-v1", "turns", ra, "turn.json"),
+        join(
+          f.c.directory,
+          "conversation-commands-v1",
+          "commands",
+          ra,
+          "accepted.json",
+        ),
         "utf8",
       ),
     );
     const turnB = JSON.parse(
       readFileSync(
-        join(f.c.directory, "conversations-v1", "turns", rb, "turn.json"),
+        join(
+          f.c.directory,
+          "conversation-commands-v1",
+          "commands",
+          rb,
+          "accepted.json",
+        ),
         "utf8",
       ),
     );
@@ -179,7 +335,7 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
       kind: "send",
       commandId: randomUUID(),
       conversationId: a.id,
-      head: ra,
+      head: null,
       text: "Wrong scope",
       model: cb.version,
     });
@@ -195,6 +351,70 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
       { id: b.id, cwd: a.cwd },
     );
     expect(wrongDirectory.kind).toBe("error");
+    expect(JSON.stringify(f.observations[1].messages)).toContain(
+      "Terminal question 000.0",
+    );
+    const firstBranch = await f.client.workbenchRead({
+      kind: "conversation",
+      id: b.id,
+      leaf: null,
+      known: null,
+    });
+    if (firstBranch.kind !== "ok" || firstBranch.value.kind !== "conversation")
+      throw Error("branch read");
+    const leaf = firstBranch.value.leaf;
+    f.reply("New branch, same Pi session and scoped cwd");
+    const branched = randomUUID();
+    expect(
+      await f.client.workbenchCommand({
+        kind: "send",
+        commandId: branched,
+        conversationId: b.id,
+        head: terminalB.longLeaf,
+        text: "Alternative from the terminal turn",
+        model: (await catalog(f.client, b)).version,
+      }),
+    ).toMatchObject({ kind: "ok" });
+    await expect
+      .poll(
+        async () => {
+          const r = await f.client.workbenchRead({
+            kind: "conversation",
+            id: b.id,
+            leaf: null,
+            known: null,
+          });
+          return r.kind === "ok" && r.value.kind === "conversation"
+            ? r.value.summary?.status
+            : null;
+        },
+        { timeout: 15000 },
+      )
+      .toBe("completed");
+    expect(
+      await f.client.workbenchRead({
+        kind: "conversation",
+        id: b.id,
+        leaf: null,
+        known: null,
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      value: {
+        branches: 3, // terminal duplicate plus the two browser branches
+        turns: 2,
+        commands: expect.arrayContaining([rb, branched]),
+      },
+    });
+    expect(
+      await f.client.workbenchRead({
+        kind: "conversation",
+        id: b.id,
+        leaf,
+        known: null,
+      }),
+    ).toMatchObject({ kind: "ok", value: { leaf, turns: 2 } });
+    expect(f.modelRequests).toEqual(["fixed", "alternate", "fixed"]);
     // Deliberately choose B again as the default for NEW conversations.
     await choose(f.client, b, "alternate");
     const kept = readFileSync(contextPath(a), "utf8");
@@ -223,7 +443,7 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
     const restoredB = await choose(restarted.client, b, "alternate");
     expect(restoredB.version.configRev).toBe(inactiveB.version.configRev);
     expect(restoredB.version.catalogId).not.toBe(inactiveB.version.catalogId);
-    expect(f.contacts()).toBe(2);
+    expect(f.contacts()).toBe(3);
   } finally {
     await f.close();
   }

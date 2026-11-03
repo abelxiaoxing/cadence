@@ -20,7 +20,7 @@ import {
   type WorkbenchRead,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
-import { ConversationContexts } from "./conversation-contexts.ts";
+import type { ConversationContexts } from "./conversation-contexts.ts";
 import { ConversationWorkflow } from "./conversation-workflow.ts";
 import { Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
@@ -58,10 +58,12 @@ export class Workbench implements WorkbenchPort {
       secrets(): readonly string[];
       timeoutMs?: number;
       checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
+      /** Where the project's Pi sessions live; defaults to Pi's own resolution. */
+      sessionDir?: string;
     },
   ) {
-    this.contexts = new ConversationContexts(o);
-    this.conversations = new Conversations({ ...o, contexts: this.contexts });
+    this.conversations = new Conversations(o);
+    this.contexts = this.conversations.contexts;
     this.workflows = new Workflows({ ...o, contexts: this.contexts });
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -83,11 +85,8 @@ export class Workbench implements WorkbenchPort {
     );
   }
   closeReads(): void {
-    try {
-      this.workflows.closeHistory();
-    } finally {
-      this.conversations.records.closeReads();
-    }
+    this.workflows.closeHistory();
+    this.conversations.records.closeReads();
   }
   read(value: WorkbenchRead): WorkbenchResult {
     const request = decodeWorkbenchRead(value);
@@ -110,10 +109,13 @@ export class Workbench implements WorkbenchPort {
         };
       case "workflow-active": {
         const active = this.workflows.activeRuns();
-        return {
-          ...active,
-          links: this.cadence.links(active.runs.map((run) => run.id)),
-        };
+        const ids = active.runs.map((run) => run.id);
+        const browser = this.cadence.links(ids);
+        // A run started in the terminal belongs to the session that recorded it.
+        const terminal = this.conversations.records
+          .nativeLinks(ids)
+          .filter((link) => !browser.some((b) => b.runId === link.runId));
+        return { ...active, links: [...browser, ...terminal] };
       }
       case "workflow-history":
         return this.workflows.history(request.after, request.scan);
@@ -123,17 +125,12 @@ export class Workbench implements WorkbenchPort {
         return this.workflows.detail(request.id, request.stepId);
       case "workflow":
         return this.workflows.view(request.id);
-      case "task-origin":
-        return this.conversations.records.origin(request.taskId);
       case "conversation-active":
       case "conversations": {
         const value =
           request.kind === "conversation-active"
             ? this.conversations.records.activeConversations()
-            : this.conversations.records.list(
-                request.after ?? null,
-                request.scan,
-              );
+            : this.conversations.records.list(request.after ?? null);
         if (
           value.kind !== "conversations" &&
           value.kind !== "conversation-active"
@@ -148,20 +145,28 @@ export class Workbench implements WorkbenchPort {
         };
       }
       case "conversation":
-        return this.conversations.records.conversation(request.id);
+        return this.conversations.records.conversation(
+          request.id,
+          request.leaf,
+          request.known,
+        );
       case "conversation-turn":
         return this.conversations.records.turnSteps(
           request.id,
+          request.leaf,
           request.ordinal,
           request.before,
         );
       case "conversation-step":
         return this.conversations.records.step(
           request.id,
+          request.leaf,
           request.turnId,
           request.step,
           request.part,
         );
+      case "conversation-tree":
+        return this.conversations.records.tree(request.id, request.leaf);
       case "files":
       case "file": {
         const cwd = this.contexts.directory(request.location);

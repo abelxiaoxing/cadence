@@ -270,7 +270,10 @@ it("canonical preflight refuses deep and accessor sources without invoking gette
 });
 
 for (const mode of ["callback-error", "write-throw", "pending-late"] as const)
-  it(`canonical iterator cleanup does not refund an original stdout write: ${mode}`, async () => {
+  it(`canonical iterator cleanup does not refund an original stdout write: ${mode}`, {
+    tags: ["slow"],
+    timeout: 20000,
+  }, async () => {
     let armed = false,
       failures = 0;
     let release: ((error?: Error | null) => void) | undefined;
@@ -336,4 +339,4 @@ for (const mode of ["callback-error", "write-throw", "pending-late"] as const)
       await observed;
       await emitter.drain();
     }
-  }, 20000);
+  });

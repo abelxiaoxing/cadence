@@ -876,7 +876,9 @@ describe("Cadence workflow subagents", () => {
 });
 
 describe("shipped entrypoint", () => {
-  it("publishes a running owner's children to the panel after startup, without a command or Start", async () => {
+  it("publishes a running owner's children to the panel after startup, without a command or Start", {
+    tags: ["slow"],
+  }, async () => {
     const { default: register } = await import("../src/index.ts");
     const { s, client } = owner();
     s.rows = [row(null, null, "running"), row(C1, "inspect-api", "running")];

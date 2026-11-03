@@ -15,6 +15,8 @@ Planeje uma tarefa de código, deixe os subagentes trabalharem nela, execute sua
   A saída dos subagentes, as execuções reais de verificação e a sua própria revisão permanecem separadas: a prosa do modelo ou um "Done" nunca contam como verificação aprovada, e resultados com falha, cancelados e desconhecidos permanecem distintos.
 - **Histórico completo.**
   Cada execução mantém suas mensagens, chamadas de ferramentas e saídas, com busca exata e exportação completa em Markdown/NDJSON; segredos conhecidos são redigidos.
+- **Um histórico compartilhado com o terminal.**
+  As conversas do navegador são as sessões do Pi do projeto: continue uma sessão do terminal no navegador ou uma do navegador com `/resume`, e leia os ramos do Pi em qualquer um dos dois.
 - **Um link para tudo.**
   A interface web (desktop e celular, inglês e chinês simplificado) também hospeda conversas comuns do Pi e alterna entre projetos, cada um com seu próprio owner e histórico.
 
@@ -105,11 +107,12 @@ O Cadence não impõe uma faixa de versões do Pi; fixações de desenvolvimento
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 As orientações de engenharia são divididas por área sob [engineering/](engineering/); o índice do projeto em [AGENTS.md](AGENTS.md) diz qual arquivo cobre qual código.
-`verify` também precisa de um build oficial do Node, um diretório temporário privado e um Chromium existente; veja [verificação](engineering/verification.md).
+`verify` também precisa de um build oficial do Node e de um diretório temporário privado; `verify:full` acrescenta os testes lentos e os cenários de navegador, que precisam de um Chromium existente; veja [verificação](engineering/verification.md).
 
 ## Licença
 

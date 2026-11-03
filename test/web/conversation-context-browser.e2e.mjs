@@ -237,7 +237,7 @@ it("conversation directories and models survive same-checkout navigation and ano
           return (
             reply.kind === "ok" &&
             (kind === "conversation"
-              ? reply.value.summary?.head === commands[2].commandId
+              ? reply.value.commands?.includes(commands[2].commandId)
               : reply.value.context?.id === commands[2].conversationId)
           );
         }),

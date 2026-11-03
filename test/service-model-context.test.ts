@@ -1,3 +1,4 @@
+// @module-tag slow
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";

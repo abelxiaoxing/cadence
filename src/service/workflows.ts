@@ -65,12 +65,13 @@ import {
   workflowOrder,
 } from "./contracts/workflow.ts";
 import { ConversationContexts } from "./conversation-contexts.ts";
-import { ConversationCapture } from "./conversations.ts";
+
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
+import { TurnCapture } from "./turn-capture.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import {
   assertTarget,
@@ -246,16 +247,16 @@ export function reviewVerdict(
 export class WorkflowTranscript {
   overflowed = false;
   private pending = false;
-  private readonly capture: ConversationCapture;
+  private readonly capture: TurnCapture;
   /** Null while the current assistant message exceeds the tracker's bound. */
-  private final: ConversationCapture | null = null;
+  private final: TurnCapture | null = null;
   private latest: ChatTurn;
   private readonly messageDetails = new Set<string>();
   constructor(
     readonly turn: ChatTurn,
     private readonly secrets: () => readonly string[],
   ) {
-    this.capture = new ConversationCapture(
+    this.capture = new TurnCapture(
       turn,
       () => {
         this.pending = true;
@@ -299,11 +300,7 @@ export class WorkflowTranscript {
       if (e.role === "assistant") {
         // Each assistant message starts a fresh bounded tracker.
         this.latest = { ...structuredClone(this.latest), items: [] };
-        this.final = new ConversationCapture(
-          this.latest,
-          () => {},
-          this.secrets,
-        );
+        this.final = new TurnCapture(this.latest, () => {}, this.secrets);
       }
       relevant = true;
     } else if (e.kind === "message-end") relevant = true;

@@ -471,36 +471,40 @@ describe("service coordination: actual isolated filesystem", () => {
     "hardlink",
     "symlink",
     "lock",
-  ])("registry %s uncertainty fences and preserves", (kind) => {
-    const { c, dir } = fixture();
-    const lease = c.acquire(config());
-    const path = join(c.registryDirectory, "roots.json");
-    if (kind === "corrupt") writeFileSync(path, "bad");
-    if (kind === "missing-roots") renameSync(path, join(dir, "saved-roots"));
-    if (kind === "oversize") writeFileSync(path, "x".repeat(1024 * 1024 + 1));
-    if (kind === "duplicate" || kind === "wrong-root") {
-      const v = JSON.parse(bytes(path).toString());
-      if (kind === "duplicate") v.entries.push(v.entries[0]);
-      else v.entries[0].root = join(dir, "missing");
-      writeFileSync(path, JSON.stringify(v));
-    }
-    if (kind === "mode") chmodSync(path, 0o644);
-    if (kind === "hardlink") linkSync(path, join(dir, "linked"));
-    if (kind === "symlink") {
-      renameSync(path, join(dir, "saved"));
-      symlinkSync(join(dir, "saved"), path);
-    }
-    if (kind === "lock")
-      writeFileSync(registryLock(c), "uncertain", { mode: 0o600 });
-    const original = existsSync(path) ? bytes(path) : null;
-    expect(c.inspect().status).toBe("unavailable");
-    expect(() => lease.release()).toThrow();
-    held(lease);
-    expect(() => c.acquire(config())).toThrow();
-    if (original) expect(bytes(path)).toEqual(original);
-    if (kind === "lock")
-      expect(readFileSync(registryLock(c), "utf8")).toBe("uncertain");
-  });
+  ])(
+    "registry %s uncertainty fences and preserves",
+    { tags: ["slow"] },
+    (kind) => {
+      const { c, dir } = fixture();
+      const lease = c.acquire(config());
+      const path = join(c.registryDirectory, "roots.json");
+      if (kind === "corrupt") writeFileSync(path, "bad");
+      if (kind === "missing-roots") renameSync(path, join(dir, "saved-roots"));
+      if (kind === "oversize") writeFileSync(path, "x".repeat(1024 * 1024 + 1));
+      if (kind === "duplicate" || kind === "wrong-root") {
+        const v = JSON.parse(bytes(path).toString());
+        if (kind === "duplicate") v.entries.push(v.entries[0]);
+        else v.entries[0].root = join(dir, "missing");
+        writeFileSync(path, JSON.stringify(v));
+      }
+      if (kind === "mode") chmodSync(path, 0o644);
+      if (kind === "hardlink") linkSync(path, join(dir, "linked"));
+      if (kind === "symlink") {
+        renameSync(path, join(dir, "saved"));
+        symlinkSync(join(dir, "saved"), path);
+      }
+      if (kind === "lock")
+        writeFileSync(registryLock(c), "uncertain", { mode: 0o600 });
+      const original = existsSync(path) ? bytes(path) : null;
+      expect(c.inspect().status).toBe("unavailable");
+      expect(() => lease.release()).toThrow();
+      held(lease);
+      expect(() => c.acquire(config())).toThrow();
+      if (original) expect(bytes(path)).toEqual(original);
+      if (kind === "lock")
+        expect(readFileSync(registryLock(c), "utf8")).toBe("uncertain");
+    },
+  );
   // chmod 0o500 does not deny writes on Windows.
   it.skipIf(!posix)(
     "actual denied persistence retains original owner/v1 bytes and reservation",

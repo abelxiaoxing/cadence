@@ -2,7 +2,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
-import { ContractError, parseWireJson } from "../service-contract.ts";
+import { ContractError, LIMITS, parseWireJson } from "../service-contract.ts";
 import { type FileSnapshot, json, PrivateFiles } from "./private-files.ts";
 
 const CONFIG_BYTES = 1024 * 1024;
@@ -590,4 +590,64 @@ export function clonePrivate<T>(value: T): T {
   if (Buffer.byteLength(encoded) > CONFIG_BYTES)
     throw new ContractError("oversize");
   return parseWireJson(encoded, CONFIG_BYTES) as T;
+}
+
+/** Readonly known-secret collection, shared with stopped-session reads; no SDK/auth operation. */
+export function snapshotLiterals(
+  snapshot: PiSnapshot,
+  launch: LaunchEnvironment,
+  routes: readonly string[] = [],
+): readonly string[] {
+  // Visit the already validated private snapshot without first flattening or
+  // spreading an uncharged literal list. Charge each UNIQUE value before retain.
+  const strings = (v: unknown, visit: (value: string) => void): void => {
+    if (typeof v === "string") {
+      if (v) visit(v);
+    } else if (v && typeof v === "object") {
+      for (const key of Object.keys(v))
+        strings((v as Record<string, unknown>)[key], visit);
+    }
+  };
+  const literals = new Set<string>();
+  let literalBytes = 0;
+  const add = (value: string) => {
+    if (literals.has(value)) return;
+    const size = Buffer.byteLength(value);
+    if (literalBytes + size > LIMITS.workerRequestBytes * 2)
+      throw new ContractError("oversize");
+    literalBytes += size;
+    literals.add(value);
+  };
+  for (const route of routes) add(route);
+  const templates = (value: unknown, provider: string) => {
+    const scoped = environment(snapshot.credentials[provider]?.env ?? {});
+    strings(value, (literal) => {
+      add(literal);
+      for (const name of templateNames(literal)) {
+        const resolved = scoped[name] || launch[name];
+        if (resolved) add(resolved);
+      }
+    });
+  };
+  for (const [provider, credential] of Object.entries(snapshot.credentials)) {
+    strings(
+      credential.type === "api_key" ? credential.key : credential.access,
+      add,
+    );
+    strings(credential.type === "oauth" ? credential.refresh : null, add);
+    strings(credential.env, add);
+    if (credential.type === "api_key") templates(credential.key, provider);
+  }
+  for (const [provider, config] of Object.entries(snapshot.providers)) {
+    templates(config.apiKey, provider);
+    templates(config.headers, provider);
+    for (const model of Array.isArray(config.models) ? config.models : [])
+      templates(data(model).headers, provider);
+    if (config.modelOverrides)
+      for (const model of Object.values(data(config.modelOverrides)))
+        templates(data(model).headers, provider);
+  }
+  for (const [key, value] of Object.entries(launch))
+    if (/(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key) && value) add(value);
+  return [...literals];
 }

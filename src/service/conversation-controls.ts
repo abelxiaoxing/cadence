@@ -1,15 +1,11 @@
 /** Readonly Cadence mode/plan records. Missing bound controls never become
  * ordinary editing authority. Shared by the owner and retained-history views. */
 import { dirname, join } from "node:path";
-import {
-  ContractError,
-  closed,
-  decodeId,
-  parseWireJson,
-} from "./contracts/core.ts";
+import { ContractError, closed, parseWireJson } from "./contracts/core.ts";
 import {
   type CadenceConversation,
   decodeCadenceConversation,
+  decodeSessionId,
 } from "./contracts/workbench.ts";
 import {
   type ConversationRecords,
@@ -84,7 +80,8 @@ export class ConversationControls {
     this.root = join(o.directory, "conversation-workflows-v1");
   }
   path(id: string) {
-    return join(this.root, decodeId(id), "state.json");
+    this.o.conversations.assertSupported(id);
+    return join(this.root, decodeSessionId(id), "state.json");
   }
   /** Never throws for one record's problems: those degrade only that conversation. */
   read(id: string): Loaded {
@@ -109,7 +106,7 @@ export class ConversationControls {
         state.notice !== undefined
       )
         return unusable(id);
-      if (state.head && !this.o.conversations.hasTurn(id, state.head))
+      if (state.head && !this.o.conversations.hasCommand(id, state.head))
         return {
           state: { ...state, proposal: null, notice: UNRECORDED },
           problem: true,

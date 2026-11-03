@@ -28,11 +28,16 @@ Read this before moving a responsibility between modules, adding an import or ch
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
-`src/service/{workbench,conversations,conversation-transcript,conversation-steps,conversation-history,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission and live preview), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
+`src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, and `src/session-entries.mjs` names the custom entries Cadence adds.
+Pre-Pi Cadence conversations are unsupported: no migration endpoint, old checkpoint codec or transcript reader remains.
+A readonly identity-presence guard refuses reuse and preserves the old files; current context/binding/link metadata retains its existing paths.
+`src/service/turn-capture.ts` retains workflow subagent turns from capture frames; `src/session-sharing.ts` is the extension's readonly notice when the browser continued the session a terminal holds.
+
 `src/service/{conversation-records,conversation-controls}.ts` owns readonly conversation, transcript and mode/plan decoding; it has no execution owner, SDK or write path.
 The live owner supplies its original turn map and lease assertion; `gateway-conversations.ts` supplies an exact stopped-owner observation instead, checked before and after each read.
 The gateway reads only associated stopped owners through these shared readers; a live, starting, quarantined or unresponsive owner is never replaced by an empty live map.
-A never-prepared selection with no private owner directory projects only an initial empty conversation, without claiming execution readiness; an established missing or unreadable store is never replaced this way.
+A never-prepared selection can read its existing Pi sessions without preparing an execution owner; it projects an empty conversation only when none exists.
 Retained conversation reads and browser draft identity no longer depend on an execution attachment; legacy task/workflow detail still uses its owner.
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
 The gateway preparation route cannot carry message text, select a model or grant plan consent; it reuses `openProjectDirectory`, also reached by native `project open`.
@@ -47,7 +52,7 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
 `src/service/conversation-contexts.ts` owns readonly context records and explicit per-conversation model installation/capture; it shares the existing bounded `OwnerModelContext` source cache, not one runtime per conversation.
-`src/conversation-identity.ts` supplies domain-separated stable native-session/context-version identities without importing the executor into Pi.
+`src/conversation-identity.ts` supplies domain-separated context-version identities without importing the executor into Pi.
 `src/cadence-preferences.ts` stores only the credential-free default for new conversations.
 The readonly diagnostics path is `index → history-shell → native client → history/workflow readers`; it cannot create, approve, execute, check, review or select a model.
 `TaskActions`, `TaskScheduler`, `ActionAdmission`, the old graph executor and foreground `TaskController` are removed, along with their execution-only tests and prospective-plan helper.

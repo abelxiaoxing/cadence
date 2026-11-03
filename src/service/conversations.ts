@@ -1,11 +1,10 @@
-/** Ordinary conversations owned by the persistent service, not Cadence tasks. */
+/** Ordinary and Cadence conversations, which are the project's Pi sessions:
+ * the terminal and the browser read and continue the same session files.
+ * Pi (the browser turn's SDK worker) writes the content; this owner keeps only
+ * each browser message's admission record and reads the sessions back. */
 import { randomUUID } from "node:crypto";
 import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  CONTEXT_BYTES,
-  CONTEXT_RECORD_BYTES,
-} from "../conversation-context.mjs";
 import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
 import {
   type CaptureFrame,
@@ -17,43 +16,44 @@ import {
 import { DetailSanitizer, sanitizeText } from "../worker-redaction.mjs";
 import { resolveWorkspace } from "../workspace.ts";
 import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
-import {
-  ContractError,
-  canonicalJson,
-  closed,
-  decodeId,
-} from "./contracts/core.ts";
+import { ContractError, canonicalJson } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
-import type {
-  ChatItem,
-  ChatTurn,
-  WorkbenchCommand,
-  WorkbenchResult,
+import {
+  type ChatItem,
+  type ChatStatus,
+  type ChatTurn,
+  decodeSessionId,
+  type WorkbenchCommand,
+  type WorkbenchResult,
 } from "./contracts/workbench.ts";
 import { ConversationContexts } from "./conversation-contexts.ts";
 import {
   ConversationRecords,
-  META_BYTES,
-  type SavedConversation,
-  TURN_BYTES,
+  INDEXED_COMMANDS,
 } from "./conversation-records.ts";
-import {
-  ConversationTranscript,
-  type FieldUpdate,
-  previewHead,
-  TRANSCRIPT_PAGE_BYTES,
-} from "./conversation-transcript.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
+import { summaryTitle } from "./pi-sessions.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
+
+const META_BYTES = 64 * 1024;
+
+/** Text one live preview keeps per item; the full item is read from the
+ * session once Pi has written it. */
+const PREVIEW_BYTES = 64 * 1024;
+/** Streamed items a preview keeps text for; earlier ones are in the session. */
+const RECENT_PREVIEWS = 8;
+const PREVIEW_MARK =
+  "\n[Preview truncated; the rest appears once it is written.]";
 
 const OMITTED_FLAG = {
   "hidden-thinking": "thinking",
   binary: "media",
   unsupported: "other",
 } as const satisfies Record<string, keyof ChatTurn["omitted"]>;
+
 type Send = Extract<WorkbenchCommand, { kind: "send" }>;
 interface Options {
   contexts?: ConversationContexts;
@@ -66,6 +66,8 @@ interface Options {
   cwd: string;
   secrets(): readonly string[];
   timeoutMs?: number;
+  /** Where the sessions live; defaults to Pi's own resolution. */
+  sessionDir?: string;
 }
 export interface ConversationControl {
   instructions: string;
@@ -74,98 +76,99 @@ export interface ConversationControl {
   onTool: NonNullable<ProcessSpec["onCoordinator"]>;
   settle(): Promise<void>;
 }
-interface LiveTurn {
-  conversationId: string;
+/** A browser message's durable admission: what was sent, where from. */
+export interface Accepted {
+  execution?: ExecutionContext;
+  directory?: string;
+  file?: string | null;
+  command: Send;
+  at: number;
+  session: string;
+  /** The entry it continues (null: a new session or a new root). */
+  parent: string | null;
+  /** The session file's size when it was accepted; Pi appends after it. */
+  offset: number;
+}
+/** How the message ended, beside the entries Pi wrote for it. */
+export interface CommandState {
+  status: ChatStatus;
+  notice: string;
+  omitted: ChatTurn["omitted"];
+  /** The user message entry Pi wrote for it, null when none was written. */
+  user: string | null;
+}
+export interface LiveTurn {
+  execution: ExecutionContext;
+  accepted: Accepted;
+  commandId: string;
+  epoch: string;
   title: string;
-  acceptedAt: number;
-  turnFile: FileSnapshot | null;
-  metaFile: FileSnapshot | null;
-  turn: ChatTurn;
+  state: CommandState;
+  stateFile: FileSnapshot | null;
+  capture: LiveCapture | null;
   abort: AbortController;
   original: Promise<AcceptedWorkResult>;
 }
 
-/** Bounded stdout projection, with the same split-secret sanitizer as task capture. */
-export class ConversationCapture {
-  // Encoded sizes are kept beside each growing text: rescanning a long stream
-  // on every chunk made capture quadratic and stalled the owner's reads.
+/** What a browser turn's worker streams that Pi has not written yet: the
+ * message being generated and the tool running, as bounded previews. */
+export class LiveCapture {
+  readonly omitted = { thinking: false, media: false, other: false };
+  notice = "";
+  private readonly assistants: { id: string; text: string }[] = [];
+  private readonly tools: {
+    id: string;
+    name: string;
+    args: string;
+    text: string;
+    error: boolean;
+  }[] = [];
   private readonly details = new Map<
     string,
-    {
-      descriptor: DetailDescriptor;
-      sanitizer: DetailSanitizer;
-      text: string;
-      bytes: number;
-      head: string;
-    }
+    { descriptor: DetailDescriptor; sanitizer: DetailSanitizer; text: string }
   >();
-  private readonly messageText = new Map<
+  private readonly blocks = new Map<
     string,
-    { messageId: string; text: string; bytes: number; head: string }
+    { messageId: string; text: string }
   >();
-  constructor(
-    private readonly turn: ChatTurn,
-    private readonly save: () => void,
-    private readonly secrets: () => readonly string[],
-    private readonly transcript?: ConversationTranscript,
-  ) {}
-  private item(id: string, role: ChatItem["role"]): ChatItem {
-    if (this.transcript) return this.transcript.item(id, role);
-    let item = this.turn.items.find((i) => i.id === id);
-    if (!item) {
-      if (this.turn.items.length >= 256) throw new ContractError("capacity");
-      item = { id, role, text: "", name: "", args: "", error: false };
-      this.turn.items.push(item);
-      try {
-        canonicalJson(this.turn, TURN_BYTES - 2048);
-      } catch (error) {
-        this.turn.items.pop();
-        this.turn.notice = "Conversation capture limit exceeded.";
-        throw error;
-      }
-    }
-    return item;
+  constructor(private readonly secrets: () => readonly string[]) {}
+  private bounded(value: string): string {
+    return Buffer.byteLength(value) <= PREVIEW_BYTES
+      ? value
+      : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
   }
-  private update(
-    item: ChatItem,
-    field: "text" | "name" | "args",
-    value: string,
-    maximum: number,
-    known: FieldUpdate = { bytes: Buffer.byteLength(value), head: value },
-  ): void {
-    const bytes = known.bytes;
-    if (this.transcript) {
-      if (bytes > LIMITS.detailBytes) throw new ContractError("capacity");
-      item[field] = value;
-      this.transcript.preview(item, { [field]: known });
-      return;
+  private tool(callId: string) {
+    let tool = this.tools.find((t) => t.id === callId);
+    if (!tool) {
+      tool = { id: callId, name: "", args: "", text: "", error: false };
+      this.tools.push(tool);
+      // Pi writes each result as it ends: older previews are only counted.
+      const stale = this.tools[this.tools.length - 1 - RECENT_PREVIEWS];
+      if (stale) stale.args = stale.text = "";
     }
-    const before = item[field];
-    try {
-      if (bytes > maximum) throw new ContractError("capacity");
-      item[field] = value;
-      canonicalJson(this.turn, TURN_BYTES - 2048);
-    } catch (error) {
-      item[field] = before;
-      this.turn.notice = "Conversation capture limit exceeded.";
-      throw error;
-    }
+    return tool;
   }
   accept(frame: CaptureFrame): void {
     const e = frame.event;
-    if (e.kind === "detail-begin") {
-      if (
-        e.descriptor.owner.kind === "context" ||
-        e.descriptor.owner.kind === "handoff"
-      )
-        return;
-      if (this.details.size >= 64) throw new ContractError("capacity");
+    if (e.kind === "message-start" && e.role === "assistant") {
+      if (!this.assistants.some((a) => a.id === e.messageId)) {
+        this.assistants.push({ id: e.messageId, text: "" });
+        const stale =
+          this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
+        if (stale) stale.text = "";
+      }
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const tool = this.tool(e.callId);
+      tool.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      if (e.kind === "tool-end") tool.error = e.isError;
+    } else if (e.kind === "detail-begin") {
+      const kind = e.descriptor.owner.kind;
+      if (kind === "context" || kind === "handoff") return;
+      if (this.details.size >= 64) return;
       this.details.set(e.detailId, {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
         text: "",
-        bytes: 0,
-        head: "",
       });
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
@@ -174,105 +177,100 @@ export class ConversationCapture {
         e.kind === "detail-chunk"
           ? d.sanitizer.write(e.text)
           : d.sanitizer.end();
-      d.text += added;
-      d.bytes += Buffer.byteLength(added);
-      d.head = previewHead(d.head, added);
-      if (d.bytes > (this.transcript ? LIMITS.detailBytes : 256 * 1024))
-        throw new ContractError("capacity");
+      if (Buffer.byteLength(d.text) <= PREVIEW_BYTES) d.text += added;
       const o = d.descriptor.owner;
-      if (o.kind === "message") {
-        const role = (
-          this.transcript?.find(o.messageId) ??
-          this.turn.items.find((i) => i.id === o.messageId)
-        )?.role;
-        if (role === "assistant" && o.stage === "stream") {
-          this.messageText.set(o.blockId, {
-            messageId: o.messageId,
-            text: d.text,
-            bytes: d.bytes,
-            head: d.head,
-          });
-          const blocks = [...this.messageText.values()].filter(
-            (block) => block.messageId === o.messageId,
+      if (o.kind === "message" && o.stage === "stream") {
+        this.blocks.set(o.blockId, { messageId: o.messageId, text: d.text });
+        const message = this.assistants.find((a) => a.id === o.messageId);
+        if (message)
+          message.text = this.bounded(
+            [...this.blocks.values()]
+              .filter((b) => b.messageId === o.messageId)
+              .map((b) => b.text)
+              .join(""),
           );
-          this.update(
-            this.item(o.messageId, "assistant"),
-            "text",
-            blocks.length === 1
-              ? blocks[0].text
-              : blocks.map((block) => block.text).join(""),
-            256 * 1024,
-            {
-              bytes: blocks.reduce((size, block) => size + block.bytes, 0),
-              head: blocks.reduce(
-                (head, block) => previewHead(head, block.head),
-                "",
-              ),
-            },
-          );
-        }
       } else if (o.kind === "message-final") {
-        const item =
-          this.transcript?.find(o.messageId) ??
-          this.turn.items.find((i) => i.id === o.messageId);
-        if (item?.role === "assistant")
-          this.update(item, "text", d.text, 256 * 1024, d);
+        const message = this.assistants.find((a) => a.id === o.messageId);
+        if (message) message.text = this.bounded(d.text);
       } else if (o.kind === "tool") {
-        const item = this.item(o.callId, "tool");
+        const tool = this.tool(o.callId);
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
-          this.update(item, "args", d.text, 64 * 1024, d);
+          tool.args = this.bounded(d.text);
         if (o.stage === "result" || o.stage === "update-snapshot")
-          this.update(item, "text", d.text, 256 * 1024, d);
+          tool.text = this.bounded(d.text);
       }
       if (e.kind === "detail-end") this.details.delete(e.detailId);
-    } else if (e.kind === "message-start" && e.role === "assistant") {
-      this.item(e.messageId, "assistant");
-    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
-      const item = this.item(e.callId, "tool");
-      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-end") item.error = e.isError;
+    } else if (e.kind === "message-end") {
+      for (const [id, block] of this.blocks)
+        if (block.messageId === e.messageId) this.blocks.delete(id);
     } else if (e.kind === "worker-failure")
-      this.turn.notice = `worker-failure: ${e.code}`;
+      this.notice = `worker-failure: ${e.code}`;
     else if (
       e.kind === "omitted-block" &&
       e.block.owner.kind !== "context" &&
       e.block.owner.kind !== "handoff"
     )
       // A flag, not a notice line: it must never displace a failure reason.
-      this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
-    if (
-      [...this.details.values()].reduce(
-        (size, detail) => size + detail.bytes + detail.sanitizer.retainedBytes,
-        0,
-      ) > (this.transcript ? 2 * LIMITS.detailBytes : TURN_BYTES)
-    )
-      throw new ContractError("capacity");
-    if (!this.transcript) canonicalJson(this.turn, TURN_BYTES);
-    if (e.kind === "message-end")
-      for (const [id, block] of this.messageText)
-        if (block.messageId === e.messageId) this.messageText.delete(id);
-    if (e.kind === "message-end" || e.kind === "tool-end") {
-      this.transcript?.complete(
-        e.kind === "message-end" ? e.messageId : e.callId,
-      );
-      this.save();
-    }
+      this.omitted[OMITTED_FLAG[e.block.reason]] = true;
+  }
+  /** The written items extended by what Pi has not written yet. Pi writes each
+   * message when it ends, in the order the worker streamed them, so the
+   * written assistant messages and tool results are counted, not matched. */
+  extend(items: ChatItem[]): { items: ChatItem[]; stable: number } {
+    const out = items.map((item) => ({ ...item }));
+    const written = out.filter((i) => i.role === "assistant").length;
+    const calls = out.filter((i) => i.role === "tool");
+    const results = calls.filter((i) => i.text || i.error).length;
+    let stable = out.length;
+    this.tools.forEach((tool, index) => {
+      if (index < results) return;
+      const item =
+        index < calls.length
+          ? calls[index]
+          : (() => {
+              const added: ChatItem = {
+                id: tool.id,
+                role: "tool",
+                name: tool.name,
+                args: tool.args,
+                text: "",
+                error: false,
+              };
+              out.push(added);
+              return added;
+            })();
+      item.text = tool.text;
+      item.error = tool.error;
+      stable = Math.min(stable, out.indexOf(item));
+    });
+    this.assistants.slice(written).forEach((message) => {
+      stable = Math.min(stable, out.length);
+      out.push({
+        id: message.id,
+        role: "assistant",
+        text: message.text,
+        name: "",
+        args: "",
+        error: false,
+      });
+    });
+    return { items: out, stable };
   }
 }
 
 export class Conversations {
   readonly records: ConversationRecords;
-  private readonly contexts: ConversationContexts;
+  readonly contexts: ConversationContexts;
   private readonly active = new Map<string, LiveTurn>();
   constructor(private readonly o: Options) {
-    this.contexts = o.contexts ?? new ConversationContexts(o);
     this.records = new ConversationRecords({
-      directory: o.coordination.directory,
-      files: o.coordination.files,
-      cwd: o.coordination.store.root,
+      ...o,
       assertCurrent: () => o.owner.lease.assert(),
       active: this.active,
     });
+    this.contexts =
+      o.contexts ??
+      new ConversationContexts({ ...o, sessions: this.records.sessions });
   }
   private currentDirectory(cwd: string): boolean {
     const current = resolveWorkspace(cwd);
@@ -286,7 +284,7 @@ export class Conversations {
   private write(
     path: string,
     value: unknown,
-    max: number,
+    max = META_BYTES,
     expected?: FileSnapshot,
   ): FileSnapshot {
     this.o.owner.lease.assert();
@@ -302,28 +300,26 @@ export class Conversations {
   }
   bindControl(id: string): void {
     if (!this.records.controlBound(id))
-      this.write(
-        join(this.records.root, "control-links", `${decodeId(id)}.json`),
-        { schema: "cadence-conversation-control/1", conversationId: id },
-        META_BYTES,
-      );
+      this.write(this.records.controlPath(id), {
+        schema: "cadence-conversation-control/1",
+        conversationId: id,
+      });
   }
-  /** Startup checks every retained head without a lifetime-count ceiling.
-   * Admission thereafter relies on the owner's original-work fence, not a
-   * full-history scan on each Send. No record is repaired or reconstructed. */
+  /** Startup refuses while a browser message's closure is unknown: its worker
+   * may still write to the session. Interrupted ones are reported as such. */
   assertSettled(): void {
     this.o.owner.lease.assert();
-    const path = join(this.records.root, "sessions");
-    if (!this.files.directory(path)) return;
-    const dir = opendirSync(path);
+    const sessions = join(this.records.root, "sessions");
+    if (!this.files.directory(sessions)) return;
+    const dir = opendirSync(sessions);
     try {
       for (let e = dir.readSync(); e; e = dir.readSync()) {
         if (!e.isFile() || !e.name.endsWith(".json"))
           throw new ContractError("corrupt-selected");
-        if (
-          this.records.retainedSummary(decodeId(e.name.slice(0, -5))).status ===
-          "unknown"
-        )
+        const latest = this.records
+          .index(decodeSessionId(e.name.slice(0, -5)))
+          .commands.at(-1);
+        if (latest && this.records.state(latest).status === "unknown")
           throw new ContractError("quarantine");
       }
     } finally {
@@ -332,18 +328,12 @@ export class Conversations {
   }
   attempted(conversationId: string, commandId: string): boolean {
     this.o.owner.lease.assert();
-    const meta = this.records.metadata(conversationId);
     return (
       this.active.has(commandId) ||
       this.files.directory(
         dirname(this.records.path(commandId, "accepted.json")),
       ) ||
-      (!!meta && this.records.contains(meta, commandId)) ||
-      (!meta &&
-        !!this.files.read(
-          this.records.identityPath(conversationId),
-          META_BYTES,
-        ))
+      this.records.index(conversationId).commands.includes(commandId)
     );
   }
   private command(input: Send, reply: boolean): Send {
@@ -356,14 +346,10 @@ export class Conversations {
    * Any caller-side freshness check must come after this lookup. */
   receipt(input: Send, reply = false): WorkbenchResult | undefined {
     this.o.owner.lease.assert();
-    const prior = this.records.read(
-      this.records.path(input.commandId, "accepted.json"),
-      META_BYTES,
-    );
-    if (prior === undefined) return undefined;
-    const saved = closed(prior, ["command", "at"]);
+    const prior = this.records.accepted(input.commandId);
+    if (!prior) return undefined;
     if (
-      canonicalJson(saved.command) !== canonicalJson(this.command(input, reply))
+      canonicalJson(prior.command) !== canonicalJson(this.command(input, reply))
     )
       throw new ContractError("conflict");
     return { kind: "accepted", commandId: input.commandId };
@@ -379,177 +365,100 @@ export class Conversations {
     if (receipt) return receipt;
     if (
       this.files.directory(
-        dirname(this.records.path(input.commandId, "accepted.json")),
+        dirname(this.records.path(input.commandId, "state.json")),
       )
     )
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
-    if (
-      !input.model.conversation &&
-      this.files.read(
-        this.contexts.records.path(input.conversationId),
-        META_BYTES,
-      )
-    )
-      throw new ContractError("stale");
     if (
       input.model.conversation &&
       input.model.conversation.id !== input.conversationId
     )
       throw new ContractError("stale");
     const execution = this.contexts.capture(input.model, !!control?.reply);
-    const existingIdentity = this.files.read(
-      this.records.identityPath(input.conversationId),
-      META_BYTES,
-    );
+    const context = this.contexts.records.read({
+      id: input.conversationId,
+      cwd: execution.cwd,
+    }).context;
     if (
-      existingIdentity &&
-      this.records.cwd(input.conversationId) !== execution.cwd
+      context.cwd !== execution.cwd ||
+      (!input.model.conversation && context.model)
     )
       throw new ContractError("stale");
-    const beforeMeta = this.files.read(
-      this.records.metadataPath(input.conversationId),
-      META_BYTES,
-    );
-    const meta = this.records.metadata(input.conversationId);
-    this.files.assert(
-      this.records.metadataPath(input.conversationId),
-      beforeMeta,
-      META_BYTES,
-    );
-    if (
-      !meta &&
-      this.files.read(
-        this.records.identityPath(input.conversationId),
-        META_BYTES,
-      )
-    )
-      throw new ContractError("corrupt-selected");
-    if ((meta?.head ?? null) !== input.head) throw new ContractError("stale");
-    if (
-      meta &&
-      this.records.turn(input.head as string).status !== "completed" &&
-      (!control ||
-        ["queued", "running", "unknown"].includes(
-          this.records.turn(input.head as string).status,
-        ))
-    )
+    this.records.sessions.directoryFor(execution.cwd);
+    // One browser message at a time per session; the terminal may still write.
+    if (this.records.liveFor(input.conversationId))
       throw new ContractError("conflict");
-    if (
-      this.active.size >= 8 ||
-      (meta && !Number.isSafeInteger(meta.count + 1))
-    )
-      throw new ContractError("capacity");
+    const index = this.records.index(input.conversationId);
+    const session = this.records.sessions.session(input.conversationId);
+    if (input.head !== null && !session?.byId.has(input.head))
+      throw new ContractError("stale");
+    if (this.active.size >= 8) throw new ContractError("capacity");
     if (!input.text.trim()) throw new ContractError("invalid");
     const space = statfsSync(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
-    const turn: ChatTurn = {
-      execution,
-      id: input.commandId,
-      epoch: input.model.epoch,
-      status: "queued",
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      items: [
-        {
-          id: "user",
-          role: "user",
-          text: command.text,
-          name: "",
-          args: "",
-          error: false,
-        },
-      ],
-    };
-    const next: SavedConversation = meta ?? {
-      id: input.conversationId,
-      title: [...command.text.trim()].slice(0, 100).join("") || "Conversation",
-      turns: [],
-      head: turn.id,
-      count: 0,
-      checkpoint: null,
-    };
-    const previous = next.checkpoint
-      ? this.records.path(next.checkpoint, "context.json")
-      : null;
-    const previousFile = previous
-      ? this.files.read(previous, CONTEXT_BYTES)
+    const listed = session
+      ? this.records.sessions.find(input.conversationId)
       : undefined;
-    if (previous && !previousFile) throw new ContractError("corrupt-selected");
+    const accepted: Accepted = {
+      execution,
+      directory: this.records.sessions.directoryFor(execution.cwd),
+      file: listed?.path ?? null,
+      command,
+      at: Date.now(),
+      session: input.conversationId,
+      parent: input.head,
+      offset: session?.read?.size ?? 0,
+    };
     const abort = new AbortController();
     // Register original work before the first durable acceptance or asynchronous effect.
     let begin!: () => void;
     const ready = new Promise<void>((resolve) => {
       begin = resolve;
     });
-    const original = ready.then(() =>
-      this.run(
-        command,
-        turn,
-        previous,
-        previousFile,
-        next,
-        abort,
-        execution,
-        control,
-      ),
-    );
     const live: LiveTurn = {
-      turn,
+      execution,
+      accepted,
+      commandId: input.commandId,
+      epoch: input.model.epoch,
+      title: listed
+        ? summaryTitle(listed.summary)
+        : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
+      state: {
+        status: "queued",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        user: null,
+      },
+      stateFile: null,
+      capture: null,
       abort,
-      original,
-      conversationId: next.id,
-      title: next.title,
-      acceptedAt: Date.now(),
-      turnFile: null,
-      metaFile: null,
+      original: ready.then(() => this.run(live, control)),
     };
     // Beyond this point even a failed registration/control write is uncertain.
     beforeAccept?.();
-    this.active.set(turn.id, live);
-    this.o.owner.trackConversation(original, () => abort.abort());
+    this.active.set(input.commandId, live);
+    this.o.owner.trackConversation(live.original, () => abort.abort());
     try {
-      if (!meta)
-        this.write(
-          this.records.identityPath(next.id),
-          { schema: "cadence-conversation/1", id: next.id, cwd: execution.cwd },
-          META_BYTES,
-        );
-      this.write(
-        this.records.path(turn.id, "accepted.json"),
-        { command, at: live.acceptedAt },
-        META_BYTES,
-      );
-      live.turnFile = this.write(
-        this.records.path(turn.id, "turn.json"),
-        turn,
-        TURN_BYTES,
-      );
-      const position = {
-        conversationId: next.id,
-        ordinal: next.count,
-        turnId: turn.id,
-      };
-      this.write(
-        this.records.slotPath(next.id, next.count),
-        position,
-        META_BYTES,
+      this.write(this.records.path(input.commandId, "accepted.json"), accepted);
+      live.stateFile = this.write(
+        this.records.path(input.commandId, "state.json"),
+        live.state,
       );
       this.write(
-        this.records.path(turn.id, "position.json"),
-        position,
+        this.records.indexPath(input.conversationId),
+        {
+          schema: "cadence-session-commands/1",
+          id: input.conversationId,
+          commands: [...index.commands, input.commandId].slice(
+            -INDEXED_COMMANDS,
+          ),
+        },
         META_BYTES,
+        index.file,
       );
-      next.head = turn.id;
-      next.count++;
-      live.metaFile = this.write(
-        this.records.metadataPath(next.id),
-        next,
-        META_BYTES,
-        beforeMeta,
-      );
-      // Control state commits last: it never names a turn that is not durably
+      // Control state commits last: it never names a message that is not durably
       // recorded. A failure here leaves an older, still-valid control record.
       control?.accept();
     } catch (error) {
@@ -558,35 +467,26 @@ export class Conversations {
       throw error;
     }
     begin();
-    return { kind: "accepted", commandId: turn.id };
+    return { kind: "accepted", commandId: input.commandId };
   }
   interrupt(id: string, turnId: string, epoch: string): void {
     this.o.owner.lease.assert();
     const live = this.active.get(turnId);
     if (live) {
-      if (live.conversationId !== id || live.turn.epoch !== epoch)
+      if (live.accepted.session !== id || live.epoch !== epoch)
         throw new ContractError("stale");
       live.abort.abort();
       return;
     }
-    const meta = this.records.metadata(id);
-    if (!meta || !this.records.contains(meta, turnId))
+    if (!this.records.hasCommand(id, turnId))
       throw new ContractError("invalid");
-    if (this.records.turn(turnId).epoch !== epoch)
-      throw new ContractError("stale");
-    this.active.get(turnId)?.abort.abort();
   }
   private async run(
-    command: Send,
-    turn: ChatTurn,
-    previous: string | null,
-    previousFile: FileSnapshot | undefined,
-    meta: SavedConversation,
-    abort: AbortController,
-    execution: ExecutionContext,
+    live: LiveTurn,
     control?: ConversationControl,
   ): Promise<AcceptedWorkResult> {
-    let transcript: ConversationTranscript | undefined;
+    const { accepted, abort, state } = live;
+    const commandId = live.commandId;
     let barrier: CheckoutPermit | undefined;
     let authSettled: Promise<void> | undefined;
     let uncertain = false;
@@ -606,51 +506,42 @@ export class Conversations {
         omissions: ["gap"],
       },
     };
-    const live = this.active.get(turn.id);
     const save = () => {
-      if (!live?.turnFile) throw new ContractError("corrupt-selected");
-      live.turnFile = this.write(
-        this.records.path(turn.id, "turn.json"),
-        turn,
-        TURN_BYTES,
-        live.turnFile,
+      if (!live.stateFile) throw new ContractError("corrupt-selected");
+      live.stateFile = this.write(
+        this.records.path(commandId, "state.json"),
+        state,
+        META_BYTES,
+        live.stateFile,
       );
     };
-    const current = () => {
-      if (
-        abort.signal.aborted ||
-        this.o.owner.state !== "idle" ||
-        !this.currentDirectory(execution.cwd)
-      )
-        return false;
-      if (previous) this.files.assert(previous, previousFile, CONTEXT_BYTES);
-      return true;
-    };
+    const current = () =>
+      !abort.signal.aborted &&
+      this.o.owner.state === "idle" &&
+      this.currentDirectory(live.execution.cwd);
     try {
       if (!current()) throw new ContractError("stale");
       if (control?.reply) {
-        turn.status = "completed";
-        turn.notice = control.reply;
+        state.status = "completed";
+        state.notice = control.reply;
         return { status: "settled" };
       }
       if (!control) {
-        barrier = await this.o.gate.acquire(turn.id, abort.signal);
+        barrier = await this.o.gate.acquire(commandId, abort.signal);
         barrier.assertHeld();
       }
       if (!current()) throw new ContractError("stale");
-      // The admitted original owns its exact model/cwd, not a future picker
-      // choice. Access rotation and another conversation's choice cannot rebase it.
-      const selected = execution.model;
+      const selected = live.execution.model;
       if (!selected) throw new ContractError("stale");
       this.o.models.assertCurrent(selected);
       const instructions = control
-        ? `${control.instructions}\nCONVERSATION CONTEXT (data): cwd ${execution.cwd}; checkout root ${execution.checkoutRoot}. Workflow declared write paths are checkout-root-relative, not cwd-relative. Tools, relative investigation roots and check commands use this conversation cwd.`
+        ? `${control.instructions}\nCONVERSATION CONTEXT (data): cwd ${live.execution.cwd}; checkout root ${live.execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.`
         : "Ordinary conversation.";
       const request = decodeWorkerPublicRequest({
         protocol: 2,
-        taskId: meta.id,
+        taskId: randomUUID(),
         taskKind: control ? "research" : "code",
-        runId: turn.id,
+        runId: commandId,
         childRunId: randomUUID(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
@@ -661,29 +552,24 @@ export class Conversations {
         },
         context: "",
         instructions,
-        prompt: command.text,
+        prompt: accepted.command.text,
         handoff: { graphRevision: 1, inputs: [] },
       });
       const auth = this.o.models.prepareTracked({
         request,
-        cwd: execution.cwd,
+        cwd: live.execution.cwd,
         operationId: randomUUID(),
-        epoch: turn.epoch,
+        epoch: live.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
         current,
         journal: {
           preparation: (value) =>
-            this.write(
-              this.records.path(turn.id, "auth-intent.json"),
-              value,
-              META_BYTES,
-            ),
+            this.write(this.records.path(commandId, "auth-intent.json"), value),
           settlement: (value) =>
             this.write(
-              this.records.path(turn.id, "auth-settled.json"),
+              this.records.path(commandId, "auth-settled.json"),
               value,
-              META_BYTES,
             ),
         },
       });
@@ -691,41 +577,31 @@ export class Conversations {
       const prepared = await auth.result;
       if (prepared.status !== "prepared" || !current())
         throw new ContractError("auth-unavailable");
-      turn.status = "running";
+      state.status = "running";
       save();
-      this.write(
-        this.records.path(turn.id, "launch.json"),
-        { epoch: turn.epoch, childRunId: request.childRunId },
-        META_BYTES,
-      );
-      let credentials: readonly string[] = [];
-      let checkpoint = false,
-        contextCount = 0;
-      let contextHead: string | null = null;
-      transcript = new ConversationTranscript(turn, (page) => {
-        const space = statfsSync(this.o.coordination.directory);
-        if (
-          space.bavail * space.bsize - TRANSCRIPT_PAGE_BYTES <
-          LIMITS.freeSpaceFloorBytes
-        )
-          throw new ContractError("capacity");
-        this.write(
-          this.records.path(turn.id, `transcript/${page.page}.json`),
-          page,
-          TRANSCRIPT_PAGE_BYTES,
-        );
+      this.write(this.records.path(commandId, "launch.json"), {
+        epoch: live.epoch,
+        childRunId: request.childRunId,
       });
-      const capture = new ConversationCapture(
-        turn,
-        save,
-        () => [...this.o.secrets(), ...credentials],
-        transcript,
-      );
+      let credentials: readonly string[] = [];
+      const capture = new LiveCapture(() => [
+        ...this.records.readSecrets(),
+        ...credentials,
+      ]);
+      live.capture = capture;
+      const existing = this.records.sessions.find(accepted.session);
+      if ((existing?.path ?? null) !== accepted.file)
+        throw new ContractError("stale");
       const running = Promise.resolve().then(() =>
         launchConversation(
           prepared.prepared,
           {
-            previous,
+            session: {
+              id: accepted.session,
+              dir: accepted.directory as string,
+              file: existing?.path ?? null,
+              head: accepted.parent,
+            },
             agentDir: this.o.agentDir,
             ...(control ? { coordinator: true as const } : {}),
           },
@@ -734,29 +610,6 @@ export class Conversations {
             timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
             ownerSecrets: this.o.secrets,
             onCoordinator: control?.onTool,
-            onContext: (message) => {
-              const space = statfsSync(this.o.coordination.directory);
-              if (
-                space.bavail * space.bsize - CONTEXT_RECORD_BYTES <
-                LIMITS.freeSpaceFloorBytes
-              )
-                throw new ContractError("capacity");
-              const file = this.write(
-                this.records.path(turn.id, `context-${contextCount}.json`),
-                {
-                  schema: "cadence-conversation-message/1",
-                  index: contextCount,
-                  previous: contextHead,
-                  message,
-                },
-                CONTEXT_RECORD_BYTES,
-              );
-              contextHead = file.identity;
-              contextCount++;
-            },
-            onContextEnd: () => {
-              checkpoint = true;
-            },
             maySignal: () => {
               try {
                 this.o.owner.lease.assert();
@@ -779,65 +632,46 @@ export class Conversations {
       this.o.owner.trackConversationProcess(tracked, () => abort.abort());
       const result = await running;
       uncertain = !result.closed;
-      turn.status = result.outcome;
-      if (result.outcome === "completed") {
-        if (!checkpoint) throw new ContractError("corrupt-selected");
-        this.write(
-          this.records.path(turn.id, "context.json"),
-          {
-            schema: "cadence-conversation-context/2",
-            messages: contextCount,
-            head: contextHead,
-          },
-          CONTEXT_BYTES,
-        );
-        meta.checkpoint = turn.id;
-        if (!live?.metaFile) throw new ContractError("corrupt-selected");
-        live.metaFile = this.write(
-          this.records.metadataPath(meta.id),
-          meta,
-          META_BYTES,
-          live.metaFile,
-        );
-      }
+      state.status = result.outcome;
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
-      turn.status = uncertain
+      state.status = uncertain
         ? "unknown"
         : abort.signal.aborted
           ? "canceled"
           : "failed";
-      turn.notice ||=
+      state.notice ||=
         error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
       await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
-      if (uncertain) turn.status = "unknown";
+      if (uncertain) state.status = "unknown";
       try {
-        // Preserve actual process closure even if final transcript publication fails.
-        this.write(
-          this.records.path(turn.id, "native.json"),
-          native,
-          META_BYTES,
-        );
-        transcript?.finish();
-        if (turn.status !== "completed")
-          turn.notice = [
-            turn.notice,
-            control
-              ? "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint."
-              : "Start a new conversation; incomplete context is not replayed.",
-          ]
-            .filter(Boolean)
-            .join("\n");
+        // Preserve actual process closure even if the final state write fails.
+        this.write(this.records.path(commandId, "native.json"), native);
+        if (live.capture) {
+          if (state.status !== "completed")
+            state.notice ||= live.capture.notice;
+          state.omitted = { ...live.capture.omitted };
+        }
+        try {
+          state.user =
+            this.records.sessions
+              .session(accepted.session)
+              ?.commandEntries(commandId, accepted.parent, accepted.offset)[0]
+              ?.id ?? null;
+        } catch {
+          // An unreadable session leaves the message's entry unknown, not lost.
+          state.user = null;
+        }
         save();
       } catch {
         uncertain = true;
       }
       if (uncertain) this.o.owner.quarantine();
       else if (this.o.owner.state === "idle") barrier?.release();
-      this.active.delete(turn.id);
+      this.active.delete(commandId);
     }
     return { status: uncertain ? "uncertain" : "settled" };
   }

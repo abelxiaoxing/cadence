@@ -258,7 +258,9 @@ it("owner content has no fictitious child and survives exact UTF-8 detail paging
     await reader.detail(cursor),
   );
 });
-it("batched sibling sinks return only their own exact committed detail mappings", async () => {
+it("batched sibling sinks return only their own exact committed detail mappings", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   await f.writer.commit(f.intent);
   const other = { ...f, link: { ...f.link, childRunId: randomUUID() } };
@@ -357,7 +359,9 @@ it("detail pages never skip a UTF-8 scalar at the byte ceiling", async () => {
   expect(first.next?.offset).toBe(LIMITS.detailPageBytes - 1);
   expect((await reader.detail(first.next!)).text).toBe("😀tail");
 });
-it("idle flush records only a real owner epoch and quota inventory counts orphan bytes", async () => {
+it("idle flush records only a real owner epoch and quota inventory counts orphan bytes", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   const flush = await f.writer.flush();
   expect(flush).toMatchObject({
@@ -487,7 +491,9 @@ for (const boundary of [
   "checkpoint",
   "run-admission",
 ] as const)
-  it(`original subprocess crash after ${boundary} never replays or repairs`, async () => {
+  it(`original subprocess crash after ${boundary} never replays or repairs`, {
+    tags: ["slow"],
+  }, async () => {
     const dir = mkdtempSync(join(tmpdir(), "cadence-w3-crash-"));
     const native = spawnSync(process.execPath, [crashFixture, dir, boundary], {
       encoding: "utf8",
@@ -767,7 +773,9 @@ it("foundation review: readers and receipt lookup cannot publish an unflushed ma
   expect(HistoryReader.open(f.c)!.inspect().committedSeq).toBe("1");
 });
 for (const damaged of ["snapshot", "interior"] as const)
-  it(`foundation review: warm detail revalidates ${damaged} in a later segment`, async () => {
+  it(`foundation review: warm detail revalidates ${damaged} in a later segment`, {
+    tags: ["slow"],
+  }, async () => {
     profile = historyProfile(`cold-${damaged}`);
     const f = historyFixture(),
       result = await ownerContent(f, "old content");
@@ -864,7 +872,9 @@ it("foundation review: context changed during original IO cannot be overwritten 
   expect(f.writer.currentContext(f.link.taskId)).toEqual(changed);
   expect(f.writer.quarantined).toBe(true);
 });
-it("foundation review: grown ingress budgets still bound real progress batches", async () => {
+it("foundation review: grown ingress budgets still bound real progress batches", {
+  tags: ["slow"],
+}, async () => {
   const f = historyFixture();
   const results = await Promise.all(
     Array.from({ length: 40 }, () => ownerContent(f, "x".repeat(8192), true)),

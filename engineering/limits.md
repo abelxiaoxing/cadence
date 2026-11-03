@@ -43,9 +43,9 @@ Clean worktrees at their expected commit are removed after a merge with plain `g
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
 Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`), at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
-Conversation-control records have no retained-directory admission cap; a bounded cache and legacy link fallback are not storage quotas.
+Conversation-control records have no retained-directory admission cap; the bounded cache is not a storage quota.
 The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
-Control records are bounded at 384KiB and project the most recent 200 workflow links; new links and displaced legacy links remain independently retained, without a lifetime attempt cap or history eviction.
+Control records are bounded at 384KiB and project the most recent 200 workflow links; links remain independently retained, without a lifetime attempt cap or history eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
 The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.
 
@@ -62,23 +62,22 @@ The launcher fixes a same-host monotonic deadline before serialization/spawn; SD
 These are cooperative I/O limits: outstanding filesystem operations and directory/file closure are joined, never abandoned on timeout; the unchanged parent worker deadline is the hard process bound.
 Explicit investigation roots are limited to eight; omitted roots select the conversation cwd.
 
-Ordinary/coordinator conversation capture (`src/service/conversation-transcript.ts`, `src/service/conversations.ts`) has no lifetime transcript-byte/item cap: immutable pages and turn snapshots are at most 384KiB each.
-The latest preview budgets 300KiB/128 items and 16Ki UTF-16 code units per field (labelled when clipped); it stands in only for items no page holds yet.
-Conversation reads have no turn-count or byte page: the head carries a summary and a count, and each read covers one turn or one stored part of one step.
-A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_BYTES` (16KiB) of encoded text and a 1KiB tool target, which always fits one 512KiB reply; the client reads further ranges itself (`src/service/contracts/workbench.ts`).
-The step index cache holds 32 turns and the WebUI keeps four reads in flight per conversation; neither bounds what is retained.
+Conversations are Pi session files with no Cadence-side lifetime byte, turn or count cap (`src/service/pi-sessions.ts`).
+A session larger than `SESSION_BYTES` (64MiB) retains its identity through a bounded `HEADER_BYTES` (16KiB) header read but cannot be opened or continued; unreadability never proves a requested ID absent; a listing considers the newest 10,000 file names, and settings files are read up to 1MiB.
+The reader caches eight parsed sessions and 64 built turns; neither bounds what is retained.
+History pages hold 50 summaries; the tree read returns the newest `TREE_NODES` (1000) user messages and says when more exist.
+A step-detail part holds at most 200KiB of encoded text and 48KiB of encoded arguments, so every part fits one 512KiB reply.
+Conversation reads have no turn-count or byte page: the head carries a summary and a count, and each read covers one turn or one part of one step.
+A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_BYTES` (16KiB) of encoded text and a 1KiB tool target (arguments over 1MiB name none), which always fits one 512KiB reply; the client reads further ranges itself (`src/service/contracts/workbench.ts`).
+The WebUI keeps four reads in flight per conversation.
 Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
-Each full field has the existing 32MiB logical-detail bound; unfinished capture has at most 256 items/64MiB, plus 64 open details/64MiB of open-detail text and sanitizer state.
-`src/conversation-context.mjs` streams continuation messages in records bounded by that same 32MiB detail limit, with no aggregate 2MiB checkpoint cap; 2MiB remains only the legacy checkpoint/manifest reader bound.
-The former separate 512MiB/10,000-entry conversation-store admission quota is removed, without eviction or incidental cleanup; admission and page/checkpoint writes retain the 256MiB free-space floor.
-Conversations and turns per conversation have no lifetime count cap; new turns use immutable ordinal/membership slots and a 64KiB head/count manifest instead of growing an inline ID array.
-The legacy inline prefix stays readable and unchanged; it is not a new-turn ceiling.
-Conversation history (`src/service/conversation-history.ts`) returns 50 recent-first summaries, scans at most eight record heads/100ms per quantum and holds at most 16 readonly scans with 120s idle expiry; progress is not an empty page.
-The summary cache (`src/service/conversation-records.ts`) holds 256 entries, not 256 conversations; the independent live roster reads only the eight admitted turns.
+A live browser turn's preview keeps at most 64KiB per streamed message or tool output (labelled when clipped), for its eight most recent messages and eight most recent tools, and 64 open details; the rest is read from the session once Pi writes it (`src/service/conversations.ts`).
+A session's index names its last 64 browser messages; the owner caches 512 message states and admits eight browser turns at a time, one per session.
+Admission retains the 256MiB free-space floor for the owner's records; Pi's own writes are bounded only by the disk, as in the terminal.
 Worker deadline/protocol and concurrency protections are unchanged.
 
-Stopped-owner conversation views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the existing bounded conversation scans and caches.
-Replacement, access rotation and workbench Stop close their scan handles; eviction affects only reads, never retained data or execution.
+Stopped-owner conversation views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the bounded Pi session and command caches.
+Replacement, access rotation and workbench Stop discard their read caches; eviction affects only reads, never retained data or execution.
 Conversation-control projections (`src/service/conversation-controls.ts`) cache at most 512 records; they retain the existing 384KiB record bound and never cache transient I/O failures.
 
 Browser explicit-Send preparation uses `SEND_PREPARATION_MS` in `web/src/client/conversation-send.ts`, separate from model/worker execution and the browser test scene budget.
@@ -88,3 +87,6 @@ Message bytes share `CONVERSATION_SEND_BYTES` with the owner decoder.
 Conversation context records use `BYTES` in `src/service/conversation-contexts.ts` (16KiB); there is no aggregate conversation-settings eviction/quota.
 Their model selections reuse the existing `OwnerModelContext` cache bounded by `LIMITS.maxPageEntries`, sharing one source per exact selector rather than one per conversation.
 Preference revision and encoded-byte checks precede source installation or persistent writes.
+
+Checkout session discovery considers at most 256 directory sources and remembers 128 explicitly observed cwd-to-session-directory resolutions in memory (`src/service/pi-sessions.ts`).
+The one shared reader retains its existing eight parsed-session and 64 built-turn bounds across those sources, not one cache per directory; no checkout tree is scanned and no session directory is created by discovery.

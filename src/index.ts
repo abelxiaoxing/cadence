@@ -5,6 +5,7 @@ import { registerCadenceAgentFeed } from "./agent-panel-cadence.ts";
 import { registerCadenceMode } from "./cadence-mode.ts";
 import { registerHistoryShell } from "./history-shell.ts";
 import { autostartNotice } from "./native-client.ts";
+import { registerSessionSharing } from "./session-sharing.ts";
 import { CONFIG_MISSING, startupCardLines } from "./startup-card.ts";
 
 /** Sole production composition. Discovery registers inert capabilities only;
@@ -13,6 +14,8 @@ export default function register(pi: ExtensionAPI): void {
   if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
   registerHistoryShell(pi);
   registerCadenceMode(pi);
+  // Readonly: notices the browser continuing the session this terminal holds.
+  registerSessionSharing(pi);
   // Observes `subagent:*` bus events only; renders nothing until one arrives.
   registerAgentPanel(pi);
   // Publishes a running owner's child runs there; readonly, never starts one.

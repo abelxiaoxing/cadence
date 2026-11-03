@@ -223,18 +223,34 @@ it(
           exact: true,
         })
         .waitFor();
-      await page
-        .getByText("Owner timing and runtime", { exact: true })
-        .first()
+      const workflowLine = (goal) =>
+        page
+          .locator(".chat-workspace")
+          .getByRole("article", { name: goal, exact: true });
+      await workflowLine("Inspect fixture")
+        .getByText(/^completed · \d+s$/)
+        .waitFor();
+      assert.equal(
+        await page.locator(".chat-workspace .workflow-card").count(),
+        0,
+      );
+      await workflowLine("Inspect fixture")
+        .getByTitle("Open workflow details")
         .click();
-      const diagnostics = await page
+      const context = page.getByLabel("Subagent context", { exact: true });
+      await context
+        .getByText("Owner timing and runtime", { exact: true })
+        .click();
+      const diagnostics = await context
         .locator(".workflow-card pre.workflow-detail")
-        .first()
         .innerText();
       assert(diagnostics.includes("Owner: Cadence"));
       assert(diagnostics.includes("checkout acquired:"));
       assert(diagnostics.includes("worker SDK"));
       assert(diagnostics.includes("service-host.mjs"));
+      await page
+        .getByRole("button", { name: "Back to conversation", exact: true })
+        .click();
       assert.equal(sendAttempts, 2);
       assert.equal(new Set(sendIds).size, 2);
       await page.unroute("**/api/v1/workbench/command");
@@ -299,11 +315,13 @@ it(
       assert(run.mergedCommit);
       // Now verify that the browser renders the actual completed run, under the
       // unchanged UI action timeout. A persisted hash alone was not success.
-      await page
-        .getByText("Actual local merge commit:", { exact: false })
-        .first()
+      await workflowLine(run.goal)
+        .getByText(
+          new RegExp(
+            `^completed · merged ${run.mergedCommit.slice(0, 7)} · \\d+s$`,
+          ),
+        )
         .waitFor();
-      await page.getByText(run.mergedCommit, { exact: true }).waitFor();
       assert.equal(approveCalls, 1, "lost reply is observed, never replayed");
       assert.equal(acceptedId, run.id);
       await page.unroute("**/api/v1/workbench/command");
@@ -333,7 +351,15 @@ it(
       assert(
         readFileSync(join(f.root, "a.txt"), "utf8").includes("implemented"),
       );
-      const childSummary = page
+      await workflowLine(run.goal).getByTitle("Open workflow details").click();
+      await context
+        .getByText("Actual local merge commit:", { exact: false })
+        .waitFor();
+      await context.getByText(run.mergedCommit, { exact: true }).waitFor();
+      await context
+        .getByText("Context fixed at admission:", { exact: false })
+        .waitFor();
+      const childSummary = context
         .locator(".workflow-card details > summary")
         .filter({ hasText: /^implementation/ })
         .first();
@@ -343,7 +369,6 @@ it(
         .getByRole("button", { name: "Open subagent context", exact: true })
         .click();
       // The subagent's context opens in the main area, not inside the chat.
-      const context = page.getByLabel("Subagent context", { exact: true });
       await context
         .getByRole("region", { name: "Conversation turn" })
         .getByText("Implemented the declared file.", { exact: true })
@@ -376,18 +401,10 @@ it(
         .locator(".conversation-badge")
         .filter({ hasText: "Cadence on" })
         .waitFor();
-      // Retained workflows are reachable without asking the coordinator/model.
+      // The retained line belongs to the same conversation after reload.
       const historyContacts = f.contacts();
-      await page.locator(".workflow-history > summary").click();
-      await page
-        .locator(".workflow-history .session-item")
-        .filter({ hasText: run.goal })
-        .click();
-      await page.getByLabel("Subagent context", { exact: true }).waitFor();
+      await workflowLine(run.goal).waitFor();
       assert.equal(f.contacts(), historyContacts);
-      await page
-        .getByRole("button", { name: "Back to conversation", exact: true })
-        .click();
       await send("Next goal: explain the existing files");
       await page
         .getByText("Investigation complete. Should we write both files?", {
@@ -395,6 +412,33 @@ it(
         })
         .last()
         .waitFor();
+      // Each workflow stays after the turn it started in; later turns follow it.
+      const order = () =>
+        page.evaluate(() => {
+          const next = [
+            ...document.querySelectorAll(".chat-message.user"),
+          ].find((m) =>
+            m.textContent?.includes("Next goal: explain the existing files"),
+          );
+          return [
+            ...document.querySelectorAll(".chat-workspace .workflow-line-goal"),
+          ].map(
+            (goal) =>
+              `${goal.textContent}:${next && goal.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING ? "before" : "after"}`,
+          );
+        });
+      const expected = [
+        "Inspect fixture:before",
+        "Two independent outputs:before",
+        "Inspect fixture:after",
+      ];
+      const settle = Date.now() + 15000;
+      while (
+        JSON.stringify(await order()) !== JSON.stringify(expected) &&
+        Date.now() < settle
+      )
+        await page.waitForTimeout(100);
+      assert.deepEqual(await order(), expected);
       assert.equal(page.url(), chatUrl);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: join(root, "mobile.png"), fullPage: true });

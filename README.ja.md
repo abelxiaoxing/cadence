@@ -20,6 +20,9 @@ Cadence は [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) 
 - **完全な履歴。**
   各実行はメッセージ、ツール呼び出し、出力を保持し、正確な検索と完全な Markdown/NDJSON エクスポートをサポートします。
   既知のシークレットはマスクされます。
+- **ターミナルと共有される履歴。**
+  ブラウザーの会話はプロジェクトの Pi セッションそのものです。
+  ターミナルのセッションをブラウザーで続けることも、ブラウザーのセッションを `/resume` で続けることもでき、Pi のブランチはどちらからでも読めます。
 - **すべてに一つのリンク。**
   WebUI（デスクトップとスマホ、英語と簡体字中国語）は通常の Pi 会話もホストし、プロジェクト間で切り替えられます。
   各プロジェクトには独自の owner と履歴があります。
@@ -123,12 +126,14 @@ Cadence は Pi のバージョン範囲を強制しない。
 
 ```sh
 bun install
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun run verify
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify:full
 ```
 
 エンジニアリングのガイダンスは [engineering/](engineering/) 下に領域ごとに分割されている。
 [AGENTS.md](AGENTS.md) のプロジェクト索引がどのファイルがどのコードをカバーするかを示す。
-`verify` には公式 Node ビルド、プライベートな一時ディレクトリ、既存の Chromium も必要。
+`verify` には公式 Node ビルドとプライベートな一時ディレクトリが必要。
+低速テストとブラウザシナリオを加える `verify:full` には既存の Chromium も必要。
 [検証](engineering/verification.md)を参照。
 
 ## ライセンス

@@ -1083,6 +1083,7 @@ it("native sessions own their model scope; tree navigation keeps it but a fork c
   await h.call("cadence_plan", plan());
   const scope = injected.client.models.mock.calls.at(-1)[1];
   expect(scope.cwd).toBe(h.root);
+  expect(scope.id).toBe(h.ctx.sessionManager.getSessionId());
   await h.emit("session_before_tree");
   await h.emit("session_tree");
   await h.call("cadence_plan", plan());

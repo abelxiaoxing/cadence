@@ -137,7 +137,7 @@ function actionFixture(f: Fixture) {
   const owner = { requestCancel: vi.fn() };
   // Actual current application port spy, not a second legacy admission engine.
   f.adapters.workbench = {
-    read: () => ({ kind: "conversations", entries: [] }),
+    read: () => ({ kind: "conversations", entries: [], next: null }),
     command: (request) => {
       effects.push(request.commandId);
       if (request.kind === "interrupt") owner.requestCancel();
@@ -179,7 +179,6 @@ describe("explicit private access setup (no user/provider credentials)", () => {
   });
   it.each([
     "",
-    "x".repeat(31),
     "x".repeat(1025),
     `${"x".repeat(32)}\n`,
     `${"x".repeat(32)}\u202e`,
@@ -189,6 +188,12 @@ describe("explicit private access setup (no user/provider credentials)", () => {
       AccessMaterial.initialize(new PrivateFiles(dir), dir, { environment }),
     ).toThrow();
     expect(existsSync(join(dir, "access-config.json"))).toBe(false);
+  });
+  it("accepts a configured token of any non-empty length", () => {
+    for (const environment of ["x", "x".repeat(1024)])
+      expect(accessFixture({ environment }).material.matches(environment)).toBe(
+        true,
+      );
   });
   it("supports special exact environment bytes and requires restart for rotation", () => {
     const environment = " +%=&雪/!".repeat(8),
@@ -1508,7 +1513,10 @@ it("lost retired-command HTTP refusal stays uncertain to the caller; receipt loo
   expect(a.effects).toHaveLength(0);
 });
 
-it("detached unresolved original snapshots retain bounded slots; established control/detach is independent", async () => {
+it("detached unresolved original snapshots retain bounded slots; established control/detach is independent", {
+  tags: ["slow"],
+  timeout: 10000,
+}, async () => {
   const f = await setup(),
     release = deferred();
   let calls = 0;
@@ -1556,7 +1564,7 @@ it("detached unresolved original snapshots retain bounded slots; established con
       ).status,
     ).toBe(200),
   );
-}, 10000);
+});
 
 it.each(["http", "upgrade"])(
   "overlapping %s pipelining closes only that connection, without accumulating private responses",

@@ -32,6 +32,7 @@ import {
 } from "react-icons/fi";
 import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
+import { decodeSessionId } from "../../src/service/contracts/workbench.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
@@ -67,7 +68,6 @@ import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
-import { WorkflowHistory } from "./components/workspace/WorkflowHistory";
 import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
@@ -81,12 +81,14 @@ import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
 
+/** A conversation link names its Pi session, as the terminal names it too. */
 function chatFromLocation(): string | null {
   const value = new URLSearchParams(window.location.hash?.slice(1)).get("chat");
-  return value &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
-    ? value
-    : null;
+  try {
+    return value ? decodeSessionId(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 const VIEWS: readonly (readonly [string, IconType])[] = [
@@ -317,16 +319,6 @@ export function App({
       ? projects.value.entries.find((entry) => entry.current)?.path
       : undefined) ??
     workspace.workspace?.rootLabel;
-  const taskOrigin = useWorkbench(
-    api.client,
-    taskId && workspace.workspace && !detached
-      ? { kind: "task-origin", taskId }
-      : null,
-  );
-  const linkedChat =
-    taskOrigin.value?.kind === "task-origin"
-      ? taskOrigin.value.conversationId
-      : null;
   const observation = {
     state: workspace.observation,
     transportStatus: workspace.transportStatus,
@@ -1044,15 +1036,6 @@ export function App({
             />
           )}
           {workspace.workspace && (
-            <WorkflowHistory
-              client={api.client}
-              onOpen={(next) => {
-                setAgent(next);
-                closeDrawer();
-              }}
-            />
-          )}
-          {workspace.workspace && (
             <AgentDock
               client={api.client}
               active={workspace.activeRuns}
@@ -1168,15 +1151,7 @@ export function App({
                     {t("Back to task")}
                   </button>
                 )}
-                {linkedChat && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => selectChat(linkedChat)}
-                  >
-                    {t("Back to ordinary conversation")}
-                  </button>
-                )}
+
                 <h2 title={taskTitle || scope.id}>
                   {scope.kind === "task"
                     ? taskTitle || t("Task {id}", { id: scope.id.slice(0, 8) })
@@ -1355,7 +1330,7 @@ export function App({
                 client={api.client}
                 enabled={!!workspace.workspace && !!fileLocation}
                 onReference={(path) => {
-                  if (!chatId) selectChat(linkedChat ?? filesConversationId);
+                  if (!chatId) selectChat(filesConversationId);
                   // A reference opened from a legacy view may enter a conversation
                   // in another subdirectory. Keep that reference's original base.
                   const reference =
