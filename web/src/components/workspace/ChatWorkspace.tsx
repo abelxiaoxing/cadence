@@ -2,6 +2,7 @@
  * transcript, folded tools and per-conversation drafts. MIT (c) 2026 xing-shuyin.
  * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,6 +23,7 @@ import {
   decodeWorkbenchCommand,
   type WorkbenchCommand,
 } from "../../../../src/service/contracts/workbench.ts";
+import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useConversation } from "../../client/use-conversation";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
@@ -34,11 +36,19 @@ import { describeError, useT } from "../../i18n/locale";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
-import type { WorkflowAgent } from "./AgentDock";
+import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
 import { BranchTree } from "./BranchTree";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
-import { WorkflowPanel } from "./WorkflowPanel";
+import {
+  nextRunWindow,
+  PlanCard,
+  placeWorkflows,
+  RUN_WINDOW,
+  WorkflowLine,
+  workflowActivity,
+  workflowLive,
+} from "./WorkflowPanel";
 
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
@@ -296,6 +306,69 @@ export function ChatWorkspace({
   useEffect(() => {
     onWorkflowRuns?.(JSON.parse(runsKey));
   }, [runsKey, onWorkflowRuns]);
+  // Each workflow is one line after the turn it started in. Each list's newest
+  // are read first; older ones only once the turns shown could hold them.
+  const [windows, setWindows] = useState({
+    terminal: RUN_WINDOW,
+    browser: RUN_WINDOW,
+  });
+  const watched = useMemo(
+    () => [
+      ...new Set([
+        ...conversation.runs.slice(-windows.terminal),
+        ...(state?.runs ?? []).slice(-windows.browser),
+      ]),
+    ],
+    [conversation.runs, state?.runs, windows],
+  );
+  const flows = useWorkflowRuns(client, available ? watched : [], 1000);
+  const firstAt = turns.find((turn) => turn.header.at > 0)?.header.at;
+  const allTurns = !earlier && turns.length > 0;
+  useEffect(() => {
+    if (!available) return;
+    const grown = (ids: readonly string[], size: number) =>
+      nextRunWindow(ids, size, flows.runs, flows.unreadable, firstAt, allTurns);
+    const terminal = grown(conversation.runs, windows.terminal),
+      browser = grown(state?.runs ?? [], windows.browser);
+    if (terminal !== windows.terminal || browser !== windows.browser)
+      setWindows({ terminal, browser });
+  }, [
+    available,
+    conversation.runs,
+    state?.runs,
+    windows,
+    flows,
+    firstAt,
+    allTurns,
+  ]);
+  const placed = useMemo(
+    () => placeWorkflows(turns, flows.runs.values(), earlier),
+    [turns, flows.runs, earlier],
+  );
+  const activeRun = [...flows.runs.values()].filter(workflowLive).at(-1);
+  // A line that appears or settles (and may gain its reason) keeps a reader at
+  // the end there; a live line's changing activity never moves the reader.
+  const linesKey = [...flows.runs.values()]
+    .map((run) => `${run.id}:${run.status}`)
+    .join();
+  useLayoutEffect(() => {
+    if (linesKey && stick.current && scroll.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [linesKey]);
+  const workflowLine = (run: WorkflowRun) => (
+    <WorkflowLine
+      key={run.id}
+      client={client}
+      run={run}
+      onOpen={() =>
+        onOpenAgent?.({ runId: run.id, stepId: null, label: run.goal })
+      }
+      onChanged={() => {
+        workflow.refresh();
+        onChanged();
+      }}
+    />
+  );
   const approve = async () => {
     if (!state?.proposal) {
       setError(t("No plan is awaiting approval."));
@@ -548,19 +621,30 @@ export function ChatWorkspace({
               {t("Show the latest")}
             </button>
           )}
-          {summary && (
-            <span className={`ep-state ${summary.status}`}>
-              {cadence
-                ? running
-                  ? t("Discussing")
-                  : settledBadly
-                    ? tx(summary.status)
-                    : state?.proposal
-                      ? t("Awaiting plan approval")
-                      : t("Ready for conversation")
-                : tx(summary.status)}
+          {/* A live workflow is what this conversation is doing, whatever its
+              mode; beside it the reply's status stays only when that reply
+              ended badly or a plan awaits approval. */}
+          {activeRun && (
+            <span className="ep-state running">
+              {tx(workflowActivity(activeRun))}
             </span>
           )}
+          {summary &&
+            (!activeRun ||
+              settledBadly ||
+              (cadence && !running && !!state?.proposal)) && (
+              <span className={`ep-state ${summary.status}`}>
+                {cadence
+                  ? running
+                    ? t("Discussing")
+                    : settledBadly
+                      ? tx(summary.status)
+                      : state?.proposal
+                        ? t("Awaiting plan approval")
+                        : t("Ready for conversation")
+                  : tx(summary.status)}
+              </span>
+            )}
         </div>
       </header>
       {branchesOpen && (
@@ -608,21 +692,25 @@ export function ChatWorkspace({
             {conversation.loadingEarlier && t("Reading earlier messages…")}
           </div>
         )}
+        {placed.start.map(workflowLine)}
         {rows.map(({ id, version, turn }) => (
-          <LazyMount
-            key={id}
-            id={id}
-            show={!lazy.hidden.has(id)}
-            height={lazy.placeholder(id, version, 320)}
-            containerRef={scroll}
-            onMeasured={lazy.recordMeasured}
-            lazyRef={lazy.register(id)}
-          >
-            <ChatTurnView
-              turn={turn}
-              toggled={toggles.current.get(id) ?? null}
-              onToggle={rememberToggle}
-            />
+          <Fragment key={id}>
+            <LazyMount
+              id={id}
+              show={!lazy.hidden.has(id)}
+              height={lazy.placeholder(id, version, 320)}
+              containerRef={scroll}
+              onMeasured={lazy.recordMeasured}
+              lazyRef={lazy.register(id)}
+            >
+              <ChatTurnView
+                turn={turn}
+                toggled={toggles.current.get(id) ?? null}
+                onToggle={rememberToggle}
+              />
+            </LazyMount>
+            {/* Workflows that started in this turn, then the turn's branch point. */}
+            {placed.after.get(id)?.map(workflowLine)}
             {turn.header.entry &&
               turn.ordinal < conversation.count - 1 &&
               !running && (
@@ -638,8 +726,9 @@ export function ChatWorkspace({
                   {t("Continue from here")}
                 </button>
               )}
-          </LazyMount>
+          </Fragment>
         ))}
+        {placed.end.map(workflowLine)}
         {conversation.attempt && (
           <article className="chat-attempt" aria-label={t("Message")}>
             <p className="chat-attempt-text">{conversation.attempt.text}</p>
@@ -653,11 +742,9 @@ export function ChatWorkspace({
             </p>
           </article>
         )}
-        {state && (
-          <WorkflowPanel
-            client={client}
-            state={state}
-            runs={runs}
+        {state?.enabled && state.proposal && (
+          <PlanCard
+            proposal={state.proposal}
             canApprove={
               canSend &&
               cadenceKnown &&
@@ -667,12 +754,21 @@ export function ChatWorkspace({
             }
             approvalHint={approvalHint}
             onApprove={() => void approve()}
-            onOpenAgent={onOpenAgent}
-            onChanged={() => {
-              workflow.refresh();
-              onChanged();
-            }}
           />
+        )}
+        {state?.enabled && !state.proposal && runs.length === 0 && (
+          <p className="inspector-note">
+            {t(
+              "Cadence stays on for this conversation until you explicitly exit.",
+            )}
+          </p>
+        )}
+        {flows.failed && (
+          <p className="inspector-note" role="status">
+            {t(
+              "Workflow activity unavailable; retained work may still be running.",
+            )}
+          </p>
         )}
         {state?.notice && (
           <p role="alert" className="banner-notice">

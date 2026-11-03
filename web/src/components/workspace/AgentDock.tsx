@@ -1,6 +1,6 @@
 /* pi-web-ui's compact agent rows, backed only by Cadence retained child IDs.
  * MIT (c) 2026 xing-shuyin. This observer never launches or cancels an agent. */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FiChevronDown, FiCpu } from "react-icons/fi";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { useT } from "../../i18n/locale";
@@ -18,51 +18,96 @@ export interface WorkflowAgent {
   label: string;
 }
 const LIVE = ["queued", "running"];
-/** A workflow step ID is `<assignment>-<uuid>`; the assignment is the readable part. */
+/** A workflow step ID is `<assignment>-<uuid>`, and a review assignment is
+ * itself `review-<uuid>`; the assignment without its suffixes is the readable part. */
 export function workflowAgentLabel(stepId: string) {
   return stepId.replace(
-    /-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    /(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})+$/i,
     "",
   );
 }
-/** Observe the named workflow runs: live ones on an interval, settled ones once. */
+/** Reads in flight at once, newest first, so current work shows soonest. */
+const READS = 4;
+/** An ID never read successfully (a terminal attempt the owner refused leaves
+ * one) is retried this often; it is never taken as a settled or absent run. */
+const UNREAD_RETRY_MS = 10000;
+/** Observe the named workflow runs: live ones on an interval, settled ones once.
+ * `failed`: a run already observed could not be read again, so what it shows
+ * may be out of date. `unreadable`: IDs not read successfully yet. */
 export function useWorkflowRuns(
   client: Pick<ServiceClient, "workbenchRead">,
   ids: readonly string[],
   interval = 2000,
 ) {
-  const [runs, setRuns] = useState<ReadonlyMap<string, WorkflowRun>>(
-    () => new Map(),
-  );
-  const [failed, setFailed] = useState(false);
+  const [observation, setObservation] = useState<{
+    runs: ReadonlyMap<string, WorkflowRun>;
+    failed: boolean;
+    unreadable: ReadonlySet<string>;
+  }>(() => ({ runs: new Map(), failed: false, unreadable: new Set() }));
+  // A settled run never changes, so a longer list reads only what is new.
+  const settled = useRef({ client, runs: new Map<string, WorkflowRun>() });
   const key = JSON.stringify([...new Set(ids)]);
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const known = new Map<string, WorkflowRun>();
-    const poll = async () => {
-      let error = false;
-      for (const id of JSON.parse(key) as string[]) {
-        const previous = known.get(id);
-        if (previous && !LIVE.includes(previous.status)) continue;
-        const reply = await client.workbenchRead(
-          { kind: "workflow", id },
-          abort.signal,
-        );
-        if (abort.signal.aborted) return;
-        if (
-          reply.kind === "ok" &&
-          reply.value.kind === "workflow" &&
-          reply.value.response.type === "run"
-        )
-          known.set(id, reply.value.response.run);
-        else error = true;
+    if (settled.current.client !== client)
+      settled.current = { client, runs: new Map() };
+    const known = new Map(settled.current.runs);
+    const missed = new Map<string, number>();
+    const listed = JSON.parse(key) as string[];
+    const publish = (failed: boolean) => {
+      const runs = new Map<string, WorkflowRun>();
+      for (const id of listed) {
+        const run = known.get(id);
+        if (run) runs.set(id, run);
       }
-      if (abort.signal.aborted) return;
-      setRuns(new Map(known));
-      setFailed(error);
-      if (error || [...known.values()].some((run) => LIVE.includes(run.status)))
+      setObservation({ runs, failed, unreadable: new Set(missed.keys()) });
+      return runs;
+    };
+    /** Whether the read left an observed run without a current observation. */
+    const read = async (id: string) => {
+      const reply = await client.workbenchRead(
+        { kind: "workflow", id },
+        abort.signal,
+      );
+      if (abort.signal.aborted) return false;
+      if (
+        reply.kind === "ok" &&
+        reply.value.kind === "workflow" &&
+        reply.value.response.type === "run"
+      ) {
+        const run = reply.value.response.run;
+        known.set(id, run);
+        missed.delete(id);
+        if (!LIVE.includes(run.status)) settled.current.runs.set(id, run);
+        return false;
+      }
+      if (known.has(id)) return true;
+      missed.set(id, Date.now());
+      return false;
+    };
+    const poll = async () => {
+      let failed = false;
+      const now = Date.now();
+      const due = listed
+        .filter((id) => {
+          const previous = known.get(id);
+          return previous
+            ? LIVE.includes(previous.status)
+            : now - (missed.get(id) ?? 0) >= UNREAD_RETRY_MS;
+        })
+        .reverse();
+      for (let i = 0; i < due.length; i += READS) {
+        const stale = await Promise.all(due.slice(i, i + READS).map(read));
+        if (abort.signal.aborted) return;
+        failed ||= stale.includes(true);
+        if (i + READS < due.length) publish(failed);
+      }
+      const runs = publish(failed);
+      if (failed || [...runs.values()].some((run) => LIVE.includes(run.status)))
         timer = setTimeout(() => void poll(), interval);
+      else if (missed.size)
+        timer = setTimeout(() => void poll(), UNREAD_RETRY_MS);
     };
     void poll();
     return () => {
@@ -70,7 +115,7 @@ export function useWorkflowRuns(
       clearTimeout(timer);
     };
   }, [client, key, interval]);
-  return { runs, failed };
+  return observation;
 }
 export function AgentDock({
   client,

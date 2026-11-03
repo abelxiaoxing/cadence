@@ -404,7 +404,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .getByRole("button", { name: "Implement this plan", exact: true })
       .click();
     await page
-      .locator(".workflow-panel .workflow-card > header .ep-state.completed")
+      .locator(".workflow-line .workflow-line-meta.completed")
       .waitFor();
     assert(
       readFileSync(join(paths[0], "a.txt"), "utf8").includes("implemented"),

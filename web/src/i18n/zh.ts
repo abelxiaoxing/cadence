@@ -50,7 +50,6 @@ export const zh = {
   "Cadence stays on. Confirm one plan before implementation.":
     "Cadence 将持续开启。确认一次计划后开始实施。",
   "Cadence workflow": "Cadence 工作流",
-  "Earlier workflow results": "较早的工作流结果",
   "Current implementation plan": "当前实施计划",
   "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.":
     "批准仅覆盖本计划中的实施、检查、有限修复和所列的本地交付。不包含推送、发布或部署。",
@@ -60,6 +59,13 @@ export const zh = {
   "Cadence stays on for this conversation until you explicitly exit.":
     "本对话将持续使用 Cadence，直到你明确退出。",
   "Workflow progress": "工作流进度",
+  "Open workflow details": "打开工作流详情",
+  Stop: "停止",
+  researching: "调研中",
+  "merged {commit}": "合并 {commit}",
+  "{s}s": "{s} 秒",
+  "{m}m {s}s": "{m} 分 {s} 秒",
+  "{h}h {m}m": "{h} 小时 {m} 分",
   "Observing workflow": "正在观察工作流",
   "State unavailable is not completion. No automatic resubmission.":
     "状态不可用不代表已经完成。不会自动重新提交。",

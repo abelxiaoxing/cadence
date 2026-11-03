@@ -507,3 +507,21 @@ During development one `verify:full` failed only `service-owner`'s `registry ove
 A separate Bun pack contains 152 files; SHA-256 `95a5e5679e3f4fa6050a51b463b9fdd19494b80925e950566e5cdf6674a2210d`, SHA-1 `83f7dc164448300ac939064eec2abbe6737e5edb`.
 Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
 Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.
+
+## Release 2.0.33 acceptance snapshot
+
+In the WebUI chat a workflow's card stayed pinned below the newest message and listed every step, check and subagent, which repeated the Subagents dock, while the conversation header and sidebar row said the reply was done during a running implementation.
+Each workflow is now one line after the turn it started in: a live line shows its phase, the running steps and a Stop button, and a settled line shows the outcome, merge commit and duration, with the first notice line when it did not complete.
+The line opens the existing main-area workflow view of steps, checks, delivery and diagnostics; subagents stay in the dock, and a plan awaiting approval stays at the bottom of the conversation.
+The header and the sidebar row name a live workflow's phase, and a failed, interrupted or unknown reply keeps its own status.
+Runs are read four at a time, newest first, and settled runs are cached; the terminal and browser run lists each grow in windows of eight, and an ID that cannot be read yet, such as one left by a refused terminal attempt, is retried every 10s instead of holding the window or reporting a failure.
+WebUI unit tests cover the line in English and Chinese, its placement and the window growth; the browser scenario checks that each line stays after the turn it started in, and the gateway scenario reads the completed line.
+A temporary preview script pressed Stop against a fixture owner and the line settled as canceled with its reason; no kept test presses it.
+Placement follows start times, not the branch on screen, and a queued browser turn whose time changes can move a line; `engineering/clients.md` records the rule.
+The contract is unchanged, so 2.0.32 and 2.0.33 clients and owners accept each other.
+
+The release `verify:full` passed on its first run in 287.5s: the gate in 24.6s (1329 root/native tests in 76 files with 282 skipped, 156 WebUI tests in 16 files and the 152-member pack audit), then 463 `slow` root tests in 154.5s and seven browser scenarios in six files in 108.3s, 1792 root tests in all as in 2.0.32.
+Before the version change the same candidate had passed `verify:full` in 312.4s.
+A separate Bun pack contains 152 files; SHA-256 `1497e0bfbf1543af895f946cf25909c618c923b86baf3a469b73dbec65df4b6a`, SHA-1 `13ab8eccc72f11fb87a23f25812dbc937c1537dc`.
+Observed environment: Linux, official Node 22.22.1, npm 11.21.1, Bun 1.3.14 and Chrome for Testing 153 (Playwright chromium-1243); macOS, Windows and paid providers were not executed.
+Commit, merge to `main`, GitHub push and npm publication were explicitly authorized.

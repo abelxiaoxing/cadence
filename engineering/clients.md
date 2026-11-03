@@ -114,7 +114,7 @@ Its chrome: a compact topbar with view tabs and icon actions, a sectioned task s
 The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
 The composer's Cadence mode switch replaces the old mode select: off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
 The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running conversations holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
-There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as a card; an active one is also listed under Running conversations.
+There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running conversations.
 A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
 The dock is only as tall as its rows, up to its default height, until a drag sets one; it stays folded while empty unless opened, and its heading count leads the total with the queued or running agents (`2 active · 5 total`).
 A compact sidebar list notes only partial, redacted or omitted recording coverage; complete coverage needs no note there.
@@ -188,8 +188,15 @@ Every navigation makes a fresh readonly observation, including retrying the same
 Folder browsing (not Open) accepts `~` for the service account's home and reports a missing folder as `invalid`, a file or linked component as `forbidden` and a read failure as `unavailable`; the gateway passes these public codes on so the picker can explain them.
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
-The center shows ordinary/coordinator messages, exact plan cards and actual workflow progress/results as Markdown, plus retained legacy task text.
-A workflow subagent's transcript and retained result open in the center as their own view over the conversation, which stays mounted (draft, scroll and observations) behind it; the chat card links to that view instead of embedding the transcript.
+The center shows ordinary/coordinator messages, exact plan cards and one line per workflow, plus retained legacy task text.
+A workflow's line follows the newest turn shown that began before the owner accepted it (Pi's turn timestamp against the owner's acceptance time), so later messages follow it rather than it staying below the newest message; with no earlier turn left to read, a run older than every turn heads the transcript, an undated record ends it, and nothing is placed before any turn is read.
+Workflows belong to the conversation, not to a branch: on any branch a line goes where its time falls.
+The line names what a live workflow is doing (its phase and running steps) with an orderly Stop request, or how it ended: its status, local merge commit and owner-measured duration, plus the first line of the reason when it did not complete.
+Its steps, checks, delivery and diagnostics are not in the chat: the line opens the workflow's own view, whose steps link to each subagent's view, and the dock lists the subagents.
+These views open in the center over the conversation, which stays mounted (draft, scroll and observations) behind them.
+The chat reads the newest workflows of the terminal's and the browser's lists at first (`RUN_WINDOW` each) and earlier ones while the loaded turns could hold them.
+A run that cannot be read again keeps its last observation with an unavailable note; an ID never read (a terminal attempt the owner refused leaves one) shows nothing and is retried every ten seconds, never taken as settled or absent.
+A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running conversations); a plan awaiting approval also stays beside it.
 Running conversations lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
 In Cadence mode a failed, interrupted or unknown turn keeps its actual status in the header and sidebar; approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
 An approval attempt guards only its own in-flight request: the owner consumes a plan once, so a lost reply is resolved by the next observation, not by a browser-side lock.

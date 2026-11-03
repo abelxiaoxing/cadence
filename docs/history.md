@@ -5,9 +5,9 @@ History is evidence, not a second task manager or renewed execution consent.
 
 ## Current workflows
 
-- In the conversation, open a workflow's steps to see actual checks, Agent review, delivery and failures.
+- In the conversation, select a workflow's line to open its steps: actual checks, Agent review, delivery and failures.
   **Open subagent context** shows the retained transcript; **Read retained step result** reads the retained result rather than its clipped status preview.
-- A workflow belongs to the conversation that started it, in the browser or in the terminal, and its card stays there.
+- A workflow belongs to the conversation that started it, in the browser or in the terminal, and its line stays after the turn it started in.
   An active workflow is also listed under **Running conversations** in the browser sidebar.
 - In a trusted Pi terminal, `/cadence-history` lists workflows without asking a model.
   The listing is paged in ID order, not chronological order; larger histories show scan progress first, and **Continue scanning** resumes it.

@@ -5,6 +5,10 @@ import type {
   CadenceConversation,
   WorkbenchCommand,
 } from "../../src/service/contracts/workbench.ts";
+import type {
+  WorkflowRun,
+  WorkflowStep,
+} from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import {
   approveWorkflow,
@@ -15,7 +19,12 @@ import {
   AgentDock,
   workflowAgentLabel,
 } from "../../web/src/components/workspace/AgentDock";
-import { WorkflowPanel } from "../../web/src/components/workspace/WorkflowPanel";
+import {
+  nextRunWindow,
+  PlanCard,
+  placeWorkflows,
+  WorkflowLine,
+} from "../../web/src/components/workspace/WorkflowPanel";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import type { ActiveRuns, RunProjection } from "../../web/src/types";
 import { plan } from "../helpers/workflow-plan.ts";
@@ -140,14 +149,13 @@ it("only exact unquoted approval/exit inputs are action intents", () => {
 });
 it("plan cards expose actual checks and local delivery, not old Save/Start/Review steps", () => {
   const s = state();
+  if (!s.proposal) throw Error("fixture proposal");
   const html = renderToStaticMarkup(
-    <WorkflowPanel
-      client={new ServiceClient(transport())}
-      state={s}
+    <PlanCard
+      proposal={s.proposal}
       canApprove={false}
       approvalHint="The latest turn's outcome is unknown."
       onApprove={() => {}}
-      onChanged={() => {}}
     />,
   );
   expect(html).toContain("Implement this plan");
@@ -160,7 +168,179 @@ it("workflow subagent rows use the readable assignment, not the step's random su
   expect(
     workflowAgentLabel("implement-a-1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
   ).toBe("implement-a");
+  // A review assignment carries its own identity before the step's suffix.
+  expect(
+    workflowAgentLabel(
+      "review-6419c395-1dd5-49f0-a1ef-87c6c13a2550-1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+    ),
+  ).toBe("review");
   expect(workflowAgentLabel("question-1")).toBe("question-1");
+});
+const step = (
+  id: string,
+  kind: WorkflowStep["kind"],
+  status: WorkflowStep["status"],
+  text = "",
+): WorkflowStep => ({
+  id: `${id}-${randomUUID()}`,
+  ...(kind === "git" || kind === "check" ? {} : { childRunId: randomUUID() }),
+  kind,
+  status,
+  text,
+  exitCode: null,
+  truncated: false,
+});
+function run(
+  over: Partial<WorkflowRun> = {},
+  acceptedAt = 1_000_000,
+  settledAt: number | null = null,
+): WorkflowRun {
+  return {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    goal: "Two independent outputs",
+    status: "running",
+    phase: "implementing",
+    steps: [
+      step("worktree-a", "git", "completed"),
+      step("a", "implementation", "running", "Writing a.txt"),
+      step("b", "implementation", "running"),
+    ],
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+    diagnostics: {
+      acceptedAt,
+      acquiredAt: null,
+      settledAt,
+      owner: {
+        version: "0",
+        build: "fixture",
+        entry: "service-host.mjs",
+        pid: 1,
+        node: "v22",
+        platform: "linux",
+        startedAt: 0,
+      },
+    },
+    ...over,
+  };
+}
+const line = (r: WorkflowRun, locale: "en" | "zh" = "en") =>
+  renderToStaticMarkup(
+    <LocaleProvider initial={locale}>
+      <WorkflowLine
+        client={new ServiceClient(transport())}
+        run={r}
+        onOpen={() => {}}
+      />
+    </LocaleProvider>,
+  );
+it("a workflow is one line: what it is doing while live, never its step list", () => {
+  const live = run();
+  const html = line(live);
+  expect(html).toContain("Two independent outputs");
+  expect(html).toContain("implementing · a, b");
+  expect(html).toContain('aria-label="Cancel workflow — request stop"');
+  expect(html).not.toContain("worktree-a");
+  expect(html).not.toContain("Writing a.txt");
+  expect(html).not.toContain("Owner timing");
+  expect(line(live, "zh")).toContain("实施中 · a, b");
+  expect(line(live, "zh")).toContain("停止");
+  const research = run({
+    phase: "research",
+    steps: [step("research-1", "research", "running")],
+  });
+  expect(line(research, "zh")).toContain("调研中 · research-1");
+});
+it("a settled line keeps its outcome, owner-clock duration and, when unsuccessful, the reason", () => {
+  const merged = run(
+    {
+      status: "completed",
+      phase: "finished",
+      mergedCommit: "9a94027ea14a0351c29deb872349614ad9bc7513",
+      notice: "Changed files: a.txt, b.txt",
+    },
+    1_000_000,
+    1_072_000,
+  );
+  expect(line(merged)).toContain("completed · merged 9a94027 · 1m 12s");
+  expect(line(merged, "zh")).toContain("已完成 · 合并 9a94027 · 1 分 12 秒");
+  expect(line(merged)).not.toContain("Cancel workflow");
+  expect(line(merged)).not.toContain("Changed files");
+  const failed = run(
+    {
+      status: "failed",
+      phase: "finished",
+      notice: "\nCheck outputs failed: exit 1\nChanged files so far: a.txt",
+    },
+    1_000_000,
+    1_042_000,
+  );
+  const html = line(failed);
+  expect(html).toContain("failed · 42s");
+  expect(html).toContain("Check outputs failed: exit 1");
+  expect(html).not.toContain("Changed files so far");
+  // A record without owner timing states no duration rather than guessing one.
+  expect(line(run({ status: "canceled", diagnostics: undefined }))).toContain(
+    "canceled</span>",
+  );
+});
+it("each workflow line follows the turn it started in, never the newest message", () => {
+  const turn = (id: string, at: number) => ({ header: { id, at } });
+  const turns = [turn("t1", 100), turn("t2", 200), turn("t3", 300)];
+  const research = run({ goal: "research" }, 150);
+  const second = run({ goal: "second" }, 260);
+  const first = run({ goal: "first" }, 210);
+  const undated = run({ goal: "undated", diagnostics: undefined, steps: [] });
+  const older = run({ goal: "older" }, 50);
+  const goals = (runs?: WorkflowRun[]) => runs?.map((r) => r.goal);
+  const placed = placeWorkflows(
+    turns,
+    [second, undated, research, older, first],
+    true,
+  );
+  expect(goals(placed.after.get("t1"))).toEqual(["research"]);
+  expect(goals(placed.after.get("t2"))).toEqual(["first", "second"]);
+  expect(placed.after.get("t3")).toBeUndefined();
+  expect(goals(placed.end)).toEqual(["undated"]);
+  // Older than every turn shown: it waits while earlier turns remain unread,
+  // then heads the transcript.
+  expect(goals(placed.start)).toEqual([]);
+  expect(
+    [...placed.after.values()].flat().some((r) => r.goal === "older"),
+  ).toBe(false);
+  expect(goals(placeWorkflows(turns, [older], false).start)).toEqual(["older"]);
+  // A turn without a recorded start holds nothing.
+  expect(goals(placeWorkflows([turn("t0", 0)], [research], false).end)).toEqual(
+    ["research"],
+  );
+  // Before any turn is read (first load, branch switch) nothing gathers at the end.
+  const unread = placeWorkflows([], [research, undated], false);
+  expect([...unread.start, ...unread.end, ...unread.after.values()]).toEqual(
+    [],
+  );
+});
+it("each workflow list is read newest first, older ones only while the turns shown could hold them", () => {
+  const ids = Array.from({ length: 20 }, () => randomUUID());
+  const at = (index: number) => 1000 + index * 10;
+  const observed = (indexes: number[]) =>
+    new Map(indexes.map((i) => [ids[i], run({ id: ids[i] }, at(i))]));
+  const newest = [12, 13, 14, 15, 16, 17, 18, 19];
+  const none = new Set<string>();
+  // Still reading the window: no growth yet.
+  expect(nextRunWindow(ids, 8, observed([19]), none, at(0), false)).toBe(8);
+  // The oldest run read began after the oldest turn shown: read older ones.
+  expect(nextRunWindow(ids, 8, observed(newest), none, at(5), false)).toBe(16);
+  // It began before the oldest turn shown: the turns shown hold no older run.
+  expect(nextRunWindow(ids, 8, observed(newest), none, at(14), false)).toBe(8);
+  // Every turn shown: read on to the oldest.
+  expect(nextRunWindow(ids, 8, observed(newest), none, at(14), true)).toBe(16);
+  expect(nextRunWindow(ids, 24, observed(newest), none, at(0), true)).toBe(24);
+  // An ID that cannot be read (a refused terminal attempt) never stalls it.
+  const refused = new Set([ids[13]]);
+  const readable = observed(newest.filter((i) => i !== 13));
+  expect(nextRunWindow(ids, 8, readable, refused, at(5), false)).toBe(16);
 });
 it("the subagent dock count leads with how many listed agents are still active", () => {
   const child = (lifecycle: RunProjection["lifecycle"]) =>
