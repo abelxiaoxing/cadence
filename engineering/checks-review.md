@@ -48,7 +48,11 @@ Local operation errors neither hide an independent observation error nor imply t
 Native/browser workflow approval includes exact setup, separate baseline/acceptance checks, delivery policy and a finite repair budget.
 Setup never implicitly copies dependency trees, profiles or credentials.
 Baseline checks cannot require future outputs.
-Local-merge candidates receive readonly Agent review, whole-candidate checks and another check after generated documentation before fast-forward integration into the unchanged target.
+Assignment handoffs name the current task and already-applied predecessor outputs; initial cleanliness preconditions are not rerun against the pipeline's own edits, and each working-copy task is confined to its own declared writes.
+Candidates run acceptance checks before readonly Agent review.
+Review and bounded repair receive current-round native exit/closure facts plus explicitly bounded, redacted retained output excerpts, never worker prose as passing-check evidence or old-round failures as current results.
+Failed checks still block delivery regardless of a review approval.
+Local-merge candidates receive another check after generated documentation before fast-forward integration into the unchanged target.
 Local commit hooks/signing are disabled; verification is explicitly approved instead.
 Workflow scope checks independently include staged changes, even when the worktree was restored to HEAD or a staged new file was removed.
 A declared write path that names a directory covers the files below it, in plan overlap, scope, commit and observation alike; write paths refuse format characters (bidi, zero-width, BOM, line separators).

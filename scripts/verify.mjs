@@ -5,8 +5,10 @@ import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
+import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+assertVerificationTemp(root);
 const full = process.argv.slice(2).includes("--full");
 const windows = process.platform === "win32";
 const node = process.execPath;

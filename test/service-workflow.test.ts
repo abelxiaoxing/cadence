@@ -418,7 +418,8 @@ it("failed verification uses only the approved repair budget and never merges a 
     p.checks = [
       {
         name: "real failure",
-        command: 'node -e "process.exit(1)"',
+        command:
+          "node -e \"console.error('fixture-check-diagnostic');process.exit(1)\"",
         timeoutMs: 3000,
       },
     ];
@@ -436,11 +437,32 @@ it("failed verification uses only the approved repair budget and never merges a 
     expect(run.mergedCommit).toBeNull();
     expect(git("rev-parse", "HEAD")).toBe(baseline);
     expect(existsSync(join(f.root, "a.txt"))).toBe(false);
-    // Working-copy delivery in Git enforces the declared scope: the fixture
-    // worker writes b.txt for a task declared to write c.txt.
+    const reviews = run.steps.filter((s) => s.kind === "review");
+    expect(reviews).toHaveLength(2);
+    for (const review of reviews) {
+      const previous = run.steps[run.steps.indexOf(review) - 1];
+      expect(previous).toMatchObject({ kind: "check", exitCode: 1 });
+      const prompt = f.observations
+        .map((o) => JSON.stringify(o.messages))
+        .find(
+          (text) =>
+            text.includes("Independently inspect the implemented files") &&
+            text.includes(previous.id),
+        );
+      expect(prompt).toContain("fixture-check-diagnostic");
+      expect(prompt).toContain("Current-round check evidence");
+    }
+    const repair = f.observations
+      .map((o) => JSON.stringify(o.messages))
+      .find((text) => text.includes("Repair only within approved paths"));
+    expect(repair).toContain("fixture-check-diagnostic");
+    expect(repair).toContain(reviews[0].id);
+    expect(repair).not.toContain(reviews[1].id);
+    // Each working-copy assignment owns its own scope, not the union: the
+    // first worker writes b.txt, which only the second assignment may write.
     const direct = plan();
     direct.delivery = "working-copy";
-    direct.tasks = [{ ...direct.tasks[1], writes: ["c.txt"] }];
+    direct.tasks = [{ ...direct.tasks[0], writes: ["c.txt"] }, direct.tasks[1]];
     const scoped = await command({ action: "propose", plan: direct, model });
     if (scoped.type !== "proposal") throw Error("proposal");
     const outside = await wait(await start(scoped.proposal));
@@ -460,6 +482,24 @@ it("explicit working-copy delivery works without Git and never initializes or co
     f.mode("workflow");
     const p = plan();
     p.delivery = "working-copy";
+    p.tasks[1].after = ["a"];
+    p.setup = [
+      {
+        name: "setup once",
+        command:
+          "node -e \"require('fs').writeFileSync('setup-once','done',{flag:'wx'})\"",
+        timeoutMs: 3000,
+      },
+    ];
+    p.baselineChecks = [
+      {
+        name: "pre-implementation only",
+        command:
+          "node -e \"if(require('fs').existsSync('a.txt'))process.exit(1);console.log('BASELINE_ONLY')\"",
+        timeoutMs: 3000,
+      },
+    ];
+    p.checks[0].command += " && node -e \"console.log('CURRENT_CHECK_OK')\"";
     const proposed = await command({ action: "propose", plan: p, model });
     if (proposed.type !== "proposal") throw Error("proposal");
     const run = await wait(await start(proposed.proposal));
@@ -472,10 +512,64 @@ it("explicit working-copy delivery works without Git and never initializes or co
     expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe(
       "implemented a.txt\n",
     );
+    const prompts = f.observations.map((o) => JSON.stringify(o.messages));
+    const second = prompts.find((text) =>
+      text.includes("Execute only assignment b:"),
+    );
+    expect(second).toContain("Predecessor assignments already applied here: a");
+    expect(second).toContain("Do not rerun initial cleanliness preconditions");
+    const review = prompts.find((text) =>
+      text.includes("Independently inspect the implemented files"),
+    );
+    expect(review).toContain("CURRENT_CHECK_OK");
+    expect(review).not.toContain("BASELINE_ONLY");
+    const index = run.steps.findIndex((s) => s.kind === "review");
+    expect(run.steps[index - 1]).toMatchObject({ kind: "check", exitCode: 0 });
+    expect(run.steps.filter((s) => s.id.startsWith("setup:"))).toHaveLength(1);
   } finally {
     await f.close();
   }
 }, 30000);
+
+it("passing checks with an unparseable review stop without spending repairs or claiming delivery", async () => {
+  const { f, command, start, wait, model } = await setup(false);
+  try {
+    f.mode("workflow");
+    f.reply("Not a structured review verdict.");
+    const definition = plan();
+    definition.delivery = "working-copy";
+    definition.repairAttempts = 1;
+    const proposed = await command({
+      action: "propose",
+      plan: definition,
+      model,
+    });
+    if (proposed.type !== "proposal") throw Error("proposal");
+    const run = await wait(await start(proposed.proposal));
+    expect(run.status).toBe("failed");
+    expect(run.notice).toContain("Checks passed");
+    expect(run.notice).toContain("could not be parsed");
+    expect(run.steps.filter((s) => s.id.startsWith("repair-"))).toHaveLength(0);
+    expect(run.steps.find((s) => s.kind === "review")).toMatchObject({
+      status: "failed",
+      exitCode: 0,
+    });
+    expect(
+      run.steps
+        .filter((s) => s.kind === "check")
+        .every((s) => s.exitCode === 0),
+    ).toBe(true);
+    expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe(
+      "implemented a.txt\n",
+    );
+    expect(run.mergedCommit).toBeNull();
+    expect(
+      existsSync(join(f.root, ".cadence/assistant/workflows", run.id)),
+    ).toBe(false);
+  } finally {
+    await f.close();
+  }
+}, 20000);
 
 it("a baseline command cannot hide out-of-scope changes by committing them in the candidate", async () => {
   const { f, git, command, start, wait, model, worktrees } = await setup();
