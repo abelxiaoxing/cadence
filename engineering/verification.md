@@ -22,7 +22,8 @@ CADENCE_SYSTEMD_E2E=1 bun run test test/service-maintenance-systemd.test.ts
 bun pm pack --destination /absolute/private-temp
 ```
 
-Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, on the checkout's disk filesystem rather than a nearly full tmpfs.
+Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, outside every Git working copy and on the checkout's disk filesystem rather than a nearly full tmpfs.
+`scripts/verification-temp.mjs` checks this before `verify` starts any stage; it refuses invalid input without creating, redirecting or cleaning directories.
 `verify` runs every independent check at once (syntax, generated bundles, incremental type checks, the web build check, lint, Agent pins, the root tests not tagged `slow`, web tests and exact real-pack auditing) and reports each stage with its time.
 `verify:full` then runs the `slow`-tagged root tests and the required real-browser scenarios, one lane at a time; a missing browser is non-green, never an automatic download.
 Run `verify:full` before a release and after changing a real-process or browser path; `verify` never says those lanes passed.
@@ -41,7 +42,9 @@ Do not run the entire suite after every local edit, but do not replace final int
 `bun run test` runs every root file in one parallel group, `test:unit` skips the `slow` tag and `test:slow` runs only it.
 Its workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
 A root test is tagged `slow` (`{ tags: ["slow"] }`, or `// @module-tag slow` as a whole file's first line) when it takes about 0.4 s or more alone, usually because it starts real owners, SDK workers, CLIs or crash children; short process tests stay untagged, so `verify` keeps them and stays fast.
-Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
+Use the external private temp root described above for targeted tests too.
+A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and triggers `Private state home must be outside the working copy`; this is an invalid test environment, not evidence that unrelated features broke.
+A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
 The same-checkout restart browser scenario observes stopped readiness and successful cold conversation head/context reads before its one explicit Send; a read refusal racing Stop permits preparation only, not message admission.
