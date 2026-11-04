@@ -13,6 +13,7 @@ import { afterEach, expect, it } from "vitest";
 import { assertVerificationTemp } from "../scripts/verification-temp.mjs";
 
 const homes = [];
+const checkout = resolve(fileURLToPath(new URL("..", import.meta.url)));
 afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true });
 });
@@ -81,7 +82,6 @@ it.skipIf(process.platform === "win32")(
 it("verify refuses checkout-local temp before launching any stages", () => {
   const { root, env } = fixture();
   // The actual checkout is always invalid as a temp root, regardless of mode.
-  const checkout = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const result = spawnSync(process.execPath, ["scripts/verify.mjs"], {
     cwd: checkout,
     env: { ...env(checkout), GIT_WORK_TREE: root },
@@ -92,3 +92,17 @@ it("verify refuses checkout-local temp before launching any stages", () => {
   expect(result.stderr).toContain("verification-temp-required");
   expect(result.stdout).toBe("");
 });
+it.each(["--full", "--browser", "--unknown"])(
+  "verify rejects %s before preflight or launching any stages",
+  (option) => {
+    const result = spawnSync(process.execPath, ["scripts/verify.mjs", option], {
+      cwd: checkout,
+      env: { ...process.env, TMPDIR: checkout, TMP: checkout, TEMP: checkout },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Usage: bun run verify (no options)\n");
+    expect(result.stdout).toBe("");
+  },
+);

@@ -21,7 +21,7 @@ export const shared = {
     {
       name: "slow",
       description:
-        "Takes about 0.4 s or more, usually by starting real owners, SDK workers, CLIs or crash children. `verify` skips it; `verify:full` runs it.",
+        "Takes about 0.4 s or more, usually by starting real owners, SDK workers, CLIs or crash children. Excluded from verification and default test commands; select explicitly for diagnosis only.",
     },
   ],
 };

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { expect, it } from "vitest";
@@ -141,29 +141,44 @@ it("reuse provenance pins every current adaptation and integration body, includi
   for (const name of policy.newIntegrationFiles)
     expect(Object.hasOwn(policy.destinations, name), name).toBe(true);
 });
-it("verify runs static, unit, web and real-pack checks; verify:full adds slow tests and the browser once; no consumer build", () => {
+it("one fast development/release gate keeps static, unit, web and real-pack checks without a browser or full lane", () => {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   expect(pkg.scripts.verify).toBe("node scripts/verify.mjs");
-  expect(pkg.scripts["verify:full"]).toBe("node scripts/verify.mjs --full");
+  for (const retired of [
+    "verify:full",
+    "test:slow",
+    "test:browser",
+    "test:web:assets-browser",
+  ])
+    expect(pkg.scripts[retired]).toBeUndefined();
+  for (const command of ["test", "test:target", "test:service"])
+    expect(pkg.scripts[command]).toContain("--tags-filter=!slow");
   const verify = readFileSync(join(root, "scripts/verify.mjs"), "utf8");
   for (const stage of [
+    '"scripts/check-syntax.mjs"',
+    '"scripts/build-operator.mjs", "--check"',
+    '"scripts/build-service.mjs", "--check"',
+    'tsc("root", "--noEmit")',
     '"web/tsconfig.json"',
     '"scripts/build-web.mjs", "--check"',
+    '[bin("biome"), "check", "."]',
+    '[bin("rumdl"), "check", "."]',
     '"scripts/check-agents.mjs"',
     '"--tags-filter=!slow"',
     '"web/vitest.config.ts"',
     '"scripts/pack-check.mjs"',
-    'vitest("--tags-filter=slow")',
   ])
     expect(verify).toContain(stage);
-  expect(verify.match(/web\/browser\.config\.ts/g)).toHaveLength(1);
+  expect(verify).toContain("Promise.all(gate.map(stage))");
+  expect(verify).not.toMatch(/--full|--tags-filter=slow|browser\.config/);
+  expect(pkg.devDependencies["playwright-core"]).toBeUndefined();
+  expect(existsSync(join(root, "web/browser.config.ts"))).toBe(false);
+  expect(
+    readdirSync(join(root, "test/web")).filter((name) =>
+      name.endsWith(".e2e.mjs"),
+    ),
+  ).toEqual([]);
   // npm 12 and Bun skip dependency install scripts by default; none ship.
   for (const hook of ["preinstall", "install", "postinstall", "prepare"])
     expect(pkg.scripts[hook]).toBeUndefined();
-  expect(readFileSync(join(root, "vitest.config.ts"), "utf8")).not.toContain(
-    "e2e",
-  );
-  expect(readFileSync(join(root, "web/browser.config.ts"), "utf8")).toContain(
-    "test/web/*.e2e.mjs",
-  );
 });
