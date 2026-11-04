@@ -53,6 +53,7 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
+`src/service/workflow-result.ts` owns the shared bounded, redacted process-result projection for workflow retention and reads, independent of native settlement and structured task completion.
 `src/service/conversation-contexts.ts` owns readonly context records and explicit per-conversation model installation/capture; it shares the existing bounded `OwnerModelContext` source cache, not one runtime per conversation.
 `src/conversation-identity.ts` supplies domain-separated context-version identities without importing the executor into Pi.
 `src/cadence-preferences.ts` stores only the credential-free default for new conversations.

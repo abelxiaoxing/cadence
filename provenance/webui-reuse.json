@@ -452,7 +452,7 @@
     "web/src/components/workspace/ChatTurnView.tsx": "34b8b09a44369ff062138bd18b39ab85008f7e9ae501123d2f0501e977b099f6",
     "test/service-conversation-workflow.test.ts": "8533466cbea513b525265cdb94d0ce73fa8f660584c6ed240fec486b1cbc332a",
     "test/web/workflow.test.tsx": "7c1d6247965606a95ae9f20ab307c38ac5500db9c3e33d088d0b528a35f20f8a",
-    "test/web/cadence-browser.e2e.mjs": "b33780848dce8ef6a86f8c16e614019f8ce9a8875744b14c44321253cd7153c9",
+    "test/web/cadence-browser.e2e.mjs": "c23691f117dd3fd17c523d70d3a25dabaf721c97db9af8ac0561ec22065d2807",
     "src/service/workbench-send-refusal.ts": "3f7481c2c07fc84bdece4ea843ccc6892495fb0ca5b7363aa6e897f0fca69878",
     "web/src/components/workspace/WorkflowAgentView.tsx": "886f213432348e9fc6396c55b661a4f5572781eb684caeb63fbe532d90503c71",
     "src/service/workflow-history.ts": "d135a518a989bb2a5e34facc5b4613f976b034d35f3651e93e5b330cf65d928c",

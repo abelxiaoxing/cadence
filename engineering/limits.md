@@ -41,7 +41,10 @@ Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKF
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
 A declared directory's identity hashes up to 20,000 entries; a larger one is refused as `invalid` with a request for narrower paths.
-Run snapshots allow 384KiB and 256 status steps; original process output retains its existing launcher bounds and labelled previews.
+Run snapshots allow 384KiB and 256 status steps.
+Workflow check/Git results use the existing 256KiB launcher output bound (`ProcessSpec.retainOutput` in `src/subagent-process.ts`), not its legacy 64KiB preview; legacy previews and native output/stop budgets remain unchanged.
+`WORKFLOW_RESULT_BYTES` in `src/service/workflow-result.ts` bounds the redacted JSON-encoded result to 240KiB, reserving wrapper space below the 384KiB record, 256KiB file-text DTO and 512KiB reply limits.
+Diagnostic head/tail clipping is explicitly flagged, including JSON escaping and redaction expansion; an implementation report is independently parsed from its complete selected message within 16KiB before field sanitation or display clipping.
 A subagent transcript beyond the conversation capture bounds (384KiB, 256 items) keeps a labelled prefix and the worker continues.
 Clean worktrees at their expected commit are removed after a merge with plain `git worktree remove`; any other worktree is retained and listed.
 Worker context remains the existing 32KiB bound and is refused rather than clipped.

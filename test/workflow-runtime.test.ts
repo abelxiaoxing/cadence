@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import type { ChatTurn } from "../src/service/contracts/workbench.ts";
-import { reviewVerdict, WorkflowTranscript } from "../src/service/workflows.ts";
+import {
+  implementationReport,
+  reviewVerdict,
+  Workflows,
+  WorkflowTranscript,
+} from "../src/service/workflows.ts";
 import { runProcess } from "../src/subagent-process.ts";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 
@@ -71,6 +76,152 @@ it("review verdicts are read alone, fenced or inside prose; unreadable replies s
     )?.approved,
   ).toBe(true);
   expect(reviewVerdict('{"approved":true,"summary":"cut')).toBeNull();
+});
+
+it("implementation reports distinguish blocked work from a complete assignment without interpreting prose", () => {
+  expect(
+    implementationReport('{"status":"completed","summary":"Built bundles"}'),
+  ).toEqual({ status: "completed", summary: "Built bundles" });
+  expect(
+    implementationReport(
+      '```json\n{"status":"blocked","summary":"Dependency missing"}\n```',
+    ),
+  ).toEqual({ status: "blocked", summary: "Dependency missing" });
+  for (const reply of [
+    "Stopped without building anything.",
+    "Completed everything!",
+    '{"status":"completed","summary":""}',
+    '{"status":"completed","summary":"ok","extra":true}',
+    '{"status":"blocked","status":"completed","summary":"ambiguous"}',
+    '{"status":"completed","summary":42}',
+    JSON.stringify({ status: "completed", summary: "\u001b[0m" }),
+    "null",
+    '{"status":"failed","summary":"error"}',
+    '{"status":"completed","summary":"cut',
+    '{"status":"completed","summary":"draft"}\n{"status":"blocked","summary":"final"}',
+  ])
+    expect(implementationReport(reply), reply).toBeNull();
+});
+
+it("structured reports sanitize decoded fields without damaging delimiters or escaped credentials", () => {
+  for (const summary of [
+    "Implemented token: string",
+    "Updated password=example",
+    "Tested Bearer fixture-value",
+  ]) {
+    const report = implementationReport(
+      JSON.stringify({ status: "completed", summary }),
+    );
+    expect(report?.status).toBe("completed");
+    expect(report?.summary).toContain("[redacted]");
+    expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+  }
+  const secret = 'fixture-"quoted"\\credential';
+  const report = implementationReport(
+    JSON.stringify({
+      status: "completed",
+      summary: `Unicode 😀, newline\n${secret}`,
+    }),
+    [secret],
+  );
+  expect(report).toEqual({
+    status: "completed",
+    summary: "Unicode 😀, newline\n[redacted]",
+  });
+  expect(
+    implementationReport(
+      JSON.stringify({ status: "completed", summary: "x".repeat(16384) }),
+    ),
+  ).toBeNull();
+});
+
+it("only complete selected reports authorize continuation; diagnostic clipping and native failure remain independent", async () => {
+  // Real stderr clipping, then the independently selected complete report as
+  // the worker boundary returns it; no model prose substitutes for native facts.
+  const result = await runProcess({
+    command: process.execPath,
+    args: ["-e", 'process.stderr.write("w".repeat(90000))'],
+    cwd: mkdtempSync(join(tmpdir(), "report-stderr-")),
+    timeoutMs: 15000,
+    signal: new AbortController().signal,
+  });
+  expect(result).toMatchObject({
+    outcome: "completed",
+    closed: true,
+    exitCode: 0,
+    truncated: true,
+  });
+  result.text = '{"status":"completed","summary":"Built file"}';
+  let report = implementationReport(result.text);
+  const step = { status: "completed", text: "", truncated: true };
+  const workflow = Object.assign(Object.create(Workflows.prototype), {
+    o: { secrets: () => [] },
+    save: () => {},
+    worker: async () => ({ result, step, report }),
+  });
+  await expect(
+    workflow.implementation({}, "unused", "build", "unused", {}),
+  ).resolves.toBeUndefined();
+  expect(step).toMatchObject({ status: "completed", truncated: true });
+  // An unavailable or clipped selected message cannot fall back to the valid
+  // looking native preview, regardless of the diagnostic flag.
+  report = null;
+  result.truncated = false;
+  await expect(
+    workflow.implementation({}, "unused", "build", "unused", {}),
+  ).rejects.toThrow("structured completion report");
+  report = implementationReport(result.text);
+  result.outcome = "unknown";
+  result.closed = false;
+  await expect(
+    workflow.implementation({}, "unused", "build", "unused", {}),
+  ).rejects.toThrow("Operation unknown");
+});
+
+it("workflow process results retain diagnostic tails beyond the legacy preview and label actual clipping", async () => {
+  const secret = "PRIVATE-FIXTURE-LITERAL";
+  const spec = {
+    command: process.execPath,
+    args: [
+      "-e",
+      `process.stdout.write("BEGIN ${secret}\\n" + "漢".repeat(30000) + "\\nFAILURE_TAIL ${secret}\\n")`,
+    ],
+    cwd: mkdtempSync(join(tmpdir(), "workflow-output-")),
+    timeoutMs: 15000,
+    signal: new AbortController().signal,
+    secrets: [secret],
+  };
+  const retained = await runProcess({ ...spec, retainOutput: true });
+  expect(retained).toMatchObject({
+    outcome: "completed",
+    exitCode: 0,
+    closed: true,
+    truncated: false,
+  });
+  expect(retained.output).toContain("FAILURE_TAIL [redacted]");
+  expect(retained.output).not.toContain(secret);
+  expect(retained.output).not.toContain("�");
+  expect(Buffer.byteLength(retained.output)).toBeGreaterThan(65536);
+  const preview = await runProcess(spec);
+  expect(preview).toMatchObject({
+    outcome: "completed",
+    exitCode: 0,
+    truncated: true,
+  });
+  expect(Buffer.byteLength(preview.output)).toBeLessThanOrEqual(65536);
+  expect(preview.output).toContain("[truncated]");
+  const expanded = await runProcess({
+    ...spec,
+    retainOutput: true,
+    secrets: ["x"],
+    args: ["-e", 'process.stdout.write("x".repeat(40000))'],
+  });
+  expect(expanded).toMatchObject({
+    outcome: "completed",
+    exitCode: 0,
+    truncated: true,
+  });
+  expect(Buffer.byteLength(expanded.output)).toBeLessThanOrEqual(256 * 1024);
 });
 
 it("transcript overflow keeps a labelled prefix and still selects the sanitized final message", () => {

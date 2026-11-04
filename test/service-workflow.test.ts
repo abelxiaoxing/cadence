@@ -107,7 +107,9 @@ async function setup(
           throw Error(JSON.stringify(r));
         const run = r.value.response.run;
         if (!["running", "queued"].includes(run.status)) return run;
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        // Observe actual settlement without a 30 Hz full-snapshot read load
+        // competing with real owners' journal I/O. Keep the original deadline.
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw Error("Workflow did not settle within its test budget");
     };
@@ -566,6 +568,245 @@ it("passing checks with an unparseable review stop without spending repairs or c
     expect(
       existsSync(join(f.root, ".cadence/assistant/workflows", run.id)),
     ).toBe(false);
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it.each([
+  ["blocked", "working-copy"],
+  ["unparseable", "working-copy"],
+  ["blocked", "local-merge"],
+  ["unparseable", "local-merge"],
+] as const)(
+  "a zero-exit %s implementation in %s stops before dependents, checks, review or delivery, preserving native facts",
+  async (report, delivery) => {
+    const { f, propose, start, wait, git, worktrees } = await setup();
+    try {
+      f.mode("workflow");
+      f.implementationReply(
+        report === "blocked"
+          ? '{"status":"blocked","summary":"Required build not performed"}'
+          : "I stopped without completing the assignment.",
+      );
+      const baseline = git("rev-parse", "HEAD");
+      const definition = plan();
+      definition.delivery = delivery;
+      definition.tasks[1].after = ["a"];
+      const run = await wait(await start(await propose(definition)));
+      expect(run.status).toBe("failed");
+      expect(run.steps.filter((s) => s.kind !== "git")).toHaveLength(1);
+      const step = run.steps.find((s) => s.kind === "implementation")!;
+      expect(step).toMatchObject({
+        kind: "implementation",
+        status: "failed",
+        exitCode: 0,
+      });
+      expect(run.notice).toContain(
+        report === "blocked"
+          ? "Assignment blocked"
+          : "structured completion report",
+      );
+      const edited =
+        delivery === "working-copy"
+          ? f.root
+          : join(worktrees, run.id, "tasks", "a");
+      expect(readFileSync(join(edited, "a.txt"), "utf8")).toBe(
+        "implemented a.txt\n",
+      );
+      expect(existsSync(join(edited, "b.txt"))).toBe(false);
+      if (delivery === "local-merge")
+        expect(existsSync(join(f.root, "a.txt"))).toBe(false);
+      expect(git("rev-parse", "HEAD")).toBe(baseline);
+      expect(
+        existsSync(join(f.root, ".cadence/assistant/workflows", run.id)),
+      ).toBe(false);
+      const result = JSON.parse(
+        readFileSync(
+          join(
+            f.c.directory,
+            "workflows-v1",
+            "runs",
+            run.id,
+            "results",
+            `${createHash("sha256").update(step.id).digest("hex")}.json`,
+          ),
+          "utf8",
+        ),
+      ).result;
+      expect(result).toMatchObject({
+        outcome: "completed",
+        closed: true,
+        exitCode: 0,
+      });
+      // The raw report is retained, not rewritten as a native process failure.
+      expect(result.text).toContain(
+        report === "blocked" ? '"status":"blocked"' : "I stopped",
+      );
+    } finally {
+      await f.close();
+    }
+  },
+  20000,
+);
+
+it("a blocked repair preserves edits and stops instead of spending another round or claiming completion", async () => {
+  const { f, propose, start, wait } = await setup(false);
+  try {
+    f.mode("workflow");
+    f.implementationReply(
+      '{"status":"blocked","summary":"Check environment requires a new plan"}',
+      true,
+    );
+    const definition = plan();
+    definition.delivery = "working-copy";
+    // One assignment suffices to reach a repair; dependency handoff has its
+    // own regression and need not add another SDK launch to this deadline.
+    definition.goal = "Preserve one output when repair is blocked";
+    definition.design = "Implement b.txt and run the declared check.";
+    definition.acceptance =
+      "b.txt is implemented and the declared check passes.";
+    definition.tasks = [definition.tasks[1]];
+    definition.repairAttempts = 2;
+    definition.checks = [
+      {
+        name: "failing check",
+        command: 'node -e "process.exit(1)"',
+        timeoutMs: 3000,
+      },
+    ];
+    const run = await wait(await start(await propose(definition)));
+    expect(run.status).toBe("failed");
+    expect(run.notice).toContain(
+      "Assignment blocked: Check environment requires a new plan",
+    );
+    expect(run.steps.filter((s) => s.id.startsWith("repair-"))).toHaveLength(1);
+    expect(run.steps.find((s) => s.id.startsWith("repair-"))).toMatchObject({
+      status: "failed",
+      exitCode: 0,
+    });
+    expect(run.steps.filter((s) => s.kind === "review")).toHaveLength(1);
+    expect(run.steps.filter((s) => s.kind === "check")).toHaveLength(1);
+    expect(readFileSync(join(f.root, "b.txt"), "utf8")).toBe(
+      "implemented b.txt\n",
+    );
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it.each([
+  ["plain", "'x'.repeat(90000)", false],
+  ["quoted-150k", "String.fromCharCode(34).repeat(150000)", true],
+  ["quoted-200k", "String.fromCharCode(34).repeat(200000)", true],
+] as const)(
+  "workflow %s check output fits records and detail replies, retaining native facts and diagnostic tails",
+  async (_name, output, truncated) => {
+    const { f, propose, start, wait } = await setup(false);
+    try {
+      f.mode("workflow");
+      const definition = plan();
+      definition.delivery = "working-copy";
+      definition.goal = "Retain diagnostics for one implemented output";
+      definition.design = "Implement a.txt and run the declared check.";
+      definition.acceptance =
+        "a.txt is implemented and the declared check passes.";
+      definition.tasks = [definition.tasks[0]];
+      definition.checks = [
+        {
+          name: "long diagnostic",
+          command: `node -e "console.log(${output}+'IMPORTANT_FAILURE_TAIL');process.exitCode=1"`,
+          timeoutMs: 3000,
+        },
+      ];
+      definition.repairAttempts = 0;
+      const run = await wait(await start(await propose(definition)));
+      expect(run.status).toBe("failed");
+      const step = run.steps.find((s) => s.kind === "check")!;
+      const result = JSON.parse(
+        readFileSync(
+          join(
+            f.c.directory,
+            "workflows-v1",
+            "runs",
+            run.id,
+            "results",
+            `${createHash("sha256").update(step.id).digest("hex")}.json`,
+          ),
+          "utf8",
+        ),
+      ).result;
+      expect(result).toMatchObject({
+        exitCode: 1,
+        closed: true,
+        truncated,
+      });
+      const detail = await f.client.workbenchRead({
+        kind: "workflow-detail",
+        id: run.id,
+        stepId: step.id,
+      });
+      expect(detail).toMatchObject({
+        kind: "ok",
+        value: { kind: "file", limited: truncated },
+      });
+      if (detail.kind !== "ok" || detail.value.kind !== "file")
+        throw Error("detail unavailable");
+      expect(JSON.parse(detail.value.text).result).toMatchObject({
+        exitCode: 1,
+        closed: true,
+        truncated,
+      });
+      expect(result.output).toContain("IMPORTANT_FAILURE_TAIL");
+      expect(Buffer.byteLength(result.output)).toBeGreaterThan(65536);
+      const review = f.observations
+        .map((o) => JSON.stringify(o.messages))
+        .find((p) => p.includes("Independently inspect the implemented files"));
+      expect(review).toContain("IMPORTANT_FAILURE_TAIL");
+      expect(review).toContain("[excerpt: middle omitted]");
+    } finally {
+      await f.close();
+    }
+  },
+  20000,
+);
+
+it("a structured completion report containing credential-shaped text survives redaction and remains machine-readable", async () => {
+  const { f, propose, start, wait } = await setup(false);
+  try {
+    f.mode("workflow");
+    f.implementationReply(
+      JSON.stringify({
+        status: "completed",
+        summary: "Implemented token: string",
+      }),
+    );
+    const definition = plan();
+    definition.delivery = "working-copy";
+    definition.goal = "One output with a structured completion report";
+    definition.design =
+      "Implement a.txt, retaining an accurately redacted report.";
+    definition.acceptance = "a.txt contains its expected text.";
+    definition.tasks = [definition.tasks[0]];
+    definition.checks[0].command =
+      "node -e \"if(require('fs').readFileSync('a.txt','utf8')!=='implemented a.txt\\n')process.exit(1)\"";
+    const run = await wait(await start(await propose(definition)));
+    expect(run.status, JSON.stringify(run)).toBe("completed");
+    for (const step of run.steps.filter((s) => s.kind === "implementation")) {
+      expect(step).toMatchObject({ status: "completed", exitCode: 0 });
+      const detail = await f.client.workbenchRead({
+        kind: "workflow-detail",
+        id: run.id,
+        stepId: step.id,
+      });
+      if (detail.kind !== "ok" || detail.value.kind !== "file")
+        throw Error("detail");
+      const report = JSON.parse(JSON.parse(detail.value.text).result.text);
+      expect(report).toEqual({
+        status: "completed",
+        summary: "Implemented token: [redacted]",
+      });
+    }
   } finally {
     await f.close();
   }

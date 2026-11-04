@@ -49,6 +49,12 @@ Native/browser workflow approval includes exact setup, separate baseline/accepta
 Setup never implicitly copies dependency trees, profiles or credentials.
 Baseline checks cannot require future outputs.
 Assignment handoffs name the current task and already-applied predecessor outputs; initial cleanliness preconditions are not rerun against the pipeline's own edits, and each working-copy task is confined to its own declared writes.
+Implementation and repair workers finish with one structured `completed` or `blocked` report and a nonempty summary, separate from native/auth/storage settlement.
+The owner parses the complete selected message before display clipping and sanitizes decoded summary fields, so quoted/escaped values and credential-shaped text cannot break its JSON structure.
+Only that message's completeness determines whether a report is available; stderr or other diagnostic clipping remains a separate recorded limitation.
+A blocked, malformed, oversized or unavailable report fails that step and stops admission of dependent work, checks, review and delivery; partial edits/worktrees remain, and native exit zero stays recorded independently.
+A completed report only permits the next stage: it is not check evidence or review approval.
+Historical records are never reinterpreted or rewritten.
 Candidates run acceptance checks before readonly Agent review.
 Review and bounded repair receive current-round native exit/closure facts plus explicitly bounded, redacted retained output excerpts, never worker prose as passing-check evidence or old-round failures as current results.
 Failed checks still block delivery regardless of a review approval.

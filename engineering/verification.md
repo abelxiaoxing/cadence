@@ -49,6 +49,8 @@ Keep that root's absolute path short: Chromium appends fixture and singleton-soc
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
 The same-checkout restart browser scenario observes stopped readiness and successful cold conversation head/context reads before its one explicit Send; a read refusal racing Stop permits preparation only, not message admission.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
+The `cadence-mode`, `history-shell`, `startup-card` and `agent-panel-cadence` fake terminal fixtures explicitly clear an inherited `CADENCE_SUBAGENT_CHILD` for their external-Pi scenario and restore it afterward; child-refusal cases set it themselves.
+Production workers and checks retain the guard, including when they run verification.
 Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
 The browser local-delivery scenario uses those distinct bounds: a consumed plan and a displayed result are UI observations (15s each); the accepted run is observed readonly under the original 120s scenario deadline, begun before setup, with its final action window reserved for UI/teardown.
 `test/helpers/workflow-observation.ts` never renews that deadline on progress or retries a mutation; a merge hash alone is not settlement, and every terminal non-success remains non-success.

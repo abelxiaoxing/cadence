@@ -86,6 +86,9 @@ export interface ProcessSpec {
     state: CaptureState | undefined,
   ) => void;
   secrets?: string[];
+  /** Workflow results retain the existing 256 KiB bounded process output,
+   * not the legacy 64 KiB presentation preview. Native output budgets stay fixed. */
+  retainOutput?: boolean;
   onProgress?: (text: string) => void;
   /** Ordinary-chat capture, a live preview only; never a task recording receipt. */
   onFrame?: (frame: CaptureFrame) => void;
@@ -287,20 +290,29 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         },
         capture,
       );
+      // Sanitize complete bounded text before clipping, including secrets that
+      // straddle the presentation limit. Flag clipping independently of native
+      // failure: exit zero and omitted diagnostic bytes can coexist.
+      const safeText = clean(
+        outcome === "completed" && spec.protocol
+          ? (final ?? "")
+          : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const safeOutput = clean(output, Number.MAX_SAFE_INTEGER);
+      const outputBytes = spec.retainOutput ? 256 * 1024 : 65536;
       resolve({
         outcome,
         closed,
         exitCode,
         signal,
         durationMs: Date.now() - started,
-        text: clean(
-          outcome === "completed" && spec.protocol
-            ? (final ?? "")
-            : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`,
-          16384,
-        ),
-        output: clean(output),
-        truncated,
+        text: diagnosticText(safeText, 16384),
+        output: diagnosticText(safeOutput, outputBytes),
+        truncated:
+          truncated ||
+          Buffer.byteLength(safeText) > 16384 ||
+          Buffer.byteLength(safeOutput) > outputBytes,
       });
       if (!closed) {
         child.unref();

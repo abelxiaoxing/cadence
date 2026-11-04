@@ -879,6 +879,8 @@ describe("shipped entrypoint", () => {
   it("publishes a running owner's children to the panel after startup, without a command or Start", {
     tags: ["slow"],
   }, async () => {
+    // This is an external-Pi startup, not a child invocation of the entrypoint.
+    vi.stubEnv("CADENCE_SUBAGENT_CHILD", undefined);
     const { default: register } = await import("../src/index.ts");
     const { s, client } = owner();
     s.rows = [row(null, null, "running"), row(C1, "inspect-api", "running")];
