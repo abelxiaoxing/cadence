@@ -398,6 +398,7 @@ export class OwnerModelContext {
                 ...t,
                 selectable: t.selectable && eligibility === "candidate",
               })),
+              images: model.input.includes("image"),
               eligibility,
             }),
           );

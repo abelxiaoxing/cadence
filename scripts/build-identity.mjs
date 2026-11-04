@@ -27,6 +27,8 @@ export function contractIdentity(root) {
     JSON.stringify(
       tuples(root, [
         "src/worker-public.mjs",
+        "src/image-content.mjs",
+        "src/image-content.d.mts",
         "src/worker-public.d.mts",
         "src/service-contract.ts",
         "src/service-client.ts",

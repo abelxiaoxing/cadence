@@ -77,7 +77,7 @@ Choose a working folder from the lower-right button; before a folder is selected
 Directory selection only remembers its canonical reference; it starts no service, creates no project-private state and requires no Pi login.
 The current explicit Send prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh compatible attachment.
-A Send claims its exact message, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
+A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
 Preparation is not message admission or execution consent.
@@ -144,6 +144,25 @@ Direct legacy project entries remain available; only that compatibility route re
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
+### Image admission
+
+`web/src/client/images.ts` uploads only on explicit Send, in bounded `image-upload` commands through the existing build/Origin/CSRF/attachment checks and gateway routing.
+The owner keeps staging in `conversation-images.ts`, bound to the full original command (including mode revision, context/model and head), authenticated attachment and access generation.
+Upload is not message admission, model selection or mode entry.
+A lost upload reply abandons that continuation; a lost Send reply observes only its original command ID.
+Count/byte reservations bound incomplete uploads too; idle staging is ineligible and swept on the next upload, and is cleared on owner close.
+No consumer file is cleaned.
+At admission the exact selected model must support images and the live turn takes the bytes independently of viewer departure.
+Only image count enters the public worker request; the owner-only fd 3 payload is bounded and bound by byte length/SHA-256 in the private envelope.
+The coordinator retains IPC fd 4.
+The worker verifies the payload, declared count, format/dimensions and pinned model capability, then supplies Pi's public `prompt` image option.
+Pi alone writes the durable content.
+Preview Blob URLs are created only after the shared header/dimension check, not merely after a compressed-size check.
+The browser's unsent images stay in memory, not sessionStorage; its draft controls lock during a pending Send/model choice.
+Image-only turns are valid, but images never authorize a plan or mode exit.
+Text redaction cannot remove secrets contained in image pixels.
+File header/dimension validation is not an image codec or sandbox.
+
 ## Ordinary conversations
 
 Ordinary conversations run through the same isolated SDK process launcher, exact model/auth sources and orderly Stop as tasks.
@@ -178,7 +197,11 @@ Listing reads each file once and then only what Pi appends, ignoring a torn fina
 A conversation reads one branch, named by its last entry, as one continuous transcript: the head read gives the summary, the branch end, whether it still continues the one shown before, the branch and leaf counts and the terminal's workflows; each turn (a user message and what followed it) is read by position as listed steps, and a step's full item is read separately in parts that each fit one reply.
 Without a chosen branch the WebUI follows Pi's current leaf, the entry appended last; a live browser turn ends the branch it was sent from until it settles.
 A listing never carries a tool's arguments or output and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
-Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps; thinking and images are flagged as omitted.
+Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps; thinking and unsupported media are flagged as omitted.
+Supported user images are small entry/index/MIME descriptors on their exact branch.
+A live turn extends that view only with its verified command-owned prefix; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
+Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
+No session paths or remote image URLs are returned, and no session is rewritten.
 The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.

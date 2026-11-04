@@ -4,6 +4,7 @@
  * a branch is chosen. */
 import type {
   ChatAttempt,
+  ChatImage,
   ChatStatus,
   ChatStep,
   ChatSummary,
@@ -13,9 +14,11 @@ import type {
 } from "../../../src/service/contracts/workbench.ts";
 import { STEP_READ } from "../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../src/service-client.ts";
+import { readImage } from "./images";
 
 /** A turn as the transcript renders it. */
 export interface TurnSource {
+  image?(image: ChatImage, signal: AbortSignal): Promise<Blob>;
   header: ChatTurnHeader;
   steps: readonly ChatStep[];
   /** A step's full recorded item: its arguments, output and whole text. */
@@ -74,6 +77,10 @@ export class ConversationReader {
   private count = 0;
   private first: number | null = null;
   private readonly turns = new Map<number, LoadedTurn>();
+  private readonly imageReaders = new Map<
+    string,
+    NonNullable<TurnSource["image"]>
+  >();
   private readonly details = new Map<string, TurnSource["detail"]>();
   private error = "";
   private loadingEarlier = false;
@@ -129,6 +136,7 @@ export class ConversationReader {
   private forget(): void {
     this.turns.clear();
     this.details.clear();
+    this.imageReaders.clear();
     this.first = null;
     this.count = 0;
   }
@@ -283,6 +291,7 @@ export class ConversationReader {
       header,
       steps: steps as ChatStep[],
       detail: this.detail(leaf, header.id, signal),
+      image: this.imageReader(leaf, signal),
     });
   }
   private async turnRead(
@@ -308,6 +317,32 @@ export class ConversationReader {
     )
       throw new ReadError("invalid");
     return value;
+  }
+  private imageReader(
+    leaf: string | null,
+    selection: AbortSignal,
+  ): NonNullable<TurnSource["image"]> {
+    const key = leaf ?? "";
+    let reader = this.imageReaders.get(key);
+    if (!reader) {
+      reader = (image, signal) =>
+        readImage(image, (offset) =>
+          this.read(
+            {
+              kind: "conversation-image",
+              id: this.id,
+              leaf,
+              ...(image.live ? { live: true } : {}),
+              entry: image.entry,
+              index: image.index,
+              offset,
+            },
+            AbortSignal.any([selection, signal]),
+          ),
+        );
+      this.imageReaders.set(key, reader);
+    }
+    return reader;
   }
   private detail(
     leaf: string | null,

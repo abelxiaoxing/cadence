@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
+  createReadStream,
   fstatSync,
   openSync,
   readFileSync,
@@ -26,6 +27,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { conversationResources } from "./conversation-resources.mjs";
 import { coordinatorTools } from "./coordinator-tools.mjs";
+import {
+  decodeImageBase64,
+  IMAGE_LIMITS,
+  validateImageBytes,
+} from "./image-content.mjs";
 import { researchClock, researchTools } from "./research-tools.mjs";
 import {
   BROWSER_COMMAND_ENTRY,
@@ -271,6 +277,7 @@ try {
       : closed(envelope.conversation, [
           "session",
           "agentDir",
+          ...(Object.hasOwn(envelope.conversation, "images") ? ["images"] : []),
           ...(Object.hasOwn(envelope.conversation, "coordinator")
             ? ["coordinator"]
             : []),
@@ -652,6 +659,50 @@ try {
   });
   await capture.context(publicRequest, session.systemPrompt);
   stage = "prompt";
+  let images;
+  if (Boolean(publicRequest.imageCount) !== Boolean(conversation?.images))
+    throw new Error("Missing image channel");
+  if (conversation?.images !== undefined) {
+    const descriptor = closed(conversation.images, ["bytes", "sha256"]);
+    if (
+      !Number.isSafeInteger(descriptor.bytes) ||
+      descriptor.bytes < 1 ||
+      descriptor.bytes > IMAGE_LIMITS.wireBytes ||
+      !/^[a-f0-9]{64}$/.test(descriptor.sha256) ||
+      !model.input?.includes("image")
+    )
+      throw new Error("Invalid image context");
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of createReadStream(null, { fd: 3 })) {
+      size += chunk.length;
+      if (size > descriptor.bytes)
+        throw new Error("Image payload exceeds bound");
+      chunks.push(chunk);
+    }
+    const bytes = Buffer.concat(chunks);
+    if (
+      size !== descriptor.bytes ||
+      createHash("sha256").update(bytes).digest("hex") !== descriptor.sha256
+    )
+      throw new Error("Incomplete image payload");
+    images = JSON.parse(bytes.toString("utf8"));
+    if (
+      !Array.isArray(images) ||
+      !images.length ||
+      images.length !== publicRequest.imageCount
+    )
+      throw new Error("Invalid images");
+    let total = 0;
+    for (const image of images) {
+      closed(image, ["type", "data", "mimeType"]);
+      if (image.type !== "image") throw new Error("Invalid image");
+      const decoded = decodeImageBase64(image.data);
+      validateImageBytes(decoded, image.mimeType);
+      total += decoded.length;
+    }
+    if (total > IMAGE_LIMITS.totalBytes) throw new Error("Images exceed bound");
+  }
   const suppliedPrompt = [
     publicRequest.context,
     ...(!conversation && kind !== "code"
@@ -668,6 +719,7 @@ try {
     .filter(Boolean)
     .join("\n\n");
   await session.prompt(suppliedPrompt, {
+    ...(images ? { images } : {}),
     expandPromptTemplates: false,
     preflightResult: (accepted) => {
       preflight = accepted ? "accepted" : "rejected";

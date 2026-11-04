@@ -2,6 +2,7 @@
  * Public types live solely in worker-public.d.mts; the TS contract paths are re-export shims.
  * Initially relocated mechanically from W1 core/domain/capture; not a generated build output. */
 /** Portable service boundary. No SDK objects, credentials, filesystem paths as IDs, or execution owner. */
+export const IMAGE_COUNT = 4;
 export const SERVICE_PROTOCOL = 1;
 export const WORKER_PROTOCOL = 2;
 export const GRAPH_SCHEMA = "cadence-graph/2";
@@ -937,6 +938,7 @@ export function decodeWorkerPublicRequest(v) {
     "context",
     "instructions",
     "prompt",
+    ...(Object.hasOwn(v ?? {}, "imageCount") ? ["imageCount"] : []),
     "handoff",
   ]);
   const result = {
@@ -951,7 +953,10 @@ export function decodeWorkerPublicRequest(v) {
     role: role(o.role),
     context: text(o.context, 32768),
     instructions: text(o.instructions, LIMITS.instructionsBytes, true),
-    prompt: text(o.prompt, 32768, true),
+    prompt: text(o.prompt, 32768, o.imageCount === undefined),
+    ...(o.imageCount === undefined
+      ? {}
+      : { imageCount: integer(o.imageCount, 1, IMAGE_COUNT) }),
     handoff: decodeHandoff(o.handoff),
   };
   if (result.handoff.inputs.some((i) => i.assignmentId !== result.assignmentId))

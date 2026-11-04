@@ -22,7 +22,12 @@ export async function acceptingFixture(
   mode: "source" | "generated",
   environment?: (env: NodeJS.ProcessEnv) => void,
   proxy: HostInput["config"]["http"]["proxy"] = null,
-  options: { rootName?: string; accessToken?: string; models?: string[] } = {},
+  options: {
+    rootName?: string;
+    accessToken?: string;
+    models?: string[];
+    images?: boolean;
+  } = {},
 ) {
   const packageRoot = process.env.CADENCE_TEST_PACKAGE_ROOT;
   const dir = mkdtempSync(join(tmpdir(), "accepting-"));
@@ -305,6 +310,7 @@ export async function acceptingFixture(
           models: (options.models ?? ["fixed"]).map((id) => ({
             id,
             reasoning: false,
+            ...(options.images ? { input: ["text", "image"] } : {}),
           })),
         },
       },

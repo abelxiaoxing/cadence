@@ -9,6 +9,7 @@ import type { TurnSource } from "../../client/conversation-reader";
 import { useStepDetail } from "../../client/turn-source";
 import { describeError, type MessageKey, useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
+import { ChatImages } from "./ChatImages";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
  * the retention rule rather than an outcome of the turn, so it is not shown. */
@@ -202,6 +203,9 @@ export function StepText({
   const full = useStepDetail(turn, index, step, step.clipped && settled);
   return (
     <>
+      {step.images?.length ? (
+        <ChatImages images={step.images} turn={turn} />
+      ) : null}
       {render(full.value?.text ?? step.text)}
       {step.clipped && settled && !full.value && (
         <p className={full.error ? "banner-notice" : "inspector-note"}>

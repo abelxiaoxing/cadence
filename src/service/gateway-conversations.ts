@@ -33,6 +33,7 @@ export function retainedConversationRead(request: WorkbenchRead): boolean {
     "conversation",
     "conversation-turn",
     "conversation-step",
+    "conversation-image",
     "cadence-conversation",
     "conversation-context",
     "conversation-tree",
@@ -188,6 +189,9 @@ export class GatewayConversations {
           request.ordinal,
           request.before,
         );
+        break;
+      case "conversation-image":
+        result = view.records.image(request);
         break;
       case "conversation-step":
         result = view.records.step(

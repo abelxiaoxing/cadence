@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { CADENCE_INSTRUCTIONS } from "../cadence-instructions.ts";
+import type { InputImage } from "../image-content.mjs";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
 import {
@@ -239,14 +240,20 @@ export class ConversationWorkflow {
       }),
     };
   }
-  send(c: Send, beforeAccept?: () => void): WorkbenchResult {
+  send(
+    c: Send,
+    beforeAccept?: () => void,
+    claimImages?: () => InputImage[],
+  ): WorkbenchResult {
     const enabled = c.intent !== "exit";
+    if (!enabled && c.images?.length) throw new ContractError("invalid");
     const input = {
       kind: "send" as const,
       commandId: c.commandId,
       conversationId: c.conversationId,
       head: c.head,
       text: enabled ? sanitizeText(c.text, this.o.secrets()) : "exit cadence",
+      ...(c.images?.length ? { images: c.images } : {}),
       model: c.model,
     };
     // A lost reply observes its original acceptance before freshness checks.
@@ -355,7 +362,7 @@ export class ConversationWorkflow {
         }
       },
     };
-    return this.o.conversations.send(input, control, beforeAccept);
+    return this.o.conversations.send(input, control, beforeAccept, claimImages);
   }
   private plan(
     current: Usable,

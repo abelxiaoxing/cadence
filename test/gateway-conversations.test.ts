@@ -25,6 +25,7 @@ import { readHostConfig } from "../src/service/runtime.ts";
 import { loadWebAssets } from "../src/service-assets.ts";
 import { wireUrl } from "../src/service-wire.ts";
 import { gatewayFixture } from "./helpers/gateway-fixture.ts";
+import { PNG } from "./helpers/images.ts";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 /** Hash fixture bytes and names, not access times. Reads must not publish,
@@ -108,6 +109,13 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
+    lines
+      .find((line) => line.id === "00000003")
+      .message.content.push({
+        type: "image",
+        mimeType: "image/png",
+        data: PNG,
+      });
     lines.at(-1).message.content[0].text =
       `Saved reply 0.1 ${"x".repeat(20000)} fabricated-accepting-key`;
     writeFileSync(
@@ -247,6 +255,35 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       kind: "conversation-step",
       item: { text: expect.stringContaining("Saved reply 0.1") },
     });
+    expect(
+      await read({
+        kind: "conversation-image",
+        id,
+        leaf: seed.longLeaf,
+        entry: "00000003",
+        index: 1,
+        offset: 0,
+      }),
+    ).toEqual({
+      kind: "conversation-image",
+      mimeType: "image/png",
+      data: PNG,
+      next: null,
+    });
+    expect(
+      (
+        await fetch(
+          path({
+            kind: "conversation-image",
+            id,
+            leaf: seed.longLeaf,
+            entry: "00000003",
+            index: 1,
+            offset: 0,
+          }),
+        )
+      ).status,
+    ).toBe(401);
     expect(await read({ kind: "cadence-conversation", id })).toMatchObject({
       state: { enabled: true, revision: 1 },
     });

@@ -2,6 +2,21 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Invalid or oversized image.": "图片格式无效或像素尺寸超出限制。",
+  "Add images": "添加图片",
+  "Remove image: {name}": "移除图片：{name}",
+  "Attached image": "附加图片",
+  "Open image": "打开图片",
+  "Image unavailable.": "图片暂不可用。",
+  "Loading image…": "正在加载图片…",
+  "Remove images before exiting Cadence.": "请先移除图片，再退出 Cadence。",
+  "The selected model does not support images. Choose a vision model or remove the images.":
+    "当前模型不支持图片。请选择视觉模型或移除图片。",
+  "PNG, JPEG or WebP · {count} images · {each} MiB each · {total} MiB total. Unsent images stay in this tab.":
+    "PNG、JPEG 或 WebP · 最多 {count} 张 · 单张 {each} MiB · 总计 {total} MiB。未发送图片仅保留在当前页面。",
+  "Too many images or total image size exceeded.": "图片数量或总大小超出限制。",
+  "Use PNG, JPEG or WebP images.": "请选择 PNG、JPEG 或 WebP 图片。",
+  "Image is empty or too large.": "图片为空或超过大小限制。",
   "Context fixed at admission:": "接纳时固定的上下文：",
   "Declared write paths use the checkout root:":
     "声明的写入路径以此 checkout 根目录为基准：",
