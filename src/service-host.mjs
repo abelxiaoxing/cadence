@@ -14542,7 +14542,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "5a3413139ef41a84946446d38615ce5216dfe0638fb20e0f7335c5e6cfc82d93",
+    contractHash: "2d78a97c9d5db70709e390e26fa315b5fdd3539f5a36e040593943f06ee5469a",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -29167,8 +29167,8 @@ function workflowResultDetail(value, secrets) {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.35",
-  build: "197a555ca16298d4019b2bac8cf495645ceb0980644b77bf1d4546521319f69d",
+  version: "2.0.36",
+  build: "a996fe94021d7ae65c3e8da45de2b5e98de031d12bb91a3bc029acdacdd9e8a5",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -31106,7 +31106,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "5a3413139ef41a84946446d38615ce5216dfe0638fb20e0f7335c5e6cfc82d93";
+  const embedded = "2d78a97c9d5db70709e390e26fa315b5fdd3539f5a36e040593943f06ee5469a";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

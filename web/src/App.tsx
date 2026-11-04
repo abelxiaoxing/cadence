@@ -32,10 +32,11 @@ import {
 } from "react-icons/fi";
 import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
-import { decodeSessionId } from "../../src/service/contracts/workbench.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
+import type { PreparationProgress } from "./client/conversation-send";
+import { chatFromLocation } from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
@@ -81,16 +82,6 @@ import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
 
-/** A conversation link names its Pi session, as the terminal names it too. */
-function chatFromLocation(): string | null {
-  const value = new URLSearchParams(window.location.hash?.slice(1)).get("chat");
-  try {
-    return value ? decodeSessionId(value) : null;
-  } catch {
-    return null;
-  }
-}
-
 const VIEWS: readonly (readonly [string, IconType])[] = [
   ["tools", FiTool],
   ["context", FiLayers],
@@ -101,17 +92,26 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 export function WorkspaceNotice({
   error,
   observationError,
+  projectObservationError,
   onDemand = false,
 }: {
   error?: string;
   observationError?: string;
+  projectObservationError?: string;
   onDemand?: boolean;
 }) {
   const { t, tx } = useT();
-  if (!error && !observationError) return null;
+  if (!error && !observationError && !projectObservationError) return null;
   return (
     <p className="banner-notice" role="alert">
       {error && <>{error} </>}
+      {projectObservationError && (
+        <>
+          {t("Project observation: {code}.", {
+            code: tx(projectObservationError),
+          })}{" "}
+        </>
+      )}
       {observationError && (
         <>
           {t("{message}.", { message: tx(observationError) })}{" "}
@@ -161,6 +161,7 @@ export function App({
   onPrepareSend?(
     signal: AbortSignal,
     location?: ConversationLocation,
+    progress?: PreparationProgress,
   ): Promise<string>;
   onOpenProject?(path: string): Promise<void>;
   onWorkbenchHome?(): void;
@@ -205,26 +206,19 @@ export function App({
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
   const execution = useProjectObservation(project?.id, project?.epoch);
-  const executionReady =
-    !project ||
-    (project.epoch !== null &&
-      !execution.error &&
-      execution.value?.status === "running");
+  const executionReady = !project || execution.readiness === "running";
   const executionStopped =
     !!project &&
-    !execution.error &&
-    (execution.value?.status === "stopped" ||
-      execution.value?.status === "not-started");
+    (execution.readiness === "stopped" ||
+      execution.readiness === "not-started");
   // A failed readiness read must not discard an existing safety attachment.
   // Only a positive Stop or replacement epoch changes that lifetime.
   const executionEpoch = useRef<string | null>(null);
-  if (execution.value?.status === "running" && execution.value.epoch)
+  if (executionReady && execution.value?.epoch)
     executionEpoch.current = execution.value.epoch;
   const observeExecution =
     !project ||
-    (project.epoch !== null &&
-      !!execution.value &&
-      !["stopped", "not-started"].includes(execution.value.status));
+    (!executionStopped && (executionReady || executionEpoch.current !== null));
   const workspace = useWorkspace(
     api,
     taskId ? { kind: "task", id: taskId } : null,
@@ -241,8 +235,12 @@ export function App({
     chatWorkspace.current =
       workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
   const prepareSend = onPrepareSend
-    ? async (signal: AbortSignal, location?: ConversationLocation) => {
-        const epoch = await onPrepareSend(signal, location);
+    ? async (
+        signal: AbortSignal,
+        location?: ConversationLocation,
+        progress?: PreparationProgress,
+      ) => {
+        const epoch = await onPrepareSend(signal, location, progress);
         if (signal.aborted) throw new Error("stale");
         execution.prepared(epoch);
         const observation = workspace.reconnect();
@@ -620,15 +618,26 @@ export function App({
     );
   const roster = workspace.activeRuns;
   const activeRuns = roster?.status === "complete" ? roster.runs : [];
-  const connection =
-    observation.state?.connection ??
-    (executionStopped
-      ? "Ready to prepare on Send"
-      : !workspace.workspace
-        ? "Service unavailable"
-        : taskId
-          ? "Task snapshot not observed yet"
-          : "Chat ready");
+  const viewerFresh =
+    !detached &&
+    !workspace.error &&
+    workspace.transportStatus === "current" &&
+    (!observation.state || observation.state.connection === "current");
+  const observationFresh = executionReady && viewerFresh;
+  const connection = detached
+    ? "Viewer disconnected"
+    : project && execution.readiness === "unknown"
+      ? "Project readiness unknown"
+      : project && execution.readiness === "stale"
+        ? "Project observation stale"
+        : executionStopped
+          ? "Ready to prepare on Send"
+          : !viewerFresh
+            ? "Viewer observation stale"
+            : !workspace.workspace
+              ? "Viewer observation unavailable"
+              : (observation.state?.connection ??
+                (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   return (
     <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
@@ -927,9 +936,17 @@ export function App({
       )}
       <WorkspaceNotice
         onDemand={!!prepareSend}
-        error={error || execution.error}
-        observationError={executionReady ? workspace.error : undefined}
+        error={error}
+        projectObservationError={execution.error}
+        observationError={workspace.error}
       />
+      {!executionStopped && !observationFresh && (
+        <p className="banner-notice" role="status">
+          {t(
+            "Observation is not current. Retained history is shown; this does not mean work has stopped.",
+          )}
+        </p>
+      )}
       <div
         ref={layout}
         className="layout"
@@ -1109,7 +1126,8 @@ export function App({
                 executionReady &&
                 !!workspace.workspace &&
                 !!workspace.compatible &&
-                !workspace.error
+                !workspace.error &&
+                viewerFresh
               }
               available={conversationAvailable}
               canInterrupt={!!workspace.cancelCompatible}
@@ -1367,7 +1385,7 @@ export function App({
               className={`status-dot ${
                 executionStopped
                   ? ""
-                  : observation.error || !workspace.workspace
+                  : !observationFresh || !workspace.workspace
                     ? "error"
                     : observation.transportStatus !== "current"
                       ? "busy"
@@ -1387,13 +1405,22 @@ export function App({
               })}
             {observation.error ? ` · ${tx(observation.error)}` : ""}
           </span>
+          {project && (
+            <span className="status-item faint">
+              {t("Execution service: {status}", {
+                status: tx(execution.readiness),
+              })}
+            </span>
+          )}
           {roster?.status === "complete"
             ? activeRuns.length > 0 && (
                 <span className="status-item warn">
                   {t(
-                    activeRuns.length === 1
-                      ? "{count} active run"
-                      : "{count} active runs",
+                    !observationFresh
+                      ? "Last observed: {count} active runs"
+                      : activeRuns.length === 1
+                        ? "{count} active run"
+                        : "{count} active runs",
                     { count: activeRuns.length },
                   )}
                 </span>

@@ -15,7 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { contractIdentity } from "../../scripts/build-identity.mjs";
+import {
+  browserIdentity,
+  contractIdentity,
+} from "../../scripts/build-identity.mjs";
 import {
   publishedWebIdentity,
   publishWebOutput,
@@ -47,6 +50,7 @@ const source = resolve("web/dist");
 it("shared plan proposal bytes participate in independently compiled compatibility", () => {
   const dir = mkdtempSync(join(tmpdir(), "web-build-inputs-"));
   for (const name of [
+    "src/abort-scope.ts",
     "src/worker-public.mjs",
     "src/image-content.mjs",
     "src/image-content.d.mts",
@@ -75,6 +79,35 @@ it("shared plan proposal bytes participate in independently compiled compatibili
     `${readFileSync(image, "utf8")}\n// changed image bound\n`,
   );
   expect(contractIdentity(dir)).not.toBe(afterPlan);
+
+  for (const name of [
+    "web/src",
+    "web/index.html",
+    "web/vite.config.ts",
+    "web/build-vis-style.ts",
+    "scripts/build-web.mjs",
+    "scripts/build-identity.mjs",
+    "scripts/audit-notices.mjs",
+    "scripts/web-output.ts",
+    "provenance/bundled-notices.json",
+    "licenses/bundled-web.txt",
+    "src/service-assets.ts",
+    "package.json",
+    "bun.lock",
+  ]) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true, mode: 0o700 });
+    cpSync(resolve(name), join(dir, name), { recursive: true });
+  }
+  const beforeHelper = browserIdentity(dir);
+  const helper = join(dir, "src/abort-scope.ts");
+  writeFileSync(
+    helper,
+    `${readFileSync(helper, "utf8")}\n// changed cancellation behavior\n`,
+  );
+  const afterHelper = browserIdentity(dir);
+  expect(afterHelper.sourceHash).toBe(beforeHelper.sourceHash);
+  expect(afterHelper.contractHash).not.toBe(beforeHelper.contractHash);
+  expect(afterHelper.buildId).not.toBe(beforeHelper.buildId);
 });
 it("loads exact compiled closure and all 60 actual KaTeX fonts, preserving full bodies", () => {
   const { manifest, assets } = loadWebAssets(source);

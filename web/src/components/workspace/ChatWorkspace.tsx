@@ -31,11 +31,16 @@ import {
 import {
   assertSendModel,
   captureSend,
+  dispatchSend,
   type PendingSend,
-  SEND_PREPARATION_MS,
+  type PreparationStage,
+  type PrepareForSend,
   draftKey as selectDraftKey,
   selector,
   sendCommand,
+  sendFailureMessage,
+  unsentMessage,
+  waitForPreparation,
   withSendModel,
 } from "../../client/conversation-send";
 import { uploadImages } from "../../client/images";
@@ -103,10 +108,7 @@ export function ChatWorkspace({
   onLocation?(location: ConversationLocation): void;
   enabled: boolean;
   actionsReady?: boolean;
-  prepareForSend?(
-    signal: AbortSignal,
-    location?: ConversationLocation,
-  ): Promise<void>;
+  prepareForSend?: PrepareForSend;
   legacyWorkspaceId?: string;
   directoryNamespaces?: string[];
   available?: boolean;
@@ -567,17 +569,20 @@ export function ChatWorkspace({
     const current = () =>
       alive.current && sendGeneration.current === generation;
     let dispatched = false;
-    let preparationAttempted = false;
+    let preparation: PreparationStage = "not-dispatched";
+    const pendingCommand = (id: string) => {
+      if (current()) setPending(id);
+    };
     const prepare = async (location?: ConversationLocation) => {
       if (!prepareForSend) return;
-      preparationAttempted = true;
       setPreparing(true);
-      await prepareForSend(
-        AbortSignal.any([
-          departure.current.signal,
-          AbortSignal.timeout(SEND_PREPARATION_MS),
-        ]),
+      await waitForPreparation(
+        prepareForSend,
+        departure.current.signal,
         location,
+        (stage) => {
+          preparation = stage;
+        },
       );
       if (current()) {
         setPreparing(false);
@@ -620,16 +625,17 @@ export function ChatWorkspace({
       await prepare(intent.location);
       if (!current()) return;
       if (intent.command.kind === "cadence-exit") {
-        const commandId = intent.command.commandId;
+        const command = sendCommand(intent);
         sentDraft.current = message;
-
-        setPending(commandId);
         dispatched = true;
-        const reply = await client.workbenchCommand(sendCommand(intent));
+        const reply = await dispatchSend(client, command, pendingCommand);
         if (!current()) return;
         if (reply.kind === "error") {
-          setError(reply.error.code);
-          if (reply.error.effect === "none") setPending("");
+          setError(
+            t(sendFailureMessage(reply.error.effect), {
+              code: reply.error.code,
+            }),
+          );
         } else {
           setPending("");
           setMode("chat");
@@ -710,15 +716,13 @@ export function ChatWorkspace({
       sentImages.current = intent.images;
       sentDraft.current = message;
 
-      setPending(command.commandId);
       dispatched = true;
-      const reply = await client.workbenchCommand(command);
+      const reply = await dispatchSend(client, command, pendingCommand);
       if (!current()) return;
       if (reply.kind === "error") {
         setError(
-          `${reply.error.code}. ${t("Observe this send before sending again. No automatic retry.")}`,
+          t(sendFailureMessage(reply.error.effect), { code: reply.error.code }),
         );
-        if (reply.error.effect === "none") setPending("");
         // Even a lost reply can have accepted work. Observe this exact turn ID.
       } else {
         removeImages(sentImages.current);
@@ -736,18 +740,9 @@ export function ChatWorkspace({
     } catch (error) {
       if (current())
         setError(
-          dispatched
-            ? t(
-                "Send unavailable. Check the message limit (16 KiB); observe any pending command before sending again.",
-              )
-            : t(
-                preparationAttempted
-                  ? "The message was not sent ({code}). Its draft is kept; preparation may have started an execution service."
-                  : "The message was not sent ({code}). Its draft is kept.",
-                {
-                  code: error instanceof Error ? error.message : "unavailable",
-                },
-              ),
+          t(dispatched ? sendFailureMessage() : unsentMessage(preparation), {
+            code: error instanceof Error ? error.message : "unavailable",
+          }),
         );
     } finally {
       if (sendGeneration.current === generation) sending.current = false;
@@ -1030,11 +1025,17 @@ export function ChatWorkspace({
             {tx(state.notice)}
           </p>
         )}
-        {(error || conversation.error || workflow.error) && (
-          <p role="alert" className="banner-notice">
-            {describeError(
-              t,
-              error || conversation.error || workflow.error || "",
+        {[...new Set([error, conversation.error, workflow.error])]
+          .filter(Boolean)
+          .map((notice) => (
+            <p key={notice} role="alert" className="banner-notice">
+              {describeError(t, notice ?? "")}
+            </p>
+          ))}
+        {conversation.error && conversation.summary !== undefined && (
+          <p role="status" className="inspector-note">
+            {t(
+              "Observation is not current. Retained history is shown; this does not mean work has stopped.",
             )}
           </p>
         )}

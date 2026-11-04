@@ -1,6 +1,7 @@
 /** One explicit user's message, pinned before startup or model selection awaits.
  * A continuation adds only the freshly observed model version, never a new
  * conversation head, control revision, text or command identity. */
+import { abortScope } from "../../../src/abort-scope.ts";
 import {
   ContractError,
   canonicalJson,
@@ -23,6 +24,7 @@ import {
   decodeWorkbenchCommand,
   type WorkbenchCommand,
 } from "../../../src/service/contracts/workbench.ts";
+import type { ServiceClient } from "../../../src/service-client.ts";
 
 type Intent =
   | Omit<Extract<WorkbenchCommand, { kind: "send" }>, "model">
@@ -38,6 +40,60 @@ export interface PendingSend {
 /** Same finite startup reporting budget as native on-demand entry. It never
  * kills a service or cancels work; no message has been dispatched at this stage. */
 export const SEND_PREPARATION_MS = 20_000;
+export type PreparationStage = "not-dispatched" | "dispatched" | "confirmed";
+export type PreparationProgress = (
+  stage: Exclude<PreparationStage, "not-dispatched">,
+) => void;
+export type PrepareForSend = (
+  signal: AbortSignal,
+  location?: ConversationLocation,
+  progress?: PreparationProgress,
+) => Promise<void>;
+
+/** One budget covers the gateway read, prepare POST/body and fresh attachment. */
+export async function waitForPreparation(
+  prepare: PrepareForSend,
+  departure: AbortSignal,
+  location: ConversationLocation | undefined,
+  progress: PreparationProgress,
+): Promise<void> {
+  const scope = abortScope([departure], SEND_PREPARATION_MS);
+  try {
+    if (scope.signal.aborted) throw scope.signal.reason;
+    await prepare(scope.signal, location, progress);
+  } finally {
+    scope.dispose();
+  }
+}
+
+export function unsentMessage(stage: PreparationStage) {
+  switch (stage) {
+    case "dispatched":
+      return "Preparation outcome is unknown ({code}); an execution service may have started. The message was not sent and its draft is kept.";
+    case "confirmed":
+      return "Execution preparation was confirmed, but the message was not sent ({code}). Its draft is kept.";
+    default:
+      return "The message was not sent ({code}). Its draft is kept.";
+  }
+}
+export function sendFailureMessage(effect?: string) {
+  return effect === "none"
+    ? "The message was not accepted ({code}). Its draft is kept."
+    : "Send outcome is unknown ({code}). Observe the original command before sending again; no automatic retry.";
+}
+
+/** The only final dispatch. Uncertain replies retain the original ID for
+ * observation, never a replacement ID or an automatic second command. */
+export async function dispatchSend(
+  client: Pick<ServiceClient, "workbenchCommand">,
+  command: ReturnType<typeof sendCommand>,
+  pending: (id: string) => void,
+) {
+  pending(command.commandId);
+  const reply = await client.workbenchCommand(command);
+  if (reply.kind === "ok" || reply.error.effect === "none") pending("");
+  return reply;
+}
 export function captureSend(input: {
   id: string;
   head: string | null;

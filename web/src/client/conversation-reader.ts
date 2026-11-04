@@ -2,6 +2,7 @@
  * shown turn of the branch once, and only an unsettled or growing turn again.
  * Earlier turns load on request. It follows the session's current leaf unless
  * a branch is chosen. */
+import { abortScope } from "../../../src/abort-scope.ts";
 import type {
   ChatAttempt,
   ChatImage,
@@ -325,21 +326,27 @@ export class ConversationReader {
     const key = leaf ?? "";
     let reader = this.imageReaders.get(key);
     if (!reader) {
-      reader = (image, signal) =>
-        readImage(image, (offset) =>
-          this.read(
-            {
-              kind: "conversation-image",
-              id: this.id,
-              leaf,
-              ...(image.live ? { live: true } : {}),
-              entry: image.entry,
-              index: image.index,
-              offset,
-            },
-            AbortSignal.any([selection, signal]),
-          ),
-        );
+      reader = async (image, signal) => {
+        const scope = abortScope([selection, signal]);
+        try {
+          return await readImage(image, (offset) =>
+            this.read(
+              {
+                kind: "conversation-image",
+                id: this.id,
+                leaf,
+                ...(image.live ? { live: true } : {}),
+                entry: image.entry,
+                index: image.index,
+                offset,
+              },
+              scope.signal,
+            ),
+          );
+        } finally {
+          scope.dispose();
+        }
+      };
       this.imageReaders.set(key, reader);
     }
     return reader;
@@ -355,20 +362,27 @@ export class ConversationReader {
       detail = async (step, parts, signal) => {
         const items = await Promise.all(
           Array.from({ length: parts }, async (_, part) => {
-            const value = await this.read(
-              {
-                kind: "conversation-step",
-                id: this.id,
-                leaf,
-                turnId,
-                step,
-                part,
-              },
-              AbortSignal.any([selection, signal]),
-            );
-            if (value.kind !== "conversation-step" || value.part !== part)
-              throw new ReadError("invalid");
-            return value.item;
+            // Each parallel read keeps its own lifetime: Promise.all may
+            // reject while siblings are still waiting or reading their body.
+            const scope = abortScope([selection, signal]);
+            try {
+              const value = await this.read(
+                {
+                  kind: "conversation-step",
+                  id: this.id,
+                  leaf,
+                  turnId,
+                  step,
+                  part,
+                },
+                scope.signal,
+              );
+              if (value.kind !== "conversation-step" || value.part !== part)
+                throw new ReadError("invalid");
+              return value.item;
+            } finally {
+              scope.dispose();
+            }
           }),
         );
         return {

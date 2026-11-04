@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.35",
+  "version": "2.0.36",
   "description": "Conversation-driven Pi workspace: persistent native and WebUI workflows, explicit plan approval, checks and local delivery.",
   "license": "MIT",
   "type": "module",
@@ -17,6 +17,7 @@
     "skills",
     "config",
     "agents",
+    "src/abort-scope.ts",
     "src/agent-panel-cadence.ts",
     "src/agent-panel-model.ts",
     "src/agent-panel.ts",

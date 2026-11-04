@@ -124,3 +124,35 @@ it("the timeline bridge carries the chosen language and its own labels", () => {
     ).lang,
   ).toBe("en");
 });
+
+it("pre-dispatch, unknown preparation, confirmed preparation and unknown Send have distinct localized guidance", async () => {
+  const { unsentMessage, sendFailureMessage } = await import(
+    "../../web/src/client/conversation-send"
+  );
+  const before = translate("zh", unsentMessage("not-dispatched"), {
+    code: "unsupported-context",
+  });
+  expect(before).toContain("草稿已保留");
+  expect(before).not.toContain("可能已启动");
+  const unknown = translate("zh", unsentMessage("dispatched"), {
+    code: "unavailable",
+  });
+  expect(unknown).toContain("准备结果未知");
+  expect(unknown).toContain("消息尚未发送");
+  expect(
+    translate("zh", unsentMessage("confirmed"), { code: "TimeoutError" }),
+  ).toContain("准备已确认");
+  expect(
+    translate("zh", sendFailureMessage(), { code: "unavailable" }),
+  ).toContain("原命令");
+  expect(
+    translate("zh", sendFailureMessage("none"), { code: "stale" }),
+  ).toContain("消息未被接受");
+  expect(translate("zh", "Project readiness unknown")).toBe("项目准备状态未知");
+  expect(
+    translate(
+      "zh",
+      "Observation is not current. Retained history is shown; this does not mean work has stopped.",
+    ),
+  ).toContain("不表示工作已停止");
+});
