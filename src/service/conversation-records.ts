@@ -14,6 +14,7 @@ import {
 } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
 import { decodeExecutionContext } from "./contracts/models.ts";
+import type { WorkbenchRead } from "./contracts/workbench.ts";
 import {
   type ChatAttempt,
   type ChatCursor,
@@ -30,11 +31,13 @@ import type { ServiceCoordination } from "./coordination.ts";
 import {
   type BuiltTurn,
   checkoutSessions,
+  imagePart,
   listTurn,
   type ParsedSession,
   type PiSessions,
   SESSION_BYTES,
   type SessionEntry,
+  sessionImage,
   summaryTitle,
   turnItems,
   turnSpans,
@@ -462,6 +465,46 @@ export class ConversationRecords {
       attempt: view.live ? null : this.attempt(id, view.leaf),
     };
   }
+  image(
+    request: Extract<WorkbenchRead, { kind: "conversation-image" }>,
+  ): WorkbenchResult {
+    this.o.assertCurrent();
+    this.readSecrets();
+    const view = this.branch(request.id, request.leaf, true);
+    if (request.live) {
+      if (view.live?.commandId !== request.entry)
+        throw new ContractError("stale");
+      // Pi can buffer a new session until its first assistant message. The
+      // admitted turn, not a second durable store, owns that input meanwhile.
+      const image = view.live.images?.[request.index];
+      if (!image) throw new ContractError("stale");
+      return imagePart(image.data, image.mimeType, request.offset);
+    }
+    if (!view.session) throw new ContractError("stale");
+    let imageLeaf = view.leaf;
+    if (view.live && !view.session.contains(imageLeaf, request.entry)) {
+      // A running turn is shown after its parent leaf. Only its worker-recorded
+      // command prefix, never an arbitrary descendant, extends that read view.
+      const accepted = view.live.accepted;
+      const chain = view.session.commandEntries(
+        view.live.commandId,
+        accepted.parent,
+        accepted.offset,
+      );
+      if (!chain.some((entry) => entry.id === request.entry))
+        throw new ContractError("stale");
+      imageLeaf = chain.at(-1)?.id ?? imageLeaf;
+    }
+    const result = sessionImage(
+      view.session,
+      imageLeaf,
+      request.entry,
+      request.index,
+      request.offset,
+    );
+    this.o.assertCurrent();
+    return result;
+  }
   tree(id: string, leaf: string | null): WorkbenchResult {
     this.o.assertCurrent();
     const view = this.branch(id, leaf, false);
@@ -551,6 +594,16 @@ export class ConversationRecords {
             id: "user",
             role: "user" as const,
             text: live.accepted.command.text,
+            ...(live.images?.length
+              ? {
+                  images: live.images.map((image, index) => ({
+                    live: true as const,
+                    entry: live.commandId,
+                    index,
+                    mimeType: image.mimeType,
+                  })),
+                }
+              : {}),
             name: "",
             args: "",
             error: false,

@@ -1,3 +1,4 @@
+import { IMAGE_LIMITS, IMAGE_TYPES } from "../../image-content.mjs";
 /** Finite, authenticated workbench API. Ordinary chat is not task admission. */
 import {
   bool,
@@ -89,6 +90,15 @@ export interface WorkflowLink {
 }
 export type WorkbenchRead =
   | {
+      kind: "conversation-image";
+      live?: true;
+      id: string;
+      leaf: string | null;
+      entry: string;
+      index: number;
+      offset: number;
+    }
+  | {
       kind: "conversation-context" | "conversation-models";
       location: ConversationLocation;
     }
@@ -131,7 +141,21 @@ export type WorkbenchRead =
   | { kind: "projects" };
 /** Maximum UTF-8 bytes of one explicit conversation Send. */
 export const CONVERSATION_SEND_BYTES = 16 * 1024;
+export type ImageSend = Extract<
+  WorkbenchCommand,
+  { kind: "send" | "cadence-send" }
+>;
 export type WorkbenchCommand =
+  | {
+      kind: "image-upload";
+      commandId: string;
+      imageId: string;
+      send: ImageSend;
+      mimeType: string;
+      size: number;
+      offset: number;
+      data: string;
+    }
   | {
       kind: "conversation-model";
       commandId: string;
@@ -161,6 +185,7 @@ export type WorkbenchCommand =
       conversationId: string;
       head: string | null;
       text: string;
+      images?: string[];
       model: ChoiceVersion;
       revision: number;
       intent: "message" | "enter" | "exit";
@@ -195,6 +220,7 @@ export type WorkbenchCommand =
       conversationId: string;
       head: string | null;
       text: string;
+      images?: string[];
       model: ChoiceVersion;
     }
   | {
@@ -213,7 +239,15 @@ export type ChatStatus =
   | "canceled"
   | "timeout"
   | "unknown";
+export interface ChatImage {
+  live?: true;
+  /** Pi entry ID, or the admitted command ID until Pi flushes its user entry. */
+  entry: string;
+  index: number;
+  mimeType: string;
+}
 export interface ChatItem {
+  images?: ChatImage[];
   id: string;
   role: "user" | "assistant" | "tool";
   text: string;
@@ -238,6 +272,7 @@ export interface ChatTurn {
  * arguments or output and keeps at most `STEP_TEXT_BYTES` of message text;
  * the full item is read per step with `conversation-step`, one part at a time. */
 export interface ChatStep {
+  images?: ChatImage[];
   id: string;
   role: ChatItem["role"];
   /** User or assistant text, a prefix of it when `clipped`; empty for tools. */
@@ -342,6 +377,7 @@ export function chatStep(
     id: item.id,
     role: item.role,
     text,
+    ...(item.images?.length ? { images: item.images } : {}),
     clipped: !tool && (more || text !== item.text),
     name: item.name,
     target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
@@ -377,6 +413,13 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
+  | { kind: "image-upload"; commandId: string; imageId: string; offset: number }
+  | {
+      kind: "conversation-image";
+      mimeType: string;
+      data: string;
+      next: number | null;
+    }
   | { kind: "conversation-context"; context: ConversationContext }
   | { kind: "conversation-models"; catalog: ModelCatalog }
   | { kind: "conversation-model"; commandId: string; choice: ModelChoiceState }
@@ -498,6 +541,36 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
         leaf: nullable(o.leaf, decodeEntryId),
         ordinal: integer(o.ordinal, 0),
         before: nullable(o.before, (b) => integer(b, 0)),
+      };
+    }
+    case "conversation-image": {
+      const o = closed(v, [
+        "kind",
+        "id",
+        "leaf",
+        "entry",
+        "index",
+        "offset",
+        ...(Object.hasOwn(v ?? {}, "live") ? ["live"] : []),
+      ]);
+      const offset = integer(
+        o.offset,
+        0,
+        4 * Math.ceil(IMAGE_LIMITS.bytes / 3),
+      );
+      if (
+        offset % IMAGE_LIMITS.chunkChars ||
+        (o.live !== undefined && o.live !== true)
+      )
+        throw new ContractError("invalid");
+      return {
+        kind,
+        id: decodeSessionId(o.id),
+        leaf: nullable(o.leaf, decodeEntryId),
+        ...(o.live === undefined ? {} : { live: true as const }),
+        entry: decodeEntryId(o.entry),
+        index: integer(o.index, 0, 1024),
+        offset,
       };
     }
     case "conversation-step": {
@@ -656,6 +729,41 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       revision: integer(o.revision, 0),
     };
   }
+  if (kind === "image-upload") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "imageId",
+      "send",
+      "mimeType",
+      "size",
+      "offset",
+      "data",
+    ]);
+    if (
+      !["send", "cadence-send"].includes(
+        Object.getOwnPropertyDescriptor(o.send ?? {}, "kind")?.value,
+      )
+    )
+      throw new ContractError("invalid");
+    const send = decodeWorkbenchCommand(o.send);
+    if (
+      (send.kind !== "send" && send.kind !== "cadence-send") ||
+      send.images?.length ||
+      (send.kind === "cadence-send" && send.intent === "exit")
+    )
+      throw new ContractError("invalid");
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      imageId: decodeId(o.imageId),
+      send,
+      mimeType: oneOf(o.mimeType, IMAGE_TYPES),
+      size: integer(o.size, 1, IMAGE_LIMITS.bytes),
+      offset: integer(o.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+      data: text(o.data, IMAGE_LIMITS.chunkChars, true),
+    };
+  }
   if (kind === "cadence-send") {
     const o = closed(v, [
       "kind",
@@ -663,6 +771,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       "conversationId",
       "head",
       "text",
+      ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
       "model",
       "revision",
       "intent",
@@ -672,7 +781,10 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       commandId: decodeId(o.commandId),
       conversationId: decodeSessionId(o.conversationId),
       head: nullable(o.head, decodeEntryId),
-      text: text(o.text, CONVERSATION_SEND_BYTES, true),
+      text: text(o.text, CONVERSATION_SEND_BYTES),
+      ...(o.images === undefined
+        ? {}
+        : { images: list(o.images, IMAGE_LIMITS.count, decodeId) }),
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
       intent: oneOf(o.intent, ["message", "enter", "exit"]),
@@ -716,6 +828,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       "conversationId",
       "head",
       "text",
+      ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
       "model",
     ]);
     return {
@@ -723,7 +836,10 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       commandId: decodeId(o.commandId),
       conversationId: decodeSessionId(o.conversationId),
       head: nullable(o.head, decodeEntryId),
-      text: text(o.text, CONVERSATION_SEND_BYTES, true),
+      text: text(o.text, CONVERSATION_SEND_BYTES),
+      ...(o.images === undefined
+        ? {}
+        : { images: list(o.images, IMAGE_LIMITS.count, decodeId) }),
       model: decodeChoiceVersion(o.model),
     };
   }
@@ -788,9 +904,36 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     items: list(o.items, 256, decodeChatItem),
   };
 }
+function decodeChatImages(v: unknown): ChatImage[] {
+  return list(v, IMAGE_LIMITS.count, (value) => {
+    const o = closed(value, [
+      "entry",
+      "index",
+      "mimeType",
+      ...(Object.hasOwn(value ?? {}, "live") ? ["live"] : []),
+    ]);
+    if (o.live !== undefined && o.live !== true)
+      throw new ContractError("invalid");
+    return {
+      ...(o.live === undefined ? {} : { live: true as const }),
+      entry: decodeEntryId(o.entry),
+      index: integer(o.index, 0, 1024),
+      mimeType: oneOf(o.mimeType, IMAGE_TYPES),
+    };
+  });
+}
 export function decodeChatItem(v: unknown): ChatItem {
-  const i = closed(v, ["id", "role", "text", "name", "args", "error"]);
+  const i = closed(v, [
+    "id",
+    "role",
+    "text",
+    "name",
+    "args",
+    "error",
+    ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
+  ]);
   return {
+    ...(i.images === undefined ? {} : { images: decodeChatImages(i.images) }),
     id: text(i.id, 160, true),
     role: oneOf(i.role, ["user", "assistant", "tool"]),
     text: text(i.text, 256 * 1024),
@@ -805,12 +948,14 @@ function decodeChatStep(v: unknown): ChatStep {
     "role",
     "text",
     "clipped",
+    ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
     "name",
     "target",
     "error",
     "parts",
   ]);
   const step = {
+    ...(o.images === undefined ? {} : { images: decodeChatImages(o.images) }),
     id: text(o.id, 160, true),
     role: oneOf(o.role, ["user", "assistant", "tool"]),
     text: text(o.text, STEP_TEXT_BYTES),
@@ -911,6 +1056,26 @@ function decodeChatTreeNode(v: unknown): ChatTreeNode {
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
   canonicalJson(v, 512 * 1024);
   const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (k === "image-upload") {
+    const o = closed(v, ["kind", "commandId", "imageId", "offset"]);
+    return {
+      kind: k,
+      commandId: decodeId(o.commandId),
+      imageId: decodeId(o.imageId),
+      offset: integer(o.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+    };
+  }
+  if (k === "conversation-image") {
+    const o = closed(v, ["kind", "mimeType", "data", "next"]);
+    return {
+      kind: k,
+      mimeType: oneOf(o.mimeType, IMAGE_TYPES),
+      data: text(o.data, IMAGE_LIMITS.chunkChars, true),
+      next: nullable(o.next, (n) =>
+        integer(n, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+      ),
+    };
+  }
   if (k === "conversation-context") {
     const o = closed(v, ["kind", "context"]);
     return { kind: k, context: decodeConversationContext(o.context) };

@@ -48,6 +48,8 @@ it("shared plan proposal bytes participate in independently compiled compatibili
   const dir = mkdtempSync(join(tmpdir(), "web-build-inputs-"));
   for (const name of [
     "src/worker-public.mjs",
+    "src/image-content.mjs",
+    "src/image-content.d.mts",
     "src/worker-public.d.mts",
     "src/service-contract.ts",
     "src/service-client.ts",
@@ -66,6 +68,13 @@ it("shared plan proposal bytes participate in independently compiled compatibili
     `${readFileSync(proposal, "utf8")}\n// changed input\n`,
   );
   expect(contractIdentity(dir)).not.toBe(before);
+  const afterPlan = contractIdentity(dir);
+  const image = join(dir, "src/image-content.mjs");
+  writeFileSync(
+    image,
+    `${readFileSync(image, "utf8")}\n// changed image bound\n`,
+  );
+  expect(contractIdentity(dir)).not.toBe(afterPlan);
 });
 it("loads exact compiled closure and all 60 actual KaTeX fonts, preserving full bodies", () => {
   const { manifest, assets } = loadWebAssets(source);

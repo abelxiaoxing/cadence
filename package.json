@@ -69,6 +69,7 @@
     "THIRD_PARTY_NOTICES.md",
     "licenses",
     "src/session-entries.mjs",
+    "src/image-content.mjs",
     "src/session-sharing.ts",
     "src/conversation-resources.mjs",
     "src/service/contracts/workbench.ts",

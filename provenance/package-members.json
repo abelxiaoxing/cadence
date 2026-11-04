@@ -43,6 +43,7 @@
   "package/src/coordinator-tools.mjs",
   "package/src/data-shapes.ts",
   "package/src/history-shell.ts",
+  "package/src/image-content.mjs",
   "package/src/index.ts",
   "package/src/native-build.ts",
   "package/src/native-client.ts",

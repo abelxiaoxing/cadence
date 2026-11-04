@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import { IMAGE_LIMITS, type InputImage } from "./image-content.mjs";
 import {
   networkSnapshot,
   safeChildEnv,
@@ -67,6 +68,8 @@ export interface ProcessSpec {
   timeoutMs: number;
   signal: AbortSignal;
   input?: string;
+  /** Private fd 3 payload, never part of the bounded public stdin envelope. */
+  imageInput?: string;
   env?: NodeJS.ProcessEnv;
   windowsVerbatimArguments?: boolean;
   /** Service lease ownership, rechecked for EVERY TERM/KILL, including recorder failure. */
@@ -156,6 +159,11 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
+  if (
+    spec.imageInput !== undefined &&
+    Buffer.byteLength(spec.imageInput) > IMAGE_LIMITS.wireBytes
+  )
+    return Promise.resolve(early("failed", "Image input exceeds bound"));
   return new Promise((resolve) => {
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
@@ -169,8 +177,15 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        // The coordinator channel keeps its slot after the unused fd 3.
-        ...(spec.onCoordinator ? ["ignore" as const, "ipc" as const] : []),
+        // Image bytes use fd 3; coordinator IPC retains fd 4.
+        ...(spec.imageInput !== undefined || spec.onCoordinator
+          ? [
+              spec.imageInput !== undefined
+                ? ("pipe" as const)
+                : ("ignore" as const),
+            ]
+          : []),
+        ...(spec.onCoordinator ? ["ipc" as const] : []),
       ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     let settled = false;
@@ -203,6 +218,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     let final: string | undefined;
     let ready = false;
     let capture: CaptureState | undefined;
+    let inputDelivered = spec.input === undefined;
+    let imagesDelivered = spec.imageInput === undefined;
     let stdin: NativeSettlement["stdin"] =
       spec.input === undefined ? "not-required" : "failed";
     const stdoutDecoder = new StringDecoder("utf8");
@@ -232,7 +249,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         (!ready ||
           final === undefined ||
           pending.length ||
-          (spec.input !== undefined && stdin !== "delivered")) &&
+          (spec.input !== undefined && stdin !== "delivered") ||
+          !imagesDelivered) &&
         outcome === "completed"
       )
         outcome = "failed";
@@ -570,13 +588,26 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       } else if (spec.recording) void stdoutWork.then(close);
       else close();
     });
+    if (spec.imageInput !== undefined) {
+      const pipe = child.stdio[3] as Writable;
+      pipe.on("error", () => {
+        stdin = "failed";
+        stop("failed");
+      });
+      pipe.once("finish", () => {
+        imagesDelivered = true;
+        if (inputDelivered) stdin = "delivered";
+      });
+      pipe.end(spec.imageInput);
+    }
     if (child.stdin) {
       child.stdin.on("error", () => {
         stdin = "failed";
         stop("failed");
       });
       child.stdin.once("finish", () => {
-        stdin = "delivered";
+        inputDelivered = true;
+        if (imagesDelivered) stdin = "delivered";
       });
       try {
         child.stdin.end(spec.input);
@@ -687,6 +718,7 @@ function launchEncoded(
     | "maySignal"
     | "onFrame"
     | "onCoordinator"
+    | "imageInput"
     | "secrets"
   > = {},
 ): Promise<RunResult> {
@@ -886,11 +918,22 @@ export function launchConversation(
     maySignal(): boolean;
     onNative(native: NativeSettlement): void;
     onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
+    images?: InputImage[];
     ownerSecrets(): readonly string[];
     onCoordinator?: ProcessSpec["onCoordinator"];
   },
 ): Promise<RunResult> {
   let encoded: ReturnType<typeof encodeEnvelope> | undefined;
+  const imageInput = options.images?.length
+    ? JSON.stringify(options.images)
+    : undefined;
+  const imageDescriptor =
+    imageInput === undefined
+      ? undefined
+      : {
+          bytes: Buffer.byteLength(imageInput),
+          sha256: createHash("sha256").update(imageInput).digest("hex"),
+        };
   return prepared.consume(
     (material) => {
       encoded = encodeEnvelope(
@@ -900,7 +943,10 @@ export function launchConversation(
       encoded.input = JSON.stringify({
         ...encoded.material,
         investigation: encoded.investigation,
-        conversation,
+        conversation: {
+          ...conversation,
+          ...(imageDescriptor ? { images: imageDescriptor } : {}),
+        },
       });
       return encoded.input;
     },
@@ -912,6 +958,7 @@ export function launchConversation(
         maySignal: options.maySignal,
         onNative: options.onNative,
         onCoordinator: options.onCoordinator,
+        imageInput,
         onFrame: (frame) => options.onFrame(frame, secrets),
       });
     },

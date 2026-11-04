@@ -686,3 +686,51 @@ it("an unsupported Pi format is not absence and never authorizes a new same-ID s
   writeFileSync(saved.path, current);
   expect(cold.session(saved.id)?.entries).toHaveLength(1);
 });
+
+it("user images are small descriptors; exact-branch lazy reads preserve Pi bytes and omitted unsupported media", async () => {
+  const { PNG } = await import("./helpers/images.ts");
+  const { sessionImage } = await import("../src/service/pi-sessions.ts");
+  const cwd = project(),
+    directory = join(cwd, "sessions");
+  const id = randomUUID();
+  const content = [
+    { type: "text", text: "a screenshot" },
+    { type: "image", data: PNG, mimeType: "image/png" },
+    { type: "image", data: "unsupported", mimeType: "image/svg+xml" },
+  ];
+  mkdirSync(directory);
+  const { path } = write(
+    directory,
+    cwd,
+    [
+      entry("message", null, {
+        id: "picture",
+        message: { role: "user", content },
+      }),
+      entry("message", null, {
+        id: "other",
+        message: { role: "user", content: "another branch" },
+      }),
+    ],
+    id,
+  );
+  const original = readFileSync(path);
+  const sessions = new PiSessions(directory, cwd);
+  const parsed = sessions.session(id)!;
+  const view = listTurn(turnItems(parsed.branch("picture"), []));
+  expect(view.steps[0].images).toEqual([
+    { entry: "picture", index: 1, mimeType: "image/png" },
+  ]);
+  expect(view.omitted.media).toBe(true);
+  expect(JSON.stringify(view.steps)).not.toContain(PNG);
+  expect(sessionImage(parsed, "picture", "picture", 1, 0)).toEqual({
+    kind: "conversation-image",
+    data: PNG,
+    next: null,
+    mimeType: "image/png",
+  });
+  expect(() => sessionImage(parsed, "other", "picture", 1, 0)).toThrow();
+  expect(() => sessionImage(parsed, "picture", "picture", 2, 0)).toThrow();
+  expect(() => sessionImage(parsed, "picture", "picture", 1, 4)).toThrow();
+  expect(readFileSync(path)).toEqual(original);
+});

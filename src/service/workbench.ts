@@ -21,6 +21,7 @@ import {
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
 import type { ConversationContexts } from "./conversation-contexts.ts";
+import { ConversationImages } from "./conversation-images.ts";
 import { ConversationWorkflow } from "./conversation-workflow.ts";
 import { Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
@@ -34,6 +35,7 @@ import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import { Workflows } from "./workflows.ts";
 
 export class Workbench implements WorkbenchPort {
+  readonly images = new ConversationImages();
   readonly conversations: Conversations;
   readonly contexts: ConversationContexts;
   readonly files: WorkbenchFiles;
@@ -85,6 +87,7 @@ export class Workbench implements WorkbenchPort {
     );
   }
   closeReads(): void {
+    this.images.clear();
     this.workflows.closeHistory();
     this.conversations.records.closeReads();
   }
@@ -157,6 +160,8 @@ export class Workbench implements WorkbenchPort {
           request.ordinal,
           request.before,
         );
+      case "conversation-image":
+        return this.conversations.records.image(request);
       case "conversation-step":
         return this.conversations.records.step(
           request.id,
@@ -190,7 +195,10 @@ export class Workbench implements WorkbenchPort {
       WorkbenchCommand,
       { kind: "send" | "cadence-send" | "cadence-exit" }
     >,
+    caller?: Caller,
   ): WorkbenchResult {
+    const claimImages = () =>
+      request.kind === "cadence-exit" ? [] : this.images.claim(request, caller);
     let mayHaveEffects = true;
     try {
       const state = this.cadence.records.state(request.conversationId);
@@ -207,7 +215,12 @@ export class Workbench implements WorkbenchPort {
         if (receipt) return receipt;
         if (state.notice) throw new ContractError("corrupt-selected");
         if (state.enabled) throw new ContractError("conflict");
-        return this.conversations.send(request, undefined, accepting);
+        return this.conversations.send(
+          request,
+          undefined,
+          accepting,
+          claimImages,
+        );
       }
       if (request.kind === "cadence-exit")
         return this.cadence.send(
@@ -222,7 +235,7 @@ export class Workbench implements WorkbenchPort {
           },
           accepting,
         );
-      return this.cadence.send(request, accepting);
+      return this.cadence.send(request, accepting, claimImages);
     } catch (error) {
       if (!mayHaveEffects && error instanceof ContractError)
         throw new UnacceptedConversationCommand(error.code);
@@ -267,6 +280,17 @@ export class Workbench implements WorkbenchPort {
     caller?: Caller,
   ): WorkbenchResult | Promise<WorkbenchResult> {
     const request = decodeWorkbenchCommand(value);
+    if (request.kind === "image-upload") {
+      this.o.owner.lease.assert();
+      if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
+      this.contexts.capture(request.send.model);
+      if (
+        request.send.model.conversation &&
+        request.send.model.conversation.id !== request.send.conversationId
+      )
+        throw new ContractError("stale");
+      return this.images.upload(request, caller);
+    }
     if (request.kind === "conversation-model")
       return {
         kind: request.kind,
@@ -307,7 +331,7 @@ export class Workbench implements WorkbenchPort {
       request.kind === "cadence-send" ||
       request.kind === "cadence-exit"
     )
-      return this.send(request);
+      return this.send(request, caller);
     if (
       request.kind === "cadence-prepare" ||
       request.kind === "cadence-approve"

@@ -17,6 +17,12 @@ import {
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import {
+  decodeImageBase64,
+  IMAGE_LIMITS,
+  IMAGE_TYPES,
+  validateImageBytes,
+} from "../image-content.mjs";
+import {
   BROWSER_COMMAND_ENTRY,
   CADENCE_MODE_ENTRY,
   WEBUI_SESSION_ENTRY,
@@ -24,6 +30,7 @@ import {
 import { sanitizeText } from "../worker-redaction.mjs";
 import { withinWorkspace } from "../workspace.ts";
 import { ContractError } from "./contracts/core.ts";
+import type { ChatImage, WorkbenchResult } from "./contracts/workbench.ts";
 import {
   type ChatItem,
   type ChatStatus,
@@ -276,6 +283,67 @@ const role = (entry: SessionEntry): unknown => {
   return m ? own(m, "role") : undefined;
 };
 const isUser = (entry: SessionEntry) => role(entry) === "user";
+function imageDescriptors(entry: SessionEntry): ChatImage[] {
+  const content = message(entry)?.content;
+  if (!isUser(entry) || !Array.isArray(content)) return [];
+  return content
+    .flatMap((b, index) =>
+      b?.type === "image" &&
+      IMAGE_TYPES.includes(b.mimeType) &&
+      typeof b.data === "string" &&
+      b.data.length > 0 &&
+      b.data.length <= 4 * Math.ceil(IMAGE_LIMITS.bytes / 3) &&
+      index <= 1024
+        ? [{ entry: entry.id, index, mimeType: b.mimeType }]
+        : [],
+    )
+    .slice(0, IMAGE_LIMITS.count);
+}
+/** Read only one supported image on the exact selected branch. Never exposes a
+ * session path, remote URL, or base64 in the regular conversation projection. */
+export function sessionImage(
+  session: ParsedSession,
+  leaf: string | null,
+  entry: string,
+  index: number,
+  offset: number,
+): WorkbenchResult {
+  if (!session.contains(leaf, entry)) throw new ContractError("stale");
+  const row = session.byId.get(entry);
+  const descriptor =
+    row && imageDescriptors(row).find((image) => image.index === index);
+  if (!row || !descriptor) throw new ContractError("invalid");
+  const content = message(row)?.content;
+  if (!Array.isArray(content)) throw new ContractError("invalid");
+  const block = content[index] as { data: string };
+  return imagePart(block.data, descriptor.mimeType, offset);
+}
+/** Same bounded bytes for a retained Pi image and a not-yet-flushed live input. */
+export function imagePart(
+  encoded: string,
+  mimeType: string,
+  offset: number,
+): WorkbenchResult {
+  try {
+    validateImageBytes(decodeImageBase64(encoded), mimeType);
+  } catch {
+    throw new ContractError("corrupt-selected");
+  }
+  if (
+    offset < 0 ||
+    offset >= encoded.length ||
+    offset % IMAGE_LIMITS.chunkChars
+  )
+    throw new ContractError("invalid");
+  const data = encoded.slice(offset, offset + IMAGE_LIMITS.chunkChars);
+  return {
+    kind: "conversation-image",
+    mimeType,
+    data,
+    next: offset + data.length < encoded.length ? offset + data.length : null,
+  };
+}
+
 function contentText(content: unknown, omitted?: ChatTurn["omitted"]): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -637,16 +705,26 @@ export function turnItems(
     const m = message(entry);
     if (m) {
       const kind = own(m, "role");
-      if (kind === "user")
+      if (kind === "user") {
+        const images = imageDescriptors(entry);
+        const content = own(m, "content");
+        const flags = { thinking: false, media: false, other: false };
+        const text = contentText(content, flags);
+        omitted.other ||= flags.other;
+        omitted.media ||=
+          flags.media &&
+          (!Array.isArray(content) ||
+            content.filter((b) => b?.type === "image").length > images.length);
         add({
+          ...(images.length ? { images } : {}),
           id: entry.id,
           role: "user",
-          text: contentText(own(m, "content"), omitted),
+          text,
           name: "",
           args: "",
           error: false,
         });
-      else if (kind === "assistant") {
+      } else if (kind === "assistant") {
         let text: ChatItem | undefined;
         const content = own(m, "content");
         for (const block of Array.isArray(content) ? content : []) {

@@ -51,6 +51,9 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
 5. Follow actual progress and local merge results in the conversation; open any subagent's full context from the lower-left **Subagents** dock.
    Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
 
+The browser also accepts images by file selection, paste or drag-and-drop, with previews and retained history.
+Choose a vision-capable model; see [image input](docs/conversation-mode.md#images-in-the-webui).
+
 ### In the terminal
 
 Enter `/cadence <goal>` once in any trusted project's Pi conversation.

@@ -3379,3 +3379,47 @@ button.link:hover:not(:disabled) {
     display: none;
   }
 }
+
+/* Image drafts and lazy, authenticated session images share a bounded layout. */
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.5rem 0;
+}
+.chat-images img {
+  display: block;
+  width: auto;
+  max-width: min(240px, 100%);
+  height: 140px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.chat-image-draft {
+  position: relative;
+  max-width: 160px;
+  min-width: 0;
+}
+.chat-image-draft img {
+  max-width: 100%;
+  height: 90px;
+}
+.chat-image-draft span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.chat-image-draft button {
+  position: absolute;
+  right: 0;
+  top: 0;
+  min-width: 26px;
+  min-height: 26px;
+}
+.composer-image-help {
+  margin: 0.3rem 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}

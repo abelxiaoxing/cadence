@@ -32,6 +32,25 @@ Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.
 When an observation reply is lost, ask for status; do not infer that the action was absent.
 
+## Images in the WebUI
+
+Use **Add images**, paste a screenshot, or drop image files onto the composer.
+Preview and remove images before Send; a message can contain images without text.
+PNG, JPEG and WebP are supported; the composer shows the current count and size limits.
+Choose a model whose catalog supports image input.
+An incompatible model refuses the message rather than dropping its images.
+Ordinary and Cadence conversations use the same image input.
+Images alongside an approval phrase are a discussion message, not plan approval.
+
+Selecting images is local to the tab and does not upload or start execution.
+Only Send uploads them, bound to that exact conversation, branch, model and message; navigating away abandons an unsent continuation, never an admitted turn.
+Unsent pictures are not saved in browser storage and disappear on refresh; the text draft remains.
+After Pi records a sent image, it appears in the conversation history and remains viewable after refresh (including retained reads when the project owner is stopped).
+Click a history thumbnail to open it at full size.
+Unsupported or over-limit media from existing Pi sessions remains omitted; unavailable images show a notice without changing their session files.
+Images are private conversation content, not public download links.
+Text redaction does not sanitize words or secrets inside pixels: inspect screenshots before sending them to a model.
+
 ## Models and project knowledge
 
 The first native use defaults to the current Pi provider/model/API/thinking selection.

@@ -30,6 +30,7 @@ type Intent =
   | Extract<WorkbenchCommand, { kind: "cadence-exit" }>;
 export interface PendingSend {
   readonly text: string;
+  readonly images: readonly File[];
   readonly location?: ConversationLocation;
   readonly model?: ModelSelector;
   readonly command: Readonly<Intent>;
@@ -41,6 +42,7 @@ export function captureSend(input: {
   id: string;
   head: string | null;
   text: string;
+  images?: readonly File[];
   revision: number;
   intent: "ordinary" | "enter" | "message" | "exit";
   location?: ConversationLocation;
@@ -56,7 +58,11 @@ export function captureSend(input: {
     : undefined;
   if (location && location.id !== common.conversationId)
     throw new ContractError("stale");
-  const message = text(input.text, CONVERSATION_SEND_BYTES, true);
+  const message = text(
+    input.text,
+    CONVERSATION_SEND_BYTES,
+    !input.images?.length,
+  );
   const command: Intent =
     input.intent === "exit"
       ? {
@@ -76,6 +82,7 @@ export function captureSend(input: {
           };
   return Object.freeze({
     text: message,
+    images: Object.freeze([...(input.images ?? [])]),
     command: Object.freeze(command),
     ...(location ? { location: Object.freeze(location) } : {}),
     ...(input.model ? { model: Object.freeze(selector(input.model)) } : {}),
@@ -108,7 +115,10 @@ export function assertSendModel(
 export function sendCommand(
   intent: PendingSend,
   model?: ChoiceVersion,
-): WorkbenchCommand {
+): Extract<
+  WorkbenchCommand,
+  { kind: "send" | "cadence-send" | "cadence-exit" }
+> {
   if (
     intent.location &&
     intent.command.kind !== "cadence-exit" &&
@@ -116,11 +126,18 @@ export function sendCommand(
       canonicalJson(model?.conversation ?? null)
   )
     throw new ContractError("stale");
-  return decodeWorkbenchCommand(
+  const command = decodeWorkbenchCommand(
     intent.command.kind === "cadence-exit"
       ? intent.command
       : { ...intent.command, model },
   );
+  if (
+    command.kind !== "send" &&
+    command.kind !== "cadence-send" &&
+    command.kind !== "cadence-exit"
+  )
+    throw new ContractError("invalid");
+  return command;
 }
 /** Retain the original draft namespace when upgrading existing conversations.
  * Reading never copies/deletes old browser data; newly selected directories use

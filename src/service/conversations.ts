@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { InputImage } from "../image-content.mjs";
 import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
 import {
   type CaptureFrame,
@@ -98,6 +99,7 @@ export interface CommandState {
   user: string | null;
 }
 export interface LiveTurn {
+  images?: InputImage[];
   execution: ExecutionContext;
   accepted: Accepted;
   commandId: string;
@@ -131,7 +133,11 @@ export class LiveCapture {
     string,
     { messageId: string; text: string }
   >();
-  constructor(private readonly secrets: () => readonly string[]) {}
+  private imageUser: string | undefined;
+  constructor(
+    private readonly secrets: () => readonly string[],
+    private readonly inputImages = false,
+  ) {}
   private bounded(value: string): string {
     return Buffer.byteLength(value) <= PREVIEW_BYTES
       ? value
@@ -150,7 +156,9 @@ export class LiveCapture {
   }
   accept(frame: CaptureFrame): void {
     const e = frame.event;
-    if (e.kind === "message-start" && e.role === "assistant") {
+    if (e.kind === "message-start" && e.role === "user" && this.inputImages) {
+      this.imageUser = e.messageId;
+    } else if (e.kind === "message-start" && e.role === "assistant") {
       if (!this.assistants.some((a) => a.id === e.messageId)) {
         this.assistants.push({ id: e.messageId, text: "" });
         const stale =
@@ -208,7 +216,13 @@ export class LiveCapture {
     else if (
       e.kind === "omitted-block" &&
       e.block.owner.kind !== "context" &&
-      e.block.owner.kind !== "handoff"
+      e.block.owner.kind !== "handoff" &&
+      !(
+        this.inputImages &&
+        e.block.sourceType === "image" &&
+        e.block.owner.kind === "message" &&
+        e.block.owner.messageId === this.imageUser
+      )
     )
       // A flag, not a notice line: it must never displace a failure reason.
       this.omitted[OMITTED_FLAG[e.block.reason]] = true;
@@ -358,6 +372,7 @@ export class Conversations {
     input: Send,
     control?: ConversationControl,
     beforeAccept?: () => void,
+    claimImages?: () => InputImage[],
   ): WorkbenchResult {
     this.o.owner.lease.assert();
     const command = this.command(input, !!control?.reply);
@@ -394,7 +409,22 @@ export class Conversations {
     if (input.head !== null && !session?.byId.has(input.head))
       throw new ContractError("stale");
     if (this.active.size >= 8) throw new ContractError("capacity");
-    if (!input.text.trim()) throw new ContractError("invalid");
+    if (!input.text.trim() && !input.images?.length)
+      throw new ContractError("invalid");
+    if (input.images?.length && (!claimImages || control?.reply))
+      throw new ContractError("invalid");
+    if (
+      input.images?.length &&
+      !this.o.models
+        .catalog()
+        .entries.some(
+          (m) =>
+            m.provider === execution.model?.provider &&
+            m.model === execution.model?.model &&
+            m.images,
+        )
+    )
+      throw new ContractError("unsupported-context");
     const space = statfsSync(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
@@ -418,6 +448,7 @@ export class Conversations {
       begin = resolve;
     });
     const live: LiveTurn = {
+      images: claimImages?.() ?? [],
       execution,
       accepted,
       commandId: input.commandId,
@@ -553,6 +584,7 @@ export class Conversations {
         context: "",
         instructions,
         prompt: accepted.command.text,
+        ...(live.images?.length ? { imageCount: live.images.length } : {}),
         handoff: { graphRevision: 1, inputs: [] },
       });
       const auth = this.o.models.prepareTracked({
@@ -584,10 +616,10 @@ export class Conversations {
         childRunId: request.childRunId,
       });
       let credentials: readonly string[] = [];
-      const capture = new LiveCapture(() => [
-        ...this.records.readSecrets(),
-        ...credentials,
-      ]);
+      const capture = new LiveCapture(
+        () => [...this.records.readSecrets(), ...credentials],
+        !!live.images?.length,
+      );
       live.capture = capture;
       const existing = this.records.sessions.find(accepted.session);
       if ((existing?.path ?? null) !== accepted.file)
@@ -608,6 +640,7 @@ export class Conversations {
           abort.signal,
           {
             timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+            images: live.images,
             ownerSecrets: this.o.secrets,
             onCoordinator: control?.onTool,
             maySignal: () => {

@@ -15,9 +15,11 @@ import {
   FiArrowUp,
   FiCornerDownRight,
   FiGitBranch,
+  FiImage,
   FiMessageSquare,
   FiSquare,
 } from "react-icons/fi";
+import { IMAGE_LIMITS, IMAGE_TYPES } from "../../../../src/image-content.mjs";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
@@ -36,6 +38,7 @@ import {
   sendCommand,
   withSendModel,
 } from "../../client/conversation-send";
+import { uploadImages } from "../../client/images";
 import { useConversation } from "../../client/use-conversation";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import {
@@ -49,6 +52,7 @@ import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
 import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
 import { BranchTree } from "./BranchTree";
+import { DraftImage, useImageDraft } from "./ChatImages";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import {
@@ -125,6 +129,10 @@ export function ChatWorkspace({
     selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
   );
   const [draft, setDraft] = useState(() => stored(draftKey));
+  const imageDraft = useImageDraft();
+  const removeImages = imageDraft.remove;
+  const sentImages = useRef<readonly File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
     stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
   );
@@ -327,12 +335,13 @@ export function ChatWorkspace({
         conversation.commands.includes(pending))
     ) {
       setPending("");
+      removeImages(sentImages.current);
       setDraft((value) => (value === sentDraft.current ? "" : value));
       onChanged();
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [summary, turns, pending, onChanged, state, conversation]);
+  }, [summary, turns, pending, onChanged, state, conversation, removeImages]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
     () =>
@@ -511,16 +520,27 @@ export function ChatWorkspace({
   };
   const send = async (override?: string, retained?: PendingSend) => {
     const message = retained?.text ?? override ?? draft;
+    const images = retained?.images ?? (override ? [] : imageDraft.files);
     const exiting = retained
       ? retained.command.kind === "cadence-exit"
       : cadence && cadenceExit(message);
     if (
       (!(exiting ? canExit : canSend) && !canPrepareOnly) ||
       running ||
-      !message.trim()
+      (!message.trim() && !images.length)
     )
       return;
-    if (!retained && !override && cadence && cadenceApproval(message)) {
+    if (exiting && images.length) {
+      setError(t("Remove images before exiting Cadence."));
+      return;
+    }
+    if (
+      !images.length &&
+      !retained &&
+      !override &&
+      cadence &&
+      cadenceApproval(message)
+    ) {
       if (!actionsReady)
         setError(
           t(
@@ -585,6 +605,7 @@ export function ChatWorkspace({
           id,
           head: conversation.leaf,
           text: message,
+          images,
           revision: state?.revision ?? 0,
           location: context ? { id, cwd: context.cwd } : undefined,
           model: observedModel.current ?? context?.model ?? undefined,
@@ -664,7 +685,29 @@ export function ChatWorkspace({
         return;
       }
       assertSendModel(intent, catalog.value.selected);
-      const command = sendCommand(intent, catalog.value.version);
+      let command = sendCommand(intent, catalog.value.version);
+      if (intent.images.length) {
+        const selected = catalog.value.selected;
+        if (
+          !catalog.value.entries.some(
+            (m) =>
+              m.provider === selected?.provider &&
+              m.model === selected?.model &&
+              m.images,
+          )
+        ) {
+          setError(
+            t(
+              "The selected model does not support images. Choose a vision model or remove the images.",
+            ),
+          );
+          return;
+        }
+        if (command.kind === "cadence-exit") throw new Error("invalid");
+        command = await uploadImages(client, command, intent.images, current);
+        if (!current()) return;
+      }
+      sentImages.current = intent.images;
       sentDraft.current = message;
 
       setPending(command.commandId);
@@ -678,6 +721,7 @@ export function ChatWorkspace({
         if (reply.error.effect === "none") setPending("");
         // Even a lost reply can have accepted work. Observe this exact turn ID.
       } else {
+        removeImages(sentImages.current);
         setDraft((value) => (value === sentDraft.current ? "" : value));
         setPending("");
         if (command.kind === "cadence-send") {
@@ -762,6 +806,16 @@ export function ChatWorkspace({
     setPreparing(false);
     conversation.choose(leaf);
     setBranchesOpen(false);
+  };
+  const imagesLocked = busy || awaitingModel || !!pending || !!running;
+  const addImages = (files: File[]) => {
+    if (imagesLocked) return;
+    try {
+      imageDraft.add(files);
+      setError("");
+    } catch (error) {
+      setError(tx(error instanceof Error ? error.message : "unavailable"));
+    }
   };
   return (
     <section
@@ -1016,11 +1070,45 @@ export function ChatWorkspace({
       )}
       <form
         className="chat-composer"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files"))
+            event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          addImages(Array.from(event.dataTransfer.files));
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void send();
         }}
       >
+        <input
+          ref={fileInput}
+          type="file"
+          accept={IMAGE_TYPES.join(",")}
+          multiple
+          hidden
+          disabled={imagesLocked}
+          aria-label={t("Add images")}
+          onChange={(event) => {
+            addImages(Array.from(event.currentTarget.files ?? []));
+            event.currentTarget.value = "";
+          }}
+        />
+        {imageDraft.files.length > 0 && (
+          <div className="chat-images">
+            {imageDraft.files.map((file) => (
+              <DraftImage
+                key={imageDraft.key(file)}
+                file={file}
+                disabled={imagesLocked}
+                remove={() => removeImages([file])}
+              />
+            ))}
+          </div>
+        )}
         <textarea
           ref={textarea}
           disabled={
@@ -1037,6 +1125,14 @@ export function ChatWorkspace({
           )}
           rows={3}
           onChange={(event) => setDraft(event.target.value)}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files).filter((f) =>
+              f.type.startsWith("image/"),
+            );
+            if (!files.length) return;
+            event.preventDefault();
+            addImages(files);
+          }}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -1048,7 +1144,27 @@ export function ChatWorkspace({
             }
           }}
         />
+        <p className="composer-image-help">
+          {t(
+            "PNG, JPEG or WebP · {count} images · {each} MiB each · {total} MiB total. Unsent images stay in this tab.",
+            {
+              count: IMAGE_LIMITS.count,
+              each: IMAGE_LIMITS.bytes / 1024 / 1024,
+              total: IMAGE_LIMITS.totalBytes / 1024 / 1024,
+            },
+          )}
+        </p>
         <div className="composer-toolbar">
+          <button
+            type="button"
+            className="ghost icon"
+            disabled={imagesLocked}
+            aria-label={t("Add images")}
+            title={t("Add images")}
+            onClick={() => fileInput.current?.click()}
+          >
+            <FiImage aria-hidden="true" />
+          </button>
           <button
             type="button"
             className={`mode-toggle${cadence || input.mode === "cadence" ? " on" : ""}`}
@@ -1133,7 +1249,7 @@ export function ChatWorkspace({
               disabled={
                 (!(cadence && cadenceExit(draft) ? canExit : canSend) &&
                   !canPrepareOnly) ||
-                !draft.trim()
+                (!draft.trim() && !imageDraft.files.length)
               }
             >
               <FiArrowUp />
