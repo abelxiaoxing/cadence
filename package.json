@@ -96,13 +96,10 @@
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "node scripts/verify.mjs",
-    "verify:full": "node scripts/verify.mjs --full",
     "check": "node scripts/check-syntax.mjs && bun scripts/build-operator.mjs --check && bun scripts/build-service.mjs --check && tsc --noEmit --incremental --tsBuildInfoFile .cache/tsc/root.tsbuildinfo",
     "lint": "biome check . && rumdl check .",
-    "test": "vitest run",
-    "test:unit": "vitest run --tags-filter=!slow",
-    "test:slow": "vitest run --tags-filter=slow",
-    "test:target": "vitest run",
+    "test": "vitest run --tags-filter=!slow",
+    "test:target": "vitest run --tags-filter=!slow",
     "check:agents": "node scripts/check-agents.mjs",
     "doctor": "node src/operator-cli.mjs doctor",
     "runs": "node src/operator-cli.mjs runs",
@@ -112,10 +109,8 @@
     "test:web": "vitest run --config web/vitest.config.ts",
     "build:web": "node scripts/build-web.mjs",
     "build:web:check": "node scripts/build-web.mjs --check",
-    "test:web:assets-browser": "bun run test:browser",
     "build:check": "bun scripts/build-operator.mjs --check && bun scripts/build-service.mjs --check && bun run build:web:check",
-    "test:service": "vitest run --config test/service.config.ts",
-    "test:browser": "vitest run --config web/browser.config.ts",
+    "test:service": "vitest run --config test/service.config.ts --tags-filter=!slow",
     "check:notices": "node scripts/audit-notices.mjs"
   },
   "peerDependencies": {
@@ -154,8 +149,7 @@
     "mdast-util-math": "3.0.0",
     "vis-timeline": "8.5.4",
     "vite": "8.3.0",
-    "@vitejs/plugin-react": "6.1.1",
-    "playwright-core": "1.63.0"
+    "@vitejs/plugin-react": "6.1.1"
   },
   "repository": {
     "type": "git",

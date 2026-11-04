@@ -87,7 +87,7 @@ Stopped-owner conversation views (`src/service/gateway-conversations.ts`) cache 
 Replacement, access rotation and workbench Stop discard their read caches; eviction affects only reads, never retained data or execution.
 Conversation-control projections (`src/service/conversation-controls.ts`) cache at most 512 records; they retain the existing 384KiB record bound and never cache transient I/O failures.
 
-Browser explicit-Send preparation uses `SEND_PREPARATION_MS` in `web/src/client/conversation-send.ts`, separate from model/worker execution and the browser test scene budget.
+Browser explicit-Send preparation uses `SEND_PREPARATION_MS` in `web/src/client/conversation-send.ts`, separate from model/worker execution.
 Its deadline abandons only an unsent client continuation; it never kills the owner or releases accepted work.
 Message bytes share `CONVERSATION_SEND_BYTES` with the owner decoder.
 

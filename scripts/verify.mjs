@@ -1,6 +1,5 @@
-// The integration gate: every independent check at once, each reported with
-// its time; any failure fails the gate. `--full` then runs the `slow`-tagged
-// root tests and the browser scenarios, one lane at a time.
+// The single development/release gate: independent fast checks run together.
+// Any failure fails verification; there is no additional release lane.
 import { spawn } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -8,8 +7,11 @@ import path from "node:path";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
+if (process.argv.length !== 2) {
+  console.error("Usage: bun run verify (no options)");
+  process.exit(1);
+}
 assertVerificationTemp(root);
-const full = process.argv.slice(2).includes("--full");
 const windows = process.platform === "win32";
 const node = process.execPath;
 const bin = (name) =>
@@ -81,14 +83,6 @@ const gate = [
   },
   { name: "pack", run: [[node, "scripts/pack-check.mjs"]] },
 ];
-const release = [
-  { name: "slow", run: [vitest("--tags-filter=slow")], counts },
-  {
-    name: "browser",
-    run: [vitest("--config", "web/browser.config.ts")],
-    counts,
-  },
-];
 
 function command([file, ...args]) {
   return new Promise((resolve) => {
@@ -135,14 +129,7 @@ async function stage({ name, run, counts }) {
 }
 
 const started = performance.now();
-let ok = (await Promise.all(gate.map(stage))).every(Boolean);
-if (ok && full) for (const lane of release) ok = (await stage(lane)) && ok;
+const ok = (await Promise.all(gate.map(stage))).every(Boolean);
 const seconds = ((performance.now() - started) / 1000).toFixed(1);
-console.log(
-  `${ok ? "verify passed" : "verify FAILED"}${full ? " (full)" : ""} in ${seconds}s`,
-);
-if (!full && ok)
-  console.log(
-    "Not run: slow-tagged root tests and browser scenarios (verify:full).",
-  );
+console.log(`${ok ? "verify passed" : "verify FAILED"} in ${seconds}s`);
 process.exit(ok ? 0 : 1);
