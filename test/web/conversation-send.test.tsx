@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
+import { ServiceClient } from "../../src/service-client.ts";
+import { publicError } from "../../src/service-contract.ts";
 import {
   assertSendModel,
   captureSend,
+  dispatchSend,
   draftKey,
   sendCommand,
+  sendFailureMessage,
   withSendModel,
 } from "../../web/src/client/conversation-send";
+import { transport } from "./fixtures";
 
 const model = {
   epoch: randomUUID(),
@@ -118,3 +123,48 @@ it("a pending Send pins cwd and the shown model; an explicit picker continuation
   });
   expect(sendCommand(exit)).toMatchObject({ kind: "cadence-exit", location });
 });
+
+it.each(["lost", "uncertain", "none"])(
+  "final Send %s retains draft/context and only reliable effect:none clears the original pending ID",
+  async (outcome) => {
+    const intent = captureSend({
+      id: randomUUID(),
+      head: randomUUID(),
+      text: "kept draft",
+      revision: 8,
+      intent: "message",
+    });
+    const command = sendCommand(intent, model);
+    const call = vi.fn(async () => {
+      if (outcome === "lost") throw new Error("reply lost");
+      return {
+        kind: "error",
+        error: publicError(
+          "unavailable",
+          outcome === "none" ? "none" : "uncertain",
+        ),
+      };
+    });
+    const client = new ServiceClient(transport({ workbenchCommand: call }));
+    const pending = vi.fn();
+    const reply = await dispatchSend(client, command, pending);
+    expect(call.mock.calls).toHaveLength(1);
+    expect(call).toHaveBeenCalledWith(command);
+    expect(pending.mock.calls).toEqual(
+      outcome === "none" ? [[command.commandId], [""]] : [[command.commandId]],
+    );
+    expect(intent.text).toBe("kept draft");
+    expect(intent.command).toMatchObject({
+      commandId: command.commandId,
+      head: command.head,
+      revision: 8,
+    });
+    expect(reply.kind).toBe("error");
+    if (reply.kind === "error") {
+      expect(sendFailureMessage(reply.error.effect)).toContain(
+        outcome === "none" ? "not accepted" : "original command",
+      );
+      expect(sendFailureMessage(reply.error.effect)).not.toContain("16 KiB");
+    }
+  },
+);

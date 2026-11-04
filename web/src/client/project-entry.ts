@@ -7,6 +7,7 @@ import {
 } from "../../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../../src/service/contracts/models.ts";
 import { localBuild } from "./build-identity";
+import type { PreparationProgress } from "./conversation-send";
 import { errorCode, readJson } from "./service";
 
 async function entry(signal?: AbortSignal) {
@@ -25,9 +26,10 @@ async function command(
   value: object,
   current: Awaited<ReturnType<typeof entry>>,
   signal?: AbortSignal,
+  dispatched?: () => void,
 ) {
   if (!localBuild) throw new Error("unsupported-context");
-  const response = await fetch(path, {
+  const init: RequestInit = {
     method: "POST",
     credentials: "same-origin",
     redirect: "error",
@@ -38,7 +40,12 @@ async function command(
       "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
     },
     body: JSON.stringify({ ...value, epoch: current.epoch }),
-  });
+  };
+  if (signal?.aborted) throw signal.reason;
+  const pending = fetch(path, init);
+  // Handed to fetch, not proof that the service received this POST.
+  dispatched?.();
+  const response = await pending;
   const reply = await readJson(response);
   if (
     !response.ok ||
@@ -71,6 +78,7 @@ export async function prepareDirectorySend(
   selected: ProjectEntry,
   signal: AbortSignal,
   location?: ConversationLocation,
+  progress?: PreparationProgress,
 ) {
   const current = await entry(signal);
   const kept = current.projects.find((p) => p.id === selected.id);
@@ -85,6 +93,7 @@ export async function prepareDirectorySend(
     },
     current,
     signal,
+    () => progress?.("dispatched"),
   );
   if (
     !result.project.epoch ||
@@ -93,5 +102,7 @@ export async function prepareDirectorySend(
     result.project.cwd !== selected.cwd
   )
     throw new Error("stale");
+  // Confirmation precedes attachment waiting; a later timeout cannot undo it.
+  progress?.("confirmed");
   return result;
 }

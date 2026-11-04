@@ -14,6 +14,7 @@ import {
 } from "../../src/service-contract.ts";
 import { App } from "./App";
 import { browserClient } from "./client/browser";
+import type { PreparationProgress } from "./client/conversation-send";
 import {
   projectReadable,
   rememberProject,
@@ -147,10 +148,16 @@ export function Workbench() {
   const prepareSend = async (
     signal: AbortSignal,
     location?: ConversationLocation,
+    progress?: PreparationProgress,
   ) => {
     const selectedProject = entry?.projects.find((p) => p.id === selected);
     if (!selectedProject) throw new Error("unavailable");
-    const ready = await prepareDirectorySend(selectedProject, signal, location);
+    const ready = await prepareDirectorySend(
+      selectedProject,
+      signal,
+      location,
+      progress,
+    );
     if (signal.aborted) throw new Error("stale");
     setEntry(ready.entry);
     return ready.project.epoch as string;

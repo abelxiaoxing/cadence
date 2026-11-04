@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { IMAGE_LIMITS } from "../../src/image-content.mjs";
 import {
   type ChatStatus,
   type ChatStep,
@@ -11,8 +12,14 @@ import {
   IDLE_MS,
   LIVE_MS,
 } from "../../web/src/client/conversation-reader";
+import { PNG } from "../helpers/images.ts";
 
-afterEach(() => vi.useRealTimers());
+const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
+afterEach(() => {
+  Object.defineProperties(AbortSignal, descriptors);
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 const id = crypto.randomUUID();
 const step = (n: number): ChatStep => ({
   id: `s${n}`,
@@ -309,4 +316,189 @@ it("branch navigation retires pending readonly reads and cannot reuse the old ob
   expect(reader.view()).toMatchObject({ pinned: false, error: "", count: 2 });
   expect(reader.view().turns).toHaveLength(2);
   reader.close();
+});
+
+it.each(["any", "timeout", "both"])(
+  "detail and image reads work without %s and release their listeners on success",
+  async (missing) => {
+    vi.useFakeTimers();
+    for (const name of missing === "both" ? ["any", "timeout"] : [missing])
+      Object.defineProperty(AbortSignal, name, {
+        configurable: true,
+        value: undefined,
+      });
+    const o = owner([settled()]);
+    const client = {
+      workbenchRead: async (request: WorkbenchRead) =>
+        request.kind === "conversation-image"
+          ? {
+              kind: "ok" as const,
+              value: {
+                kind: "conversation-image" as const,
+                data: PNG,
+                next: null,
+                mimeType: "image/png",
+              },
+            }
+          : o.client.workbenchRead(request),
+    };
+    const reader = new ConversationReader(client, id, () => {});
+    try {
+      reader.setActive(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const turn = reader.view().turns[0];
+      const abort = new AbortController();
+      const remove = vi.spyOn(abort.signal, "removeEventListener");
+      expect(await turn.detail(1, 2, abort.signal)).toEqual({
+        text: "out0out1",
+        args: "{}",
+      });
+      if (!turn.image) throw new Error("missing image reader");
+      const image = await turn.image(
+        { entry: "user", index: 0, mimeType: "image/png" },
+        abort.signal,
+      );
+      expect(image.type).toBe("image/png");
+      expect(remove).toHaveBeenCalledTimes(3);
+      expect(abort.signal.aborted).toBe(false);
+    } finally {
+      reader.close();
+    }
+  },
+);
+it("a rejected detail part does not disconnect the remaining parallel read from branch cancellation", async () => {
+  vi.useFakeTimers();
+  const o = owner([settled()]);
+  const signals: AbortSignal[] = [];
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request, signal) => {
+        if (request.kind !== "conversation-step")
+          return o.client.workbenchRead(request);
+        if (!signal) throw new Error("missing read signal");
+        signals.push(signal);
+        if (request.part === 0) throw new Error("one part failed");
+        await new Promise<void>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          }),
+        );
+        throw new Error("must abort");
+      },
+    },
+    id,
+    () => {},
+  );
+  try {
+    reader.setActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const abort = new AbortController();
+    const remove = vi.spyOn(abort.signal, "removeEventListener");
+    await expect(
+      reader.view().turns[0].detail(1, 2, abort.signal),
+    ).rejects.toThrow("one part failed");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(signals[1].aborted).toBe(false);
+    reader.choose("other-branch");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signals[1].aborted).toBe(true);
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(abort.signal.aborted).toBe(false);
+  } finally {
+    reader.close();
+  }
+});
+it("one image scope spans every page and closes on cancellation of a later page", async () => {
+  vi.useFakeTimers();
+  const o = owner([settled()]);
+  const signals: AbortSignal[] = [];
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request, signal) => {
+        if (request.kind !== "conversation-image")
+          return o.client.workbenchRead(request);
+        if (!signal) throw new Error("missing read signal");
+        signals.push(signal);
+        if (request.offset === 0)
+          return {
+            kind: "ok",
+            value: {
+              kind: "conversation-image",
+              mimeType: "image/png",
+              data: "A".repeat(IMAGE_LIMITS.chunkChars),
+              next: IMAGE_LIMITS.chunkChars,
+            },
+          };
+        await new Promise<void>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          }),
+        );
+        throw new Error("must abort");
+      },
+    },
+    id,
+    () => {},
+  );
+  try {
+    reader.setActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const abort = new AbortController();
+    const add = vi.spyOn(abort.signal, "addEventListener"),
+      remove = vi.spyOn(abort.signal, "removeEventListener");
+    const image = reader.view().turns[0].image;
+    if (!image) throw new Error("missing image reader");
+    const result = expect(
+      image({ entry: "user", index: 0, mimeType: "image/png" }, abort.signal),
+    ).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+    abort.abort();
+    await result;
+    expect(remove).toHaveBeenCalledTimes(1);
+  } finally {
+    reader.close();
+  }
+});
+it("failed re-observation preserves the last server status and history, never a fabricated stopped state", async () => {
+  vi.useFakeTimers();
+  const o = owner([{ ...settled(), status: "running" }]);
+  let fail = false;
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request) => {
+        if (fail) throw new Error("offline");
+        return o.client.workbenchRead(request);
+      },
+    },
+    id,
+    () => {},
+  );
+  try {
+    reader.setActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const turns = reader.view().turns;
+    fail = true;
+    reader.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reader.view()).toMatchObject({
+      error: "unavailable",
+      summary: { status: "running" },
+      turns,
+    });
+    fail = false;
+    reader.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reader.view().error).toBe("");
+    expect(
+      o.reads.every(
+        (r) => r.kind === "conversation" || r.kind === "conversation-turn",
+      ),
+    ).toBe(true);
+  } finally {
+    reader.close();
+  }
 });

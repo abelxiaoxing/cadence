@@ -6,16 +6,39 @@ import {
   type ProjectObservation,
 } from "../../../src/service/contracts/gateway.ts";
 import { errorCode, readJson } from "./service";
+
+export function projectReadiness(
+  value?: ProjectObservation,
+  error?: string,
+  fresh = true,
+) {
+  if (!value || value.status === "unavailable") return "unknown";
+  if (error || !fresh) return "stale";
+  return value.status;
+}
+/** A failed observation keeps history identity, not a claim of live readiness. */
+export function projectObservationResult(
+  previous: ProjectObservation | undefined,
+  value?: ProjectObservation,
+  error?: string,
+) {
+  if (!value || value.status === "unavailable")
+    return { value: previous ?? value, error: error ?? "unavailable" };
+  return { value, error: undefined };
+}
 export function useProjectObservation(
   id?: string,
   selectedEpoch?: string | null,
 ) {
   const [revision, setRevision] = useState(0);
+  const nextRevision = useRef(0);
   const serial = useRef(0);
   const [state, setState] = useState<{
     id?: string;
     value?: ProjectObservation;
     error?: string;
+    revision?: number;
+    selectedEpoch?: string | null;
   }>({});
   useEffect(() => {
     void revision;
@@ -36,13 +59,28 @@ export function useProjectObservation(
         });
         const value = await readJson(response);
         if (!response.ok) throw new Error(errorCode(value));
-        if (current()) setState({ id, value: decodeProjectObservation(value) });
+        const observed = decodeProjectObservation(value);
+        if (current())
+          setState((previous) => ({
+            id,
+            revision,
+            selectedEpoch,
+            ...projectObservationResult(
+              previous.id === id ? previous.value : undefined,
+              observed,
+            ),
+          }));
       } catch (error) {
         if (current())
           setState((previous) => ({
             id,
-            value: previous.id === id ? previous.value : undefined,
-            error: error instanceof Error ? error.message : "unavailable",
+            revision,
+            selectedEpoch,
+            ...projectObservationResult(
+              previous.id === id ? previous.value : undefined,
+              undefined,
+              error instanceof Error ? error.message : "unavailable",
+            ),
           }));
       }
       if (current()) timer = setTimeout(() => void load(), 5000);
@@ -55,14 +93,19 @@ export function useProjectObservation(
   }, [id, revision, selectedEpoch]);
   const refresh = useCallback(() => {
     ++serial.current;
-    setRevision((v) => v + 1);
+    const revision = ++nextRevision.current;
+    setRevision(revision);
+    return revision;
   }, []);
   // Only an authenticated explicit Send preparation supplies this readiness.
   // Retire older reads synchronously so none can overwrite its new epoch.
+  // The parent adopts this confirmed epoch, not the callback's old selection.
   const prepared = (epoch: string) => {
-    refresh();
+    const revision = refresh();
     setState((previous) => ({
       id,
+      revision,
+      selectedEpoch: epoch,
       value: {
         kind: "project-observation",
         status: "running",
@@ -72,5 +115,16 @@ export function useProjectObservation(
       },
     }));
   };
-  return { ...(state.id === id ? state : {}), refresh, prepared };
+  const selected = state.id === id ? state : {};
+  return {
+    ...selected,
+    readiness: projectReadiness(
+      selected.value,
+      selected.error,
+      selected.revision === revision &&
+        selected.selectedEpoch === selectedEpoch,
+    ),
+    refresh,
+    prepared,
+  };
 }

@@ -1,3 +1,4 @@
+import { abortScope } from "./abort-scope.ts";
 import type {
   WorkbenchCommand,
   WorkbenchRead,
@@ -129,60 +130,64 @@ export class HttpServiceTransport implements ServiceTransport {
       write = wire.method === "POST";
     // No automatic session/preflight refresh, changed command ID, mutation retry,
     // credential query or redirect follow after an uncertain HTTP outcome.
-    const response = await this.fetcher(
-      `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
-      {
-        method: wire.method,
-        headers: this.headers(write),
-        credentials: "same-origin",
-        redirect: "error",
-        signal:
-          this.options.requestTimeoutMs === undefined
-            ? signal
-            : AbortSignal.any([
-                ...(signal ? [signal] : []),
-                AbortSignal.timeout(this.options.requestTimeoutMs),
-              ]),
-        ...(write ? { body: wire.body } : {}),
-      },
-    );
-    // Keep a known allocation even if its original response body is lost or
-    // malformed. Without a validated CSRF challenge detach may remain blocked;
-    // never silently forget that slot and acquire 16 replacement sessions.
-    let sessionAttachment: string | undefined;
+    const scope =
+      this.options.requestTimeoutMs === undefined
+        ? undefined
+        : abortScope([signal], this.options.requestTimeoutMs);
+    const requestSignal = scope?.signal ?? signal;
     try {
-      if (operation === "session" && response.ok) {
-        sessionAttachment = decodeId(
-          response.headers.get("x-cadence-attachment"),
-        );
-        this.attachment = sessionAttachment;
+      if (requestSignal?.aborted) throw requestSignal.reason;
+      const response = await this.fetcher(
+        `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
+        {
+          method: wire.method,
+          headers: this.headers(write),
+          credentials: "same-origin",
+          redirect: "error",
+          signal: requestSignal,
+          ...(write ? { body: wire.body } : {}),
+        },
+      );
+      // Keep a known allocation even if its original response body is lost or
+      // malformed. Without a validated CSRF challenge detach may remain blocked;
+      // never silently forget that slot and acquire 16 replacement sessions.
+      let sessionAttachment: string | undefined;
+      try {
+        if (operation === "session" && response.ok) {
+          sessionAttachment = decodeId(
+            response.headers.get("x-cadence-attachment"),
+          );
+          this.attachment = sessionAttachment;
+        }
+      } catch (error) {
+        await response.body?.cancel().catch(() => {});
+        throw error;
       }
-    } catch (error) {
-      await response.body?.cancel().catch(() => {});
-      throw error;
-    }
-    const source = await boundedText(response, httpOutputLimit(operation)),
-      parsed = parseWireJson(source);
-    // Graph's category is known only after parsing. Count ORIGINAL wire bytes,
-    // not a canonical re-encoding which discards padding or alternate escapes.
-    if (utf8Bytes(source) > httpOutputLimit(operation, parsed))
-      throw new ContractError("oversize");
-    const result = decodeHttpOutput(operation, parsed);
-    if (operation === "session") {
-      const reply = decodeReply(result, decodeSessionBootstrap);
-      if (reply.kind === "ok") {
-        if (
-          (reply.value.authority === "local") !==
-          !!this.options.localCapability
-        )
-          throw new ContractError("forbidden");
-        this.attachment =
-          sessionAttachment ??
-          decodeId(response.headers.get("x-cadence-attachment"));
-        this.csrf = reply.value.csrf;
+      const source = await boundedText(response, httpOutputLimit(operation)),
+        parsed = parseWireJson(source);
+      // Graph's category is known only after parsing. Count ORIGINAL wire bytes,
+      // not a canonical re-encoding which discards padding or alternate escapes.
+      if (utf8Bytes(source) > httpOutputLimit(operation, parsed))
+        throw new ContractError("oversize");
+      const result = decodeHttpOutput(operation, parsed);
+      if (operation === "session") {
+        const reply = decodeReply(result, decodeSessionBootstrap);
+        if (reply.kind === "ok") {
+          if (
+            (reply.value.authority === "local") !==
+            !!this.options.localCapability
+          )
+            throw new ContractError("forbidden");
+          this.attachment =
+            sessionAttachment ??
+            decodeId(response.headers.get("x-cadence-attachment"));
+          this.csrf = reply.value.csrf;
+        }
       }
+      return result;
+    } finally {
+      scope?.dispose();
     }
-    return result;
   }
   session(signal?: AbortSignal) {
     return this.request("session", null, signal);

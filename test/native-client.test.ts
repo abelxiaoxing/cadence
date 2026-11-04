@@ -184,13 +184,8 @@ it("native export verifies digest/EOF, refuses overwrites/links and preserves in
     epoch,
     capability: "a".repeat(43),
   });
-  const deadlines: AbortController[] = [];
-  vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
-    expect(milliseconds).toBe(10000);
-    const controller = new AbortController();
-    deadlines.push(controller);
-    return controller.signal;
-  });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const deadlines = vi.spyOn(globalThis, "setTimeout");
   let exportSignal: AbortSignal | null | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     if (String(url).endsWith("/session"))
@@ -226,8 +221,8 @@ it("native export verifies digest/EOF, refuses overwrites/links and preserves in
             controller.enqueue(Buffer.from(encoded));
             return;
           }
-          // Model the original native fetch deadline firing while bytes flow.
-          for (const deadline of deadlines) deadline.abort();
+          // Progress past the finite-request budget while export bytes flow.
+          vi.advanceTimersByTime(10_001);
           if (exportSignal?.aborted)
             controller.error(new Error("total deadline"));
           else {
@@ -243,18 +238,24 @@ it("native export verifies digest/EOF, refuses overwrites/links and preserves in
   const connection = new NativeConnection();
   try {
     const native = await connection.attach(root);
-    expect(deadlines).toHaveLength(1);
-    deadlines.length = 0;
+    expect(deadlines).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Function),
+      10000,
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    deadlines.mockClear();
     const caller = new AbortController();
     const destination = join(root, " 汉🧪 complete export ");
     await expect(
       exportNative(native, request, destination, caller.signal),
     ).resolves.toBe("complete");
     expect(exportSignal?.aborted).toBe(false);
+    expect(deadlines).not.toHaveBeenCalled();
     expect(readFileSync(destination, "utf8")).toBe(
       encoded + encodeExportFrame(trailer, "ndjson"),
     );
   } finally {
     await connection.detach();
+    vi.useRealTimers();
   }
 });
