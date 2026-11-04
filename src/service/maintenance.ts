@@ -244,8 +244,13 @@ export async function release(
   ]);
   if (result.status !== 0) return undefined;
   try {
-    // One field present prints a bare value; both print an object.
-    const value: unknown = JSON.parse(result.stdout);
+    // One field present prints a string; both print an object. npm 12 keeps
+    // a top-level array even for one result; unwrap exactly that one layer.
+    let value: unknown = JSON.parse(result.stdout);
+    if (Array.isArray(value)) {
+      if (value.length !== 1) return undefined;
+      value = value[0];
+    }
     if (typeof value === "string")
       return { version: decodeVersion(value), deprecated: false };
     const o = closed(value, ["version", "deprecated"]);
