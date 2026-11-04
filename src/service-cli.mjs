@@ -6311,7 +6311,12 @@ async function release(spec = "latest", npmRun = npm) {
   if (result.status !== 0)
     return;
   try {
-    const value = JSON.parse(result.stdout);
+    let value = JSON.parse(result.stdout);
+    if (Array.isArray(value)) {
+      if (value.length !== 1)
+        return;
+      value = value[0];
+    }
     if (typeof value === "string")
       return { version: decodeVersion(value), deprecated: false };
     const o = closed(value, ["version", "deprecated"]);

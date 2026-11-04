@@ -9987,7 +9987,12 @@ async function release(spec = "latest", npmRun = npm) {
   if (result.status !== 0)
     return;
   try {
-    const value = JSON.parse(result.stdout);
+    let value = JSON.parse(result.stdout);
+    if (Array.isArray(value)) {
+      if (value.length !== 1)
+        return;
+      value = value[0];
+    }
     if (typeof value === "string")
       return { version: decodeVersion(value), deprecated: false };
     const o = closed(value, ["version", "deprecated"]);
@@ -28672,7 +28677,7 @@ class WorkflowHistoryScanner {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.34",
-  build: "f229191f19ecc4ccdf44b258718084e012a399e8927d04061fcf0ed19139753c",
+  build: "d6bb46856c88a4c04e38daba80944119fee1893b98c850fda0395d8c47614a4b",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

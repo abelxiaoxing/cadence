@@ -219,18 +219,54 @@ describe("WebUI job record", () => {
 describe("upgrade", () => {
   interface Npmish {
     view?: unknown;
-    viewStatus?: number;
+    viewStdout?: string;
+    viewStatus?: number | null;
     cache?: number;
     install?: (version: string) => number;
   }
+  const invalidAnswers = [
+    [],
+    ["2.0.27", "2.0.28"],
+    [
+      { version: "2.0.27", deprecated: false },
+      { version: "2.0.28", deprecated: false },
+    ],
+    [["2.0.28"]],
+    [[{ version: "2.0.28", deprecated: "Withdrawn" }]],
+    null,
+    false,
+    2,
+    {},
+    { version: "2.0.28" },
+    { deprecated: "Withdrawn" },
+    { version: "2.0.28", deprecated: false, extra: true },
+    ...[
+      "",
+      "latest",
+      "2",
+      "2.0",
+      "^2.0.28",
+      "v2.0.28",
+      "02.0.28",
+      "2.0.28+build",
+      "2.0.28\n",
+      "1000000000.0.0",
+      `2.0.28-${"a".repeat(65)}`,
+      null,
+      2,
+    ].flatMap((version) => [version, { version, deprecated: false }]),
+  ];
+  const badJson = ["", "not json", '["2.0.28"'];
   function npm(f: ReturnType<typeof system>, o: Npmish, log: string[]): Npm {
     return async (args) => {
       log.push(`npm ${args.join(" ")}`);
       if (args[0] === "root") return { status: 0, stdout: `${f.global}\n` };
       if (args[0] === "view")
         return {
-          status: o.viewStatus ?? 0,
-          stdout: JSON.stringify(o.view ?? "2.0.0"),
+          status: o.viewStatus === undefined ? 0 : o.viewStatus,
+          stdout:
+            o.viewStdout ??
+            JSON.stringify(o.view === undefined ? "2.0.0" : o.view),
         };
       if (args[0] === "cache") return { status: o.cache ?? 0, stdout: "" };
       const version = (args.at(-1) ?? "").split("@").at(-1) ?? "";
@@ -281,41 +317,78 @@ describe("upgrade", () => {
     expect(result).toEqual({ status: "not-npm-global" });
     expect(log).toEqual(["root --global"]);
   });
-  it("fetches before stopping, installs the exact version and reports the new copy", async () => {
-    const { result, log } = await run({ view: "2.0.0" });
-    expect(result).toEqual({
-      status: "upgraded",
-      from: "1.0.0",
-      to: "2.0.0",
-      version: "2.0.0",
-    });
-    expect(log).toEqual([
-      "npm root --global",
-      "npm view @abelxiaoxing/cadence@latest version deprecated --json",
-      "npm cache add @abelxiaoxing/cadence@2.0.0",
-      "stop",
-      "npm install --global --no-audit --no-fund @abelxiaoxing/cadence@2.0.0",
-      "restart 2.0.0",
-    ]);
-  });
-  it("names an exact requested version, and changes nothing for the current or a deprecated one", async () => {
-    expect((await run({ to: "1.5.0", view: "1.5.0" })).log[1]).toBe(
-      "npm view @abelxiaoxing/cadence@1.5.0 version deprecated --json",
-    );
-    const current = await run({ view: "1.0.0" });
-    expect(current.result).toMatchObject({
-      status: "current",
-      version: "1.0.0",
-    });
-    expect(current.log).not.toContain("stop");
-    const deprecated = await run({
-      view: { version: "2.0.0", deprecated: "Withdrawn" },
-    });
-    expect(deprecated.result).toMatchObject({
-      status: "deprecated",
-      to: "2.0.0",
-    });
-    expect(deprecated.log).not.toContain("stop");
+  it.each([
+    { view: "2.0.0" },
+    { view: { version: "2.0.0", deprecated: false } },
+    { view: ["2.0.0"] },
+    { view: [{ version: "2.0.0", deprecated: false }] },
+  ])(
+    "fetches before stopping, installs the exact version and reports the new copy ($view)",
+    async ({ view }) => {
+      const { result, log } = await run({ view });
+      expect(result).toEqual({
+        status: "upgraded",
+        from: "1.0.0",
+        to: "2.0.0",
+        version: "2.0.0",
+      });
+      expect(log).toEqual([
+        "npm root --global",
+        "npm view @abelxiaoxing/cadence@latest version deprecated --json",
+        "npm cache add @abelxiaoxing/cadence@2.0.0",
+        "stop",
+        "npm install --global --no-audit --no-fund @abelxiaoxing/cadence@2.0.0",
+        "restart 2.0.0",
+      ]);
+    },
+  );
+  it.each(["bare", "single-result array"])(
+    "names an exact requested version, and changes nothing for the current or a deprecated one (%s)",
+    async (format) => {
+      const view = (value: unknown) => (format === "bare" ? value : [value]);
+      expect((await run({ to: "1.5.0", view: view("1.5.0") })).log[1]).toBe(
+        "npm view @abelxiaoxing/cadence@1.5.0 version deprecated --json",
+      );
+      const current = await run({ view: view("1.0.0") });
+      expect(current.result).toMatchObject({
+        status: "current",
+        version: "1.0.0",
+      });
+      expect(current.log).toHaveLength(2);
+      for (const message of ["Withdrawn", ""]) {
+        const deprecated = await run({
+          view: view({ version: "2.0.0", deprecated: message }),
+        });
+        expect(deprecated.result).toMatchObject({
+          status: "deprecated",
+          to: "2.0.0",
+        });
+        expect(deprecated.log).toHaveLength(2);
+      }
+    },
+  );
+  it("refuses invalid query results before Stop, install or restart", async () => {
+    const answers: Npmish[] = [
+      ...invalidAnswers.flatMap((view) => [{ view }, { view: [view] }]),
+      ...badJson.map((viewStdout) => ({ viewStdout })),
+      ...[1, null].map((viewStatus) => ({
+        view: ["2.0.0"],
+        viewStatus,
+      })),
+    ];
+    for (const answer of answers) {
+      const { result, log, f } = await run(answer);
+      expect(result, JSON.stringify(answer)).toEqual({
+        status: "failed",
+        reason: "fetch-failed",
+        from: "1.0.0",
+      });
+      expect(log).toEqual([
+        "npm root --global",
+        "npm view @abelxiaoxing/cadence@latest version deprecated --json",
+      ]);
+      expect(installedVersion(f.root)).toBe("1.0.0");
+    }
   });
   it("an unreachable registry or a failed download leaves the service running", async () => {
     for (const o of [{ viewStatus: 1 }, { cache: 1 }]) {
@@ -364,22 +437,77 @@ describe("upgrade", () => {
     });
     expect(log.at(-1)).toBe("restart 1.0.0");
   });
-  it("reads npm's single-field and object answers and refuses a range", async () => {
-    const answer =
-      (value: unknown, status = 0): Npm =>
-      async () => ({ status, stdout: JSON.stringify(value) });
-    expect(await release("latest", answer("2.0.28"))).toEqual({
-      version: "2.0.28",
-      deprecated: false,
-    });
-    expect(
-      await release(
-        "2.0.13",
-        answer({ version: "2.0.13", deprecated: "Withdrawn; use 2.0.12" }),
-      ),
-    ).toEqual({ version: "2.0.13", deprecated: true });
-    expect(await release("2", answer(["2.0.27", "2.0.28"]))).toBeUndefined();
-    expect(await release("latest", answer({}, 1))).toBeUndefined();
+  it.each(["bare", "single-result array"])(
+    "reads npm's single-field and strict object answers (%s)",
+    async (format) => {
+      const answer =
+        (value: unknown): Npm =>
+        async () => ({
+          status: 0,
+          stdout: JSON.stringify(format === "bare" ? value : [value]),
+        });
+      for (const version of ["2.0.28", "0.0.0", "2.0.28-rc.1"]) {
+        expect(await release("latest", answer(version))).toEqual({
+          version,
+          deprecated: false,
+        });
+        expect(
+          await release(
+            version,
+            answer({ version, deprecated: "Withdrawn; use 2.0.12" }),
+          ),
+        ).toEqual({ version, deprecated: true });
+      }
+      for (const [value, deprecated] of [
+        ["", true],
+        [null, false],
+        [false, false],
+        [true, false],
+        [0, false],
+        [1, false],
+        [[], false],
+        [{}, false],
+      ] as const) {
+        expect(
+          await release(
+            "2.0.13",
+            answer({ version: "2.0.13", deprecated: value }),
+          ),
+          JSON.stringify(value),
+        ).toEqual({ version: "2.0.13", deprecated });
+      }
+    },
+  );
+  it("refuses invalid npm answers, even in a single-result array", async () => {
+    for (const value of invalidAnswers) {
+      for (const view of [value, [value]]) {
+        const stdout = JSON.stringify(view);
+        expect(
+          await release("2", async () => ({ status: 0, stdout })),
+          stdout,
+        ).toBeUndefined();
+      }
+    }
+    for (const stdout of badJson) {
+      expect(
+        await release("latest", async () => ({ status: 0, stdout })),
+        stdout,
+      ).toBeUndefined();
+    }
+  });
+  it("refuses nonzero and null npm statuses even with a valid answer", async () => {
+    for (const status of [1, null]) {
+      for (const value of ["2.0.28", { version: "2.0.28", deprecated: "" }]) {
+        for (const view of [value, [value]]) {
+          expect(
+            await release("latest", async () => ({
+              status,
+              stdout: JSON.stringify(view),
+            })),
+          ).toBeUndefined();
+        }
+      }
+    }
   });
 });
 
