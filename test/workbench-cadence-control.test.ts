@@ -38,7 +38,7 @@ const caller = {
   authority: "browser" as const,
   accessGeneration: 1,
 };
-function fixture() {
+function fixture(joinResearch: () => Promise<void> = async () => {}) {
   const namespace = mkdtempSync(join(tmpdir(), "cadence-control-"));
   const directory = join(namespace, "service-v1");
   const files = new PrivateFiles(namespace);
@@ -126,7 +126,7 @@ function fixture() {
       };
     },
     activeRuns: () => ({ kind: "workflow-active" as const, runs: active }),
-    join: async () => {},
+    join: joinResearch,
     command(commandId: string, _epoch: string, r: WorkflowRequest) {
       if (r.action === "propose") {
         const proposal: WorkflowProposal = {
@@ -363,6 +363,51 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
     enabled: false,
     proposal: null,
   });
+});
+
+it("one browser Send can investigate more than two batches and still publish a plan", async () => {
+  const f = fixture();
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence investigate");
+  for (let i = 0; i < 4; i++)
+    expect(
+      await f.tool(turn, "cadence_research", {
+        goal: "g",
+        questions: [`question ${i}`],
+      }),
+    ).toMatchObject({ phase: "research" });
+  expect(f.cw.records.state(id).runs).toHaveLength(4);
+  expect(await f.tool(turn, "cadence_plan", plan())).toMatchObject({
+    proposalId: expect.any(String),
+  });
+  await f.settle(turn);
+  expect(() => f.send(id)).not.toThrow();
+});
+
+it("settlement retains an in-flight investigation after earlier calls have completed", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = fixture(() => pending);
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence investigate");
+  await f.tool(turn, "cadence_status", {});
+  const investigation = f.tool(turn, "cadence_research", {
+    goal: "g",
+    questions: ["q"],
+  });
+  let settled = false;
+  const settling = f.settle(turn)!.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  expect(() => f.send(id)).toThrow("conflict");
+  release();
+  await investigation;
+  await settling;
+  expect(() => f.send(id)).not.toThrow();
 });
 
 it("coordinator turns are per conversation, and a lost cadence-send reply observes its receipt", async () => {

@@ -49,7 +49,7 @@ Only successfully prepared epochs join whole-workbench Stop; browsing an indepen
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and checkout gate.
 
 The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
-`src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, finite delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
+`src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.

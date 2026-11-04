@@ -357,7 +357,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       });
       ingressStop.abort();
     };
-    let bridgeCalls = 0;
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child.on("message", (message) => {
@@ -384,7 +383,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
               child.send({ id, ok: false }, () => {});
           };
           if (
-            ++bridgeCalls > 16 ||
             bridgeBusy ||
             Buffer.byteLength(JSON.stringify(message)) > 65536
           ) {
@@ -705,13 +703,7 @@ function encodeEnvelope(
     ...literals(material.auth.env ?? {}),
     ...selected.redactionLiterals,
   ];
-  // Same-host monotonic clock, shared by parent and child. Freeze before
-  // serialization/spawn so SDK bootstrap can only consume, never renew, it.
-  const investigation = {
-    roots,
-    timeoutMs,
-    deadlineMs: Number(process.hrtime.bigint() / 1_000_000n) + timeoutMs,
-  };
+  const investigation = { roots, timeoutMs };
   const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");

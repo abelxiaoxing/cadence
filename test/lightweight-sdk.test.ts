@@ -2096,7 +2096,7 @@ const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
 const captureFixtureImports = `    import { createHash } from "node:crypto";
     const VERSION = "fixture-sdk";
     const readFileSync = () => Buffer.from("explicit public-boundary fixture worker source");
-    import { researchClock, researchTools } from ${JSON.stringify(new URL("../src/research-tools.mjs", import.meta.url).href)};
+    import { researchTools } from ${JSON.stringify(new URL("../src/research-tools.mjs", import.meta.url).href)};
     import { LIMITS, closed, decodeWorkerPublicRequest, parseWireJson } from ${JSON.stringify(new URL("../src/worker-public.mjs", import.meta.url).href)};
     import { CaptureEmitter, SdkCapture } from ${JSON.stringify(new URL("../src/worker-capture.mjs", import.meta.url).href)};
     import { own } from ${JSON.stringify(new URL("../src/worker-redaction.mjs", import.meta.url).href)};

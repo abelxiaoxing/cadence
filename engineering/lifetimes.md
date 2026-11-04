@@ -126,5 +126,5 @@ Queue time is outside the workflow/process budgets; ongoing tool/model activity 
 Readonly investigations use bounded native filesystem tools at explicit roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
 They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
 Grep is explicitly literal-only.
-The final-report reserve refuses new tool calls without inventing a completed investigation or abandoning outstanding I/O.
+Tool calls have no cumulative quota or early final-report cutoff; per-call bounds never abandon outstanding I/O, and the parent process deadline and explicit cancellation remain authoritative.
 These scope checks are not a filesystem sandbox.
