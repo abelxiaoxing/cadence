@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TerminalEntryLatch } from "../src/history-shell.ts";
 import register from "../src/index.ts";
 
@@ -33,6 +33,8 @@ vi.mock("../src/native-client.ts", async (original) => ({
     }
   },
 }));
+// Tests of the child refusal below explicitly re-enable the production guard.
+beforeEach(() => vi.stubEnv("CADENCE_SUBAGENT_CHILD", undefined));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();

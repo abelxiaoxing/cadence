@@ -48,6 +48,11 @@ export async function acceptingFixture(
     | "read-then-fail"
     | "research-scan" = "single";
   let finalReply: string | undefined;
+  let repairReply: string | undefined;
+  let implementationReply = JSON.stringify({
+    status: "completed",
+    summary: "Implemented the declared file.",
+  });
   let contacts = 0,
     active = 0,
     maxActive = 0;
@@ -61,8 +66,8 @@ export async function acceptingFixture(
   const observations: { tools: string[]; mode: string; messages: unknown[] }[] =
     [];
   const longText = `Actual retained SDK result. ${"retained-detail-αβγ ".repeat(900)} END-RETAINED`;
-  function finish(res: ServerResponse, text = longText) {
-    text = finalReply ?? text;
+  function finish(res: ServerResponse, text = longText, useReply = true) {
+    if (useReply) text = finalReply ?? text;
     res.writeHead(200, {
       "content-type": "text/event-stream",
       connection: "close",
@@ -204,7 +209,13 @@ export async function acceptingFixture(
           }),
         );
       } else if (input.messages.at(-1)?.role === "tool")
-        finish(res, "Implemented the declared file.");
+        finish(
+          res,
+          prompt.includes("Repair only within approved paths")
+            ? (repairReply ?? implementationReply)
+            : implementationReply,
+          false,
+        );
       else {
         const messages = input.messages
           .map((m: { content?: unknown }) =>
@@ -460,6 +471,10 @@ export async function acceptingFixture(
     },
     reply(text: string) {
       finalReply = text;
+    },
+    implementationReply(text: string, repair = false) {
+      if (repair) repairReply = text;
+      else implementationReply = text;
     },
     fail() {
       for (const r of held.splice(0)) {

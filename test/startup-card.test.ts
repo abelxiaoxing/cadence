@@ -8,12 +8,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import register from "../src/index.ts";
 import { autostartNotice } from "../src/native-client.ts";
 import { CONFIG_MISSING, startupCardLines } from "../src/startup-card.ts";
 
 const roots: string[] = [];
+// Explicit external-Pi fixture, even when verification runs inside a worker.
+beforeEach(() => vi.stubEnv("CADENCE_SUBAGENT_CHILD", undefined));
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });

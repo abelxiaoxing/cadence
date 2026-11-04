@@ -371,7 +371,10 @@ it(
       // The subagent's context opens in the main area, not inside the chat.
       await context
         .getByRole("region", { name: "Conversation turn" })
-        .getByText("Implemented the declared file.", { exact: true })
+        .getByText(
+          '{"status":"completed","summary":"Implemented the declared file."}',
+          { exact: true },
+        )
         .waitFor();
       assert(
         await page
@@ -391,7 +394,10 @@ it(
       await dockRow.click();
       await context
         .getByRole("region", { name: "Conversation turn" })
-        .getByText("Implemented the declared file.", { exact: true })
+        .getByText(
+          '{"status":"completed","summary":"Implemented the declared file."}',
+          { exact: true },
+        )
         .waitFor();
       await page
         .getByRole("button", { name: "Back to conversation", exact: true })

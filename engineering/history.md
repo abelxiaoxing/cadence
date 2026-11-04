@@ -87,13 +87,17 @@ The terminal's workflows are found from its `cadence-conversation-mode/1` entrie
 ## Conversation workflow records
 
 The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
-It stores immutable proposals/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and complete bounded process results.
+It stores immutable proposals/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and bounded process results with explicit diagnostic truncation.
 One-use confirmation grants remain ephemeral; persisted mode or Markdown never reconstructs them.
 The shared capture sanitizer is reused, not a second credential policy.
 Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.
 Selected final-result previews come from the sanitized complete captured message before clipping, not a raw prefix that could bisect a known literal.
 Detail reads reapply the shared structural sanitizer for currently known secrets, including pre-fix records, without rewriting or migrating retained bytes.
 Status previews label clipping and offer exact retained step-result lookup.
+Workflow check/Git results use the launcher's bounded output rather than its legacy preview; `workflow-result.ts` then budgets the JSON-encoded result, including redaction expansion and the outer record/reply wrappers.
+If the retained diagnostic cannot fit, a scalar-aligned head/tail excerpt and truncation flag preserve coverage honestly without losing native exit/closure facts.
+Detail reads apply the same bounds after current redaction and report limitations, without rewriting older records or reconstructing missing output.
+Output or final-text clipping sets the aggregate result's truncation flag independently of native exit; this flag is not the completeness of a separately selected implementation report.
 Restart treats incomplete work as uncertain, never completed or a resumable mutation queue.
 No incidental migration or cleanup occurs.
 

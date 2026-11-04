@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   CADENCE_MODE_ENTRY,
   CadenceUserInput,
@@ -52,6 +52,8 @@ vi.mock("../src/native-client.ts", () => ({
     }
   },
 }));
+// This harness models an external terminal, not the workflow running the tests.
+beforeEach(() => vi.stubEnv("CADENCE_SUBAGENT_CHILD", undefined));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
