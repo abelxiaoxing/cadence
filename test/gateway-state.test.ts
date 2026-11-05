@@ -166,7 +166,7 @@ it("the service routes report this copy and refuse a restart that is stale, unco
       kind: "service",
       version,
       unit: null,
-      upgrade: "not-npm-global",
+      upgrade: "unsupported-install",
       work: 0,
       job: null,
     });

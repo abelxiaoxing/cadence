@@ -90,7 +90,7 @@ Sus resultados reales se mantienen separados de la revisión automática del age
 ```sh
 cadence server status
 cadence server restart     # después de una actualización o un cambio de .env / models.json
-cadence server upgrade     # instalación global de npm: descargar, instalar y reiniciar
+cadence server upgrade
 cadence server stop        # permanece registrado y vuelve a iniciar en el próximo arranque o inicio de sesión
 cadence server uninstall   # ejecutar antes de npm uninstall -g
 ```

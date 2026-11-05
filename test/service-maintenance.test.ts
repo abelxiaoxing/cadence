@@ -10,14 +10,15 @@ import {
 } from "../src/service/autostart.ts";
 import type { MaintenanceJob } from "../src/service/contracts/gateway.ts";
 import { GatewayStore } from "../src/service/gateway-store.ts";
+import type { PackageCommand } from "../src/service/installation.ts";
 import {
   cgroupPath,
   insideUnit,
   installedVersion,
   jobOutcome,
   MaintenanceRecord,
-  type Npm,
   release,
+  restartInstalled,
   supervisingUnit,
   upgradeService,
 } from "../src/service/maintenance.ts";
@@ -216,6 +217,15 @@ describe("WebUI job record", () => {
   });
 });
 
+it("does not treat a failed restart process as ready merely because it printed a ready object", async () => {
+  const f = system();
+  writeFileSync(
+    join(f.root, "src", "service-cli.mjs"),
+    'console.log(JSON.stringify({ status: "started", service: "alive" })); process.exitCode = 9;',
+  );
+  expect(await restartInstalled(f.s)).toBe(false);
+});
+
 describe("upgrade", () => {
   interface Npmish {
     view?: unknown;
@@ -257,7 +267,11 @@ describe("upgrade", () => {
     ].flatMap((version) => [version, { version, deprecated: false }]),
   ];
   const badJson = ["", "not json", '["2.0.28"'];
-  function npm(f: ReturnType<typeof system>, o: Npmish, log: string[]): Npm {
+  function npm(
+    f: ReturnType<typeof system>,
+    o: Npmish,
+    log: string[],
+  ): PackageCommand {
     return async (args) => {
       log.push(`npm ${args.join(" ")}`);
       if (args[0] === "root") return { status: 0, stdout: `${f.global}\n` };
@@ -287,7 +301,10 @@ describe("upgrade", () => {
     const log: string[] = [];
     const ready = [...(o.ready ?? [true])];
     const result = await upgradeService(f.s, o.to, {
-      npm: npm(f, o, log),
+      commands: {
+        npm: npm(f, o, log),
+        bun: async () => ({ status: 1, stdout: "" }),
+      },
       stop: async () => {
         log.push("stop");
         return { status: o.stop ?? "stopped" };
@@ -303,9 +320,12 @@ describe("upgrade", () => {
     const f = system();
     const log: string[] = [];
     const result = await upgradeService(f.s, undefined, {
-      npm: async (args) => {
-        log.push(args.join(" "));
-        return { status: 0, stdout: `${join(f.home, "elsewhere")}\n` };
+      commands: {
+        bun: async () => ({ status: 1, stdout: "" }),
+        npm: async (args) => {
+          log.push(args.join(" "));
+          return { status: 0, stdout: `${join(f.home, "elsewhere")}\n` };
+        },
       },
       stop: async () => {
         throw new Error("never stops");
@@ -314,7 +334,7 @@ describe("upgrade", () => {
         throw new Error("never restarts");
       },
     });
-    expect(result).toEqual({ status: "not-npm-global" });
+    expect(result).toEqual({ status: "unsupported-install" });
     expect(log).toEqual(["root --global"]);
   });
   it.each([
@@ -325,7 +345,7 @@ describe("upgrade", () => {
   ])(
     "fetches before stopping, installs the exact version and reports the new copy ($view)",
     async ({ view }) => {
-      const { result, log } = await run({ view });
+      const { result, log, f } = await run({ view });
       expect(result).toEqual({
         status: "upgraded",
         from: "1.0.0",
@@ -334,10 +354,12 @@ describe("upgrade", () => {
       });
       expect(log).toEqual([
         "npm root --global",
-        "npm view @abelxiaoxing/cadence@latest version deprecated --json",
-        "npm cache add @abelxiaoxing/cadence@2.0.0",
+        `npm view --global --prefix ${join(f.home, "prefix")} @abelxiaoxing/cadence@latest version deprecated --json`,
+        `npm cache add --global --prefix ${join(f.home, "prefix")} @abelxiaoxing/cadence@2.0.0`,
+        `npm cache add --global --prefix ${join(f.home, "prefix")} @abelxiaoxing/cadence@1.0.0`,
+        "npm root --global",
         "stop",
-        "npm install --global --no-audit --no-fund @abelxiaoxing/cadence@2.0.0",
+        `npm install --global --prefix ${join(f.home, "prefix")} --no-audit --no-fund @abelxiaoxing/cadence@2.0.0`,
         "restart 2.0.0",
       ]);
     },
@@ -346,8 +368,9 @@ describe("upgrade", () => {
     "names an exact requested version, and changes nothing for the current or a deprecated one (%s)",
     async (format) => {
       const view = (value: unknown) => (format === "bare" ? value : [value]);
-      expect((await run({ to: "1.5.0", view: view("1.5.0") })).log[1]).toBe(
-        "npm view @abelxiaoxing/cadence@1.5.0 version deprecated --json",
+      const exact = await run({ to: "1.5.0", view: view("1.5.0") });
+      expect(exact.log[1]).toBe(
+        `npm view --global --prefix ${join(exact.f.home, "prefix")} @abelxiaoxing/cadence@1.5.0 version deprecated --json`,
       );
       const current = await run({ view: view("1.0.0") });
       expect(current.result).toMatchObject({
@@ -385,7 +408,7 @@ describe("upgrade", () => {
       });
       expect(log).toEqual([
         "npm root --global",
-        "npm view @abelxiaoxing/cadence@latest version deprecated --json",
+        `npm view --global --prefix ${join(f.home, "prefix")} @abelxiaoxing/cadence@latest version deprecated --json`,
       ]);
       expect(installedVersion(f.root)).toBe("1.0.0");
     }
@@ -417,9 +440,10 @@ describe("upgrade", () => {
       to: "2.0.0",
       version: "1.0.0",
     });
-    expect(back.log.slice(-3)).toEqual([
+    expect(back.log.slice(-4)).toEqual([
       "restart 2.0.0",
-      "npm install --global --no-audit --no-fund @abelxiaoxing/cadence@1.0.0",
+      "stop",
+      `npm install --global --prefix ${join(back.f.home, "prefix")} --no-audit --no-fund @abelxiaoxing/cadence@1.0.0`,
       "restart 1.0.0",
     ]);
     const neither = await run({ ready: [false, false] });
@@ -428,8 +452,10 @@ describe("upgrade", () => {
       reason: "not-ready",
     });
   });
-  it("restarts whatever is installed after a failed install", async () => {
-    const { result, log } = await run({ install: () => 1 });
+  it("restores the previous version after a failed install", async () => {
+    const { result, log } = await run({
+      install: (version) => (version === "1.0.0" ? 0 : 1),
+    });
     expect(result).toMatchObject({
       status: "failed",
       reason: "install-failed",
@@ -441,7 +467,7 @@ describe("upgrade", () => {
     "reads npm's single-field and strict object answers (%s)",
     async (format) => {
       const answer =
-        (value: unknown): Npm =>
+        (value: unknown): PackageCommand =>
         async () => ({
           status: 0,
           stdout: JSON.stringify(format === "bare" ? value : [value]),
