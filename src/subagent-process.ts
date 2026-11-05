@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
-import { IMAGE_LIMITS, type InputImage } from "./image-content.mjs";
+import type { InputImage } from "./image-content.mjs";
 import {
   networkSnapshot,
   safeChildEnv,
@@ -162,11 +162,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
-  if (
-    spec.imageInput !== undefined &&
-    Buffer.byteLength(spec.imageInput) > IMAGE_LIMITS.wireBytes
-  )
-    return Promise.resolve(early("failed", "Image input exceeds bound"));
   return new Promise((resolve) => {
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,

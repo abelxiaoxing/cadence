@@ -1,6 +1,5 @@
 /** Public declaration owner for the maintained worker-public.mjs implementation. */
 /** Portable service boundary. No SDK objects, credentials, filesystem paths as IDs, or execution owner. */
-export declare const IMAGE_COUNT = 4;
 export declare const SERVICE_PROTOCOL = 1;
 export declare const WORKER_PROTOCOL = 2;
 export declare const GRAPH_SCHEMA = "cadence-graph/2";

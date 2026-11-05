@@ -553,11 +553,7 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
         "offset",
         ...(Object.hasOwn(v ?? {}, "live") ? ["live"] : []),
       ]);
-      const offset = integer(
-        o.offset,
-        0,
-        4 * Math.ceil(IMAGE_LIMITS.bytes / 3),
-      );
+      const offset = integer(o.offset, 0);
       if (
         offset % IMAGE_LIMITS.chunkChars ||
         (o.live !== undefined && o.live !== true)
@@ -569,7 +565,7 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
         leaf: nullable(o.leaf, decodeEntryId),
         ...(o.live === undefined ? {} : { live: true as const }),
         entry: decodeEntryId(o.entry),
-        index: integer(o.index, 0, 1024),
+        index: integer(o.index, 0),
         offset,
       };
     }
@@ -759,8 +755,8 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       imageId: decodeId(o.imageId),
       send,
       mimeType: oneOf(o.mimeType, IMAGE_TYPES),
-      size: integer(o.size, 1, IMAGE_LIMITS.bytes),
-      offset: integer(o.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+      size: integer(o.size, 1),
+      offset: integer(o.offset, 0),
       data: text(o.data, IMAGE_LIMITS.chunkChars, true),
     };
   }
@@ -784,7 +780,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       text: text(o.text, CONVERSATION_SEND_BYTES),
       ...(o.images === undefined
         ? {}
-        : { images: list(o.images, IMAGE_LIMITS.count, decodeId) }),
+        : { images: list(o.images, Number.MAX_SAFE_INTEGER, decodeId) }),
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
       intent: oneOf(o.intent, ["message", "enter", "exit"]),
@@ -839,7 +835,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       text: text(o.text, CONVERSATION_SEND_BYTES),
       ...(o.images === undefined
         ? {}
-        : { images: list(o.images, IMAGE_LIMITS.count, decodeId) }),
+        : { images: list(o.images, Number.MAX_SAFE_INTEGER, decodeId) }),
       model: decodeChoiceVersion(o.model),
     };
   }
@@ -905,7 +901,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
   };
 }
 function decodeChatImages(v: unknown): ChatImage[] {
-  return list(v, IMAGE_LIMITS.count, (value) => {
+  return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
       "entry",
       "index",
@@ -917,7 +913,7 @@ function decodeChatImages(v: unknown): ChatImage[] {
     return {
       ...(o.live === undefined ? {} : { live: true as const }),
       entry: decodeEntryId(o.entry),
-      index: integer(o.index, 0, 1024),
+      index: integer(o.index, 0),
       mimeType: oneOf(o.mimeType, IMAGE_TYPES),
     };
   });
@@ -1062,7 +1058,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       kind: k,
       commandId: decodeId(o.commandId),
       imageId: decodeId(o.imageId),
-      offset: integer(o.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+      offset: integer(o.offset, 0),
     };
   }
   if (k === "conversation-image") {
@@ -1071,9 +1067,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       kind: k,
       mimeType: oneOf(o.mimeType, IMAGE_TYPES),
       data: text(o.data, IMAGE_LIMITS.chunkChars, true),
-      next: nullable(o.next, (n) =>
-        integer(n, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
-      ),
+      next: nullable(o.next, (n) => integer(n, 0)),
     };
   }
   if (k === "conversation-context") {
