@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   lstatSync,
   openSync,
@@ -27,6 +28,7 @@ import {
 
 import { ContractError } from "./contracts/core.ts";
 import {
+  type DeliveryTarget,
   type WorkflowPlan,
   workflowCovers,
   workflowPath,
@@ -426,10 +428,25 @@ export function overlapping(
 }
 const list = (paths: readonly string[]) =>
   `${paths.slice(0, 32).join(", ")}${paths.length > 32 ? ` and ${paths.length - 32} more` : ""}`;
+const INDEX_FLAGS = ["ls-files", "-v", "-z"];
+/** assume-unchanged/skip-worktree can hide real bytes even from git status. */
+function indexHidden(output: string): string[] {
+  return names(output)
+    .filter((row) => row.startsWith("S ") || /^[a-z] /u.test(row))
+    .map((row) => row.slice(2));
+}
+function assertVisibleIndex(paths: string[]): void {
+  if (paths.length)
+    throw new WorkflowRefusal(
+      "conflict",
+      `Git index flags hide these paths: ${list(paths)}. Correct them explicitly; Cadence never clears flags or assumes hidden contents are clean.`,
+    );
+}
 export async function assertWorkflowScope(
   cwd: string,
   allowed: readonly string[],
 ): Promise<string[]> {
+  assertVisibleIndex(indexHidden(await gitText(cwd, INDEX_FLAGS)));
   const changes = await changedPaths(cwd);
   const outside = changes.filter((name) => !workflowCovers(allowed, name));
   if (outside.length)
@@ -481,6 +498,114 @@ export async function committedPaths(
     ]),
   ).sort();
 }
+/** Canonical shared repository plus filesystem incarnation; linked checkouts
+ * must not be mistaken for independent ref namespaces. */
+export function repositoryIdentity(cwd: string): {
+  repository: string;
+  repositoryIdentity: string;
+} {
+  const repository = realpathSync(
+    resolve(
+      cwd,
+      gitRead(cwd, ["rev-parse", "--git-common-dir"]).replace(/\r?\n$/u, ""),
+    ),
+  );
+  const st = lstatSync(repository);
+  if (!st.isDirectory()) throw new ContractError("stale");
+  return {
+    repository,
+    repositoryIdentity: hash(JSON.stringify([repository, st.dev, st.ino])),
+  };
+}
+export function deliveryTarget(
+  cwd: string,
+  source: { head: string; branch: string },
+): DeliveryTarget {
+  const gitDir = gitRead(cwd, ["rev-parse", "--absolute-git-dir"]).replace(
+    /\r?\n$/u,
+    "",
+  );
+  for (const name of [
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "rebase-apply",
+    "rebase-merge",
+    "sequencer",
+    "BISECT_START",
+    "index.lock",
+    "HEAD.lock",
+  ]) {
+    if (existsSync(join(gitDir, name)))
+      throw new WorkflowRefusal(
+        "conflict",
+        "Finish the existing Git operation before planning isolated delivery.",
+      );
+  }
+  return {
+    ...repositoryIdentity(cwd),
+    checkoutRoot: realpathSync(cwd),
+    head: source.head,
+    branch: source.branch,
+  };
+}
+export function assertRepository(target: DeliveryTarget): void {
+  const actual = repositoryIdentity(target.checkoutRoot);
+  if (
+    actual.repository !== target.repository ||
+    actual.repositoryIdentity !== target.repositoryIdentity
+  )
+    throw new ContractError("stale");
+}
+/** Includes ignored files everywhere: ordinary worktree removal deletes them. */
+export async function worktreeResidue(cwd: string): Promise<string[]> {
+  const residue = names(
+    await gitText(cwd, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "-uall",
+      "--ignored=traditional",
+      "--no-renames",
+    ]),
+  )
+    .map((row) => row.slice(3))
+    .filter(Boolean)
+    .sort();
+  return [
+    ...new Set([...residue, ...indexHidden(await gitText(cwd, INDEX_FLAGS))]),
+  ].sort();
+}
+/** Committed changes need scope checks too; a clean index is not authority to
+ * adopt an externally substituted integration history. */
+export async function assertCommittedScope(
+  cwd: string,
+  base: string,
+  candidate: string,
+  scope: readonly string[],
+): Promise<void> {
+  if (
+    (await gitRun(cwd, ["merge-base", "--is-ancestor", base, candidate]))
+      .code !== 0
+  )
+    throw new ContractError("stale");
+  const outside = (await committedPaths(cwd, base, candidate)).filter(
+    (path) => !workflowCovers(scope, path),
+  );
+  if (outside.length)
+    throw new WorkflowRefusal(
+      "forbidden",
+      `Candidate contains committed files outside the approved scope: ${list(outside)}`,
+    );
+}
+/** A sealed candidate cannot acquire even staged-only edits during checks. */
+export async function assertCandidate(
+  cwd: string,
+  candidate: string,
+): Promise<void> {
+  if ((await gitHead(cwd)) !== candidate) throw new ContractError("stale");
+  await assertWorkflowScope(cwd, []);
+}
 /** Consent observation: branch/HEAD, declared target contents and project
  * guidance, plus a refusal when a declared target is already dirty. Unrelated
  * dirty files are not part of it: they never block planning or delivery. */
@@ -503,11 +628,17 @@ export function workflowObservation(
     // service; this exact per-write identity refuses substituted direct targets.
     return { identity: hash(JSON.stringify(contents)), head: "", branch: "" };
   }
+  // Refuse unsupported Git before any local-delivery observation can trigger
+  // a partial clone's implicit object download. Ordinary non-Git mode is unchanged.
+  gitRead(cwd, ["--no-lazy-fetch", "--version"]);
   const head = gitRead(cwd, ["rev-parse", "--verify", "HEAD"]).trim();
   const branch = gitRead(cwd, ["symbolic-ref", "HEAD"]).trim();
   if (!/^refs\/heads\//u.test(branch) || !/^[a-f0-9]{40,64}$/u.test(head))
     throw new ContractError("invalid");
   if (plan) {
+    assertVisibleIndex(
+      overlapping(declared, indexHidden(gitRead(cwd, INDEX_FLAGS))),
+    );
     // A task cannot implicitly adopt dirty inputs as its committed baseline.
     const dirty = overlapping(declared, workflowChanged(cwd));
     if (dirty.length)
@@ -551,6 +682,9 @@ export async function assertTarget(
       "stale",
       `The target branch changed during the run (expected ${expected.branch} at ${expected.head.slice(0, 12)}); nothing was integrated.`,
     );
+  assertVisibleIndex(
+    overlapping(scope, indexHidden(await gitText(cwd, INDEX_FLAGS))),
+  );
   const dirty = overlapping(scope, await changedPaths(cwd));
   if (dirty.length)
     throw new WorkflowRefusal(
@@ -569,33 +703,13 @@ export async function documentPlacement(
   cwd: string,
   name: string,
 ): Promise<"commit" | "direct"> {
-  const dirty = (await changedPaths(cwd)).includes(name);
+  const dirty =
+    (await changedPaths(cwd)).includes(name) ||
+    indexHidden(await gitText(cwd, INDEX_FLAGS)).includes(name);
   if (await tracked(cwd, name)) return dirty ? "direct" : "commit";
   if ((await gitRun(cwd, ["check-ignore", "-q", "--", name])).code === 0)
     return "direct";
   return (await pathIdentityAsync(cwd, name)) === null ? "commit" : "direct";
-}
-/** Anything left under a scope in a worktree, including ignored files that a
- * plain `git worktree remove` would delete. */
-export async function scopeResidue(
-  cwd: string,
-  scope: readonly string[],
-): Promise<string[]> {
-  if (!scope.length) return [];
-  const out = await gitText(cwd, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "-uall",
-    "--ignored=traditional",
-    "--no-renames",
-    "--",
-    ...scope,
-  ]);
-  return names(out)
-    .map((row) => row.slice(3))
-    .filter(Boolean)
-    .sort();
 }
 /** Working-copy scope evidence: identity of every changed path plus `extra`.
  * Outside a Git work tree only `extra` (the declared targets) is observable. */
@@ -620,6 +734,7 @@ export async function workingSnapshot(
               "-z",
             ]),
           );
+    changed.push(...indexHidden(await gitText(cwd, INDEX_FLAGS)));
   }
   const paths = new Map<string, string | null>();
   for (const p of new Set([...changed, ...extra]))

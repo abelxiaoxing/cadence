@@ -74,10 +74,14 @@ Cross-worktree verification streams file bytes, including large files under dire
 Cancellation joins the current read/close instead of abandoning it.
 Source changes during checks require verification of the resulting bytes; changes during readonly review refuse stale evidence.
 Project knowledge is maintained from actual implemented behavior and evidence, not copied from proposal prose; its ownership and context policy are in [project knowledge](project-knowledge.md).
+Local-merge verification rounds first commit the approved candidate changes, then bind real checks and Agent review to that exact commit/tree and source identity.
+Delivery notes and knowledge changes are included before final acceptance; new edits invalidate earlier acceptance.
 Local-merge candidates receive another verification after delivery notes, before fast-forward integration.
 Post-merge failures preserve the real merge: any repair happens in the owned candidate, is checked/reviewed there and fast-forwards the unchanged target again.
 The user's unrelated index is never committed by recovery.
 Local commit hooks/signing are disabled; verification is explicitly approved instead.
+Git index flags that hide declared targets (`assume-unchanged` / `skip-worktree`) refuse isolated delivery; hidden entries anywhere in a candidate prevent clean-candidate acceptance or cleanup.
+Working-copy snapshots also observe index-hidden paths rather than treating Git status as complete.
 Workflow scope checks independently include staged changes, even when the worktree was restored to HEAD or a staged new file was removed.
 A declared write path that names a directory covers the files below it, in plan overlap, scope, commit and observation alike; write paths refuse format characters (bidi, zero-width, BOM, line separators).
 Working-copy delivery snapshots every worker and repair: in Git, edits outside the declared writes fail the run with the path list and are preserved, never reverted; the changed-file list is recorded.
@@ -89,7 +93,9 @@ Workflow delivery notes are written before the final candidate checks and say th
 Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
 Unmodified guidance is not part of the dirty check; explicitly approved knowledge write targets are.
 Generated workflow notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check.
-Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file under its approved paths, ignored ones included, retains it.
+Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file anywhere in it, ignored ones included, retains it.
+Successful post-merge checks and exact owned/delivered candidate evidence are prerequisites for cleanup; the named branch remains.
+Failed or interrupted delivery retains its worktree.
 An Agent review reply whose verdict objects disagree, repeat verdict keys or exceed complete-verdict inspection bounds counts as unparseable, never as approval.
 The whole selected message is parsed before display clipping; bounded summary/issue excerpts cannot change the resulting verdict.
 Version-1 proposals remain readable under their original rules, but cannot authorize the new adaptive executor; prepare/execute refuse them without effect and require a current agreement.

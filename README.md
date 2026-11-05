@@ -21,7 +21,7 @@ The optional WebUI supports the same persistent conversation workflow without a 
 - **One history with the terminal.**
   Browser conversations are the project's Pi sessions: continue a terminal session in the browser or a browser one with `/resume`, and read Pi's branches in either place.
 
-Cadence is a trusted assistant, **not a sandbox**: its agents edit your working copy directly with host tools, so use it on code you can review and recover.
+Cadence is a trusted assistant, **not a sandbox**: its agents use host tools in the approved checkout or worktree, so use it on code you can review and recover.
 
 ## Install
 
@@ -59,7 +59,8 @@ Choose a vision-capable model; see [image input](docs/conversation-mode.md#image
 Enter `/cadence <goal>` once in any trusted project's Pi conversation.
 Continue with normal messages: Cadence investigates, consolidates questions and develops a readable plan with you.
 After one explicit delivery approval it automatically implements, recovers, reviews and verifies within the agreed boundary.
-One stable candidate preserves partial work; approved local commits/merge never imply a remote push.
+Each approved local delivery gets a named branch and one stable worktree that preserves partial work, then merges back into the displayed original branch.
+Mode entry/research create no Git resources; approved local commits/merge never imply a remote push.
 Relevant project documents are injected into workers and updated from verified lessons, without a separate knowledge-management command.
 
 **Completing a goal leaves the conversation in Cadence mode.**

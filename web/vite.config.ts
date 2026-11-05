@@ -6,6 +6,9 @@ import { defineConfig } from "vite";
 import { localVisStyles } from "./build-vis-style.ts";
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
+  // Worktree development may explicitly reuse installed dependencies via links.
+  // Keep the audited logical module IDs; the notice audit still checks every byte.
+  resolve: { preserveSymlinks: true },
   publicDir: false,
   envDir: false,
   plugins: [react(), localVisStyles()],

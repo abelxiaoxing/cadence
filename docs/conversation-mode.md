@@ -109,7 +109,9 @@ Old task summaries and history are neither imported nor reset.
 The plan chooses one delivery policy:
 
 - **Local merge:** requires an existing Git branch and configured commit identity.
-  Assignments use one stable isolated candidate, preserving predecessor outputs and partial attempts instead of repeatedly rebuilding worktrees.
+  After approval, each delivery creates its own `cadence/<goal>-<run-id>` branch and one stable worktree; mode entry and research create neither.
+  Assignments, diagnosis, recovery and knowledge updates reuse that candidate, preserving partial work.
+  The target is the current local branch displayed in the agreement, not necessarily `main`; the conversation stays in its original directory.
   The owner commits only declared file changes, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
   Local task commits and the merge are included in the plan approval.
   Git hooks and commit signing are disabled for these internal commits; verification is explicitly declared instead.
@@ -124,7 +126,9 @@ A write path naming a directory covers the files below it; in Git, working-copy 
 Unresolved conflicts or a changed target stop integration.
 Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
-Clean worktrees are removed after a successful merge (plain `git worktree remove`, which also deletes their ignored setup output such as `node_modules`); dirty or moved ones and all results are retained.
+The named task branch is kept.
+Only owned worktrees at the delivered commit, after successful post-merge checks and without any residue, are removed with plain `git worktree remove`.
+Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
 Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
 There is no fixed delivery-duration or repair-round quota.
 Individual workers/checks retain their process deadlines; a settled failure can trigger diagnosis and continuation, not automatic goal termination.
@@ -146,7 +150,9 @@ An unchanged failure and identical recovery strategy cannot become an endless re
 A concrete external blocker is reported with preserved work, not a generic request to type “continue”.
 Final candidate checks must pass before merge.
 Post-merge failures retain the actual merge commit.
-Repairs stay in the owned candidate, are checked/reviewed and can fast-forward the unchanged target again; the user’s unrelated index is never committed.
+Repairs stay in the same named candidate, invalidate its earlier acceptance, and are checked/reviewed against a new exact candidate.
+Only this run’s last confirmed merge can serve as the next integration baseline; external target movement or branch switching blocks integration.
+Repairs can fast-forward that unchanged target again; the user’s unrelated index is never committed.
 Unresolved failures remain failures; no rollback is fabricated.
 Automatic review is never recorded as human review.
 
@@ -166,7 +172,7 @@ System-service installation and remote access remain separate explicit operation
 The WebUI uses the same execution engine with a separate, context-bound browser confirmation path.
 Its main composer stays in the same conversation; the agreement card appears inline, and each workflow is one line after the turn it started in, showing what it is doing (with **Stop**) or how it ended: its merge commit, or the reason it did not complete.
 Select the line to open the workflow's steps, checks, delivery and diagnostics in the main area; while it runs, the conversation's status names its phase.
-Research, implementation and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
+Research, implementation, diagnosis, knowledge and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
 Active workflows are listed under **Running conversations** with **Cancel workflow — request stop**; this includes native-started workflows, and an unavailable observation is not proof of no work.
 The old task creation/Save/Start/check/human-Review controls are retired on both clients and refused by the service.
 Existing task records remain readonly; they are not converted into workflows.

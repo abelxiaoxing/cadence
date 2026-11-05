@@ -467,6 +467,7 @@ try {
   toolkit = createWorkerToolkit({
     workspace,
     purpose: publicRequest.purpose,
+    changes: publicRequest.changes,
     coordinator,
     reporting: !conversation && publicRequest.purpose === "edit",
     secrets,

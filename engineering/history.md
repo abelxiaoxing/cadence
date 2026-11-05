@@ -91,6 +91,8 @@ It stores immutable versioned agreements/accepted commands, expected-byte run sn
 Version-2 runs additionally retain route revisions, launch knowledge manifests and immutable earlier-step pages with exact step membership.
 Snapshot step bounds are view bounds, not lifetime attempt quotas; native/Web history can select earlier pages without rebasing live execution.
 All original results remain retained.
+New snapshots also retain the immutable target binding, named branch/worktree, exact candidate acceptance, independent integration/post-checks and cleanup outcomes.
+Restart marks applying/preparing stages unknown and retains artifacts without replay; shared delivery resource records are coordination, not another history store.
 One-use confirmation grants remain ephemeral; persisted mode or Markdown never reconstructs them.
 The shared capture sanitizer is reused, not a second credential policy.
 Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.

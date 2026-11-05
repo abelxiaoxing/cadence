@@ -39,6 +39,7 @@ import {
   RecoveryLog,
   strayTemporaries,
 } from "./recovery-log.ts";
+import { recoverDeliveryResources } from "./repository-coordination.ts";
 
 export type HealBlock =
   /** The recorded holder runs on another host (shared or copied state). */
@@ -606,6 +607,36 @@ export async function healProjectAt(
     : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
   if (workers.running)
     return { status: "blocked", reason: "workers-running", pid };
+  const selectedOwner = [
+    s.owner && s.owner !== "unreadable" ? s.owner.value : null,
+    s.registration && s.registration !== "unreadable"
+      ? s.registration.value
+      : null,
+    s.row,
+  ].find((value) => value?.epoch === epoch);
+  const expectedOwner = selectedOwner
+    ? {
+        pid: selectedOwner.pid,
+        host: selectedOwner.host,
+        ...("boot" in selectedOwner
+          ? { boot: selectedOwner.boot ?? null }
+          : {}),
+        ...("started" in selectedOwner
+          ? { started: selectedOwner.started ?? null }
+          : {}),
+      }
+    : undefined;
+  if (epoch) {
+    try {
+      recoverDeliveryResources(c.files, root, epoch, {
+        inspect: true,
+        takeOver: options.takeOver,
+        expectedOwner,
+      });
+    } catch {
+      return { status: "blocked", reason: "holder-unknown", pid };
+    }
+  }
   const restarted = epoch ? ledger.restartRequested(epoch) : false;
   const cause: RecoveryEvent["cause"] = !active(s)
     ? "storage"
@@ -620,6 +651,15 @@ export async function healProjectAt(
   if (stoppedOwner) actions.add("stopped-owner");
   if (workers.stopped) actions.add("stopped-workers");
   const archive = log.archive();
+  if (
+    epoch &&
+    recoverDeliveryResources(c.files, root, epoch, {
+      takeOver: options.takeOver,
+      expectedOwner,
+      archive: (path) => archive.keep(path),
+    })
+  )
+    actions.add("released-locks");
   if (active(s)) {
     reclaim(c, p, s, archive);
     actions.add("released-locks");

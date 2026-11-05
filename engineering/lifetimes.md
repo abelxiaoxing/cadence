@@ -12,6 +12,10 @@ Unknown closure never releases the gate, and cleanup quarantine cannot be overwr
 Within that barrier, implementation assignments run in one stable candidate, preserving predecessor and partial-attempt outputs.
 The initial dependency order can share write paths; readonly questions within a research run may still overlap.
 A local-merge candidate lives under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/integration` (0700, outside the private service namespace and checkout).
+The candidate is on one named task branch created only after approval; mode entry, research and clarification create no Git resources.
+Git mutation groups also hold a short common-directory lease after the checkout permit, never while waiting for workers or checks.
+Managed candidate worktrees cannot start another owner; exact-owner healing releases coordination records without deleting retained Git artifacts.
+See [worktree delivery](worktree-delivery.md) for creation, exact acceptance and retention.
 Retained task worktrees from earlier releases remain untouched.
 Direct working-copy delivery serializes edits without Git mutation.
 The terminal is never an embedded executor.
