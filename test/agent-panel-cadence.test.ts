@@ -854,6 +854,23 @@ describe("Cadence workflow subagents", () => {
         .every(([r]: any) => r.kind === "workflow-active"),
     ).toBe(true);
   });
+  it("announces review rejection without an agent error", async () => {
+    const { client, w } = workflowOwner();
+    w.run.steps = [step("review", "review", "running", W2)];
+    const h = host(connection(client));
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    w.run.steps = [step("review", "review", "rejected", W2)];
+    await advance(FEED_TIMING.activeMs);
+    expect(h.published(E.end)).toEqual([
+      { id: W2, status: "rejected", endedAt: expect.any(Number) },
+    ]);
+    expect(h.published(E.activity)).toContainEqual({
+      id: W2,
+      activity: "review · rejected",
+    });
+  });
+
   it("a workflow that stays unreadable ends its subagents as not observed", async () => {
     const { client, w } = workflowOwner();
     const h = host(connection(client));

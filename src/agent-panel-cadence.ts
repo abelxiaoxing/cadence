@@ -499,11 +499,15 @@ class Feed {
       status:
         outcome === "completed"
           ? "done"
-          : outcome === "canceled"
-            ? "cancelled"
-            : "error",
+          : outcome === "rejected"
+            ? "rejected"
+            : outcome === "canceled"
+              ? "cancelled"
+              : "error",
       endedAt: this.now(),
-      ...(outcome === "completed" || outcome === "canceled"
+      ...(outcome === "completed" ||
+      outcome === "canceled" ||
+      outcome === "rejected"
         ? {}
         : { error: `${child.label} · ${outcome}` }),
     });

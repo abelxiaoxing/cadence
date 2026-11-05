@@ -39,6 +39,12 @@ it("English is the source text; unknown text and codes pass through unchanged", 
     "预检被拒绝：{code}",
   );
 });
+it("review rejection is distinct from execution failure in both languages", () => {
+  expect(translate("en", "rejected")).toBe("rejected");
+  expect(translate("zh", "rejected")).toBe("已拒绝");
+  expect(translate("en", "failed")).toBe("failed");
+  expect(translate("zh", "failed")).toBe("失败");
+});
 it("a saved explicit choice wins over the browser's first preferred language", () => {
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {

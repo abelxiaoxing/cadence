@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { ChatTurn } from "../src/service/contracts/workbench.ts";
 import {
   implementationReport,
@@ -77,6 +77,77 @@ it("review verdicts are read alone, fenced or inside prose; unreadable replies s
   ).toBe(true);
   expect(reviewVerdict('{"approved":true,"summary":"cut')).toBeNull();
 });
+
+it.each([
+  [
+    '{"approved":true,"summary":"ok","blockingIssues":[]}',
+    "completed",
+    "approved",
+  ],
+  [
+    '{"approved":false,"summary":"missing test","blockingIssues":["b.txt untested"]}',
+    "rejected",
+    "rejected",
+  ],
+  ["Not a verdict", "failed", "unparseable"],
+])(
+  "review keeps verdict status separate from native success: %s",
+  async (text, status, verdict) => {
+    const result = {
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      text,
+      output: "",
+      signal: null,
+      durationMs: 1,
+      truncated: false,
+    };
+    const step = {
+      id: "review",
+      kind: "review",
+      status: "running",
+      text: "",
+      exitCode: null,
+    };
+    const saved: string[] = [];
+    const retained: unknown[] = [];
+    const quarantine = vi.fn();
+    const workflow = Object.assign(Object.create(Workflows.prototype), {
+      root: "unused",
+      o: { secrets: () => [], owner: { quarantine } },
+      write: (_path: string, value: unknown) => retained.push(value),
+      save: () => saved.push(step.status),
+      evidence: () => "",
+      worker: async () => {
+        workflow.finishStep({ run: { id: randomUUID() } }, step, result);
+        return { result, step };
+      },
+    });
+    const review = () =>
+      workflow.review(
+        { run: {} },
+        "unused",
+        { plan: { tasks: [] }, model: {} },
+        [],
+      );
+    await expect(review()).resolves.toBe(verdict);
+    expect(step).toMatchObject({ status, exitCode: 0 });
+    // No intermediate completed snapshot may end the panel's observation early.
+    expect(saved).toEqual(["running", status]);
+    expect(retained).toEqual([{ stepId: "review", result }]);
+    // A plausible verdict cannot override failure, cancellation or uncertainty.
+    for (const outcome of ["failed", "canceled", "timeout", "unknown"]) {
+      result.outcome = outcome;
+      result.closed = outcome !== "unknown";
+      step.status = "running";
+      await expect(review()).rejects.toThrow(`Operation ${outcome}`);
+      expect(step.status).toBe(outcome);
+      expect(retained.at(-1)).toEqual({ stepId: "review", result });
+    }
+    expect(quarantine).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("implementation reports distinguish blocked work from a complete assignment without interpreting prose", () => {
   expect(
