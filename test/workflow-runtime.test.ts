@@ -120,8 +120,10 @@ it.each([
       save: () => saved.push(step.status),
       evidence: () => "",
       worker: async () => {
-        workflow.finishStep({ run: { id: randomUUID() } }, step, result);
-        return { result, step };
+        workflow.finishStep({ run: { id: randomUUID() } }, step, result, {
+          verdict: reviewVerdict(text),
+        });
+        return { result, step, verdict: reviewVerdict(text) };
       },
     });
     const review = () =>
@@ -475,4 +477,52 @@ it("an uninterruptible process is never signalled by timeout, cancellation or ou
     signal: new AbortController().signal,
   });
   expect(bounded.outcome).toBe("timeout");
+});
+
+it("review never approves a clipped prefix or a scan that exhausted its verdict budget", async () => {
+  const yes = '{"approved":true,"summary":"ok","blockingIssues":[]}';
+  const no =
+    '{"approved":false,"summary":"not approved","blockingIssues":["bug"]}';
+  expect(reviewVerdict(`${yes}\n${"x".repeat(20000)}\n${no}`)).toBeNull();
+  expect(reviewVerdict(`${`${yes}\n`.repeat(64)}${no}`)).toBeNull();
+  const result = {
+    outcome: "completed",
+    closed: true,
+    exitCode: 0,
+    signal: null,
+    durationMs: 0,
+    text: yes,
+    output: "",
+    truncated: true,
+  };
+  const step = {
+    id: "review",
+    kind: "review",
+    status: "completed",
+    text: "",
+    exitCode: 0,
+    truncated: true,
+  };
+  let verdict: ReturnType<typeof reviewVerdict> = null;
+  const workflow = Object.assign(Object.create(Workflows.prototype), {
+    root: "unused",
+    o: { secrets: () => [], owner: { quarantine: vi.fn() } },
+    write() {},
+    save() {},
+    evidence: () => "",
+    worker: async () => {
+      workflow.finishStep({ run: { id: randomUUID() } }, step, result, {
+        verdict,
+      });
+      return { result, step, verdict };
+    },
+  });
+  const live = { run: { phase: "reviewing" } },
+    proposal = { model: {}, plan: { tasks: [] } };
+  expect(await workflow.review(live, "unused", proposal, [])).toBe(
+    "unparseable",
+  );
+  expect(step.status).toBe("failed");
+  verdict = reviewVerdict(yes); // Independently selected COMPLETE message, not result.text.
+  expect(await workflow.review(live, "unused", proposal, [])).toBe("approved");
 });

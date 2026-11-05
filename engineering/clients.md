@@ -112,6 +112,8 @@ Lost replies to Send or approval return the original receipt or run on a retry w
 One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last message to that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
+Both surfaces display the owner-bound target/ref/base and named-worktree delivery policy before approval, then the recorded task branch, workspace, candidate acceptance, integration, post-check and retention outcomes.
+The conversation/session cwd stays unchanged; worktree observation does not start a second owner or move its Pi session.
 Plan approval covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
 An accepted plan is consumed at the conversation boundary before dispatch; command loss or an uncertain attempt is observed, never replayed.
 Full plan cards and retained run/step details replace daily task/Save/Start/Checks/Review management; automatic review is never human review.

@@ -16,11 +16,11 @@ import {
   documentPlacement,
   pathIdentity,
   pathIdentityAsync,
-  scopeResidue,
   snapshotChanges,
   WorkflowRefusal,
   workflowObservation,
   workingSnapshot,
+  worktreeResidue,
 } from "../src/service/workflow-git.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -215,7 +215,7 @@ it("working-copy snapshots attribute new, changed and reverted paths", async () 
   expect([...outside.paths.keys()]).toEqual(["a.txt"]);
 });
 
-it("local merge refuses ignored targets; ignored residue under a scope is reported", async () => {
+it("local merge refuses ignored targets; ignored residue outside task writes is retained", async () => {
   const { cwd, git } = fixture();
   writeFileSync(join(cwd, ".gitignore"), "generated/\n");
   git("add", ".gitignore");
@@ -236,8 +236,7 @@ it("local merge refuses ignored targets; ignored residue under a scope is report
   mkdirSync(join(cwd, "src/generated"), { recursive: true });
   writeFileSync(join(cwd, "src/generated/edit.txt"), "only copy\n");
   writeFileSync(join(cwd, ".gitignore"), "generated/\n");
-  expect(await scopeResidue(cwd, ["src"])).toEqual(["src/generated/edit.txt"]);
-  expect(await scopeResidue(cwd, ["allowed.txt"])).toEqual([]);
+  expect(await worktreeResidue(cwd)).toEqual(["src/generated/edit.txt"]);
 });
 
 it("a directory target's identity follows its contents", async () => {
@@ -255,3 +254,26 @@ it("a directory target's identity follows its contents", async () => {
   // A Git scope pinned by HEAD and the dirty check skips the walk.
   expect(pathIdentity(cwd, "dir", false)).toBe("directory");
 });
+
+it.each(["--assume-unchanged", "--skip-worktree"])(
+  "%s cannot conceal target edits or authorize worktree removal",
+  async (flag) => {
+    const { cwd, git } = fixture(),
+      p = plan();
+    p.tasks = [{ ...p.tasks[0], writes: ["allowed.txt"] }];
+    const target = workflowObservation(cwd, p);
+    git("update-index", flag, "allowed.txt");
+    writeFileSync(join(cwd, "allowed.txt"), "hidden consumer work");
+    expect(git("status", "--porcelain")).toBe("");
+    expect(() => workflowObservation(cwd, p)).toThrow("conflict");
+    await expect(assertTarget(cwd, target, ["allowed.txt"])).rejects.toThrow(
+      "conflict",
+    );
+    await expect(assertWorkflowScope(cwd, [])).rejects.toThrow("conflict");
+    expect(await worktreeResidue(cwd)).toContain("allowed.txt");
+    expect(await documentPlacement(cwd, "allowed.txt")).toBe("direct");
+    expect(readFileSync(join(cwd, "allowed.txt"), "utf8")).toBe(
+      "hidden consumer work",
+    );
+  },
+);

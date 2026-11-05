@@ -26,6 +26,8 @@ import { decodeSessionId } from "./service/contracts/models.ts";
 import type { ChatTurn } from "./service/contracts/workbench.ts";
 import {
   decodeWorkflowPlan,
+  readableDelivery,
+  readableDeliveryRun,
   readableWorkflowPlan,
   type WorkflowProposal,
   type WorkflowRequest,
@@ -85,7 +87,7 @@ const idle = (): CadenceModeState => ({
   previousTools: [],
 });
 function readableProposal(proposal: WorkflowProposal): string {
-  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n\n${readableWorkflowPlan(proposal.plan)}`;
+  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n\n${readableDelivery(proposal.delivery)}\n\n${readableWorkflowPlan(proposal.plan)}`;
 }
 /** Session restoration restores mode/context, NEVER a grant, pending command or action replay. */
 export function restoreCadenceMode(
@@ -389,7 +391,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     context = ctx;
   };
   const summarize = (run: WorkflowRun) =>
-    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id}\n${workflowDiagnostics(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
+    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
   const conversation = (ctx: ExtensionContext) => {
     const cwd = resolveWorkspace(ctx.cwd).cwd;

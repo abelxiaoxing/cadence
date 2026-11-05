@@ -938,6 +938,7 @@ export function decodeWorkerPublicRequest(v) {
     "instructions",
     "prompt",
     ...(Object.hasOwn(v ?? {}, "imageCount") ? ["imageCount"] : []),
+    ...(Object.hasOwn(v ?? {}, "changes") ? ["changes"] : []),
     "handoff",
   ]);
   const result = {
@@ -960,6 +961,23 @@ export function decodeWorkerPublicRequest(v) {
   };
   if (result.handoff.inputs.some((i) => i.assignmentId !== result.assignmentId))
     invalid();
+  if (o.changes !== undefined) {
+    const c = closed(o.changes, ["root", "base", "candidate"]);
+    const root = text(c.root, 4096, true);
+    if (
+      result.purpose !== "review" ||
+      !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(root) ||
+      root.includes("\0")
+    )
+      throw new Error("Invalid review binding");
+    const oid = (value) => {
+      const s = text(value, 64, true);
+      if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(s))
+        throw new Error("Invalid review object");
+      return s;
+    };
+    result.changes = { root, base: oid(c.base), candidate: oid(c.candidate) };
+  }
   if (
     (result.taskKind !== "code" && result.purpose === "edit") ||
     result.role.role !== roleForPurpose(result.purpose)

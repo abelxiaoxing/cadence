@@ -37,6 +37,9 @@ Image input has no Cadence-specific count, byte, dimension or pixel quota; brows
 `src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
 The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
+`CHANGE_LIMITS` in `src/change-tools.mjs` permits four live Git evidence streams, 2KiB raw output per page, 120s idle expiry and a 30s active-page operation budget; stop still joins actual process closure.
+`src/service/repository-coordination.ts` bounds repository-lease waiting at 30s with 50ms polling and recovery inspection at 256 active owner resource intents; no live lease expires by age.
+
 Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks (IDs up to 48 characters), two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline counted from acquiring the checkout gate.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.

@@ -58,8 +58,12 @@ Historical records are never reinterpreted or rewritten.
 Candidates run acceptance checks before readonly Agent review.
 Review and bounded repair receive current-round native exit/closure facts plus explicitly bounded, redacted retained output excerpts, never worker prose as passing-check evidence or old-round failures as current results.
 Failed checks still block delivery regardless of a review approval.
-Local-merge candidates receive another check after generated documentation before fast-forward integration into the unchanged target.
+Local-merge candidates commit their Git-delivered documentation before exact-candidate checks and readonly Agent review.
+The owner binds the acceptance to that commit/tree, plan/context and current check/review steps, rechecking HEAD, index, worktree and committed scope before fast-forward integration into the unchanged target.
+Review verdicts come from the complete selected message, never a clipped display prefix; exhausting the verdict scan refuses approval.
 Local commit hooks/signing are disabled; verification is explicitly approved instead.
+Git index flags that hide declared targets (`assume-unchanged` / `skip-worktree`) refuse isolated delivery; hidden entries anywhere in a candidate prevent clean-candidate acceptance or cleanup.
+Working-copy snapshots also observe index-hidden paths rather than treating Git status as complete.
 Workflow scope checks independently include staged changes, even when the worktree was restored to HEAD or a staged new file was removed.
 A declared write path that names a directory covers the files below it, in plan overlap, scope, commit and observation alike; write paths refuse format characters (bidi, zero-width, BOM, line separators).
 Working-copy delivery snapshots every worker and repair: in Git, edits outside the declared writes fail the run with the path list and are preserved, never reverted; the changed-file list is recorded.
@@ -69,7 +73,9 @@ The first settled review-step snapshot already contains its verdict, never a tem
 Workflow delivery notes are written before the final candidate checks and say they are not a verification result.
 Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
 `AGENTS.md` and `.cadence/project.md` are not part of the dirty check; notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check, merging the managed region into the user's text.
-Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file under its approved paths, ignored ones included, retains it.
+Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file anywhere in it, ignored ones included, retains it.
+Successful delivery keeps the named task branch; detached-task cleanup uses recorded applied commits rather than pretending cherry-pick preserved the original OIDs.
+Failure, cancellation, uncertain closure and failed post-merge checks retain the worktrees.
 An Agent review reply whose verdict objects disagree counts as unparseable, never as approval.
 Proposals retained from 2.0.21 keep reading under the older plan rules; preparing or executing one that breaks the current rules refuses `invalid` without effect.
 Git operations are recorded as `git` steps (worktrees, dependencies, commits, integration, merge and worktree removal).

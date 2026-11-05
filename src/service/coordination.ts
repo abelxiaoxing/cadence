@@ -572,6 +572,13 @@ export class ServiceCoordination {
     reselectExisting?: (hostConfig: FileSnapshot) => void,
   ): OwnerLease {
     void this.store; // An account-only recovery target cannot acquire an owner.
+    if (
+      rootsOverlap(
+        this.store.root,
+        join(this.stateHome, "cadence-worktrees-v1"),
+      )
+    )
+      throw new ContractError("forbidden"); // Managed worktrees belong to their original run, never an implicit project owner.
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))

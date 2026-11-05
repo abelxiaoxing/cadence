@@ -1,13 +1,6 @@
 /** Persistent conversation workflow coordinator. Clients never own execution. */
 import { randomUUID } from "node:crypto";
-import {
-  lstatSync,
-  opendirSync,
-  realpathSync,
-  rmdirSync,
-  statfsSync,
-  writeFileSync,
-} from "node:fs";
+import { opendirSync, realpathSync, statfsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefinitions } from "../agent-registry.ts";
@@ -48,6 +41,7 @@ import {
 } from "./contracts/workbench.ts";
 import {
   clipUnits,
+  decodeDeliveryObservation,
   decodeWorkflowPlan,
   decodeWorkflowProposal,
   decodeWorkflowRequest,
@@ -72,9 +66,18 @@ import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
+import { RepositoryCoordination } from "./repository-coordination.ts";
 import { TurnCapture } from "./turn-capture.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import {
+  acceptanceRecord,
+  deliveryObservation,
+  WorkflowDelivery,
+} from "./workflow-delivery.ts";
+import {
+  assertCandidate,
+  assertCommittedScope,
+  assertRepository,
   assertTarget,
   assertWorkflowCommit,
   assertWorkflowScope,
@@ -82,14 +85,14 @@ import {
   committedPaths,
   contentsIdentity,
   contentsIdentityAsync,
+  deliveryTarget,
   documentPlacement,
   gitHead,
   gitRun,
-  nested,
+  gitText,
   pathIdentity,
   projectMarkdown,
   safeWorkflowFile,
-  scopeResidue,
   snapshotChanges,
   tracked,
   WorkflowRefusal,
@@ -149,6 +152,7 @@ interface Live {
   abort: AbortController;
   file?: FileSnapshot;
   original: Promise<AcceptedWorkResult>;
+  delivery?: WorkflowDelivery;
   proposal?: WorkflowProposal;
   /** Target observed at admission (local-merge) or declared-target identity (working copy). */
   target?: { head: string; branch: string };
@@ -240,7 +244,11 @@ export function reviewVerdict(
       }
     }
   }
-  if (!found.length || found.some((v) => v.approved !== found[0].approved))
+  if (
+    starts >= 64 ||
+    !found.length ||
+    found.some((v) => v.approved !== found[0].approved)
+  )
     return null;
   return found[0];
 }
@@ -509,6 +517,22 @@ export class Workflows {
     const integrating = run.phase === "integrating";
     run.status = "unknown";
     run.phase = "finished";
+    if (run.delivery) {
+      if (run.delivery.preparation === "pending")
+        run.delivery.preparation = "unknown";
+      if (run.delivery.integration.status === "applying") {
+        run.delivery.integration.status = "unknown";
+        run.delivery.integration.reason =
+          "Owner restarted during integration; observe the target, never replay.";
+      }
+      run.delivery.cleanup = {
+        status: "retained",
+        reason:
+          "Owner restarted; artifacts retained without replay or cleanup.",
+      };
+      for (const artifact of run.delivery.artifacts)
+        if (artifact.state !== "removed") artifact.state = "retained";
+    }
     for (const step of run.steps)
       if (step.status === "running") step.status = "unknown";
     // Startup runs before model sources load: no secret projection here. The
@@ -569,11 +593,20 @@ export class Workflows {
   }
   private observation(plan: WorkflowPlan) {
     const source = workflowObservation(this.cwd, plan);
+    const delivery =
+      plan.delivery === "local-merge"
+        ? {
+            policy: "task-branch-v1" as const,
+            target: deliveryTarget(this.cwd, source),
+          }
+        : undefined;
     return {
       source,
+      delivery,
       digest: hash(
         canonicalJson({
           source,
+          delivery: delivery ?? null,
           working:
             plan.delivery === "working-copy"
               ? captureChanges(this.cwd).fingerprint
@@ -606,22 +639,45 @@ export class Workflows {
     }
     this.model(p.model);
     const observed = this.observation(p.plan);
+    if (p.plan.delivery === "local-merge" && !p.delivery)
+      throw new WorkflowRefusal(
+        "invalid",
+        "Publish a new plan with explicit task-branch delivery before execution.",
+      );
     if (
       p.epoch !== this.o.owner.lease.registration.epoch ||
       p.digest !== digest ||
       p.cwd !== this.contexts.capture(p.model).cwd ||
       (p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd) ||
-      observed.digest !== p.observation
+      observed.digest !== p.observation ||
+      canonicalJson(observed.delivery ?? null) !==
+        canonicalJson(p.delivery ?? null) ||
+      p.digest !==
+        hash(
+          canonicalJson(
+            p.delivery ? { plan: p.plan, delivery: p.delivery } : p.plan,
+          ),
+        )
     )
       throw new ContractError("stale");
     return observed.source;
+  }
+  private projectDelivery(run: WorkflowRun): WorkflowRun {
+    return run.delivery
+      ? {
+          ...run,
+          delivery: decodeDeliveryObservation(
+            JSON.parse(sanitizeData(run.delivery, this.o.secrets())),
+          ),
+        }
+      : run;
   }
   activeRuns(): WorkbenchResult & { kind: "workflow-active" } {
     this.o.owner.lease.assert();
     return {
       kind: "workflow-active",
       runs: [...this.active.values()].map(({ run }) => ({
-        ...structuredClone(run),
+        ...this.projectDelivery(structuredClone(run)),
         goal: clipUnits(run.goal, 320),
         steps: [],
       })),
@@ -692,7 +748,7 @@ export class Workflows {
     return {
       kind: "workflow",
       commandId: null,
-      response: { type: "run", run },
+      response: { type: "run", run: this.projectDelivery(run) },
     };
   }
   transcript(id: string, stepId: string): WorkbenchResult {
@@ -833,9 +889,10 @@ export class Workflows {
         JSON.parse(sanitizeData(r.plan, secrets)),
         { strict: true },
       );
-      const { source, digest } = this.observation(plan);
+      const { source, digest, delivery } = this.observation(plan);
       const selected = this.model(r.model);
       const p: WorkflowProposal = {
+        ...(delivery ? { delivery } : {}),
         id: commandId,
         epoch,
         model: r.model,
@@ -848,7 +905,7 @@ export class Workflows {
           branch: source.branch,
           baseCommit: source.head,
         },
-        digest: hash(canonicalJson(plan)),
+        digest: hash(canonicalJson(delivery ? { plan, delivery } : plan)),
       };
       // Only the owner's own environment (cwd/branch) could still carry a literal.
       if (sanitizeData(p, secrets) !== canonicalJson(p))
@@ -915,6 +972,7 @@ export class Workflows {
     if (this.files.directory(dirname(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal: WorkflowProposal | undefined;
+    let delivery: WorkflowRun["delivery"];
     let target: Live["target"];
     let declared: string | undefined;
     if (request.action === "execute") {
@@ -941,6 +999,16 @@ export class Workflows {
       )
         throw new ContractError("expired-grant");
       const writes = proposal.plan.tasks.flatMap((t) => t.writes);
+      if (proposal.delivery) {
+        delivery = deliveryObservation(
+          proposal.delivery,
+          this.worktreeRoot,
+          commandId,
+          proposal.plan.goal,
+        );
+        if (sanitizeData(delivery, secrets) !== canonicalJson(delivery))
+          throw new ContractError("forbidden");
+      }
       effect();
       this.grants.delete(request.grant);
       if (proposal.plan.delivery === "local-merge")
@@ -959,6 +1027,7 @@ export class Workflows {
             })()),
     );
     const run: WorkflowRun = {
+      ...(delivery ? { delivery } : {}),
       execution,
       id: commandId,
       epoch,
@@ -1126,14 +1195,17 @@ export class Workflows {
     live: Live,
     s: WorkflowStep,
     original: RunResult,
-    preview?: string,
+    display: {
+      preview?: string;
+      verdict?: ReturnType<typeof reviewVerdict>;
+    } = {},
   ) {
     const result = this.sanitizeResult(original);
     this.write(this.path(live.run.id, `results/${hash(s.id)}.json`), {
       stepId: s.id,
       result,
     });
-    const shown = preview ?? (result.text || result.output);
+    const shown = display.preview ?? (result.text || result.output);
     s.status = result.outcome;
     s.text = diagnosticText(
       shown,
@@ -1150,7 +1222,7 @@ export class Workflows {
       result.closed &&
       result.exitCode === 0
     ) {
-      const verdict = reviewVerdict(result.text);
+      const verdict = display.verdict ?? null;
       s.status = verdict
         ? verdict.approved
           ? "completed"
@@ -1181,6 +1253,7 @@ export class Workflows {
     result: RunResult;
     step: WorkflowStep;
     report: ReturnType<typeof implementationReport>;
+    verdict: ReturnType<typeof reviewVerdict>;
   }> {
     this.assertRunning(live);
     const model = live.execution.model;
@@ -1190,6 +1263,7 @@ export class Workflows {
     )
       throw new ContractError("stale");
     this.o.models.assertCurrent(model);
+    if (cwd !== this.cwd) await live.delivery?.assertBinding(cwd);
     const runCwd = this.executionCwd(live, cwd);
     const role = loadAgentDefinitions().find(
       (r) =>
@@ -1207,7 +1281,22 @@ export class Workflows {
       runId: live.run.id,
       childRunId,
       assignmentId: id,
-      purpose: readonly ? "research" : "edit",
+      purpose: readonly
+        ? live.run.phase === "reviewing"
+          ? "review"
+          : "research"
+        : "edit",
+      ...(readonly &&
+      live.run.phase === "reviewing" &&
+      live.run.delivery?.candidate
+        ? {
+            changes: {
+              root: cwd,
+              base: live.run.delivery.binding.target.head,
+              candidate: live.run.delivery.candidate,
+            },
+          }
+        : {}),
       model,
       role: { role: role.role, sha256: role.sha256 },
       context: plan
@@ -1346,6 +1435,7 @@ Declared write paths are relative to that checkout root, not to the execution cw
       );
       const completed = this.sanitizeResult(await running);
       let report: ReturnType<typeof implementationReport> = null;
+      let verdict: ReturnType<typeof reviewVerdict> = null;
       if (completed.outcome === "completed") {
         // The runner's preview may cut through an owner literal before it is
         // sanitized: use the sanitized complete message, then bound it.
@@ -1360,6 +1450,17 @@ Declared write paths are relative to that checkout root, not to the execution cw
           // runProcess's preview. Stderr/other diagnostic clipping says nothing
           // about its completeness. Never parse a display-truncated fallback.
           if (!readonly) report = implementationReport(selected, secrets);
+          else if (live.run.phase === "reviewing") {
+            const parsed = reviewVerdict(selected);
+            if (parsed)
+              verdict = {
+                ...parsed,
+                summary: sanitizeText(parsed.summary, secrets),
+                blockingIssues: parsed.blockingIssues.map((issue) =>
+                  sanitizeText(issue, secrets),
+                ),
+              };
+          }
           const final = report
             ? canonicalJson(report, RECORD_BYTES)
             : sanitizeText(selected, secrets);
@@ -1369,8 +1470,8 @@ Declared write paths are relative to that checkout root, not to the execution cw
       }
       transcript.status = completed.outcome;
       saveTranscript();
-      this.finishStep(live, step, completed);
-      return { result: completed, step, report };
+      this.finishStep(live, step, completed, { verdict });
+      return { result: completed, step, report, verdict };
     } finally {
       await auth.settled;
       if (step.timing) {
@@ -1394,6 +1495,7 @@ Declared write paths are relative to that checkout root, not to the execution cw
   ): Promise<RunResult> {
     this.assertRunning(live);
     const shell = "check" in operation;
+    if (cwd !== this.cwd) await live.delivery?.assertBinding(cwd);
     if (cwd !== this.cwd && shell) await assertWorktree(this.cwd, cwd);
     const runCwd = shell ? this.executionCwd(live, cwd) : cwd;
     const id = randomUUID();
@@ -1418,6 +1520,7 @@ Declared write paths are relative to that checkout root, not to the execution cw
             ? ["/d", "/s", "/c", `"${operation.check.command}"`]
             : ["-c", operation.check.command]
           : gitArguments([
+              "--no-lazy-fetch",
               "-c",
               `core.hooksPath=${join(this.root, "empty-hooks")}`,
               "-c",
@@ -1501,6 +1604,26 @@ Declared write paths are relative to that checkout root, not to the execution cw
     title: string,
     body: (git: (args: string[]) => Promise<RunResult>) => Promise<T>,
   ): Promise<T> {
+    const operation = () => {
+      this.assertRunning(live);
+      if (cwd !== this.cwd) live.delivery?.assertWorkspace(cwd);
+      return this.recordGitStep(live, cwd, title, body);
+    };
+    return live.delivery
+      ? live.delivery.resources.mutate(
+          live.delivery.view.binding.target.repository,
+          live.abort.signal,
+          operation,
+          () => this.o.owner.state === "idle",
+        )
+      : operation();
+  }
+  private async recordGitStep<T>(
+    live: Live,
+    cwd: string,
+    title: string,
+    body: (git: (args: string[]) => Promise<RunResult>) => Promise<T>,
+  ): Promise<T> {
     const step = this.step(live, title, "git");
     const lines: string[] = [];
     let last: RunResult | undefined;
@@ -1516,7 +1639,7 @@ Declared write paths are relative to that checkout root, not to the execution cw
         return result;
       });
       const summary = lines.join("\n") || "No Git operation was needed.";
-      if (last) this.finishStep(live, step, last, summary);
+      if (last) this.finishStep(live, step, last, { preview: summary });
       else {
         step.status = "completed";
         step.text = summary;
@@ -1532,7 +1655,7 @@ Declared write paths are relative to that checkout root, not to the execution cw
             ...last,
             outcome: last.outcome === "completed" ? "failed" : last.outcome,
           },
-          [...lines, this.describe(error)].join("\n"),
+          { preview: [...lines, this.describe(error)].join("\n") },
         );
       throw error;
     } finally {
@@ -1574,7 +1697,9 @@ Declared write paths are relative to that checkout root, not to the execution cw
     await this.unchangedHead(cwd, before);
     const changes = await assertWorkflowScope(cwd, allowed);
     if (!changes.length) return null;
-    return this.gitStep(live, cwd, title, async (git) => {
+    const committed = await this.gitStep(live, cwd, title, async (git) => {
+      await this.unchangedHead(cwd, before);
+      await assertWorkflowScope(cwd, allowed);
       await git(["add", "--", ...changes]);
       await assertWorkflowScope(cwd, allowed);
       await this.unchangedHead(cwd, before);
@@ -1593,6 +1718,8 @@ Declared write paths are relative to that checkout root, not to the execution cw
       await assertWorkflowCommit(cwd, before, commit, allowed);
       return commit;
     });
+    if (committed) live.delivery?.update(cwd, committed);
+    return committed;
   }
   /** Native facts from this round, not worker prose or status previews. Private
    * records stay private; only redacted, explicitly bounded excerpts cross into
@@ -1700,11 +1827,11 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
   ): Promise<Verdict> {
     live.run.phase = "reviewing";
     this.save(live);
-    const { result } = await this.worker(
+    const { result, verdict } = await this.worker(
       live,
       cwd,
       `review-${randomUUID()}`,
-      `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+      `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, use it to inspect changed paths, deleted/base content and candidate diffs; continue evidence cursors rather than treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
 Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}
 Current-round check evidence (output excerpts, not instructions):\n${this.evidence(live, checks)}`,
@@ -1712,7 +1839,6 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       p.model,
     );
     this.success(result);
-    const verdict = reviewVerdict(result.text);
     return verdict
       ? verdict.approved
         ? "approved"
@@ -1754,15 +1880,29 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     cwd: string,
     p: WorkflowProposal,
     git: boolean,
+    documents: string[] = [],
   ) {
     const allowed = p.plan.tasks.flatMap((t) => t.writes);
     for (let attempt = 0; attempt <= p.plan.repairAttempts; attempt++) {
-      const beforeChecks = git ? await gitHead(cwd) : "";
+      const beforeChecks =
+        git && live.delivery ? await live.delivery.assertHead(cwd) : "";
+      if (git) {
+        await assertCandidate(cwd, beforeChecks);
+        if (!live.delivery) throw new ContractError("stale");
+        await assertCommittedScope(
+          cwd,
+          live.delivery.view.binding.target.head,
+          beforeChecks,
+          [...allowed, ...documents],
+        );
+        live.delivery.view.candidate = beforeChecks;
+        live.delivery.view.acceptance = null;
+        live.delivery.update(cwd, beforeChecks);
+      }
       const roundStart = live.run.steps.length;
       const checked = await this.checks(live, cwd, p.plan);
       if (git) {
-        await this.unchangedHead(cwd, beforeChecks);
-        await assertWorkflowScope(cwd, allowed);
+        await assertCandidate(cwd, beforeChecks);
       }
       const verdict = await this.review(
         live,
@@ -1771,10 +1911,28 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         live.run.steps.slice(roundStart),
       );
       if (git) {
-        await this.unchangedHead(cwd, beforeChecks);
-        await assertWorkflowScope(cwd, allowed);
+        await assertCandidate(cwd, beforeChecks);
       }
-      if (verdict === "approved" && checked) return;
+      if (verdict === "approved" && checked) {
+        if (live.delivery) {
+          const steps = live.run.steps.slice(roundStart);
+          const reviewed = steps.at(-1);
+          if (!reviewed) throw new ContractError("stale");
+          live.delivery.view.acceptance = acceptanceRecord(
+            beforeChecks,
+            (
+              await gitText(cwd, ["rev-parse", `${beforeChecks}^{tree}`])
+            ).trim(),
+            p.digest,
+            live.execution,
+            steps.filter((s) => s.kind === "check"),
+            reviewed,
+            p.plan.checks.length,
+          );
+          this.save(live);
+        }
+        return;
+      }
       // An unreadable verdict has nothing to repair: report it, do not spend rounds.
       if (verdict === "unparseable" && checked)
         throw new Error(
@@ -1852,6 +2010,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     names: string[],
     changed: string[],
   ) {
+    this.assertRunning(live);
     for (const name of names) {
       const file = safeWorkflowFile(cwd, name);
       if (!safeDirectory(dirname(file), true))
@@ -1860,25 +2019,6 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         flag: name === ".cadence/project.md" ? "w" : "wx",
       });
     }
-  }
-  /** New run worktrees live outside the private namespace and the checkout. */
-  private worktreeHome(id: string): string {
-    if (nested(this.cwd, this.worktreeRoot))
-      throw new ContractError("unsupported-context");
-    for (const directory of [dirname(this.worktreeRoot), this.worktreeRoot]) {
-      if (!safeDirectory(directory, true)) throw new ContractError("forbidden");
-      const st = lstatSync(directory);
-      if (
-        process.platform !== "win32" &&
-        ((st.mode & 0o077) !== 0 ||
-          (process.getuid && st.uid !== process.getuid()))
-      )
-        throw new ContractError("forbidden");
-    }
-    const home = join(this.worktreeRoot, decodeId(id));
-    if (safeDirectory(home)) throw new ContractError("conflict"); // never adopt contents
-    safeDirectory(join(home, "tasks"), true);
-    return home;
   }
   /** Fast-forward the user's checkout. Never interrupted: no cancellation,
    * timeout or output bound signals Git mid-update. HEAD is re-read afterwards
@@ -1898,16 +2038,41 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     } finally {
       try {
         actual = await gitHead(this.cwd);
+        if (live.run.delivery) {
+          assertRepository(live.run.delivery.binding.target);
+          if (
+            (await gitText(this.cwd, ["symbolic-ref", "HEAD"])).trim() !==
+            live.run.delivery.binding.target.branch
+          )
+            actual = null;
+        }
       } catch {
         actual = null;
       }
       if (actual === candidate) live.run.mergedCommit = candidate;
+      if (live.run.delivery) {
+        live.run.delivery.integration.after = actual;
+        live.run.delivery.integration.status =
+          actual === candidate
+            ? "applied"
+            : actual === null
+              ? "unknown"
+              : "blocked";
+        live.run.delivery.integration.reason =
+          actual === candidate
+            ? ""
+            : actual === null
+              ? "Target identity or outcome could not be confirmed; do not replay."
+              : "Git did not leave the target at the accepted candidate.";
+      }
       if (result)
         this.finishStep(
           live,
           step,
           actual === null ? { ...result, outcome: "unknown" } : result,
-          `git merge --ff-only: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}; target HEAD ${actual ? actual.slice(0, 12) : "unreadable"}${result.exitCode === 0 ? "" : `\n${result.output}`}`,
+          {
+            preview: `git merge --ff-only: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}; target HEAD ${actual ? actual.slice(0, 12) : "unreadable"}${result.exitCode === 0 ? "" : `\n${result.output}`}`,
+          },
         );
       this.closeStep(live, step);
     }
@@ -1923,70 +2088,6 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         "The fast-forward did not leave the target at the candidate commit; nothing is reported as merged.",
       );
     }
-  }
-  /** Plain `git worktree remove` of clean worktrees at their expected commit.
-   * Git's refusal (untracked/modified files) retains the worktree. */
-  private async removeWorktrees(
-    live: Live,
-    entries: { path: string; expected: string; scope: string[] }[],
-    home: string,
-  ) {
-    const removed: string[] = [],
-      retained: string[] = [];
-    const step = this.step(live, "remove-merged-worktrees", "git");
-    try {
-      for (const { path, expected, scope } of entries) {
-        const label = path.slice(home.length + 1);
-        try {
-          if ((await gitHead(path)) !== expected) {
-            retained.push(`${label} (HEAD moved)`);
-            continue;
-          }
-          // `git worktree remove` deletes ignored files: anything left under an
-          // approved path (including ignored edits) keeps the worktree.
-          const residue = await scopeResidue(path, scope);
-          if (residue.length) {
-            retained.push(
-              `${label} (uncommitted or ignored files under approved paths: ${residue.slice(0, 8).join(", ")}${residue.length > 8 ? ", …" : ""})`,
-            );
-            continue;
-          }
-          const r = await this.run(live, this.cwd, {
-            git: ["worktree", "remove", path],
-          });
-          if (r.outcome === "completed" && r.exitCode === 0)
-            removed.push(label);
-          else
-            retained.push(
-              `${label} (${diagnosticText(r.output, 160, this.o.secrets()).trim() || "git refused"})`,
-            );
-        } catch (error) {
-          retained.push(`${label} (${this.describe(error)})`);
-        }
-      }
-      step.status = "completed";
-      step.text = diagnosticText(
-        [
-          removed.length ? `Removed: ${removed.join(", ")}` : "",
-          retained.length ? `Retained: ${retained.join("; ")}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n") || "No worktree to remove.",
-        1024,
-        this.o.secrets(),
-      );
-      this.save(live);
-    } finally {
-      this.closeStep(live, step);
-    }
-    for (const directory of [join(home, "tasks"), home])
-      try {
-        rmdirSync(directory); // Only ever succeeds when already empty.
-      } catch {
-        /* Retained: not empty or not removable. */
-      }
-    if (retained.length)
-      live.notes.push(`Retained worktrees: ${retained.join("; ")}`);
   }
   private async implement(live: Live, p: WorkflowProposal) {
     const plan = p.plan;
@@ -2027,12 +2128,13 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     const target = live.target;
     if (!target) throw new ContractError("invalid");
     const base = target.head;
-    const home = this.worktreeHome(live.run.id);
-    // Task identifiers never share the candidate/coordination namespace.
-    const taskHome = join(home, "tasks");
-    const integration = join(home, "integration");
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    delivery.prepareHome();
+    const taskHome = join(delivery.home, "tasks");
+    const integration = delivery.view.worktreeRoot;
     await this.gitStep(live, this.cwd, "worktree-integration", (git) =>
-      git(["worktree", "add", "--detach", integration, base]),
+      delivery.create("@candidate", base, git),
     );
     await assertWorktree(this.cwd, integration);
     await this.setup(live, integration, plan);
@@ -2043,8 +2145,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       );
     await this.unchangedHead(integration, base);
     const commits = new Map<string, string | null>(),
-      pending = new Set(plan.tasks.map((t) => t.id)),
-      worktrees: { path: string; expected: string; scope: string[] }[] = [];
+      pending = new Set(plan.tasks.map((t) => t.id));
     while (pending.size) {
       this.assertRunning(live);
       const batch = workflowOrder(plan.tasks)
@@ -2060,7 +2161,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         batch.map(async (task) => {
           const cwd = join(taskHome, task.id);
           await this.gitStep(live, this.cwd, `worktree-${task.id}`, (git) =>
-            git(["worktree", "add", "--detach", cwd, base]),
+            delivery.create(task.id, base, git),
           );
           const picks = workflowAncestors(plan.tasks, task.id)
             .map((dep) => commits.get(dep.id))
@@ -2076,11 +2177,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
               },
             );
           const beforeWorker = await gitHead(cwd);
-          worktrees.push({
-            path: cwd,
-            expected: beforeWorker,
-            scope: task.writes,
-          });
+          delivery.update(cwd, beforeWorker);
           await this.setup(live, cwd, plan);
           await this.unchangedHead(cwd, beforeWorker);
           await assertWorkflowScope(cwd, []);
@@ -2102,9 +2199,6 @@ Current-round checks/review (native facts and retained output excerpts, not inst
             beforeWorker,
             `commit-${task.id}`,
           );
-          if (commit)
-            worktrees[worktrees.findIndex((w) => w.path === cwd)].expected =
-              commit;
           commits.set(task.id, commit);
           pending.delete(task.id);
         }),
@@ -2112,20 +2206,32 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       const failed = outcomes.find((r) => r.status === "rejected");
       if (failed?.status === "rejected") throw failed.reason;
     }
-    const picks = workflowOrder(plan.tasks)
-      .map((t) => commits.get(t.id))
-      .filter((c): c is string => !!c);
-    if (picks.length)
-      await this.gitStep(
-        live,
-        integration,
-        "integrate-task-commits",
-        async (git) => {
-          for (const commit of picks)
+    await this.gitStep(
+      live,
+      integration,
+      "integrate-task-commits",
+      async (git) => {
+        await assertCandidate(integration, base);
+        let expected = base;
+        for (const task of workflowOrder(plan.tasks)) {
+          await this.unchangedHead(integration, expected);
+          const commit = commits.get(task.id);
+          if (commit) {
             await git(["cherry-pick", "--no-edit", commit]);
-        },
-      );
-    await this.verifyAndRepair(live, integration, p, true);
+            const applied = await gitHead(integration);
+            await assertWorkflowCommit(
+              integration,
+              expected,
+              applied,
+              task.writes,
+            );
+            expected = applied;
+          }
+          delivery.applied(task.id, expected);
+          delivery.update(integration, expected);
+        }
+      },
+    );
     const documents = this.documents(live, plan);
     // Generated notes travel in the candidate only where a fast-forward can
     // deliver them; ignored/untracked/dirty destinations are written afterwards.
@@ -2136,7 +2242,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     const documentBefore = new Map(
       documents.map((name) => [name, pathIdentity(this.cwd, name)]),
     );
-    const beforePublication = await gitHead(integration);
+    const beforePublication = await delivery.assertHead(integration);
     const changed = await committedPaths(integration, base, beforePublication);
     this.publish(live, integration, plan, committed, changed);
     await this.commit(
@@ -2147,25 +2253,47 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       beforePublication,
       "commit-delivery-notes",
     );
-    const candidate = await gitHead(integration);
-    if (!(await this.checks(live, integration, plan)))
-      throw new Error("Final candidate checks failed; nothing merged.");
-    await this.unchangedHead(integration, candidate);
-    await assertWorkflowScope(integration, []);
-    // Only what a safe fast-forward needs; `merge --ff-only` refuses other overlaps.
-    this.assertRunning(live);
-    await assertTarget(this.cwd, target, [...allowed, ...committed]);
-    live.run.phase = "integrating";
-    this.save(live);
-    await this.merge(live, candidate);
+    await this.verifyAndRepair(live, integration, p, true, committed);
+    const candidate = delivery.view.candidate;
+    if (!candidate) throw new ContractError("stale");
+    try {
+      await delivery.resources.mutate(
+        delivery.view.binding.target.repository,
+        live.abort.signal,
+        async () => {
+          this.assertRunning(live);
+          await delivery.assertAccepted(p.digest, live.execution, [
+            ...allowed,
+            ...committed,
+          ]);
+          live.run.phase = "integrating";
+          delivery.view.integration.status = "applying";
+          this.save(live);
+          await this.merge(live, candidate);
+        },
+        () => this.o.owner.state === "idle",
+      );
+    } catch (error) {
+      if (delivery.view.integration.status === "pending")
+        delivery.view.integration.status = "blocked";
+      delivery.view.integration.reason = diagnosticText(
+        this.describe(error),
+        2048,
+        this.o.secrets(),
+      );
+      this.save(live);
+      throw error;
+    }
     for (const path of await committedPaths(this.cwd, base, candidate))
       live.delivered.add(path);
     try {
+      this.assertRunning(live);
       for (const name of documents) {
         // A committed note arrived with the fast-forward. A direct note (ignored,
         // untracked or dirty destination) is always written here, never dropped.
         if (committed.includes(name) && (await tracked(this.cwd, name)))
           continue;
+        this.assertRunning(live);
         const file = safeWorkflowFile(this.cwd, name),
           before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
@@ -2188,33 +2316,40 @@ Current-round checks/review (native facts and retained output excerpts, not inst
           { flag: before ? "w" : "wx" },
         );
       }
-      if (!(await this.checks(live, this.cwd, plan)))
+      delivery.view.postChecks = "unknown";
+      this.save(live);
+      const checked = await this.checks(live, this.cwd, plan);
+      delivery.view.postChecks = checked ? "passed" : "failed";
+      this.save(live);
+      if (!checked)
         throw new Error(
           "Local merge completed, but post-merge checks failed. No reset or rollback was attempted.",
         );
       await this.unchangedHead(this.cwd, candidate);
-    } finally {
+      if (
+        (await gitText(this.cwd, ["symbolic-ref", "HEAD"])).trim() !==
+        target.branch
+      )
+        throw new ContractError("stale");
       if (!live.abort.signal.aborted)
-        try {
-          await this.removeWorktrees(
+        await delivery.cleanup(async (artifact, check) => {
+          await this.gitStep(
             live,
-            [
-              ...worktrees,
-              {
-                path: integration,
-                expected: candidate,
-                scope: [...allowed, ...committed],
-              },
-            ],
-            home,
+            this.cwd,
+            "remove-merged-worktrees",
+            async (git) => {
+              await check();
+              await git(["worktree", "remove", artifact.path]);
+            },
           );
-        } catch (error) {
-          live.notes.push(
-            `Worktrees retained: removal did not complete (${this.describe(error)}).`,
-          );
-        }
+        });
+    } catch (error) {
+      if (delivery.view.postChecks === "passed")
+        delivery.view.postChecks = "unknown";
+      throw error;
     }
   }
+
   /** Start only against the target the approval observed; unrelated changes are fine. */
   private async assertStartable(live: Live, p: WorkflowProposal) {
     this.current();
@@ -2261,6 +2396,19 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         live.abort.abort();
       }, WORKFLOW_LIMITS.durationMs);
       if (live.proposal) await this.assertStartable(live, live.proposal);
+      if (live.run.delivery)
+        live.delivery = new WorkflowDelivery(
+          live.run.delivery,
+          new RepositoryCoordination(
+            this.o.coordination,
+            this.cwd,
+            live.run.epoch,
+            live.run.id,
+            () => this.o.owner.lease.assert(),
+            () => this.o.owner.quarantine(),
+          ),
+          () => this.save(live),
+        );
       live.run.status = "running";
       this.save(live);
       if (request.action === "research") {
@@ -2301,6 +2449,14 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       clearTimeout(timer);
       live.run.phase = "finished";
       if (live.run.diagnostics) live.run.diagnostics.settledAt = Date.now();
+      if (live.delivery && this.o.owner.state === "idle") {
+        try {
+          live.delivery.finish();
+        } catch {
+          this.o.owner.quarantine();
+          live.run.status = "unknown";
+        }
+      }
       const delivered = [...live.delivered].sort();
       live.run.notice = this.notice(
         failure,
