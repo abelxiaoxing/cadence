@@ -116,8 +116,14 @@ Unresolved conflicts or a changed target stop integration.
 Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
 Clean worktrees are removed after a successful merge (plain `git worktree remove`, which also deletes their ignored setup output such as `node_modules`); dirty or moved ones and all results are retained.
-Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
-The 90-minute budget starts when the run acquires the checkout; Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
+Separate WebUI or terminal conversations can run independent local-merge workflows concurrently in the same project, within the owner's four-active-run limit (including investigations).
+Open a new conversation for each task; a single conversation still permits only one approved implementation at a time.
+Readonly investigations share access; direct working-copy edits and ordinary host-tool conversations remain exclusive.
+Each isolated workflow uses shared access for start validation and exclusive access for final delivery, not throughout implementation.
+Final delivery is serialized.
+When another verified Cadence workflow advances the same branch, a non-overlapping candidate may be rebased over that delivery, then checked and automatically reviewed again without another repair budget.
+Changed instructions, incompatible project context, overlapping write paths or external branch changes stop integration and retain the candidate for a fresh plan; conflicts are never resolved silently.
+The 90-minute budget starts when the run first acquires checkout access and includes any later integration wait; Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
 Local-merge plans cannot declare files that Git ignores; use working-copy delivery for those.
 After an owner restart, an unfinished run is shown as `unknown` with its retained worktrees; it is never resumed.
 Credential-looking text in plans and research questions is shown and approved redacted.

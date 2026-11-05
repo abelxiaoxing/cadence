@@ -86,6 +86,7 @@ import {
   gitHead,
   gitRun,
   nested,
+  overlapping,
   pathIdentity,
   projectMarkdown,
   safeWorkflowFile,
@@ -152,6 +153,10 @@ interface Live {
   proposal?: WorkflowProposal;
   /** Target observed at admission (local-merge) or declared-target identity (working copy). */
   target?: { head: string; branch: string };
+  /** Only successfully verified sibling deliveries may advance this frontier. */
+  frontier?: string;
+  guidance?: { agents: string | null; project: string | null };
+  barrier?: CheckoutPermit;
   declared?: string;
   delivered: Set<string>;
   notes: string[];
@@ -920,12 +925,17 @@ export class Workflows {
     if (request.action === "execute") {
       proposal = this.proposal(request.proposalId);
       const source = this.assertProposal(proposal, request.digest);
-      // A second plan would be checked against a checkout the first one changes;
-      // queued behind it, it could only end stale. Refused before the grant is used.
-      if ([...this.active.values()].some((live) => live.proposal))
+      const conversation = proposal.model.conversation?.id;
+      if (
+        [...this.active.values()].some(
+          (live) =>
+            live.proposal &&
+            live.execution.version.conversation?.id === conversation,
+        )
+      )
         throw new WorkflowRefusal(
           "conflict",
-          "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.",
+          "This conversation already has an approved workflow queued or running. Start a separate conversation for another task.",
         );
       this.capacity();
       // Validated before use: a refusal leaves the grant (or another
@@ -993,6 +1003,13 @@ export class Workflows {
       original: ready.then(() => this.execute(live, request)),
       proposal,
       target,
+      frontier: target?.head,
+      guidance: target
+        ? {
+            agents: pathIdentity(this.cwd, "AGENTS.md"),
+            project: pathIdentity(this.cwd, ".cadence/project.md"),
+          }
+        : undefined,
       declared,
       delivered: new Set(),
       notes: [],
@@ -1754,9 +1771,10 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     cwd: string,
     p: WorkflowProposal,
     git: boolean,
+    repairAttempts = p.plan.repairAttempts,
   ) {
     const allowed = p.plan.tasks.flatMap((t) => t.writes);
-    for (let attempt = 0; attempt <= p.plan.repairAttempts; attempt++) {
+    for (let attempt = 0; attempt <= repairAttempts; attempt++) {
       const beforeChecks = git ? await gitHead(cwd) : "";
       const roundStart = live.run.steps.length;
       const checked = await this.checks(live, cwd, p.plan);
@@ -1780,7 +1798,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         throw new Error(
           "Checks passed, but the automatic review reply could not be parsed as a verdict; nothing was delivered without an Agent review approval.",
         );
-      if (attempt === p.plan.repairAttempts)
+      if (attempt === repairAttempts)
         throw new Error(
           `${checked ? "" : "Checks failed. "}${verdict === "rejected" ? "Agent review rejected the candidate. " : verdict === "unparseable" ? "Agent review reply could not be parsed. " : ""}Verification/review failed; repair budget exhausted. Artifacts preserved; nothing merged.`,
         );
@@ -2126,6 +2144,11 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         },
       );
     await this.verifyAndRepair(live, integration, p, true);
+    // No worker still touches the user's checkout. Acquire exclusively only
+    // for candidate refresh, publication, fast-forward and post-merge checks.
+    live.barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
+    live.barrier.assertHeld();
+    await this.refreshCandidate(live, integration, p);
     const documents = this.documents(live, plan);
     // Generated notes travel in the candidate only where a fast-forward can
     // deliver them; ignored/untracked/dirty destinations are written afterwards.
@@ -2137,7 +2160,12 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       documents.map((name) => [name, pathIdentity(this.cwd, name)]),
     );
     const beforePublication = await gitHead(integration);
-    const changed = await committedPaths(integration, base, beforePublication);
+    const deliveryTarget = { ...target, head: live.frontier ?? target.head };
+    const changed = await committedPaths(
+      integration,
+      deliveryTarget.head,
+      beforePublication,
+    );
     this.publish(live, integration, plan, committed, changed);
     await this.commit(
       live,
@@ -2154,11 +2182,16 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     await assertWorkflowScope(integration, []);
     // Only what a safe fast-forward needs; `merge --ff-only` refuses other overlaps.
     this.assertRunning(live);
-    await assertTarget(this.cwd, target, [...allowed, ...committed]);
+    await assertTarget(this.cwd, deliveryTarget, [...allowed, ...committed]);
+    this.assertGuidance(live, p);
     live.run.phase = "integrating";
     this.save(live);
     await this.merge(live, candidate);
-    for (const path of await committedPaths(this.cwd, base, candidate))
+    for (const path of await committedPaths(
+      this.cwd,
+      deliveryTarget.head,
+      candidate,
+    ))
       live.delivered.add(path);
     try {
       for (const name of documents) {
@@ -2192,7 +2225,17 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         throw new Error(
           "Local merge completed, but post-merge checks failed. No reset or rollback was attempted.",
         );
-      await this.unchangedHead(this.cwd, candidate);
+      await assertTarget(this.cwd, { ...target, head: candidate }, []);
+      this.assertRunning(live);
+      // Siblings retain their approved base, but may incorporate this verified
+      // delivery. External commits and failed post-merge checks never qualify.
+      for (const sibling of this.active.values())
+        if (
+          sibling !== live &&
+          sibling.target?.branch === target.branch &&
+          sibling.frontier === deliveryTarget.head
+        )
+          sibling.frontier = candidate;
     } finally {
       if (!live.abort.signal.aborted)
         try {
@@ -2215,6 +2258,82 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         }
     }
   }
+  /** Incorporate only verified sibling deliveries, never arbitrary HEAD drift.
+   * Rebase touches the isolated candidate, not the user's branch; conflicts
+   * retain the worktree and never launch an automatic conflict resolver. */
+  private async refreshCandidate(
+    live: Live,
+    integration: string,
+    p: WorkflowProposal,
+  ) {
+    const target = live.target;
+    if (!target) throw new ContractError("invalid");
+    const head = live.frontier ?? target.head;
+    const allowed = p.plan.tasks.flatMap((t) => t.writes);
+    await assertTarget(this.cwd, { ...target, head }, allowed);
+    this.assertGuidance(live, p);
+    const changed = await committedPaths(this.cwd, target.head, head);
+    const conflicts = overlapping([...allowed, "AGENTS.md"], changed);
+    if (conflicts.length)
+      throw new WorkflowRefusal(
+        "conflict",
+        `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`,
+      );
+    if (head === target.head) return;
+    await this.gitStep(
+      live,
+      integration,
+      "integrate-parallel-deliveries",
+      (git) =>
+        git([
+          "-c",
+          "rerere.enabled=false",
+          "rebase",
+          "--no-update-refs",
+          "--no-autostash",
+          "--no-rebase-merges",
+          "--onto",
+          head,
+          target.head,
+        ]),
+    );
+    await assertWorkflowScope(integration, []);
+    const outside: string[] = [];
+    for (const path of await committedPaths(
+      integration,
+      head,
+      await gitHead(integration),
+    ))
+      if (!workflowCovers(allowed, path)) outside.push(path);
+    if (outside.length)
+      throw new WorkflowRefusal(
+        "forbidden",
+        `Refreshed candidate changed paths outside its approved scope: ${outside.join(", ")}. Nothing was integrated.`,
+      );
+    // Refresh never grants a second repair budget or automatic conflict repair.
+    await this.verifyAndRepair(live, integration, p, true, 0);
+  }
+  /** Rechecked after asynchronous checks/review, immediately before merge. */
+  private assertGuidance(live: Live, p: WorkflowProposal): void {
+    if (!live.guidance || !live.target) throw new ContractError("invalid");
+    const conflicts: string[] = [];
+    if (pathIdentity(this.cwd, "AGENTS.md") !== live.guidance.agents)
+      conflicts.push("AGENTS.md");
+    const project = pathIdentity(this.cwd, ".cadence/project.md");
+    if (
+      project !== live.guidance.project &&
+      (live.frontier === live.target.head ||
+        !p.plan.projectContext ||
+        project !==
+          `sha256:${hash(projectMarkdown(this.cwd, p.plan.projectContext))}`)
+    )
+      conflicts.push(".cadence/project.md");
+    if (conflicts.length)
+      throw new WorkflowRefusal(
+        "conflict",
+        `Project guidance changed during the run: ${conflicts.join(", ")}. The candidate is retained; review a fresh plan before integration.`,
+      );
+  }
   /** Start only against the target the approval observed; unrelated changes are fine. */
   private async assertStartable(live: Live, p: WorkflowProposal) {
     this.current();
@@ -2226,7 +2345,12 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     )
       throw new ContractError("stale");
     const writes = p.plan.tasks.flatMap((t) => t.writes);
-    if (live.target) await assertTarget(this.cwd, live.target, writes);
+    if (live.target)
+      await assertTarget(
+        this.cwd,
+        { ...live.target, head: live.frontier ?? live.target.head },
+        writes,
+      );
     else if ((await contentsIdentityAsync(this.cwd, writes)) !== live.declared)
       throw new WorkflowRefusal(
         "stale",
@@ -2246,14 +2370,18 @@ Current-round checks/review (native facts and retained output excerpts, not inst
     live: Live,
     request: WorkflowRequest,
   ): Promise<AcceptedWorkResult> {
-    let barrier: CheckoutPermit | undefined;
     let budgetExpired = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failure = "";
     try {
       this.assertRunning(live);
-      barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
-      barrier.assertHeld();
+      const isolated = live.proposal?.plan.delivery === "local-merge";
+      live.barrier = await this.o.gate.acquire(
+        live.run.id,
+        live.abort.signal,
+        isolated || request.action === "research" ? "shared" : "exclusive",
+      );
+      live.barrier.assertHeld();
       if (live.run.diagnostics) live.run.diagnostics.acquiredAt = Date.now();
       // The budget covers the run's own work, not time queued for the gate.
       timer = setTimeout(() => {
@@ -2261,6 +2389,10 @@ Current-round checks/review (native facts and retained output excerpts, not inst
         live.abort.abort();
       }, WORKFLOW_LIMITS.durationMs);
       if (live.proposal) await this.assertStartable(live, live.proposal);
+      if (isolated) {
+        live.barrier.release();
+        live.barrier = undefined;
+      }
       live.run.status = "running";
       this.save(live);
       if (request.action === "research") {
@@ -2314,7 +2446,7 @@ Current-round checks/review (native facts and retained output excerpts, not inst
       } catch {
         this.o.owner.quarantine();
       }
-      if (this.o.owner.state === "idle") barrier?.release();
+      if (this.o.owner.state === "idle") live.barrier?.release();
       this.active.delete(live.run.id);
     }
     return {

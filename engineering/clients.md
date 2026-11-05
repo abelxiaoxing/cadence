@@ -106,7 +106,9 @@ The coordinator is an isolated SDK child with only bounded research/proposal/sta
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
 A plan card persists across later messages until a new plan replaces it, the user exits or execution is admitted; a refused approval keeps the card.
-Plans may be published while other workflows run; research is refused with an explanation only behind an approved implementation, and its run ID is recorded only once accepted.
+Plans and research in another conversation may proceed while an implementation runs; a conversation with its own accepted implementation cannot start another implementation or investigation until it settles.
+Research IDs are recorded only once accepted.
+WebUI and native sessions use the same service scheduling and isolation rules in [lifetimes](lifetimes.md).
 An unreadable or incomplete control record degrades only its own conversation: the read carries a notice, every Cadence command there refuses, and nothing is repaired; other conversations and owner startup are unaffected.
 Lost replies to Send or approval return the original receipt or run on a retry with the same command ID.
 One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last message to that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.

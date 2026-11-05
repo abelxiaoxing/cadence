@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import {
+  CHECKOUT_READERS,
   CHECKOUT_WAITERS,
   CheckoutGate,
 } from "../src/service/checkout-gate.ts";
@@ -124,6 +125,72 @@ it("closing admission settles all waiting reports but never refunds the active p
   await Promise.all(waits);
   expect(() => held.release()).toThrow("quarantine");
   expect(() => gate.assertQuiescent()).toThrow("quarantine");
+});
+it("shared readers overlap but never bypass an earlier writer", async () => {
+  const { gate } = fixture();
+  const a = await gate.acquire(randomUUID(), signal(), "shared");
+  const b = await gate.acquire(randomUUID(), signal(), "shared");
+  const order: string[] = [];
+  const writer = gate.acquire(randomUUID(), signal()).then((p) => {
+    order.push("writer");
+    return p;
+  });
+  const reader = gate.acquire(randomUUID(), signal(), "shared").then((p) => {
+    order.push("reader");
+    return p;
+  });
+  a.release();
+  await Promise.resolve();
+  expect(order).toEqual([]);
+  b.release();
+  const exclusive = await writer;
+  expect(order).toEqual(["writer"]);
+  exclusive.release();
+  (await reader).release();
+  expect(order).toEqual(["writer", "reader"]);
+  gate.assertQuiescent();
+});
+it("canceling a queued writer unblocks compatible readers, never refunds a shared holder", async () => {
+  const { gate } = fixture();
+  const first = new AbortController();
+  const a = await gate.acquire(randomUUID(), first.signal, "shared");
+  const abort = new AbortController();
+  const writer = expect(
+    gate.acquire(randomUUID(), abort.signal),
+  ).rejects.toThrow("stale");
+  const reader = gate.acquire(randomUUID(), signal(), "shared");
+  abort.abort();
+  await writer;
+  const b = await reader;
+  first.abort();
+  a.assertHeld();
+  b.release();
+  expect(() => gate.assertQuiescent()).toThrow("conflict");
+  a.release();
+  gate.assertQuiescent();
+});
+it("bounds shared holders and retains every permit on quarantine", async () => {
+  const { gate, owner } = fixture();
+  const readers = await Promise.all(
+    Array.from({ length: CHECKOUT_READERS }, () =>
+      gate.acquire(randomUUID(), signal(), "shared"),
+    ),
+  );
+  let entered = false;
+  const next = gate.acquire(randomUUID(), signal(), "shared").then((p) => {
+    entered = true;
+    return p;
+  });
+  await Promise.resolve();
+  expect(entered).toBe(false);
+  readers.shift()?.release();
+  readers.push(await next);
+  owner.state = "quarantined";
+  for (const p of readers) expect(() => p.release()).toThrow("quarantine");
+  owner.state = "idle";
+  expect(() => gate.assertQuiescent()).toThrow("conflict");
+  for (const p of readers) p.release();
+  gate.assertQuiescent();
 });
 it("lost lease is rechecked at both observation and release, never treated as settlement", async () => {
   const { gate, owner } = fixture();

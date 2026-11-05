@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import type { ChoiceVersion } from "../src/service/contracts/models.ts";
 import type { WorkflowRequest } from "../src/service/contracts/workflow.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
@@ -16,7 +17,7 @@ import * as workspace from "../src/workspace.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 /** Admission only: the checkout gate never opens, so nothing runs. */
-function owner() {
+function owner(scoped = false) {
   const dir = mkdtempSync(join(tmpdir(), "workflow-admission-"));
   const root = join(dir, "project");
   mkdirSync(root, { mode: 0o700 });
@@ -40,6 +41,24 @@ function owner() {
   };
   const workflows = new Workflows({
     coordination,
+    ...(scoped
+      ? {
+          contexts: {
+            capture: (version: ChoiceVersion) => ({
+              version,
+              cwd: root,
+              checkoutRoot: root,
+              model: {
+                sourceSelectionId,
+                provider: "fixture",
+                model: "fixed",
+                api: "openai-completions",
+                thinking: "off",
+              },
+            }),
+          },
+        }
+      : {}),
     owner: host,
     models: { assertCurrent() {} },
     choice: {
@@ -164,6 +183,63 @@ it("native workflow refusals are definite only without any prior record, admissi
       definite,
     ),
   ).toMatchObject({ kind: "workflow" });
+});
+
+it("different conversations admit independent workflows while the same conversation keeps its grant on refusal", async () => {
+  const { workflows, epoch, version, coordination } = owner(true);
+  const approve = (conversationId: string) => {
+    const direct = plan();
+    direct.delivery = "working-copy";
+    const proposed = workflows.command(randomUUID(), epoch, {
+      action: "propose",
+      plan: direct,
+      model: {
+        ...version,
+        conversation: { id: conversationId, cwd: coordination.store.root },
+      },
+    });
+    if (proposed.kind !== "workflow" || proposed.response.type !== "proposal")
+      throw Error("proposal");
+    const p = proposed.response.proposal;
+    const prepared = workflows.command(randomUUID(), epoch, {
+      action: "prepare",
+      proposalId: p.id,
+      digest: p.digest,
+    });
+    if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
+      throw Error("grant");
+    return {
+      action: "execute",
+      proposalId: p.id,
+      digest: p.digest,
+      grant: prepared.response.grant,
+    } satisfies WorkflowRequest;
+  };
+  const a = randomUUID(),
+    b = randomUUID();
+  const first = approve(a),
+    second = approve(b),
+    duplicate = approve(a);
+  const runA = randomUUID(),
+    runB = randomUUID();
+  workflows.command(runA, epoch, first);
+  workflows.command(runB, epoch, second);
+  expect(workflows.activeRuns().runs).toHaveLength(2);
+  const refused = refusal(() =>
+    workflows.command(randomUUID(), epoch, duplicate, { definite: true }),
+  );
+  expect(refused).toMatchObject({ code: "conflict" });
+  expect(refused).toBeInstanceOf(UnacceptedWorkflowCommand);
+  workflows.command(randomUUID(), epoch, { action: "cancel", runId: runA });
+  await workflows.join(runA);
+  const next = randomUUID();
+  expect(workflows.command(next, epoch, duplicate)).toMatchObject({
+    response: { type: "run" },
+  });
+  for (const runId of [runB, next]) {
+    workflows.command(randomUUID(), epoch, { action: "cancel", runId });
+    await workflows.join(runId);
+  }
 });
 
 it("a refused native execute leaves its grant usable; retained non-conforming proposals refuse cleanly", async () => {
