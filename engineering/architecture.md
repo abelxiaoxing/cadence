@@ -51,6 +51,9 @@ Their original Stop lifetime and exclusive checkout barrier belong to the existi
 The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
+`src/worker-toolkit.mjs` owns trusted capability composition and tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
+`src/research-tools.mjs` owns observation schemas/cursors; `src/research-scan.mjs` owns their streaming filesystem operations.
+See [worker tools](worker-tools.md) for capability, continuation, coverage and disposal contracts; SDK bootstrap no longer duplicates role-specific tool lists.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
 `src/service/workflow-result.ts` owns the shared bounded, redacted process-result projection for workflow retention and reads, independent of native settlement and structured task completion.

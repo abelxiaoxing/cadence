@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { coordinatorTools } from "../src/coordinator-tools.mjs";
+import { createCoordinatorTools } from "../src/coordinator-tools.mjs";
 
 // Explicit IPC seam: no SDK, owner or real process channel.
 afterEach(() => vi.restoreAllMocks());
@@ -10,10 +10,17 @@ function fixture() {
     return process;
   });
   const send = vi.fn((_request, callback) => callback());
-  vi.stubGlobal("process", { ...process, send });
-  const tool = coordinatorTools().find((t) => t.name === "cadence_status");
+  const removeListener = vi.fn((event, listener) => {
+    expect(listeners.get(event)).toBe(listener);
+    listeners.delete(event);
+  });
+  vi.stubGlobal("process", { ...process, send, removeListener });
+  const kit = createCoordinatorTools();
+  const tool = kit.tools.find((t) => t.name === "cadence_status");
   return {
     send,
+    removeListener,
+    close: () => kit.close(),
     call: (signal) => tool.execute("id", {}, signal),
     reply: (
       value = { id: send.mock.calls.at(-1)[0].id, ok: true, text: "observed" },
@@ -54,6 +61,47 @@ it("queued cancellation refuses dispatch without abandoning an already sent call
   expect(f.send).toHaveBeenCalledTimes(1);
   await expect(f.call(abort.signal)).rejects.toThrow("Coordinator canceled");
 });
+
+it("owned close joins sent work, refuses queued sends and then releases listeners", async () => {
+  const f = fixture();
+  const first = f.call();
+  await Promise.resolve();
+  const queued = f.call();
+  const refused = expect(queued).rejects.toThrow("Coordinator closed");
+  let settled = false;
+  const closing = f.close().then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  await expect(f.call()).rejects.toThrow("Coordinator closed");
+  f.reply();
+  await first;
+  await refused;
+  await closing;
+  expect(f.send).toHaveBeenCalledTimes(1);
+  expect(f.removeListener).toHaveBeenCalledTimes(2);
+});
+
+it.each(["throw", "callback"])(
+  "%s send failures release that request and expose only the fixed transport error",
+  async (cause) => {
+    const f = fixture();
+    const fault = new Error("synthetic private transport diagnostic");
+    f.send.mockImplementationOnce((_request, callback) => {
+      if (cause === "throw") throw fault;
+      callback(fault);
+    });
+    await expect(f.call()).rejects.toThrow("Coordinator request unavailable");
+    const next = f.call();
+    await Promise.resolve();
+    f.reply();
+    expect((await next).content[0].text).toBe("observed");
+    await f.close();
+    expect(f.send).toHaveBeenCalledTimes(2);
+    expect(f.removeListener).toHaveBeenCalledTimes(2);
+  },
+);
 
 it.each(["disconnect", "malformed reply"])(
   "%s closes pending and queued calls without further sends",

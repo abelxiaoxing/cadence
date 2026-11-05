@@ -1,351 +1,429 @@
-/** Cooperative, bounded readonly investigation. No shell, downloads, raw spill,
- * or abandoned Promise.race: every original filesystem operation is joined.
- * Not a sandbox. The parent process deadline remains the hard stop for stuck I/O. */
-import { constants } from "node:fs";
-import { open, opendir, realpath, stat } from "node:fs/promises";
-import {
-  basename,
-  isAbsolute,
-  join,
-  matchesGlob,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+/** Model-facing observation tools and their worker-local resource lifetime.
+ * A cursor is one-use navigation, never execution authority or a durable snapshot. */
+import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
+import { RESEARCH_LIMITS as L, ResearchScan } from "./research-scan.mjs";
 
-export const RESEARCH_LIMITS = {
-  toolMs: 30_000,
-  entries: 2000,
-  depth: 8,
-  results: 100,
-  fileBytes: 1024 * 1024,
-  scanBytes: 8 * 1024 * 1024,
-  outputBytes: 32 * 1024,
+const object = (value, keys) => {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).some((key) => !keys.includes(key))
+  )
+    throw new Error("Invalid investigation arguments");
+  return value;
 };
-const within = (root, path) => {
-  const p = relative(root, path);
-  return (
-    p === "" || (!isAbsolute(p) && p !== ".." && !p.startsWith(`..${sep}`))
-  );
+const integer = (value, maximum = Number.MAX_SAFE_INTEGER, minimum = 1) => {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
+    throw new Error("Invalid investigation range or limit");
+  return value;
 };
-class Bound extends Error {}
-export function researchTools(cwd, roots, now = () => performance.now()) {
-  // Resolve only when explicitly used, never during resource discovery.
-  let selected;
-  const scope = async () => {
-    selected ??= (async () => {
-      const paths = [];
-      // Sequential originals: a rejected root cannot abandon sibling realpaths.
-      for (const p of roots.length ? roots : [cwd])
-        paths.push(await realpath(resolve(cwd, p)));
-      return paths;
-    })();
-    return selected;
+const string = (value, maximum = 4096) => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > maximum ||
+    value.includes("\0")
+  )
+    throw new Error("Invalid investigation path or pattern");
+  return value;
+};
+const array = (value, maximum) => {
+  if (!Array.isArray(value) || !value.length || value.length > maximum)
+    throw new Error("Invalid investigation batch");
+  return value;
+};
+const glob = (value) => {
+  string(value, 256);
+  if (/[{}()]/u.test(value))
+    throw new Error("Use a simple glob without braces or extglobs");
+  return value;
+};
+function query(kind, args) {
+  const common = ["pageSize", "path"];
+  object(args, [
+    ...common,
+    ...(kind === "read"
+      ? ["files", "offset", "limit"]
+      : kind === "grep"
+        ? ["pattern", "patterns", "glob", "depth", "ignoreCase", "literal"]
+        : kind === "find"
+          ? ["pattern", "depth"]
+          : []),
+  ]);
+  const result = {
+    kind,
+    pageSize: integer(args.pageSize ?? L.results, L.results),
   };
-  const pathSchema = Type.Optional(
-    Type.String({
-      description:
-        "Path inside the supplied investigation roots; omitted and relative paths use the first root. Never start at / or a parent directory.",
-    }),
-  );
-  const limitSchema = Type.Optional(
-    Type.Integer({ minimum: 1, maximum: RESEARCH_LIMITS.results }),
-  );
-  const tools = [
-    {
-      name: "ls",
-      description:
-        "List one directory without per-entry stat calls. Filesystem order, at most 100 entries; use a specific subdirectory to narrow. No recursive listing.",
-      parameters: Type.Object({ path: pathSchema, limit: limitSchema }),
-    },
-    {
-      name: "find",
-      description:
-        "Bounded simple filename glob search (*, **, ?, brackets; no braces/extglobs) inside an investigation root. At most 2000 entries, depth 8, 100 results and 30s cooperative work. Does not follow symlinks; skips .git/node_modules, not backup trees. Does not interpret .gitignore. Partial coverage is explicit; narrow the path rather than repeating.",
-      parameters: Type.Object({
-        pattern: Type.String({ minLength: 1, maxLength: 256 }),
-        path: pathSchema,
-        limit: limitSchema,
-        depth: Type.Optional(
-          Type.Integer({ minimum: 0, maximum: RESEARCH_LIMITS.depth }),
-        ),
-      }),
-    },
-    {
-      name: "grep",
-      description:
-        "Bounded literal text search (not regex). Search a specific file or narrow directory; optional simple filename glob (no braces/extglobs). At most 1MiB per file, 8MiB total, 2000 entries, depth 8, 100 matching lines. Binary files, symlinks and .git/node_modules are not searched; .gitignore is not interpreted. Reports incomplete coverage.",
-      parameters: Type.Object({
-        pattern: Type.String({ minLength: 1, maxLength: 256 }),
-        path: pathSchema,
-        glob: Type.Optional(Type.String({ maxLength: 256 })),
-        ignoreCase: Type.Optional(Type.Boolean()),
-        literal: Type.Optional(Type.Boolean()),
-        limit: limitSchema,
-        depth: Type.Optional(
-          Type.Integer({ minimum: 0, maximum: RESEARCH_LIMITS.depth }),
-        ),
-      }),
-    },
-    {
-      name: "read",
-      description:
-        "Read a bounded UTF-8 text file within the investigation roots. At most the first 1MiB, 100 requested lines and 32KiB output. Binary/media are not decoded; partial coverage is explicit.",
-      parameters: Type.Object({
-        path: Type.String(),
-        offset: Type.Optional(Type.Integer({ minimum: 1 })),
-        limit: limitSchema,
-      }),
-    },
-  ];
-  return tools.map((tool) => ({
-    ...tool,
-    label: tool.name,
-    async execute(_id, args, signal) {
-      const startedAt = now();
-      const deadline = startedAt + RESEARCH_LIMITS.toolMs;
-      const check = () => {
-        if (signal?.aborted) throw new Error("Investigation canceled");
-        if (now() >= deadline) throw new Bound("cooperative time limit");
-      };
-      const limits = new Set();
-      const lines = [];
-      let entries = 0,
-        bytes = 0,
-        outputBytes = 0;
-      const limit = args.limit ?? RESEARCH_LIMITS.results;
-      if (
-        !Number.isSafeInteger(limit) ||
-        limit < 1 ||
-        limit > RESEARCH_LIMITS.results
-      )
-        throw new Error("Invalid result limit");
-      const depth = args.depth ?? RESEARCH_LIMITS.depth;
-      if (
-        !Number.isSafeInteger(depth) ||
-        depth < 0 ||
-        depth > RESEARCH_LIMITS.depth
-      )
-        throw new Error("Invalid search depth");
-      const add = (line) => {
-        if (lines.length >= limit) throw new Bound("result limit");
-        if (
-          outputBytes + Buffer.byteLength(line) + 1 >
-          RESEARCH_LIMITS.outputBytes
-        )
-          throw new Bound("output limit");
-        outputBytes += Buffer.byteLength(line) + 1;
-        lines.push(line);
-      };
-      const read = async (path) => {
-        check();
-        const file = await open(
-          path,
-          constants.O_RDONLY |
-            constants.O_NONBLOCK |
-            (constants.O_NOFOLLOW ?? 0),
-        );
-        try {
-          check();
-          const info = await file.stat();
-          if (!info.isFile())
-            throw new Error("Only regular text files can be read");
-          const size = Math.min(
-            RESEARCH_LIMITS.fileBytes,
-            RESEARCH_LIMITS.scanBytes - bytes,
-          );
-          if (!size) throw new Bound("aggregate byte limit");
-          const buffer = Buffer.alloc(size);
-          let offset = 0;
-          while (offset < size) {
-            check();
-            const result = await file.read(
-              buffer,
-              offset,
-              Math.min(65536, size - offset),
-              offset,
-            );
-            bytes += result.bytesRead;
-            if (!result.bytesRead) break;
-            offset += result.bytesRead;
-          }
-          check();
-          // Read actual EOF, not stat.size (virtual/growing files can report zero).
-          if (offset === size) limits.add("file/aggregate byte limit");
-          const content = buffer.subarray(0, offset);
-          if (content.includes(0)) {
-            limits.add("binary file omitted");
-            return null;
-          }
-          try {
-            return new TextDecoder("utf-8", { fatal: true }).decode(content);
-          } catch {
-            limits.add("non-UTF-8 or cut UTF-8 file omitted");
-            return null;
-          }
-        } finally {
-          await file.close();
-        }
-      };
-      const walk = async function* (path, remaining, root) {
-        check();
-        const dir = await opendir(path);
-        try {
-          for (;;) {
-            check();
-            const e = await dir.read();
-            check();
-            if (!e) break;
-            if (++entries > RESEARCH_LIMITS.entries)
-              throw new Bound("entry limit");
-            const full = join(path, e.name);
-            if (e.isSymbolicLink()) {
-              limits.add("symlink omitted");
-              continue;
-            }
-            if (e.isDirectory()) {
-              if (e.name === ".git" || e.name === "node_modules") {
-                limits.add(".git/node_modules omitted");
-                continue;
-              }
-              if (remaining === 0) {
-                limits.add("depth limit");
-                continue;
-              }
-              try {
-                yield* walk(full, remaining - 1, root);
-              } catch (error) {
-                if (error instanceof Bound || signal?.aborted) throw error;
-                limits.add("unreadable directory omitted");
-              }
-            } else if (e.isFile())
-              yield {
-                path: full,
-                name: relative(root, full).split(sep).join("/"),
-              };
-            else limits.add("special file omitted");
-          }
-        } finally {
-          await dir.close();
-        }
-      };
-      try {
-        check();
-        const allowed = await scope();
-        check();
-        const target = await realpath(
-          args.path === undefined ? allowed[0] : resolve(allowed[0], args.path),
-        );
-        check();
-        if (!allowed.some((p) => within(p, target)))
-          throw new Error(
-            "Path outside investigation roots. Ask the coordinator to select the specific intended root; do not enumerate parent directories.",
-          );
-        const info = await stat(target);
-        check();
-        if (tool.name === "ls") {
-          if (!info.isDirectory()) throw new Error("Select a directory");
-          const dir = await opendir(target);
-          try {
-            for (;;) {
-              check();
-              const e = await dir.read();
-              check();
-              if (!e) break;
-              entries++;
-              add(
-                `${e.name}${e.isDirectory() ? "/" : e.isSymbolicLink() ? " [symlink; not followed]" : ""}`,
-              );
-            }
-          } finally {
-            await dir.close();
-          }
-        } else if (tool.name === "read") {
-          const content = await read(target);
-          const offset = args.offset ?? 1;
-          if (!Number.isSafeInteger(offset) || offset < 1)
-            throw new Error("Invalid line offset");
-          if (content !== null)
-            for (const line of content.split("\n").slice(offset - 1)) {
-              check();
-              add(line);
-            }
-        } else {
-          if (tool.name === "grep" && args.literal === false)
-            throw new Error(
-              "Research grep supports literal text only. Supply a literal pattern, not a regex.",
-            );
-          const glob = tool.name === "find" ? args.pattern : args.glob;
-          if (
-            glob !== undefined &&
-            (typeof glob !== "string" ||
-              !glob ||
-              glob.length > 256 ||
-              /[{}()]/u.test(glob))
-          )
-            throw new Error("Use a simple glob without braces or extglobs");
-          const pattern = args.ignoreCase
-            ? args.pattern.toLowerCase()
-            : args.pattern;
-          const files = info.isDirectory()
-            ? walk(target, depth, target)
-            : [{ path: target, name: basename(target) }];
-          for await (const file of files) {
-            check();
-            if (
-              glob &&
-              !matchesGlob(
-                glob.includes("/") ? file.name : basename(file.name),
-                glob,
-              )
-            )
-              continue;
-            if (tool.name === "find") add(file.name);
-            else {
-              let content;
-              try {
-                content = await read(file.path);
-              } catch (e) {
-                if (e instanceof Bound || signal?.aborted) throw e;
-                limits.add("unreadable file omitted");
-                continue;
-              }
-              if (content === null) continue;
-              let n = 0;
-              for (const line of content.split("\n")) {
-                check();
-                n++;
-                if (
-                  (args.ignoreCase ? line.toLowerCase() : line).includes(
-                    pattern,
-                  )
-                )
-                  add(`${file.name}:${n}: ${line}`);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        if (!(e instanceof Bound)) throw e;
-        limits.add(e.message);
-      }
-      // A bounded prefix is evidence, never proof that the unsearched tree has no match.
-      const partial = limits.size > 0;
+  if (kind === "read") {
+    if (
+      args.files !== undefined &&
+      ["path", "offset", "limit"].some((key) => args[key] !== undefined)
+    )
+      throw new Error("Select either one file or a file batch");
+    const offset = integer(args.offset ?? 1);
+    const end =
+      args.limit === undefined
+        ? Number.MAX_SAFE_INTEGER
+        : integer(offset + integer(args.limit) - 1);
+    const files =
+      args.files === undefined
+        ? [{ path: string(args.path), ranges: [{ start: offset, end }] }]
+        : array(args.files, L.files);
+    let count = 0;
+    result.files = files.map((entry) => {
+      object(entry, ["path", "ranges"]);
+      const ranges = entry.ranges ?? [
+        { start: 1, end: Number.MAX_SAFE_INTEGER },
+      ];
       return {
-        content: [
-          {
-            type: "text",
-            text: `${lines.join("\n") || (partial ? "No results in the inspected portion." : "No results in the requested scope.")}\n\n${partial ? `[Partial coverage: ${[...limits].join(", ")}. Narrow the path; do not infer absence.]` : "[Requested scope inspected.]"}`,
-          },
-        ],
-        details: {
-          elapsedMs: Math.max(0, now() - startedAt),
-          inspectedEntries: entries,
-          readBytes: bytes,
-          ...(partial ? { truncation: { reason: [...limits] } } : {}),
-        },
+        path: string(entry.path),
+        ranges: array(ranges, L.ranges).map((range) => {
+          object(range, ["start", "end"]);
+          if (++count > L.ranges)
+            throw new Error("Too many requested line ranges");
+          const start = integer(range.start);
+          return {
+            start,
+            end: integer(range.end, Number.MAX_SAFE_INTEGER, start),
+          };
+        }),
       };
-    },
+    });
+  } else {
+    result.path = args.path === undefined ? undefined : string(args.path);
+    result.depth = integer(args.depth ?? L.depth, L.depth, 0);
+    if (kind === "find") result.glob = glob(args.pattern);
+    if (kind === "grep") {
+      if (args.literal !== undefined && args.literal !== true)
+        throw new Error("Research grep supports literal text only, not regex");
+      if (args.ignoreCase !== undefined && typeof args.ignoreCase !== "boolean")
+        throw new Error("Invalid case selection");
+      if ((args.pattern === undefined) === (args.patterns === undefined))
+        throw new Error("Supply one pattern or a patterns array");
+      result.ignoreCase = args.ignoreCase === true;
+      result.patterns = array(args.patterns ?? [args.pattern], L.patterns).map(
+        (pattern) => {
+          const text = string(pattern, 256);
+          return result.ignoreCase ? text.toLowerCase() : text;
+        },
+      );
+      if (args.glob !== undefined) result.glob = glob(args.glob);
+    }
+  }
+  return result;
+}
+
+const path = Type.Optional(
+  Type.String({
+    minLength: 1,
+    maxLength: 4096,
+    description:
+      "Within the admitted roots; relative paths use the first root.",
+  }),
+);
+const pageSize = Type.Optional(
+  Type.Integer({ minimum: 1, maximum: L.results }),
+);
+const depth = Type.Optional(Type.Integer({ minimum: 0, maximum: L.depth }));
+const pattern = Type.String({ minLength: 1, maxLength: 256 });
+// Provider function schemas require an object root, not a union of objects.
+// Initial-query versus continuation exclusivity is checked before admission;
+// every field is optional here because a continuation carries no query fields.
+const parameters = (shape) =>
+  Type.Partial(
+    Type.Object({
+      ...shape,
+      cursor: Type.String({ minLength: 1, maxLength: 128 }),
+      close: Type.Literal(true),
+    }),
+    { additionalProperties: false },
+  );
+const definitions = [
+  {
+    name: "read",
+    description:
+      "Read UTF-8 text or a batch of file/line ranges. Use path with optional 1-based offset/limit, or files with ranges {start,end}. Overlapping ranges are merged. pageSize bounds one response, not the requested range. Resume a returned cursor instead of rereading a prefix; {cursor,close:true} releases it. Long/binary/invalid text omissions are explicit.",
+    parameters: parameters({
+      path,
+      offset: Type.Optional(Type.Integer({ minimum: 1 })),
+      limit: Type.Optional(Type.Integer({ minimum: 1 })),
+      files: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              path: Type.String(),
+              ranges: Type.Optional(
+                Type.Array(
+                  Type.Object({
+                    start: Type.Integer({ minimum: 1 }),
+                    end: Type.Integer({ minimum: 1 }),
+                  }),
+                  { minItems: 1, maxItems: L.ranges },
+                ),
+              ),
+            },
+            { additionalProperties: false },
+          ),
+          { minItems: 1, maxItems: L.files },
+        ),
+      ),
+      pageSize,
+    }),
+  },
+  {
+    name: "grep",
+    description:
+      "Search literal text, not regex, in one file or a tree. Supply pattern or patterns (OR; matchedPatterns are zero-based input indexes). Each file is scanned once per query. Optional simple glob, ignoreCase and depth. No symlink traversal, .gitignore interpretation, or .git/node_modules scan. Empty pages with a cursor are progress, NOT absence. Resume with {cursor}, or release with {cursor,close:true}.",
+    parameters: parameters({
+      path,
+      pattern: Type.Optional(pattern),
+      patterns: Type.Optional(
+        Type.Array(pattern, { minItems: 1, maxItems: L.patterns }),
+      ),
+      glob: Type.Optional(pattern),
+      literal: Type.Optional(Type.Literal(true)),
+      ignoreCase: Type.Optional(Type.Boolean()),
+      depth,
+      pageSize,
+    }),
+  },
+  {
+    name: "find",
+    description:
+      "Find file paths with a simple glob (*, **, ?, brackets; no braces/extglobs). Bounded traversal in filesystem order, skipping tree symlinks and .git/node_modules, not backup trees; .gitignore is not interpreted. Resume actual directory positions with {cursor}; {cursor,close:true} releases them. Coverage/omissions are explicit.",
+    parameters: parameters({ path, pattern, depth, pageSize }),
+  },
+  {
+    name: "ls",
+    description:
+      "List one directory in filesystem order, including entry kinds. Does not follow symlinks or recurse. Continue with the returned {cursor}, not a repeated initial request; {cursor,close:true} releases it.",
+    parameters: parameters({ path, pageSize }),
+  },
+];
+
+function render(scan, items, state, nextCursor, pausedBy, elapsedMs) {
+  const omissions = [...scan.omissions].map(([reason, count]) => ({
+    reason,
+    count,
   }));
+  const details = {
+    state,
+    nextCursor,
+    pausedBy,
+    coverage: {
+      complete: state === "done" && !omissions.length,
+      consistency: "live-filesystem",
+      omissions,
+    },
+    progress: { ...scan.page, total: { ...scan.total } },
+    elapsedMs,
+    ...(state === "more" || omissions.length
+      ? {
+          truncation: {
+            reason: [
+              ...(pausedBy ? [pausedBy] : []),
+              ...omissions.map((o) => o.reason),
+            ],
+          },
+        }
+      : {}),
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify({ items, ...details }) }],
+    details,
+  };
+}
+const size = (result) => Buffer.byteLength(JSON.stringify(result));
+
+export function createResearchTools(workspace, now = () => performance.now()) {
+  const scans = new Set();
+  const cursors = new Map();
+  let closing = false,
+    closingOriginal,
+    failure;
+  const finish = (scan) => {
+    scan.finishing ??= (async () => {
+      try {
+        await scan.close();
+        scans.delete(scan);
+      } catch {
+        failure = new Error("Investigation resource closure failed");
+        throw failure;
+      }
+    })();
+    return scan.finishing;
+  };
+  const stop = async (scan) => {
+    scan.stopping = true;
+    await scan.active?.catch(() => {});
+    await finish(scan);
+  };
+  const execute = (kind, args, signal) => {
+    if (closing || failure)
+      return Promise.reject(failure ?? new Error("Investigation tools closed"));
+    if (signal?.aborted)
+      return Promise.reject(new Error("Investigation canceled"));
+    let scan,
+      close = false;
+    try {
+      if (args?.cursor !== undefined) {
+        object(args, ["cursor", "close"]);
+        if (args.close !== undefined && args.close !== true)
+          throw new Error("Invalid cursor operation");
+        const token = string(args.cursor, 128);
+        scan = cursors.get(token);
+        if (scan && scan.query.kind === kind && now() >= scan.expiresAt) {
+          cursors.delete(token);
+          clearTimeout(scan.timer);
+          void stop(scan).catch(() => {
+            /* finish retains the closure failure. */
+          });
+          throw new Error(
+            "Investigation cursor expired; start a fresh query explicitly",
+          );
+        }
+        if (!scan || scan.query.kind !== kind)
+          throw new Error(
+            "Investigation cursor consumed or foreign; start a fresh query explicitly",
+          );
+        cursors.delete(token);
+        clearTimeout(scan.timer);
+        close = args.close === true;
+      } else {
+        const request = query(kind, args);
+        if (scans.size >= L.scans)
+          throw new Error(
+            "Investigation cursor capacity reached; close an unused cursor",
+          );
+        scan = new ResearchScan(workspace, request);
+        scans.add(scan); // Reserve before the first asynchronous filesystem operation.
+      }
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const original = (async () => {
+      const startedAt = now();
+      scan.begin(signal);
+      const items = [];
+      const token = randomUUID();
+      let done = false,
+        pausedBy = null;
+      try {
+        if (close) {
+          await finish(scan);
+          return render(
+            scan,
+            [],
+            "closed",
+            null,
+            null,
+            Math.max(0, now() - startedAt),
+          );
+        }
+        await scan.validate();
+        for (;;) {
+          scan.check();
+          if (now() - startedAt >= L.toolMs) {
+            pausedBy = "cooperative time quantum";
+            break;
+          }
+          const next = scan.pending ?? (await scan.iterator.next());
+          scan.pending = undefined;
+          scan.check();
+          if (next.done) {
+            done = true;
+            break;
+          }
+          if (!next.value) continue;
+          if (next.value.pause) {
+            pausedBy = next.value.pause;
+            break;
+          }
+          const item = next.value.item;
+          const candidate = render(
+            scan,
+            [...items, item],
+            "more",
+            token,
+            "output quantum",
+            0,
+          );
+          // Reserve bounded metadata growth (counters/omissions/elapsed) while
+          // charging the entire encoded envelope, not just unescaped line text.
+          if (size(candidate) > L.outputBytes - 4096) {
+            if (!items.length) {
+              scan.omit("oversized result omitted");
+              continue;
+            }
+            scan.pending = next;
+            pausedBy = "output quantum";
+            break;
+          }
+          if (items.length >= scan.query.pageSize) {
+            scan.pending = next;
+            pausedBy = "result quantum";
+            break;
+          }
+          items.push(item);
+        }
+        await scan.validate();
+        scan.check();
+        if (done) await finish(scan);
+        const result = render(
+          scan,
+          items,
+          done ? "done" : "more",
+          done ? null : token,
+          pausedBy,
+          Math.max(0, now() - startedAt),
+        );
+        if (size(result) > L.outputBytes)
+          throw new Error("Investigation reply exceeds bound");
+        if (!done) {
+          scan.expiresAt = now() + L.idleMs;
+          cursors.set(token, scan);
+          scan.timer = setTimeout(() => {
+            cursors.delete(token);
+            void stop(scan).catch(() => {
+              /* finish retains the failure and reservation. */
+            });
+          }, L.idleMs);
+          scan.timer.unref();
+        }
+        return result;
+      } catch (error) {
+        await finish(scan);
+        throw error;
+      }
+    })();
+    scan.active = original;
+    // Return the tracked original. No detached rejecting finally promise.
+    return original.finally(() => {
+      if (scan.active === original) scan.active = undefined;
+    });
+  };
+  return {
+    tools: definitions.map((tool) => ({
+      ...tool,
+      label: tool.name,
+      execute: (_id, args, signal) => execute(tool.name, args, signal),
+    })),
+    close() {
+      if (closingOriginal) return closingOriginal;
+      closing = true;
+      for (const scan of cursors.values()) clearTimeout(scan.timer);
+      cursors.clear();
+      closingOriginal = (async () => {
+        const outcomes = await Promise.allSettled([...scans].map(stop));
+        if (
+          failure ||
+          outcomes.some((outcome) => outcome.status === "rejected")
+        )
+          throw failure ?? new Error("Investigation resource closure failed");
+      })();
+      return closingOriginal;
+    },
+  };
 }
