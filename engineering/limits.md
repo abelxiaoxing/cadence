@@ -49,7 +49,8 @@ A subagent transcript beyond the conversation capture bounds (384KiB, 256 items)
 Clean worktrees at their expected commit are removed after a merge with plain `git worktree remove`; any other worktree is retained and listed.
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
-Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`), at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
+Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`).
+There is no per-Send bridge-call or investigation-batch quota; each investigation batch has at most two readonly workers.
 Conversation-control records have no retained-directory admission cap; the bounded cache is not a storage quota.
 The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
 Control records are bounded at 384KiB and project the most recent 200 workflow links; links remain independently retained, without a lifetime attempt cap or history eviction.
@@ -63,9 +64,9 @@ Workflow history reads at most 200 directory entries per quantum and returns at 
 At most 16 scans hold readonly directory handles; 120s idle expiry or owner teardown closes them (`historyScans`, `historyIdleMs`).
 These are read budgets, not a lifetime retained-run cap; history is never evicted to satisfy them.
 
-Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-tools.mjs`: 64 calls per worker, 30s cooperative work per call, 2000 visited entries, depth 8, 100 results, 1MiB per text file, 8MiB read per call and 32KiB output.
-The tool-admission cutoff reserves the smaller of 120s and 10% of the process budget for the final report.
-The launcher fixes a same-host monotonic deadline before serialization/spawn; SDK bootstrap consumes that budget, and tool construction never renews it.
+Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-tools.mjs`: 30s cooperative work per call, 2000 visited entries, depth 8, 100 results, 1MiB per text file, 8MiB read per call and 32KiB output.
+There is no cumulative tool-call quota or early final-report cutoff.
+The parent launcher alone enforces the total process deadline, including SDK bootstrap.
 These are cooperative I/O limits: outstanding filesystem operations and directory/file closure are joined, never abandoned on timeout; the unchanged parent worker deadline is the hard process bound.
 Explicit investigation roots are limited to eight; omitted roots select the conversation cwd.
 
