@@ -56,11 +56,7 @@ export function DraftImage({
   return (
     <div className="chat-image-draft">
       {url && <img src={url} alt={file.name} />}
-      {failed && (
-        <span className="banner-notice">
-          {t("Invalid or oversized image.")}
-        </span>
-      )}
+      {failed && <span className="banner-notice">{t("Invalid image.")}</span>}
       <span title={file.name}>{file.name}</span>
       <button
         type="button"

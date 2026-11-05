@@ -2,7 +2,7 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Invalid or oversized image.": "图片格式无效或像素尺寸超出限制。",
+  "Invalid image.": "图片格式无效。",
   "Add images": "添加图片",
   "Remove image: {name}": "移除图片：{name}",
   "Attached image": "附加图片",
@@ -12,11 +12,8 @@ export const zh = {
   "Remove images before exiting Cadence.": "请先移除图片，再退出 Cadence。",
   "The selected model does not support images. Choose a vision model or remove the images.":
     "当前模型不支持图片。请选择视觉模型或移除图片。",
-  "PNG, JPEG or WebP · {count} images · {each} MiB each · {total} MiB total. Unsent images stay in this tab.":
-    "PNG、JPEG 或 WebP · 最多 {count} 张 · 单张 {each} MiB · 总计 {total} MiB。未发送图片仅保留在当前页面。",
-  "Too many images or total image size exceeded.": "图片数量或总大小超出限制。",
   "Use PNG, JPEG or WebP images.": "请选择 PNG、JPEG 或 WebP 图片。",
-  "Image is empty or too large.": "图片为空或超过大小限制。",
+  "Image is empty.": "图片为空。",
   "Context fixed at admission:": "接纳时固定的上下文：",
   "Declared write paths use the checkout root:":
     "声明的写入路径以此 checkout 根目录为基准：",
@@ -890,26 +887,40 @@ export const zh = {
   "This workbench was not started by Cadence's systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.":
     "此工作台不是由 Cadence 的 systemd 服务启动的，页面无法重启或升级它。请在终端中运行 cadence server restart。",
   "Last request ({time}): {outcome}": "上次请求（{time}）：{outcome}",
+  "Installation: npm global.": "安装方式：npm 全局安装。",
+  "Installation: npm local.": "安装方式：npm 本地安装。",
+  "Installation: Bun local.": "安装方式：Bun 本地安装。",
+  "Installation: Bun global.": "安装方式：Bun 全局安装。",
+  "Installation: Pi-managed (npm).": "安装方式：Pi 管理（npm）。",
+  "Installation: Pi-managed (Bun).": "安装方式：Pi 管理（Bun）。",
+  "Pi pins this package version; change its package declaration explicitly before upgrading.":
+    "Pi 固定了此包的版本；请先明确修改包声明，再升级。",
+  "This account cannot write the installation; update it in a terminal.":
+    "当前账户无法写入安装目录；请在终端中更新。",
+  "The installation method could not be safely identified; update it using its original installation method.":
+    "无法可靠识别安装方式；请按原安装方式更新。",
   Updates: "更新",
-  "npm could not be reached.": "无法连接 npm。",
+  "Update information is unavailable for this installation.":
+    "无法获取此安装的更新信息。",
   "Check for updates": "检查更新",
-  "Asking npm for the latest version…": "正在向 npm 查询最新版本…",
+  "Asking the package registry for the latest version…":
+    "正在向软件包仓库查询最新版本…",
   "Cadence {version} is the latest version.":
     "Cadence {version} 已是最新版本。",
   "{version} is deprecated on npm and is not offered.":
     "{version} 在 npm 上已弃用，不提供升级。",
   "{version} is available, but this account cannot write the installation; upgrade it in a terminal.":
     "{version} 可用，但当前账户无法写入安装目录；请在终端中升级。",
-  "{version} is available, but this copy was not installed with npm install -g; upgrade it the way you installed it.":
-    "{version} 可用，但当前副本不是通过 npm install -g 安装的；请按原安装方式升级。",
+  "{version} is available, but this installation requires a manual update using its original installation method.":
+    "{version} 可用，但当前安装需要按原安装方式手动更新。",
   "Upgrade to {version}": "升级到 {version}",
   "Restart service": "重启服务",
   "Restart Cadence?": "重启 Cadence？",
   "Upgrade Cadence {from} to {to}?": "将 Cadence 从 {from} 升级到 {to}？",
   "The service stops in order and starts again; this page waits and then reloads.":
     "服务会按顺序停止并重新启动；此页面会等待完成后重新加载。",
-  "npm downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.":
-    "npm 会在 Cadence 继续运行时下载 {to}；然后服务停止、安装 {to} 并重新启动。如果 {to} 未能就绪，会重新安装 {from}。",
+  "The package manager downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.":
+    "包管理器会在 Cadence 继续运行时下载 {to}；然后服务停止、安装 {to} 并重新启动。如果 {to} 未能就绪，会重新安装 {from}。",
   "{count} running workflows or conversations will be stopped.":
     "{count} 个正在运行的工作流或会话将被停止。",
   "Stop them and continue": "停止它们并继续",
@@ -941,7 +952,8 @@ export const zh = {
     "无法下载该版本；服务保持运行。",
   "The running service did not confirm its orderly stop.":
     "正在运行的服务没有确认有序停止。",
-  "npm could not install the release.": "npm 无法安装该版本。",
+  "The package manager could not install the release.":
+    "包管理器无法安装该版本。",
   "The new service did not become ready.": "新服务未能就绪。",
   "The service manager refused the operation.": "服务管理器拒绝了此操作。",
   "The job ended without reporting.": "任务在报告结果前结束。",

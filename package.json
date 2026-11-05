@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.36",
+  "version": "2.0.37",
   "description": "Conversation-driven Pi workspace: persistent native and WebUI workflows, explicit plan approval, checks and local delivery.",
   "license": "MIT",
   "type": "module",
@@ -55,6 +55,10 @@
     "src/worker-redaction.mjs",
     "src/worker-tools.mjs",
     "src/research-tools.mjs",
+    "src/research-scan.mjs",
+    "src/worker-toolkit.mjs",
+    "src/worker-workspace.mjs",
+    "src/worker-workspace.d.mts",
     "web/dist",
     "docs",
     "README.md",
@@ -83,7 +87,8 @@
     "src/workspace.ts",
     "src/data-shapes.ts",
     "src/service/checkout-lock.ts",
-    "src/service/liveness.ts"
+    "src/service/liveness.ts",
+    "src/agent-browser"
   ],
   "pi": {
     "extensions": [
@@ -115,14 +120,14 @@
     "check:notices": "node scripts/audit-notices.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@earendil-works/pi-tui": "^1.5.0",
     "typebox": "*",
-    "@earendil-works/pi-ai": "*"
+    "@earendil-works/pi-ai": "^1.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@earendil-works/pi-tui": "0.84.3",
+    "@earendil-works/pi-tui": "1.5.0",
     "@types/node": "^22.15.3",
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",
@@ -165,8 +170,8 @@
     "ws": "8.21.3"
   },
   "optionalDependencies": {
-    "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3"
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0"
   },
   "bin": {
     "cadence": "./src/service-cli.mjs",

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { ChatTurn } from "../src/service/contracts/workbench.ts";
 import {
   implementationReport,
@@ -85,7 +85,7 @@ it.each([
     "approved",
   ],
   [
-    '{"approved":false,"summary":"missing test","blockingIssues":[]}',
+    '{"approved":false,"summary":"missing test","blockingIssues":["b.txt untested"]}',
     "rejected",
     "rejected",
   ],
@@ -112,9 +112,10 @@ it.each([
     };
     const saved: string[] = [];
     const retained: unknown[] = [];
+    const quarantine = vi.fn();
     const workflow = Object.assign(Object.create(Workflows.prototype), {
       root: "unused",
-      o: { secrets: () => [] },
+      o: { secrets: () => [], owner: { quarantine } },
       write: (_path: string, value: unknown) => retained.push(value),
       save: () => saved.push(step.status),
       evidence: () => "",
@@ -135,11 +136,16 @@ it.each([
     // No intermediate completed snapshot may end the panel's observation early.
     expect(saved).toEqual(["running", status]);
     expect(retained).toEqual([{ stepId: "review", result }]);
-    // A plausible verdict cannot override an actual worker failure.
-    result.outcome = "failed";
-    step.status = "failed";
-    await expect(review()).rejects.toThrow("Operation failed");
-    expect(step.status).toBe("failed");
+    // A plausible verdict cannot override failure, cancellation or uncertainty.
+    for (const outcome of ["failed", "canceled", "timeout", "unknown"]) {
+      result.outcome = outcome;
+      result.closed = outcome !== "unknown";
+      step.status = "running";
+      await expect(review()).rejects.toThrow(`Operation ${outcome}`);
+      expect(step.status).toBe(outcome);
+      expect(retained.at(-1)).toEqual({ stepId: "review", result });
+    }
+    expect(quarantine).toHaveBeenCalledTimes(1);
   },
 );
 
@@ -401,8 +407,8 @@ it("both coordinator bridge ends permit more than sixteen calls and preserve can
   tags: ["slow"],
 }, async () => {
   const script = `
-    import { coordinatorTools } from ${JSON.stringify(new URL("../src/coordinator-tools.mjs", import.meta.url).href)};
-    const tool = coordinatorTools().find(t => t.name === "cadence_status");
+    import { createCoordinatorTools } from ${JSON.stringify(new URL("../src/coordinator-tools.mjs", import.meta.url).href)};
+    const tool = createCoordinatorTools().tools.find(t => t.name === "cadence_status");
     const abort = new AbortController();
     abort.abort();
     try { await tool.execute("canceled", {}, abort.signal); }

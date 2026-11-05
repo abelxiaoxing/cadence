@@ -102,7 +102,7 @@ WebUI 폴더 선택기도 같은 방법으로 프로젝트를 엽니다.
 ```sh
 cadence server status
 cadence server restart     # 업그레이드나 .env / models.json 변경 후
-cadence server upgrade     # npm 전역 설치: 받기, 설치, 재시작
+cadence server upgrade
 cadence server stop        # 등록은 유지되고 다음 부팅 또는 로그인 시 다시 시작
 cadence server uninstall   # npm uninstall -g 전에 실행
 ```
@@ -118,7 +118,7 @@ Linux 루트 및 이름 지정 서비스, 원격 HTTPS 액세스, 복구에는 [
 
 Pi는 로컬 체크아웃이나 패킹된 tarball도 로드할 수 있습니다.
 그 절대 또는 상대 경로를 Pi의 `packages`에 추가하거나, `pi -e ./cadence`를 시도하세요.
-Cadence는 Pi 버전 범위를 강제하지 않습니다.
+Cadence는 Pi 1.5.0 또는 호환되는 1.x 호스트가 필요합니다.
 개발 고정 버전과 테스트된 런타임은 보편적인 호환성 약속이 아닙니다.
 
 ```sh

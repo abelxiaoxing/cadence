@@ -107,7 +107,7 @@ A successful manager start request is not owner readiness: an unready owner repo
 Status also retains the manager's `active`/`activating`/`failed` observation separately.
 A definition whose project directory was removed gets a readable refusal (exit78, so the unit does not restart in a loop); `cadence server install` switches it to the workbench.
 `restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
-The `upgrade` command (Linux) installs the latest version, or exactly `--to VERSION`, with npm and restarts; see [Restart and upgrade from the WebUI](#restart-and-upgrade-from-the-webui) for its steps.
+The `upgrade` command (Linux) installs the latest version, or exactly `--to VERSION`, with the detected installation's package manager and restarts; see [Restart and upgrade from the WebUI](#restart-and-upgrade-from-the-webui) for its steps.
 Commands that change the service (`install`, `restart`, `stop`, `uninstall`, `upgrade`) refuse with `inside-service` when they run inside the service they would stop, for example from a tool of its own agent: stopping a systemd unit ends every process in it, so the command would die before it started the service again.
 Use the WebUI or a terminal outside the service instead.
 `stop` joins the workbench's accepted Send preparations and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
@@ -123,7 +123,7 @@ The generated registration stays for the next boot or login.
 Because npm runs no uninstall script, uninstall the service before `npm uninstall -g`; a left-behind definition fails to start once its CLI path disappears.
 A definition Cadence did not generate is left unchanged (`foreign`), and `status` reports `absent` when none is registered.
 
-Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
+Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from the exact optional dependency versions in `package.json`.
 Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
 Missing or unusable Pi sources refuse before an owner registers; an owner that cannot load the SDK refuses at stage `pi-runtime` and exits.
 The no-project workbench starts without either an SDK runtime or Pi authentication; missing sources are reported only when a project is explicitly opened.
@@ -137,7 +137,7 @@ A machine without a supported user service manager and `CADENCE_AUTOSTART=0` kee
 ### Restart and upgrade from the WebUI
 
 On Linux the workbench has a **Cadence service** dialog: the server button on the entry page, or **More → Cadence service** in a project.
-It shows the running version and its systemd unit, asks npm for the latest version only when you press **Check for updates**, and offers **Restart service** and **Upgrade to VERSION**.
+It shows the running version and its systemd unit, shows its installation method, asks that package manager for the latest version only when you press **Check for updates**, and offers **Restart service** and **Upgrade to VERSION**.
 The confirmation names the running workflows and conversations the restart stops; they stop through the orderly Stop, never by a signal.
 If work starts or ends before you confirm, the request is refused as stale and the dialog reads the service again.
 
@@ -145,17 +145,43 @@ The request runs outside the service, in a transient unit `cadence.maintenance.s
 It runs the same `cadence server restart` or `cadence server upgrade`, then records its outcome; the page waits for that record and offers to reload.
 If it reports nothing, see `journalctl --user -u cadence.maintenance.service` (without `--user` for a system service) and `cadence server status`.
 
-An upgrade fetches the exact release while the service still runs, so an unreachable registry changes nothing.
-Then it stops the service, installs the release with `npm install --global` and starts the new copy's own `server restart`.
-A new version that does not become ready is replaced by the previous version again from npm's cache.
-The npm calls use npm's own configuration (`~/.npmrc` registry, proxy and prefix).
-Only a copy that `npm root --global` names, and that the service account can write, upgrades itself; the dialog says when another installation (Pi's own copy, a checkout, Bun, a root-owned prefix) has to be upgraded the way it was installed, followed by `cadence server restart`.
+An upgrade fetches the exact release and previous version while the service still runs, so an unreachable registry changes nothing.
+Then it stops the service, installs the release in the **same prefix with the same package manager** and starts the new copy's own `server restart`.
+A failed/partial installation is replaced by the prefetched previous version, using that same manager.
+After a new copy has attempted startup but has not confirmed readiness, its own orderly Stop must succeed before rollback can replace its files; an unconfirmed Stop leaves that copy untouched for diagnosis.
+Readiness requires both a successful restart command exit and an alive-owner result; printed JSON alone cannot make a failed command successful.
+Prefetch is not a transactional or fully offline dependency installation: a later install or rollback may still fail, and the recorded outcome keeps that failure.
+No Pi settings, credentials or profiles are copied or rewritten.
+
+Supported installations:
+
+| Installed with                                                         | Update route                                                                                          |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pi install npm:@abelxiaoxing/cadence`                                 | The selected Pi agent directory's `npm` prefix, using npm with `--legacy-peer-deps`                   |
+| The same Pi command with `npmCommand: ["bun"]`                         | That same prefix, using Bun with `--omit=peer`                                                        |
+| `npm install -g @abelxiaoxing/cadence`                                 | npm's actual global prefix                                                                            |
+| `bun add -g @abelxiaoxing/cadence`                                     | Bun's actual global directory, including a custom user `bunfig.toml` location                         |
+| `npm install @abelxiaoxing/cadence` or `bun add @abelxiaoxing/cadence` | The local prefix, when its manifest directly declares Cadence and its lockfile identifies one manager |
+
+Bun's directory listing alone is not proof of a Bun installation: its prefix must have an unambiguous Bun lockfile.
+Local npm prefixes also recognize `npm-shrinkwrap.json`.
+Pi's default and custom `PI_CODING_AGENT_DIR` are supported; its string and object package declarations and resource filters stay unchanged.
+A versioned Pi declaration (including `@latest`) is pinned: change it explicitly in Pi before using self-upgrade.
+A Pi-managed prefix from another agent or a temporary Pi install is never treated as an ordinary local dependency to bypass that declaration.
+Custom Pi `npmCommand` wrappers, project-local/temporary Pi installs, source checkouts, linked/isolated-store copies, mixed lockfiles, and prefixes the service account cannot write require a terminal update using the original installation method, followed by that copy's `server restart`.
+Bun uses a fresh private staging directory with install scripts disabled to warm its cache; it removes only that staging directory.
+Bun prefixes with their own `.npmrc` or `bunfig.toml` also require a terminal update: Cadence will not copy those potentially credential-bearing files into staging or silently fetch from another registry.
+The managers read their account's own configuration (`~/.npmrc`, Bun's user `bunfig.toml` and npm's prefix-local configuration); npm/Bun binaries must be available on the service's saved PATH.
+Every npm query, fetch and install explicitly selects the same prefix and global/local scope, overriding an inherited `global=true`.
+A pinned, unwritable or unidentified installation reports that update information is unavailable rather than silently consulting another manager's registry.
+Newly generated definitions retain absolute `XDG_CONFIG_HOME`, `BUN_INSTALL`, `BUN_INSTALL_GLOBAL_DIR`, `BUN_INSTALL_BIN`, and npm prefix/userconfig environment paths when explicitly supplied; registry tokens are never baked into the unit.
+If an older service definition lacks those locations, restart it once from a terminal with the correct environment before using WebUI updates.
 A workbench that was not started by its systemd service, and services on macOS and Windows, show the version only; restart and upgrade them in a terminal.
 
 ### One copy for Pi and the service
 
 After `npm install -g`, `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates the service and native `/cadence` together.
-Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client, but its copy puts no `cadence` on `PATH`; if you want the optional boot service, register it with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
+Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client and supports the WebUI update route above, but its copy puts no `cadence` on `PATH`; if you want the optional boot service, register it with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
 Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
 A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
 Opening the private link once leaves an HttpOnly cookie in that browser; the address without the token only explains how to get the link.

@@ -149,7 +149,7 @@ export function templateNames(value: unknown): string[] {
 function headers(value: unknown): void {
   for (const [name, entry] of Object.entries(data(value))) {
     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) refuse();
-    // Installed 0.84.3 models.json supports string headers only. AuthResult null
+    // Selected models.json accepts string headers only. AuthResult null
     // suppression is separately preserved; never coerce null config to a string.
     if (typeof entry !== "string" || /[\r\n\0]/.test(entry)) refuse();
     if (entry) templateNames(entry);

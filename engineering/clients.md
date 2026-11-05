@@ -55,16 +55,25 @@ The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads 
 Nothing shows while no agent runs.
 Agents whose start was observed form a batch: the first one opens it, and later starts join it until it closes.
 A start with `startedAt: null` joins no batch, so after a restart already finished children neither reopen the live view nor repeat a card.
-While a batch is open, one block above the input shows a spinner header naming a shared kind (`2 Research agents running · 1 done`), then rows for its running, failed and cancelled members; a cleanly finished member is only counted, and rows past six fold into `+K more`.
-Row text leads with the label unless the producer's activity already does.
+While a batch is open, one summary line above the input names its shared kind and running/done/rejected/failed/cancelled counts; individual rows belong only to the agent browser.
 Once every member ended, the block shows the card it is about to become for `SETTLE_MS` (1.5s); a start in that time joins the same batch.
 Then the block is removed and the card is appended to the session as a display-only `cadence-agent-batch` entry, which is not part of the model's context and renders again on resume.
-A collapsed card is one line when every member finished cleanly and otherwise also lists the failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
+A collapsed card is one line when every member finished cleanly and otherwise also lists the rejected, failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
 A card holds only display text (kind, row text, status, elapsed), at most 64 members, and anything malformed in a session file renders nothing.
 A batch that settled is carded in the session it ran in, even on departure; one still running carries over to the next session, and one that ended while no session showed it gets no card.
 `CADENCE_AGENT_PANEL=always` keeps the last batch in the block, without a card, until the next batch begins.
-With an empty input, ↓ opens a list below the input of this session's agents, at most 24 ended ones beyond the open batch and six rows at once plus `+K more`; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, Esc returns to the list, and Esc or ↑ past the first row returns to the input and hides the list.
-Every other input key, including Enter, Shift+Tab and Ctrl+J, stays Pi's; each agent view remembers its scroll position.
+With an empty focused input, ↓ opens the adapted upstream readonly session browser: Pi's continuous selection list, with up to ten visible agent rows and stable ID selection as activities change.
+Enter opens the upstream transcript pane in that same interaction; ↑/↓ or j/k scroll content, the host's paging bindings and Shift+↑/↓ page, Home/End and the host's top/bottom bindings jump, and Ctrl+O toggles retained tool output locally.
+Esc, q or Ctrl+C in a transcript return to the same selected list row; Esc in the list returns to input.
+No browser key controls execution.
+The fullscreen browser is a focused overlay, so viewport keys and its normalized mouse wheel reach the browser rather than the parent conversation.
+Pi's current regular mode uses the upstream docked mounting behavior to avoid baking overlay chrome into scrollback; this is one browser for the two current renderers, not a legacy Pi compatibility implementation.
+Transcript chrome costs two rows and short content does not fill the screen; long content is capped at 70% of terminal height.
+There is no duplicate bottom queue.
+Each agent's reading position survives switches; new output follows only at the bottom, while paused reading stays put and is labelled paused.
+Tool output and thinking start folded.
+Messages outside the retained view remain in `/cadence-history`; an empty view reports that no retained messages have been observed, not that the agent finished without output.
+The mounted browser is disposed on departure and announces no viewed child after detach.
 A new session drops the previous one's ended agents.
 The panel never starts, cancels or keeps an agent or Pi alive; across restarts only the cards remain.
 For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays a batch of fake agents (the second fails), then a fake review agent with its own card, and runs nothing.
@@ -157,14 +166,15 @@ Error codes, identifiers, commands and recorded content stay untranslated.
 The owner keeps staging in `conversation-images.ts`, bound to the full original command (including mode revision, context/model and head), authenticated attachment and access generation.
 Upload is not message admission, model selection or mode entry.
 A lost upload reply abandons that continuation; a lost Send reply observes only its original command ID.
-Count/byte reservations bound incomplete uploads too; idle staging is ineligible and swept on the next upload, and is cleared on owner close.
+There are no image-specific count, byte or dimension quotas, including for incomplete staging; idle staging is ineligible and swept on the next upload, and is cleared on owner close.
 No consumer file is cleaned.
 At admission the exact selected model must support images and the live turn takes the bytes independently of viewer departure.
-Only image count enters the public worker request; the owner-only fd 3 payload is bounded and bound by byte length/SHA-256 in the private envelope.
+Only image count enters the public worker request; the owner-only fd 3 payload is bound by its exact byte length/SHA-256 in the private envelope.
 The coordinator retains IPC fd 4.
 The worker verifies the payload, declared count, format/dimensions and pinned model capability, then supplies Pi's public `prompt` image option.
 Pi alone writes the durable content.
-Preview Blob URLs are created only after the shared header/dimension check, not merely after a compressed-size check.
+Preview Blob URLs are created only after the shared format/header and nonzero-dimension check.
+The composer keeps its image action and previews without a permanent format, quota or draft-retention help paragraph.
 The browser's unsent images stay in memory, not sessionStorage; its draft controls lock during a pending Send/model choice.
 Image-only turns are valid, but images never authorize a plan or mode exit.
 Text redaction cannot remove secrets contained in image pixels.

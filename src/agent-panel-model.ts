@@ -307,28 +307,6 @@ export function described(
     : `${agent.label} · ${text}`;
 }
 
-/** The `max` most recently active agents plus any pinned ones, shown in
- * stable start order, and how many others are hidden. */
-export function visibleAgents(
-  agents: SubagentState[],
-  max: number,
-  pinned: (string | undefined)[] = [],
-): { rows: SubagentState[]; hidden: number } {
-  if (agents.length <= max) return { rows: agents, hidden: 0 };
-  const recent = [...agents].sort((a, b) => b.activeAt - a.activeAt);
-  const keep = new Set(recent.slice(0, max).map((a) => a.id));
-  for (const id of pinned) {
-    if (!id || keep.has(id) || !agents.some((a) => a.id === id)) continue;
-    const drop = [...keep]
-      .reverse()
-      .find((k) => !pinned.includes(k) && k !== id);
-    if (drop) keep.delete(drop);
-    keep.add(id);
-  }
-  const rows = agents.filter((a) => keep.has(a.id));
-  return { rows, hidden: agents.length - rows.length };
-}
-
 const s = (n: number) => (n === 1 ? "" : "s");
 const cut = (text: string, width: number) =>
   truncateToWidth(text, Math.max(0, width), "…");
@@ -374,16 +352,6 @@ function rowLine(
     width,
   );
 }
-const liveRow = (a: SubagentState, now: number, frame: number): Row => {
-  const used = usage(a);
-  return {
-    symbol: statusSymbol(a, frame),
-    kind: a.kind,
-    text: described(a),
-    failed: a.status === "error",
-    facts: `${elapsedText(a, now).padStart(8)}${used ? ` · ${used}` : ""}`,
-  };
-};
 const kindColumn = (kinds: string[]) =>
   Math.min(12, Math.max(7, ...kinds.map((k) => visibleWidth(k))));
 /** The kind every agent shares, if any; it then names the batch instead of
@@ -469,7 +437,7 @@ export function decodeCard(data: unknown): AgentCard | undefined {
 }
 
 /** A finished batch: `✔ 3 Research agents finished · 2m 14s`, with outcome
- * counts when any failed or was cancelled. Collapsed, it lists only those;
+ * counts when any failed, rejected or was cancelled. Collapsed, it lists only those;
  * expanded, every member with its final text and elapsed time. */
 export function cardLines(
   card: AgentCard,
@@ -534,20 +502,16 @@ export interface LiveFrame {
   agents: SubagentState[];
   now: number;
   frame: number;
-  maxRows: number;
   /** Show the `↓ to manage` hint: the input box has focus. */
   hint: boolean;
 }
-/** Above the input while a batch is open. Running: a spinner header with the
- * batch's outcome counts, then its running and failed/cancelled members; a
- * member that finished cleanly is only counted. Settled: the card it is about
- * to become, so the collapse into the transcript does not change the text. */
+/** One summary line; the adapted session browser owns all agent rows. */
 export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
   const { agents } = f;
   if (agents.length === 0) return [];
   const running = agents.filter((a) => a.status === "running");
   if (running.length === 0)
-    return cardLines(cardOf(agents), false, width, paint, false);
+    return cardLines(cardOf(agents), false, width, paint, false).slice(0, 1);
   const kind = sharedKind(agents);
   const tally = (status: SubagentStatus) =>
     agents.filter((a) => a.status === status).length;
@@ -561,217 +525,9 @@ export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
   const [spin, role] = statusSymbol(running[0], f.frame);
   const header = hinted(
     `${paint(role, spin)} ${running.length} ${noun(kind, running.length)} running${counts}`,
-    f.hint ? " (↓ to manage)" : "",
+    f.hint ? " (↓ to view)" : "",
     width,
     paint,
   );
-  const listed = [
-    ...running,
-    ...agents.filter((a) => a.status !== "running" && a.status !== "done"),
-  ];
-  const rows = listed.slice(0, f.maxRows);
-  const more = listed.length - rows.length;
-  const kindWidth = kind ? 0 : kindColumn(rows.map((a) => a.kind));
-  const leads = tree(rows.length, more);
-  const lines = [
-    header,
-    ...rows.map((a, i) =>
-      rowLine(liveRow(a, f.now, f.frame), leads[i], kindWidth, width, paint),
-    ),
-  ];
-  if (more) lines.push(cut(`${paint("dim", "  └ ")}… +${more} more`, width));
-  return lines;
-}
-
-export interface PanelFrame {
-  agents: SubagentState[];
-  focus: "input" | "panel";
-  /** Selected row: an agent id, or undefined while the input has focus. */
-  selected: string | undefined;
-  /** Agent shown in place of the main view, if any. */
-  view: string | undefined;
-  now: number;
-  frame: number;
-  maxRows: number;
-}
-/** Below the input only while it is being used (focus moved down to it, or
- * an agent view is open): this Pi session's agents, at most `maxRows` of the
- * most recently active plus the selection, `+K more`, and a key hint. */
-export function panelLines(
-  f: PanelFrame,
-  width: number,
-  paint: Paint,
-): string[] {
-  if (f.agents.length === 0 || (f.focus !== "panel" && f.view === undefined))
-    return [];
-  const { rows, hidden } = visibleAgents(f.agents, f.maxRows, [
-    f.selected,
-    f.view,
-  ]);
-  const lines = hidden ? [cut(paint("dim", `  +${hidden} more`), width)] : [];
-  const kindWidth = kindColumn(rows.map((a) => a.kind));
-  for (const a of rows) {
-    const selected = f.focus === "panel" && f.selected === a.id;
-    lines.push(
-      rowLine(
-        liveRow(a, f.now, f.frame),
-        selected ? "▶" : " ",
-        kindWidth,
-        width,
-        paint,
-        selected,
-      ),
-    );
-  }
-  if (f.view === undefined)
-    lines.push(
-      cut(paint("dim", " ↑↓ select · Enter open · Esc back to input"), width),
-    );
-  return lines;
-}
-
-export type PanelKey =
-  | "down"
-  | "up"
-  | "next"
-  | "previous"
-  | "enter"
-  | "escape"
-  | "interrupt"
-  | "pageUp"
-  | "pageDown"
-  | "halfUp"
-  | "halfDown"
-  | "home"
-  | "end"
-  | "other";
-/** `pass` leaves the key to Pi; `open`/`close` show or leave an agent view. */
-export type PanelAction = "pass" | "consume" | "open" | "close";
-export interface Scroll {
-  top: number;
-  /** Stick to the newest line as the transcript grows. */
-  follow: boolean;
-}
-
-/** Focus model. F_input (default) passes every key except ↓ on an idle, empty
- * editor, which moves focus down to the agent list; F_panel moves its
- * selection, and ↑ past the first row or Esc returns to the input. An agent
- * view keeps F_panel and replaces the main view until Esc or Ctrl+C. */
-export class PanelFocus {
-  focus: "input" | "panel" = "input";
-  selected: string | undefined;
-  view: string | undefined;
-  /** Rows of the last rendered agent view, for paging. */
-  page = 10;
-  private readonly scrolls = new Map<string, Scroll>();
-  constructor(
-    private readonly store: SubagentStore,
-    private readonly maxRows = 6,
-  ) {}
-
-  key(key: PanelKey, editorIdle: boolean): PanelAction {
-    if (this.focus === "input" && this.view === undefined) {
-      if (key !== "down" || !editorIdle || this.store.size === 0) return "pass";
-      this.focus = "panel";
-      this.selected = visibleAgents(
-        this.store.ordered(),
-        this.maxRows,
-      ).rows[0]?.id;
-      return "consume";
-    }
-    const rows = this.store.ordered().map((a) => a.id);
-    // A selection the store dropped falls back to the first row.
-    const at = Math.max(0, rows.indexOf(this.selected ?? ""));
-    switch (key) {
-      case "up":
-      case "previous":
-        // ↑ past the first row returns to the input, the inverse of ↓.
-        if (at === 0 && this.view === undefined) this.toInput();
-        else this.selected = rows[Math.max(0, at - 1)];
-        return "consume";
-      case "down":
-      case "next":
-        this.selected = rows[Math.min(rows.length - 1, at + 1)];
-        return "consume";
-      case "enter":
-        this.selected = rows[at];
-        if (this.selected === undefined) {
-          this.toInput();
-          return "consume";
-        }
-        if (this.view === undefined) {
-          this.view = this.selected;
-          return "open";
-        }
-        this.view = this.selected;
-        return "consume";
-      case "escape":
-      case "interrupt":
-        if (this.view !== undefined) return this.leave();
-        this.toInput();
-        // Ctrl+C keeps Pi's own clear/interrupt/exit meaning.
-        return key === "escape" ? "consume" : "pass";
-      case "pageUp":
-      case "pageDown":
-      case "halfUp":
-      case "halfDown":
-      case "home":
-      case "end":
-        if (this.view !== undefined) {
-          this.scroll(this.view, key);
-          return "consume";
-        }
-        // The main transcript scrolls itself; Ctrl+U/D must not edit or exit.
-        return key === "halfUp" || key === "halfDown" ? "consume" : "pass";
-      default:
-        if (this.view !== undefined) return "consume";
-        this.toInput();
-        return "pass";
-    }
-  }
-  /** Pi replaced the agent view (another dialog took the editor slot). */
-  abandon(): void {
-    this.view = undefined;
-    this.toInput();
-  }
-  /** Top line for this view, remembered per agent across switches. */
-  settle(id: string, total: number, height: number): number {
-    const s = this.scrolls.get(id) ?? { top: 0, follow: true };
-    const max = Math.max(0, total - height);
-    const top = s.follow ? max : Math.min(Math.max(0, s.top), max);
-    this.scrolls.set(id, { top, follow: top >= max });
-    this.page = Math.max(1, height);
-    return top;
-  }
-  scrollOf(id: string): Scroll | undefined {
-    return this.scrolls.get(id);
-  }
-  /** The store dropped these agents: forget their scroll positions. */
-  forget(ids: string[]): void {
-    for (const id of ids) this.scrolls.delete(id);
-  }
-  private toInput(): void {
-    this.focus = "input";
-    this.selected = undefined;
-  }
-  private leave(): PanelAction {
-    this.view = undefined;
-    return "close";
-  }
-  private scroll(id: string, key: PanelKey): void {
-    const s = this.scrolls.get(id) ?? { top: 0, follow: true };
-    const step =
-      key === "pageUp" || key === "pageDown"
-        ? Math.max(1, this.page - 1)
-        : Math.max(1, Math.floor(this.page / 2));
-    const sign = key === "pageUp" || key === "halfUp" ? -1 : 1;
-    this.scrolls.set(
-      id,
-      key === "home"
-        ? { top: 0, follow: false }
-        : key === "end"
-          ? { top: s.top, follow: true }
-          : { top: s.top + sign * step, follow: false },
-    );
-  }
+  return [header];
 }

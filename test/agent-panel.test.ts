@@ -1,14 +1,18 @@
-/** Background-agent panel: the live batch above the input, its card in the
- * transcript, the on-demand list below the input and the Pi widget/bus/entry
- * binding through a fake Pi host. */
-import { initTheme } from "@earendil-works/pi-coding-agent";
+/** Readonly panel binding and the reused upstream agent session browser. */
+import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import {
+  type Component,
   Editor,
+  KeybindingsManager,
   stripTerminalSequences,
+  type TUI,
+  TUI_KEYBINDINGS,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import agentPanelDemo from "../scripts/agent-panel-demo.ts";
+import { cadenceBrowserSource } from "../src/agent-browser/source.ts";
+import { TranscriptPane } from "../src/agent-browser/transcript-pane.ts";
 import { registerAgentPanel, SETTLE_MS } from "../src/agent-panel.ts";
 import {
   CARD_ENTRY,
@@ -16,888 +20,608 @@ import {
   cardOf,
   decodeCard,
   SUBAGENT_EVENTS as E,
-  type LiveFrame,
   liveLines,
   MAX_ENDED,
   type Paint,
-  type PanelFrame,
-  panelLines,
   SubagentStore,
 } from "../src/agent-panel-model.ts";
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-/** Plain text; reverse video shows as [brackets]. */
-const paint: Paint = (role, text) => (role === "selected" ? `[${text}]` : text);
-const T0 = 1_000_000;
-/** A row whose facts sit at the right edge of `width`. */
-const row = (left: string, right: string, width: number) =>
-  left + " ".repeat(width - visibleWidth(left) - visibleWidth(right)) + right;
-
-function agents(n: number, at = T0, kind = "Explore") {
-  let now = at;
-  const s = new SubagentStore(() => now);
-  for (let i = 0; i < n; i++) {
-    now = at + i;
-    s.apply(E.start, {
-      id: `a${i}`,
-      label: `Analyze part ${i}`,
-      kind,
-      startedAt: at,
-    });
-  }
-  return {
-    s,
-    at(t: number) {
-      now = t;
-    },
-  };
-}
-const live = (s: SubagentStore, patch: Partial<LiveFrame> = {}) => ({
-  agents: s.batch(),
-  now: T0 + 283_000,
-  frame: 0,
-  maxRows: 6,
-  hint: true,
-  ...patch,
-});
-const list = (s: SubagentStore, patch: Partial<PanelFrame> = {}) => ({
-  agents: s.ordered(),
-  focus: "panel" as const,
-  selected: undefined,
-  view: undefined,
-  now: T0 + 283_000,
-  frame: 0,
-  maxRows: 6,
-  ...patch,
-});
-
-describe("live batch", () => {
-  it("names a shared kind once and lists running then failed members", () => {
-    const { s, at } = agents(4);
-    s.apply(E.activity, {
-      id: "a0",
-      activity: "Inspecting observer.ts polling and sockets",
-      tokensIn: 110_900,
-    });
-    at(T0 + 252_000);
-    s.apply(E.end, { id: "a1", status: "done" });
-    s.apply(E.end, { id: "a2", status: "error", error: "Rate limited" });
-    s.apply(E.activity, { id: "a3", activity: "Analyze part 3 · Reading" });
-    expect(liveLines(live(s), 76, paint)).toEqual([
-      "⠋ 2 Explore agents running · 1 done · 1 failed (↓ to manage)",
-      row(
-        "  ├ ⠋ Analyze part 0 · Inspecting observer.ts polling a…",
-        "4m 43s · ↓110.9k",
-        76,
-      ),
-      row("  ├ ⠋ Analyze part 3 · Reading", "4m 43s", 76),
-      row("  └ ✘ Analyze part 2 · Rate limited", "4m 12s", 76),
-    ]);
-    // The hint is only for the input box; a cleanly finished member is counted.
-    expect(liveLines(live(s, { hint: false }), 76, paint)[0]).toBe(
-      "⠋ 2 Explore agents running · 1 done · 1 failed",
-    );
+initTheme("dark");
+afterEach(() => vi.useRealTimers());
+const DOWN = "\x1b[B",
+  UP = "\x1b[A",
+  ENTER = "\r",
+  ESC = "\x1b",
+  PAGEUP = "\x1b[5~";
+const plain = (lines: string[]) => lines.map(stripTerminalSequences).join("\n");
+const paint: Paint = (_role, text) => text;
+const keys = () =>
+  new KeybindingsManager({
+    ...TUI_KEYBINDINGS,
+    "app.tools.expand": { defaultKeys: "ctrl+o", description: "Expand" },
   });
-
-  it("counts rejected reviews separately from failed agents in live and retained cards", () => {
-    const { s } = agents(2, T0, "Review");
-    s.apply(E.activity, { id: "a0", activity: "rejected" });
-    expect(s.apply(E.end, { id: "a0", status: "rejected" })).toBe(true);
-    const lines = liveLines(live(s), 100, paint);
-    expect(lines[0]).toContain("1 rejected");
-    expect(lines.join("\n")).not.toContain("failed");
-    expect(lines[2]).toContain("⊘ Analyze part 0 · rejected");
-    s.apply(E.end, { id: "a1", status: "done" });
-    const card = cardOf(s.batch());
-    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
-    const collapsed = cardLines(card, false, 100, paint);
-    expect(collapsed[0]).toContain(
-      "⊘ 2 Review agents finished · 1 done · 1 rejected",
-    );
-    expect(collapsed).toHaveLength(2);
-    expect(collapsed.join("\n")).not.toContain("failed");
-  });
-
-  it("shows a kind column for mixed kinds and folds rows past maxRows", () => {
-    const { s } = agents(3);
-    s.apply(E.start, { id: "r", label: "Review", kind: "Review" });
-    const lines = liveLines(live(s, { maxRows: 2 }), 60, paint);
-    expect(lines[0]).toBe("⠋ 4 agents running (↓ to manage)");
-    expect(lines[1]).toMatch(/^ {2}├ ⠋ Explore {2}Analyze part 0 +4m 43s$/);
-    expect(lines.slice(2)).toEqual([
-      expect.stringMatching(/^ {2}├ ⠋ Explore {2}Analyze part 1/),
-      "  └ … +2 more",
-    ]);
-  });
-
-  it("shows the card it will become once every member ended", () => {
-    const { s, at } = agents(2);
-    at(T0 + 134_000);
-    s.apply(E.end, { id: "a0", status: "done" });
-    s.apply(E.end, { id: "a1", status: "done" });
-    const settled = liveLines(live(s), 80, paint);
-    expect(settled).toEqual(["✔ 2 Explore agents finished · 2m 14s"]);
-    expect(cardLines(cardOf(s.batch()), false, 80, paint, false)).toEqual(
-      settled,
-    );
-    expect(liveLines(live(new SubagentStore()), 80, paint)).toEqual([]);
-  });
-});
-
-describe("card", () => {
-  const finished = () => {
-    const { s, at } = agents(3);
-    s.apply(E.activity, { id: "a0", activity: "Reading README.md" });
-    at(T0 + 31_000);
-    s.apply(E.end, { id: "a0", status: "done" });
-    at(T0 + 48_000);
-    s.apply(E.end, { id: "a1", status: "error", error: "Rate limited" });
-    at(T0 + 62_000);
-    s.apply(E.end, { id: "a2", status: "cancelled" });
-    return cardOf(s.batch());
-  };
-
-  it("is one line when every member finished cleanly, all members when expanded", () => {
-    const { s, at } = agents(2);
-    at(T0 + 62_000);
-    s.apply(E.end, { id: "a0", status: "done" });
-    s.apply(E.end, { id: "a1", status: "done" });
-    const card = cardOf(s.batch());
-    expect(cardLines(card, false, 80, paint)).toEqual([
-      "✔ 2 Explore agents finished · 1m 2s (ctrl+o to expand)",
-    ]);
-    expect(cardLines(card, true, 60, paint)).toEqual([
-      "✔ 2 Explore agents finished · 1m 2s",
-      row("  ├ ✔ Analyze part 0", "1m 2s", 60),
-      row("  └ ✔ Analyze part 1", "1m 2s", 60),
-    ]);
-  });
-
-  it("lists failed and cancelled members collapsed, with outcome counts", () => {
-    const card = finished();
-    expect(card.agents.map((a) => a.text)).toEqual([
-      "Analyze part 0 · Reading README.md",
-      "Analyze part 1 · Rate limited",
-      "Analyze part 2",
-    ]);
-    expect(cardLines(card, false, 80, paint)).toEqual([
-      // The expand hint gives way when it does not fit.
-      "✘ 3 Explore agents finished · 1 done · 1 failed · 1 cancelled · 1m 2s",
-      row("  ├ ✘ Analyze part 1 · Rate limited", "48s", 80),
-      row("  └ ○ Analyze part 2", "1m 2s", 80),
-    ]);
-    expect(cardLines(card, true, 80, paint)).toHaveLength(4);
-    const cancelled = { ...card, agents: [card.agents[0], card.agents[2]] };
-    expect(cardLines(cancelled, false, 80, paint)[0]).toMatch(
-      /^○ 2 Explore agents finished · 1 done · 1 cancelled/,
-    );
-    expect(
-      cardLines({ ...card, omitted: 2 }, true, 80, paint).slice(-1),
-    ).toEqual(["  └ … +2 more"]);
-  });
-
-  it("round-trips through the session and renders nothing for malformed data", () => {
-    const card = finished();
-    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
-    for (const bad of [
-      null,
-      [],
-      {},
-      { ...card, agents: "x" },
-      { ...card, omitted: -1 },
-      { ...card, elapsed: "1s" },
-      { ...card, agents: [], omitted: 0 },
-      { ...card, agents: [{ ...card.agents[0], status: "running" }] },
-      { ...card, agents: [{ ...card.agents[0], kind: "" }] },
-      {
-        ...card,
-        agents: [{ ...card.agents[0], elapsed: Number.POSITIVE_INFINITY }],
-      },
-    ])
-      expect(decodeCard(bad)).toBeUndefined();
-    // Terminal controls from an edited file are flattened, not rendered.
-    expect(
-      decodeCard({
-        ...card,
-        agents: [{ ...card.agents[0], text: "\x1b[2Jx\ny" }],
-      })?.agents[0].text,
-    ).toBe("[2Jx y");
-  });
-});
-
-describe("list below the input", () => {
-  it("shows only while used, marks the selection and folds old rows", () => {
-    const { s, at } = agents(5);
-    expect(panelLines(list(s, { focus: "input" }), 50, paint)).toEqual([]);
-    at(T0 + 100);
-    s.apply(E.activity, { id: "a0", activity: "busy" });
-    const lines = panelLines(
-      list(s, { maxRows: 2, selected: "a3" }),
-      50,
-      paint,
-    );
-    expect(lines[0]).toBe("  +3 more");
-    expect(lines[1]).toMatch(/^ ⠋ Explore {2}Analyze part 0 · busy/);
-    expect(lines[2]).toMatch(/^\[▶⠋ Explore {2}Analyze part 3 +4m 43s\]$/);
-    expect(visibleWidth(lines[2])).toBe(52);
-    expect(lines[3]).toBe(" ↑↓ select · Enter open · Esc back to input");
-    // While an agent view is open the rows stay, without the key hint.
-    expect(
-      panelLines(
-        list(s, { maxRows: 2, view: "a3", selected: "a3" }),
-        50,
-        paint,
-      ),
-    ).toHaveLength(3);
-  });
-
-  it("never exceeds the width for long text, wide glyphs and any size", () => {
-    const { s, at } = agents(2);
-    s.apply(E.start, {
-      id: "w",
-      label: "宽",
-      kind: "探索代理人员非常长的类型名",
-    });
-    s.apply(E.activity, { id: "w", activity: "读取文件".repeat(40) });
-    s.apply(E.stats, { id: "w", tokensIn: 9_999_999, tokensOut: 1_200_000 });
-    const running = liveLines(live(s), 80, paint);
-    at(T0 + 9_000);
-    s.apply(E.end, { id: "a0", status: "error", error: "失败".repeat(50) });
-    s.apply(E.end, { id: "a1", status: "done" });
-    s.apply(E.end, { id: "w", status: "cancelled" });
-    const card = cardOf(s.batch());
-    expect(running.length).toBe(4);
-    for (let width = 1; width <= 130; width++)
-      // The test paint shows reverse video as two brackets.
-      for (const line of [
-        ...liveLines(live(s), width, paint),
-        ...cardLines(card, true, width, paint),
-        ...cardLines(card, false, width, paint),
-        ...panelLines(list(s), width, paint),
-        ...panelLines(list(s, { selected: "w" }), width, paint),
-      ])
-        expect(visibleWidth(line)).toBeLessThanOrEqual(
-          width + (line.startsWith("[") ? 2 : 0),
-        );
-  });
-});
-
-type Rendered = {
-  render(width: number): string[];
-  handleInput?(data: string): void;
+const theme = {
+  fg: (_role: string, text: string) => text,
+  bold: (text: string) => text,
+  inverse: (text: string) => `[${text}]`,
+  getThinkingBorderColor: () => (text: string) => text,
 };
-type Renderer = (
-  entry: { customType: string; data: unknown },
-  options: { expanded: boolean },
-  theme: unknown,
-) => Rendered | undefined;
-function host(options: { rows?: number; keep?: boolean } = {}) {
-  const bus = new Map<string, Set<(data: unknown) => void>>();
-  const handlers = new Map<
-    string,
-    ((event: unknown, ctx: unknown) => void)[]
-  >();
-  const widgets = new Map<
-    string,
-    { component: Rendered; placement?: string }
-  >();
-  const renderers = new Map<string, Renderer>();
-  const entries: { customType: string; data: unknown }[] = [];
-  let clock = T0,
-    text = "",
+
+function host(
+  options: {
+    rows?: number;
+    mode?: "fullscreen" | "regular";
+    keep?: boolean;
+  } = {},
+) {
+  const bus = new Map<string, ((data: any) => void)[]>();
+  const handlers = new Map<string, ((event: unknown, ctx: any) => void)[]>();
+  const entries: { customType: string; data: any }[] = [];
+  const widgets = new Map<string, Component>();
+  const renderers = new Map<string, any>();
+  const editor = Object.create(Editor.prototype);
+  let focused: any = editor,
     overlay = false,
-    listener: ((data: string) => { consume?: boolean } | undefined) | undefined;
-  // Pi's input box; instanceof is what the panel checks.
-  const editor = Object.create(Editor.prototype) as Rendered;
-  const dialog: Rendered = { render: () => ["dialog"] };
-  let focused: Rendered | null = editor,
-    slot: Rendered = editor,
-    beneath: Rendered = editor;
+    text = "",
+    time = 1000;
+  let listener:
+    | ((data: string) => { consume?: boolean } | undefined)
+    | undefined;
+  let component: (Component & { dispose?(): void }) | undefined;
   const tui = {
+    mode: options.mode ?? "fullscreen",
     terminal: { rows: options.rows ?? 30, columns: 80 },
     requestRender: vi.fn(),
     getFocusedComponent: () => focused,
     hasOverlay: () => overlay,
   };
-  const theme = {
-    fg: (_color: string, text: string) => text,
-    inverse: (text: string) => `[${text}]`,
-  };
   const pi = {
     events: {
-      on(channel: string, fn: (data: unknown) => void) {
-        const set = bus.get(channel) ?? new Set();
-        bus.set(channel, set);
-        set.add(fn);
-        return () => set.delete(fn);
-      },
-      emit(channel: string, data: unknown) {
-        for (const fn of bus.get(channel) ?? []) fn(data);
+      on: (event: string, fn: (data: any) => void) =>
+        bus.set(event, [...(bus.get(event) ?? []), fn]),
+      emit: (event: string, data: any) => {
+        for (const fn of bus.get(event) ?? []) fn(data);
       },
     },
-    on(event: string, fn: (event: unknown, ctx: unknown) => void) {
-      handlers.set(event, [...(handlers.get(event) ?? []), fn]);
-    },
-    registerEntryRenderer(customType: string, renderer: Renderer) {
-      renderers.set(customType, renderer);
-    },
-    appendEntry: vi.fn((customType: string, data: unknown) => {
-      // Pi stores entries as JSON.
-      entries.push({ customType, data: JSON.parse(JSON.stringify(data)) });
-    }),
+    on: (event: string, fn: (event: unknown, ctx: any) => void) =>
+      handlers.set(event, [...(handlers.get(event) ?? []), fn]),
+    registerEntryRenderer: (type: string, renderer: any) =>
+      renderers.set(type, renderer),
+    appendEntry: (customType: string, data: any) =>
+      entries.push({ customType, data }),
   };
   const ctx = {
     mode: "tui",
     hasUI: true,
-    cwd: "/work",
+    cwd: "/fixture",
     ui: {
-      setWidget(key: string, factory: any, opts?: { placement?: string }) {
-        if (!factory) widgets.delete(key);
-        else
-          widgets.set(key, {
-            component: factory(tui, theme),
-            placement: opts?.placement,
-          });
-      },
-      onTerminalInput(fn: typeof listener) {
+      notify: vi.fn(),
+      getEditorText: () => text,
+      onTerminalInput: (fn: typeof listener) => {
         listener = fn;
         return () => {
           listener = undefined;
         };
       },
-      getEditorText: () => text,
-      getToolsExpanded: () => false,
-      // Non-overlay custom UI: replaces and refocuses the editor slot, as Pi does.
+      setWidget: (id: string, factory: any) => {
+        if (factory) widgets.set(id, factory(tui, theme));
+        else widgets.delete(id);
+      },
       custom: vi.fn(
-        (factory: any) =>
+        (factory: any, opts: any) =>
           new Promise<void>((resolve) => {
             let closed = false;
-            const component = factory(tui, theme, {}, () => {
+            const done = () => {
               if (closed) return;
               closed = true;
-              slot = editor;
+              component?.dispose?.();
+              component = undefined;
               focused = editor;
+              overlay = false;
               resolve();
-            });
-            slot = component;
+            };
+            component = factory(tui, theme, keys(), done);
             focused = component;
+            overlay = opts?.overlay === true;
           }),
       ),
     },
   };
-  registerAgentPanel(pi as any, { now: () => clock, keep: options.keep });
-  /** Terminal input: listener first, then the focused component. */
-  const key = (data: string) => {
-    const result = listener?.(data);
-    if (result?.consume) return "consumed";
-    if (focused !== editor) focused?.handleInput?.(data);
-    return focused === editor ? "editor" : "component";
+  registerAgentPanel(pi as any, { now: () => time, keep: options.keep });
+  const emit = (event: string) => {
+    for (const fn of handlers.get(event) ?? []) fn({}, ctx);
   };
   return {
     pi,
-    tui,
     ctx,
-    widgets,
+    tui,
     entries,
-    editor,
-    key,
-    emit(event: string) {
-      for (const fn of handlers.get(event) ?? []) fn({}, ctx);
+    widgets,
+    emit,
+    start: (id: string, extra = {}) =>
+      pi.events.emit(E.start, {
+        id,
+        label: `Agent ${id}`,
+        kind: "Research",
+        ...extra,
+      }),
+    end: (id: string, status = "done") => pi.events.emit(E.end, { id, status }),
+    say: (id: string, content: string) =>
+      pi.events.emit(E.message, { id, message: { role: "user", content } }),
+    key(data: string) {
+      if (listener?.(data)?.consume) return "consumed";
+      if (focused === editor) return "editor";
+      focused?.handleInput?.(data);
+      return "component";
     },
-    at(t: number) {
-      clock = t;
-    },
-    type(value: string) {
+    setText: (value: string) => {
       text = value;
     },
-    overlay(on: boolean) {
-      overlay = on;
+    focusDialog: () => {
+      focused = { render: () => [] };
     },
-    dialog(open: boolean) {
-      if (open) [beneath, slot] = [slot, dialog];
-      else slot = beneath;
-      focused = slot;
+    overlay: (value: boolean) => {
+      overlay = value;
     },
-    /** Pi put its editor back into the slot (after displacing the view). */
-    restoreEditor() {
-      slot = editor;
-      focused = editor;
+    at: (value: number) => {
+      time = value;
     },
-    slot: () => slot,
-    view: (width = 60) => (slot === editor ? undefined : slot.render(width)),
-    live: (width = 60) =>
-      widgets.get("cadence-agents")?.component.render(width),
-    list: (width = 60) =>
-      widgets.get("cadence-agents-list")?.component.render(width),
-    /** The `n`th card as Pi would render it in the transcript. */
-    card(n: number, expanded = false, width = 80) {
-      const entry = entries[n];
-      return renderers
-        .get(entry.customType)?.(entry, { expanded }, theme)
-        ?.render(width);
+    live: (width = 80) => widgets.get("cadence-agents")?.render(width) ?? [],
+    view: (width = 80) => component?.render(width) ?? [],
+    component: () => component,
+    card: (index: number, expanded = false) =>
+      renderers
+        .get(CARD_ENTRY)(entries[index], { expanded }, theme)
+        ?.render(80),
+    flush: async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     },
-    flush: () => new Promise((resolve) => setImmediate(resolve)),
   };
 }
-const DOWN = "\x1b[B",
-  UP = "\x1b[A",
-  ENTER = "\r",
-  ESC = "\x1b",
-  CTRL_C = "\x03";
-function withTwo() {
-  const h = host();
+
+function withAgents(n = 2, options: Parameters<typeof host>[0] = {}) {
+  const h = host(options);
   h.emit("session_start");
-  h.pi.events.emit(E.start, { id: "a", label: "Agent A", kind: "Explore" });
-  h.pi.events.emit(E.start, { id: "b", label: "Agent B", kind: "Explore" });
+  for (let i = 0; i < n; i++) h.start(String(i));
   return h;
 }
 
-describe("Pi binding", () => {
-  it("shows a batch above the input only while it runs, then leaves its card in the transcript", () => {
+describe("compact panel and durable cards", () => {
+  it("shows only one live summary, then preserves the settled card", () => {
+    vi.useFakeTimers();
+    const h = withAgents();
+    expect(h.live()).toHaveLength(1);
+    expect(h.live()[0]).toContain("2 Research agents running");
+    expect(h.live()[0]).toContain("↓ to view");
+    const first = h.live()[0];
+    vi.advanceTimersByTime(100);
+    expect(h.live()[0]).not.toBe(first);
+    h.at(65000);
+    h.end("0");
+    h.end("1", "error");
+    expect(h.live()).toHaveLength(1);
+    expect(h.live()[0]).toContain("1 failed");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.live()).toEqual([]);
+    expect(h.entries).toHaveLength(1);
+    expect(h.card(0).join("\n")).toContain("1 failed");
+    expect(h.card(0, true)).toHaveLength(3);
+    h.tui.requestRender.mockClear();
+    vi.advanceTimersByTime(1000);
+    expect(h.tui.requestRender).not.toHaveBeenCalled();
+    h.emit("session_shutdown");
+    expect(h.widgets.size).toBe(0);
+  });
+  it("counts rejected reviews separately in the one-line summary and retained cards", () => {
+    vi.useFakeTimers();
+    const h = withAgents();
+    h.end("0", "rejected");
+    expect(h.live()).toHaveLength(1);
+    expect(h.live()[0]).toContain("1 rejected");
+    expect(h.live()[0]).not.toContain("failed");
+    h.end("1");
+    expect(h.live()[0]).toContain("⊘");
+    expect(h.live()[0]).toContain("1 done · 1 rejected");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.live()).toEqual([]);
+    expect(h.entries).toHaveLength(1);
+    const card = h.entries[0].data;
+    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    expect(card.agents.map((a: { status: string }) => a.status)).toEqual([
+      "rejected",
+      "done",
+    ]);
+    expect(h.card(0)).toHaveLength(2);
+    expect(h.card(0).join("\n")).toContain("1 done · 1 rejected");
+    expect(h.card(0).join("\n")).not.toContain("failed");
+    expect(h.card(0, true)).toHaveLength(3);
+    h.emit("session_shutdown");
+  });
+  it("keeps failures and cancellations distinct beside a rejected review", () => {
+    vi.useFakeTimers();
+    const h = withAgents(4);
+    h.end("0", "rejected");
+    h.end("1", "error");
+    h.end("2", "cancelled");
+    expect(h.live()[0]).toContain("1 failed · 1 rejected · 1 cancelled");
+    h.end("3");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.card(0)[0]).toContain("✘");
+    expect(h.card(0)[0]).toContain(
+      "1 done · 1 failed · 1 rejected · 1 cancelled",
+    );
+    expect(h.card(0)).toHaveLength(4);
+    expect(decodeCard(h.entries[0].data)?.agents.map((a) => a.status)).toEqual([
+      "rejected",
+      "error",
+      "cancelled",
+      "done",
+    ]);
+    h.emit("session_shutdown");
+  });
+  it("joins a new start during settlement but cards a later batch separately", () => {
+    vi.useFakeTimers();
+    const h = withAgents(1);
+    h.end("0");
+    vi.advanceTimersByTime(SETTLE_MS - 1);
+    h.start("1");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries).toHaveLength(0);
+    h.end("1");
+    vi.advanceTimersByTime(SETTLE_MS);
+    h.start("2");
+    h.end("2");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries.map((entry) => entry.data.agents.length)).toEqual([2, 1]);
+  });
+  it("keeps only a summary with keep, without a session card", () => {
+    vi.useFakeTimers();
+    const h = withAgents(1, { keep: true });
+    h.end("0");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries).toEqual([]);
+    expect(h.live()).toHaveLength(1);
+    expect(h.live()[0]).toContain("finished");
+  });
+  it("does not activate outside TUI or repeat a card for a first-seen settled child", () => {
     vi.useFakeTimers();
     const h = host();
     h.ctx.mode = "rpc";
     h.emit("session_start");
-    h.pi.events.emit(E.start, { id: "x", startedAt: T0 });
+    h.start("old", { startedAt: null });
+    h.end("old");
     expect(h.widgets.size).toBe(0);
-    h.pi.events.emit(E.end, { id: "x", status: "done", endedAt: T0 });
-    vi.advanceTimersByTime(SETTLE_MS);
     h.ctx.mode = "tui";
     h.emit("session_start");
-    // Nothing is mounted until an agent runs.
-    expect(h.widgets.size).toBe(0);
-    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
-    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Explore" });
-    expect(h.widgets.get("cadence-agents")?.placement).toBe("aboveEditor");
-    expect(h.live()).toEqual([
-      "⠋ 2 Explore agents running (↓ to manage)",
-      row("  ├ ⠋ A", "0s", 60),
-      row("  └ ⠋ B", "0s", 60),
-    ]);
-    // The list below the input takes no row until it is used.
-    expect(h.list()).toEqual([]);
-    // The spinner animates while one runs.
-    const first = h.live()![0];
-    h.tui.requestRender.mockClear();
-    h.at(T0 + 1000);
-    vi.advanceTimersByTime(100);
-    expect(h.tui.requestRender).toHaveBeenCalledTimes(1);
-    expect(h.live()![0]).not.toBe(first);
-    h.at(T0 + 64_000);
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
-    h.pi.events.emit(E.end, { id: "b", status: "error", error: "boom" });
-    // Settled: the text it will keep, briefly, then the card replaces it.
-    expect(h.live()).toEqual([
-      "✘ 2 Explore agents finished · 1 done · 1 failed · 1m 4s",
-      row("  └ ✘ B · boom", "1m 4s", 60),
-    ]);
-    h.tui.requestRender.mockClear();
-    vi.advanceTimersByTime(SETTLE_MS - 1);
-    expect(h.tui.requestRender).not.toHaveBeenCalled();
-    expect(h.entries).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(h.live()).toBeUndefined();
-    expect(h.list()).toEqual([]);
-    expect(h.entries.map((e) => e.customType)).toEqual([CARD_ENTRY]);
-    expect(h.card(0)).toEqual([
-      " ✘ 2 Explore agents finished · 1 done · 1 failed · 1m 4s (ctrl+o to expand)",
-      ` ${row("  └ ✘ B · boom", "1m 4s", 79)}`,
-    ]);
-    expect(h.card(0, true)).toHaveLength(3);
-    // Nothing keeps rendering once the batch collapsed.
-    h.tui.requestRender.mockClear();
-    vi.advanceTimersByTime(10_000);
-    expect(h.tui.requestRender).not.toHaveBeenCalled();
-    h.emit("session_shutdown");
-    expect(h.widgets.size).toBe(0);
-  });
-
-  it("joins a start during the settle time to the batch; a later start opens a new one", () => {
-    vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Research" });
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
-    vi.advanceTimersByTime(SETTLE_MS - 100);
-    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Review" });
-    vi.advanceTimersByTime(SETTLE_MS * 3);
-    expect(h.entries).toEqual([]);
-    expect(h.live()![0]).toMatch(
-      /^. 1 agent running · 1 done \(↓ to manage\)$/,
-    );
-    h.pi.events.emit(E.end, { id: "b", status: "done" });
+    h.start("retained", { startedAt: null });
+    h.end("retained");
     vi.advanceTimersByTime(SETTLE_MS);
-    h.pi.events.emit(E.start, { id: "c", label: "C", kind: "Review" });
-    h.pi.events.emit(E.end, { id: "c", status: "done" });
-    vi.advanceTimersByTime(SETTLE_MS);
-    expect(h.entries.map((e) => (e.data as any).agents.length)).toEqual([2, 1]);
-    expect(h.card(1)![0]).toMatch(/^ ✔ 1 Review agent finished · 0s/);
-  });
-
-  it("puts agents first seen settled in no batch and no card, but lists them", () => {
-    vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    h.pi.events.emit(E.start, { id: "old", label: "Old", startedAt: null });
-    h.pi.events.emit(E.end, { id: "old", status: "done" });
-    vi.advanceTimersByTime(SETTLE_MS * 2);
-    expect(h.live()).toBeUndefined();
+    expect(h.live()).toEqual([]);
     expect(h.entries).toEqual([]);
-    expect(h.key(DOWN)).toBe("consumed");
-    expect(h.list()![0]).toMatch(/^\[▶✔ agent {4}Old +— *\]$/);
+    h.key(DOWN);
+    expect(plain(h.view())).toContain("retained");
+    h.emit("session_shutdown");
   });
-
-  it("writes a settled batch's card before leaving its session; running agents carry over", () => {
+  it("cards a settled batch on departure, carries running agents and drops ended history on a new session", () => {
     vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
-    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Explore" });
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
+    const h = withAgents();
+    h.end("0");
     h.emit("session_shutdown");
     expect(h.entries).toEqual([]);
+    h.emit("session_start");
+    expect(h.live()[0]).toContain("1 Research agent running");
+    h.end("1");
+    h.emit("session_shutdown");
+    expect(h.entries).toHaveLength(1);
+    h.emit("session_start");
     expect(h.widgets.size).toBe(0);
-    // The next session shows the batch that still runs, with its ended member.
-    h.emit("session_start");
-    expect(h.live()![0]).toBe(
-      "⠋ 1 Explore agent running · 1 done (↓ to manage)",
-    );
-    h.pi.events.emit(E.end, { id: "b", status: "done" });
-    h.emit("session_shutdown");
-    expect(h.entries.map((e) => (e.data as any).agents.length)).toEqual([2]);
-    // Ended agents belong to the session they ran in.
-    h.emit("session_start");
-    expect(h.key(DOWN)).toBe("editor");
+  });
+  it("bounds ended agents while retaining an open transcript", async () => {
+    vi.useFakeTimers();
+    const h = withAgents(MAX_ENDED + 6);
+    h.key(DOWN);
+    h.key(ENTER);
+    for (let i = 0; i < MAX_ENDED + 6; i++) h.end(String(i));
     vi.advanceTimersByTime(SETTLE_MS);
     expect(h.entries).toHaveLength(1);
+    expect(plain(h.view())).toContain("Agent 0");
+    h.key(ESC);
+    expect(plain(h.view())).toContain(`1 / ${MAX_ENDED + 1}`);
+    h.key(ESC);
+    await h.flush();
+    h.emit("session_shutdown");
   });
-
-  it("keeps at most MAX_ENDED ended agents for review", () => {
-    vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    for (let i = 0; i < MAX_ENDED + 6; i++) {
-      h.pi.events.emit(E.start, { id: `a${i}`, label: `A${i}` });
-      h.pi.events.emit(E.end, { id: `a${i}`, status: "done" });
-    }
-    vi.advanceTimersByTime(SETTLE_MS);
-    expect((h.entries[0].data as any).agents).toHaveLength(MAX_ENDED + 6);
-    h.key(DOWN);
-    expect(h.list()![0]).toBe(`  +${MAX_ENDED - 6} more`);
-  });
-
-  it("keeps a finished batch live instead of writing a card with CADENCE_AGENT_PANEL=always", () => {
-    vi.useFakeTimers();
-    const h = host({ keep: true });
-    h.emit("session_start");
-    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
-    vi.advanceTimersByTime(SETTLE_MS * 2);
-    expect(h.entries).toEqual([]);
-    expect(h.live()).toEqual(["✔ 1 Explore agent finished · 0s"]);
-    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Review" });
-    expect(h.live()![0]).toBe("⠋ 1 Review agent running (↓ to manage)");
+  it("validates retained cards and fits Unicode rows to terminal width", () => {
+    const s = new SubagentStore(() => 1000);
+    s.apply(E.start, { id: "a", label: "读取文件".repeat(40) });
+    s.apply(E.end, { id: "a", status: "error", error: "失败".repeat(50) });
+    const card = cardOf(s.batch());
+    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    for (const bad of [
+      null,
+      {},
+      { ...card, agents: [] },
+      { ...card, omitted: -1 },
+      { ...card, agents: [{ ...card.agents[0], status: "running" }] },
+    ])
+      expect(decodeCard(bad)).toBeUndefined();
+    for (let width = 1; width < 100; width++)
+      for (const line of cardLines(card, true, width, paint))
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    expect(
+      liveLines({ agents: [], now: 0, frame: 0, hint: true }, 80, paint),
+    ).toEqual([]);
   });
 });
 
-describe("focus model", () => {
-  it("leaves every input-box key to Pi, including Enter, Shift+Tab and Ctrl+J", () => {
-    const h = withTwo();
-    for (const data of [
+describe("upstream agent browser integration", () => {
+  it("leaves editor, dialog, overlay and key-release input alone", () => {
+    const h = withAgents();
+    for (const key of [
       ENTER,
-      "\x1b[Z", // shift+tab
-      "\t",
-      "\n", // ctrl+j: Pi's newline
-      "a",
       UP,
       ESC,
-      CTRL_C,
-      "\x04", // ctrl+d
-      "\x0e", // ctrl+n
-      "\x10", // ctrl+p
-      "\x15", // ctrl+u
-      "\x1b[5~", // page up
+      "\x03",
+      "\x04",
+      "\x0e",
+      "\x10",
+      "\x1b[Z",
+      "\n",
+      "x",
+      PAGEUP,
+      "\x1b[1;1:3B",
     ])
-      expect(h.key(data)).toBe("editor");
-    // ↓ only moves down from an empty, focused input box with agents.
-    h.type("draft");
+      expect(h.key(key)).toBe("editor");
+    h.setText("draft");
     expect(h.key(DOWN)).toBe("editor");
-    h.type("");
+    h.setText("");
     h.overlay(true);
     expect(h.key(DOWN)).toBe("editor");
     h.overlay(false);
-    h.dialog(true);
+    h.focusDialog();
     expect(h.key(DOWN)).toBe("component");
-    h.dialog(false);
-    const empty = host();
-    empty.emit("session_start");
-    expect(empty.key(DOWN)).toBe("editor");
-    expect(h.list()).toEqual([]);
+    expect(h.ctx.ui.custom).not.toHaveBeenCalled();
+    h.emit("session_shutdown");
   });
-
-  it("↓ opens the list below the input; ↑ past the first row or Esc closes it", () => {
-    const h = withTwo();
+  it("mounts fullscreen browsing as one overlay; Esc returns to the same list", async () => {
+    const h = withAgents();
     expect(h.key(DOWN)).toBe("consumed");
-    expect(h.widgets.get("cadence-agents-list")?.placement).toBe("belowEditor");
-    expect(h.list()![0]).toMatch(/^\[▶⠋ Explore {2}Agent A/);
-    // The live hint is for the input box only.
-    expect(h.live()![0]).toBe("⠋ 2 Explore agents running");
+    expect(h.ctx.ui.custom.mock.calls[0][1]).toMatchObject({ overlay: true });
     h.key(DOWN);
-    expect(h.list()![1]).toMatch(/^\[▶/);
-    h.key(DOWN);
-    expect(h.list()![1]).toMatch(/^\[▶/);
-    h.key("\x10"); // ctrl+p
-    expect(h.list()![0]).toMatch(/^\[▶/);
-    expect(h.key(UP)).toBe("consumed");
-    expect(h.list()).toEqual([]);
-    expect(h.live()![0]).toContain("(↓ to manage)");
-    h.key(DOWN);
-    // Esc is the list's, never Pi's interrupt.
-    expect(h.key(ESC)).toBe("consumed");
-    expect(h.list()).toEqual([]);
-    expect(h.key("x")).toBe("editor");
-  });
-
-  it("in the list, Ctrl+D/U cannot exit or edit, and other keys return to the input", () => {
-    const h = withTwo();
-    h.key(DOWN);
-    expect(h.key("\x04")).toBe("consumed");
-    expect(h.key("\x15")).toBe("consumed");
-    expect(h.key("\x1b[5~")).toBe("editor"); // main transcript scrolls itself
-    expect(h.key(CTRL_C)).toBe("editor");
-    expect(h.list()).toEqual([]);
-    expect(h.key(DOWN)).toBe("consumed");
-    expect(h.key("q")).toBe("editor");
-    expect(h.key(DOWN)).toBe("consumed");
-    // A dialog that takes focus gets its own keys.
-    h.dialog(true);
-    expect(h.key(DOWN)).toBe("component");
-    expect(h.list()).toEqual([]);
-    h.dialog(false);
-    expect(h.key(ENTER)).toBe("editor");
-  });
-
-  it("Enter opens the agent view; selection switches it; Esc or Ctrl+C return", async () => {
-    const h = withTwo();
-    h.key(DOWN);
-    expect(h.key(ENTER)).toBe("consumed");
-    expect(h.ctx.ui.custom).toHaveBeenCalledTimes(1);
-    expect(h.view()![0]).toContain("→ viewing: Agent A");
-    expect(h.view()!.at(-1)).toContain("Esc back to main");
+    h.key(ENTER);
+    expect(plain(h.view())).toContain("Agent 1");
     expect(h.live()).toEqual([]);
-    expect(h.list()).toHaveLength(2);
-    expect(h.list()![0]).toMatch(/^\[▶/);
-    h.key(DOWN);
-    h.key(ENTER);
-    expect(h.view()![0]).toContain("Agent B");
+    h.key(ESC);
+    expect(plain(h.view())).toContain("2 / 2");
     expect(h.ctx.ui.custom).toHaveBeenCalledTimes(1);
-    // Text input is disabled while viewing.
-    expect(h.key("z")).toBe("component");
-    expect(h.view()![0]).toContain("Agent B");
     h.key(ESC);
     await h.flush();
-    expect(h.view()).toBeUndefined();
-    expect(h.live()![0]).toContain("running");
-    // Focus stays in the list on the viewed row.
-    expect(h.list()![1]).toMatch(/^\[▶/);
+    expect(h.view()).toEqual([]);
+    expect(h.live()).toHaveLength(1);
+    h.emit("session_shutdown");
+  });
+  it("updates the current browser transcript and list with rejection, not failure", () => {
+    const h = withAgents(1);
+    h.say("0", "Review found a missing acceptance test.");
+    h.key(DOWN);
     h.key(ENTER);
-    expect(h.view()![0]).toContain("Agent B");
-    h.key(CTRL_C);
-    await h.flush();
-    expect(h.view()).toBeUndefined();
+    expect(plain(h.view())).toContain("running");
+    h.end("0", "rejected");
+    expect(plain(h.view())).toContain("rejected");
+    expect(plain(h.view())).toContain(
+      "Review found a missing acceptance test.",
+    );
+    expect(plain(h.view())).not.toContain("error");
     h.key(ESC);
-    expect(h.list()).toEqual([]);
+    expect(plain(h.view())).toContain("rejected");
+    h.emit("session_shutdown");
   });
-
-  it("forgets a view Pi displaced, and never takes keys from the restored editor", async () => {
-    const h = withTwo();
+  it("uses the upstream docked mount in regular mode, without changing the browser", () => {
+    const h = withAgents(2, { mode: "regular" });
     h.key(DOWN);
-    h.key(ENTER);
-    h.dialog(true);
-    expect(h.key(ESC)).toBe("component");
-    h.restoreEditor();
-    expect(h.key("x")).toBe("editor");
-    expect(h.live()![0]).toContain("running");
-    expect(h.list()).toEqual([]);
+    expect(h.ctx.ui.custom.mock.calls[0][1]).toEqual({ overlay: false });
+    h.emit("session_shutdown");
   });
-
-  it("writes the card of a batch that settles while viewed, keeping the view until Esc", async () => {
-    vi.useFakeTimers();
-    const h = withTwo();
+  it("scrolls a continuous list and preserves selection while other agents update", () => {
+    const h = withAgents(18);
     h.key(DOWN);
+    for (let i = 0; i < 12; i++) h.key(DOWN);
+    const before = plain(h.view());
+    expect(before).toContain("13 / 18");
+    const ids = [...before.matchAll(/Agent (\d+)/g)].map((m) => Number(m[1]));
+    expect(ids.length).toBeGreaterThan(3);
+    expect(ids).toEqual(
+      Array.from({ length: ids.length }, (_, i) => ids[0] + i),
+    );
+    h.pi.events.emit(E.activity, { id: "0", activity: "New activity" });
+    h.start("18");
+    expect(plain(h.view())).toContain("13 / 19");
     h.key(ENTER);
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
-    h.pi.events.emit(E.end, { id: "b", status: "done" });
-    vi.advanceTimersByTime(SETTLE_MS);
-    expect(h.entries).toHaveLength(1);
-    expect(h.view()![0]).toContain("✔ finished");
-    expect(h.list()).toHaveLength(2);
-    h.key(ESC);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(h.list()).toHaveLength(3);
-    h.key(ESC);
-    expect(h.live()).toBeUndefined();
-    expect(h.list()).toEqual([]);
+    expect(plain(h.view())[0]).toBeDefined();
+    expect(plain(h.view())).toContain("Agent 12");
+    h.emit("session_shutdown");
   });
-});
-
-describe("agent view", () => {
-  initTheme("dark");
-  const plain = (lines: string[] | undefined) =>
-    (lines ?? []).map((l) => stripTerminalSequences(l)).join("\n");
-  const say = (h: ReturnType<typeof host>, id: string, text: string) =>
-    h.pi.events.emit(E.message, {
-      id,
-      message: { role: "user", content: text },
-    });
-
-  it("shows the agent's history and streams new output live", () => {
-    const h = withTwo();
-    say(h, "a", "Map the architecture");
+  it("arrows scroll the transcript; new output does not move paused reading; each agent remembers its position", () => {
+    const h = withAgents();
+    for (let i = 0; i < 80; i++) {
+      h.say("0", `a-line-${i}`);
+      h.say("1", `b-line-${i}`);
+    }
     h.key(DOWN);
     h.key(ENTER);
-    expect(plain(h.view(70))).toContain("Map the architecture");
-    const assistant = (text: string, extra: object[] = []) => ({
-      role: "assistant",
-      content: [{ type: "text", text }, ...extra],
-      stopReason: "toolUse",
-    });
-    h.pi.events.emit(E.message, {
-      id: "a",
-      message: assistant("Reading the ent"),
-      streaming: true,
-    });
-    expect(plain(h.view(70))).toContain("Reading the ent");
-    h.pi.events.emit(E.message, {
-      id: "a",
-      message: assistant("Reading the entry point.", [
-        {
-          type: "toolCall",
-          id: "t1",
-          name: "read",
-          arguments: { path: "src/index.ts" },
-        },
-      ]),
-    });
-    h.pi.events.emit(E.message, {
-      id: "a",
-      message: {
-        role: "toolResult",
-        toolCallId: "t1",
-        toolName: "read",
-        content: [{ type: "text", text: "export default function register" }],
-        isError: false,
-      },
-    });
-    const text = plain(h.view(70));
-    expect(text).not.toContain("Reading the ent\n");
-    expect(text.match(/Reading the entry point\./g)).toHaveLength(1);
-    expect(text).toContain("src/index.ts");
-    for (const line of h.view(70)!)
-      expect(visibleWidth(line)).toBeLessThanOrEqual(70);
-    // Another agent's history is separate.
-    h.key(DOWN);
-    h.key(ENTER);
-    expect(plain(h.view(70))).toContain("(no messages yet)");
-  });
-
-  it("remembers each view's scroll position across switches", async () => {
-    const h = withTwo();
-    for (let i = 0; i < 80; i++) say(h, "a", `a-line-${i}`);
-    for (let i = 0; i < 80; i++) say(h, "b", `b-line-${i}`);
-    h.key(DOWN);
-    h.key(ENTER);
-    // Follows the newest output by default.
     expect(plain(h.view())).toContain("a-line-79");
-    h.key("\x1b[5~");
-    h.key("\x1b[5~");
-    const scrolled = plain(h.view());
-    expect(scrolled).not.toContain("a-line-79");
-    // New output does not move a scrolled-up view.
-    say(h, "a", "a-line-80");
-    expect(plain(h.view())).toBe(scrolled);
+    h.key(UP);
+    expect(plain(h.view())).toContain("paused");
+    h.key(PAGEUP);
+    const content = h.view().slice(1, -1);
+    h.say("0", "a-line-80");
+    expect(h.view().slice(1, -1)).toEqual(content);
+    h.key(ESC);
     h.key(DOWN);
     h.key(ENTER);
     expect(plain(h.view())).toContain("b-line-79");
-    h.key("\x15"); // ctrl+u: half page
-    const bScrolled = plain(h.view());
-    expect(bScrolled).not.toContain("b-line-79");
+    h.key(ESC);
     h.key(UP);
     h.key(ENTER);
-    expect(plain(h.view())).toBe(scrolled);
-    h.key(ESC);
-    await h.flush();
-    h.key(DOWN);
-    h.key(ENTER);
-    expect(plain(h.view())).toBe(bScrolled);
-    // End follows again; Home goes to the top.
+    expect(h.view().slice(1, -1)).toEqual(content);
     h.key("\x1b[F");
-    say(h, "b", "b-line-80");
-    expect(plain(h.view())).toContain("b-line-80");
+    expect(plain(h.view())).toContain("a-line-80");
     h.key("\x1b[H");
-    expect(plain(h.view())).toMatch(/b-line-0 /);
-    expect(h.view()!.join("")).not.toContain("\x1b]133;");
-    // Height fits the terminal above the list and the footer.
-    expect(h.view()).toHaveLength(30 - 2 - 5);
+    expect(plain(h.view())).toContain("a-line-0");
+    h.emit("session_shutdown");
   });
-
-  it("keeps the view when its agent ends and shows the final facts", () => {
-    const h = withTwo();
+  it("renders streamed messages and retained tool results without unmatched prompt marks", () => {
+    const h = withAgents(1);
     h.key(DOWN);
     h.key(ENTER);
-    h.at(T0 + 252_000);
-    h.pi.events.emit(E.stats, { id: "a", tokensIn: 1_234_567 });
-    h.pi.events.emit(E.end, { id: "a", status: "done" });
-    expect(plain(h.view())).toContain("✔ finished (4m 12s · ↓1.2M)");
-    h.pi.events.emit(E.end, { id: "b", status: "error", error: "boom" });
+    const assistant = (text: string) => ({
+      role: "assistant",
+      content: [{ type: "text", text }],
+    });
+    h.pi.events.emit(E.message, {
+      id: "0",
+      message: assistant("partial"),
+      streaming: true,
+    });
+    expect(plain(h.view())).toContain("partial");
+    h.pi.events.emit(E.message, {
+      id: "0",
+      message: assistant("finished text"),
+    });
+    expect(plain(h.view())).not.toContain("partial");
+    h.pi.events.emit(E.message, {
+      id: "0",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "read1",
+            name: "read",
+            arguments: { path: "file.ts" },
+          },
+        ],
+      },
+    });
+    h.pi.events.emit(E.message, {
+      id: "0",
+      message: {
+        role: "toolResult",
+        toolCallId: "read1",
+        toolName: "read",
+        content: [{ type: "text", text: "retained result" }],
+      },
+    });
+    expect(plain(h.view())).toContain("file.ts");
+    h.key("\x0f");
+    expect(plain(h.view())).toContain("retained result");
+    h.say("0", "user");
+    expect(h.view().join("")).not.toContain("\x1b]133;");
+    h.emit("session_shutdown");
+  });
+  it("keeps short transcripts compact and fits narrow/short terminals", () => {
+    const h = withAgents(1);
+    h.say("0", "short");
     h.key(DOWN);
     h.key(ENTER);
-    expect(plain(h.view())).toContain("✘ failed (4m 12s)");
-    expect(h.live()).toEqual([]);
+    expect(h.view().length).toBeLessThan(10);
+    for (const rows of [6, 12, 24, 40])
+      for (const width of [6, 20, 80]) {
+        h.tui.terminal.rows = rows;
+        const rendered = h.view(width);
+        expect(rendered.length).toBeLessThanOrEqual(rows);
+        for (const line of rendered)
+          expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    h.emit("session_shutdown");
+  });
+  it("only announces the viewed child and detaches on shutdown without control commands", () => {
+    const h = withAgents();
+    const views: any[] = [];
+    h.pi.events.on("subagent:view", (event) => views.push(event.id));
+    h.key(DOWN);
+    expect(views).toEqual([]);
+    h.key(ENTER);
+    expect(views).toEqual(["0"]);
+    h.key(ESC);
+    expect(views.at(-1)).toBe(null);
+    h.key(DOWN);
+    h.key(ENTER);
+    expect(views.at(-1)).toBe("1");
+    h.emit("session_shutdown");
+    expect(views.at(-1)).toBe(null);
+    expect(h.view()).toEqual([]);
+    expect(h.widgets.size).toBe(0);
   });
 });
 
-describe("demo command", () => {
-  it("plays a batch with one failure, then a review agent with its own card", async () => {
-    vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    let demo: any;
-    const notify = vi.fn();
-    agentPanelDemo({
-      events: h.pi.events,
-      on: () => {},
-      registerCommand: (_name: string, command: unknown) => {
-        demo = command;
+describe("adapted upstream transcript pane", () => {
+  it("honours remapped paging and consumes wheel only", () => {
+    const store = new SubagentStore();
+    store.apply(E.start, { id: "a" });
+    store.apply(E.message, {
+      id: "a",
+      message: {
+        role: "user",
+        content: Array.from({ length: 100 }, (_, i) => `r${i}`).join("\n"),
       },
-    } as any);
-    await demo.handler("", { ui: { notify } });
-    expect(notify).toHaveBeenCalledWith(
-      expect.stringContaining("Started 2 fake background agents"),
-      "info",
-    );
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(h.live(100)).toHaveLength(3);
-    // Each demo agent leaves a transcript with tool results.
-    h.key(DOWN);
-    h.key(ENTER);
-    await vi.advanceTimersByTimeAsync(60_000);
-    const view = h.view(100)!.join("\n");
-    expect(view).toContain("src/native-client.ts");
-    expect(view).toContain("composes the shell");
-    h.key(ESC);
-    h.key(ESC);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(h.entries).toHaveLength(2);
-    expect(h.card(0, false, 100)).toEqual([
-      expect.stringMatching(
-        /^ ✘ 2 Explore agents finished · 1 done · 1 failed · \d+s \(ctrl\+o to expand\)$/,
-      ),
-      expect.stringMatching(/Provider rate limit \(demo failure\)/),
-    ]);
-    expect(h.card(1, false, 100)![0]).toMatch(/^ ✔ 1 Review agent finished/);
-    expect(h.live()).toBeUndefined();
+    });
+    const entry = cadenceBrowserSource(store, () => {}, Date.now).entries()[0];
+    const tui = { terminal: { rows: 24, columns: 80 }, requestRender: vi.fn() };
+    const pane = new TranscriptPane({
+      tui: tui as unknown as TUI,
+      theme: theme as any,
+      keys: new KeybindingsManager(TUI_KEYBINDINGS, {
+        "tui.altScreen.pageUp": "ctrl+b",
+      }),
+      source: entry.source,
+      heading: entry.heading,
+      cwd: "/fixture",
+      done: () => {},
+      markdownTheme: getMarkdownTheme(),
+      position: { offset: 0, follow: true },
+    });
+    const before = pane.render(80);
+    pane.handleInput(PAGEUP);
+    expect(pane.render(80)).toEqual(before);
+    pane.handleInput("\x02");
+    expect(pane.render(80)).not.toEqual(before);
+    const at = pane.render(80);
+    expect(pane.handleMouse({ type: "wheel", wheelDelta: -3 } as any)).toEqual({
+      handled: true,
+    });
+    expect(pane.render(80)).not.toEqual(at);
+    expect(pane.handleMouse({ type: "click" } as any)).toBeUndefined();
+    pane.dispose();
   });
+});
+
+it("keeps the fake-agent demo's two settled cards without executing work", async () => {
+  vi.useFakeTimers();
+  const h = host();
+  h.emit("session_start");
+  let demo: any;
+  agentPanelDemo({
+    ...h.pi,
+    registerCommand: (_name: string, command: unknown) => {
+      demo = command;
+    },
+  } as any);
+  await demo.handler("", { ui: { notify: vi.fn() } });
+  await vi.advanceTimersByTimeAsync(1000);
+  h.key(DOWN);
+  h.key(ENTER);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(plain(h.view(100))).toContain("src/native-client.ts");
+  h.key(ESC);
+  h.key(ESC);
+  await h.flush();
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(h.entries).toHaveLength(2);
+  expect(h.card(0).join("\n")).toContain("1 failed");
+  expect(h.card(1).join("\n")).toContain("Review agent");
+  expect(h.live()).toEqual([]);
+  h.emit("session_shutdown");
 });

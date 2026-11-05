@@ -90,7 +90,7 @@ cadence project open /absolute/new-project --create
 ```sh
 cadence server status
 cadence server restart     # 升级或修改 .env / models.json 之后
-cadence server upgrade     # npm 全局安装：下载、安装并重启
+cadence server upgrade     # 识别 Pi/npm/Bun 安装：下载、安装并重启
 cadence server stop        # 保持注册状态，并在下次启动或登录时再次启动
 cadence server uninstall   # 在 npm uninstall -g 之前运行
 ```
@@ -103,7 +103,7 @@ Linux root 与命名服务、远程 HTTPS 访问和恢复见[服务管理](docs/
 ## 开发
 
 Pi 也可以加载本地 checkout 或打包的 tarball：把其绝对或相对路径加到 Pi 的 `packages`，或试试 `pi -e ./cadence`。
-Cadence 不指定 Pi 版本范围；开发用的固定版本和已测试运行时不是通用的兼容性承诺。
+Cadence 要求 Pi 1.5.0 或兼容的 1.x 宿主；开发用的固定版本和已测试运行时不是通用的兼容性承诺。
 
 ```sh
 bun install

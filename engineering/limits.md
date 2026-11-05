@@ -33,9 +33,9 @@ Rows naming a module are maintained by hand; update them in the same change as t
 | Unified workbench     | 128 selected directories; 1024 durable startup/association preparation receipts (warm reuse writes none); 64 connections; bounded proxy frames and bodies; no eviction | `src/service/gateway.ts`, `src/service/gateway-store.ts`                                                     |
 | Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                                                                            | `src/service-assets.ts`                                                                                      |
 
-Image input bounds live in `src/image-content.mjs` (`IMAGE_LIMITS`, with the standalone codec's `IMAGE_COUNT`): 4 images per message, 4MiB per image and 8MiB per message, 16384 per dimension and 32Mi pixels.
-Staging reserves at most 64 images/64MiB of raw bytes, with a 10min idle validity; base64 adds about one third.
-Upload/history chunks hold at most 256KiB base64 characters, and the private worker image pipe is bounded at 12MiB; each active turn separately holds only its admitted message bytes.
+Image input has no Cadence-specific count, byte, dimension or pixel quota; browser/host memory, provider limits and the existing control/session read budgets still apply.
+`src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
+The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
 Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks (IDs up to 48 characters), two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline counted from acquiring the checkout gate.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
@@ -64,11 +64,14 @@ Workflow history reads at most 200 directory entries per quantum and returns at 
 At most 16 scans hold readonly directory handles; 120s idle expiry or owner teardown closes them (`historyScans`, `historyIdleMs`).
 These are read budgets, not a lifetime retained-run cap; history is never evicted to satisfy them.
 
-Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-tools.mjs`: 30s cooperative work per call, 2000 visited entries, depth 8, 100 results, 1MiB per text file, 8MiB read per call and 32KiB output.
+Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-scan.mjs`: 30s cooperative work per call, 2000 visited entries per page, depth 8, 100 results per page, 1MiB per file per page, 8MiB read per call and 32KiB for the complete encoded tool result.
+Streaming uses 64KiB chunks and 8KiB line buffers; oversized lines are labelled and skipped, not retained without bound.
+There are at most four opening/active/suspended/closing scans per worker, with 120s idle cursor expiry; batch reads admit eight file requests and 32 total ranges, and literal searches admit 16 patterns.
+The per-page file quantum does not hide the rest of a file: a continuation resumes its actual position.
 There is no cumulative tool-call quota or early final-report cutoff.
 The parent launcher alone enforces the total process deadline, including SDK bootstrap.
 These are cooperative I/O limits: outstanding filesystem operations and directory/file closure are joined, never abandoned on timeout; the unchanged parent worker deadline is the hard process bound.
-Explicit investigation roots are limited to eight; omitted roots select the conversation cwd.
+Explicit investigation roots are limited to eight (`bindWorkerWorkspace` in `src/worker-workspace.mjs`); omitted roots select the conversation cwd.
 
 Conversations are Pi session files with no Cadence-side lifetime byte, turn or count cap (`src/service/pi-sessions.ts`).
 A session larger than `SESSION_BYTES` (64MiB) retains its identity through a bounded `HEADER_BYTES` (16KiB) header read but cannot be opened or continued; unreadability never proves a requested ID absent; a listing considers the newest 10,000 file names, and settings files are read up to 1MiB.

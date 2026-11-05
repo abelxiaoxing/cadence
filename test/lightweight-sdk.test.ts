@@ -1165,6 +1165,24 @@ const mockedWorker = async (scenario: string) => {
   );
   let stdout = "";
   let stderr = "";
+  let toolkitCloses = 0;
+  vi.doMock("../src/worker-toolkit.mjs", async (original) => {
+    const actual = await original<any>();
+    return {
+      ...actual,
+      createWorkerToolkit: (options: any) => {
+        const toolkit = actual.createWorkerToolkit(options);
+        return {
+          ...toolkit,
+          close: async () => {
+            toolkitCloses++;
+            await toolkit.close();
+            if (scenario === "tool-cleanup") throw secretFault;
+          },
+        };
+      },
+    };
+  });
   let listener: (event: any) => void = () => {};
   const stops = [
     "stop",
@@ -1499,6 +1517,7 @@ const mockedWorker = async (scenario: string) => {
       requests,
       payloadCalls,
       responseCalls,
+      toolkitCloses,
     };
   } finally {
     process.exitCode = savedExitCode;
@@ -1507,9 +1526,28 @@ const mockedWorker = async (scenario: string) => {
     vi.doUnmock("@earendil-works/pi-ai");
     vi.doUnmock("@earendil-works/pi-ai/api/openai-completions");
     vi.doUnmock("@earendil-works/pi-coding-agent");
+    vi.doUnmock("../src/worker-toolkit.mjs");
     vi.resetModules();
   }
 };
+
+it.each(["stop", "session", "prompt-throw", "tool-cleanup"])(
+  "worker bootstrap joins toolkit cleanup even after %s",
+  async (scenario) => {
+    const result = await mockedWorker(scenario);
+    expect(result.toolkitCloses).toBe(1);
+    expect(result.exitCode).toBe(scenario === "stop" ? 0 : 1);
+    if (scenario === "tool-cleanup") {
+      expect(diagnostic(result.stderr)).toMatchObject({
+        stage: "cleanup",
+        class: "cleanup-failure",
+        cleanupFailures: 4,
+        cleanupSettled: true,
+      });
+      expect(result.stderr).not.toContain("fabricated-secret");
+    }
+  },
+);
 
 for (const scenario of [
   "payload-undefined",
@@ -2096,11 +2134,12 @@ const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
 const captureFixtureImports = `    import { createHash } from "node:crypto";
     const VERSION = "fixture-sdk";
     const readFileSync = () => Buffer.from("explicit public-boundary fixture worker source");
-    import { researchTools } from ${JSON.stringify(new URL("../src/research-tools.mjs", import.meta.url).href)};
+    import { createWorkerToolkit } from ${JSON.stringify(new URL("../src/worker-toolkit.mjs", import.meta.url).href)};
+    import { bindWorkerWorkspace } from ${JSON.stringify(new URL("../src/worker-workspace.mjs", import.meta.url).href)};
     import { LIMITS, closed, decodeWorkerPublicRequest, parseWireJson } from ${JSON.stringify(new URL("../src/worker-public.mjs", import.meta.url).href)};
     import { CaptureEmitter, SdkCapture } from ${JSON.stringify(new URL("../src/worker-capture.mjs", import.meta.url).href)};
     import { own } from ${JSON.stringify(new URL("../src/worker-redaction.mjs", import.meta.url).href)};
-    import { captureBash, ToolIngress } from ${JSON.stringify(new URL("../src/worker-tools.mjs", import.meta.url).href)};
+    import { ToolIngress } from ${JSON.stringify(new URL("../src/worker-tools.mjs", import.meta.url).href)};
     const createLocalBashOperations = () => { throw new Error("Fixture bash forbidden"); };
 `;
 const mockBootstrap = (
@@ -2620,7 +2659,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
             "utf8",
           ),
         ).version,
-      ).toBe("0.84.3");
+      ).toBe("1.5.0");
       const workerSha256 = createHash("sha256")
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
@@ -2729,7 +2768,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         executable: process.execPath,
         platform: process.platform,
         arch: process.arch,
-        publicSDKVersion: "0.84.3",
+        publicSDKVersion: "1.5.0",
         routingQualified:
           !unexpected &&
           (mode === "DIRECT"

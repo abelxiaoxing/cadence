@@ -26,13 +26,7 @@ import {
   VERSION,
 } from "@earendil-works/pi-coding-agent";
 import { conversationResources } from "./conversation-resources.mjs";
-import { coordinatorTools } from "./coordinator-tools.mjs";
-import {
-  decodeImageBase64,
-  IMAGE_LIMITS,
-  validateImageBytes,
-} from "./image-content.mjs";
-import { researchTools } from "./research-tools.mjs";
+import { decodeImageBase64, validateImageBytes } from "./image-content.mjs";
 import {
   BROWSER_COMMAND_ENTRY,
   WEBUI_SESSION_ENTRY,
@@ -45,7 +39,9 @@ import {
   parseWireJson,
 } from "./worker-public.mjs";
 import { own } from "./worker-redaction.mjs";
-import { captureBash, ToolIngress } from "./worker-tools.mjs";
+import { createWorkerToolkit } from "./worker-toolkit.mjs";
+import { ToolIngress } from "./worker-tools.mjs";
+import { bindWorkerWorkspace } from "./worker-workspace.mjs";
 
 const adapters = {
   "openai-completions": () =>
@@ -64,6 +60,7 @@ const adapters = {
     import("@earendil-works/pi-ai/api/azure-openai-responses"),
 };
 let session;
+let toolkit;
 let ownsCoordinatorChannel = false;
 let ownedAgent;
 let unsubscribe;
@@ -81,7 +78,7 @@ let terminalStopReason = "UNKNOWN";
 let requestPrepared = false;
 let actualResponseStatus = "UNKNOWN";
 let preflight = "UNKNOWN";
-let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, dispose=4, owned close=8.
+let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, session/tool dispose=4, owned close=8.
 let pendingAbort;
 let cleanupSettled = false;
 const fail = (where, category) => {
@@ -463,40 +460,33 @@ try {
   process.stdout.on("error", stdoutFailureListener);
   stage = "session";
   const requestedThinkingLevel = thinkingLevel ?? "off";
+  const workspace = bindWorkerWorkspace(cwd, investigation?.roots ?? [cwd]);
   const manager = conversation
-    ? openConversation(target, cwd, model, requestedThinkingLevel)
-    : SessionManager.inMemory(cwd);
-  const coordinationTools = coordinator ? coordinatorTools() : undefined;
+    ? openConversation(target, workspace.cwd, model, requestedThinkingLevel)
+    : SessionManager.inMemory(workspace.cwd);
+  toolkit = createWorkerToolkit({
+    workspace,
+    purpose: publicRequest.purpose,
+    coordinator,
+    secrets,
+    fail: captureFailure,
+    createLocalBashOperations,
+    queue: emitter.queue,
+  });
   ownsCoordinatorChannel = coordinator;
   const created = await createAgentSession({
-    cwd,
-    agentDir: cwd,
+    ...toolkit.sessionOptions,
+    agentDir: workspace.cwd,
     model,
     modelRuntime: runtime,
     thinkingLevel: requestedThinkingLevel,
-    tools: coordinator
-      ? ["cadence_research", "cadence_plan", "cadence_status"]
-      : kind === "code"
-        ? ["read", "grep", "find", "ls", "write", "edit", "bash"]
-        : ["read", "grep", "find", "ls"],
-    customTools: coordinator
-      ? coordinationTools
-      : kind === "code"
-        ? [
-            captureBash(
-              cwd,
-              secrets,
-              captureFailure,
-              createLocalBashOperations,
-              emitter.queue,
-            ),
-          ]
-        : conversation
-          ? []
-          : researchTools(cwd, investigation?.roots ?? [cwd]),
     resourceLoader:
       conversation && !coordinator
-        ? conversationResources(resourceLoader, cwd, conversation.agentDir)
+        ? conversationResources(
+            resourceLoader,
+            workspace.cwd,
+            conversation.agentDir,
+          )
         : resourceLoader,
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory({
@@ -558,7 +548,9 @@ try {
   session.agent.toolExecution = "sequential";
   if (session.agent.toolExecution !== "sequential")
     refuse("session", "capture-unsupported");
-  session.agent.state.tools = ingress.wrap(session.agent.state.tools);
+  session.agent.state.tools = ingress.wrap(
+    toolkit.wrap(session.agent.state.tools),
+  );
   const initialLeaf = conversation ? manager.getLeafId() : null;
   let recordedUser = null;
   unsubscribe = session.agent.subscribe(async (event) => {
@@ -655,7 +647,6 @@ try {
     if (
       !Number.isSafeInteger(descriptor.bytes) ||
       descriptor.bytes < 1 ||
-      descriptor.bytes > IMAGE_LIMITS.wireBytes ||
       !/^[a-f0-9]{64}$/.test(descriptor.sha256) ||
       !model.input?.includes("image")
     )
@@ -681,21 +672,18 @@ try {
       images.length !== publicRequest.imageCount
     )
       throw new Error("Invalid images");
-    let total = 0;
     for (const image of images) {
       closed(image, ["type", "data", "mimeType"]);
       if (image.type !== "image") throw new Error("Invalid image");
       const decoded = decodeImageBase64(image.data);
       validateImageBytes(decoded, image.mimeType);
-      total += decoded.length;
     }
-    if (total > IMAGE_LIMITS.totalBytes) throw new Error("Images exceed bound");
   }
   const suppliedPrompt = [
     publicRequest.context,
     ...(!conversation && kind !== "code"
       ? [
-          `Investigation roots: ${JSON.stringify(investigation?.roots ?? [cwd])}. Start at these specific paths, not / or their parents. Tools use bounded cooperative reads; no shell is available. Search filenames and shallow directories before content. Do not repeat broad scans or silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. There is no cumulative tool-call quota or early tool cutoff. On partial coverage, narrow the scope and continue as needed; never claim exhaustive absence. Report retained evidence and unresolved questions honestly.`,
+          `Investigation roots: ${JSON.stringify(workspace.roots)}. Start at these specific paths, not / or their parents. Observation tools support file/range batches, literal multi-pattern searches and one-use continuation cursors; no shell is available. Read their schemas. Continue a cursor to advance actual I/O, including empty progress pages; do not repeat the initial query to paginate. Close unused cursors. Source-changed/expired cursors require an explicit fresh query, never an assumed continuation. Coverage names omissions and live-filesystem observation, not a snapshot. Search filenames and shallow directories before content; do not silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. There is no cumulative tool-call quota or early tool cutoff. Use nextCursor when available; for terminal omissions, narrow the scope as needed. Never claim exhaustive absence from a progress page or incomplete coverage. Report retained evidence and unresolved questions honestly.`,
         ]
       : []),
     ...publicRequest.handoff.inputs.map(
@@ -765,12 +753,21 @@ try {
       fail("cleanup", "cleanup-failure");
     }
   })();
+  const closingTools = (async () => {
+    try {
+      await toolkit?.close();
+    } catch {
+      cleanupFailures |= 4;
+      fail("cleanup", "cleanup-failure");
+    }
+  })();
   await Promise.all([
     closing,
     unsubscribing,
     pendingAbort,
     aborting,
     disposing,
+    closingTools,
     emitter?.drain(),
   ]);
   // A final snapshot exists only after the actual cleanup attempts settle.

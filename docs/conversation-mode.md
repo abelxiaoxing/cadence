@@ -54,7 +54,8 @@ An uncertain final Send keeps its original command identity for observation only
 
 Use **Add images**, paste a screenshot, or drop image files onto the composer.
 Preview and remove images before Send; a message can contain images without text.
-PNG, JPEG and WebP are supported; the composer shows the current count and size limits.
+PNG, JPEG and WebP are supported.
+Cadence imposes no image count or size limit; available browser/host memory and the selected model provider still constrain what can be sent.
 Choose a model whose catalog supports image input.
 An incompatible model refuses the message rather than dropping its images.
 Ordinary and Cadence conversations use the same image input.
@@ -65,7 +66,7 @@ Only Send uploads them, bound to that exact conversation, branch, model and mess
 Unsent pictures are not saved in browser storage and disappear on refresh; the text draft remains.
 After Pi records a sent image, it appears in the conversation history and remains viewable after refresh (including retained reads when the project owner is stopped).
 Click a history thumbnail to open it at full size.
-Unsupported or over-limit media from existing Pi sessions remains omitted; unavailable images show a notice without changing their session files.
+Unsupported media from existing Pi sessions remains omitted; unavailable images show a notice without changing their session files.
 Images are private conversation content, not public download links.
 Text redaction does not sanitize words or secrets inside pixels: inspect screenshots before sending them to a model.
 

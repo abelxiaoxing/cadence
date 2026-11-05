@@ -8,7 +8,7 @@ import {
   statfsSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefinitions } from "../agent-registry.ts";
 import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
@@ -23,6 +23,7 @@ import {
   type NativeSettlement,
 } from "../worker-public.mjs";
 import { sanitizeData, sanitizeText } from "../worker-redaction.mjs";
+import { executionDirectory } from "../worker-workspace.mjs";
 import {
   gitArguments,
   gitEnvironment,
@@ -552,7 +553,14 @@ export class Workflows {
     return execution.model;
   }
   private executionCwd(live: Live, tree: string): string {
-    const cwd = resolve(tree, relative(this.cwd, live.execution.cwd));
+    if (live.execution.checkoutRoot !== this.cwd)
+      throw new ContractError("stale");
+    let cwd: string;
+    try {
+      cwd = executionDirectory(live.execution, tree);
+    } catch {
+      throw new ContractError("stale");
+    }
     if (!withinWorkspace(tree, cwd)) throw new ContractError("stale");
     // Git does not track empty/untracked directories. Recreate only their
     // empty location in an existing isolated tree, never copy source profiles

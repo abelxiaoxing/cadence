@@ -7,8 +7,8 @@
  * separate transient unit that runs the same CLI outside that cgroup.
  * Management-only and SDK-free. */
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type AutostartResult,
   type AutostartSystem,
@@ -23,17 +23,22 @@ import {
   decodeVersion,
   type MaintenanceJob,
   type MaintenanceReason,
-  type UPGRADE_ROUTES,
 } from "./contracts/gateway.ts";
 import type { GatewayStore } from "./gateway-store.ts";
+import {
+  fetchVersions,
+  type InstallationResult,
+  installation,
+  installVersion,
+  PACKAGE,
+  type PackageCommand,
+  type PackageCommands,
+  registryCommand,
+} from "./installation.ts";
 import { encoded, json } from "./private-files.ts";
 
-export const PACKAGE = "@abelxiaoxing/cadence";
 /** systemd stops a job that runs longer; a restart takes seconds, npm minutes. */
 const JOB_SECONDS = 1800;
-/** One registry query, and one install including its dependencies. */
-const VIEW_MS = 30_000;
-const INSTALL_MS = 15 * 60_000;
 /** A restart waits for its owner to become ready (see observeStarted). */
 const RESTART_MS = 5 * 60_000;
 
@@ -174,21 +179,10 @@ export function jobRunning(s: AutostartSystem): boolean {
 }
 
 type Run = { status: number | null; stdout: string };
-/** npm, with its own configuration (~/.npmrc registry, prefix and proxy). A
- * shown run writes npm's output to stderr, keeping stdout for the result. */
-export type Npm = (args: string[], show?: boolean) => Promise<Run>;
-export const npm: Npm = (args, show = false) =>
-  run("npm", args, show ? INSTALL_MS : VIEW_MS, show);
-
-function run(
-  command: string,
-  args: string[],
-  timeout: number,
-  show = false,
-): Promise<Run> {
+function run(command: string, args: string[], timeout: number): Promise<Run> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
-      stdio: ["ignore", show ? 2 : "pipe", show ? 2 : "ignore"],
+      stdio: ["ignore", "pipe", "ignore"],
       timeout,
       windowsHide: true,
     });
@@ -201,30 +195,6 @@ function run(
   });
 }
 
-export type UpgradeRoute = (typeof UPGRADE_ROUTES)[number];
-/** Only the copy that `npm root --global` names is upgraded with npm. */
-export async function upgradeRoute(
-  root: string,
-  npmRun: Npm = npm,
-): Promise<UpgradeRoute> {
-  const result = await npmRun(["root", "--global"]);
-  const global = result.status === 0 ? result.stdout.trim() : "";
-  let installed: string;
-  try {
-    installed = realpathSync(join(global, ...PACKAGE.split("/")));
-    if (!global || installed !== realpathSync(root)) return "not-npm-global";
-  } catch {
-    return "not-npm-global";
-  }
-  try {
-    accessSync(dirname(installed), constants.W_OK);
-    accessSync(global, constants.W_OK);
-  } catch {
-    return "not-writable";
-  }
-  return "npm";
-}
-
 export interface Release {
   version: string;
   deprecated: boolean;
@@ -232,21 +202,39 @@ export interface Release {
 /** The registry's exact version for a tag or version; undefined when it
  * cannot be resolved to one version. */
 export async function release(
-  spec = "latest",
-  npmRun: Npm = npm,
+  spec: string | undefined,
+  command: PackageCommand,
+  manager: "npm" | "bun" = "npm",
 ): Promise<Release | undefined> {
-  const result = await npmRun([
-    "view",
-    `${PACKAGE}@${spec}`,
-    "version",
-    "deprecated",
-    "--json",
-  ]);
+  const name = `${PACKAGE}@${spec ?? "latest"}`;
+  // Bun 1.3's info accepts only one property, silently ignoring the second.
+  // Read its complete version metadata so a deprecated release stays refused.
+  const result = await command(
+    manager === "bun"
+      ? ["info", name, "--json"]
+      : ["view", name, "version", "deprecated", "--json"],
+  );
   if (result.status !== 0) return undefined;
   try {
     // One field present prints a string; both print an object. npm 12 keeps
     // a top-level array even for one result; unwrap exactly that one layer.
     let value: unknown = JSON.parse(result.stdout);
+    if (manager === "bun") {
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        !("name" in value) ||
+        !("version" in value)
+      )
+        return undefined;
+      literal(value.name, PACKAGE);
+      return {
+        version: decodeVersion(value.version),
+        deprecated:
+          "deprecated" in value && typeof value.deprecated === "string",
+      };
+    }
     if (Array.isArray(value)) {
       if (value.length !== 1) return undefined;
       value = value[0];
@@ -261,6 +249,18 @@ export async function release(
   } catch {
     return undefined;
   }
+}
+
+/** Refused/unknown installations do not fall back to a different registry
+ * client. Both the WebUI check and the upgrade use this exact selection. */
+export function releaseForInstallation(
+  selected: InstallationResult,
+  commands: PackageCommands,
+  spec?: string,
+): Promise<Release | undefined> {
+  return "manager" in selected
+    ? release(spec, registryCommand(selected, commands), selected.manager)
+    : Promise.resolve(undefined);
 }
 
 /** Starts the installed copy's own `server restart`, which rewrites the
@@ -279,6 +279,7 @@ export async function restartInstalled(s: AutostartSystem): Promise<boolean> {
     ],
     RESTART_MS,
   );
+  if (result.status !== 0) return false;
   try {
     const value: unknown = JSON.parse(
       result.stdout.trim().split("\n").at(-1) ?? "",
@@ -303,7 +304,7 @@ export interface UpgradeResult extends AutostartResult {
   reason?: MaintenanceReason;
 }
 export interface UpgradePorts {
-  npm: Npm;
+  commands: PackageCommands;
   /** The platform's orderly service Stop. */
   stop(): Promise<AutostartResult>;
   /** Whether the installed copy restarted and its owner became ready. */
@@ -317,48 +318,67 @@ export async function upgradeService(
   to: string | undefined,
   ports: UpgradePorts,
 ): Promise<UpgradeResult> {
-  const route = await upgradeRoute(s.root, ports.npm);
-  if (route !== "npm") return { status: route };
+  const selected = await installation(s, ports.commands);
+  if (!("manager" in selected)) return { status: selected.route };
+  const currentVersion = () => {
+    try {
+      return installedVersion(s.root);
+    } catch {
+      return undefined;
+    }
+  };
   const from = installedVersion(s.root);
-  const target = await release(to, ports.npm);
-  if (!target) return { status: "failed", reason: "fetch-failed", from };
+  const target = await releaseForInstallation(selected, ports.commands, to);
+  if (!target || (to !== undefined && target.version !== to))
+    return { status: "failed", reason: "fetch-failed", from };
   const versions = { from, to: target.version };
   if (target.version === from)
     return { status: "current", version: from, ...versions };
   if (target.deprecated) return { status: "deprecated", ...versions };
-  const spec = `${PACKAGE}@${target.version}`;
-  if ((await ports.npm(["cache", "add", spec], true)).status !== 0)
+  if (!(await fetchVersions(selected, [target.version, from], ports.commands)))
     return { status: "failed", reason: "fetch-failed", ...versions };
+  // A long fetch cannot authorize changing a newly pinned/replaced copy.
+  if (
+    currentVersion() !== from ||
+    JSON.stringify(await installation(s, ports.commands)) !==
+      JSON.stringify(selected)
+  )
+    return { status: "failed", reason: "refused", ...versions };
   const stopped = await ports.stop();
   if (stopped.status !== "stopped")
     return { ...stopped, reason: "stop-unconfirmed", ...versions };
   const install = (version: string) =>
-    ports.npm(
-      [
-        "install",
-        "--global",
-        "--no-audit",
-        "--no-fund",
-        `${PACKAGE}@${version}`,
-      ],
-      true,
-    );
+    installVersion(selected, version, ports.commands);
   const settled = (status: string, reason?: MaintenanceReason) => ({
     status,
     ...(reason ? { reason } : {}),
     ...versions,
-    version: installedVersion(s.root),
+    version: currentVersion(),
   });
-  if ((await install(target.version)).status !== 0) {
-    await ports.restart();
-    return settled("failed", "install-failed");
+  const installed =
+    (await install(target.version)).status === 0 &&
+    currentVersion() === target.version;
+  if (installed) {
+    if (await ports.restart()) return settled("upgraded");
+    // Failure to observe readiness is not proof that the new owner exited.
+    // Its own orderly Stop must join it before any downgrade touches its code.
+    const stoppedNew = await ports.stop();
+    if (stoppedNew.status !== "stopped")
+      return {
+        ...stoppedNew,
+        ...settled(stoppedNew.status, "stop-unconfirmed"),
+      };
   }
-  if (await ports.restart()) return settled("upgraded");
-  // The new owner never became ready, so it wrote no state an older copy
-  // could not read; the previous version comes back from npm's cache.
-  if ((await install(from)).status === 0 && (await ports.restart()))
-    return settled("rolled-back", "not-ready");
-  return settled("failed", "not-ready");
+  // Never restart a partially installed or wrong copy. Both install failure
+  // and an unready new owner restore the prefetched version with its manager.
+  const reason = installed ? "not-ready" : "install-failed";
+  if (
+    (await install(from)).status === 0 &&
+    currentVersion() === from &&
+    (await ports.restart())
+  )
+    return settled(installed ? "rolled-back" : "failed", reason);
+  return settled("failed", reason);
 }
 
 /** The outcome a finished CLI job records for the WebUI. */

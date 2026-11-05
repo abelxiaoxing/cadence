@@ -90,7 +90,7 @@ Ihre tatsächlichen Ergebnisse bleiben von der automatischen Agent-Prüfung getr
 ```sh
 cadence server status
 cadence server restart     # nach einem Upgrade oder einer .env / models.json-Änderung
-cadence server upgrade     # npm-Globalinstallation: laden, installieren, neu starten
+cadence server upgrade
 cadence server stop        # bleibt registriert und startet beim nächsten Boot oder Login erneut
 cadence server uninstall   # vor npm uninstall -g ausführen
 ```
@@ -103,7 +103,7 @@ Linux-Root- und benannte Dienste, entfernter HTTPS-Zugang und Wiederherstellung 
 ## Entwicklung
 
 Pi kann auch ein lokales Checkout oder ein gepacktes Tarball laden: Füge seinen absoluten oder relativen Pfad zu Pís `packages` hinzu, oder versuche `pi -e ./cadence`.
-Cadence erzwingt keinen Pi-Versionsbereich; Entwicklungs-Pins und getestete Laufzeiten sind keine universellen Kompatibilitätsversprechen.
+Cadence benötigt Pi 1.5.0 oder einen kompatiblen 1.x-Host; Entwicklungs-Pins und getestete Laufzeiten sind keine universellen Kompatibilitätsversprechen.
 
 ```sh
 bun install

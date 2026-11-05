@@ -3422,8 +3422,3 @@ button.link:hover:not(:disabled) {
   min-width: 26px;
   min-height: 26px;
 }
-.composer-image-help {
-  margin: 0.3rem 0;
-  font-size: 0.7rem;
-  color: var(--muted);
-}
