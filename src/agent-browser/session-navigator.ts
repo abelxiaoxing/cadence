@@ -69,11 +69,23 @@ export class SessionNavigator implements Component {
     ]);
     if (this.signature === signature) return;
     this.signature = signature;
-    this.entries = entries;
-    const index = Math.max(
-      0,
-      entries.findIndex((entry) => entry.id === this.selected),
+    const previousIndex = this.entries.findIndex(
+      (entry) => entry.id === this.selected,
     );
+    // Keep an already-open transcript as a reading snapshot, but release the
+    // producer as soon as it leaves the live list. No historical rereads.
+    if (this.viewing && !entries.some((entry) => entry.id === this.viewing)) {
+      this.viewing = undefined;
+      this.source.view(null);
+    }
+    this.entries = entries;
+    const selectedIndex = entries.findIndex(
+      (entry) => entry.id === this.selected,
+    );
+    const index =
+      selectedIndex >= 0
+        ? selectedIndex
+        : Math.max(0, Math.min(previousIndex, entries.length - 1));
     this.selected = entries[index]?.id;
     this.list = new SelectList(
       entries.map(({ id, label }) => ({ value: id, label })),
@@ -95,8 +107,14 @@ export class SessionNavigator implements Component {
   }
 
   private open(id: string): void {
+    // Mouse input can still name a row painted before its end. Recheck that
+    // exact id, rather than redirecting the click to a different live row.
+    this.refresh();
     const entry = this.entries.find((candidate) => candidate.id === id);
-    if (!entry) return;
+    if (!entry) {
+      this.tui.requestRender();
+      return;
+    }
     this.viewing = id;
     let position = this.positions.get(id);
     if (!position) {
@@ -144,10 +162,17 @@ export class SessionNavigator implements Component {
       labeledRule(
         width,
         (text) => this.theme.fg("border", text),
-        ["Agents"],
+        ["Running agents"],
         [`${at + 1} / ${this.entries.length}`],
       ),
-      ...(this.list?.render(width) ?? []),
+      ...(this.entries.length
+        ? (this.list?.render(width) ?? [])
+        : [
+            truncateToWidth(
+              this.theme.fg("dim", "No agents running in this session"),
+              width,
+            ),
+          ]),
       truncateToWidth(
         this.theme.fg("dim", "↑↓ select · Enter view · Esc return to input"),
         width,
@@ -157,6 +182,8 @@ export class SessionNavigator implements Component {
 
   handleInput(data: string): void {
     if (isKeyRelease(data)) return;
+    // An end can arrive between the last paint and Enter: never open a stale row.
+    this.refresh();
     if (this.pane) this.pane.handleInput(data);
     else this.list?.handleInput(data);
     this.tui.requestRender();

@@ -18,7 +18,7 @@ export default function register(pi: ExtensionAPI): void {
   registerSessionSharing(pi);
   // Observes `subagent:*` bus events only; renders nothing until one arrives.
   registerAgentPanel(pi);
-  // Publishes a running owner's child runs there; readonly, never starts one.
+  // Publishes only this conversation's live workflow children; never starts work.
   registerCadenceAgentFeed(pi);
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;

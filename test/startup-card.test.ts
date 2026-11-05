@@ -91,7 +91,10 @@ function harness(registrar = register) {
         await handler(
           { reason },
           {
-            sessionManager: { getBranch: () => [] },
+            sessionManager: {
+              getBranch: () => [],
+              getSessionId: () => "startup-fixture",
+            },
             ...(ctx as object),
             ui: { setStatus() {}, ...(ctx as any).ui },
           },
