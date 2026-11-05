@@ -701,3 +701,17 @@ A separate Bun tarball passed the exact **164 regular-member** and body audit; S
 The post-sync gate log is `/home/mirako/cadence-merge-verify.kYmp1J/verify-rebased-3.log`; the separate archive is under that directory's `standalone-pack/`.
 No slow suite, physical terminal, paid-provider request, browser automation, service-manager operation or macOS/Windows execution was performed.
 Local commit and synchronization were explicitly authorized; actual merge into `main`, push, installation and publication remain unperformed.
+
+## Release 2.0.37 qualification (2026-11-05)
+
+The user explicitly authorized the 2.0.37 release commit, GitHub push and npm publication.
+The release includes the integrated worker toolkit and resumable research, minimal image input without image-specific quotas, installation-aware Pi/npm/Bun WebUI upgrades, and the reused readonly native agent browser with a Pi 1.5.0 baseline.
+Release preparation adds no behavior changes to integrated main `1605c60`: only the package version, canonical generated service/Web identities and this evidence appendix change.
+
+Fresh `bun run verify` passed in **11.9s**: **1501 fast root tests passed, 281 skipped** (87 passing files, two skipped), **238 Web tests passed** (21 files), plus types, syntax, lint, Agent pins, deterministic generated-byte checks and real-pack auditing.
+A separate `bun pm pack --destination <private-temp>` passed exact auditing of **164 regular members**, every body, Agent pin, notice and font; npm publish dry-run matched its member count, SHA-1 and SHA-512 integrity.
+Archive SHA-256: `5c9f58275e99f9c9e529c1c68b9c41a5ac48ff0c0c7de48b3681b3bb42904487`; SHA-1: `7beecb890a630f9cae67c23b37d7408126fbff51`.
+Qualification used Linux, Node 26.7.0, npm 12.0.2, Bun 1.3.14 and installed Pi SDK/TUI 1.5.0, with all three temp variables bound to one fresh private disk directory outside Git checkouts.
+No slow suite, physical terminal, paid-provider request, browser automation, macOS/Windows execution, global installation or production service operation was performed; no dependency or browser was downloaded.
+Logs, package auditing, the release artifact and subsequent publication observations are retained in the checkout's ignored `.cache/releases/2.0.37/` directory; temporary fixtures are disposable, not consumer history or profiles.
+This evidence-only appendix follows qualification and is not shipped in the archive; remote push and registry publication must still be confirmed independently against that audited artifact.
