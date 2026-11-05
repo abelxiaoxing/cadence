@@ -244,10 +244,16 @@ export function PlanCard({
       )}
       <p>
         {t(
-          "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.",
+          "Approval covers this goal and boundary: adaptive implementation, checks, recovery, project knowledge and the displayed local delivery. No push, publication or deployment.",
         )}
       </p>
-      <Markdown text={readableWorkflowPlan(proposal.plan)} />
+      <Markdown
+        text={`## ${proposal.plan.goal}\n\n${proposal.plan.acceptance}\n\n${proposal.plan.decisions}`}
+      />
+      <details>
+        <summary>{t("Complete delivery agreement")}</summary>
+        <Markdown text={readableWorkflowPlan(proposal.plan)} />
+      </details>
       <button
         type="button"
         className="primary"
@@ -278,24 +284,42 @@ export async function cancelWorkflow(
   });
   return reply.kind === "error" ? reply.error.code : "";
 }
-export function WorkflowCard({
-  client,
-  id,
-  onChanged,
-  onOpenAgent,
-}: {
+type WorkflowCardProps = {
   client: ServiceClient;
   id: string;
   onChanged?(): void;
   onOpenAgent?(agent: WorkflowAgent): void;
-}) {
+};
+export function WorkflowCard(props: WorkflowCardProps) {
+  // A different run must not inherit an archive cursor, stopped polling or a
+  // selected step belonging to the previous run.
+  return <WorkflowCardView key={props.id} {...props} />;
+}
+function WorkflowCardView({
+  client,
+  id,
+  onChanged,
+  onOpenAgent,
+}: WorkflowCardProps) {
   const { t, tx } = useT();
   const [poll, setPoll] = useState(1000);
+  const [before, setBefore] = useState<number | undefined>();
+  // Archived steps are immutable, but their run's status and Stop affordance
+  // are live observations even while the reader is looking at an older page.
   const page = useWorkbench(client, { kind: "workflow", id }, poll);
+  const history = useWorkbench(
+    client,
+    before === undefined ? null : { kind: "workflow", id, before },
+  );
+  const historical =
+    history.value?.kind === "workflow" && history.value.response.type === "run"
+      ? history.value.response.run
+      : null;
   const run =
     page.value?.kind === "workflow" && page.value.response.type === "run"
       ? page.value.response.run
       : null;
+  const shown = before === undefined ? run : historical;
   const [detail, setDetail] = useState<string | null>(null);
   const result = useWorkbench(
     client,
@@ -327,9 +351,9 @@ export function WorkflowCard({
           </span>
         )}
       </header>
-      {(page.error || error) && (
+      {(page.error || history.error || error) && (
         <p role="alert">
-          {error || page.error} ·{" "}
+          {error || page.error || history.error} ·{" "}
           {t("State unavailable is not completion. No automatic resubmission.")}
         </p>
       )}
@@ -360,7 +384,37 @@ export function WorkflowCard({
           )}
         </p>
       )}
-      {run?.steps.map((step) => (
+      {run && (run.revision ?? 0) > 0 && (
+        <p>
+          {t("Implementation route updates")}: {run.revision}
+        </p>
+      )}
+      {run && ((shown?.stepsBefore ?? 0) > 0 || before !== undefined) && (
+        <nav className="workflow-actions">
+          {(shown?.stepsBefore ?? 0) > 0 && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setBefore(shown?.stepsBefore)}
+            >
+              {t("Earlier workflow steps")}
+            </button>
+          )}
+          {before !== undefined && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setBefore(undefined);
+                setPoll(1000);
+              }}
+            >
+              {t("Latest workflow steps")}
+            </button>
+          )}
+        </nav>
+      )}
+      {shown?.steps.map((step) => (
         <details key={step.id} className="chat-tool">
           <summary>
             {tx(step.kind)} · {workflowAgentLabel(step.id)} · {tx(step.status)}
@@ -425,7 +479,14 @@ export function WorkflowCard({
           {t("Cancel workflow — request stop")}
         </button>
       )}
-      <button type="button" className="ghost" onClick={page.refresh}>
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => {
+          page.refresh();
+          if (before !== undefined) history.refresh();
+        }}
+      >
         {t("Observe current state")}
       </button>
     </article>

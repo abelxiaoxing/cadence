@@ -107,7 +107,7 @@ export type WorkbenchRead =
   | { kind: "workflow-history"; after: string | null; scan?: string }
   | { kind: "workflow-detail"; id: string; stepId: string }
   | { kind: "workflow-transcript"; id: string; stepId: string }
-  | { kind: "workflow"; id: string }
+  | { kind: "workflow"; id: string; before?: number }
   | { kind: "conversation-active" }
   | { kind: "conversations"; after?: ChatCursor | null }
   | {
@@ -610,8 +610,16 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       return { kind, id: decodeId(o.id), stepId: text(o.stepId, 160, true) };
     }
     case "workflow": {
-      const o = closed(v, ["kind", "id"]);
-      return { kind, id: decodeId(o.id) };
+      const o = closed(v, [
+        "kind",
+        "id",
+        ...(Object.hasOwn(v ?? {}, "before") ? ["before"] : []),
+      ]);
+      return {
+        kind,
+        id: decodeId(o.id),
+        ...(o.before === undefined ? {} : { before: integer(o.before, 1) }),
+      };
     }
     case "conversations": {
       const after = Object.hasOwn(v as object, "after");

@@ -468,6 +468,7 @@ try {
     workspace,
     purpose: publicRequest.purpose,
     coordinator,
+    reporting: !conversation && publicRequest.purpose === "edit",
     secrets,
     fail: captureFailure,
     createLocalBashOperations,

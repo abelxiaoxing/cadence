@@ -1461,6 +1461,7 @@ const mockedWorker = async (scenario: string) => {
         "write",
         "edit",
         "bash",
+        "cadence_report",
       ]);
       if (scenario === "session") throw secretFault;
       return {

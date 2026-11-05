@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { CheckoutGate } from "../src/service/checkout-gate.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
+import {
+  reviewVerdict,
+  WorkflowTranscript,
+} from "../src/service/workflow-report.ts";
 import { Workflows } from "../src/service/workflows.ts";
+import { plan } from "./helpers/workflow-plan.ts";
 
 const worker = vi.hoisted(() => vi.fn());
 vi.mock("../src/subagent-process.ts", async (original) => ({
@@ -15,9 +20,13 @@ vi.mock("../src/subagent-process.ts", async (original) => ({
 
 // Owner/SDK boundary unit fixture, not native-process evidence. Real process
 // ordering and generated-owner closure have separate integration tests.
-it.each([false, true])(
-  "lifecycle observations stay in memory until original settlement; storage failure=%s retains fences",
-  async (failStorage) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+])(
+  "lifecycle observations retain actual closure; storage failure=%s editing cleanup unknown=%s",
+  async (failStorage, editing) => {
     const home = mkdtempSync(join(tmpdir(), "workflow-lifecycle-"));
     const cwd = join(home, "project");
     mkdirSync(cwd, { mode: 0o700 });
@@ -117,19 +126,47 @@ it.each([false, true])(
     });
     try {
       const id = randomUUID();
-      workflows.command(id, epoch, {
-        action: "research",
-        goal: "Bounded observation",
-        questions: ["q"],
-        model: version,
-      });
+      if (editing) {
+        const definition = plan();
+        definition.delivery = "working-copy";
+        const proposed = workflows.command(randomUUID(), epoch, {
+          action: "propose",
+          plan: definition,
+          model: version,
+        });
+        if (
+          proposed.kind !== "workflow" ||
+          proposed.response.type !== "proposal"
+        )
+          throw Error("proposal");
+        const proposal = proposed.response.proposal;
+        const prepared = workflows.command(randomUUID(), epoch, {
+          action: "prepare",
+          proposalId: proposal.id,
+          digest: proposal.digest,
+        });
+        if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
+          throw Error("grant");
+        workflows.command(id, epoch, {
+          action: "execute",
+          proposalId: proposal.id,
+          digest: proposal.digest,
+          grant: prepared.response.grant,
+        });
+      } else
+        workflows.command(id, epoch, {
+          action: "research",
+          goal: "Bounded observation",
+          questions: ["q"],
+          model: version,
+        });
       await workflows.join(id);
       expect(observed).toBe(true);
       const view = workflows.view(id);
       if (view.kind !== "workflow" || view.response.type !== "run")
         throw Error("run");
       expect(view.response.run.status).toBe(
-        failStorage ? "unknown" : "timeout",
+        failStorage || editing ? "unknown" : "timeout",
       );
       expect(view.response.run.steps[0].timing).toMatchObject({
         startedAt: expect.any(Number),
@@ -138,7 +175,7 @@ it.each([false, true])(
         settledAt: expect.any(Number),
         stopReason: "timeout",
       });
-      if (failStorage) {
+      if (failStorage || editing) {
         expect(owner.state).toBe("quarantined");
         // Test-only observation of the gate's held reservation, without releasing it.
         owner.state = "idle";
@@ -148,6 +185,139 @@ it.each([false, true])(
     } finally {
       replace.mockRestore();
       workflows.closeHistory();
+    }
+  },
+);
+
+it.each(["implementation", "diagnosis", "review"])(
+  "%s preserves completion boundaries independently of diagnostic truncation",
+  async (kind) => {
+    const cwd = mkdtempSync(join(tmpdir(), "workflow-report-projection-"));
+    const epoch = randomUUID();
+    const version = {
+      epoch,
+      accessGeneration: 1,
+      configRev: 1,
+      catalogId: randomUUID(),
+    };
+    const model = {
+      sourceSelectionId: randomUUID(),
+      provider: "fixture",
+      model: "fixed",
+      api: "openai-completions",
+      thinking: "off",
+    };
+    const report = { status: "completed", summary: "Completed assignment" };
+    const diagnosis = {
+      action: "continue",
+      cause: "Split remaining work",
+      evidence: ["failed-step"],
+      strategy: "Implement the remaining parts separately",
+      work: Array.from({ length: 3 }, (_, i) => ({
+        title: `Part ${i}`,
+        instructions: "x".repeat(8192),
+        writes: ["src"],
+      })),
+    };
+    const selected = vi
+      .spyOn(WorkflowTranscript.prototype, "selected")
+      .mockReturnValue(
+        kind === "diagnosis"
+          ? JSON.stringify(diagnosis)
+          : kind === "review"
+            ? `{"approved":true}\n${"Context ".repeat(3000)}\n{"approved":false,"blockingIssues":["missing requirement"]}`
+            : undefined,
+      );
+    // The capture parser has separate event-stream tests. This isolates the
+    // owner projection when its complete report survives a missing final preview.
+    const captured = vi
+      .spyOn(WorkflowTranscript.prototype, "assignmentReport")
+      .mockReturnValue(JSON.stringify(report));
+    const live = {
+      execution: { version, model },
+      abort: new AbortController(),
+      run: {
+        id: randomUUID(),
+        epoch,
+        goal: "Fixture",
+        phase: "implementing",
+        steps: [],
+      },
+    };
+    const owner = Object.assign(Object.create(Workflows.prototype), {
+      cwd,
+      root: cwd,
+      assertRunning() {},
+      executionCwd: () => cwd,
+      save() {},
+      write: () => ({}),
+      o: {
+        secrets: () => [],
+        owner: {
+          lease: { assert() {} },
+          trackConversationProcess: (p: Promise<unknown>) => {
+            void p.catch(() => {});
+          },
+        },
+        models: {
+          assertCurrent() {},
+          prepareTracked: () => ({
+            result: Promise.resolve({ status: "prepared", prepared: {} }),
+            settled: Promise.resolve(),
+          }),
+        },
+      },
+    });
+    worker.mockImplementationOnce(async (_prepared, _cwd, _signal, options) => {
+      options.onNative({
+        outcome: "completed",
+        closure: "direct-child-closed",
+        exitCode: 0,
+        signal: null,
+        durationMs: 1,
+        stdin: "delivered",
+        final: "valid",
+        cleanup: "settled",
+        capture: {
+          observed: "incomplete",
+          source: "unavailable",
+          redacted: false,
+          omissions: ["gap"],
+        },
+      });
+      return {
+        outcome: "completed",
+        closed: true,
+        exitCode: 0,
+        signal: null,
+        durationMs: 1,
+        text: "clipped final",
+        output: "[diagnostic truncated]",
+        truncated: true,
+      };
+    });
+    try {
+      const { result, step } = await owner.worker(
+        live,
+        cwd,
+        "assignment",
+        "Inspect fixture",
+        kind !== "implementation",
+        version,
+        undefined,
+        kind,
+      );
+      if (kind === "review") {
+        expect(reviewVerdict(result.text)).toBeNull();
+        expect(step.status).toBe("failed");
+      } else
+        expect(JSON.parse(result.text)).toEqual(
+          kind === "diagnosis" ? diagnosis : report,
+        );
+      expect(result.truncated).toBe(true);
+    } finally {
+      captured.mockRestore();
+      selected.mockRestore();
     }
   },
 );

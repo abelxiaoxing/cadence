@@ -45,7 +45,7 @@ That observation holds one of the owner's viewer attachments, so departure (incl
 It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
 A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-history` keeps the actual outcome.
 Workflow review rejections are announced and counted as `rejected`, never as agent errors; the browser dock also shows `rejected` separately from `failed`.
-Workflow research, implementation and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
+Workflow research, implementation, diagnosis, knowledge and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
 Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
 Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-history`.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
@@ -112,10 +112,12 @@ Lost replies to Send or approval return the original receipt or run on a retry w
 One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last message to that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
-Plan approval covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
+Version-2 agreement approval covers the immutable goal, explicit decisions, acceptance and declared paths/commands, plus service-owned adaptive routes, recovery and verified project-knowledge maintenance.
+It covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
 An accepted plan is consumed at the conversation boundary before dispatch; command loss or an uncertain attempt is observed, never replayed.
 Full plan cards and retained run/step details replace daily task/Save/Start/Checks/Review management; automatic review is never human review.
 Workflow progress is distinct from the ordinary/coordinator response status, including actual merge commits after failed post-merge checks.
+Browsing an archived step page keeps the current run status polling independently; navigation to another run resets the archive cursor, selected detail and polling state.
 The independent project workflow roster includes native-started work; missing observations never render as an empty complete roster.
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
 A failed or interrupted coordinator turn stays in the session; a new explicit Send continues that branch as Pi would (errored replies are skipped and orphaned tool calls closed); no incomplete tool call is resumed.
@@ -306,3 +308,7 @@ Research replies carry exact run/step identities.
 `cadence_status` accepts an explicit `runId` for retained results/transcripts without changing the current selection or acknowledging a different current unknown run.
 Cancel pins the displayed run identity before its confirmation dialog.
 Session changes invalidate in-flight dispatch/response handling; no command is replayed.
+
+Adaptive delivery progress adds `recovering` and `learning` phases, route-revision counts and readonly earlier-step paging.
+A child failure remains visible while the service diagnoses or continues the same admitted goal; no client-triggered Send or automatic mutation replay is involved.
+Version-1 plans stay readable but cannot authorize the new executor.

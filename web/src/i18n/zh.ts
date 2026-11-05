@@ -2,6 +2,13 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Complete delivery agreement": "完整交付约定",
+  "Implementation route updates": "实现路线调整次数",
+  "Earlier workflow steps": "更早的执行步骤",
+  "Latest workflow steps": "最新执行步骤",
+  recovering: "自动诊断与恢复",
+  learning: "沉淀项目知识",
+  knowledge: "项目知识",
   "Invalid image.": "图片格式无效。",
   "Add images": "添加图片",
   "Remove image: {name}": "移除图片：{name}",
@@ -120,7 +127,7 @@ export const zh = {
     "Cadence 将持续开启。确认一次计划后开始实施。",
   "Cadence workflow": "Cadence 工作流",
   "Current implementation plan": "当前实施计划",
-  "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.":
+  "Approval covers this goal and boundary: adaptive implementation, checks, recovery, project knowledge and the displayed local delivery. No push, publication or deployment.":
     "批准仅覆盖本计划中的实施、检查、有限修复和所列的本地交付。不包含推送、发布或部署。",
   "Implement this plan": "按此计划实施",
   "To change the plan, continue the conversation. A changed plan requires fresh approval.":

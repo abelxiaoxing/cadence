@@ -38,7 +38,6 @@ export async function acceptingFixture(
     agentDir = join(dir, "agent");
   let providerMode:
     | "coordinator"
-    | "workflow-parallel"
     | "workflow"
     | "single"
     | "parallel"
@@ -48,7 +47,7 @@ export async function acceptingFixture(
     | "read-then-fail"
     | "research-scan" = "single";
   let finalReply: string | undefined;
-  let repairReply: string | undefined;
+  let recoverImplementation = false;
   let implementationReply = JSON.stringify({
     status: "completed",
     summary: "Implemented the declared file.",
@@ -58,11 +57,6 @@ export async function acceptingFixture(
     maxActive = 0;
   const held: ServerResponse[] = [];
   const modelRequests: string[] = [];
-  const workflowWrites: {
-    res: ServerResponse;
-    path: string;
-    declared: string;
-  }[] = [];
   const observations: { tools: string[]; mode: string; messages: unknown[] }[] =
     [];
   const longText = `Actual retained SDK result. ${"retained-detail-αβγ ".repeat(900)} END-RETAINED`;
@@ -182,6 +176,38 @@ export async function acceptingFixture(
       return;
     }
     if (
+      JSON.stringify(input.messages).includes(
+        "Diagnose this settled attempt using actual files",
+      )
+    ) {
+      const prompt = input.messages
+        .map((m: { content?: unknown }) =>
+          typeof m.content === "string" ? m.content : "",
+        )
+        .join("\n");
+      const stepId = /"stepId":"([^"]+)"/.exec(prompt)?.[1];
+      if (!stepId) throw new Error("No native evidence in recovery fixture");
+      const continuing = recoverImplementation;
+      if (continuing)
+        implementationReply =
+          '{"status":"completed","summary":"Completed remaining fixture work"}';
+      recoverImplementation = false;
+      finish(
+        res,
+        JSON.stringify({
+          action: continuing ? "continue" : "blocked",
+          cause: "Fixture diagnosed the recorded failure",
+          evidence: [stepId],
+          strategy: continuing
+            ? "Inspect preserved output and complete remaining assignment"
+            : "The fixture deliberately cannot resolve this external condition",
+          work: [],
+        }),
+        false,
+      );
+      return;
+    }
+    if (
       providerMode === "coordinator" &&
       !toolNames.includes("write") &&
       !JSON.stringify(input.messages).includes(
@@ -193,11 +219,7 @@ export async function acceptingFixture(
       else callTool(res, "coordinator-read", "read", { path: "existing.txt" });
       return;
     }
-    if (
-      providerMode === "coordinator" ||
-      providerMode === "workflow" ||
-      providerMode === "workflow-parallel"
-    ) {
+    if (providerMode === "coordinator" || providerMode === "workflow") {
       const prompt = JSON.stringify(input.messages);
       if (prompt.includes("Independently inspect the implemented files")) {
         finish(
@@ -208,15 +230,28 @@ export async function acceptingFixture(
             blockingIssues: [],
           }),
         );
-      } else if (input.messages.at(-1)?.role === "tool")
-        finish(
-          res,
-          prompt.includes("Repair only within approved paths")
-            ? (repairReply ?? implementationReply)
-            : implementationReply,
-          false,
-        );
-      else {
+      } else if (input.messages.at(-1)?.role === "tool") {
+        const last = input.messages.at(-1);
+        if (last.tool_call_id === "assignment-report")
+          finish(res, "Assignment report submitted.", false);
+        else {
+          const reply = implementationReply;
+          let report: unknown;
+          try {
+            report = JSON.parse(reply);
+          } catch {
+            /* malformed-report regression */
+          }
+          if (report && toolNames.includes("cadence_report"))
+            callTool(
+              res,
+              "assignment-report",
+              "cadence_report",
+              report as object,
+            );
+          else finish(res, reply, false);
+        }
+      } else {
         const messages = input.messages
           .map((m: { content?: unknown }) =>
             typeof m.content === "string"
@@ -246,22 +281,10 @@ export async function acceptingFixture(
         const path = scope
           ? relative(scope[1], join(scope[2], declared))
           : declared;
-        if (
-          providerMode === "workflow-parallel" &&
-          prompt.includes("Write only these exact files:")
-        ) {
-          workflowWrites.push({ res, path, declared });
-          if (workflowWrites.length === 2)
-            for (const item of workflowWrites.splice(0))
-              callTool(item.res, `workflow-${item.path}`, "write", {
-                path: item.path,
-                content: `implemented ${item.declared}\n`,
-              });
-        } else
-          callTool(res, `workflow-${path}`, "write", {
-            path,
-            content: `implemented ${declared}\n`,
-          });
+        callTool(res, `workflow-${path}`, "write", {
+          path,
+          content: `implemented ${declared}\n`,
+        });
       }
       return;
     }
@@ -472,9 +495,11 @@ export async function acceptingFixture(
     reply(text: string) {
       finalReply = text;
     },
-    implementationReply(text: string, repair = false) {
-      if (repair) repairReply = text;
-      else implementationReply = text;
+    recoverImplementation() {
+      recoverImplementation = true;
+    },
+    implementationReply(text: string) {
+      implementationReply = text;
     },
     fail() {
       for (const r of held.splice(0)) {

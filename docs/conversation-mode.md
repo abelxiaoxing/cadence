@@ -11,7 +11,8 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
 
 1. Cadence delegates focused readonly repository investigations, reuses existing project documentation, and consolidates questions in the main conversation.
 2. Discuss requirements and decisions until the implementation and acceptance criteria are clear.
-3. Cadence presents one readable plan: scope, dependencies, setup, baseline checks, acceptance checks, repair budget and delivery policy.
+3. Cadence presents one readable delivery agreement: expected result, acceptance, scope, setup/check commands, project knowledge and delivery policy.
+   The technical route is an initial suggestion; routine recovery and in-scope implementation changes need no further approval.
 4. Type `按计划实施` after the plan to authorize those exact bytes.
    In the browser, click **Implement this plan** or send that exact approval phrase for the currently displayed plan.
    In Pi, the Start tool can alternatively present one native confirmation of the complete plan.
@@ -87,10 +88,13 @@ An unavailable remembered model is not silently substituted.
 Pi's original model and authentication sources remain authoritative; Cadence does not copy credentials.
 
 Repository investigation and discussion do not edit business code.
-Approved work publishes a managed region in `.cadence/project.md` and readable plan/result notes under `.cadence/assistant/workflows/<run-id>/`.
-Existing human text outside the managed region is preserved.
-Existing architecture and development documents should be referenced, not duplicated.
-Each worker receives the approved goal/design/decisions/acceptance and its exact assignment; oversized context is refused rather than silently clipped.
+Approved work maintains the relevant existing project documents named in the agreement and publishes readable workflow notes under `.cadence/assistant/workflows/<run-id>/`.
+`.cadence/project.md` is a compact knowledge index; optional `.cadence/knowledge/` topics fill gaps, not duplicate existing `engineering/`, `docs/` or `.trellis/spec/`.
+Human text and unrelated conventions are preserved.
+Workers receive actual selected project knowledge, the approved goal/decisions/acceptance, their assignment and relevant failure/check evidence.
+Source paths and partial coverage are recorded; longer documents remain available for on-demand reads.
+After implementation, Cadence extracts useful source-backed lessons and updates approved documentation automatically, then checks and reviews the combined candidate.
+No knowledge-maintenance or finish command is required.
 Private proposals, grants, native/auth outcomes and transcripts stay outside the checkout.
 Markdown is not execution authority.
 Old task summaries and history are neither imported nor reset.
@@ -100,8 +104,8 @@ Old task summaries and history are neither imported nor reset.
 The plan chooses one delivery policy:
 
 - **Local merge:** requires an existing Git branch and configured commit identity.
-  Independent tasks use separate worktrees, up to two at once; dependencies are applied before their consumers.
-  The owner commits only declared file changes, integrates them into a separate candidate, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
+  Assignments use one stable isolated candidate, preserving predecessor outputs and partial attempts instead of repeatedly rebuilding worktrees.
+  The owner commits only declared file changes, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
   Local task commits and the merge are included in the plan approval.
   Git hooks and commit signing are disabled for these internal commits; verification is explicitly declared instead.
   No remote push occurs.
@@ -117,8 +121,11 @@ Cadence never resets, stashes, force-pushes or silently cleans uncertain worktre
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
 Clean worktrees are removed after a successful merge (plain `git worktree remove`, which also deletes their ignored setup output such as `node_modules`); dirty or moved ones and all results are retained.
 Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
-The 90-minute budget starts when the run acquires the checkout; Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
-Local-merge plans cannot declare files that Git ignores; use working-copy delivery for those.
+There is no fixed delivery-duration or repair-round quota.
+Individual workers/checks retain their process deadlines; a settled failure can trigger diagnosis and continuation, not automatic goal termination.
+Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
+Local-merge plans need clean, nonignored code and knowledge targets; use working-copy delivery for dirty or ignored documentation.
+Generated workflow notes remain separate.
 After an owner restart, an unfinished run is shown as `unknown` with its retained worktrees; it is never resumed.
 Credential-looking text in plans and research questions is shown and approved redacted.
 
@@ -127,10 +134,15 @@ Investigate prerequisites during planning.
 If dependencies/setup are needed, include the exact commands in the plan for explicit approval.
 No dependency/browser download or source-profile copying is implicit.
 Baseline checks are separate from acceptance checks that need newly implemented files.
-Failed declared baseline checks stop before editing.
-At most two approved repair rounds may follow failed review/checks; repairs cannot expand scope or weaken acceptance.
+Failed setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.
+Cadence can preserve partial outputs, split remaining work and choose alternative implementations within the approval; it never expands permissions or weakens acceptance.
+Known transient provider HTTP failures back off automatically after actual cleanup, without holding the checkout while waiting; re-entry checks that the approved files have not changed.
+An unchanged failure and identical recovery strategy cannot become an endless replay loop.
+A concrete external blocker is reported with preserved work, not a generic request to type “continue”.
 Final candidate checks must pass before merge.
-Post-merge failures remain failures and report the actual merge commit; no rollback is fabricated.
+Post-merge failures retain the actual merge commit.
+Repairs stay in the owned candidate, are checked/reviewed and can fast-forward the unchanged target again; the user’s unrelated index is never committed.
+Unresolved failures remain failures; no rollback is fabricated.
 Automatic review is never recorded as human review.
 
 To request orderly closure, ask Cadence to cancel in Pi, or use **Cancel workflow — request stop** in the browser (the browser coordinator cannot cancel).
@@ -147,7 +159,7 @@ System-service installation and remote access remain separate explicit operation
 
 `/cadence-history [run-id]` provides readonly diagnostics without model calls or service startup; see [History and diagnostics](history.md).
 The WebUI uses the same execution engine with a separate, context-bound browser confirmation path.
-Its main composer stays in the same conversation; the plan card appears inline, and each workflow is one line after the turn it started in, showing what it is doing (with **Stop**) or how it ended: its merge commit, or the reason it did not complete.
+Its main composer stays in the same conversation; the agreement card appears inline, and each workflow is one line after the turn it started in, showing what it is doing (with **Stop**) or how it ended: its merge commit, or the reason it did not complete.
 Select the line to open the workflow's steps, checks, delivery and diagnostics in the main area; while it runs, the conversation's status names its phase.
 Research, implementation and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
 Active workflows are listed under **Running conversations** with **Cancel workflow — request stop**; this includes native-started workflows, and an unavailable observation is not proof of no work.
@@ -178,3 +190,7 @@ Ask for `cadence_status` with the exact `runId`, `stepId`, and optionally `trans
 Selecting a retained run is readonly and does not replace the current run or restart work.
 Native status/history and the browser's **Owner timing and runtime** details show the actual owner build/epoch and recorded queue/worker timestamps; the worker SDK version can differ from the terminal Pi host.
 A parent session may record a whole batch of tool results together, so those timestamps are not the service's completion times.
+
+Long workflows retain earlier steps in readonly pages rather than stopping at a step count.
+Open **Earlier workflow steps** in the WebUI, **Earlier steps** in native history, or use `cadence_status` with the returned `stepsBefore` as `before`.
+Route revisions and failed attempts remain visible; a later successful attempt never rewrites their original outcomes.

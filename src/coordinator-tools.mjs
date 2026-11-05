@@ -11,7 +11,8 @@ const PLAN = Type.Object({
   design: Type.String(),
   decisions: Type.String(),
   acceptance: Type.String(),
-  projectContext: Type.String(),
+  version: Type.Literal(2),
+  knowledge: Type.Array(Type.String(), { maxItems: 16 }),
   tasks: Type.Array(
     Type.Object({
       id: Type.String(),
@@ -25,7 +26,6 @@ const PLAN = Type.Object({
   checks: Type.Array(CHECK, { minItems: 1, maxItems: 16 }),
   setup: Type.Array(CHECK, { maxItems: 4 }),
   baselineChecks: Type.Array(CHECK, { maxItems: 16 }),
-  repairAttempts: Type.Integer({ minimum: 0, maximum: 2 }),
   delivery: Type.Union([
     Type.Literal("local-merge"),
     Type.Literal("working-copy"),

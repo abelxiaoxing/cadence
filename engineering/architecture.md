@@ -56,7 +56,7 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/research-tools.mjs` owns observation schemas/cursors; `src/research-scan.mjs` owns their streaming filesystem operations.
 See [worker tools](worker-tools.md) for capability, continuation, coverage and disposal contracts; SDK bootstrap no longer duplicates role-specific tool lists.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
-`src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
+`src/service/workflows.ts` owns the private agreement/grant/run journal, original processes and delivery operations; `workflow-controller.ts` owns evidence-led continuation and route revisions, `workflow-report.ts` owns structured reports and bounded capture projection, while `project-knowledge.ts` owns source selection and verified knowledge-assignment policy (see [project knowledge](project-knowledge.md)); `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
 `src/service/workflow-result.ts` owns the shared bounded, redacted process-result projection for workflow retention and reads, independent of native settlement and structured task completion.
 `src/service/conversation-contexts.ts` owns readonly context records and explicit per-conversation model installation/capture; it shares the existing bounded `OwnerModelContext` source cache, not one runtime per conversation.
 `src/conversation-identity.ts` supplies domain-separated context-version identities without importing the executor into Pi.
@@ -96,7 +96,7 @@ Browser assets are prebuilt, not compiled by consumer postinstall.
 - `skills/context7-auto-research` and `skills/grok-search` remain independent research tools.
 - `skills/git-commit` requires an explicit commit request and deterministic audit; legacy task review never commits.
   Conversation workflows may perform only their explicitly plan-authorized local commits/merge.
-- Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
+- Three pinned professional profiles in `agents/` provide readonly design/diagnosis/review and direct-edit implementation/knowledge instructions, not execution authority.
 - `config/` contains the optional research environment example; the obsolete task-check example is removed.
   The package has no install script; `cadence server install` creates a missing user `.env` template, and no build/Git/provider operation runs at install.
 - `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.

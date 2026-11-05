@@ -222,7 +222,7 @@ it("workflow output redacts owner and provider literals before retention and def
   }
 }, 30000);
 
-it("real generated owner: task IDs integration/tasks stay disjoint, run parallel SDK workers and merge while preserving dirt", async () => {
+it("real generated owner: task IDs cannot collide with the stable candidate; sequential workers merge while preserving dirt", async () => {
   const { f, git, propose, start, wait, worktrees } = await setup();
   try {
     writeFileSync(join(f.root, "unrelated.txt"), "user-owned bytes\n");
@@ -235,7 +235,7 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
       join(f.root, ".cadence/project.md"),
       "# Team notes\nUncommitted user line.\n",
     );
-    f.mode("workflow-parallel");
+    f.mode("workflow");
     const definition = plan();
     definition.tasks[0].id = "integration";
     definition.tasks[1].id = "tasks";
@@ -249,15 +249,13 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
       status: "completed",
       humanReviewed: false,
     });
-    expect(f.maxActive()).toBeGreaterThanOrEqual(2);
+    expect(f.maxActive()).toBe(1);
     // Worktrees lived outside the private namespace and were removed by plain
     // `git worktree remove` once merged and clean.
     const operations = run.steps.filter((s) => s.kind === "git");
     for (const name of [
       "worktree-integration",
-      "worktree-integration",
-      "worktree-tasks",
-      "integrate-task-commits",
+      "commit-implementation",
       "merge",
       "remove-merged-worktrees",
     ])
@@ -305,8 +303,7 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
     ).toBe(true);
     const context = readFileSync(join(f.root, ".cadence/project.md"), "utf8");
     expect(context).toContain("Uncommitted user line.");
-    expect(context).toContain("<!-- CADENCE:PROJECT:START -->");
-    expect(context).toContain(definition.projectContext);
+    expect(context).toBe("# Team notes\nUncommitted user line.\n");
     // An interrupted run never fences startup: it settles honestly as unknown.
     const interrupted = randomUUID();
     f.c.files.create(
@@ -410,13 +407,12 @@ it("stale plans refuse before effects; generated research remains readonly and C
   }
 }, 20000);
 
-it("failed verification uses only the approved repair budget and never merges a failing candidate", async () => {
+it("failed verification reaches readonly diagnosis and never merges a genuinely blocked candidate", async () => {
   const { f, command, start, wait, model, git } = await setup();
   try {
     f.mode("workflow");
     const baseline = git("rev-parse", "HEAD");
     const p = plan();
-    p.repairAttempts = 1;
     p.checks = [
       {
         name: "real failure",
@@ -429,8 +425,8 @@ it("failed verification uses only the approved repair budget and never merges a 
     if (proposed.type !== "proposal") throw Error("proposal");
     const run = await wait(await start(proposed.proposal));
     expect(run.status).toBe("failed");
-    expect(run.notice).toContain("repair budget exhausted");
-    expect(run.steps.filter((s) => s.id.startsWith("repair-"))).toHaveLength(1);
+    expect(run.notice).toContain("Delivery blocked");
+    expect(run.steps.filter((s) => s.kind === "diagnosis")).toHaveLength(1);
     expect(
       run.steps
         .filter((s) => s.kind === "check")
@@ -440,7 +436,7 @@ it("failed verification uses only the approved repair budget and never merges a 
     expect(git("rev-parse", "HEAD")).toBe(baseline);
     expect(existsSync(join(f.root, "a.txt"))).toBe(false);
     const reviews = run.steps.filter((s) => s.kind === "review");
-    expect(reviews).toHaveLength(2);
+    expect(reviews).toHaveLength(1);
     for (const review of reviews) {
       const previous = run.steps[run.steps.indexOf(review) - 1];
       expect(previous).toMatchObject({ kind: "check", exitCode: 1 });
@@ -456,10 +452,10 @@ it("failed verification uses only the approved repair budget and never merges a 
     }
     const repair = f.observations
       .map((o) => JSON.stringify(o.messages))
-      .find((text) => text.includes("Repair only within approved paths"));
+      .find((text) => text.includes("Diagnose this settled attempt"));
     expect(repair).toContain("fixture-check-diagnostic");
     expect(repair).toContain(reviews[0].id);
-    expect(repair).not.toContain(reviews[1].id);
+    expect(repair).toContain("Approved paths");
     // Each working-copy assignment owns its own scope, not the union: the
     // first worker writes b.txt, which only the second assignment may write.
     const direct = plan();
@@ -533,14 +529,13 @@ it("explicit working-copy delivery works without Git and never initializes or co
   }
 }, 30000);
 
-it("passing checks with an unparseable review stop without spending repairs or claiming delivery", async () => {
+it("passing checks with an unparseable review invoke diagnosis without claiming delivery", async () => {
   const { f, command, start, wait, model } = await setup(false);
   try {
     f.mode("workflow");
     f.reply("Not a structured review verdict.");
     const definition = plan();
     definition.delivery = "working-copy";
-    definition.repairAttempts = 1;
     const proposed = await command({
       action: "propose",
       plan: definition,
@@ -549,8 +544,8 @@ it("passing checks with an unparseable review stop without spending repairs or c
     if (proposed.type !== "proposal") throw Error("proposal");
     const run = await wait(await start(proposed.proposal));
     expect(run.status).toBe("failed");
-    expect(run.notice).toContain("Checks passed");
-    expect(run.notice).toContain("could not be parsed");
+    expect(run.notice).toContain("Delivery blocked");
+    expect(run.steps.some((s) => s.kind === "diagnosis")).toBe(true);
     expect(run.steps.filter((s) => s.id.startsWith("repair-"))).toHaveLength(0);
     expect(run.steps.find((s) => s.kind === "review")).toMatchObject({
       status: "failed",
@@ -579,7 +574,7 @@ it.each([
   ["blocked", "local-merge"],
   ["unparseable", "local-merge"],
 ] as const)(
-  "a zero-exit %s implementation in %s stops before dependents, checks, review or delivery, preserving native facts",
+  "a zero-exit %s implementation in %s is diagnosed before dependents, checks, review or delivery, preserving native facts",
   async (report, delivery) => {
     const { f, propose, start, wait, git, worktrees } = await setup();
     try {
@@ -595,14 +590,14 @@ it.each([
       definition.tasks[1].after = ["a"];
       const run = await wait(await start(await propose(definition)));
       expect(run.status).toBe("failed");
-      expect(run.steps.filter((s) => s.kind !== "git")).toHaveLength(1);
+      expect(run.steps.filter((s) => s.kind !== "git")).toHaveLength(2);
       const step = run.steps.find((s) => s.kind === "implementation")!;
       expect(step).toMatchObject({
         kind: "implementation",
         status: "failed",
         exitCode: 0,
       });
-      expect(run.notice).toContain(
+      expect(step.text).toContain(
         report === "blocked"
           ? "Assignment blocked"
           : "structured completion report",
@@ -610,7 +605,7 @@ it.each([
       const edited =
         delivery === "working-copy"
           ? f.root
-          : join(worktrees, run.id, "tasks", "a");
+          : join(worktrees, run.id, "integration");
       expect(readFileSync(join(edited, "a.txt"), "utf8")).toBe(
         "implemented a.txt\n",
       );
@@ -650,43 +645,28 @@ it.each([
   20000,
 );
 
-it("a blocked repair preserves edits and stops instead of spending another round or claiming completion", async () => {
+it("a real worker's first blocked report is recovered without another user Send or approval", async () => {
   const { f, propose, start, wait } = await setup(false);
   try {
     f.mode("workflow");
     f.implementationReply(
-      '{"status":"blocked","summary":"Check environment requires a new plan"}',
-      true,
+      '{"status":"blocked","summary":"Partial output remains"}',
     );
+    f.recoverImplementation();
     const definition = plan();
     definition.delivery = "working-copy";
-    // One assignment suffices to reach a repair; dependency handoff has its
-    // own regression and need not add another SDK launch to this deadline.
-    definition.goal = "Preserve one output when repair is blocked";
-    definition.design = "Implement b.txt and run the declared check.";
-    definition.acceptance =
-      "b.txt is implemented and the declared check passes.";
-    definition.tasks = [definition.tasks[1]];
-    definition.repairAttempts = 2;
-    definition.checks = [
-      {
-        name: "failing check",
-        command: 'node -e "process.exit(1)"',
-        timeoutMs: 3000,
-      },
-    ];
     const run = await wait(await start(await propose(definition)));
-    expect(run.status).toBe("failed");
-    expect(run.notice).toContain(
-      "Assignment blocked: Check environment requires a new plan",
+    expect(run.status).toBe("completed");
+    expect(run.revision).toBe(1);
+    expect(run.steps.filter((s) => s.kind === "diagnosis")).toHaveLength(1);
+    expect(
+      run.steps.some(
+        (s) => s.kind === "implementation" && s.status === "failed",
+      ),
+    ).toBe(true);
+    expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe(
+      "implemented a.txt\n",
     );
-    expect(run.steps.filter((s) => s.id.startsWith("repair-"))).toHaveLength(1);
-    expect(run.steps.find((s) => s.id.startsWith("repair-"))).toMatchObject({
-      status: "failed",
-      exitCode: 0,
-    });
-    expect(run.steps.filter((s) => s.kind === "review")).toHaveLength(1);
-    expect(run.steps.filter((s) => s.kind === "check")).toHaveLength(1);
     expect(readFileSync(join(f.root, "b.txt"), "utf8")).toBe(
       "implemented b.txt\n",
     );
@@ -719,7 +699,6 @@ it.each([
           timeoutMs: 3000,
         },
       ];
-      definition.repairAttempts = 0;
       const run = await wait(await start(await propose(definition)));
       expect(run.status).toBe("failed");
       const step = run.steps.find((s) => s.kind === "check")!;

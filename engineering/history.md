@@ -87,17 +87,22 @@ The terminal's workflows are found from its `cadence-conversation-mode/1` entrie
 ## Conversation workflow records
 
 The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
-It stores immutable proposals/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and bounded process results with explicit diagnostic truncation.
+It stores immutable versioned agreements/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and bounded process results with explicit diagnostic truncation.
+Version-2 runs additionally retain route revisions, launch knowledge manifests and immutable earlier-step pages with exact step membership.
+Snapshot step bounds are view bounds, not lifetime attempt quotas; native/Web history can select earlier pages without rebasing live execution.
+All original results remain retained.
 One-use confirmation grants remain ephemeral; persisted mode or Markdown never reconstructs them.
 The shared capture sanitizer is reused, not a second credential policy.
 Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.
-Selected final-result previews come from the sanitized complete captured message before clipping, not a raw prefix that could bisect a known literal.
+Selected final-result previews come from the sanitized complete captured message or independently captured structured assignment report before clipping, not a raw prefix that could bisect a known literal.
 Detail reads reapply the shared structural sanitizer for currently known secrets, including pre-fix records, without rewriting or migrating retained bytes.
+Run and archived-step preview reads also reapply current known literals without changing stored bytes or live execution state.
 Status previews label clipping and offer exact retained step-result lookup.
 Workflow check/Git results use the launcher's bounded output rather than its legacy preview; `workflow-result.ts` then budgets the JSON-encoded result, including redaction expansion and the outer record/reply wrappers.
 If the retained diagnostic cannot fit, a scalar-aligned head/tail excerpt and truncation flag preserve coverage honestly without losing native exit/closure facts.
 Detail reads apply the same bounds after current redaction and report limitations, without rewriting older records or reconstructing missing output.
 Output or final-text clipping sets the aggregate result's truncation flag independently of native exit; this flag is not the completeness of a separately selected implementation report.
+Structured diagnosis replies retain their own codec allowance, not the smaller ordinary-text preview allowance.
 Restart treats incomplete work as uncertain, never completed or a resumable mutation queue.
 No incidental migration or cleanup occurs.
 

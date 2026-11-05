@@ -40,7 +40,6 @@ const READ_MS = 120_000;
 /** Larger files use a stat identity instead of a full content hash. */
 const HASH_BYTES = 64 * 1024 * 1024;
 const CHUNK = 1024 * 1024;
-const PROJECT_BYTES = 1024 * 1024;
 
 /** A refusal with an explanation; the public code stays one of ERROR_CODES. */
 export class WorkflowRefusal extends ContractError {
@@ -211,25 +210,51 @@ async function fileIdentityAsync(
   p: string,
   st: Stats,
   hashBytes: number,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   if (st.isSymbolicLink()) return `link:${hash(await readlink(p))}`;
   const quick = quickIdentity(st, hashBytes);
   if (quick) return quick;
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    handle = await open(p, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    handle = await open(
+      p,
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
+    );
   } catch (e) {
     if (absent(e)) return null;
     throw e;
   }
   try {
+    const before = await handle.stat();
+    const same = (a: Stats, b: Stats) =>
+      a.isFile() &&
+      b.isFile() &&
+      a.dev === b.dev &&
+      a.ino === b.ino &&
+      a.size === b.size &&
+      a.mtimeMs === b.mtimeMs &&
+      a.ctimeMs === b.ctimeMs;
+    if (!same(st, before)) throw new ContractError("stale");
     const digest = createHash("sha256"),
       buffer = Buffer.alloc(CHUNK);
-    for (;;) {
-      const { bytesRead } = await handle.read(buffer, 0, CHUNK, null);
-      if (!bytesRead) break;
+    let remaining = before.size;
+    while (remaining > 0) {
+      if (signal?.aborted) throw new ContractError("stale");
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(CHUNK, remaining),
+        null,
+      );
+      if (!bytesRead) throw new ContractError("stale");
       digest.update(buffer.subarray(0, bytesRead));
+      remaining -= bytesRead;
     }
+    if (!same(before, await handle.stat()) || !same(before, await lstat(p)))
+      throw new ContractError("stale");
     return `sha256:${digest.digest("hex")}`;
   } finally {
     await handle.close();
@@ -265,11 +290,14 @@ function directoryIdentity(root: string, name: string): string {
 async function directoryIdentityAsync(
   root: string,
   name: string,
+  contentOnly = false,
+  signal?: AbortSignal,
 ): Promise<string> {
   const rows: string[] = [];
   let count = 0;
   const visit = async (directory: string, prefix: string) => {
     for (const entry of (await readdir(directory)).sort()) {
+      if (signal?.aborted) throw new ContractError("stale");
       if (entry === ".git") continue;
       if (++count > DIRECTORY_ENTRIES) throw tooLarge(name);
       const full = join(directory, entry),
@@ -280,7 +308,7 @@ async function directoryIdentityAsync(
         await visit(full, `${relative}/`);
       } else
         rows.push(
-          `${relative}\0${await fileIdentityAsync(full, st, DIRECTORY_HASH_BYTES)}`,
+          `${relative}\0${await fileIdentityAsync(full, st, contentOnly ? Infinity : DIRECTORY_HASH_BYTES, signal)}`,
         );
     }
   };
@@ -310,7 +338,10 @@ export function pathIdentity(
 export async function pathIdentityAsync(
   cwd: string,
   name: string,
+  contentOnly = false,
+  signal?: AbortSignal,
 ): Promise<string | null> {
+  if (signal?.aborted) throw new ContractError("stale");
   const p = resolve(cwd, name);
   if (relative(cwd, p).startsWith("..")) throw new ContractError("forbidden");
   let st: Stats;
@@ -320,8 +351,9 @@ export async function pathIdentityAsync(
     if (absent(e)) return null;
     throw e;
   }
-  if (st.isDirectory()) return directoryIdentityAsync(p, name);
-  return fileIdentityAsync(p, st, HASH_BYTES);
+  if (st.isDirectory())
+    return directoryIdentityAsync(p, name, contentOnly, signal);
+  return fileIdentityAsync(p, st, contentOnly ? Infinity : HASH_BYTES, signal);
 }
 export function contentsIdentity(cwd: string, paths: readonly string[]) {
   return hash(JSON.stringify(paths.map((p) => [p, pathIdentity(cwd, p)])));
@@ -332,6 +364,18 @@ export async function contentsIdentityAsync(
 ): Promise<string> {
   const rows = [];
   for (const p of paths) rows.push([p, await pathIdentityAsync(cwd, p)]);
+  return hash(JSON.stringify(rows));
+}
+/** Verification crosses worktrees: inode, timestamps and other placement metadata
+ * cannot identify source bytes. Stream every file, retaining directory entry bounds. */
+export async function sourceIdentityAsync(
+  cwd: string,
+  paths: readonly string[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const rows = [];
+  for (const p of paths)
+    rows.push([p, await pathIdentityAsync(cwd, p, true, signal)]);
   return hash(JSON.stringify(rows));
 }
 const names = (s: string) => s.split("\0").filter(Boolean);
@@ -444,7 +488,12 @@ export function workflowObservation(
   cwd: string,
   plan?: WorkflowPlan,
 ): { identity: string; head: string; branch: string } {
-  const declared = [...new Set(plan?.tasks.flatMap((t) => t.writes) ?? [])];
+  const declared = [
+    ...new Set([
+      ...(plan?.tasks.flatMap((t) => t.writes) ?? []),
+      ...(plan?.knowledge ?? []),
+    ]),
+  ];
   for (const p of declared) declaredTarget(cwd, p);
   const paths = [...new Set([".cadence/project.md", "AGENTS.md", ...declared])];
   const working = plan?.delivery === "working-copy";
@@ -584,34 +633,6 @@ export function snapshotChanges(
   return [...new Set([...before.keys(), ...after.keys()])]
     .filter((p) => (before.get(p) ?? null) !== (after.get(p) ?? null))
     .sort();
-}
-export function projectMarkdown(cwd: string, context: string): string {
-  const file = safeWorkflowFile(cwd, ".cadence/project.md");
-  const previous =
-    readBounded(file, PROJECT_BYTES)?.toString("utf8") ??
-    "# Cadence project context\n";
-  const start = "<!-- CADENCE:PROJECT:START -->",
-    end = "<!-- CADENCE:PROJECT:END -->";
-  if (
-    previous.split(start).length !== previous.split(end).length ||
-    previous.split(start).length > 2
-  )
-    throw new WorkflowRefusal(
-      "conflict",
-      ".cadence/project.md has unbalanced Cadence managed-region markers.",
-    );
-  const block = `${start}\n${context}\n${end}`;
-  if (!previous.includes(start)) return `${previous.trimEnd()}\n\n${block}\n`;
-  if (previous.indexOf(end) < previous.indexOf(start))
-    throw new WorkflowRefusal(
-      "conflict",
-      ".cadence/project.md has misordered Cadence managed-region markers.",
-    );
-  return (
-    previous.slice(0, previous.indexOf(start)) +
-    block +
-    previous.slice(previous.indexOf(end) + end.length)
-  );
 }
 /** Existing package dependencies must be provisioned by plan.setup, never copied implicitly. */
 export async function assertWorktree(root: string, cwd: string): Promise<void> {

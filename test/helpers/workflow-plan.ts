@@ -4,8 +4,8 @@ export const plan = (): WorkflowPlan => ({
   design: "Implement two files without touching existing files.",
   decisions: "No remote push or installation.",
   acceptance: "Both files contain their expected text.",
-  projectContext:
-    "Consult existing.txt. This fixture has no dependency installation.",
+  version: 2,
+  knowledge: [],
   tasks: [
     {
       id: "a",
@@ -32,6 +32,5 @@ export const plan = (): WorkflowPlan => ({
   ],
   setup: [],
   baselineChecks: [],
-  repairAttempts: 0,
   delivery: "local-merge",
 });

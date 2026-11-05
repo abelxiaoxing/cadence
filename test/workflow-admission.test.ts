@@ -230,6 +230,6 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
   expect(outdated).toBeInstanceOf(UnacceptedWorkflowCommand);
   expect(outdated).toMatchObject({ code: "invalid" });
   expect((outdated as UnacceptedWorkflowCommand).detail).toContain(
-    "predates the current plan rules",
+    "does not authorize adaptive delivery",
   );
 });

@@ -3,7 +3,7 @@
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
 Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a conversation-driven engineering workflow.
-Enter `/cadence [goal]`, align the plan through conversation, then let the persistent owner implement and verify it.
+Enter `/cadence [goal]`, align the expected delivery through conversation, then let the persistent owner implement, recover and verify it.
 The optional WebUI supports the same persistent conversation workflow without a live Pi terminal, alongside ordinary chat and readonly retained history.
 
 ## Why Cadence
@@ -11,9 +11,9 @@ The optional WebUI supports the same persistent conversation workflow without a 
 - **Work outlives the window.**
   Tasks run in a background service: closing the terminal, quitting Pi or leaving the browser tab only detaches, and either client can reattach to the same run.
 - **Nothing is edited before you approve.**
-  A task first analyzes readonly and proposes a readable plan; files change only after you confirm that exact plan.
+  Cadence first investigates readonly and proposes a readable delivery agreement; files change only after you confirm its goal, scope and permitted actions.
 - **Results you can trust.**
-  Subagent output, real check runs and your own review stay separate: model prose or a "Done" never counts as a passed check, and failed, canceled and unknown outcomes stay distinct.
+  Subagent output, real check runs and independent Agent review stay separate: model prose or a "Done" never counts as a passed check, and failed, canceled and unknown outcomes stay distinct.
 - **Complete history.**
   Conversation workflows retain sanitized transcripts and actual process results; legacy task history also provides exact search and Markdown/NDJSON export.
 - **One link for everything.**
@@ -47,7 +47,7 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
    Saved model preferences are reused on Send; choose once if none is available.
 3. Send `/cadence [goal]` once to enter Cadence in this conversation; continue with normal messages to investigate and clarify requirements.
 4. Review the complete inline plan and click **Implement this plan** (or send `按计划实施`).
-   The owner implements, verifies, repairs within budget and delivers as approved.
+   The owner implements, diagnoses failures, adjusts the route, updates approved project knowledge and verifies delivery without routine reconfirmation.
 5. Follow actual progress and local merge results in the conversation; open any subagent's full context from the lower-left **Subagents** dock.
    Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
 
@@ -58,8 +58,9 @@ Choose a vision-capable model; see [image input](docs/conversation-mode.md#image
 
 Enter `/cadence <goal>` once in any trusted project's Pi conversation.
 Continue with normal messages: Cadence investigates, consolidates questions and develops a readable plan with you.
-After explicit plan approval it automatically implements, reviews, verifies, performs bounded repairs and delivers as agreed.
-Independent Git tasks use separate worktrees and may run in parallel; approved local commits/merge never imply a remote push.
+After one explicit delivery approval it automatically implements, recovers, reviews and verifies within the agreed boundary.
+One stable candidate preserves partial work; approved local commits/merge never imply a remote push.
+Relevant project documents are injected into workers and updated from verified lessons, without a separate knowledge-management command.
 
 **Completing a goal leaves the conversation in Cadence mode.**
 No repeated command is needed.

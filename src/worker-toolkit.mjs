@@ -1,7 +1,9 @@
 /** Trusted capability composition. No discovery, plugin claims or model-selected
  * permissions. Role prompts do not grant tools; the validated owner request does. */
+import { Type } from "typebox";
 import { createCoordinatorTools } from "./coordinator-tools.mjs";
 import { createResearchTools } from "./research-tools.mjs";
+import { sanitizeText } from "./worker-redaction.mjs";
 import { captureBash } from "./worker-tools.mjs";
 
 const policies = Object.freeze({
@@ -44,9 +46,43 @@ export function createWorkerToolkit(options) {
   const capabilities = policies[coordinator ? "coordination" : purpose];
   const owned = capabilities.map((capability) => bundles[capability](options));
   const customTools = owned.flatMap((bundle) => bundle.tools);
+  if (options.reporting && !coordinator && purpose === "edit")
+    customTools.push({
+      name: "cadence_report",
+      label: "Report assignment outcome",
+      description:
+        "Submit this assignment's structured result after all work. Completed means assigned work is done, not that owner checks or review passed. Use blocked for remaining work. Then give a brief final answer; no JSON formatting is required in that answer. Any later tool call requires a new report.",
+      parameters: Type.Object({
+        status: Type.Union([
+          Type.Literal("completed"),
+          Type.Literal("blocked"),
+        ]),
+        summary: Type.String({ minLength: 1, maxLength: 8192 }),
+      }),
+      async execute(_id, input) {
+        if (
+          !input ||
+          !["completed", "blocked"].includes(input.status) ||
+          typeof input.summary !== "string" ||
+          !input.summary.trim() ||
+          Object.keys(input).some((key) => !["status", "summary"].includes(key))
+        )
+          throw new Error("Invalid assignment report");
+        const report = {
+          status: input.status,
+          summary: sanitizeText(input.summary, options.secrets ?? []),
+        };
+        const text = JSON.stringify(report);
+        if (!report.summary.trim() || Buffer.byteLength(text) > 16384)
+          throw new Error("Assignment report exceeds bound");
+        return { content: [{ type: "text", text }], details: undefined };
+      },
+    });
   const names = owned.flatMap(
     (bundle) => bundle.names ?? bundle.tools.map((tool) => tool.name),
   );
+  if (options.reporting && !coordinator && purpose === "edit")
+    names.push("cadence_report");
   if (new Set(names).size !== names.length)
     throw new Error("Duplicate worker tool");
   const originals = new Set();

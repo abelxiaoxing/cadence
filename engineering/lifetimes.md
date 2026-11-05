@@ -7,12 +7,21 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
-Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
-Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` plus a disjoint `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
-Worktrees created by 2.0.21 inside the service namespace are left where they are.
-Direct working-copy delivery serializes edits.
+A proven transient provider HTTP failure may then release the gate during abortable backoff; before continuing, the owner reacquires it and rechecks approved target contents.
+Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
+Within that barrier, implementation assignments run in one stable candidate, preserving predecessor and partial-attempt outputs.
+The initial dependency order can share write paths; readonly questions within a research run may still overlap.
+A local-merge candidate lives under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/integration` (0700, outside the private service namespace and checkout).
+Retained task worktrees from earlier releases remain untouched.
+Direct working-copy delivery serializes edits without Git mutation.
 The terminal is never an embedded executor.
-One fresh 120s grant binds the exact proposal/plan, model source, project observation and owner epoch; accepted durable work owns the declared finite steps, not fabricated user clicks.
+One fresh 120s grant binds the exact displayed version-2 delivery agreement, model source, project observation and owner epoch.
+The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations inside its immutable goal, decisions, acceptance, write paths and exact commands; a model cannot change those permissions.
+There is no total delivery deadline or fixed repair-round quota.
+Each worker/check still has its native deadline and original closure requirements.
+Settled failures enter readonly diagnosis; authority, scope, storage, cancellation and unknown-closure failures never authorize another attempt.
+Identical strategy and unchanged failure/source evidence stop a nonprogressing route.
+A concrete external blocker is retained as an unsuccessful delivery, never success or a fabricated user request.
 The general workflow command remains native-only.
 Browser confirmation uses a separate conversation-bound boundary; both reach the same execution owner.
 Browser grants additionally bind the authenticated attachment/access generation and exact conversation revision/head, and are consumed before dispatch; a parallel tab cannot accept the same proposal twice.
@@ -131,7 +140,7 @@ Stopping an unresponsive owner requires its recorded start identity; taking over
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
 Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
-Queue time is outside the workflow/process budgets; ongoing tool/model activity never renews a worker's total deadline.
+Queue time is outside the process deadlines; ongoing tool/model activity never renews a worker's total deadline.
 Readonly investigations use bounded native filesystem tools at explicit roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
 They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
 Grep is explicitly literal-only.

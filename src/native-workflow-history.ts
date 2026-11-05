@@ -11,9 +11,13 @@ export async function workflowDetails(
   ui: NativeViews,
   id: string,
 ): Promise<void> {
+  let before: number | undefined;
   for (;;) {
     const view = value(
-      await client.workbenchRead({ kind: "workflow", id }, ui.signal),
+      await client.workbenchRead(
+        { kind: "workflow", id, ...(before === undefined ? {} : { before }) },
+        ui.signal,
+      ),
     );
     ui.current();
     if (
@@ -31,9 +35,19 @@ export async function workflowDetails(
     );
     const selected = await ui.select("Workflow details • readonly", [
       ...labels,
+      ...((run.stepsBefore ?? 0) > 0 ? ["Earlier steps"] : []),
+      ...(before !== undefined ? ["Latest steps"] : []),
       "Refresh",
       "Return",
     ]);
+    if (selected === "Earlier steps") {
+      before = run.stepsBefore;
+      continue;
+    }
+    if (selected === "Latest steps") {
+      before = undefined;
+      continue;
+    }
     if (selected === "Refresh") continue;
     if (!selected || !labels.includes(selected)) return;
     const step = run.steps[labels.indexOf(selected)];
