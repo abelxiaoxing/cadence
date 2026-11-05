@@ -6,6 +6,7 @@ import {
   validateImageBytes,
 } from "../src/image-content.mjs";
 import {
+  decodeChatItem,
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
@@ -62,9 +63,19 @@ it("closed image uploads/reads keep existing control bounds and forbid nested up
   expect(() =>
     decodeWorkbenchCommand({ ...c, path: "/tmp/user.png" }),
   ).toThrow();
-  expect(() =>
-    decodeWorkbenchCommand({ ...c, size: IMAGE_LIMITS.bytes + 1 }),
-  ).toThrow();
+  for (const size of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+    expect(() => decodeWorkbenchCommand({ ...c, size })).toThrow();
+  expect(
+    decodeWorkbenchCommand({ ...c, size: 128 * 1024 * 1024 }),
+  ).toMatchObject({
+    size: 128 * 1024 * 1024,
+  });
+  expect(
+    decodeWorkbenchRead({ ...media, index: 1025, offset: 8 * 1024 * 1024 }),
+  ).toMatchObject({
+    index: 1025,
+    offset: 8 * 1024 * 1024,
+  });
   expect(() =>
     decodeWorkbenchCommand({
       ...c,
@@ -116,7 +127,7 @@ it("claim binds exact send/context/model/revision and authenticated attachment, 
   ]);
   expect(() => store.claim(claim, caller)).toThrow();
 });
-it("chunk offsets, early EOF, duplicates, count limits and idle expiry cannot admit images", () => {
+it("chunk offsets, early EOF, duplicates and idle expiry cannot admit images", () => {
   let now = 1;
   const store = new ConversationImages(() => now),
     command = send(),
@@ -130,24 +141,14 @@ it("chunk offsets, early EOF, duplicates, count limits and idle expiry cannot ad
   expect(() =>
     store.claim({ ...command, images: [c.imageId, c.imageId] }, caller),
   ).toThrow();
-  for (let i = 1; i < IMAGE_LIMITS.count; i++)
-    store.upload(upload(command), caller);
-  expect(() => store.upload(upload(command), caller)).toThrow();
   now += IMAGE_LIMITS.idleMs + 1;
   expect(() =>
     store.claim({ ...command, images: [c.imageId] }, caller),
   ).toThrow();
   expect(() => store.upload(upload(command), caller)).not.toThrow();
 });
-it("staging reserves aggregate size up front; malformed, misleading MIME and pixel bombs refuse", () => {
-  const store = new ConversationImages(),
-    command = send();
-  for (let i = 0; i < 2; i++)
-    store.upload(
-      { ...upload(command), size: IMAGE_LIMITS.bytes, data: PNG.slice(0, 4) },
-      caller,
-    );
-  expect(() => store.upload(upload(command), caller)).toThrow();
+it("malformed encodings, misleading MIME and invalid headers still refuse", () => {
+  const store = new ConversationImages();
   expect(() =>
     store.upload({ ...upload(send()), data: "!!!!" }, caller),
   ).toThrow();
@@ -159,9 +160,9 @@ it("staging reserves aggregate size up front; malformed, misleading MIME and pix
     width: 1,
     height: 1,
   });
-  const bomb = pngBytes();
-  bomb.writeUInt32BE(100000, 16);
-  expect(() => validateImageBytes(bomb, "image/png")).toThrow();
+  const invalid = pngBytes();
+  invalid.writeUInt32BE(0, 16);
+  expect(() => validateImageBytes(invalid, "image/png")).toThrow();
   expect(() =>
     validateImageBytes(Buffer.from("<svg></svg>"), "image/png"),
   ).toThrow();
@@ -176,4 +177,77 @@ it("staging reserves aggregate size up front; malformed, misleading MIME and pix
   expect(() =>
     store.claim({ ...cadence, revision: 2, images: [c.imageId] }, caller),
   ).toThrow();
+});
+
+it("image count and staged byte declarations have no image-specific quota", () => {
+  const store = new ConversationImages(),
+    command = send();
+  const uploads = Array.from({ length: 65 }, () => upload(command));
+  for (const c of uploads) store.upload(c, caller);
+  const claim = decodeWorkbenchCommand({
+    ...command,
+    images: uploads.map((c) => c.imageId),
+  }) as ImageSend;
+  expect(store.claim(claim, caller)).toHaveLength(65);
+  for (let i = 0; i < 65; i++)
+    store.upload(
+      { ...upload(command), size: 128 * 1024 * 1024, data: PNG.slice(0, 4) },
+      caller,
+    );
+  store.clear();
+  const c = upload(command);
+  store.upload(c, caller);
+  expect(store.claim({ ...command, images: [c.imageId] }, caller)).toHaveLength(
+    1,
+  );
+});
+it("complete images above the former per-file and message byte limits can be claimed", () => {
+  const store = new ConversationImages(),
+    command = send();
+  // Padding exercises byte transport; header validation is not codec decoding.
+  const bytes = Buffer.concat([pngBytes(), Buffer.alloc(5 * 1024 * 1024)]);
+  const data = bytes.toString("base64");
+  const images: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const c = { ...upload(command), size: bytes.length };
+    for (
+      let offset = 0;
+      offset < data.length;
+      offset += IMAGE_LIMITS.chunkChars
+    )
+      store.upload(
+        decodeWorkbenchCommand({
+          ...c,
+          offset,
+          data: data.slice(offset, offset + IMAGE_LIMITS.chunkChars),
+        }) as typeof c,
+        caller,
+      );
+    images.push(c.imageId);
+  }
+  const claimed = store.claim({ ...command, images }, caller);
+  expect(claimed.map((image) => image.data.length)).toEqual([
+    data.length,
+    data.length,
+  ]);
+  expect(claimed[1].data).toBe(data);
+});
+
+it("retained image descriptors decode without a count or content-index quota", () => {
+  const images = Array.from({ length: 65 }, (_, i) => ({
+    entry: "user",
+    index: 1025 + i,
+    mimeType: "image/png",
+  }));
+  expect(
+    decodeChatItem({
+      id: "user",
+      role: "user",
+      text: "",
+      name: "",
+      args: "",
+      error: false,
+      images,
+    }),
+  ).toMatchObject({ images });
 });

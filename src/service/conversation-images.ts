@@ -15,7 +15,6 @@ import type { Caller } from "./ports.ts";
 type Upload = Extract<WorkbenchCommand, { kind: "image-upload" }>;
 interface Staged {
   binding: string;
-  commandId: string;
   caller: string;
   mimeType: string;
   size: number;
@@ -31,7 +30,7 @@ const identity = (caller?: Caller) => {
   if (!caller) throw new ContractError("forbidden");
   return canonicalJson(caller);
 };
-/** Ephemeral, bounded uploads only. Pi owns the sole durable image copy.
+/** Ephemeral uploads only. Pi owns the sole durable image copy.
  * Uploading cannot admit a turn, select a model or enable Cadence. */
 export class ConversationImages {
   private readonly staged = new Map<string, Staged>();
@@ -47,19 +46,9 @@ export class ConversationImages {
       if (now - value.at > IMAGE_LIMITS.idleMs) this.staged.delete(id);
     let row = this.staged.get(c.imageId);
     if (!row) {
-      const rows = [...this.staged.values()];
-      const message = rows.filter((r) => r.commandId === c.send.commandId);
       if (c.offset !== 0) throw new ContractError("stale");
-      if (
-        rows.length >= IMAGE_LIMITS.stagedCount ||
-        rows.reduce((n, r) => n + r.size, c.size) > IMAGE_LIMITS.stagedBytes ||
-        message.length >= IMAGE_LIMITS.count ||
-        message.reduce((n, r) => n + r.size, c.size) > IMAGE_LIMITS.totalBytes
-      )
-        throw new ContractError("capacity");
       row = {
         binding: key,
-        commandId: c.send.commandId,
         caller: who,
         mimeType: c.mimeType,
         size: c.size,
@@ -113,7 +102,6 @@ export class ConversationImages {
       key = binding(send);
     if (new Set(send.images).size !== send.images.length)
       throw new ContractError("invalid");
-    let size = 0;
     const images = send.images.map((id): InputImage => {
       const row = this.staged.get(id);
       if (
@@ -123,10 +111,8 @@ export class ConversationImages {
         this.now() - row.at > IMAGE_LIMITS.idleMs
       )
         throw new ContractError("stale");
-      size += row.size;
       return { type: "image", data: row.data, mimeType: row.mimeType };
     });
-    if (size > IMAGE_LIMITS.totalBytes) throw new ContractError("capacity");
     for (const id of send.images) this.staged.delete(id);
     return images;
   }

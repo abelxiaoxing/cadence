@@ -154,14 +154,15 @@ Error codes, identifiers, commands and recorded content stay untranslated.
 The owner keeps staging in `conversation-images.ts`, bound to the full original command (including mode revision, context/model and head), authenticated attachment and access generation.
 Upload is not message admission, model selection or mode entry.
 A lost upload reply abandons that continuation; a lost Send reply observes only its original command ID.
-Count/byte reservations bound incomplete uploads too; idle staging is ineligible and swept on the next upload, and is cleared on owner close.
+There are no image-specific count, byte or dimension quotas, including for incomplete staging; idle staging is ineligible and swept on the next upload, and is cleared on owner close.
 No consumer file is cleaned.
 At admission the exact selected model must support images and the live turn takes the bytes independently of viewer departure.
-Only image count enters the public worker request; the owner-only fd 3 payload is bounded and bound by byte length/SHA-256 in the private envelope.
+Only image count enters the public worker request; the owner-only fd 3 payload is bound by its exact byte length/SHA-256 in the private envelope.
 The coordinator retains IPC fd 4.
 The worker verifies the payload, declared count, format/dimensions and pinned model capability, then supplies Pi's public `prompt` image option.
 Pi alone writes the durable content.
-Preview Blob URLs are created only after the shared header/dimension check, not merely after a compressed-size check.
+Preview Blob URLs are created only after the shared format/header and nonzero-dimension check.
+The composer keeps its image action and previews without a permanent format, quota or draft-retention help paragraph.
 The browser's unsent images stay in memory, not sessionStorage; its draft controls lock during a pending Send/model choice.
 Image-only turns are valid, but images never authorize a plan or mode exit.
 Text redaction cannot remove secrets contained in image pixels.

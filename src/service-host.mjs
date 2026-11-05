@@ -271,7 +271,6 @@ function effectiveWorkspace(requested, stateHome, _home) {
 }
 
 // src/worker-public.mjs
-var IMAGE_COUNT = 4;
 var SERVICE_PROTOCOL = 1;
 var WORKER_PROTOCOL = 2;
 var GRAPH_SCHEMA = "cadence-graph/2";
@@ -1168,7 +1167,7 @@ function decodeWorkerPublicRequest(v) {
     context: text(o.context, 32768),
     instructions: text(o.instructions, LIMITS.instructionsBytes, true),
     prompt: text(o.prompt, 32768, o.imageCount === undefined),
-    ...o.imageCount === undefined ? {} : { imageCount: integer(o.imageCount, 1, IMAGE_COUNT) },
+    ...o.imageCount === undefined ? {} : { imageCount: integer(o.imageCount, 1) },
     handoff: decodeHandoff(o.handoff)
   };
   if (result.handoff.inputs.some((i) => i.assignmentId !== result.assignmentId))
@@ -5147,36 +5146,26 @@ function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.
 
 // src/image-content.mjs
 var IMAGE_LIMITS = Object.freeze({
-  count: IMAGE_COUNT,
-  bytes: 4 * 1024 * 1024,
-  totalBytes: 8 * 1024 * 1024,
   chunkChars: 256 * 1024,
-  stagedBytes: 64 * 1024 * 1024,
-  stagedCount: 64,
-  idleMs: 10 * 60 * 1000,
-  pixels: 32 * 1024 * 1024,
-  dimension: 16384,
-  wireBytes: 12 * 1024 * 1024
+  idleMs: 10 * 60 * 1000
 });
 var IMAGE_TYPES = Object.freeze([
   "image/png",
   "image/jpeg",
   "image/webp"
 ]);
-function decodeImageBase64(data, maxBytes = IMAGE_LIMITS.bytes) {
-  if (typeof data !== "string" || !data.length || data.length % 4 || data.length > 4 * Math.ceil(maxBytes / 3) || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
+function decodeImageBase64(data) {
+  if (typeof data !== "string" || !data.length || data.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data))
     throw new Error("Invalid image encoding");
   const raw = atob(data);
-  if (raw.length > maxBytes)
-    throw new Error("Image is too large");
   const bytes = new Uint8Array(raw.length);
   for (let i = 0;i < raw.length; i++)
     bytes[i] = raw.charCodeAt(i);
   return bytes;
 }
 function validateImageBytes(bytes, mimeType) {
-  if (!IMAGE_TYPES.includes(mimeType) || !bytes.length || bytes.length > IMAGE_LIMITS.bytes)
-    throw new Error("Unsupported image or size");
+  if (!IMAGE_TYPES.includes(mimeType) || !bytes.length)
+    throw new Error("Unsupported or empty image");
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const ascii = (at, value) => [...value].every((c, i) => bytes[at + i] === c.charCodeAt(0));
   let width = 0, height = 0;
@@ -5235,7 +5224,7 @@ function validateImageBytes(bytes, mimeType) {
       height = 1 + (bits >>> 14 & 16383);
     }
   }
-  if (!width || !height || width > IMAGE_LIMITS.dimension || height > IMAGE_LIMITS.dimension || width * height > IMAGE_LIMITS.pixels)
+  if (!width || !height)
     throw new Error("Invalid image dimensions or header");
   return { width, height };
 }
@@ -5775,7 +5764,7 @@ function decodeWorkbenchRead(v) {
         "offset",
         ...Object.hasOwn(v ?? {}, "live") ? ["live"] : []
       ]);
-      const offset = integer(o.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3));
+      const offset = integer(o.offset, 0);
       if (offset % IMAGE_LIMITS.chunkChars || o.live !== undefined && o.live !== true)
         throw new ContractError("invalid");
       return {
@@ -5784,7 +5773,7 @@ function decodeWorkbenchRead(v) {
         leaf: nullable(o.leaf, decodeEntryId),
         ...o.live === undefined ? {} : { live: true },
         entry: decodeEntryId(o.entry),
-        index: integer(o.index, 0, 1024),
+        index: integer(o.index, 0),
         offset
       };
     }
@@ -5944,8 +5933,8 @@ function decodeWorkbenchCommand(v) {
       imageId: decodeId(o2.imageId),
       send,
       mimeType: oneOf(o2.mimeType, IMAGE_TYPES),
-      size: integer(o2.size, 1, IMAGE_LIMITS.bytes),
-      offset: integer(o2.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)),
+      size: integer(o2.size, 1),
+      offset: integer(o2.offset, 0),
       data: text(o2.data, IMAGE_LIMITS.chunkChars, true)
     };
   }
@@ -5967,7 +5956,7 @@ function decodeWorkbenchCommand(v) {
       conversationId: decodeSessionId(o2.conversationId),
       head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, CONVERSATION_SEND_BYTES),
-      ...o2.images === undefined ? {} : { images: list(o2.images, IMAGE_LIMITS.count, decodeId) },
+      ...o2.images === undefined ? {} : { images: list(o2.images, Number.MAX_SAFE_INTEGER, decodeId) },
       model: decodeChoiceVersion(o2.model),
       revision: integer(o2.revision, 0),
       intent: oneOf(o2.intent, ["message", "enter", "exit"])
@@ -6017,7 +6006,7 @@ function decodeWorkbenchCommand(v) {
       conversationId: decodeSessionId(o2.conversationId),
       head: nullable(o2.head, decodeEntryId),
       text: text(o2.text, CONVERSATION_SEND_BYTES),
-      ...o2.images === undefined ? {} : { images: list(o2.images, IMAGE_LIMITS.count, decodeId) },
+      ...o2.images === undefined ? {} : { images: list(o2.images, Number.MAX_SAFE_INTEGER, decodeId) },
       model: decodeChoiceVersion(o2.model)
     };
   }
@@ -6073,7 +6062,7 @@ function decodeChatTurn(v) {
   };
 }
 function decodeChatImages(v) {
-  return list(v, IMAGE_LIMITS.count, (value) => {
+  return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
       "entry",
       "index",
@@ -6085,7 +6074,7 @@ function decodeChatImages(v) {
     return {
       ...o.live === undefined ? {} : { live: true },
       entry: decodeEntryId(o.entry),
-      index: integer(o.index, 0, 1024),
+      index: integer(o.index, 0),
       mimeType: oneOf(o.mimeType, IMAGE_TYPES)
     };
   });
@@ -6225,7 +6214,7 @@ function decodeWorkbenchResult(v) {
       kind: k,
       commandId: decodeId(o2.commandId),
       imageId: decodeId(o2.imageId),
-      offset: integer(o2.offset, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3))
+      offset: integer(o2.offset, 0)
     };
   }
   if (k === "conversation-image") {
@@ -6234,7 +6223,7 @@ function decodeWorkbenchResult(v) {
       kind: k,
       mimeType: oneOf(o2.mimeType, IMAGE_TYPES),
       data: text(o2.data, IMAGE_LIMITS.chunkChars, true),
-      next: nullable(o2.next, (n) => integer(n, 0, 4 * Math.ceil(IMAGE_LIMITS.bytes / 3)))
+      next: nullable(o2.next, (n) => integer(n, 0))
     };
   }
   if (k === "conversation-context") {
@@ -11310,7 +11299,7 @@ function imageDescriptors(entry) {
   const content = message(entry)?.content;
   if (!isUser(entry) || !Array.isArray(content))
     return [];
-  return content.flatMap((b, index) => b?.type === "image" && IMAGE_TYPES.includes(b.mimeType) && typeof b.data === "string" && b.data.length > 0 && b.data.length <= 4 * Math.ceil(IMAGE_LIMITS.bytes / 3) && index <= 1024 ? [{ entry: entry.id, index, mimeType: b.mimeType }] : []).slice(0, IMAGE_LIMITS.count);
+  return content.flatMap((b, index) => b?.type === "image" && IMAGE_TYPES.includes(b.mimeType) && typeof b.data === "string" && b.data.length > 0 ? [{ entry: entry.id, index, mimeType: b.mimeType }] : []);
 }
 function sessionImage(session, leaf, entry, index, offset) {
   if (!session.contains(leaf, entry))
@@ -14542,7 +14531,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "2d78a97c9d5db70709e390e26fa315b5fdd3539f5a36e040593943f06ee5469a",
+    contractHash: "c0fbbbe2327906feda671704f27dcac1fa3d5da6c89f5d276231b6f5edb171ed",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -25415,8 +25404,6 @@ function runProcess(spec) {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
-  if (spec.imageInput !== undefined && Buffer.byteLength(spec.imageInput) > IMAGE_LIMITS.wireBytes)
-    return Promise.resolve(early("failed", "Image input exceeds bound"));
   return new Promise((resolve12) => {
     const child = spawn3(spec.command, spec.args, {
       cwd: spec.cwd,
@@ -27139,15 +27126,10 @@ class ConversationImages {
         this.staged.delete(id);
     let row = this.staged.get(c.imageId);
     if (!row) {
-      const rows = [...this.staged.values()];
-      const message2 = rows.filter((r) => r.commandId === c.send.commandId);
       if (c.offset !== 0)
         throw new ContractError("stale");
-      if (rows.length >= IMAGE_LIMITS.stagedCount || rows.reduce((n, r) => n + r.size, c.size) > IMAGE_LIMITS.stagedBytes || message2.length >= IMAGE_LIMITS.count || message2.reduce((n, r) => n + r.size, c.size) > IMAGE_LIMITS.totalBytes)
-        throw new ContractError("capacity");
       row = {
         binding: key2,
-        commandId: c.send.commandId,
         caller: who,
         mimeType: c.mimeType,
         size: c.size,
@@ -27188,16 +27170,12 @@ class ConversationImages {
     const who = identity(caller), key2 = binding(send2);
     if (new Set(send2.images).size !== send2.images.length)
       throw new ContractError("invalid");
-    let size2 = 0;
     const images = send2.images.map((id) => {
       const row = this.staged.get(id);
       if (!row?.ready || row.caller !== who || row.binding !== key2 || this.now() - row.at > IMAGE_LIMITS.idleMs)
         throw new ContractError("stale");
-      size2 += row.size;
       return { type: "image", data: row.data, mimeType: row.mimeType };
     });
-    if (size2 > IMAGE_LIMITS.totalBytes)
-      throw new ContractError("capacity");
     for (const id of send2.images)
       this.staged.delete(id);
     return images;
@@ -29161,7 +29139,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.36",
-  build: "dc0c41216ec2494e32e26fe242144608f3b8b83f5e10b905e1ecb1f70a16ade3",
+  build: "54e61b3b116deb779d8693edfa4022003a45e31ee111ee5b69ce9a956c955a1f",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -31099,7 +31077,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "2d78a97c9d5db70709e390e26fa315b5fdd3539f5a36e040593943f06ee5469a";
+  const embedded = "c0fbbbe2327906feda671704f27dcac1fa3d5da6c89f5d276231b6f5edb171ed";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

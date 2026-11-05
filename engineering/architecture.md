@@ -29,7 +29,7 @@ A root access rotation retires its proxy attachment IDs and detaches those exact
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
 `src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission and live preview), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
-`src/service/conversation-images.ts` owns bounded ephemeral upload staging; `src/image-content.mjs` owns portable format/size validation.
+`src/service/conversation-images.ts` owns ephemeral upload staging; `src/image-content.mjs` owns portable format/header validation.
 The conversation launcher delivers admitted bytes on its private image pipe, not through the public control envelope.
 `src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, and `src/session-entries.mjs` names the custom entries Cadence adds.
 Pre-Pi Cadence conversations are unsupported: no migration endpoint, old checkpoint codec or transcript reader remains.

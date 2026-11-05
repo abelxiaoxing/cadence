@@ -1,17 +1,9 @@
-import { IMAGE_COUNT } from "./worker-public.mjs";
-/** Shared image ceilings. Upload chunks and history parts fit existing control replies;
- * image bytes never enlarge the public worker request or become prompt text. */
+/** Upload chunks and history parts fit existing control replies. There are no
+ * image-specific count, byte or dimension quotas; runtime/provider limits apply.
+ * Image bytes never enlarge the public worker request or become prompt text. */
 export const IMAGE_LIMITS = Object.freeze({
-  count: IMAGE_COUNT,
-  bytes: 4 * 1024 * 1024,
-  totalBytes: 8 * 1024 * 1024,
   chunkChars: 256 * 1024,
-  stagedBytes: 64 * 1024 * 1024,
-  stagedCount: 64,
   idleMs: 10 * 60 * 1000,
-  pixels: 32 * 1024 * 1024,
-  dimension: 16384,
-  wireBytes: 12 * 1024 * 1024,
 });
 export const IMAGE_TYPES = Object.freeze([
   "image/png",
@@ -19,17 +11,15 @@ export const IMAGE_TYPES = Object.freeze([
   "image/webp",
 ]);
 
-export function decodeImageBase64(data, maxBytes = IMAGE_LIMITS.bytes) {
+export function decodeImageBase64(data) {
   if (
     typeof data !== "string" ||
     !data.length ||
     data.length % 4 ||
-    data.length > 4 * Math.ceil(maxBytes / 3) ||
     !/^[A-Za-z0-9+/]*={0,2}$/.test(data)
   )
     throw new Error("Invalid image encoding");
   const raw = atob(data);
-  if (raw.length > maxBytes) throw new Error("Image is too large");
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
   return bytes;
@@ -37,12 +27,8 @@ export function decodeImageBase64(data, maxBytes = IMAGE_LIMITS.bytes) {
 
 /** Bounded header validation, not an image transcoder. No SVG/HTML or remote URLs. */
 export function validateImageBytes(bytes, mimeType) {
-  if (
-    !IMAGE_TYPES.includes(mimeType) ||
-    !bytes.length ||
-    bytes.length > IMAGE_LIMITS.bytes
-  )
-    throw new Error("Unsupported image or size");
+  if (!IMAGE_TYPES.includes(mimeType) || !bytes.length)
+    throw new Error("Unsupported or empty image");
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const ascii = (at, value) =>
     [...value].every((c, i) => bytes[at + i] === c.charCodeAt(0));
@@ -108,13 +94,6 @@ export function validateImageBytes(bytes, mimeType) {
       height = 1 + ((bits >>> 14) & 16383);
     }
   }
-  if (
-    !width ||
-    !height ||
-    width > IMAGE_LIMITS.dimension ||
-    height > IMAGE_LIMITS.dimension ||
-    width * height > IMAGE_LIMITS.pixels
-  )
-    throw new Error("Invalid image dimensions or header");
+  if (!width || !height) throw new Error("Invalid image dimensions or header");
   return { width, height };
 }
