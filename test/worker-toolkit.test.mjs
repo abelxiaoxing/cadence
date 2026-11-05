@@ -180,3 +180,37 @@ it("existing execution context maps subdirectories into the owner-selected tree 
     ),
   ).toThrow("escaped");
 });
+it("only admitted editing workers get structured reporting; it grants no execution authority", async () => {
+  const kit = toolkit("edit", resolve("."), {
+    reporting: true,
+    secrets: ["fixture-secret"],
+  });
+  const report = kit.sessionOptions.customTools.find(
+    (t) => t.name === "cadence_report",
+  );
+  expect(report).toBeDefined();
+  const result = await report.execute("report", {
+    status: "blocked",
+    summary: "Partial work; fixture-secret was withheld",
+  });
+  expect(JSON.parse(result.content[0].text)).toEqual({
+    status: "blocked",
+    summary: "Partial work; [redacted] was withheld",
+  });
+  await expect(
+    report.execute("report", { status: "completed", summary: "" }),
+  ).rejects.toThrow();
+  await expect(
+    report.execute("report", {
+      status: "completed",
+      summary: "done",
+      command: "unapproved",
+    }),
+  ).rejects.toThrow();
+  expect(
+    toolkit("research", resolve("."), { reporting: true }).sessionOptions.tools,
+  ).not.toContain("cadence_report");
+  expect(toolkit("edit", resolve(".")).sessionOptions.tools).not.toContain(
+    "cadence_report",
+  );
+});

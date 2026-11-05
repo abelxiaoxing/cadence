@@ -170,8 +170,10 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
       path.join(root, "agents/implementation-worker.md"),
     );
     expect(implementation).toMatch(/smallest complete change/i);
-    expect(implementation).toMatch(/chosen working copy/i);
-    expect(implementation).toMatch(/not passing parent checks/i);
+    expect(implementation).toMatch(/owner-selected working copy/i);
+    expect(implementation).toMatch(/not passing checks or delivery approval/i);
+    expect(implementation).toContain("cadence_report");
+    expect(implementation).toContain("service owns delegation and recovery");
     expect(implementation).not.toMatch(
       /parent.*seals the candidate|supplied disposable proposal root/i,
     );
@@ -179,7 +181,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
       const body = read(path.join(root, `agents/${role}.md`));
       expect(body).toMatch(/readonly/i);
       expect(body).toMatch(/Do not/i);
-      expect(body).toMatch(/human review/i);
+      expect(body).toMatch(/supporting evidence|human review/i);
     }
   });
 });

@@ -10,7 +10,7 @@ Parent process, Stop and checkout ownership remain in [lifetimes](lifetimes.md).
   `executionDirectory` maps the existing pinned `ExecutionContext` into an owner-selected tree; it never creates a directory, branch or worktree.
   The service retains canonical-path validation and its existing empty-subdirectory preparation.
 - `src/worker-toolkit.mjs` is the one trusted capability registry and request-to-capability policy.
-  An owner-validated `edit` purpose receives SDK file tools and the captured no-spill shell adapter; `research`, `diagnosis` and the protocol's explicit `review` purpose receive the observation bundle.
+  An owner-validated `edit` purpose receives SDK file tools and the captured no-spill shell adapter; nonconversation editing workers additionally receive the nonexecuting `cadence_report` tool, whose structured result is not verification or execution authority; `research`, `diagnosis` and the protocol's explicit `review` purpose receive the observation bundle.
   Automatic review uses that same readonly bundle, not editing authority.
   A browser coordinator receives only its owner bridge.
   Prompt roles, repository files, model arguments and arbitrary plugins cannot register tools or grant capabilities.

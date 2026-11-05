@@ -46,7 +46,7 @@ Le port et le jeton se trouvent dans `~/.pi/agent/cadence/.env` ; quiconque poss
 3. Envoyez une fois `/cadence [objectif]`.
    Cette conversation reste en mode Cadence ; précisez les besoins par des messages ordinaires.
 4. Lisez le plan complet et cliquez sur **Implement this plan**.
-   L’implémentation, les vérifications, les réparations bornées et la livraison locale convenue sont automatiques.
+   L’implémentation, les vérifications, la reprise automatique et la livraison locale convenue sont automatiques.
 5. Suivez la progression dans la conversation ; ouvrez les traces des sous-agents depuis le panneau **Subagents** en bas à gauche.
    Actualiser ou terminer un objectif ne quitte pas le mode.
    **Exit Cadence** quitte le mode ; **Cancel workflow — request stop** demande l’annulation.
@@ -57,7 +57,7 @@ No live Pi terminal is required for the browser conversation workflow.
 
 Saisissez `/cadence <objectif>` une seule fois, puis poursuivez la conversation normalement.
 Cadence étudie le projet, clarifie les décisions et prépare un plan.
-Après votre approbation explicite, il réalise les modifications, vérifications, réparations limitées et intégration locale convenues.
+Après votre approbation explicite, il réalise les modifications, vérifications, reprise automatique et intégration locale convenues.
 
 Le mode reste actif pendant toute la conversation, même après la fin d’un objectif.
 Saisissez `exit cadence` pour quitter ; cela n’annule pas le travail accepté.

@@ -22,14 +22,12 @@ export const WORKFLOW_LIMITS = {
   tasks: 16,
   parallel: 2,
   checks: 16,
-  repairs: 2,
   bytes: 256 * 1024,
   // Read budgets, never a lifetime cap on retained runs.
   historyScanEntries: 200,
   historyPage: 20,
   historyScans: 16,
   historyIdleMs: 120000,
-  durationMs: 90 * 60 * 1000,
 } as const;
 export interface WorkflowCheck {
   name: string;
@@ -44,16 +42,21 @@ export interface WorkflowTask {
   after: string[];
 }
 export interface WorkflowPlan {
+  /** Version 2 admits adaptive delivery; absent versions are retained, readonly plans. */
+  version?: 2;
+  knowledge?: string[];
   goal: string;
   design: string;
   decisions: string;
   acceptance: string;
-  projectContext: string;
+  /** Retained v1 data only, never used to synthesize new project knowledge. */
+  projectContext?: string;
   tasks: WorkflowTask[];
   checks: WorkflowCheck[];
   setup: WorkflowCheck[];
   baselineChecks: WorkflowCheck[];
-  repairAttempts: number;
+  /** Retained v1 evidence only. New plans have no repair quota. */
+  repairAttempts?: number;
   delivery: "local-merge" | "working-copy";
 }
 export interface WorkflowProposal {
@@ -96,7 +99,14 @@ export interface WorkflowStep {
   runtime?: { sdkVersion: string; workerHash: string };
   id: string;
   childRunId?: string;
-  kind: "research" | "implementation" | "review" | "check" | "git";
+  kind:
+    | "research"
+    | "implementation"
+    | "diagnosis"
+    | "knowledge"
+    | "review"
+    | "check"
+    | "git";
   status:
     | "running"
     | "completed"
@@ -110,6 +120,10 @@ export interface WorkflowStep {
   truncated: boolean;
 }
 export interface WorkflowRun {
+  /** New runs retain older step pages separately; this is a view offset, not eviction. */
+  stepsBefore?: number;
+  revision?: number;
+  verification?: { id: string; source: string; steps: string[] };
   execution?: ExecutionContext;
   diagnostics?: WorkflowDiagnostics;
   id: string;
@@ -128,6 +142,8 @@ export interface WorkflowRun {
     | "implementing"
     | "verifying"
     | "reviewing"
+    | "recovering"
+    | "learning"
     | "integrating"
     | "finished";
   steps: WorkflowStep[];
@@ -248,18 +264,26 @@ export function decodeWorkflowPlan(
   options: { strict?: boolean } = {},
 ): WorkflowPlan {
   const strict = options.strict === true;
+  const modern = Object.hasOwn(v ?? {}, "version");
+  if (strict && !modern)
+    throw new Error(
+      "Publish a new delivery agreement; retained fixed-pipeline plans are readonly",
+    );
   canonicalJson(v, WORKFLOW_LIMITS.bytes);
+  if (modern && (v as { version?: unknown }).version !== 2)
+    throw new Error("Unsupported delivery agreement version");
   const o = closed(v, [
     "goal",
     "design",
     "decisions",
     "acceptance",
-    "projectContext",
+    ...(modern
+      ? ["version", "knowledge"]
+      : ["projectContext", "repairAttempts"]),
     "tasks",
     "checks",
     "setup",
     "baselineChecks",
-    "repairAttempts",
     "delivery",
   ]);
   const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
@@ -285,7 +309,9 @@ export function decodeWorkflowPlan(
   )
     throw new Error("Empty or duplicate task scope");
   workflowOrder(tasks);
-  for (const a of tasks)
+  // Retained parallel plans keep their original validation. New delivery uses
+  // a stable sequential candidate, so adjacent assignments may share files.
+  for (const a of modern ? [] : tasks)
     for (const b of tasks) {
       if (
         a.id >= b.id ||
@@ -309,7 +335,20 @@ export function decodeWorkflowPlan(
     design: text(o.design, 32768, true),
     decisions: text(o.decisions, 16384),
     acceptance: text(o.acceptance, 16384, true),
-    projectContext: text(o.projectContext, 16384),
+    ...(modern
+      ? {
+          version: 2 as const,
+          knowledge: list(o.knowledge, 16, (v) => {
+            const path = workflowPath(v, strict);
+            if (!path.endsWith(".md"))
+              throw new Error("Knowledge targets must be Markdown files");
+            return path;
+          }),
+        }
+      : {
+          projectContext: text(o.projectContext, 16384),
+          repairAttempts: integer(o.repairAttempts, 0, 2),
+        }),
     tasks,
     checks,
     setup: list(o.setup, 4, decodeWorkflowCheck),
@@ -318,17 +357,16 @@ export function decodeWorkflowPlan(
       WORKFLOW_LIMITS.checks,
       decodeWorkflowCheck,
     ),
-    repairAttempts: integer(o.repairAttempts, 0, WORKFLOW_LIMITS.repairs),
     delivery: oneOf(o.delivery, ["local-merge", "working-copy"]),
   };
   workflowContext(result);
-  text(result.tasks.flatMap((t) => t.writes).join(", "), 16384);
+  text(workflowWrites(result).join(", "), 16384);
   for (const value of [
     result.goal,
     result.design,
     result.decisions,
     result.acceptance,
-    result.projectContext,
+    result.projectContext ?? "",
     ...result.tasks.flatMap((t) => [t.title, t.instructions]),
     ...[...result.checks, ...result.setup, ...result.baselineChecks].flatMap(
       (c) => [c.name, c.command],
@@ -345,9 +383,15 @@ export function decodeWorkflowPlan(
       throw new Error("Plan contains invisible terminal controls");
   return result;
 }
+/** The immutable permission/verification boundary, independent of internal route revisions. */
+export function workflowWrites(p: WorkflowPlan): string[] {
+  return [
+    ...new Set([...p.tasks.flatMap((t) => t.writes), ...(p.knowledge ?? [])]),
+  ];
+}
 export function workflowContext(p: WorkflowPlan): string {
   return text(
-    `# ${p.goal}\n\n${p.design}\n\nDecisions: ${p.decisions}\n\nAcceptance: ${p.acceptance}`,
+    `# ${p.goal}\n\nInitial route (adapt within the approved boundary): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}\n\nImmutable acceptance: ${p.acceptance}`,
     32768,
     true,
   );
@@ -456,6 +500,9 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     "notice",
     "mergedCommit",
     "humanReviewed",
+    ...(Object.hasOwn(v ?? {}, "stepsBefore") ? ["stepsBefore"] : []),
+    ...(Object.hasOwn(v ?? {}, "revision") ? ["revision"] : []),
+    ...(Object.hasOwn(v ?? {}, "verification") ? ["verification"] : []),
     ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
   ]);
@@ -471,6 +518,22 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
   if (o.humanReviewed !== false)
     throw new Error("Automatic execution is not human review");
   return {
+    ...(o.verification === undefined
+      ? {}
+      : {
+          verification: (() => {
+            const evidence = closed(o.verification, ["id", "source", "steps"]);
+            return {
+              id: decodeId(evidence.id),
+              source: decodeHash(evidence.source),
+              steps: list(evidence.steps, 32, (v) => text(v, 160, true)),
+            };
+          })(),
+        }),
+    ...(o.stepsBefore === undefined
+      ? {}
+      : { stepsBefore: integer(o.stepsBefore, 0) }),
+    ...(o.revision === undefined ? {} : { revision: integer(o.revision, 0) }),
     ...(o.execution === undefined
       ? {}
       : { execution: decodeExecutionContext(o.execution) }),
@@ -486,6 +549,8 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
       "implementing",
       "verifying",
       "reviewing",
+      "recovering",
+      "learning",
       "integrating",
       "finished",
     ]),
@@ -526,6 +591,8 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
         kind: oneOf(s.kind, [
           "research",
           "implementation",
+          "diagnosis",
+          "knowledge",
           "review",
           "check",
           "git",
@@ -562,7 +629,7 @@ export function decodeWorkflowResponse(v: unknown): WorkflowResponse {
   };
 }
 export function readableWorkflowPlan(p: WorkflowPlan): string {
-  return `# ${p.goal}\n\n## Design\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}\n\n## Tasks\n${workflowOrder(
+  return `# ${p.goal}\n\n## Initial route (automatically adjustable)\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}\n\n## Tasks\n${workflowOrder(
     p.tasks,
   )
     .map(
@@ -571,7 +638,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
+    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\n${p.version === 2 ? "Authorize diagnosis, partial-work continuation, task splitting and alternative implementations within these goals, decisions, write paths and exact setup/check commands. No fixed repair-round or delivery-duration quota. Only actual verification and independent Agent review permit delivery." : `Historical fixed pipeline: at most ${p.repairAttempts} repair rounds.`} ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project knowledge\n${p.version === 2 ? p.knowledge?.join("\n") || "No documentation edits authorized; existing knowledge is still read." : p.projectContext}\n`;
 }
 
 const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);

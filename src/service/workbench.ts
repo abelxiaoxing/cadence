@@ -127,7 +127,7 @@ export class Workbench implements WorkbenchPort {
       case "workflow-detail":
         return this.workflows.detail(request.id, request.stepId);
       case "workflow":
-        return this.workflows.view(request.id);
+        return this.workflows.view(request.id, request.before);
       case "conversation-active":
       case "conversations": {
         const value =

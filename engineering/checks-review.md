@@ -45,39 +45,61 @@ Local operation errors neither hide an independent observation error nor imply t
 
 ## Automatic conversation workflow
 
-Native/browser workflow approval includes exact setup, separate baseline/acceptance checks, delivery policy and a finite repair budget.
+Native/browser approval binds a version-2 delivery agreement: goal, explicit decisions, immutable acceptance, declared code/Markdown paths, exact setup/baseline/acceptance commands and local delivery policy.
+The initial route and assignments are adjustable inside that boundary, not a user-managed repair budget.
 Setup never implicitly copies dependency trees, profiles or credentials.
+Recovery retries the failed setup command, not preceding successful commands and their effects.
 Baseline checks cannot require future outputs.
-Assignment handoffs name the current task and already-applied predecessor outputs; initial cleanliness preconditions are not rerun against the pipeline's own edits, and each working-copy task is confined to its own declared writes.
-Implementation and repair workers finish with one structured `completed` or `blocked` report and a nonempty summary, separate from native/auth/storage settlement.
-The owner parses the complete selected message before display clipping and sanitizes decoded summary fields, so quoted/escaped values and credential-shaped text cannot break its JSON structure.
-Only that message's completeness determines whether a report is available; stderr or other diagnostic clipping remains a separate recorded limitation.
-A blocked, malformed, oversized or unavailable report fails that step and stops admission of dependent work, checks, review and delivery; partial edits/worktrees remain, and native exit zero stays recorded independently.
-A completed report only permits the next stage: it is not check evidence or review approval.
-Historical records are never reinterpreted or rewritten.
-Candidates run acceptance checks before readonly Agent review.
-Review and bounded repair receive current-round native exit/closure facts plus explicitly bounded, redacted retained output excerpts, never worker prose as passing-check evidence or old-round failures as current results.
-Failed checks still block delivery regardless of a review approval.
-Local-merge candidates receive another check after generated documentation before fast-forward integration into the unchanged target.
+One stable candidate preserves earlier outputs; each editing attempt is attributed against its own write scope.
+Initial cleanliness preconditions are not rerun against the delivery's own work.
+Implementation and knowledge workers submit `cadence_report`, independently captured from successful tool-result content even after transcript preview overflow.
+A later tool invalidates the report.
+The SDK still needs real final-message/native/auth/storage closure; a report alone cannot override any of those outcomes.
+A complete strict JSON final report remains an alternative structured report, never a prose inference.
+Blocked, malformed or missing reports fail that attempt, not the goal.
+The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further in-scope work.
+Dependent assignments wait for completion.
+Unknown originals, scope violations, Cancel and authority/storage failures stop new work.
+An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.
+A timed-out shell check is not automatically replayed because descendant/tool closure was not established.
+Checks and readonly Agent review still decide delivery.
+Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
+The original acceptance and exact commands cannot be weakened or replaced.
+Repeated unchanged evidence and an identical strategy do not restart the same attempt indefinitely.
+Current-round native exit/closure facts and labelled redacted result excerpts reach diagnosis, repair and review.
+Old failures are historical context, not current check evidence; baseline and post-merge rounds collect their own original check identities.
+Every relevant repair or knowledge edit triggers fresh checks/review on the combined candidate.
+Successful verification records bind the agreement, cwd, exact approved-source identity and original step IDs.
+Cross-worktree verification streams file bytes, including large files under directory scopes; placement-dependent stat identities remain observation fences only.
+Cancellation joins the current read/close instead of abandoning it.
+Source changes during checks require verification of the resulting bytes; changes during readonly review refuse stale evidence.
+Project knowledge is maintained from actual implemented behavior and evidence, not copied from proposal prose; its ownership and context policy are in [project knowledge](project-knowledge.md).
+Local-merge candidates receive another verification after delivery notes, before fast-forward integration.
+Post-merge failures preserve the real merge: any repair happens in the owned candidate, is checked/reviewed there and fast-forwards the unchanged target again.
+The user's unrelated index is never committed by recovery.
 Local commit hooks/signing are disabled; verification is explicitly approved instead.
 Workflow scope checks independently include staged changes, even when the worktree was restored to HEAD or a staged new file was removed.
 A declared write path that names a directory covers the files below it, in plan overlap, scope, commit and observation alike; write paths refuse format characters (bidi, zero-width, BOM, line separators).
 Working-copy delivery snapshots every worker and repair: in Git, edits outside the declared writes fail the run with the path list and are preserved, never reverted; the changed-file list is recorded.
 Credential-looking plan and research text is redacted, not refused: the stored, displayed and approved plan is the redacted one.
-Agent review verdicts are accepted bare, fenced or inside prose; a review step is `completed` for approve, `rejected` for an explicit negative verdict and `failed` for an unparseable reply or worker failure, and passing checks with an unparseable verdict stop the run instead of spending repairs.
+Agent review verdicts are accepted bare, fenced or inside prose; a review step is `completed` for approve, `rejected` for an explicit negative verdict and `failed` for an unparseable reply or worker failure.
+None of the latter outcomes counts as delivery approval.
 The first settled review-step snapshot already contains its verdict, never a temporary process-success status that could end client observation early; retained native process and transcript outcomes remain independent.
 Workflow delivery notes are written before the final candidate checks and say they are not a verification result.
 Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
-`AGENTS.md` and `.cadence/project.md` are not part of the dirty check; notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check, merging the managed region into the user's text.
+Unmodified guidance is not part of the dirty check; explicitly approved knowledge write targets are.
+Generated workflow notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check.
 Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file under its approved paths, ignored ones included, retains it.
-An Agent review reply whose verdict objects disagree counts as unparseable, never as approval.
-Proposals retained from 2.0.21 keep reading under the older plan rules; preparing or executing one that breaks the current rules refuses `invalid` without effect.
-Git operations are recorded as `git` steps (worktrees, dependencies, commits, integration, merge and worktree removal).
+An Agent review reply whose verdict objects disagree, repeat verdict keys or exceed complete-verdict inspection bounds counts as unparseable, never as approval.
+The whole selected message is parsed before display clipping; bounded summary/issue excerpts cannot change the resulting verdict.
+Version-1 proposals remain readable under their original rules, but cannot authorize the new adaptive executor; prepare/execute refuse them without effect and require a current agreement.
+Git operations are recorded as `git` steps (candidate creation, commits, integration, merge and worktree removal).
 Each generated commit must extend the observed baseline and change only its approved files; unexpected HEAD movement during setup/workers/checks refuses continuation.
 Rejection preserves the index and worktrees; it never clears or resets them to manufacture an in-scope result.
+Cleanup names the last confirmed delivered commit, never a freshly observed candidate HEAD: a clean but unmerged repair remains retained.
 No implicit remote operation occurs.
 Post-merge checks report the real resulting commit even on failure; no rollback is claimed.
 Automatic outcomes retain `humanReviewed: false` and cannot satisfy legacy human Review.
 Full sanitized process results are separate from labelled status previews; lookup verifies that the selected step belongs to the run.
-Project Markdown uses a managed region preserving outside human text; ignored generated documents remain ignored and are published with expected-byte checks.
+Knowledge assignments preserve human text and update existing topic owners; ignored generated documents remain ignored and are published with expected-byte checks.
 Workflow notes have a separate directory/version and never add unknown siblings to legacy task v1.

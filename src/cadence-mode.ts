@@ -237,7 +237,8 @@ const PLAN = Type.Object({
   design: Type.String(),
   decisions: Type.String(),
   acceptance: Type.String(),
-  projectContext: Type.String(),
+  version: Type.Literal(2),
+  knowledge: Type.Array(Type.String(), { maxItems: 16 }),
   tasks: Type.Array(
     Type.Object({
       id: Type.String(),
@@ -251,7 +252,6 @@ const PLAN = Type.Object({
   checks: Type.Array(CHECK, { minItems: 1, maxItems: 16 }),
   setup: Type.Array(CHECK, { maxItems: 4 }),
   baselineChecks: Type.Array(CHECK, { maxItems: 16 }),
-  repairAttempts: Type.Integer({ minimum: 0, maximum: 2 }),
   delivery: Type.Union([
     Type.Literal("local-merge"),
     Type.Literal("working-copy"),
@@ -389,7 +389,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     context = ctx;
   };
   const summarize = (run: WorkflowRun) =>
-    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id}\n${workflowDiagnostics(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
+    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
   const conversation = (ctx: ExtensionContext) => {
     const cwd = resolveWorkspace(ctx.cwd).cwd;
@@ -1067,7 +1067,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_plan",
     label: "Propose implementation plan",
     description:
-      "After interactive clarification, publish the exact readable plan, dependency graph, checks, setup commands, repair budget and delivery policy for user approval. Does not execute.",
+      "Publish a readable delivery agreement: goal, acceptance, explicit boundaries, initial route, checks, setup, knowledge paths and delivery policy. Internal implementation routes may adapt after one approval. Does not execute.",
     parameters: PLAN,
     async execute(_id, input, _signal, _update, ctx) {
       return changing(ctx, async (claim) => {
@@ -1135,9 +1135,9 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   });
   pi.registerTool({
     name: "cadence_start",
-    label: "Execute approved plan",
+    label: "Deliver approved goal",
     description:
-      "Start the current exact plan after fresh user approval. The service automatically implements, reviews, verifies, performs bounded repairs and delivers; client departure only detaches.",
+      "Start the current exact plan after fresh user approval. The service automatically implements, reviews, verifies, recovers settled failures, adapts implementation, maintains project knowledge and delivers; client departure only detaches.",
     parameters: Type.Object({}),
     async execute(_id, _input, signal, _update, ctx) {
       return changing(ctx, async (claim) => {
@@ -1247,11 +1247,12 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_status",
     label: "Observe workflow",
     description:
-      "Read a retained workflow without replaying any action. Specify runId for earlier runs; otherwise selects the current run. With stepId read its result, or transcript: true for its transcript.",
+      "Read a retained workflow without replaying any action. Specify runId for earlier runs; otherwise selects the current run. With stepId read its result, or transcript: true for its transcript. If stepsBefore is nonzero, use before: stepsBefore to read earlier steps.",
     parameters: Type.Object({
       runId: Type.Optional(Type.String()),
       stepId: Type.Optional(Type.String()),
       transcript: Type.Optional(Type.Boolean()),
+      before: Type.Optional(Type.Integer({ minimum: 1 })),
     }),
     async execute(_id, input, _signal, _update, ctx) {
       active(ctx);
@@ -1261,11 +1262,29 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         return result(
           "Cadence is enabled; no run yet. Continue clarifying the goal.",
         );
+      if (input.before !== undefined && !input.stepId) {
+        await connect(ctx, false);
+        const page = value(
+          await client().workbenchRead({
+            kind: "workflow",
+            id,
+            before: input.before,
+          }),
+        );
+        if (
+          page.kind !== "workflow" ||
+          page.response.type !== "run" ||
+          page.response.run.id !== id
+        )
+          throw new ContractError("invalid");
+        return result(summarize(page.response.run));
+      }
       if (input.stepId) {
         const seen = await observe(ctx, id);
         if (
           "absent" in seen ||
-          !seen.run.steps.some((s) => s.id === input.stepId)
+          (!seen.run.steps.some((s) => s.id === input.stepId) &&
+            !(seen.run.stepsBefore ?? 0))
         )
           throw new Error(
             `Step ${input.stepId} does not belong to selected run ${id}. Supply the exact runId and stepId from the research result; no other run was searched.`,

@@ -3,13 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { canonicalJson } from "../src/service/contracts/core.ts";
 import type { ChatTurn } from "../src/service/contracts/workbench.ts";
 import {
   implementationReport,
+  reviewReport,
   reviewVerdict,
-  Workflows,
   WorkflowTranscript,
-} from "../src/service/workflows.ts";
+} from "../src/service/workflow-report.ts";
+import { Workflows } from "../src/service/workflows.ts";
 import { runProcess } from "../src/subagent-process.ts";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 
@@ -231,7 +233,13 @@ it("only complete selected reports authorize continuation; diagnostic clipping a
     worker: async () => ({ result, step, report }),
   });
   await expect(
-    workflow.implementation({}, "unused", "build", "unused", {}),
+    workflow.implementation(
+      { abort: new AbortController() },
+      "unused",
+      "build",
+      "unused",
+      {},
+    ),
   ).resolves.toBeUndefined();
   expect(step).toMatchObject({ status: "completed", truncated: true });
   // An unavailable or clipped selected message cannot fall back to the valid
@@ -239,13 +247,25 @@ it("only complete selected reports authorize continuation; diagnostic clipping a
   report = null;
   result.truncated = false;
   await expect(
-    workflow.implementation({}, "unused", "build", "unused", {}),
+    workflow.implementation(
+      { abort: new AbortController() },
+      "unused",
+      "build",
+      "unused",
+      {},
+    ),
   ).rejects.toThrow("structured completion report");
   report = implementationReport(result.text);
   result.outcome = "unknown";
   result.closed = false;
   await expect(
-    workflow.implementation({}, "unused", "build", "unused", {}),
+    workflow.implementation(
+      { abort: new AbortController() },
+      "unused",
+      "build",
+      "unused",
+      {},
+    ),
   ).rejects.toThrow("Operation unknown");
 });
 
@@ -475,4 +495,100 @@ it("an uninterruptible process is never signalled by timeout, cancellation or ou
     signal: new AbortController().signal,
   });
   expect(bounded.outcome).toBe("timeout");
+});
+it("structured assignment reports survive transcript overflow and are invalidated by later tools", () => {
+  const retained = turn();
+  retained.items = Array.from({ length: 256 }, () => ({
+    id: randomUUID(),
+    role: "assistant" as const,
+    name: "",
+    args: "",
+    text: "retained prefix",
+    error: false,
+  }));
+  const recorder = new WorkflowTranscript(retained, () => []);
+  recorder.accept(
+    frame({
+      kind: "message-start",
+      messageId: randomUUID(),
+      role: "assistant",
+    }),
+  );
+  expect(recorder.overflowed).toBe(true);
+  const callId = randomUUID(),
+    detailId = randomUUID();
+  const report = { status: "completed", summary: "Implemented actual work" };
+  for (const event of [
+    { kind: "tool-start", callId, name: "cadence_report" },
+    {
+      kind: "detail-begin",
+      detailId,
+      descriptor: {
+        owner: { kind: "tool", callId, stage: "result" },
+        field: "tool-result",
+        encoding: "canonical-json",
+      },
+    },
+    {
+      kind: "detail-chunk",
+      detailId,
+      text: canonicalJson({
+        content: [{ type: "text", text: JSON.stringify(report) }],
+      }),
+    },
+    { kind: "detail-end", detailId },
+    { kind: "tool-end", callId, name: "cadence_report", isError: false },
+  ])
+    recorder.accept(frame(event));
+  expect(implementationReport(recorder.assignmentReport()!)).toEqual(report);
+  recorder.accept(
+    frame({ kind: "tool-start", callId: randomUUID(), name: "edit" }),
+  );
+  expect(recorder.assignmentReport()).toBeUndefined();
+});
+
+it("review never approves contradictory duplicate keys or an uninspected suffix", () => {
+  expect(
+    reviewVerdict('{"approved":false,"approved":true,"blockingIssues":[]}'),
+  ).toBeNull();
+  expect(
+    reviewVerdict(
+      'Verdict {"approved":false,"approved":true,"example":{"approved":true}}',
+    ),
+  ).toBeNull();
+  const positive = '{"approved":true,"blockingIssues":[]}';
+  const negative =
+    '{"approved":false,"blockingIssues":["missing requirement"]}';
+  const full = `${positive}\n${"context ".repeat(3000)}\n${negative}`;
+  const result = reviewReport(full, []);
+  expect(reviewVerdict(result.text)).toBeNull();
+  expect(
+    reviewVerdict(`${Array(64).fill(positive).join("\n")}\n${negative}`),
+  ).toBeNull();
+});
+it("large review fields are projected as valid JSON without changing their complete verdict", () => {
+  const issues = Array.from({ length: 40 }, () =>
+    "Concrete missing behavior. ".repeat(40),
+  );
+  const result = reviewReport(
+    JSON.stringify({
+      approved: true,
+      summary: "Details ".repeat(8000),
+      blockingIssues: issues,
+    }),
+    [],
+  );
+  expect(result.truncated).toBe(true);
+  expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16384);
+  expect(reviewVerdict(result.text)?.approved).toBe(false);
+  const approved = reviewReport(
+    JSON.stringify({
+      approved: true,
+      summary: "Inspected ".repeat(8000),
+      blockingIssues: [],
+    }),
+    [],
+  );
+  expect(approved.truncated).toBe(true);
+  expect(reviewVerdict(approved.text)?.approved).toBe(true);
 });

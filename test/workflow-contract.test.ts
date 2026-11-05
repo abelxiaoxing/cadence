@@ -17,7 +17,7 @@ import {
 
 import { plan } from "./helpers/workflow-plan.ts";
 
-it("plans are finite DAGs, independent outputs have distinct owners, and checks are mandatory", () => {
+it("initial plans are finite DAGs and checks are mandatory; route revisions belong to the owner", () => {
   expect(
     workflowOrder(decodeWorkflowPlan(plan()).tasks).map((t) => t.id),
   ).toEqual(["a", "b"]);
@@ -28,9 +28,6 @@ it("plans are finite DAGs, independent outputs have distinct owners, and checks 
     },
     (p: WorkflowPlan) => {
       p.tasks[1].after = ["missing"];
-    },
-    (p: WorkflowPlan) => {
-      p.tasks[1].writes = ["a.txt"];
     },
     (p: WorkflowPlan) => {
       p.tasks[0].writes = ["../outside"];
@@ -97,7 +94,7 @@ it("new plans refuse invisible path characters and over-long task IDs; retained 
   const nestedScope = plan();
   nestedScope.tasks[0].writes = ["src"];
   nestedScope.tasks[1].writes = ["src/b.txt"];
-  expect(() => decodeWorkflowPlan(nestedScope)).toThrow("share write paths");
+  expect(decodeWorkflowPlan(nestedScope).tasks).toHaveLength(2);
   expect(workflowCovers(["src"], "src/b.txt")).toBe(true);
   expect(workflowCovers(["src"], "srcx/b.txt")).toBe(false);
 });
@@ -180,4 +177,28 @@ it("global preferences persist only exact model choice and never silently replac
   writeFileSync(p.path, '{"schema":"unknown"}');
   expect(() => p.save(model)).toThrow();
   expect(readFileSync(p.path, "utf8")).toBe('{"schema":"unknown"}');
+});
+
+it("retained fixed-pipeline agreements remain readable but cannot authorize adaptive delivery", () => {
+  const current = plan();
+  const { version: _version, knowledge: _knowledge, ...body } = current;
+  const old = {
+    ...body,
+    projectContext: "Original planning notes",
+    repairAttempts: 2,
+  };
+  expect(decodeWorkflowPlan(old)).toEqual(old);
+  expect(() => decodeWorkflowPlan(old, { strict: true })).toThrow("readonly");
+  expect(() =>
+    decodeWorkflowPlan({ ...current, repairAttempts: 2 }, { strict: true }),
+  ).toThrow();
+  expect(() =>
+    decodeWorkflowPlan(
+      { ...current, knowledge: ["../secret.md"] },
+      { strict: true },
+    ),
+  ).toThrow();
+  expect(() =>
+    decodeWorkflowPlan({ ...current, knowledge: [".env"] }, { strict: true }),
+  ).toThrow();
 });

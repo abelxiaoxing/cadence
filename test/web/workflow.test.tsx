@@ -381,3 +381,29 @@ it("the subagent dock count leads with how many listed agents are still active",
   expect(dock(mixed, "zh")).toContain("2 个进行中 · 共 3 个");
   expect(dock([child("settled")])).toContain('<span class="lp-count">1</span>');
 });
+
+it("automatic recovery and knowledge progress remain live and do not request another approval", () => {
+  for (const [phase, kind, label] of [
+    ["recovering", "diagnosis", "自动诊断与恢复"],
+    ["learning", "knowledge", "沉淀项目知识"],
+  ] as const) {
+    const current = run({
+      phase,
+      revision: 3,
+      steps: [step("next", kind, "running")],
+    });
+    const html = line(current, "zh");
+    expect(html).toContain(label);
+    expect(html).toContain("停止");
+    expect(html).not.toContain("Implement this plan");
+  }
+  const s = state();
+  if (!s.proposal) throw new Error("Missing fixture agreement");
+  const html = renderToStaticMarkup(
+    <PlanCard proposal={s.proposal} canApprove onApprove={() => {}} />,
+  );
+  expect(html).toContain("Complete delivery agreement");
+  expect(html).toContain("<details>");
+  expect(html).toContain("adaptive implementation");
+  expect(html).not.toContain("At most 2 repair rounds");
+});

@@ -4,13 +4,13 @@
 agents:
   - path: agents/design-explorer.md
     role: design-explorer
-    sha256: 26256f9e7c56e2be93dac05bf3c2b3f33a06c63f20367e74853564a59974ece2
+    sha256: f6ffc0b61500e1ec1f482af0fd8b6e62d34e336592e14b6b2d5042c8c1df3fe9
   - path: agents/diagnosis-worker.md
     role: diagnosis-worker
-    sha256: 0fe5c88b92f66e0fb32e4d0b1dbcab46e4e16b14ab657cca007309669853abae
+    sha256: 410761179bc0e7932e3542ac8760fc21771df042214045e795cd8e75e0b5a0ea
   - path: agents/implementation-worker.md
     role: implementation-worker
-    sha256: abd7d796ac998729c2b901c2da45d92ee9c62a9caa4c6a170ac673cef6c4143b
+    sha256: ee3abe8a00ebc4ef3f813750ae57bcea25231a8a76f141171447b8f6511fe887
 reference:
   attribution: THIRD_PARTY_NOTICES.md
   license: licenses/pi-subagents-MIT.txt

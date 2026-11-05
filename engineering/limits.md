@@ -37,11 +37,15 @@ Image input has no Cadence-specific count, byte, dimension or pixel quota; brows
 `src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
 The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
-Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks (IDs up to 48 characters), two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline counted from acquiring the checkout gate.
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters), two concurrent readonly research workers, 16 checks per set and four explicit setup commands.
+Adaptive delivery has no fixed repair-round count or total deadline; native worker/check deadlines still apply.
+Implementation uses one stable candidate.
+Proven provider 429/5xx failures back off from 2s to 60s after actual cleanup; this is a wait interval, not a lifetime retry quota.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
 A declared directory's identity hashes up to 20,000 entries; a larger one is refused as `invalid` with a request for narrower paths.
-Run snapshots allow 384KiB and 256 status steps.
+Run snapshots allow 384KiB and 256 recent status steps.
+Settled prefixes move into immutable 128-step pages at the count bound or with 64KiB snapshot headroom remaining, retaining exact membership and results without limiting the lifetime number of attempts.
 Workflow check/Git results use the existing 256KiB launcher output bound (`ProcessSpec.retainOutput` in `src/subagent-process.ts`), not its legacy 64KiB preview; legacy previews and native output/stop budgets remain unchanged.
 `WORKFLOW_RESULT_BYTES` in `src/service/workflow-result.ts` bounds the redacted JSON-encoded result to 240KiB, reserving wrapper space below the 384KiB record, 256KiB file-text DTO and 512KiB reply limits.
 Diagnostic head/tail clipping is explicitly flagged, including JSON escaping and redaction expansion; an implementation report is independently parsed from its complete selected message within 16KiB before field sanitation or display clipping.
@@ -101,3 +105,7 @@ Preference revision and encoded-byte checks precede source installation or persi
 
 Checkout session discovery considers at most 256 directory sources and remembers 128 explicitly observed cwd-to-session-directory resolutions in memory (`src/service/pi-sessions.ts`).
 The one shared reader retains its existing eight parsed-session and 64 built-turn bounds across those sources, not one cache per directory; no checkout tree is scanned and no session directory is created by discovery.
+
+Project knowledge observations use `KNOWLEDGE_LIMITS` in `src/service/project-knowledge.ts`: 160 candidate documents, depth 3, 64KiB observed per file and at most 12KiB of selected context (less when the existing 32KiB worker context needs the room).
+Selected excerpts and omitted sources are labelled.
+These are per-observation bounds, not delivery budgets.
