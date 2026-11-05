@@ -143,7 +143,7 @@ describe("standalone independence", () => {
     });
   });
 
-  it("exposes no host-version policy or compatibility module", () => {
+  it("uses the declared current Pi baseline without upstream runtime dependencies", () => {
     const srcFiles = walk(path.join(root, "src")).filter((f) =>
       f.endsWith(".ts"),
     );
@@ -152,7 +152,11 @@ describe("standalone independence", () => {
       const text = read(f);
       expect(text).not.toMatch(/0\.84\.1/);
       expect(text).not.toMatch(/host-version policy|version compatibility/);
-      expect(text).not.toMatch(/pi-subagents|gotgenes/);
+      // Copyright/provenance comments are required for the reused browser;
+      // importing another extension's manager or executor remains forbidden.
+      expect(text).not.toMatch(
+        /\b(?:from|import\s*\(|require\s*\()\s*["'][^"']*(?:pi-subagents|gotgenes)/,
+      );
     }
   });
 
@@ -164,11 +168,16 @@ describe("standalone independence", () => {
       const base = path.basename(f);
       expect(
         /\.(log|tmp|bak|swp)$/.test(base) ||
-          base.includes("transcript") ||
-          /\b(session|transcript|receipt|credential)\.(json|log|txt|yaml|yml)$/.test(
+          (base.includes("transcript") &&
+            ![
+              "src/agent-browser/transcript-pane.ts",
+              "src/agent-browser/transcript-content.ts",
+            ].includes(f)) ||
+          /\b(session|transcript|receipt|credential)\.(json|jsonl|ndjson|log|txt|yaml|yml)$/.test(
             base,
           ) ||
           /(^|\/)state\//.test(f),
+        f,
       ).toBe(false);
     }
   });
@@ -189,14 +198,12 @@ describe("standalone independence", () => {
     expect(pkg.workspaces).toBeUndefined();
   });
 
-  it("documents local-directory and installed-tarball loading without version or publication claims", () => {
+  it("documents local-directory and installed-tarball loading with the declared Pi baseline", () => {
     const readme = read(path.join(root, "README.md"));
     expect(readme).toMatch(/local package|tarball|\.tgz|installed/i);
     expect(readme).toMatch(/\.\/|absolute|relative/i);
-    expect(readme).not.toMatch(
-      /0\.84\.1|(?:requires|supports only|supported versions of) Pi \d/i,
-    );
-    expect(readme).toContain("does not impose a Pi version range");
+    expect(readme).not.toMatch(/0\.84\.1|supports only Pi 0\./i);
+    expect(readme).toContain("requires Pi 1.5.0");
     expect(readme).toContain("not universal compatibility promises");
     expect(readme).not.toMatch(/installed from npm|npm install @abel/i);
   });

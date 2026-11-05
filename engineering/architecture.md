@@ -8,7 +8,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | Owner                                                                                                      | Responsibility                                                                                                             |
 | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`, `src/history-shell.ts`, `src/native-*.ts`                                                  | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor     |
-| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                             | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work         |
+| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`, `src/agent-browser/`       | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work         |
 | `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,system-service,launchd,login-run}.ts` | Single-owner composition, explicit project launch and generated system/user service definitions; management stays SDK-free |
 | `src/service/{coordination,private-files,owner}.ts`                                                        | Canonical overlap exclusion, exact locks and original-operation lifetime                                                   |
 | `src/service/{liveness,self-heal,process-ledger,recovery-log,doctor}.ts`                                   | Holder liveness evidence, startup self-healing, recovery log/archive and `cadence doctor`                                  |
@@ -83,11 +83,11 @@ Use their current declarations rather than copying DTO parsing, reducers, a seco
 The package can be loaded as a reviewed local package, extracted tarball or installed npm package through Pi's package mechanism.
 For a local checkout, add its absolute or relative path to Pi's `packages` setting, or try `pi -e ./cadence`.
 Pi loads `src/index.ts`; the service, worker and readonly operator are ordinary JavaScript with no TypeScript/source-tree fallback.
-The manifest does not impose a Pi version range; inside Pi the extension uses Pi's own public packages.
+The native extension requires Pi 1.5.0 or a compatible 1.x host; inside Pi it uses the host's own public packages, never a second TUI runtime.
 Development pins, declared Node baseline (`>=22.19.0`) and actual tested runtime identities are separate facts, not universal compatibility promises.
 Required installed peers are public Pi packages and Typebox; `undici` and `ws` are exact production dependencies.
 Pi's package installer omits peers and supplies only its own packages and Typebox to the extension, so any other extension import must be a production dependency.
-The standalone owner and workers run outside Pi and import `pi-coding-agent`/`pi-ai` by bare name, so they load the exact tested copy (0.84.3) from optional dependencies; an install that omits optional dependencies cannot start an owner.
+The standalone owner and workers run outside Pi and import `pi-coding-agent`/`pi-ai` by bare name, so they load the exact tested copy (1.5.0) from optional dependencies; an install that omits optional dependencies cannot start an owner.
 Browser assets are prebuilt, not compiled by consumer postinstall.
 
 ## Shipped content
@@ -99,3 +99,6 @@ Browser assets are prebuilt, not compiled by consumer postinstall.
 - `config/` contains the optional research environment example; the obsolete task-check example is removed.
   The package has no install script; `cadence server install` creates a missing user `.env` template, and no build/Git/provider operation runs at install.
 - `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
+
+The native agent browser reuses the readonly session navigator, transcript pane/content renderer and labeled rules from `gotgenes/pi-packages`; `provenance/agent-browser-reuse.json` pins source bytes and describes the small Cadence adaptations.
+Its source adapter consumes only the existing bus and never loads an upstream agent manager or execution API.

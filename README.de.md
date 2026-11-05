@@ -103,7 +103,7 @@ Linux-Root- und benannte Dienste, entfernter HTTPS-Zugang und Wiederherstellung 
 ## Entwicklung
 
 Pi kann auch ein lokales Checkout oder ein gepacktes Tarball laden: Füge seinen absoluten oder relativen Pfad zu Pís `packages` hinzu, oder versuche `pi -e ./cadence`.
-Cadence erzwingt keinen Pi-Versionsbereich; Entwicklungs-Pins und getestete Laufzeiten sind keine universellen Kompatibilitätsversprechen.
+Cadence benötigt Pi 1.5.0 oder einen kompatiblen 1.x-Host; Entwicklungs-Pins und getestete Laufzeiten sind keine universellen Kompatibilitätsversprechen.
 
 ```sh
 bun install

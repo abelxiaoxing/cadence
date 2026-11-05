@@ -674,3 +674,30 @@ A separate real Bun tarball passed exact auditing of **155 regular members**, ev
 Artifact: `/home/mirako/cadence-release-2.0.36.nHgc0gXD/pack/abelxiaoxing-cadence-2.0.36.tgz`; SHA-256 `0602eebe5e5b1972be25486fce9232a7a59041ab6a3a1c8c68f25cd13a9feb1d`, SHA-1 `f38b0cd58329dc367a9a942840840de395025d71`.
 The independent review is retained at `/home/mirako/cadence-review.f0b0eYQZ/review-result.md`; targeted test reports cover all four root files (44 tests) and nine Web files (87 tests), overlapping the gate counts rather than adding to them.
 This appendix records pre-publication qualification and is not shipped in the archive; remote push and npm publication must be confirmed separately against the audited artifact.
+
+## 2026-11-05 — Current Pi baseline and reused native agent browser (development)
+
+The native extension now declares the Pi 1.5 baseline and development/standalone SDK dependencies are pinned together at 1.5.0.
+The original pinned readonly session browser from `gotgenes/pi-packages` supplies the transcript pane, message/tool renderer, incremental content cache and labeled chrome; `provenance/agent-browser-reuse.json` records source hashes and the Cadence adaptations.
+The browser consumes only Cadence's existing readonly feed, retains selection by agent ID and per-agent reading positions, mounts as an overlay in the current fullscreen renderer and keeps the upstream docked behavior in the current regular renderer.
+A compact live summary and retained batch cards replace the duplicate live queue; the superseded panel focus, recent-row substitution and inline transcript implementation are removed.
+No upstream execution manager, steering, stop, file-backed run reader or extra runtime package was introduced.
+
+Verification in the isolated `cadence-native-subagent-panel` worktree used Linux, Node 26.7.0, Bun 1.3.14-canary.1 and public Pi SDK/TUI 1.5.0, with private disk-backed temporary files outside Git checkouts.
+`bun run verify` passed in 11.4s: 1400 fast root assertions (84 passing files, two skipped), 235 Web assertions (21 files), types, generated bundles, deterministic Web output, lint, Agent pins and real pack audit.
+The native regression uses the real Pi fullscreen renderer with an in-memory terminal to prove that paging and wheel move the viewed child rather than the parent transcript.
+An in-process public SDK fixture checks exact model/thinking, literal parent auth, tool selection and disabled resource discovery without a provider request.
+A separate `bun pm pack --destination <private-temp>` route also passed the exact member/body audit.
+No physical terminal, paid provider, retained slow suite, service-manager installation or macOS/Windows execution is claimed; no global package or running service was changed, and no commit or publication was made.
+
+## 2026-11-05 — Native browser synchronization and merge preparation (development)
+
+The merge-preparation candidate incorporates `ec18aa5` (`refactor(worker): compose capabilities and resumable research`) without replacing its worker capability, workspace, observation or cleanup implementation.
+The three generated-file conflicts were resolved by canonical service/Web regeneration, not hand-editing bundle bodies.
+The initial post-sync gate exposed the new Responses schema fixture's raw-context call into the Pi 1.5 API adapter; it now uses the public `normalizeContext()` boundary, retaining both strict-mode cases, schema assertions and the no-network guard.
+After that correction and import formatting, `bun run verify` passed in **11.8s**: **1441 fast root tests passed, 281 skipped** (86 passing files, two skipped), **235 Web tests passed** (21 files), types, syntax, lint, Agent pins, deterministic builds and real-pack auditing.
+The run used Linux, Node 26.7.0, Bun 1.3.14 and Pi 1.5.0, with all three temp variables pointing to the same external private disk directory.
+A separate Bun tarball passed the exact **164 regular-member** and body audit; SHA-256 `fce2aa239ef639731dc778f765ccf50c9d17b92c761d03f624353c622227c1f5`.
+The post-sync gate log is `/home/mirako/cadence-merge-verify.kYmp1J/verify-rebased-3.log`; the separate archive is under that directory's `standalone-pack/`.
+No slow suite, physical terminal, paid-provider request, browser automation, service-manager operation or macOS/Windows execution was performed.
+Local commit and synchronization were explicitly authorized; actual merge into `main`, push, installation and publication remain unperformed.

@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/gotgenes/pi-packages",
+  "commit": "52854c12d590142e61a4f6a6947be9084035300d",
+  "license": "licenses/pi-subagents-MIT.txt",
+  "modules": [
+    {
+      "upstreamPath": "packages/pi-subagents/src/ui/session-navigator.ts",
+      "upstreamSha256": "6365e926de5f5eb0c86b41114ae414be19968dfd92642576ee0a28b7f9f8f763",
+      "localPaths": [
+        "src/agent-browser/session-navigator.ts",
+        "src/agent-browser/transcript-pane.ts"
+      ],
+      "changes": "Reuse upstream selection-to-transcript flow, readonly pane, paging/follow, two-rule chrome, mouse handling and responsive viewport. Adapt selection to a live Pi SelectList with stable ids and in-place return; inject renderer mode at the host; keep reading position across visits; fold tools/thinking by default."
+    },
+    {
+      "upstreamPath": "packages/pi-subagents/src/ui/transcript-content.ts",
+      "upstreamSha256": "24a957c3ad011cdf59c276f548fe3945ccbee0aa2db6cc4108551a00d1e80863",
+      "localPaths": ["src/agent-browser/transcript-content.ts"],
+      "changes": "Reuse per-message Pi component mapping, incremental settled blocks, paired tool results and width/content caches. Adapt source imports and activity/omission notices; strip shell prompt marks; never preview retained edit calls against current files; local tool-output expansion."
+    },
+    {
+      "upstreamPath": "packages/pi-subagents/src/ui/labeled-rule.ts",
+      "upstreamSha256": "13666f8b9a30292afdfd8a5a732e075d027432ff7ec882dc05a6b35a850a2151",
+      "localPaths": ["src/agent-browser/labeled-rule.ts"],
+      "changes": "Relative imports/formatting only; preserve upstream label fitting."
+    }
+  ],
+  "integration": "Cadence supplies readonly roster/transcript snapshots on the existing subagent bus. No upstream manager, executor, persisted-run reader, settings or commands are shipped."
+}
