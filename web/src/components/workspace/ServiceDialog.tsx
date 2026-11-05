@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { FiArrowUpCircle, FiRefreshCw } from "react-icons/fi";
 import {
+  canUpgrade,
   compareVersions,
   type MaintenanceJob,
   type MaintenanceReason,
@@ -31,7 +32,7 @@ const REASONS: Record<MaintenanceReason, MessageKey> = {
   "fetch-failed":
     "The release could not be downloaded; the service kept running.",
   "stop-unconfirmed": "The running service did not confirm its orderly stop.",
-  "install-failed": "npm could not install the release.",
+  "install-failed": "The package manager could not install the release.",
   "not-ready": "The new service did not become ready.",
   refused: "The service manager refused the operation.",
   interrupted: "The job ended without reporting.",
@@ -73,6 +74,39 @@ export function unchanged(job: MaintenanceJob): boolean {
     : job.state === "ready" &&
         job.action === "upgrade" &&
         job.version === job.from;
+}
+
+/** The same closed route drives the explanation and server/client admission. */
+export function installationMessage(
+  t: Translator["t"],
+  route: ServiceEntry["upgrade"],
+): string {
+  switch (route) {
+    case "npm":
+      return t("Installation: npm global.");
+    case "bun":
+      return t("Installation: Bun global.");
+    case "npm-local":
+      return t("Installation: npm local.");
+    case "bun-local":
+      return t("Installation: Bun local.");
+    case "pi-npm":
+      return t("Installation: Pi-managed (npm).");
+    case "pi-bun":
+      return t("Installation: Pi-managed (Bun).");
+    case "pinned":
+      return t(
+        "Pi pins this package version; change its package declaration explicitly before upgrading.",
+      );
+    case "not-writable":
+      return t(
+        "This account cannot write the installation; update it in a terminal.",
+      );
+    case "unsupported-install":
+      return t(
+        "The installation method could not be safely identified; update it using its original installation method.",
+      );
+  }
 }
 
 export function ServiceDialog({
@@ -143,7 +177,10 @@ export function ServiceDialog({
 
   const check = () => {
     setLatest("checking");
-    readRelease().then(setLatest, () => setLatest("failed"));
+    readRelease()
+      .then(setLatest, () => setLatest("failed"))
+      // The server re-observes the route even when it refuses the query.
+      .finally(() => observe((n) => n + 1));
   };
   const submit = (selected: Choice) => {
     if (!service) return;
@@ -275,7 +312,7 @@ export function ServiceDialog({
                   "The service stops in order and starts again; this page waits and then reloads.",
                 )
               : t(
-                  "npm downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.",
+                  "The package manager downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.",
                   { to: choice.to, from: service.version },
                 )}
           </p>
@@ -339,6 +376,7 @@ export function ServiceDialog({
         <>
           <section className="service-info">
             <h3>Cadence {service.version}</h3>
+            <p>{installationMessage(t, service.upgrade)}</p>
             <p>
               {service.unit
                 ? t("Runs as {unit} ({scope} systemd service).", {
@@ -364,14 +402,20 @@ export function ServiceDialog({
               {latest === undefined || latest === "failed" ? (
                 <>
                   {latest === "failed" && (
-                    <p role="alert">{t("npm could not be reached.")}</p>
+                    <p role="alert">
+                      {t(
+                        "Update information is unavailable for this installation.",
+                      )}
+                    </p>
                   )}
                   <button type="button" onClick={check}>
                     {t("Check for updates")}
                   </button>
                 </>
               ) : latest === "checking" ? (
-                <p role="status">{t("Asking npm for the latest version…")}</p>
+                <p role="status">
+                  {t("Asking the package registry for the latest version…")}
+                </p>
               ) : !newer ? (
                 <p>
                   {t("Cadence {version} is the latest version.", {
@@ -384,7 +428,7 @@ export function ServiceDialog({
                     version: latest.version,
                   })}
                 </p>
-              ) : service.upgrade !== "npm" ? (
+              ) : !canUpgrade(service.upgrade) ? (
                 <p>
                   {service.upgrade === "not-writable"
                     ? t(
@@ -392,7 +436,7 @@ export function ServiceDialog({
                         { version: latest.version },
                       )
                     : t(
-                        "{version} is available, but this copy was not installed with npm install -g; upgrade it the way you installed it.",
+                        "{version} is available, but this installation requires a manual update using its original installation method.",
                         { version: latest.version },
                       )}
                 </p>

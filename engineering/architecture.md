@@ -24,7 +24,8 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution.
-`src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the npm upgrade with rollback; it stays SDK-free like the rest of management.
+`src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the upgrade with rollback; `src/service/installation.ts` identifies the exact Pi/npm/Bun installation and owns its package-manager commands.
+Both stay SDK-free like the rest of management.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.

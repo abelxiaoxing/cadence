@@ -90,7 +90,7 @@ Ihre tatsächlichen Ergebnisse bleiben von der automatischen Agent-Prüfung getr
 ```sh
 cadence server status
 cadence server restart     # nach einem Upgrade oder einer .env / models.json-Änderung
-cadence server upgrade     # npm-Globalinstallation: laden, installieren, neu starten
+cadence server upgrade
 cadence server stop        # bleibt registriert und startet beim nächsten Boot oder Login erneut
 cadence server uninstall   # vor npm uninstall -g ausführen
 ```

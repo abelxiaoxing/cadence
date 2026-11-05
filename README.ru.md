@@ -90,7 +90,7 @@ cadence project open /absolute/new-project --create
 ```sh
 cadence server status
 cadence server restart     # после обновления или изменения .env / models.json
-cadence server upgrade     # глобальная установка npm: загрузить, установить, перезапустить
+cadence server upgrade
 cadence server stop        # остаётся зарегистрированной и снова запускается при следующей загрузке или входе
 cadence server uninstall   # выполнить перед npm uninstall -g
 ```

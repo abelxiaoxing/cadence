@@ -1,6 +1,7 @@
 /** One authenticated UI origin, no default project, no SDK/runtime on discovery.
  * Project traffic remains browser-authority traffic on the real owner; the gateway
  * never turns a browser command into a native-capability action. */
+
 import { randomUUID } from "node:crypto";
 import { opendirSync } from "node:fs";
 import {
@@ -27,7 +28,6 @@ import {
 } from "../service-contract.ts";
 import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
 import { effectiveWorkspace } from "../workspace.ts";
-
 import { HttpAuthentication, requestBoundary } from "./auth.ts";
 import { hostSystem, serviceConfigPath } from "./autostart.ts";
 import {
@@ -47,6 +47,7 @@ import {
   text,
 } from "./contracts/core.ts";
 import {
+  canUpgrade,
   decodeProjectEntry,
   decodeVersion,
   MAINTENANCE_ACTIONS,
@@ -76,14 +77,18 @@ import {
 } from "./gateway-store.ts";
 import { fixedHeaders } from "./http.ts";
 import {
+  installation,
+  packageCommands,
+  type UpgradeRoute,
+  upgradeRoute,
+} from "./installation.ts";
+import {
   installedVersion,
   jobRunning,
   launchJob,
   MaintenanceRecord,
-  release,
+  releaseForInstallation,
   supervisingUnit,
-  type UpgradeRoute,
-  upgradeRoute,
 } from "./maintenance.ts";
 import { encoded, hash, json } from "./private-files.ts";
 import { RecoveryLog } from "./recovery-log.ts";
@@ -294,6 +299,8 @@ export async function createGateway(
     );
     return s && serviceConfigPath(s) === input.serverConfig ? s : undefined;
   })();
+  const packageSystem = managed ?? hostSystem(root, ownerControl, {});
+  const commands = packageCommands(packageSystem);
   let route: Promise<UpgradeRoute> | undefined,
     requesting = false;
   /** Accepted work in associated running owners: what a restart stops. */
@@ -329,7 +336,7 @@ export async function createGateway(
       : job;
   }
   async function serviceEntry(): Promise<ServiceEntry> {
-    route ??= upgradeRoute(root);
+    route ??= upgradeRoute(packageSystem, commands);
     return {
       kind: "service",
       version,
@@ -354,8 +361,8 @@ export async function createGateway(
     if (decodeId(o.epoch) !== auth.epoch || decodeVersion(o.from) !== version)
       throw new ContractError("stale");
     if (!managed) throw new ContractError("unsupported-context");
-    route ??= upgradeRoute(root);
-    if (action === "upgrade" && (await route) !== "npm")
+    route = upgradeRoute(packageSystem, commands);
+    if (action === "upgrade" && !canUpgrade(await route))
       throw new ContractError("unsupported-context");
     if (requesting || jobRunning(managed)) throw new ContractError("conflict");
     requesting = true;
@@ -1046,7 +1053,9 @@ export async function createGateway(
       }
       // Registry contact only on an explicit check, never in the background.
       if (raw === "/workbench/v1/service/release" && req.method === "GET") {
-        const latest = await release();
+        const selected = await installation(packageSystem, commands);
+        route = Promise.resolve(selected.route);
+        const latest = await releaseForInstallation(selected, commands);
         if (!latest) throw new ContractError("unavailable");
         reply(res, 200, { kind: "release", ...latest });
         return;

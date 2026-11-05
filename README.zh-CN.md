@@ -90,7 +90,7 @@ cadence project open /absolute/new-project --create
 ```sh
 cadence server status
 cadence server restart     # 升级或修改 .env / models.json 之后
-cadence server upgrade     # npm 全局安装：下载、安装并重启
+cadence server upgrade     # 识别 Pi/npm/Bun 安装：下载、安装并重启
 cadence server stop        # 保持注册状态，并在下次启动或登录时再次启动
 cadence server uninstall   # 在 npm uninstall -g 之前运行
 ```

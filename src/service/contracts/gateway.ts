@@ -211,13 +211,28 @@ export function decodeMaintenanceJob(value: unknown): MaintenanceJob {
     endedAt: o.endedAt === null ? null : integer(o.endedAt, 0),
   };
 }
-/** How this installation upgrades: only an npm global install the service
- * account can write upgrades itself. */
+/** The manager and scope of this exact installation, or why it refuses. */
 export const UPGRADE_ROUTES = [
   "npm",
-  "not-npm-global",
+  "bun",
+  "pi-npm",
+  "pi-bun",
+  "npm-local",
+  "bun-local",
+  "unsupported-install",
+  "pinned",
   "not-writable",
 ] as const;
+export function canUpgrade(route: (typeof UPGRADE_ROUTES)[number]): boolean {
+  return (
+    route === "npm" ||
+    route === "bun" ||
+    route === "pi-npm" ||
+    route === "pi-bun" ||
+    route === "npm-local" ||
+    route === "bun-local"
+  );
+}
 export interface ServiceEntry {
   kind: "service";
   /** The running package version. */

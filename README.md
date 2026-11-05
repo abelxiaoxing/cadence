@@ -92,7 +92,7 @@ Their actual outcomes remain separate from automatic Agent review.
 ```sh
 cadence server status
 cadence server restart     # after an upgrade or a .env / models.json change
-cadence server upgrade     # npm global install: fetch, install and restart
+cadence server upgrade     # detected Pi/npm/Bun install: fetch, install and restart
 cadence server stop        # stays registered and starts again at the next boot or login
 cadence server uninstall   # run before npm uninstall -g
 cadence doctor             # what is left over or recently recovered; --fix for the rest

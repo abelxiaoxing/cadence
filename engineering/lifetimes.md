@@ -98,7 +98,16 @@ The `server install|restart|stop|uninstall|upgrade` commands therefore compare `
 The WebUI's restart and upgrade run the same CLI outside that cgroup: the gateway proves its own unit (cgroup name, generated definition, `InvocationID` equal to its `INVOCATION_ID`, its own `.env`) and starts `systemd-run --collect` as `cadence[-NAME].maintenance.service`, whose fixed name admits one job at a time, with the environment the definition bakes plus the gateway's `HOME`.
 A request names the version, target, epoch and running-work count the browser confirmed; any difference is `stale`, and running work is named and stopped only by its orderly Stop.
 The job records its outcome in `maintenance.json` beside the workbench registration; a job that ends without reporting reads as `interrupted`, and the job's journal never carries the private link.
-An upgrade (Linux, an npm global install the account can write) resolves one exact version and fetches it while the service still runs, then stops it orderly, installs it and runs the installed copy's own `server restart`; a copy that never becomes ready wrote no state, so the previous version is reinstalled from npm's cache and restarted.
+An upgrade (Linux, a proven Pi/npm/Bun installation the account can write) resolves one exact version through its own package manager and prefetches both that and the previous version while the service still runs.
+Pi's user settings select npm or Bun; version pins and custom wrapper commands refuse, without any settings edit.
+Global roots come from the managers; Bun additionally needs its own lock evidence because its listing also accepts npm trees.
+Local installs require a direct dependency and an unambiguous manager lockfile; Pi-managed prefixes cannot fall back into that route.
+Linked checkouts and ambiguous sources refuse.
+Bun prefetches in fresh private staging with scripts disabled, then removes only that staging; no configuration or profile is copied.
+The installation and installed version are rechecked after the fetch, before orderly Stop; only the same prefix/manager may install and roll back.
+The new copy's own `server restart` must exit successfully and become ready, and its actual installed version must match; failed/partial installs restore the previous version before any restart rather than starting a broken copy.
+An attempted new-owner startup that does not confirm readiness is not proof of exit: its own orderly Stop must confirm before rollback may overwrite it; an unconfirmed Stop leaves the installed version intact.
+Service definitions retain explicit package-manager location/config-file environment paths, never registry credentials.
 On macOS and Windows, restart and upgrade stay in a terminal: their managers' process tracking for a job that outlives the service has not been qualified.
 
 ## Self-healing
