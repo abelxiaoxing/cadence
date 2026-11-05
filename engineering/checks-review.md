@@ -67,8 +67,10 @@ Credential-looking plan and research text is redacted, not refused: the stored, 
 Agent review verdicts are accepted bare, fenced or inside prose; a review step is `completed` for approve, `rejected` for an explicit negative verdict and `failed` for an unparseable reply or worker failure, and passing checks with an unparseable verdict stop the run instead of spending repairs.
 The first settled review-step snapshot already contains its verdict, never a temporary process-success status that could end client observation early; retained native process and transcript outcomes remain independent.
 Workflow delivery notes are written before the final candidate checks and say they are not a verification result.
-Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
-`AGENTS.md` and `.cadence/project.md` are not part of the dirty check; notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check, merging the managed region into the user's text.
+Integration rechecks the target branch, HEAD, declared/committed targets and approved project guidance after final candidate checks, immediately before merge; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
+After post-merge checks, both branch and HEAD must still match before advancing parallel workflows' delivery frontiers.
+`AGENTS.md` and `.cadence/project.md` have separate content-identity checks rather than a general dirty refusal; compatible sibling project-context delivery follows [lifetimes](lifetimes.md).
+Notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check, merging the managed region into the user's text.
 Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file under its approved paths, ignored ones included, retains it.
 An Agent review reply whose verdict objects disagree counts as unparseable, never as approval.
 Proposals retained from 2.0.21 keep reading under the older plan rules; preparing or executing one that breaks the current rules refuses `invalid` without effect.

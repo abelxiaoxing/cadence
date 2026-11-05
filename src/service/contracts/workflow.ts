@@ -571,7 +571,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
+    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and serialized fast-forward integration into the current branch. Other conversations may run concurrently; a candidate may be rebased over verified non-conflicting Cadence deliveries, then checked and automatically reviewed again. External branch changes or overlapping writes require a fresh plan." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
 }
 
 const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);
@@ -633,7 +633,7 @@ export function workflowDiagnostics(run: WorkflowRun): string {
     `Owner: Cadence ${d.owner.version} · ${d.owner.platform} · Node ${d.owner.node} · PID ${d.owner.pid} · epoch ${run.epoch}`,
     `Build: ${d.owner.build} · entry: ${d.owner.entry} · owner started: ${at(d.owner.startedAt)}`,
     `Accepted: ${at(d.acceptedAt)} · checkout acquired: ${at(d.acquiredAt)} · settled: ${at(d.settledAt)}`,
-    `Checkout wait: ${d.acquiredAt === null ? "still waiting or not acquired" : `${Math.max(0, d.acquiredAt - d.acceptedAt)}ms`}. Runs share an exclusive checkout; questions within one research run may overlap.`,
+    `Checkout wait: ${d.acquiredAt === null ? "still waiting or not acquired" : `${Math.max(0, d.acquiredAt - d.acceptedAt)}ms`}. Readonly runs share checkout access; isolated implementations may overlap. Direct edits and final integration require exclusive access.`,
     ...run.steps.flatMap((s) =>
       s.timing
         ? [

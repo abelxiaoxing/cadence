@@ -6,8 +6,19 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 ## Conversation workflow lifetime
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
-They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
-Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
+Separate conversations may admit independent workflows in one checkout; one conversation has at most one accepted implementation.
+The existing per-owner active-run bound still applies.
+Research holds shared checkout access until all original workers/auth/storage settle.
+Direct working-copy delivery and ordinary host-tool turns hold exclusive access through original settlement.
+Local-merge workflows briefly acquire shared access to validate their pinned start, then implement in isolated worktrees without holding the user's checkout gate.
+Independent assignments use separate Git worktrees (two at once per run); dependent worktrees consume committed ancestor outputs in topological order.
+Final integration acquires exclusive access through candidate refresh, publication, fast-forward, post-merge checks and cleanup.
+FIFO readers never bypass a waiting writer; cancellation removes a waiter, never a holder.
+Only a sibling's actual fast-forward followed by successful post-merge checks advances already-admitted peers' in-memory delivery frontiers.
+An isolated candidate can rebase onto that frontier, with fresh checks and automatic review before publication.
+External HEAD/branch drift, overlapping approved writes or changed AGENTS.md refuse; changed managed project context is compatible only when the approved context produces the same bytes.
+Failed or unknown deliveries never advance peers.
+Conflicting candidates remain for inspection, without automatic conflict resolution or reset.
 Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` plus a disjoint `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
 Worktrees created by 2.0.21 inside the service namespace are left where they are.
 Direct working-copy delivery serializes edits.
@@ -121,8 +132,9 @@ A running owner that does not answer, a holder on another host and a PID that ca
 Stopping an unresponsive owner requires its recorded start identity; taking over a foreign or unidentifiable holder touches no process.
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
-Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
-Queue time is outside the workflow/process budgets; ongoing tool/model activity never renews a worker's total deadline.
+Research runs share readonly checkout access across conversations; up to two questions within one admitted run execute concurrently and are joined before release.
+Initial checkout queue time is outside the workflow/process budgets; later integration waiting stays within the started workflow budget.
+Ongoing tool/model activity never renews a worker's total deadline.
 Readonly investigations use bounded native filesystem tools at explicit roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
 They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
 Grep is explicitly literal-only.

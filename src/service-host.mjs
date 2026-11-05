@@ -5613,7 +5613,7 @@ ${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join(`
 `)}
 
 ## Automation boundary
-At most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.
+At most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and serialized fast-forward integration into the current branch. Other conversations may run concurrently; a candidate may be rebased over verified non-conflicting Cadence deliveries, then checked and automatically reviewed again. External branch changes or overlapping writes require a fresh plan." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.
 
 ## Project context
 ${p.projectContext}
@@ -14558,7 +14558,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "afd5c3b4604a2831b624163a6cad9a45b36bc01e111555c08aedcba6f4996595",
+    contractHash: "0c20fc1351ea017a56562403cfeb07b41b6da9a2b702e6ae8f01a396321cbeb7",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -25987,11 +25987,12 @@ class AuthNetwork {
 
 // src/service/checkout-gate.ts
 var CHECKOUT_WAITERS = 16;
+var CHECKOUT_READERS = 4;
 
 class CheckoutGate {
   owner;
   waiting = [];
-  holder = null;
+  holders = new Set;
   closed = false;
   constructor(owner) {
     this.owner = owner;
@@ -26003,26 +26004,29 @@ class CheckoutGate {
   }
   assertQuiescent() {
     this.assertOpen();
-    if (this.holder || this.waiting.length)
+    if (this.holders.size || this.waiting.length)
       throw new ContractError("conflict");
   }
-  acquire(id, signal) {
+  acquire(id, signal, access = "exclusive") {
     decodeId(id);
     this.assertOpen();
     if (signal.aborted)
       throw new ContractError("stale");
-    if (this.holder?.id === id || this.waiting.some((w) => w.id === id))
+    if ([...this.holders, ...this.waiting].some((w) => w.id === id))
       throw new ContractError("conflict");
     if (this.waiting.length >= CHECKOUT_WAITERS)
       throw new ContractError("capacity");
     const result = new Promise((resolve12, reject) => {
       const abort = () => {
         const at = this.waiting.indexOf(waiter);
-        if (at >= 0)
+        if (at >= 0) {
           this.waiting.splice(at, 1)[0].reject(new ContractError("stale"));
+          this.pump();
+        }
       };
       const waiter = {
         id,
+        access,
         resolve: (permit) => {
           signal.removeEventListener("abort", abort);
           resolve12(permit);
@@ -26044,7 +26048,7 @@ class CheckoutGate {
       w.reject(new ContractError("quarantine"));
   }
   pump() {
-    if (this.closed || this.holder || !this.waiting.length)
+    if (this.closed || !this.waiting.length)
       return;
     try {
       this.assertOpen();
@@ -26052,23 +26056,26 @@ class CheckoutGate {
       this.closeAdmission();
       return;
     }
-    const waiter = this.waiting.shift();
-    if (!waiter)
-      return;
-    this.holder = waiter;
-    const assertHeld = () => {
-      this.assertOpen();
-      if (this.holder !== waiter)
-        throw new ContractError("stale");
-    };
-    waiter.resolve({
-      assertHeld,
-      release: () => {
-        assertHeld();
-        this.holder = null;
-        this.pump();
-      }
-    });
+    while (this.waiting.length) {
+      const waiter = this.waiting[0];
+      if (this.holders.size >= CHECKOUT_READERS || [...this.holders].some((w) => w.access === "exclusive") || waiter.access === "exclusive" && this.holders.size)
+        return;
+      this.waiting.shift();
+      this.holders.add(waiter);
+      const assertHeld = () => {
+        this.assertOpen();
+        if (!this.holders.has(waiter))
+          throw new ContractError("stale");
+      };
+      waiter.resolve({
+        assertHeld,
+        release: () => {
+          assertHeld();
+          this.holders.delete(waiter);
+          this.pump();
+        }
+      });
+    }
   }
 }
 
@@ -27228,7 +27235,7 @@ import { join as join32 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Continue normal conversation, not a task-manager UI. Do not ask the user to manage tasks, IDs, JSON, service ports, Save/Start/check menus or agent assignments.
 For each new goal: inspect relevant project evidence through cadence_research (up to two independent readonly subagents); read existing AGENTS/docs/.cadence/project.md before proposing conventions. Reuse still-current findings; do not rescan the entire repository or spawn agents merely to fill slots. Aggregate questions yourself. Investigate discoverable facts and ask focused, frequent questions only for unresolved product/technical decisions. Preserve confirmed decisions across turns. Diagnosis/research alone never imply implementation.
-Once material decisions and acceptance criteria are aligned, use cadence_plan with a readable design, explicit non-goals/decisions, exact file scopes, a finite dependency DAG, real verification commands, worktree prerequisites and a bounded repair budget. Independent writes may run concurrently; shared files need a single owner or dependency. Investigate local tool/dependency prerequisites BEFORE finalizing: isolated worktrees do not inherit ignored node_modules. Setup commands require inclusion in the final approval; never silently install/download/copy dependencies or credentials. local-merge needs an existing Git branch and commit identity; working-copy is explicit direct editing without Git mutation and is serialized.
+Once material decisions and acceptance criteria are aligned, use cadence_plan with a readable design, explicit non-goals/decisions, exact file scopes, a finite dependency DAG, real verification commands, worktree prerequisites and a bounded repair budget. Independent writes may run concurrently; shared files need a single owner or dependency. Investigate local tool/dependency prerequisites BEFORE finalizing: isolated worktrees do not inherit ignored node_modules. Setup commands require inclusion in the final approval; never silently install/download/copy dependencies or credentials. local-merge needs an existing Git branch and commit identity; working-copy is explicit direct editing without Git mutation and is serialized. Separate conversations may run independent local-merge workflows concurrently (one implementation per conversation). Final integration is serialized; non-conflicting verified Cadence deliveries may be incorporated into the isolated candidate with fresh checks and automatic review. Overlapping writes, incompatible project context or external branch changes require a fresh plan; never promise automatic conflict resolution.
 Present the returned complete plan and invite a single clear execution approval (the user can type 按计划实施). cadence_start binds the exact displayed plan and obtains fresh user consent; never interpret a vague acknowledgement as approval. No further confirmations are needed for the approved bounded pipeline. No push, publication, deployment, recursive delegation or scope expansion. If a material decision changes, revise the plan and seek fresh approval.
 For a follow-up to previously accepted work, inspect cadence_status and retained outcomes before proposing a new run or applying clean-start prerequisites. Known partial outputs from that run are not unexplained user edits. Preserve them and the original failed/unknown result; diagnose the actual failed stage. Never replay the run or claim its checks passed; any new implementation still needs a fresh exact-plan approval.
 During accepted work answer questions, report actual retained progress, and let the service execute. cadence_cancel is explicit cancellation, not navigation/exit. Never claim a worker's prose is a passing check or automatic review is human review. Failed/unknown/blocked outcomes are not success. A completed goal leaves Cadence ON and ready for the next goal; do not require /cadence again. Unrelated discussion is still ordinary conversation within this mode, not implicit permission to start another implementation. Tools operate on the host; this is not a sandbox.`;
@@ -27514,9 +27521,9 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     } catch {
       return refusal3("invalid", "An investigation needs a goal and one or two non-empty questions. Nothing was started.");
     }
-    const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
+    const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research" && current2.state.runs.includes(r.id)).map((r) => r.id);
     if (busy.length)
-      return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
+      return refusal3("checkout-busy", `This conversation has an approved workflow (${busy.join(", ")}). Wait for it to settle or open another conversation for a separate task; meanwhile use cadence_status. Nothing was started.`);
     const id = randomUUID21(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
@@ -27602,6 +27609,8 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file } = this.records.usable(c.conversationId);
+    if (this.o.workflows.activeRuns().runs.some((run2) => run2.phase !== "research" && state.runs.includes(run2.id)))
+      throw new ContractError("conflict");
     const latest = this.o.conversations.records.latestCommand(c.conversationId);
     if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || ["queued", "running", "unknown"].includes(latest.status) || this.active.has(c.conversationId))
       throw new ContractError("stale");
@@ -29177,7 +29186,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.36",
-  build: "f3e14fc017e4cf0917b08d1a06397987a6ecee16efd35f846e2eef884f23c418",
+  build: "a48b7d1e4da3e3b7657bfceacafcdd10b37d7e3392133c24db359cef55e6a067",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -29778,8 +29787,9 @@ class Workflows {
     if (request3.action === "execute") {
       proposal = this.proposal(request3.proposalId);
       const source = this.assertProposal(proposal, request3.digest);
-      if ([...this.active.values()].some((live3) => live3.proposal))
-        throw new WorkflowRefusal("conflict", "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.");
+      const conversation = proposal.model.conversation?.id;
+      if ([...this.active.values()].some((live3) => live3.proposal && live3.execution.version.conversation?.id === conversation))
+        throw new WorkflowRefusal("conflict", "This conversation already has an approved workflow queued or running. Start a separate conversation for another task.");
       this.capacity();
       const grant = this.grants.get(request3.grant);
       if (grant && grant.expiresAt < Date.now())
@@ -29834,6 +29844,11 @@ class Workflows {
       original: ready2.then(() => this.execute(live2, request3)),
       proposal,
       target: target2,
+      frontier: target2?.head,
+      guidance: target2 ? {
+        agents: pathIdentity(this.cwd, "AGENTS.md"),
+        project: pathIdentity(this.cwd, ".cadence/project.md")
+      } : undefined,
       declared,
       delivered: new Set,
       notes: []
@@ -30376,9 +30391,9 @@ ${this.evidence(live2, checks)}`, true, p.model);
       throw outcome.error;
     return outcome.value;
   }
-  async verifyAndRepair(live2, cwd, p, git) {
+  async verifyAndRepair(live2, cwd, p, git, repairAttempts = p.plan.repairAttempts) {
     const allowed = p.plan.tasks.flatMap((t) => t.writes);
-    for (let attempt2 = 0;attempt2 <= p.plan.repairAttempts; attempt2++) {
+    for (let attempt2 = 0;attempt2 <= repairAttempts; attempt2++) {
       const beforeChecks = git ? await gitHead(cwd) : "";
       const roundStart = live2.run.steps.length;
       const checked2 = await this.checks(live2, cwd, p.plan);
@@ -30395,7 +30410,7 @@ ${this.evidence(live2, checks)}`, true, p.model);
         return;
       if (verdict === "unparseable" && checked2)
         throw new Error("Checks passed, but the automatic review reply could not be parsed as a verdict; nothing was delivered without an Agent review approval.");
-      if (attempt2 === p.plan.repairAttempts)
+      if (attempt2 === repairAttempts)
         throw new Error(`${checked2 ? "" : "Checks failed. "}${verdict === "rejected" ? "Agent review rejected the candidate. " : verdict === "unparseable" ? "Agent review reply could not be parsed. " : ""}Verification/review failed; repair budget exhausted. Artifacts preserved; nothing merged.`);
       const failures = live2.run.steps.slice(roundStart);
       const beforeRepair = git ? await gitHead(cwd) : "";
@@ -30617,6 +30632,9 @@ ${result.output}`}`);
           await git(["cherry-pick", "--no-edit", commit]);
       });
     await this.verifyAndRepair(live2, integration, p, true);
+    live2.barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal);
+    live2.barrier.assertHeld();
+    await this.refreshCandidate(live2, integration, p);
     const documents = this.documents(live2, plan);
     const committed3 = [];
     for (const name of documents)
@@ -30624,7 +30642,8 @@ ${result.output}`}`);
         committed3.push(name);
     const documentBefore = new Map(documents.map((name) => [name, pathIdentity(this.cwd, name)]));
     const beforePublication = await gitHead(integration);
-    const changed = await committedPaths(integration, base, beforePublication);
+    const deliveryTarget = { ...target2, head: live2.frontier ?? target2.head };
+    const changed = await committedPaths(integration, deliveryTarget.head, beforePublication);
     this.publish(live2, integration, plan, committed3, changed);
     await this.commit(live2, integration, committed3, "Cadence: project context and delivery notes", beforePublication, "commit-delivery-notes");
     const candidate = await gitHead(integration);
@@ -30633,11 +30652,12 @@ ${result.output}`}`);
     await this.unchangedHead(integration, candidate);
     await assertWorkflowScope(integration, []);
     this.assertRunning(live2);
-    await assertTarget(this.cwd, target2, [...allowed, ...committed3]);
+    await assertTarget(this.cwd, deliveryTarget, [...allowed, ...committed3]);
+    this.assertGuidance(live2, p);
     live2.run.phase = "integrating";
     this.save(live2);
     await this.merge(live2, candidate);
-    for (const path of await committedPaths(this.cwd, base, candidate))
+    for (const path of await committedPaths(this.cwd, deliveryTarget.head, candidate))
       live2.delivered.add(path);
     try {
       for (const name of documents) {
@@ -30652,7 +30672,11 @@ ${result.output}`}`);
       }
       if (!await this.checks(live2, this.cwd, plan))
         throw new Error("Local merge completed, but post-merge checks failed. No reset or rollback was attempted.");
-      await this.unchangedHead(this.cwd, candidate);
+      await assertTarget(this.cwd, { ...target2, head: candidate }, []);
+      this.assertRunning(live2);
+      for (const sibling of this.active.values())
+        if (sibling !== live2 && sibling.target?.branch === target2.branch && sibling.frontier === deliveryTarget.head)
+          sibling.frontier = candidate;
     } finally {
       if (!live2.abort.signal.aborted)
         try {
@@ -30669,6 +30693,52 @@ ${result.output}`}`);
         }
     }
   }
+  async refreshCandidate(live2, integration, p) {
+    const target2 = live2.target;
+    if (!target2)
+      throw new ContractError("invalid");
+    const head = live2.frontier ?? target2.head;
+    const allowed = p.plan.tasks.flatMap((t) => t.writes);
+    await assertTarget(this.cwd, { ...target2, head }, allowed);
+    this.assertGuidance(live2, p);
+    const changed = await committedPaths(this.cwd, target2.head, head);
+    const conflicts = overlapping([...allowed, "AGENTS.md"], changed);
+    if (conflicts.length)
+      throw new WorkflowRefusal("conflict", `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`);
+    if (head === target2.head)
+      return;
+    await this.gitStep(live2, integration, "integrate-parallel-deliveries", (git) => git([
+      "-c",
+      "rerere.enabled=false",
+      "rebase",
+      "--no-update-refs",
+      "--no-autostash",
+      "--no-rebase-merges",
+      "--onto",
+      head,
+      target2.head
+    ]));
+    await assertWorkflowScope(integration, []);
+    const outside = [];
+    for (const path of await committedPaths(integration, head, await gitHead(integration)))
+      if (!workflowCovers(allowed, path))
+        outside.push(path);
+    if (outside.length)
+      throw new WorkflowRefusal("forbidden", `Refreshed candidate changed paths outside its approved scope: ${outside.join(", ")}. Nothing was integrated.`);
+    await this.verifyAndRepair(live2, integration, p, true, 0);
+  }
+  assertGuidance(live2, p) {
+    if (!live2.guidance || !live2.target)
+      throw new ContractError("invalid");
+    const conflicts = [];
+    if (pathIdentity(this.cwd, "AGENTS.md") !== live2.guidance.agents)
+      conflicts.push("AGENTS.md");
+    const project = pathIdentity(this.cwd, ".cadence/project.md");
+    if (project !== live2.guidance.project && (live2.frontier === live2.target.head || !p.plan.projectContext || project !== `sha256:${hash(projectMarkdown(this.cwd, p.plan.projectContext))}`))
+      conflicts.push(".cadence/project.md");
+    if (conflicts.length)
+      throw new WorkflowRefusal("conflict", `Project guidance changed during the run: ${conflicts.join(", ")}. The candidate is retained; review a fresh plan before integration.`);
+  }
   async assertStartable(live2, p) {
     this.current();
     if (!live2.execution.model)
@@ -30678,7 +30748,7 @@ ${result.output}`}`);
       throw new ContractError("stale");
     const writes = p.plan.tasks.flatMap((t) => t.writes);
     if (live2.target)
-      await assertTarget(this.cwd, live2.target, writes);
+      await assertTarget(this.cwd, { ...live2.target, head: live2.frontier ?? live2.target.head }, writes);
     else if (await contentsIdentityAsync(this.cwd, writes) !== live2.declared)
       throw new WorkflowRefusal("stale", "Declared targets changed between approval and start; nothing was edited.");
   }
@@ -30686,14 +30756,14 @@ ${result.output}`}`);
     return error instanceof WorkflowRefusal ? `${error.code}: ${error.detail}` : error instanceof ContractError ? error.code : error instanceof Error ? error.message : "Workflow failed";
   }
   async execute(live2, request3) {
-    let barrier;
     let budgetExpired = false;
     let timer;
     let failure2 = "";
     try {
       this.assertRunning(live2);
-      barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal);
-      barrier.assertHeld();
+      const isolated = live2.proposal?.plan.delivery === "local-merge";
+      live2.barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal, isolated || request3.action === "research" ? "shared" : "exclusive");
+      live2.barrier.assertHeld();
       if (live2.run.diagnostics)
         live2.run.diagnostics.acquiredAt = Date.now();
       timer = setTimeout(() => {
@@ -30702,6 +30772,10 @@ ${result.output}`}`);
       }, WORKFLOW_LIMITS.durationMs);
       if (live2.proposal)
         await this.assertStartable(live2, live2.proposal);
+      if (isolated) {
+        live2.barrier.release();
+        live2.barrier = undefined;
+      }
       live2.run.status = "running";
       this.save(live2);
       if (request3.action === "research") {
@@ -30734,7 +30808,7 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
         this.o.owner.quarantine();
       }
       if (this.o.owner.state === "idle")
-        barrier?.release();
+        live2.barrier?.release();
       this.active.delete(live2.run.id);
     }
     return {
@@ -31117,7 +31191,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "afd5c3b4604a2831b624163a6cad9a45b36bc01e111555c08aedcba6f4996595";
+  const embedded = "0c20fc1351ea017a56562403cfeb07b41b6da9a2b702e6ae8f01a396321cbeb7";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

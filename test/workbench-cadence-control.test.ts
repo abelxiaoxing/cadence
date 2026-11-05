@@ -327,7 +327,7 @@ it("one unusable control record degrades only its conversation and is never repa
   expect(f.cw.records.state(unbound).notice).not.toBe("forged");
 });
 
-it("a displayed plan survives discussion, exit retires it, and research is refused only behind an implementation", async () => {
+it("a displayed plan survives discussion and another conversation's implementation does not block research", async () => {
   const f = fixture();
   const id = randomUUID();
   let turn = f.send(id, "enter", "/cadence plan");
@@ -337,17 +337,17 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
   // Another workflow does not block publishing; approval re-binds observation.
   const published = await f.tool(turn, "cadence_plan", plan());
   expect(published).toMatchObject({ proposalId: expect.any(String) });
-  const busy = await f.tool(turn, "cadence_research", {
+  const concurrent = await f.tool(turn, "cadence_research", {
     goal: "g",
     questions: ["q"],
   });
-  expect(busy).toMatchObject({ refused: "checkout-busy" });
+  expect(concurrent).toMatchObject({ phase: "research" });
   const invalid = await f.tool(turn, "cadence_plan", { ...plan(), checks: [] });
   expect(invalid).toMatchObject({ refused: "invalid-plan" });
   await f.settle(turn);
   const proposal = f.cw.records.state(id).proposal;
   expect(proposal?.id).toBe(published.proposalId);
-  // Investigations queue behind other investigations, not an implementation.
+  // Independent investigations can also overlap.
   f.active.splice(0, 1, f.run(randomUUID(), "research"));
   turn = f.send(id, "message", "what does task b do?");
   expect(f.cw.records.state(id).proposal).toEqual(proposal);
@@ -356,7 +356,7 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
     questions: ["q"],
   });
   expect(research).toMatchObject({ phase: "research" });
-  expect(f.cw.records.state(id).runs).toHaveLength(1);
+  expect(f.cw.records.state(id).runs).toHaveLength(2);
   await f.settle(turn);
   f.send(id, "exit", "exit cadence");
   expect(f.cw.records.state(id)).toMatchObject({
@@ -485,6 +485,37 @@ it("approval admits before consuming the plan: a definite refusal keeps it, and 
     commandId: runId,
   });
   expect(f.runs.size).toBe(1);
+  f.active.push(f.runs.get(runId) as WorkflowRun);
+  // The same conversation cannot replace its accepted task, even with a new
+  // plan card. Another conversation still publishes and prepares independently.
+  const followup = f.send(id);
+  expect(
+    await f.tool(followup, "cadence_research", {
+      goal: "another goal",
+      questions: ["q"],
+    }),
+  ).toMatchObject({ refused: "checkout-busy" });
+  await f.tool(followup, "cadence_plan", plan());
+  await f.settle(followup);
+  await expect(approve()).rejects.toThrow("conflict");
+  const other = randomUUID();
+  const otherTurn = f.send(other, "enter", "/cadence parallel");
+  await f.tool(otherTurn, "cadence_plan", plan());
+  await f.settle(otherTurn);
+  const state = f.cw.records.state(other);
+  expect(
+    f.cw.approval(
+      {
+        kind: "cadence-prepare",
+        commandId: randomUUID(),
+        conversationId: other,
+        revision: state.revision,
+        proposalId: state.proposal!.id,
+        digest: state.proposal!.digest,
+      },
+      caller,
+    ),
+  ).toMatchObject({ kind: "cadence-grant" });
 });
 
 it("list and link projections decode a record once per change and stay bounded", () => {
