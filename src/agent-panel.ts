@@ -22,7 +22,6 @@ import {
   cardOf,
   decodeCard,
   liveLines,
-  MAX_ENDED,
   type Paint,
   SUBAGENT_EVENTS,
   SUBAGENT_VIEW,
@@ -48,10 +47,10 @@ export function registerAgentPanel(
   pi: ExtensionAPI,
   options: AgentPanelOptions = {},
 ): void {
-  const store = new SubagentStore(options.now);
+  let store: SubagentStore | undefined;
   for (const channel of Object.values(SUBAGENT_EVENTS))
     pi.events.on(channel, (data) => {
-      store.apply(channel, data);
+      store?.apply(channel, data);
     });
   pi.registerEntryRenderer(CARD_ENTRY, (entry, { expanded }, theme) => {
     const card = decodeCard(entry.data);
@@ -70,6 +69,7 @@ export function registerAgentPanel(
   let detach: (() => void) | undefined;
   pi.on("session_start", (_event, ctx) => {
     detach?.();
+    store = new SubagentStore(options.now);
     detach =
       ctx.mode === "tui" && ctx.hasUI
         ? attachPanel(
@@ -84,6 +84,7 @@ export function registerAgentPanel(
   pi.on("session_shutdown", () => {
     detach?.();
     detach = undefined;
+    store = undefined;
   });
 }
 
@@ -96,8 +97,6 @@ function attachPanel(
 ): () => void {
   const now = options.now ?? Date.now;
   const keep = options.keep ?? process.env.CADENCE_AGENT_PANEL === "always";
-  if (store.settled()) store.closeBatch();
-  store.prune(0);
   let tui: TUI | undefined;
   let frame = 0;
   let spinner: ReturnType<typeof setInterval> | undefined;
@@ -114,11 +113,10 @@ function attachPanel(
     clearInterval(spinner);
     spinner = undefined;
   };
-  const source = cadenceBrowserSource(store, announce, now);
   const mount = () => {
-    // An empty mounted summary costs no content rows, and retains the public
-    // TUI handle needed to admit ↓ only when Pi's empty editor has focus.
-    const show = store.size > 0;
+    // Keep a handle only for a live batch (or an explicitly kept summary),
+    // never just because old agents remain in memory.
+    const show = liveAgents().length > 0;
     if (show === mounted) return;
     mounted = show;
     ctx.ui.setWidget(
@@ -155,14 +153,11 @@ function attachPanel(
         /* A replaced runtime cannot append. */
       }
     }
-    for (const id of store.prune(MAX_ENDED, [
-      browser?.selected,
-      browser?.viewing,
-    ]))
-      positions.delete(id);
+    for (const id of store.prune()) positions.delete(id);
   };
   const changed = () => {
     if (detached) return;
+    for (const id of store.prune()) positions.delete(id);
     if (kept.length && store.batch().length) kept = [];
     if (!store.settled()) {
       clearTimeout(settling);
@@ -201,7 +196,8 @@ function attachPanel(
             t,
             theme,
             keys,
-            source,
+            // Transcript caches belong to this interaction, not future batches.
+            cadenceBrowserSource(store, announce, now),
             ctx.cwd,
             positions,
             closeBrowser,
@@ -242,7 +238,7 @@ function attachPanel(
     )
       return;
     if (
-      !store.size ||
+      store.running() === 0 ||
       ctx.ui.getEditorText() !== "" ||
       tui?.hasOverlay() ||
       !(

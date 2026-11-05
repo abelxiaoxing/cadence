@@ -38,16 +38,27 @@ The old `/cadence-inspect` execution interface is removed.
 
 ## Background agent panel
 
-A readonly panel in the Pi TUI follows background agents: the child runs of Cadence's running owner and any agents another extension announces on Pi's shared event bus.
-Every TUI session, not only `/cadence`, looks for the owner already running for its workspace half a second after start and every 15s while none answers; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
+A readonly panel in the Pi TUI follows the current conversation's Cadence workflow children and agents another extension announces on this Pi runtime's event bus.
+The conversation identity is the public Pi session ID, pinned when the observer attaches; sharing a cwd is not sharing an observation scope.
+The feed admits only roster runs whose immutable `execution.version.conversation.id` matches that session ID, before reading their steps or transcripts.
+Copied/forked session entries and reconstructed workflow links cannot transfer that attribution; missing admission context stays invisible rather than falling back to a project-wide broadcast.
+Resuming the same conversation (including in another terminal) observes its still-running work; a different/new/forked conversation does not inherit it.
+Every TUI session looks for its workspace's already-running owner after startup and retries absent owners; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
 That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
 `CADENCE_AGENT_PANEL=off` turns that observation off.
-It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
-A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-history` keeps the actual outcome.
+The small workflow roster uses the idle interval until this conversation has a followed run, then the active interval; timing constants live in `src/agent-panel-cadence.ts`.
+Only research, implementation, diagnosis, knowledge and review steps first observed running are announced; first-seen settled steps and unattributed legacy tasks are not loaded into the native panel.
 Workflow review rejections are announced and counted as `rejected`, never as agent errors; the browser dock also shows `rejected` separately from `failed`.
-Workflow research, implementation, diagnosis, knowledge and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
-Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
-Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-history`.
+Legacy task history and the WebUI's project-wide dock remain unchanged.
+A run that leaves the active roster remains attributed until its final observation; a failed roster read is not proof of completion.
+A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or a persistently unreadable workflow) ends as an error that says so; `/cadence-history` keeps the actual outcome.
+An abandoned run is not automatically readmitted while it remains in the roster; only its ID is retained until it leaves, preventing repeated failed reads and duplicate agent batches.
+Explicitly reopening the conversation creates a fresh observer; the owner's execution and retained history are unaffected.
+The viewed child streams its transcript; unviewed running children refresh activity at the bounded background interval.
+On settlement, only an already-viewed transcript gets one final read, before the end event, even if an earlier transcript read failed; a failed final read cannot discard the observed outcome or trigger repeated historical reads.
+Settled children leave the feed immediately; completed runs are no longer read.
+Elapsed time counts from when this session first observed a child; no tokens are shown because the owner records no usage.
+Opening a running child reads its retained messages, tool calls and results through the workflow reader, with bounded text fields; full retained evidence stays in `/cadence-history`.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
 Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `rejected`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
@@ -60,11 +71,17 @@ Once every member ended, the block shows the card it is about to become for `SET
 Then the block is removed and the card is appended to the session as a display-only `cadence-agent-batch` entry, which is not part of the model's context and renders again on resume.
 A collapsed card is one line when every member finished cleanly and otherwise also lists the rejected, failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
 A card holds only display text (kind, row text, status, elapsed), at most 64 members, and anything malformed in a session file renders nothing.
-A batch that settled is carded in the session it ran in, even on departure; one still running carries over to the next session, and one that ended while no session showed it gets no card.
-`CADENCE_AGENT_PANEL=always` keeps the last batch in the block, without a card, until the next batch begins.
-With an empty focused input, ↓ opens the adapted upstream readonly session browser: Pi's continuous selection list, with up to ten visible agent rows and stable ID selection as activities change.
+A batch that settled is carded in the session it ran in, even on departure; a running batch is discarded on departure, without fabricating an outcome or carrying it into another session.
+Ended agents are dropped from memory after their batch becomes a card; an already-open transcript may retain its own display snapshot until closed.
+`CADENCE_AGENT_PANEL=always` keeps the last batch summary in the block, without a card, until the next batch begins; it never keeps ended agents browsable.
+With an empty focused input and at least one running agent, ↓ opens the adapted upstream readonly session browser: Pi's continuous selection list, with up to ten visible **running** rows and stable ID selection as activities change.
+An ended row disappears immediately, without waiting for the batch card; if it was selected, selection moves to the nearest running row.
+Keyboard and mouse openings recheck the exact live row; a click on an ended row never opens it or silently redirects to its replacement.
+With none running, ↓ belongs to the editor again.
+A transcript already being read stays open as a snapshot when its agent ends, but releases its producer subscription and cannot be reopened from the running list.
+An already-open empty list says no agents are running; it does not fetch history or unexpectedly redirect keys into the editor.
 Enter opens the upstream transcript pane in that same interaction; ↑/↓ or j/k scroll content, the host's paging bindings and Shift+↑/↓ page, Home/End and the host's top/bottom bindings jump, and Ctrl+O toggles retained tool output locally.
-Esc, q or Ctrl+C in a transcript return to the same selected list row; Esc in the list returns to input.
+Esc, q or Ctrl+C in a transcript return to the selected live row (or the empty list); Esc in the list returns to input.
 No browser key controls execution.
 The fullscreen browser is a focused overlay, so viewport keys and its normalized mouse wheel reach the browser rather than the parent conversation.
 Pi's current regular mode uses the upstream docked mounting behavior to avoid baking overlay chrome into scrollback; this is one browser for the two current renderers, not a legacy Pi compatibility implementation.
@@ -74,7 +91,7 @@ Each agent's reading position survives switches; new output follows only at the 
 Tool output and thinking start folded.
 Messages outside the retained view remain in `/cadence-history`; an empty view reports that no retained messages have been observed, not that the agent finished without output.
 The mounted browser is disposed on departure and announces no viewed child after detach.
-A new session drops the previous one's ended agents.
+A new session drops all of the previous session's agents; late reads from its stopped observer cannot publish into the new session.
 The panel never starts, cancels or keeps an agent or Pi alive; across restarts only the cards remain.
 For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays a batch of fake agents (the second fails), then a fake review agent with its own card, and runs nothing.
 

@@ -54,9 +54,6 @@ export interface SubagentState {
 
 /** Retained messages per agent; older ones are counted, not kept. */
 export const MAX_MESSAGES = 2000;
-/** Ended agents kept for review outside the open batch; older ones are
- * dropped with their messages once a batch collapses into its card. */
-export const MAX_ENDED = 24;
 /** Agents written into one card; more are counted, not listed. */
 export const MAX_CARD_AGENTS = 64;
 const ENDED = new Set(["done", "rejected", "error", "cancelled"]);
@@ -125,16 +122,14 @@ export class SubagentStore {
     this.batchIds = [];
     return batch;
   }
-  /** Drop ended agents outside the open batch, oldest first, until at most
-   * `keep` remain; `retain` ids stay. Returns the dropped ids. Listeners are
-   * not called: the caller is the panel, which redraws itself. */
-  prune(keep: number, retain: (string | undefined)[] = []): string[] {
+  /** Drop ended agents once their batch has become a display card. An open
+   * transcript already holds its own state reference; no history list stays.
+   * Listeners are not called: the panel owns the redraw. */
+  prune(): string[] {
     const open = new Set(this.batchOpen ? this.batchIds : []);
-    const ended = [...this.agents.values()].filter(
-      (a) =>
-        a.status !== "running" && !open.has(a.id) && !retain.includes(a.id),
+    const drop = [...this.agents.values()].filter(
+      (a) => a.status !== "running" && !open.has(a.id),
     );
-    const drop = ended.slice(0, Math.max(0, ended.length - keep));
     for (const a of drop) this.agents.delete(a.id);
     return drop.map((a) => a.id);
   }
@@ -502,7 +497,7 @@ export interface LiveFrame {
   agents: SubagentState[];
   now: number;
   frame: number;
-  /** Show the `↓ to manage` hint: the input box has focus. */
+  /** Show the `↓ to view` hint: the input box has focus. */
   hint: boolean;
 }
 /** One summary line; the adapted session browser owns all agent rows. */

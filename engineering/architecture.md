@@ -103,3 +103,4 @@ Browser assets are prebuilt, not compiled by consumer postinstall.
 
 The native agent browser reuses the readonly session navigator, transcript pane/content renderer and labeled rules from `gotgenes/pi-packages`; `provenance/agent-browser-reuse.json` pins source bytes and describes the small Cadence adaptations.
 Its source adapter consumes only the existing bus and never loads an upstream agent manager or execution API.
+Native Cadence observation is scoped by the workflow admission context to the current Pi conversation; the browser lists only running agents.

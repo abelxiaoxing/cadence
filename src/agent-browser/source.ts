@@ -143,26 +143,30 @@ export function cadenceBrowserSource(
   const sources = new Map<string, TranscriptSource>();
   return {
     entries: () => {
-      for (const id of sources.keys()) if (!store.get(id)) sources.delete(id);
-      return store.ordered().map((agent) => {
-        let source = sources.get(agent.id);
-        if (!source) {
-          source = transcriptSource(store, agent);
-          sources.set(agent.id, source);
-        }
-        return {
-          id: agent.id,
-          label: `${described(agent)} · ${agent.status} · ${factsText(agent, now())}`,
-          heading: {
-            name: agent.label,
-            modeLabel: agent.kind,
-            get description() {
-              return agent.status;
+      for (const id of sources.keys())
+        if (store.get(id)?.status !== "running") sources.delete(id);
+      return store
+        .ordered()
+        .filter((agent) => agent.status === "running")
+        .map((agent) => {
+          let source = sources.get(agent.id);
+          if (!source) {
+            source = transcriptSource(store, agent);
+            sources.set(agent.id, source);
+          }
+          return {
+            id: agent.id,
+            label: `${described(agent)} · ${agent.status} · ${factsText(agent, now())}`,
+            heading: {
+              name: agent.label,
+              modeLabel: agent.kind,
+              get description() {
+                return agent.status;
+              },
             },
-          },
-          source,
-        };
-      });
+            source,
+          };
+        });
     },
     subscribe: (changed) => store.subscribe(changed),
     view,
