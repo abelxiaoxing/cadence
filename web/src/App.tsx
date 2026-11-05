@@ -225,6 +225,17 @@ export function App({
     !detached && observeExecution,
     executionEpoch.current,
   );
+  // Presentation only: an empty first attachment is still loading, not stale.
+  // Once data or a failure was observed, a reset/reconnect must not look new.
+  const initialViewer = useRef(true);
+  if (
+    workspace.workspace ||
+    workspace.observation ||
+    workspace.error ||
+    workspace.transportStatus === "stale" ||
+    workspace.compatible === false
+  )
+    initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
   // history and drafts reachable; only explicit Send can prepare execution.
   const projectObserved = !!(project && (execution.value || execution.error));
@@ -624,20 +635,30 @@ export function App({
     workspace.transportStatus === "current" &&
     (!observation.state || observation.state.connection === "current");
   const observationFresh = executionReady && viewerFresh;
+  const connecting =
+    initialViewer.current &&
+    !observation.state &&
+    !observation.error &&
+    !execution.error &&
+    (!project ||
+      (!execution.value && execution.readiness === "unknown") ||
+      execution.readiness === "running");
   const connection = detached
     ? "Viewer disconnected"
-    : project && execution.readiness === "unknown"
-      ? "Project readiness unknown"
-      : project && execution.readiness === "stale"
-        ? "Project observation stale"
-        : executionStopped
-          ? "Ready to prepare on Send"
-          : !viewerFresh
-            ? "Viewer observation stale"
-            : !workspace.workspace
-              ? "Viewer observation unavailable"
-              : (observation.state?.connection ??
-                (taskId ? "Task snapshot not observed yet" : "Chat ready"));
+    : connecting
+      ? "Connecting…"
+      : project && execution.readiness === "unknown"
+        ? "Project readiness unknown"
+        : project && execution.readiness === "stale"
+          ? "Project observation stale"
+          : executionStopped
+            ? "Ready to prepare on Send"
+            : !viewerFresh
+              ? "Viewer observation stale"
+              : !workspace.workspace
+                ? "Viewer observation unavailable"
+                : (observation.state?.connection ??
+                  (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   return (
     <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
@@ -927,20 +948,13 @@ export function App({
         </section>
       )}
       {notices}
-      {executionStopped && (
-        <p className="banner-notice" role="status">
-          {t(
-            "Execution will be prepared when you send. Browsing does not start it.",
-          )}
-        </p>
-      )}
       <WorkspaceNotice
         onDemand={!!prepareSend}
         error={error}
         projectObservationError={execution.error}
         observationError={workspace.error}
       />
-      {!executionStopped && !observationFresh && (
+      {!connecting && !executionStopped && !observationFresh && (
         <p className="banner-notice" role="status">
           {t(
             "Observation is not current. Retained history is shown; this does not mean work has stopped.",
@@ -1383,22 +1397,25 @@ export function App({
           >
             <span
               className={`status-dot ${
-                executionStopped
-                  ? ""
-                  : !observationFresh || !workspace.workspace
-                    ? "error"
-                    : observation.transportStatus !== "current"
-                      ? "busy"
-                      : !observation.state
-                        ? ""
-                        : observation.state.connection === "current"
-                          ? "ok"
-                          : "busy"
+                connecting
+                  ? "busy"
+                  : executionStopped
+                    ? ""
+                    : !observationFresh || !workspace.workspace
+                      ? "error"
+                      : observation.transportStatus !== "current"
+                        ? "busy"
+                        : !observation.state
+                          ? ""
+                          : observation.state.connection === "current"
+                            ? "ok"
+                            : "busy"
               }`}
               aria-hidden="true"
             />
             {tx(connection)}
-            {!executionStopped &&
+            {!connecting &&
+              !executionStopped &&
               observation.transportStatus !== "current" &&
               t(" · transport {status}", {
                 status: tx(observation.transportStatus),
@@ -1425,7 +1442,8 @@ export function App({
                   )}
                 </span>
               )
-            : !executionStopped && (
+            : !connecting &&
+              !executionStopped && (
                 <span className="status-item faint">
                   {t(
                     "Active roster unavailable; absence is not proof of settlement.",

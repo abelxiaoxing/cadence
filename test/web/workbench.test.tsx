@@ -500,6 +500,16 @@ it("a failed project observation retains identity but not readiness; unavailable
   const { projectObservationResult, projectReadiness } = await import(
     "../../web/src/client/use-project-observation"
   );
+  expect(projectReadiness()).toBe("unknown");
+  const failedFirstRead = projectObservationResult(
+    undefined,
+    undefined,
+    "offline",
+  );
+  expect(failedFirstRead).toEqual({ value: undefined, error: "offline" });
+  expect(projectReadiness(failedFirstRead.value, failedFirstRead.error)).toBe(
+    "unknown",
+  );
   const running = {
     kind: "project-observation" as const,
     status: "running" as const,
