@@ -695,7 +695,11 @@ it("user images are small descriptors; exact-branch lazy reads preserve Pi bytes
   const id = randomUUID();
   const content = [
     { type: "text", text: "a screenshot" },
-    { type: "image", data: PNG, mimeType: "image/png" },
+    ...Array.from({ length: 5 }, () => ({
+      type: "image",
+      data: PNG,
+      mimeType: "image/png",
+    })),
     { type: "image", data: "unsupported", mimeType: "image/svg+xml" },
   ];
   mkdirSync(directory);
@@ -718,9 +722,24 @@ it("user images are small descriptors; exact-branch lazy reads preserve Pi bytes
   const sessions = new PiSessions(directory, cwd);
   const parsed = sessions.session(id)!;
   const view = listTurn(turnItems(parsed.branch("picture"), []));
-  expect(view.steps[0].images).toEqual([
-    { entry: "picture", index: 1, mimeType: "image/png" },
-  ]);
+  expect(view.steps[0].images).toEqual(
+    Array.from({ length: 5 }, (_, index) => ({
+      entry: "picture",
+      index: index + 1,
+      mimeType: "image/png",
+    })),
+  );
+  expect(
+    decodeWorkbenchResult({
+      kind: "conversation-image",
+      mimeType: "image/png",
+      data: PNG,
+      next: 8 * 1024 * 1024,
+    }),
+  ).toMatchObject({ next: 8 * 1024 * 1024 });
+  expect(sessionImage(parsed, "picture", "picture", 5, 0)).toMatchObject({
+    data: PNG,
+  });
   expect(view.omitted.media).toBe(true);
   expect(JSON.stringify(view.steps)).not.toContain(PNG);
   expect(sessionImage(parsed, "picture", "picture", 1, 0)).toEqual({
@@ -730,7 +749,54 @@ it("user images are small descriptors; exact-branch lazy reads preserve Pi bytes
     mimeType: "image/png",
   });
   expect(() => sessionImage(parsed, "other", "picture", 1, 0)).toThrow();
-  expect(() => sessionImage(parsed, "picture", "picture", 2, 0)).toThrow();
+  expect(() => sessionImage(parsed, "picture", "picture", 6, 0)).toThrow();
   expect(() => sessionImage(parsed, "picture", "picture", 1, 4)).toThrow();
   expect(readFileSync(path)).toEqual(original);
+});
+
+it("retained descriptors include large images even beyond the old content-index ceiling", async () => {
+  const { pngBytes } = await import("./helpers/images.ts");
+  const data = Buffer.concat([
+    pngBytes(),
+    Buffer.alloc(5 * 1024 * 1024),
+  ]).toString("base64");
+  const view = listTurn(
+    turnItems(
+      [
+        {
+          type: "message",
+          id: "picture",
+          parentId: null,
+          timestamp: "",
+          pos: 0,
+          raw: {
+            message: {
+              role: "user",
+              content: [
+                ...Array.from({ length: 1025 }, () => ({
+                  type: "text",
+                  text: "",
+                })),
+                ...Array.from({ length: 5 }, () => ({
+                  type: "image",
+                  data,
+                  mimeType: "image/png",
+                })),
+              ],
+            },
+          },
+        },
+      ],
+      [],
+    ),
+  );
+  expect(view.steps[0].images).toEqual(
+    Array.from({ length: 5 }, (_, i) => ({
+      entry: "picture",
+      index: 1025 + i,
+      mimeType: "image/png",
+    })),
+  );
+  expect(view.omitted.media).toBe(false);
+  expect(JSON.stringify(view)).not.toContain(data);
 });

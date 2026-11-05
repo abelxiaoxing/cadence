@@ -16,7 +16,6 @@ export {
   errorStatus,
   GRAPH_SCHEMA,
   HISTORY_SCHEMA,
-  IMAGE_COUNT,
   integer,
   invalid,
   LIMITS,

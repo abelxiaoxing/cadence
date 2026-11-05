@@ -12,16 +12,10 @@ import type {
 import type { ServiceClient } from "../../../src/service-client.ts";
 
 export function validateImageFiles(files: readonly File[]): void {
-  if (
-    files.length > IMAGE_LIMITS.count ||
-    files.reduce((size, f) => size + f.size, 0) > IMAGE_LIMITS.totalBytes
-  )
-    throw new Error("Too many images or total image size exceeded.");
   for (const file of files) {
     if (!IMAGE_TYPES.includes(file.type))
       throw new Error("Use PNG, JPEG or WebP images.");
-    if (!file.size || file.size > IMAGE_LIMITS.bytes)
-      throw new Error("Image is empty or too large.");
+    if (!file.size) throw new Error("Image is empty.");
   }
 }
 /** Validate compressed bytes and dimensions before creating any preview URL. */
@@ -83,7 +77,7 @@ export async function uploadImages(
   }
   return images.length ? { ...command, images } : command;
 }
-/** Bounded lazy read. The caller supplies the original branch and abort signal. */
+/** Chunked lazy read. The caller supplies the original branch and abort signal. */
 export async function readImage(
   image: ChatImage,
   read: (offset: number) => Promise<WorkbenchResult>,
@@ -101,8 +95,6 @@ export async function readImage(
       throw new Error("invalid");
     parts.push(reply.data);
     offset += reply.data.length;
-    if (offset > 4 * Math.ceil(IMAGE_LIMITS.bytes / 3))
-      throw new Error("capacity");
     if (reply.next === null) break;
     if (reply.next !== offset || reply.data.length !== IMAGE_LIMITS.chunkChars)
       throw new Error("invalid");

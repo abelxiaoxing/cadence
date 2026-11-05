@@ -19,7 +19,7 @@ import {
   FiMessageSquare,
   FiSquare,
 } from "react-icons/fi";
-import { IMAGE_LIMITS, IMAGE_TYPES } from "../../../../src/image-content.mjs";
+import { IMAGE_TYPES } from "../../../../src/image-content.mjs";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
@@ -1145,16 +1145,6 @@ export function ChatWorkspace({
             }
           }}
         />
-        <p className="composer-image-help">
-          {t(
-            "PNG, JPEG or WebP · {count} images · {each} MiB each · {total} MiB total. Unsent images stay in this tab.",
-            {
-              count: IMAGE_LIMITS.count,
-              each: IMAGE_LIMITS.bytes / 1024 / 1024,
-              total: IMAGE_LIMITS.totalBytes / 1024 / 1024,
-            },
-          )}
-        </p>
         <div className="composer-toolbar">
           <button
             type="button"
