@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,6 +129,36 @@ it("unit clipping never leaves a lone surrogate", () => {
     }),
   ).not.toThrow();
 });
+it("rejected is a review verdict only; historical failures stay unchanged", () => {
+  const run = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    goal: "review",
+    status: "failed",
+    phase: "finished",
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+    steps: [
+      {
+        id: "review",
+        kind: "review",
+        status: "rejected",
+        text: "",
+        exitCode: 0,
+        truncated: false,
+      },
+    ],
+  };
+  expect(decodeWorkflowRun(run).steps[0].status).toBe("rejected");
+  expect(() => decodeWorkflowRun({ ...run, status: "rejected" })).toThrow();
+  run.steps[0].kind = "implementation";
+  expect(() => decodeWorkflowRun(run)).toThrow();
+  run.steps[0].kind = "review";
+  run.steps[0].status = "failed";
+  expect(decodeWorkflowRun(run).steps[0].status).toBe("failed");
+});
+
 it("automatic execution cannot manufacture human-reviewed state", () => {
   expect(() => decodeWorkflowRun({ humanReviewed: true })).toThrow();
 });

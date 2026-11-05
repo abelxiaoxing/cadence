@@ -100,6 +100,7 @@ export interface WorkflowStep {
   status:
     | "running"
     | "completed"
+    | "rejected"
     | "failed"
     | "canceled"
     | "timeout"
@@ -529,7 +530,10 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
           "check",
           "git",
         ]),
-        status: status(s.status),
+        status:
+          s.kind === "review" && s.status === "rejected"
+            ? "rejected"
+            : status(s.status),
         text: text(s.text, 65536),
         exitCode: nullable(s.exitCode, (n) =>
           integer(n, -2147483648, 2147483647),

@@ -1135,6 +1135,29 @@ export class Workflows {
     s.exitCode = result.exitCode;
     s.truncated =
       result.truncated || Buffer.byteLength(shown) > Buffer.byteLength(s.text);
+    // Observers stop following a settled step; publish its verdict atomically.
+    if (
+      s.kind === "review" &&
+      result.outcome === "completed" &&
+      result.closed &&
+      result.exitCode === 0
+    ) {
+      const verdict = reviewVerdict(result.text);
+      s.status = verdict
+        ? verdict.approved
+          ? "completed"
+          : "rejected"
+        : "failed";
+      s.text = diagnosticText(
+        verdict
+          ? verdict.approved
+            ? `Agent review approved (automatic, not human review). ${verdict.summary}`
+            : `Agent review rejected: ${[verdict.summary, ...verdict.blockingIssues].filter(Boolean).join(" | ") || "no reason given"}`
+          : `Agent review reply could not be parsed as a verdict${result.truncated ? " (the reply was clipped)" : ""}; it is not counted as approval.`,
+        1024,
+        this.o.secrets(),
+      );
+    }
     if (!result.closed) this.o.owner.quarantine();
     this.save(live);
   }
@@ -1669,7 +1692,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
   ): Promise<Verdict> {
     live.run.phase = "reviewing";
     this.save(live);
-    const { result, step } = await this.worker(
+    const { result } = await this.worker(
       live,
       cwd,
       `review-${randomUUID()}`,
@@ -1682,17 +1705,6 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     );
     this.success(result);
     const verdict = reviewVerdict(result.text);
-    step.status = verdict?.approved ? "completed" : "failed";
-    step.text = diagnosticText(
-      verdict
-        ? verdict.approved
-          ? `Agent review approved (automatic, not human review). ${verdict.summary}`
-          : `Agent review rejected: ${[verdict.summary, ...verdict.blockingIssues].filter(Boolean).join(" | ") || "no reason given"}`
-        : `Agent review reply could not be parsed as a verdict${result.truncated ? " (the reply was clipped)" : ""}; it is not counted as approval.`,
-      1024,
-      this.o.secrets(),
-    );
-    this.save(live);
     return verdict
       ? verdict.approved
         ? "approved"

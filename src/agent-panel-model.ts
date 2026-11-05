@@ -18,7 +18,12 @@ export const SUBAGENT_VIEW = "subagent:view";
  * of the model's context. */
 export const CARD_ENTRY = "cadence-agent-batch";
 
-export type SubagentStatus = "running" | "done" | "error" | "cancelled";
+export type SubagentStatus =
+  | "running"
+  | "done"
+  | "rejected"
+  | "error"
+  | "cancelled";
 type Ended = Exclude<SubagentStatus, "running">;
 
 export interface SubagentState {
@@ -54,7 +59,7 @@ export const MAX_MESSAGES = 2000;
 export const MAX_ENDED = 24;
 /** Agents written into one card; more are counted, not listed. */
 export const MAX_CARD_AGENTS = 64;
-const ENDED = new Set(["done", "error", "cancelled"]);
+const ENDED = new Set(["done", "rejected", "error", "cancelled"]);
 
 const record = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v)
@@ -265,6 +270,7 @@ export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const SYMBOL: Record<Ended, [string, PaintRole]> = {
   done: ["✔", "success"],
   error: ["✘", "error"],
+  rejected: ["⊘", "accent"],
   cancelled: ["○", "muted"],
 };
 export function statusSymbol(
@@ -476,13 +482,22 @@ export function cardLines(
   const tally = (status: Ended) =>
     card.agents.filter((a) => a.status === status).length;
   const failed = tally("error"),
+    rejected = tally("rejected"),
     cancelled = tally("cancelled");
   const [symbol, role] =
-    SYMBOL[failed ? "error" : cancelled ? "cancelled" : "done"];
+    SYMBOL[
+      failed
+        ? "error"
+        : rejected
+          ? "rejected"
+          : cancelled
+            ? "cancelled"
+            : "done"
+    ];
   const kind = sharedKind(card.agents);
   const outcome =
-    failed || cancelled
-      ? ` · ${tally("done")} done${failed ? ` · ${failed} failed` : ""}${
+    failed || rejected || cancelled
+      ? ` · ${tally("done")} done${failed ? ` · ${failed} failed` : ""}${rejected ? ` · ${rejected} rejected` : ""}${
           cancelled ? ` · ${cancelled} cancelled` : ""
         }`
       : "";
@@ -538,10 +553,11 @@ export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
     agents.filter((a) => a.status === status).length;
   const done = tally("done"),
     failed = tally("error"),
+    rejected = tally("rejected"),
     cancelled = tally("cancelled");
   const counts = `${done ? ` · ${done} done` : ""}${
     failed ? ` · ${failed} failed` : ""
-  }${cancelled ? ` · ${cancelled} cancelled` : ""}`;
+  }${rejected ? ` · ${rejected} rejected` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}`;
   const [spin, role] = statusSymbol(running[0], f.frame);
   const header = hinted(
     `${paint(role, spin)} ${running.length} ${noun(kind, running.length)} running${counts}`,
@@ -551,7 +567,7 @@ export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
   );
   const listed = [
     ...running,
-    ...agents.filter((a) => a.status === "error" || a.status === "cancelled"),
+    ...agents.filter((a) => a.status !== "running" && a.status !== "done"),
   ];
   const rows = listed.slice(0, f.maxRows);
   const more = listed.length - rows.length;

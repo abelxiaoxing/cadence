@@ -367,9 +367,12 @@ function attachPanel(
         `→ viewing: ${agent.label}   (Esc to return to main)`,
       );
     const [symbol, role] = statusSymbol(agent, frame);
-    const word = { done: "finished", error: "failed", cancelled: "cancelled" }[
-      agent.status
-    ];
+    const word = {
+      done: "finished",
+      rejected: "rejected",
+      error: "failed",
+      cancelled: "cancelled",
+    }[agent.status];
     const facts = factsText(agent, now());
     return `${paint(role, `${symbol} ${word}`)}${paint(
       "dim",

@@ -101,6 +101,25 @@ describe("live batch", () => {
     );
   });
 
+  it("counts rejected reviews separately from failed agents in live and retained cards", () => {
+    const { s } = agents(2, T0, "Review");
+    s.apply(E.activity, { id: "a0", activity: "rejected" });
+    expect(s.apply(E.end, { id: "a0", status: "rejected" })).toBe(true);
+    const lines = liveLines(live(s), 100, paint);
+    expect(lines[0]).toContain("1 rejected");
+    expect(lines.join("\n")).not.toContain("failed");
+    expect(lines[2]).toContain("⊘ Analyze part 0 · rejected");
+    s.apply(E.end, { id: "a1", status: "done" });
+    const card = cardOf(s.batch());
+    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    const collapsed = cardLines(card, false, 100, paint);
+    expect(collapsed[0]).toContain(
+      "⊘ 2 Review agents finished · 1 done · 1 rejected",
+    );
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed.join("\n")).not.toContain("failed");
+  });
+
   it("shows a kind column for mixed kinds and folds rows past maxRows", () => {
     const { s } = agents(3);
     s.apply(E.start, { id: "r", label: "Review", kind: "Review" });

@@ -765,6 +765,7 @@ export const zh = {
   settled: "已结束",
   completed: "已完成",
   failed: "失败",
+  rejected: "已拒绝",
   canceled: "已取消",
   timeout: "超时",
   unknown: "未知",

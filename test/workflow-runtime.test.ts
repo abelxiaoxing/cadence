@@ -78,6 +78,71 @@ it("review verdicts are read alone, fenced or inside prose; unreadable replies s
   expect(reviewVerdict('{"approved":true,"summary":"cut')).toBeNull();
 });
 
+it.each([
+  [
+    '{"approved":true,"summary":"ok","blockingIssues":[]}',
+    "completed",
+    "approved",
+  ],
+  [
+    '{"approved":false,"summary":"missing test","blockingIssues":[]}',
+    "rejected",
+    "rejected",
+  ],
+  ["Not a verdict", "failed", "unparseable"],
+])(
+  "review keeps verdict status separate from native success: %s",
+  async (text, status, verdict) => {
+    const result = {
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      text,
+      output: "",
+      signal: null,
+      durationMs: 1,
+      truncated: false,
+    };
+    const step = {
+      id: "review",
+      kind: "review",
+      status: "running",
+      text: "",
+      exitCode: null,
+    };
+    const saved: string[] = [];
+    const retained: unknown[] = [];
+    const workflow = Object.assign(Object.create(Workflows.prototype), {
+      root: "unused",
+      o: { secrets: () => [] },
+      write: (_path: string, value: unknown) => retained.push(value),
+      save: () => saved.push(step.status),
+      evidence: () => "",
+      worker: async () => {
+        workflow.finishStep({ run: { id: randomUUID() } }, step, result);
+        return { result, step };
+      },
+    });
+    const review = () =>
+      workflow.review(
+        { run: {} },
+        "unused",
+        { plan: { tasks: [] }, model: {} },
+        [],
+      );
+    await expect(review()).resolves.toBe(verdict);
+    expect(step).toMatchObject({ status, exitCode: 0 });
+    // No intermediate completed snapshot may end the panel's observation early.
+    expect(saved).toEqual(["running", status]);
+    expect(retained).toEqual([{ stepId: "review", result }]);
+    // A plausible verdict cannot override an actual worker failure.
+    result.outcome = "failed";
+    step.status = "failed";
+    await expect(review()).rejects.toThrow("Operation failed");
+    expect(step.status).toBe("failed");
+  },
+);
+
 it("implementation reports distinguish blocked work from a complete assignment without interpreting prose", () => {
   expect(
     implementationReport('{"status":"completed","summary":"Built bundles"}'),
