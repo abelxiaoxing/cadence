@@ -27,11 +27,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { conversationResources } from "./conversation-resources.mjs";
 import { coordinatorTools } from "./coordinator-tools.mjs";
-import {
-  decodeImageBase64,
-  IMAGE_LIMITS,
-  validateImageBytes,
-} from "./image-content.mjs";
+import { decodeImageBase64, validateImageBytes } from "./image-content.mjs";
 import { researchTools } from "./research-tools.mjs";
 import {
   BROWSER_COMMAND_ENTRY,
@@ -655,7 +651,6 @@ try {
     if (
       !Number.isSafeInteger(descriptor.bytes) ||
       descriptor.bytes < 1 ||
-      descriptor.bytes > IMAGE_LIMITS.wireBytes ||
       !/^[a-f0-9]{64}$/.test(descriptor.sha256) ||
       !model.input?.includes("image")
     )
@@ -681,15 +676,12 @@ try {
       images.length !== publicRequest.imageCount
     )
       throw new Error("Invalid images");
-    let total = 0;
     for (const image of images) {
       closed(image, ["type", "data", "mimeType"]);
       if (image.type !== "image") throw new Error("Invalid image");
       const decoded = decodeImageBase64(image.data);
       validateImageBytes(decoded, image.mimeType);
-      total += decoded.length;
     }
-    if (total > IMAGE_LIMITS.totalBytes) throw new Error("Images exceed bound");
   }
   const suppliedPrompt = [
     publicRequest.context,

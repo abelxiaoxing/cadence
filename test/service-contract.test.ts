@@ -522,6 +522,14 @@ describe.each([
         }),
       ).toThrow();
     });
+    it("worker image counts have no per-message quota and remain positive safe integers", () => {
+      const input = { ...worker(), prompt: "", imageCount: 65 };
+      expect(decodeWorkerPublicRequest(input)).toEqual(input);
+      for (const imageCount of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+        expect(() =>
+          decodeWorkerPublicRequest({ ...input, imageCount }),
+        ).toThrow();
+    });
     it("separates 512KiB graph/1MiB control, 96KiB public and actual 128KiB worker envelope", () => {
       const input = worker();
       expect(decodeWorkerPublicRequest(input)).toEqual(input);

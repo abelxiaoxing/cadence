@@ -33,9 +33,9 @@ Rows naming a module are maintained by hand; update them in the same change as t
 | Unified workbench     | 128 selected directories; 1024 durable startup/association preparation receipts (warm reuse writes none); 64 connections; bounded proxy frames and bodies; no eviction | `src/service/gateway.ts`, `src/service/gateway-store.ts`                                                     |
 | Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                                                                            | `src/service-assets.ts`                                                                                      |
 
-Image input bounds live in `src/image-content.mjs` (`IMAGE_LIMITS`, with the standalone codec's `IMAGE_COUNT`): 4 images per message, 4MiB per image and 8MiB per message, 16384 per dimension and 32Mi pixels.
-Staging reserves at most 64 images/64MiB of raw bytes, with a 10min idle validity; base64 adds about one third.
-Upload/history chunks hold at most 256KiB base64 characters, and the private worker image pipe is bounded at 12MiB; each active turn separately holds only its admitted message bytes.
+Image input has no Cadence-specific count, byte, dimension or pixel quota; browser/host memory, provider limits and the existing control/session read budgets still apply.
+`src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
+The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
 Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks (IDs up to 48 characters), two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline counted from acquiring the checkout gate.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.

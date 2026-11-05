@@ -6,6 +6,7 @@ import {
   type ChatTurn,
   toolTarget,
 } from "../../src/service/contracts/workbench.ts";
+import { ServiceClient } from "../../src/service-client.ts";
 import {
   LAST_PROJECT_STORAGE_KEY,
   projectReadable,
@@ -20,11 +21,15 @@ import {
   turnParts,
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
-import { ChatTurnView } from "../../web/src/components/workspace/ChatWorkspace";
+import {
+  ChatTurnView,
+  ChatWorkspace,
+} from "../../web/src/components/workspace/ChatWorkspace";
 import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker";
 import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
 import { WorkingFolderButton } from "../../web/src/components/workspace/WorkingFolderButton";
 import { LocaleProvider } from "../../web/src/i18n/locale";
+import { transport } from "./fixtures";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -656,3 +661,28 @@ it.each(["cold", "same-epoch", "replacement"])(
     }
   },
 );
+
+it("the minimal composer keeps the image action without a permanent image-help paragraph", () => {
+  for (const locale of ["en", "zh"] as const) {
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <ChatWorkspace
+          client={new ServiceClient(transport())}
+          id="conversation"
+          workspaceId="workspace"
+          enabled={false}
+          onModelChanged={() => {}}
+          onChanged={() => {}}
+          onReferenceUsed={() => {}}
+        />
+      </LocaleProvider>,
+    );
+    expect(html).toContain(
+      locale === "zh" ? 'aria-label="添加图片"' : 'aria-label="Add images"',
+    );
+    expect(html).not.toContain("composer-image-help");
+    expect(html).not.toContain("MiB");
+    expect(html).not.toContain("Unsent images");
+    expect(html).not.toContain("未发送图片");
+  }
+});

@@ -286,18 +286,14 @@ const isUser = (entry: SessionEntry) => role(entry) === "user";
 function imageDescriptors(entry: SessionEntry): ChatImage[] {
   const content = message(entry)?.content;
   if (!isUser(entry) || !Array.isArray(content)) return [];
-  return content
-    .flatMap((b, index) =>
-      b?.type === "image" &&
-      IMAGE_TYPES.includes(b.mimeType) &&
-      typeof b.data === "string" &&
-      b.data.length > 0 &&
-      b.data.length <= 4 * Math.ceil(IMAGE_LIMITS.bytes / 3) &&
-      index <= 1024
-        ? [{ entry: entry.id, index, mimeType: b.mimeType }]
-        : [],
-    )
-    .slice(0, IMAGE_LIMITS.count);
+  return content.flatMap((b, index) =>
+    b?.type === "image" &&
+    IMAGE_TYPES.includes(b.mimeType) &&
+    typeof b.data === "string" &&
+    b.data.length > 0
+      ? [{ entry: entry.id, index, mimeType: b.mimeType }]
+      : [],
+  );
 }
 /** Read only one supported image on the exact selected branch. Never exposes a
  * session path, remote URL, or base64 in the regular conversation projection. */
