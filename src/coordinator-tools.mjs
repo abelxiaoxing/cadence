@@ -31,12 +31,14 @@ const PLAN = Type.Object({
     Type.Literal("working-copy"),
   ]),
 });
-export function coordinatorTools() {
+export function createCoordinatorTools() {
   if (!process.send) throw new Error("Coordinator bridge unavailable");
   const pending = new Map();
   let counter = 0;
   let chain = Promise.resolve();
   let disconnected = false;
+  let retiring = false;
+  let retirement;
   const closed = () => {
     disconnected = true;
     for (const p of pending.values())
@@ -44,7 +46,7 @@ export function coordinatorTools() {
     pending.clear();
   };
   process.on("disconnect", closed);
-  process.on("message", (reply) => {
+  const receive = (reply) => {
     if (
       !reply ||
       typeof reply !== "object" ||
@@ -60,8 +62,9 @@ export function coordinatorTools() {
         details: undefined,
       });
     else p.reject(new Error("Coordinator refused this request"));
-  });
-  return [
+  };
+  process.on("message", receive);
+  const tools = [
     {
       name: "cadence_research",
       description:
@@ -96,6 +99,7 @@ export function coordinatorTools() {
     ...tool,
     label: tool.name,
     execute: async (_callId, args, signal) => {
+      if (retiring) throw new Error("Coordinator closed");
       if (signal?.aborted) throw new Error("Coordinator canceled");
       const request = { id: ++counter, name: tool.name, args };
       if (Buffer.byteLength(JSON.stringify(request)) > 65536)
@@ -105,17 +109,38 @@ export function coordinatorTools() {
           new Promise((resolve, reject) => {
             if (signal?.aborted) throw new Error("Coordinator canceled");
             if (disconnected) throw new Error("Coordinator disconnected");
+            if (retiring) throw new Error("Coordinator closed");
             pending.set(request.id, { resolve, reject });
-            process.send(request, (error) => {
-              if (error) {
-                pending.delete(request.id);
-                reject(new Error("Coordinator request unavailable"));
-              }
-            });
+            const unavailable = () => {
+              pending.delete(request.id);
+              reject(new Error("Coordinator request unavailable"));
+            };
+            try {
+              process.send(request, (error) => {
+                if (error) unavailable();
+              });
+            } catch {
+              // Synchronous transport failures own the same cleanup as the
+              // callback path; never retain pending entries or expose raw errors.
+              unavailable();
+            }
           }),
       );
       chain = original.catch(() => {});
       return original;
     },
   }));
+  return {
+    tools,
+    close() {
+      retiring = true;
+      // Already-sent calls still own their original reply/disconnect lifetime.
+      // Queued calls refuse before sending; listeners stay until that joins.
+      retirement ??= chain.finally(() => {
+        process.removeListener("disconnect", closed);
+        process.removeListener("message", receive);
+      });
+      return retirement;
+    },
+  };
 }

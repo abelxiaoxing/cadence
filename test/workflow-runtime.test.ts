@@ -336,8 +336,8 @@ it("both coordinator bridge ends permit more than sixteen calls and preserve can
   tags: ["slow"],
 }, async () => {
   const script = `
-    import { coordinatorTools } from ${JSON.stringify(new URL("../src/coordinator-tools.mjs", import.meta.url).href)};
-    const tool = coordinatorTools().find(t => t.name === "cadence_status");
+    import { createCoordinatorTools } from ${JSON.stringify(new URL("../src/coordinator-tools.mjs", import.meta.url).href)};
+    const tool = createCoordinatorTools().tools.find(t => t.name === "cadence_status");
     const abort = new AbortController();
     abort.abort();
     try { await tool.execute("canceled", {}, abort.signal); }

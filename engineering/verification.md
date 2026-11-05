@@ -78,6 +78,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
 - `checkout-gate`, `service-owner`, `self-heal`: original operations, overlap, Stop, and startup self-healing from real crashed owners, registry locks, partial reservations, orphan workers, torn/unreadable history, half-written metadata, removed project directories and dead workbenches (live owners never reclaimed).
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
+  `worker-toolkit` covers trusted capability assembly and immutable placement; `research-tools` covers real continuations/coverage and `research-tools-settlement` covers retained original I/O/close charges; `coordinator-tools` owns bridge admission and disposal.
+  `research-tools-schema` checks object-root schemas with the installed public SDK validator and pre-send Responses serialization, not a paid-provider request.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
 - `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
