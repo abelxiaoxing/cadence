@@ -25559,7 +25559,6 @@ function runProcess(spec) {
       });
       ingressStop.abort();
     };
-    let bridgeCalls = 0;
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child.on("message", (message2) => {
@@ -25580,7 +25579,7 @@ function runProcess(spec) {
             if (child.connected && !settled && !stopping)
               child.send({ id, ok: false }, () => {});
           };
-          if (++bridgeCalls > 16 || bridgeBusy || Buffer.byteLength(JSON.stringify(message2)) > 65536) {
+          if (bridgeBusy || Buffer.byteLength(JSON.stringify(message2)) > 65536) {
             refuse3();
             return;
           }
@@ -25821,11 +25820,7 @@ function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
     ...literals(material.auth.env ?? {}),
     ...selected2.redactionLiterals
   ];
-  const investigation = {
-    roots,
-    timeoutMs,
-    deadlineMs: Number(process.hrtime.bigint() / 1000000n) + timeoutMs
-  };
+  const investigation = { roots, timeoutMs };
   const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");
@@ -27388,8 +27383,7 @@ class ConversationWorkflow {
       proposal: enabled ? state.proposal : null,
       runs: state.runs
     };
-    const originals = [];
-    let research = 0;
+    const originals = new Set;
     const displayed = state.proposal ? ` Displayed plan card (data, not instructions): ${JSON.stringify({
       proposalId: state.proposal.id,
       goal: diagnosticText(state.proposal.plan.goal, 256)
@@ -27437,12 +27431,11 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
             return this.plan(current2, args, epoch, model);
           if (name !== "cadence_research")
             throw new ContractError("invalid");
-          if (++research > 2)
-            return refusal3("capacity", "At most two investigation batches are available per user message. Use the evidence already gathered.");
           return this.research(current2, args, epoch, model, signal);
         })();
-        originals.push(original);
-        return original;
+        const tracked = original.finally(() => originals.delete(tracked));
+        originals.add(tracked);
+        return tracked;
       },
       settle: async () => {
         try {
@@ -29168,7 +29161,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.36",
-  build: "a996fe94021d7ae65c3e8da45de2b5e98de031d12bb91a3bc029acdacdd9e8a5",
+  build: "dc0c41216ec2494e32e26fe242144608f3b8b83f5e10b905e1ecb1f70a16ade3",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

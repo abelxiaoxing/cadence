@@ -2,20 +2,11 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  RESEARCH_LIMITS,
-  researchClock,
-  researchTools,
-} from "../src/research-tools.mjs";
+import { RESEARCH_LIMITS, researchTools } from "../src/research-tools.mjs";
 
-async function fixture(now = researchClock) {
+async function fixture(now = () => performance.now()) {
   const root = await mkdtemp(join(tmpdir(), "research-tools-"));
-  const tools = researchTools(
-    root,
-    [root],
-    { timeoutMs: 1200000, deadlineMs: now() + 1200000 },
-    now,
-  );
+  const tools = researchTools(root, [root], now);
   const call = (name, args, signal) =>
     tools.find((t) => t.name === name).execute("call", args, signal);
   return { root, call };
@@ -64,29 +55,25 @@ it("text reads and searches have byte ceilings and binary omission is not an emp
   );
   await expect(call("read", { path: "." })).rejects.toThrow();
 });
-it("cooperative deadlines return labelled prefixes and reserve time for a final report", async () => {
-  let clock = 0;
-  const { root, call } = await fixture(() => clock);
-  await writeFile(join(root, "a"), "evidence");
-  clock = 1100000;
-  await expect(call("ls", {})).rejects.toThrow("Summarize retained evidence");
+it("cooperative per-call deadlines return labelled prefixes", async () => {
+  const { root } = await fixture();
   let ticks = 0;
-  const tools = researchTools(
-    root,
-    [root],
-    { timeoutMs: 1200000, deadlineMs: 1200000 },
-    () => ticks++ * 15000,
-  );
+  const tools = researchTools(root, [root], () => ticks++ * 15000);
   const result = await tools.find((t) => t.name === "ls").execute("call", {});
   expect(result.content[0].text).toContain("cooperative time limit");
 });
-it("aborts do not start work and the cumulative call budget cannot be renewed by activity", async () => {
-  const { call } = await fixture();
+it("cancellation still refuses work but calls have no cumulative quota", async () => {
+  const { root, call } = await fixture();
+  await writeFile(join(root, "a"), "evidence");
   const abort = new AbortController();
   abort.abort();
-  await expect(call("ls", {}, abort.signal)).rejects.toThrow("canceled");
-  for (let i = 1; i < RESEARCH_LIMITS.calls; i++) await call("ls", {});
-  await expect(call("ls", {})).rejects.toThrow("budget reached");
+  await expect(call("read", { path: "a" }, abort.signal)).rejects.toThrow(
+    "canceled",
+  );
+  for (let i = 0; i < 80; i++)
+    expect((await call("read", { path: "a" })).content[0].text).toContain(
+      "evidence",
+    );
 });
 it.skipIf(process.platform === "win32")(
   "symlinks do not expand the scan scope",
@@ -107,10 +94,7 @@ it("relative paths resolve against the explicit investigation root, not an unrel
   const { root } = await fixture();
   const selected = await mkdtemp(join(tmpdir(), "selected-root-"));
   await writeFile(join(selected, "save.txt"), "selected evidence");
-  const tools = researchTools(root, [selected], {
-    timeoutMs: 1200000,
-    deadlineMs: researchClock() + 1200000,
-  });
+  const tools = researchTools(root, [selected]);
   const read = await tools
     .find((t) => t.name === "read")
     .execute("call", { path: "save.txt" });
@@ -121,31 +105,13 @@ it("relative paths resolve against the explicit investigation root, not an unrel
       .execute("call", { pattern: "{1..100000000}" }),
   ).rejects.toThrow("simple glob");
 });
-it("SDK bootstrap consumes the launcher's budget rather than restarting the report reserve", async () => {
-  const { root } = await fixture();
-  // Parent budget starts at 0; setup takes 3.5s before tools are constructed.
-  let clock = 3500;
-  const tools = researchTools(
-    root,
-    [root],
-    { timeoutMs: 10000, deadlineMs: 10000 },
-    () => clock,
-  );
-  const list = () => tools.find((t) => t.name === "ls").execute("id", {});
-  clock = 8999;
-  expect((await list()).content[0].text).toContain("Requested scope inspected");
-  clock = 9000;
-  await expect(list()).rejects.toThrow("Investigation budget reached");
-  clock = 9500;
-  await expect(list()).rejects.toThrow("Investigation budget reached");
-  clock = 11000;
-  const exhausted = researchTools(
-    root,
-    [root],
-    { timeoutMs: 10000, deadlineMs: 10000 },
-    () => clock,
-  );
-  await expect(exhausted[0].execute("id", {})).rejects.toThrow(
-    "Investigation budget reached",
-  );
+it("elapsed worker time never introduces an early tool-admission cutoff", async () => {
+  let clock = 0;
+  const { call } = await fixture(() => clock);
+  for (const elapsed of [0, 1080000, 1200000, 2400000]) {
+    clock = elapsed;
+    expect((await call("ls", {})).content[0].text).toContain(
+      "Requested scope inspected",
+    );
+  }
 });

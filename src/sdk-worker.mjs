@@ -32,7 +32,7 @@ import {
   IMAGE_LIMITS,
   validateImageBytes,
 } from "./image-content.mjs";
-import { researchClock, researchTools } from "./research-tools.mjs";
+import { researchTools } from "./research-tools.mjs";
 import {
   BROWSER_COMMAND_ENTRY,
   WEBUI_SESSION_ENTRY,
@@ -306,7 +306,7 @@ try {
   const investigation =
     envelope.investigation === undefined
       ? null
-      : closed(envelope.investigation, ["roots", "timeoutMs", "deadlineMs"]);
+      : closed(envelope.investigation, ["roots", "timeoutMs"]);
   if (
     investigation &&
     (!Array.isArray(investigation.roots) ||
@@ -317,9 +317,7 @@ try {
       ) ||
       !Number.isSafeInteger(investigation.timeoutMs) ||
       investigation.timeoutMs < 100 ||
-      investigation.timeoutMs > LIMITS.workerMs ||
-      !Number.isSafeInteger(investigation.deadlineMs) ||
-      investigation.deadlineMs < 0)
+      investigation.timeoutMs > LIMITS.workerMs)
   )
     refuse("parse", "invalid-investigation");
   const publicRequest = decodeWorkerPublicRequest(envelope.request);
@@ -495,17 +493,7 @@ try {
           ]
         : conversation
           ? []
-          : researchTools(
-              cwd,
-              investigation?.roots ?? [cwd],
-              investigation ?? {
-                timeoutMs: LIMITS.workerMs,
-                // Standalone protocol callers without a launcher policy still
-                // start at process birth, never at tool construction.
-                deadlineMs:
-                  researchClock() + LIMITS.workerMs - process.uptime() * 1000,
-              },
-            ),
+          : researchTools(cwd, investigation?.roots ?? [cwd]),
     resourceLoader:
       conversation && !coordinator
         ? conversationResources(resourceLoader, cwd, conversation.agentDir)
@@ -707,7 +695,7 @@ try {
     publicRequest.context,
     ...(!conversation && kind !== "code"
       ? [
-          `Investigation roots: ${JSON.stringify(investigation?.roots ?? [cwd])}. Start at these specific paths, not / or their parents. Tools use bounded cooperative reads; no shell is available. Search filenames and shallow directories before content. Do not repeat broad scans or silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. Reserve the last portion for a concise final report. On any budget/coverage limit, summarize partial evidence and unresolved questions; never claim exhaustive absence.`,
+          `Investigation roots: ${JSON.stringify(investigation?.roots ?? [cwd])}. Start at these specific paths, not / or their parents. Tools use bounded cooperative reads; no shell is available. Search filenames and shallow directories before content. Do not repeat broad scans or silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. There is no cumulative tool-call quota or early tool cutoff. On partial coverage, narrow the scope and continue as needed; never claim exhaustive absence. Report retained evidence and unresolved questions honestly.`,
         ]
       : []),
     ...publicRequest.handoff.inputs.map(

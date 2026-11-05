@@ -289,7 +289,7 @@ it("coordinator bridge refuses one call without stopping the coordinator and red
     const calls = [
       { id: 1, name: "cadence_plan", args: { design: "Add a token: string field; SECRET-LITERAL" } },
       { id: 2, name: "cadence_plan", args: { design: "x".repeat(70000) } },
-      { id: 3, name: "cadence_status", args: {} },
+      ...Array.from({ length: 22 }, (_, i) => ({ id: i + 3, name: "cadence_status", args: {} })),
     ];
     const replies = [];
     process.on("message", (reply) => {
@@ -320,13 +320,55 @@ it("coordinator bridge refuses one call without stopping the coordinator and red
     [
       [1, true],
       [2, false],
-      [3, true],
+      ...Array.from({ length: 22 }, (_, i) => [i + 3, true]),
     ],
   );
-  expect(seen.map((s) => s.name)).toEqual(["cadence_plan", "cadence_status"]);
+  expect(seen.map((s) => s.name)).toEqual([
+    "cadence_plan",
+    ...Array(22).fill("cadence_status"),
+  ]);
   expect(seen[0].args).toEqual({
     design: "Add a token: [redacted] field; [redacted]",
   });
+});
+
+it("both coordinator bridge ends permit more than sixteen calls and preserve cancellation", {
+  tags: ["slow"],
+}, async () => {
+  const script = `
+    import { coordinatorTools } from ${JSON.stringify(new URL("../src/coordinator-tools.mjs", import.meta.url).href)};
+    const tool = coordinatorTools().find(t => t.name === "cadence_status");
+    const abort = new AbortController();
+    abort.abort();
+    try { await tool.execute("canceled", {}, abort.signal); }
+    catch (error) { process.stdout.write(error.message + "\\n"); }
+    for (let i = 0; i < 24; i++) {
+      const result = await tool.execute(String(i), {});
+      if (!result.content[0].text.includes("observed")) throw new Error("Missing reply");
+    }
+    process.stdout.write("completed 24 calls\\n");
+    const queuedAbort = new AbortController();
+    const first = tool.execute("first", {});
+    const queued = tool.execute("queued", {}, queuedAbort.signal);
+    const observed = queued.then(() => "unexpected send", error => error.message);
+    queuedAbort.abort();
+    await first;
+    process.stdout.write("queued: " + await observed);
+    process.disconnect();`;
+  let calls = 0;
+  const result = await runProcess({
+    command: process.execPath,
+    args: ["--input-type=module", "-e", script],
+    cwd: mkdtempSync(join(tmpdir(), "bridge-quota-")),
+    timeoutMs: 15000,
+    signal: new AbortController().signal,
+    onCoordinator: async () => ({ observed: ++calls }),
+  });
+  expect(result.outcome, JSON.stringify(result)).toBe("completed");
+  expect(calls).toBe(25);
+  expect(result.output).toContain("Coordinator canceled");
+  expect(result.output).toContain("completed 24 calls");
+  expect(result.output).toContain("queued: Coordinator canceled");
 });
 
 it("an uninterruptible process is never signalled by timeout, cancellation or output bounds", {

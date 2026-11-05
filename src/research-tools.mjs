@@ -15,9 +15,7 @@ import {
 import { Type } from "typebox";
 
 export const RESEARCH_LIMITS = {
-  calls: 64,
   toolMs: 30_000,
-  finishReserveMs: 120_000,
   entries: 2000,
   depth: 8,
   results: 100,
@@ -32,17 +30,7 @@ const within = (root, path) => {
   );
 };
 class Bound extends Error {}
-const STOP =
-  "Investigation budget reached. Do not retry the same search. Summarize retained evidence, missing coverage and a narrower follow-up for the user.";
-
-/** Node's same-host monotonic clock, not a child-local performance origin. */
-export const researchClock = () => Number(process.hrtime.bigint() / 1_000_000n);
-
-export function researchTools(cwd, roots, budget, now = researchClock) {
-  const finishAt =
-    budget.deadlineMs -
-    Math.min(RESEARCH_LIMITS.finishReserveMs, budget.timeoutMs / 10);
-  let calls = 0;
+export function researchTools(cwd, roots, now = () => performance.now()) {
   // Resolve only when explicitly used, never during resource discovery.
   let selected;
   const scope = async () => {
@@ -115,10 +103,8 @@ export function researchTools(cwd, roots, budget, now = researchClock) {
     ...tool,
     label: tool.name,
     async execute(_id, args, signal) {
-      if (++calls > RESEARCH_LIMITS.calls || now() >= finishAt)
-        throw new Error(STOP);
       const startedAt = now();
-      const deadline = Math.min(finishAt, now() + RESEARCH_LIMITS.toolMs);
+      const deadline = startedAt + RESEARCH_LIMITS.toolMs;
       const check = () => {
         if (signal?.aborted) throw new Error("Investigation canceled");
         if (now() >= deadline) throw new Bound("cooperative time limit");
@@ -350,7 +336,7 @@ export function researchTools(cwd, roots, budget, now = researchClock) {
         content: [
           {
             type: "text",
-            text: `${lines.join("\n") || (partial ? "No results in the inspected portion." : "No results in the requested scope.")}\n\n${partial ? `[Partial coverage: ${[...limits].join(", ")}. Narrow the path; do not infer absence.]` : "[Requested scope inspected.]"}${now() >= finishAt || calls >= RESEARCH_LIMITS.calls ? `\n${STOP}` : ""}`,
+            text: `${lines.join("\n") || (partial ? "No results in the inspected portion." : "No results in the requested scope.")}\n\n${partial ? `[Partial coverage: ${[...limits].join(", ")}. Narrow the path; do not infer absence.]` : "[Requested scope inspected.]"}`,
           },
         ],
         details: {

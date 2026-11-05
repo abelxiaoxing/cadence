@@ -1,4 +1,4 @@
-/** Finite private child/owner bridge. Never a browser API or shell executor. */
+/** Serialized private child/owner bridge. Never a browser API or shell executor. */
 import { Type } from "typebox";
 
 const CHECK = Type.Object({
@@ -36,7 +36,9 @@ export function coordinatorTools() {
   const pending = new Map();
   let counter = 0;
   let chain = Promise.resolve();
+  let disconnected = false;
   const closed = () => {
+    disconnected = true;
     for (const p of pending.values())
       p.reject(new Error("Coordinator disconnected"));
     pending.clear();
@@ -94,14 +96,15 @@ export function coordinatorTools() {
     ...tool,
     label: tool.name,
     execute: async (_callId, args, signal) => {
-      if (signal?.aborted || ++counter > 16 || pending.size >= 4)
-        throw new Error("Coordinator budget exceeded");
-      const request = { id: counter, name: tool.name, args };
+      if (signal?.aborted) throw new Error("Coordinator canceled");
+      const request = { id: ++counter, name: tool.name, args };
       if (Buffer.byteLength(JSON.stringify(request)) > 65536)
         throw new Error("Coordinator request exceeds bound");
       const original = chain.then(
         () =>
           new Promise((resolve, reject) => {
+            if (signal?.aborted) throw new Error("Coordinator canceled");
+            if (disconnected) throw new Error("Coordinator disconnected");
             pending.set(request.id, { resolve, reject });
             process.send(request, (error) => {
               if (error) {

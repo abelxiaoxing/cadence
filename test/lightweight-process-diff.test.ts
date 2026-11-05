@@ -1028,21 +1028,15 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
     });
     expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
   });
-  it("the SDK launch envelope carries a fixed parent monotonic deadline", async () => {
+  it("the SDK launch envelope carries scope and process policy, not a tool cutoff", async () => {
     const child = lifecycleChild("");
     const wire = request();
-    const before = Number(process.hrtime.bigint() / 1_000_000n);
     const run = runWorker(wire, new AbortController().signal, undefined, 1000);
-    const after = Number(process.hrtime.bigint() / 1_000_000n);
     const envelope = JSON.parse(child.stdin!.end.mock.calls[0][0]);
-    expect(envelope.investigation).toMatchObject({
+    expect(envelope.investigation).toEqual({
       roots: [wire.cwd],
       timeoutMs: 1000,
     });
-    expect(envelope.investigation.deadlineMs).toBeGreaterThanOrEqual(
-      before + 1000,
-    );
-    expect(envelope.investigation.deadlineMs).toBeLessThanOrEqual(after + 1000);
     child.emit("close", 1, null);
     expect((await run).closed).toBe(true);
   });

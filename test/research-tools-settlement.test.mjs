@@ -31,12 +31,7 @@ it("timeout/cancel cannot report completion or close a directory before its orig
   let now = 0,
     settled = false;
   const abort = new AbortController();
-  const tools = researchTools(
-    root,
-    [root],
-    { timeoutMs: 1200000, deadlineMs: 1200000 },
-    () => now,
-  );
+  const tools = researchTools(root, [root], () => now);
   const original = tools
     .find((t) => t.name === "ls")
     .execute("id", {}, abort.signal);
