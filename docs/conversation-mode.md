@@ -32,6 +32,24 @@ Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.
 When an observation reply is lost, ask for status; do not infer that the action was absent.
 
+## Resume a sent conversation on another device
+
+Open the same authenticated workbench on the other device with the **complete conversation link**: `/app?project=<project-key>#chat=<session-id>`.
+The project and chat identities in that link select the same server-held conversation even with empty or blocked browser storage.
+Its sent history, Cadence mode, working directory, model preference and linked work come from the service, not from the first device's pending-send display.
+A link grants neither access nor plan approval: authenticate normally and make any new execution confirmation explicitly.
+Without that complete link, the other browser is not promised an automatic return to the first browser's last conversation.
+
+Opening the link only observes; browsing never prepares or starts the project's execution service.
+Only an explicit **Send** may prepare it on demand.
+Leaving, closing or disconnecting a viewer does not cancel accepted work; reconnecting does not resend a message, resume an interrupted queue or inherit approval.
+A stale or unavailable observation keeps readable history but cannot establish that work stopped; distinguish connection freshness from the workflow's last observed status.
+
+Unsent text and images are not synchronized across devices.
+Text drafts are local to that browser session when storage is available; images remain local to the tab.
+A preparation failure keeps the local draft and explains whether preparation was never dispatched, is unconfirmed, or was confirmed before a later wait failed.
+An uncertain final Send keeps its original command identity for observation only: do not send it again merely because its reply was lost.
+
 ## Images in the WebUI
 
 Use **Add images**, paste a screenshot, or drop image files onto the composer.

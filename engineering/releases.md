@@ -656,3 +656,21 @@ A separate Bun tarball passed every member/body, Agent-pin, notice and font chec
 The first ad-hoc dry-run comparison misread npm 12's package-keyed JSON; its corrected comparison audited the retained successful dry-run output without changing package contents.
 Artifact: `/home/mirako/abel/.r35.HHAL4F/pack/abelxiaoxing-cadence-2.0.35.tgz`; SHA-256 `1c71cd003cf7b64e47717e7305693dc9274ad52be3ff44a30a6a8baafc16ea7f`, SHA-1 `6fc7f62db8b50d4768b643d7bf453e483ecfad07`.
 This evidence-only appendix follows qualification and is not shipped in the archive; remote push and registry publication must still succeed and be verified against this audited artifact.
+
+## Release 2.0.36 qualification (2026-11-04)
+
+The user explicitly authorized a commit, GitHub push and npm publication of the reviewed cross-device WebUI fix.
+The candidate replaces static `AbortSignal.any`/`timeout` dependencies with disposable cancellation scopes, preserves untimed signal forwarding and streaming export lifetimes, and distinguishes preparation dispatch/confirmation from uncertain final Send outcomes without replay.
+Complete project/conversation links restore server-held state without browser storage; confirmed preparation carries the correct observation generation, and stale connections no longer imply current readiness or stopped work.
+The shared cancellation helper participates in compatibility identity and the exact published import closure.
+
+A separate readonly Agent reviewed all 34 implementation-candidate files and returned `approve`, with no blocking findings; the implementation hashes and changed-file set were unchanged after that review.
+This is automatic Agent review, not human Review, and it did not rewrite the earlier failed or timed-out workflow records.
+The version-only change to 2.0.36 was followed by canonical operator/service/Web regeneration and fresh `bun run verify`, which passed in **11.4s**: **1397 fast root tests passed, 280 skipped**, **208 Web tests passed**, plus types, syntax, lint, Agent pins, deterministic generated-byte checks and real-pack auditing.
+Qualification used Linux, Node 26.7.0, npm 12.0.2 and Bun 1.3.14; no slow suite, browser automation, physical Edge/Chrome/Android interaction, macOS/Windows or production service operation was performed.
+No dependency, browser or credential/profile copy was installed or downloaded.
+
+A separate real Bun tarball passed exact auditing of **155 regular members**, every body, Agent pin, notice and font; npm publish dry-run matched its member count, SHA-1 and SHA-512 integrity.
+Artifact: `/home/mirako/cadence-release-2.0.36.nHgc0gXD/pack/abelxiaoxing-cadence-2.0.36.tgz`; SHA-256 `0602eebe5e5b1972be25486fce9232a7a59041ab6a3a1c8c68f25cd13a9feb1d`, SHA-1 `f38b0cd58329dc367a9a942840840de395025d71`.
+The independent review is retained at `/home/mirako/cadence-review.f0b0eYQZ/review-result.md`; targeted test reports cover all four root files (44 tests) and nine Web files (87 tests), overlapping the gate counts rather than adding to them.
+This appendix records pre-publication qualification and is not shipped in the archive; remote push and npm publication must be confirmed separately against the audited artifact.

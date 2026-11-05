@@ -26,6 +26,7 @@ export function contractIdentity(root) {
   return digest(
     JSON.stringify(
       tuples(root, [
+        "src/abort-scope.ts",
         "src/worker-public.mjs",
         "src/image-content.mjs",
         "src/image-content.d.mts",

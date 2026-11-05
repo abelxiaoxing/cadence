@@ -81,6 +81,10 @@ A Send claims its exact message and image File list, conversation head, mode rev
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
 Preparation is not message admission or execution consent.
+`project-entry.ts` reports `dispatched` only after local signal/build/body/identity preparation and the POST's handoff to fetch; that handoff is not proof of receipt.
+Only a decoded response matching the selected project/path/cwd and a non-null epoch reports `confirmed`, before the serialized viewer attachment wait.
+A request-before-dispatch failure cannot suggest owner startup; an unconfirmed dispatch is preparation-unknown with no message submitted, and an attachment failure cannot undo confirmation.
+Final Send clears uncertainty only on a matched success or reliable `effect:none`; all other failures retain the original command ID for observation without replay.
 Failure keeps the draft; losing an accepted Send reply keeps its original command ID for observation only.
 Leaving the conversation or choosing another branch aborts its unsent continuation, never accepted startup or work.
 Saved plan approval does not prepare a stopped owner: it still requires fresh live, exact-plan, attachment-bound confirmation.
@@ -217,6 +221,19 @@ It refuses symlinks, hard-linked files, private state, Pi's agent directory (inc
 This is not a filesystem sandbox for model tools.
 
 ## WebUI contracts
+
+`src/abort-scope.ts` owns finite local cancellation lifetimes with AbortController, listeners and an optional timer, without static `AbortSignal.any`/`timeout`, polyfills or dependencies.
+A scope takes the first source reason (including pre-cancellation), removes listeners/timer on cancellation and is disposed in `finally` on normal or exceptional completion.
+Disposal never cancels sources or service work.
+Finite HTTP scopes cover fetch, the entire bounded body and decode; streaming export retains its separate existing budget.
+Send preparation uses one scope through gateway observation, POST and fresh attachment; its budget is defined beside `SEND_PREPARATION_MS`.
+History images keep one scope across all pages; parallel detail parts each dispose only their own scope, so an early Promise.all rejection cannot disconnect still-pending siblings from navigation cancellation.
+
+Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
+Project readiness, viewer freshness and actual work status are separate observations.
+A failed/unavailable readiness read retains earlier history identity but marks it stale/unknown; a pending re-observation or epoch change cannot make a retained value current.
+Only positive stopped/not-started observations offer stopped-owner preparation guidance.
+App preserves the existing attachment through uncertainty, labels retained work counts as last-observed, and keeps local, project and viewer errors visible together.
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch.

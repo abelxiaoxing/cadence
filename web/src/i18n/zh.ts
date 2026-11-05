@@ -49,8 +49,25 @@ export const zh = {
     "发送消息时会按需准备执行服务，浏览不会启动服务。",
   "Ready to prepare on Send": "发送时按需准备",
   "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
-  "The message was not sent ({code}). Its draft is kept; preparation may have started an execution service.":
-    "消息尚未发送（{code}）。草稿已保留；准备过程中可能已启动执行服务。",
+  "Preparation outcome is unknown ({code}); an execution service may have started. The message was not sent and its draft is kept.":
+    "准备结果未知（{code}）；执行服务可能已启动。消息尚未发送，草稿已保留。",
+  "Execution preparation was confirmed, but the message was not sent ({code}). Its draft is kept.":
+    "执行服务准备已确认，但消息尚未发送（{code}）。草稿已保留。",
+  "The message was not accepted ({code}). Its draft is kept.":
+    "消息未被接受（{code}）。草稿已保留。",
+  "Send outcome is unknown ({code}). Observe the original command before sending again; no automatic retry.":
+    "发送结果未知（{code}）。再次发送前请观察原命令的结果；不会自动重试。",
+  "Project observation: {code}.": "项目观察：{code}。",
+  "Project readiness unknown": "项目准备状态未知",
+  "Project observation stale": "项目观察已过期",
+  "Viewer observation stale": "当前页面观察已过期",
+  "Viewer observation unavailable": "当前页面观察不可用",
+  "Viewer disconnected": "当前页面已断开",
+  "Execution service: {status}": "执行服务：{status}",
+  "Last observed: {count} active runs": "上次观察：{count} 个活动运行",
+  "Observation is not current. Retained history is shown; this does not mean work has stopped.":
+    "观察不是最新状态。仍显示保留的历史；这不表示工作已停止。",
+  "not-started": "尚未启动",
   "Connection unavailable. Existing work may continue; no message is replayed automatically.":
     "连接当前不可用。已接纳的工作可能仍在运行；不会自动重发任何消息。",
 
@@ -208,8 +225,6 @@ export const zh = {
     "请新建对话；不会重放不完整的上下文。",
   "Current metadata unavailable; showing the active turn only. No state was reconstructed.":
     "当前对话元数据不可用，仅显示仍在运行的轮次，未重建任何状态。",
-  "Send unavailable. Check the message limit (16 KiB); observe any pending command before sending again.":
-    "暂时无法发送。请检查消息是否超过 16 KiB；如有待确认的命令，请先观察其结果，不要重复发送。",
   Files: "文件",
   "File list": "文件列表",
   "Workspace panels": "工作区面板",
@@ -276,8 +291,6 @@ export const zh = {
   "Reading earlier messages…": "正在读取更早的消息…",
   "Reading the rest of this message…": "正在读取这条消息的其余部分…",
   "Send outcome not yet observed:": "尚未观察到此次发送的结果：",
-  "Observe this send before sending again. No automatic retry.":
-    "请先观察此次发送的结果，不会自动重试。",
   Subagents: "子代理",
   "{active} active · {total} total": "{active} 个进行中 · 共 {total} 个",
   "Subagent roster unavailable": "暂时无法观察子代理列表",
