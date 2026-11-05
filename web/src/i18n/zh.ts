@@ -45,8 +45,7 @@ export const zh = {
     "会话按目录保留。选择目录即可查看历史；发送时才准备执行服务。",
   "Selecting a folder does not start execution. Send prepares it when needed.":
     "选择目录不会启动执行服务；发送消息时才会按需准备。",
-  "Execution will be prepared when you send. Browsing does not start it.":
-    "发送消息时会按需准备执行服务，浏览不会启动服务。",
+  "Connecting…": "正在连接…",
   "Ready to prepare on Send": "发送时按需准备",
   "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
   "Preparation outcome is unknown ({code}); an execution service may have started. The message was not sent and its draft is kept.":

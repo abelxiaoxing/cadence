@@ -13,14 +13,35 @@ const viewer = vi.hoisted(() => ({
   transportStatus: "current" as "current" | "stale" | "closed",
   workspace: undefined as WorkspaceBootstrap | undefined,
   attachmentVersion: 1,
-  compatible: true,
+  compatible: true as boolean | undefined,
   error: undefined as string | undefined,
   refresh: () => {},
 }));
 const execution = vi.hoisted(() => ({
   value: undefined as ProjectObservation | undefined,
   error: undefined as string | undefined,
+  fresh: true,
 }));
+// Retain only ref slots for the transition test. This is controlled SSR,
+// not a claim of real React mounting or browser lifecycle validation.
+const retainedRefs = vi.hoisted(() => ({
+  enabled: false,
+  index: 0,
+  slots: [] as { current: unknown }[],
+}));
+vi.mock("react", async (original) => {
+  const actual = await original<typeof import("react")>();
+  return {
+    ...actual,
+    useRef: (initial: unknown) => {
+      const ref = actual.useRef(initial);
+      if (!retainedRefs.enabled) return ref;
+      const index = retainedRefs.index++;
+      retainedRefs.slots[index] ??= ref;
+      return retainedRefs.slots[index];
+    },
+  };
+});
 vi.mock("../../web/src/client/use-project-observation", async (original) => {
   const actual =
     await original<
@@ -30,7 +51,11 @@ vi.mock("../../web/src/client/use-project-observation", async (original) => {
     ...actual,
     useProjectObservation: () => ({
       ...execution,
-      readiness: actual.projectReadiness(execution.value, execution.error),
+      readiness: actual.projectReadiness(
+        execution.value,
+        execution.error,
+        execution.fresh,
+      ),
       refresh() {},
       prepared() {},
     }),
@@ -45,10 +70,16 @@ afterEach(() => {
   viewer.error = undefined;
   viewer.workspace = undefined;
   viewer.transportStatus = "current";
+  viewer.attachmentVersion = 1;
   execution.value = undefined;
   execution.error = undefined;
+  execution.fresh = true;
+  retainedRefs.enabled = false;
+  retainedRefs.index = 0;
+  retainedRefs.slots = [];
 });
 function render(locale: "en" | "zh", project = false) {
+  retainedRefs.index = 0;
   vi.stubGlobal("window", { location: new URL("http://127.0.0.1:43210/app") });
   return renderToStaticMarkup(
     <LocaleProvider initial={locale}>
@@ -180,19 +211,145 @@ it.each([
     expect(html).not.toContain("status-dot ok");
   },
 );
-it("only a positive stopped observation offers preparation, separately from work settlement", () => {
-  execution.value = {
-    kind: "project-observation",
-    status: "stopped",
-    epoch: null,
-    workspaceId: id(),
-  };
-  const html = render("en", true);
-  expect(html).toContain(
-    "Execution will be prepared when you send. Browsing does not start it.",
+for (const locale of ["en", "zh"] as const) {
+  it.each(["stopped", "not-started"] as const)(
+    `${locale}: %s offers preparation in the statusbar without a global notice`,
+    (status) => {
+      execution.value = {
+        kind: "project-observation",
+        status,
+        epoch: null,
+        workspaceId: status === "stopped" ? id() : null,
+      };
+      const html = render(locale, true);
+      const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
+      expect(html).not.toContain('class="banner-notice"');
+      expect(html).not.toContain("Execution will be prepared when you send.");
+      expect(html).not.toContain("浏览不会启动服务");
+      expect(statusbar).toContain(
+        locale === "zh" ? "发送时按需准备" : "Ready to prepare on Send",
+      );
+      expect(statusbar).not.toContain("status-dot error");
+      expect(statusbar).not.toContain("status-dot ok");
+    },
   );
-  expect(html).toContain("Ready to prepare on Send");
-});
+  it.each([
+    "direct",
+    "project-pending",
+    "project-running",
+    "session-acquired",
+    "workspace-pending",
+  ])(
+    `${locale}: %s first connection stays quiet without claiming readiness`,
+    (phase) => {
+      viewer.transportStatus =
+        phase === "workspace-pending" ? "current" : "closed";
+      viewer.attachmentVersion = [
+        "session-acquired",
+        "workspace-pending",
+      ].includes(phase)
+        ? 1
+        : 0;
+      viewer.compatible = viewer.attachmentVersion ? true : undefined;
+      if (!["direct", "project-pending"].includes(phase))
+        execution.value = {
+          kind: "project-observation",
+          status: "running",
+          epoch: id(),
+          workspaceId: id(),
+        };
+      const html = render(locale, phase !== "direct");
+      const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
+      expect(html).not.toContain('class="banner-notice"');
+      expect(statusbar).toContain(
+        locale === "zh" ? "正在连接…" : "Connecting…",
+      );
+      expect(statusbar).toContain("status-dot busy");
+      expect(statusbar).not.toMatch(
+        /status-dot (ok|error)|Chat ready|>current<|聊天已就绪/,
+      );
+      expect(statusbar).not.toContain("Active roster unavailable");
+      expect(statusbar).not.toContain("活动运行列表不可用");
+    },
+  );
+  it.each([
+    "project-error",
+    "project-unavailable",
+    "project-stale",
+    "viewer-error",
+    "transport-stale",
+    "incompatible",
+  ])(`${locale}: %s during the first connection remains visible`, (failure) => {
+    viewer.transportStatus = "closed";
+    viewer.attachmentVersion = 0;
+    viewer.compatible = undefined;
+    if (failure === "project-error") execution.error = "unavailable";
+    if (failure === "project-unavailable")
+      execution.value = {
+        kind: "project-observation",
+        status: "unavailable",
+        epoch: null,
+        workspaceId: null,
+      };
+    if (failure === "project-stale") {
+      execution.value = {
+        kind: "project-observation",
+        status: "running",
+        epoch: id(),
+        workspaceId: id(),
+      };
+      execution.fresh = false;
+    }
+    if (failure === "viewer-error") viewer.error = "unavailable";
+    if (failure === "transport-stale") viewer.transportStatus = "stale";
+    if (failure === "incompatible") viewer.compatible = false;
+    const html = render(locale, true);
+    const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
+    expect(html).toContain('class="banner-notice"');
+    expect(html).toContain(
+      locale === "zh"
+        ? "不表示工作已停止"
+        : "this does not mean work has stopped",
+    );
+    expect(statusbar).not.toContain(
+      locale === "zh" ? "正在连接…" : "Connecting…",
+    );
+    expect(statusbar).toContain("status-dot error");
+  });
+}
+it.each(["data", "failure"])(
+  "%s followed by an empty reconnect is not a new quiet first load",
+  (first) => {
+    retainedRefs.enabled = true;
+    const epoch = id();
+    execution.value = {
+      kind: "project-observation",
+      status: "running",
+      epoch,
+      workspaceId: id(),
+    };
+    if (first === "data")
+      viewer.workspace = {
+        workspaceId: id(),
+        storeId: id(),
+        epoch,
+        committedSeq: "1",
+        rootLabel: "fixture",
+        context: { status: "available", version: context() },
+        models: [],
+      };
+    else viewer.error = "unavailable";
+    render("en", true);
+    viewer.workspace = undefined;
+    viewer.error = undefined;
+    viewer.compatible = undefined;
+    viewer.transportStatus = "closed";
+    viewer.attachmentVersion = 0;
+    const html = render("en", true);
+    expect(html).toContain("this does not mean work has stopped");
+    expect(html).not.toContain("Connecting…");
+  },
+);
 it("local, project-read and viewer errors remain visible together", () => {
   const html = renderToStaticMarkup(
     <WorkspaceNotice

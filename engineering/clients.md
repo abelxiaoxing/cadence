@@ -232,7 +232,9 @@ History images keep one scope across all pages; parallel detail parts each dispo
 Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
 Project readiness, viewer freshness and actual work status are separate observations.
 A failed/unavailable readiness read retains earlier history identity but marks it stale/unknown; a pending re-observation or epoch change cannot make a retained value current.
-Only positive stopped/not-started observations offer stopped-owner preparation guidance.
+Positive stopped/not-started observations keep preparation guidance in the statusbar, not a global banner; explicit Send still displays its local preparation progress.
+Normal first observation and attachment waits show a neutral connecting status, not a stale warning or a ready claim, including after project readiness arrives but before the first viewer data.
+Once viewer data or a failure has been observed, resetting its attachment does not become a new quiet first load; unavailable, failed and retained stale observations remain visible.
 App preserves the existing attachment through uncertainty, labels retained work counts as last-observed, and keeps local, project and viewer errors visible together.
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
