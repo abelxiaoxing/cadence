@@ -103,7 +103,7 @@ Serviços root e nomeados do Linux, acesso HTTPS remoto e recuperação estão c
 ## Desenvolvimento
 
 O Pi também pode carregar um checkout local ou um tarball empacotado: adicione seu caminho absoluto ou relativo aos `packages` do Pi, ou experimente `pi -e ./cadence`.
-O Cadence não impõe uma faixa de versões do Pi; fixações de desenvolvimento e tempos de execução testados não são promessas universais de compatibilidade.
+O Cadence requer Pi 1.5.0 ou um host 1.x compatível; fixações de desenvolvimento e tempos de execução testados não são promessas universais de compatibilidade.
 
 ```sh
 bun install

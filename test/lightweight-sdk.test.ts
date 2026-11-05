@@ -2659,7 +2659,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
             "utf8",
           ),
         ).version,
-      ).toBe("0.84.3");
+      ).toBe("1.5.0");
       const workerSha256 = createHash("sha256")
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
@@ -2768,7 +2768,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         executable: process.execPath,
         platform: process.platform,
         arch: process.arch,
-        publicSDKVersion: "0.84.3",
+        publicSDKVersion: "1.5.0",
         routingQualified:
           !unexpected &&
           (mode === "DIRECT"

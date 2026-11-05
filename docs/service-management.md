@@ -123,7 +123,7 @@ The generated registration stays for the next boot or login.
 Because npm runs no uninstall script, uninstall the service before `npm uninstall -g`; a left-behind definition fails to start once its CLI path disappears.
 A definition Cadence did not generate is left unchanged (`foreign`), and `status` reports `absent` when none is registered.
 
-Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
+Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from the exact optional dependency versions in `package.json`.
 Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
 Missing or unusable Pi sources refuse before an owner registers; an owner that cannot load the SDK refuses at stage `pi-runtime` and exits.
 The no-project workbench starts without either an SDK runtime or Pi authentication; missing sources are reported only when a project is explicitly opened.

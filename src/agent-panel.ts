@@ -1,93 +1,44 @@
-/** Background-agent panel for Pi's TUI. Observation only: it subscribes to
- * the `subagent:*` events on Pi's shared extension bus and renders them; it
- * never starts, cancels or keeps an agent or the Pi process alive.
- *
- * Nothing shows while no agent runs. A batch of agents is live above the
- * input; once all of them ended it collapses into a card in the transcript
- * (a display-only session entry) and the live view goes away. The list below
- * the input appears only while it is being used. */
-import {
-  AssistantMessageComponent,
-  type ExtensionAPI,
-  type ExtensionContext,
-  getMarkdownTheme,
-  type Theme,
-  ToolExecutionComponent,
-  UserMessageComponent,
+/** Readonly bus binding and compact batch summary. Agent browsing is delegated
+ * to the adapted upstream session navigator, not a second panel/focus model. */
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
-  type Component,
-  Container,
   Editor,
   isKeyRelease,
-  Key,
-  type KeyId,
   matchesKey,
-  Spacer,
-  Text,
   type TUI,
-  truncateToWidth,
+  type TuiMainScreen,
 } from "@earendil-works/pi-tui";
+import { SessionNavigator } from "./agent-browser/session-navigator.ts";
+import { cadenceBrowserSource } from "./agent-browser/source.ts";
+import type { ReadingPosition } from "./agent-browser/transcript-pane.ts";
 import {
   type AgentCard,
   CARD_ENTRY,
   cardLines,
   cardOf,
   decodeCard,
-  factsText,
   liveLines,
   MAX_ENDED,
   type Paint,
-  type PanelAction,
-  PanelFocus,
-  type PanelKey,
-  panelLines,
   SUBAGENT_EVENTS,
   SUBAGENT_VIEW,
   type SubagentState,
   SubagentStore,
-  statusSymbol,
 } from "./agent-panel-model.ts";
 
 export interface AgentPanelOptions {
-  /** Agent rows shown at once; more collapse into `+K more`. */
-  maxRows?: number;
-  /** Keep a finished batch live instead of collapsing it into a card
-   * (CADENCE_AGENT_PANEL=always). */
+  /** Keep a settled summary instead of appending a session card. */
   keep?: boolean;
   now?: () => number;
 }
-const LIVE = "cadence-agents",
-  LIST = "cadence-agents-list",
-  SPIN_MS = 100;
-/** A batch whose agents all ended stays live this long before it collapses
- * into its card, so the outcome is seen and a start that follows at once
- * (the next workflow step) joins the same batch. */
+const LIVE = "cadence-agents";
+const SPIN_MS = 100;
+/** Adjacent workflow steps join the same batch during this settle window. */
 export const SETTLE_MS = 1500;
-
-/** Rows kept for Pi's footer/status lines while an agent view is shown. */
-const RESERVED = 5;
-const KEYS: [KeyId, PanelKey][] = [
-  [Key.down, "down"],
-  [Key.up, "up"],
-  [Key.ctrl("n"), "next"],
-  [Key.ctrl("p"), "previous"],
-  [Key.enter, "enter"],
-  [Key.escape, "escape"],
-  [Key.ctrl("c"), "interrupt"],
-  [Key.pageUp, "pageUp"],
-  [Key.pageDown, "pageDown"],
-  [Key.ctrl("u"), "halfUp"],
-  [Key.ctrl("d"), "halfDown"],
-  [Key.home, "home"],
-  [Key.end, "end"],
-];
-/** Key releases (Kitty protocol) stay Pi's. */
-export function panelKey(data: string): PanelKey | undefined {
-  if (isKeyRelease(data)) return undefined;
-  return KEYS.find(([id]) => matchesKey(data, id))?.[1] ?? "other";
-}
-
 const themePaint =
   (theme: Theme): Paint =>
   (role, text) =>
@@ -102,17 +53,17 @@ export function registerAgentPanel(
     pi.events.on(channel, (data) => {
       store.apply(channel, data);
     });
-  // Pi renders the card where it was appended and again on resume; Ctrl+O
-  // (Pi's tool-output expansion) lists every member.
   pi.registerEntryRenderer(CARD_ENTRY, (entry, { expanded }, theme) => {
     const card = decodeCard(entry.data);
     if (!card) return undefined;
-    const paint = themePaint(theme);
     return {
       render: (width) =>
-        cardLines(card, expanded, Math.max(1, width - 1), paint).map(
-          (line) => ` ${line}`,
-        ),
+        cardLines(
+          card,
+          expanded,
+          Math.max(1, width - 1),
+          themePaint(theme),
+        ).map((line) => ` ${line}`),
       invalidate() {},
     };
   });
@@ -144,111 +95,81 @@ function attachPanel(
   commit: (card: AgentCard) => void,
 ): () => void {
   const now = options.now ?? Date.now;
-  const maxRows = Math.max(1, options.maxRows ?? 6);
   const keep = options.keep ?? process.env.CADENCE_AGENT_PANEL === "always";
-  const focus = new PanelFocus(store, maxRows);
-  // A batch that ended while no session showed it has no card to give, and a
-  // new session lists only its own agents; ones still running carry over.
   if (store.settled()) store.closeBatch();
   store.prune(0);
-  let tui: TUI | undefined,
-    paint: Paint = (_role, text) => text,
-    frame = 0,
-    spinner: ReturnType<typeof setInterval> | undefined,
-    settling: ReturnType<typeof setTimeout> | undefined,
-    view: { component: Component; done: () => void } | undefined,
-    // Mounted widgets: the batch above the input while one is live, and the
-    // list's slot below it while any agent is kept for review.
-    live = false,
-    list = false,
-    // The last batch, kept live after it ended (CADENCE_AGENT_PANEL=always).
-    kept: SubagentState[] = [],
-    // The agent last announced on `subagent:view`, so producers load only it.
-    announced: string | undefined;
-  const announceView = () => {
-    if (focus.view === announced) return;
-    announced = focus.view;
-    announce(announced ?? null);
-  };
-  const transcripts = new Map<string, Transcript>();
+  let tui: TUI | undefined;
+  let frame = 0;
+  let spinner: ReturnType<typeof setInterval> | undefined;
+  let settling: ReturnType<typeof setTimeout> | undefined;
+  let mounted = false;
+  let detached = false;
+  let opening = false;
+  let kept: SubagentState[] = [];
+  let browser: SessionNavigator | undefined;
+  let closeBrowser: (() => void) | undefined;
+  const positions = new Map<string, ReadingPosition>();
+  const liveAgents = () => (store.batch().length ? store.batch() : kept);
   const stopSpinner = () => {
     clearInterval(spinner);
     spinner = undefined;
   };
-  const liveAgents = () => {
-    const open = store.batch();
-    return open.length ? open : kept;
-  };
-  const widget =
-    (lines: (width: number) => string[]) => (t: TUI, theme: Theme) => {
-      tui = t;
-      paint = themePaint(theme);
-      return { render: lines, invalidate() {} };
-    };
-  const liveWidget = widget((width) =>
-    // The agent view takes this place; a summary above it would be noise.
-    view
-      ? []
-      : liveLines(
-          {
-            agents: liveAgents(),
-            now: now(),
-            frame,
-            maxRows,
-            hint: focus.focus === "input",
-          },
-          width,
-          paint,
-        ),
-  );
-  const listWidget = widget((width) => panelLines(panelFrame(), width, paint));
+  const source = cadenceBrowserSource(store, announce, now);
   const mount = () => {
-    const showLive = liveAgents().length > 0;
-    // The list renders nothing until used, and Pi gives the slot below the
-    // input no spacing, so it costs no row; mounting it while agents exist
-    // is what lets ↓ see whether Pi's input box has focus.
-    const showList = store.size > 0 || focus.view !== undefined;
-    if (showLive !== live) {
-      live = showLive;
-      ctx.ui.setWidget(LIVE, showLive ? liveWidget : undefined, {
-        placement: "aboveEditor",
-      });
-    }
-    if (showList !== list) {
-      list = showList;
-      ctx.ui.setWidget(LIST, showList ? listWidget : undefined, {
-        placement: "belowEditor",
-      });
-    }
+    // An empty mounted summary costs no content rows, and retains the public
+    // TUI handle needed to admit ↓ only when Pi's empty editor has focus.
+    const show = store.size > 0;
+    if (show === mounted) return;
+    mounted = show;
+    ctx.ui.setWidget(
+      LIVE,
+      show
+        ? (t, theme) => {
+            tui = t;
+            return {
+              render: (width) =>
+                browser || opening
+                  ? []
+                  : liveLines(
+                      { agents: liveAgents(), now: now(), frame, hint: true },
+                      width,
+                      themePaint(theme),
+                    ),
+              invalidate() {},
+            };
+          }
+        : undefined,
+      { placement: "aboveEditor" },
+    );
   };
-  /** Close the settled batch: its card goes into the session, the live view
-   * goes away and older ended agents beyond the review bound are dropped. */
-  const close = () => {
+  const closeBatch = () => {
     clearTimeout(settling);
     settling = undefined;
     if (!store.settled()) return;
     const agents = store.closeBatch();
     if (keep) kept = agents;
-    else
+    else {
       try {
         commit(cardOf(agents));
       } catch {
-        // A replaced runtime cannot append; the agents stay reviewable.
+        /* A replaced runtime cannot append. */
       }
-    const dropped = store.prune(MAX_ENDED, [focus.selected, focus.view]);
-    for (const id of dropped) transcripts.delete(id);
-    focus.forget(dropped);
+    }
+    for (const id of store.prune(MAX_ENDED, [
+      browser?.selected,
+      browser?.viewing,
+    ]))
+      positions.delete(id);
   };
-  // One redraw per spinner frame while anything runs; Pi's differential
-  // renderer rewrites only the changed rows.
   const changed = () => {
+    if (detached) return;
     if (kept.length && store.batch().length) kept = [];
     if (!store.settled()) {
       clearTimeout(settling);
       settling = undefined;
     } else if (!settling) {
       settling = setTimeout(() => {
-        close();
+        closeBatch();
         changed();
       }, SETTLE_MS);
       settling.unref?.();
@@ -257,7 +178,7 @@ function attachPanel(
     else if (!spinner) {
       spinner = setInterval(() => {
         frame++;
-        changed();
+        tui?.requestRender();
       }, SPIN_MS);
       spinner.unref?.();
     }
@@ -265,303 +186,88 @@ function attachPanel(
     tui?.requestRender();
   };
   const unsubscribe = store.subscribe(changed);
-  const focused = () =>
-    (
-      tui as { getFocusedComponent?(): Component | null } | undefined
-    )?.getFocusedComponent?.();
-  /** Pi's own input box has focus: no dialog, selector or overlay is up. */
-  const editorFocused = () => focused() instanceof Editor && !tui?.hasOverlay();
-  const act = (action: PanelAction) => {
-    if (action === "open") openView();
-    else if (action === "close") view?.done();
-    announceView();
-    mount();
-    tui?.requestRender();
-    return action === "pass" ? undefined : { consume: true };
-  };
-  const unlisten = ctx.ui.onTerminalInput((data) => {
-    if (focus.view !== undefined) {
-      // The view handles its own keys. Pi may have put its editor back in the
-      // view's slot (another dialog came and went); then the view is gone.
-      if (!(focused() instanceof Editor)) return undefined;
-      focus.abandon();
-      view = undefined;
-      announceView();
-      mount();
-    }
-    if (focus.focus === "panel" && !editorFocused()) {
-      // A dialog took focus: its keys are not the panel's.
-      focus.abandon();
-      mount();
-      tui?.requestRender();
-      return undefined;
-    }
-    const key = panelKey(data);
-    if (!key) return undefined;
-    const idle = ctx.ui.getEditorText() === "" && editorFocused();
-    return act(focus.key(key, idle));
-  });
-
-  const openView = () => {
+  const open = () => {
+    if (opening || browser || detached || !tui) return;
+    opening = true;
+    // This is the current renderer's public mode, not a saved setting or a
+    // version fallback. Regular mode retains the upstream docked mount to
+    // avoid writing overlay pixels into the terminal's scrollback.
+    const fullscreen = tui.mode === "fullscreen";
     void ctx.ui
-      .custom<void>((_tui, _theme, _keybindings, done) => {
-        const component: Component = {
-          render: (width) => viewLines(width),
-          handleInput(data) {
-            const key = panelKey(data);
-            if (key) act(focus.key(key, false));
-          },
-          invalidate() {},
-        };
-        view = { component, done: () => done() };
-        return component;
+      .custom<void>(
+        (t, theme, keys, done) => {
+          closeBrowser = () => done();
+          browser = new SessionNavigator(
+            t,
+            theme,
+            keys,
+            source,
+            ctx.cwd,
+            positions,
+            closeBrowser,
+          );
+          if (detached) done();
+          return browser;
+        },
+        fullscreen
+          ? {
+              overlay: true,
+              overlayOptions: {
+                width: "100%",
+                maxHeight: "70%",
+                anchor: "center",
+              },
+            }
+          : { overlay: false },
+      )
+      .catch(() => {
+        if (!detached)
+          ctx.ui.notify("Could not open the agent browser", "error");
       })
       .finally(() => {
-        view = undefined;
-        tui?.requestRender();
+        browser?.dispose();
+        browser = undefined;
+        closeBrowser = undefined;
+        opening = false;
+        if (!detached) changed();
       });
   };
-  const panelFrame = () => ({
-    agents: store.ordered(),
-    focus: focus.focus,
-    selected: focus.selected,
-    view: focus.view,
-    now: now(),
-    frame,
-    maxRows,
+  const unlisten = ctx.ui.onTerminalInput((data) => {
+    if (
+      detached ||
+      opening ||
+      browser ||
+      isKeyRelease(data) ||
+      !matchesKey(data, "down")
+    )
+      return;
+    if (
+      !store.size ||
+      ctx.ui.getEditorText() !== "" ||
+      tui?.hasOverlay() ||
+      !(
+        (tui as TuiMainScreen | undefined)?.getFocusedComponent() instanceof
+        Editor
+      )
+    )
+      return;
+    open();
+    return { consume: true };
   });
-  const viewLines = (width: number): string[] => {
-    const agent = focus.view === undefined ? undefined : store.get(focus.view);
-    if (!agent) return [];
-    const panelHeight = panelLines(panelFrame(), width, paint).length;
-    const height = Math.max(
-      3,
-      (tui?.terminal.rows ?? 24) - panelHeight - RESERVED,
-    );
-    let transcript = transcripts.get(agent.id);
-    if (!transcript && tui) {
-      transcript = new Transcript(tui, ctx.cwd, ctx.ui.getToolsExpanded());
-      transcripts.set(agent.id, transcript);
-    }
-    const body = transcript?.render(agent, width, paint) ?? [];
-    const top = focus.settle(agent.id, body.length, height - 2);
-    const rows = body.slice(top, top + height - 2);
-    while (rows.length < height - 2) rows.push("");
-    return [
-      truncateToWidth(banner(agent), width, "…"),
-      ...rows,
-      truncateToWidth(
-        paint(
-          "dim",
-          "↑↓ select · Enter open · PgUp/PgDn scroll · Esc back to main",
-        ),
-        width,
-        "…",
-      ),
-    ];
-  };
-  const banner = (agent: SubagentState): string => {
-    if (agent.status === "running")
-      return paint(
-        "dim",
-        `→ viewing: ${agent.label}   (Esc to return to main)`,
-      );
-    const [symbol, role] = statusSymbol(agent, frame);
-    const word = { done: "finished", error: "failed", cancelled: "cancelled" }[
-      agent.status
-    ];
-    const facts = factsText(agent, now());
-    return `${paint(role, `${symbol} ${word}`)}${paint(
-      "dim",
-      ` (${facts}) · ${agent.label}   (Esc to return to main)`,
-    )}`;
-  };
-
   changed();
   return () => {
+    detached = true;
     unsubscribe();
     unlisten();
     stopSpinner();
-    // A batch that already ended still gets its card in the session it ran
-    // in; one still running carries over to the next session.
-    if (settling) close();
+    if (settling) closeBatch();
     clearTimeout(settling);
-    if (announced !== undefined) announce(null);
+    browser?.dispose();
     try {
-      view?.done();
-      if (live) ctx.ui.setWidget(LIVE, undefined);
-      if (list) ctx.ui.setWidget(LIST, undefined);
+      closeBrowser?.();
+      if (mounted) ctx.ui.setWidget(LIVE, undefined);
     } catch {
-      // A replaced runtime already cleared its UI.
+      /* The old runtime already cleared its UI. */
     }
   };
-}
-
-// biome-ignore lint/suspicious/noControlCharactersInRegex: match OSC 133 terminal marks
-const OSC_133 = /\x1b\]133;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
-type Message = Record<string, unknown> & { content?: unknown };
-const textOf = (content: unknown): string =>
-  typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content
-          .map((block) =>
-            block?.type === "text"
-              ? String(block.text ?? "")
-              : block?.type === "image"
-                ? "[image]"
-                : "",
-          )
-          .filter(Boolean)
-          .join("\n")
-      : "";
-
-/** One agent's messages as Pi's own transcript components, the way Pi renders
- * a resumed session. Only the tail is rebuilt: new messages, a replaced
- * streaming snapshot, or everything once older messages were dropped. */
-class Transcript {
-  private readonly root = new Container();
-  private parts: Component[][] = [];
-  private tail: object | undefined;
-  private tailStreaming = false;
-  private omitted = 0;
-  private revision = -1;
-  private readonly tools = new Map<string, ToolExecutionComponent>();
-  constructor(
-    private readonly tui: TUI,
-    private readonly cwd: string,
-    private readonly expanded: boolean,
-  ) {}
-
-  render(agent: SubagentState, width: number, paint: Paint): string[] {
-    this.sync(agent);
-    // Pi marks its own prompts for terminal shell integration; a sliced view
-    // of another agent's prompts must not open unmatched marks.
-    let lines: string[];
-    try {
-      lines = this.root.render(width).map((line) => line.replace(OSC_133, ""));
-    } catch {
-      // Producer data must never break Pi's own render loop.
-      lines = [paint("error", " (this transcript could not be rendered)")];
-    }
-    if (agent.omitted)
-      lines.unshift(
-        paint("dim", `… ${agent.omitted} earlier messages not retained`),
-      );
-    if (!agent.messages.length) lines.push(paint("dim", " (no messages yet)"));
-    return lines;
-  }
-  private sync(agent: SubagentState): void {
-    if (agent.revision === this.revision) return;
-    this.revision = agent.revision;
-    const { messages } = agent;
-    if (agent.omitted !== this.omitted) {
-      this.root.clear();
-      this.parts = [];
-      this.tools.clear();
-      this.omitted = agent.omitted;
-    }
-    let from = this.parts.length;
-    // A streaming snapshot may be replaced or mutated in place.
-    if (from > 0 && (this.tailStreaming || messages[from - 1] !== this.tail))
-      from--;
-    for (const part of this.parts.splice(from))
-      for (const component of part) this.root.removeChild(component);
-    for (let i = from; i < messages.length; i++) {
-      const last = i === messages.length - 1;
-      const part = this.build(messages[i] as Message, last && agent.streaming);
-      for (const component of part) this.root.addChild(component);
-      this.parts.push(part);
-    }
-    this.tail = messages.at(-1);
-    this.tailStreaming = agent.streaming;
-  }
-  private build(message: Message, streaming: boolean): Component[] {
-    switch (message.role) {
-      case "user": {
-        const text = textOf(message.content);
-        return text
-          ? [new Spacer(1), new UserMessageComponent(text, getMarkdownTheme())]
-          : [];
-      }
-      case "assistant": {
-        // Pi's component assumes well-formed blocks; keep only those.
-        const content = (
-          Array.isArray(message.content) ? message.content : []
-        ).filter(
-          (b) =>
-            (b?.type === "text" && typeof b.text === "string") ||
-            (b?.type === "thinking" && typeof b.thinking === "string") ||
-            b?.type === "toolCall",
-        );
-        const parts: Component[] = [
-          new AssistantMessageComponent(
-            { ...message, content } as never,
-            false,
-            getMarkdownTheme(),
-          ),
-        ];
-        const failed =
-          message.stopReason === "aborted" || message.stopReason === "error";
-        for (const block of content) {
-          if (block.type !== "toolCall") continue;
-          const tool = this.tool(
-            String(block.name ?? "tool"),
-            String(block.id ?? ""),
-            block.arguments ?? {},
-          );
-          // Pi's edit renderer previews complete arguments against the file
-          // as it is now, where an applied edit no longer matches and would
-          // read as a failure; a transcript edit shows its call and result only.
-          if (!streaming && block.name !== "edit") tool.setArgsComplete();
-          if (failed)
-            tool.updateResult({
-              content: [
-                {
-                  type: "text",
-                  text: String(message.errorMessage ?? "Operation aborted"),
-                },
-              ],
-              isError: true,
-            });
-          parts.push(tool);
-        }
-        return parts;
-      }
-      case "toolResult": {
-        const result = {
-          content: Array.isArray(message.content) ? message.content : [],
-          details: message.details,
-          isError: message.isError === true,
-        };
-        const id = String(message.toolCallId ?? "");
-        const pending = this.tools.get(id);
-        if (pending) {
-          pending.updateResult(result, streaming);
-          return [];
-        }
-        const orphan = this.tool(String(message.toolName ?? "tool"), id, {});
-        orphan.updateResult(result, streaming);
-        return [orphan];
-      }
-      default: {
-        const text = textOf(message.content);
-        return text ? [new Spacer(1), new Text(text, 1, 0)] : [];
-      }
-    }
-  }
-  private tool(name: string, id: string, args: unknown) {
-    const tool = new ToolExecutionComponent(
-      name,
-      id,
-      args,
-      {},
-      undefined,
-      this.tui,
-      this.cwd,
-    );
-    tool.setExpanded(this.expanded);
-    this.tools.set(id, tool);
-    return tool;
-  }
 }

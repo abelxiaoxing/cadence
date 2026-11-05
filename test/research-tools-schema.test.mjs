@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { validateToolArguments } from "@earendil-works/pi-ai";
+import { normalizeContext, validateToolArguments } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
 import { expect, it, vi } from "vitest";
 import { createResearchTools } from "../src/research-tools.mjs";
@@ -112,7 +112,8 @@ it.each([false, true])(
     try {
       const result = await stream(
         model,
-        { messages: [], tools },
+        // Pi 1.5 API adapters receive a normalized transcript, not raw Context.
+        normalizeContext({ messages: [], tools }),
         {
           apiKey: "fabricated-schema-key",
           fetch,

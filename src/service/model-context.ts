@@ -158,8 +158,8 @@ function exactEnvironment(
 ): void {
   const scoped = snapshot.credentials[selected.selection.provider]?.env;
   const local = scoped === undefined ? {} : environment(scoped);
-  // 0.84.3's auth store and OAuth configured headers resolve templates through
-  // process.env, not solely getAuth overrides. Check named launch facts without
+  // Auth configuration may resolve templates through process.env. Bind the
+  // selected launch facts independently of getAuth overrides, without
   // mutating process.env. Empty/missing values never fall through to ambient.
   for (const [name, value] of Object.entries(selected.env)) {
     if (local[name]) continue;

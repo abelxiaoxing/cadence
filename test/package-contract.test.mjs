@@ -53,9 +53,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.engines?.node).toBe(">=22.19.0");
     expect(pkg.license).toBe("MIT");
     expect(pkg.keywords).toContain("pi-package");
-    expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
-    expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("*");
-    expect(pkg.peerDependencies?.["@earendil-works/pi-ai"]).toBe("*");
+    expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe(
+      "^1.5.0",
+    );
+    expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("^1.5.0");
+    expect(pkg.peerDependencies?.["@earendil-works/pi-ai"]).toBe("^1.5.0");
     expect(pkg.peerDependencies?.typebox).toBe("*");
     // Pi's managed install omits peers; Undici must ship as a dependency.
     expect(pkg.peerDependencies?.undici).toBeUndefined();
@@ -64,8 +66,8 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     // The standalone owner and workers import the SDK by bare name outside Pi,
     // so they load the exact tested copy from optional dependencies.
     expect(pkg.optionalDependencies).toEqual({
-      "@earendil-works/pi-ai": "0.84.3",
-      "@earendil-works/pi-coding-agent": "0.84.3",
+      "@earendil-works/pi-ai": "1.5.0",
+      "@earendil-works/pi-coding-agent": "1.5.0",
     });
     for (const name of Object.keys(pkg.optionalDependencies))
       expect(pkg.devDependencies?.[name]).toBeUndefined();
@@ -133,7 +135,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     const readme = read(path.join(root, "README.md"));
     expect(readme).toMatch(/local package|tarball|\.tgz|installed/i);
     expect(readme).toMatch(/\.\/|absolute|relative/i);
-    expect(readme).toContain("does not impose a Pi version range");
+    expect(readme).toContain("requires Pi 1.5.0");
     // published as @abelxiaoxing/cadence only; no other @abel/ scope or bare scope installs
     expect(readme).not.toMatch(/npm install @abel(?![a-z]+\/)/i);
     expect(readme).not.toMatch(/@abel\/(?!xiaoxing)/i);
