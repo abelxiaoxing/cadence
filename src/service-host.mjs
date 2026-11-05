@@ -28312,7 +28312,7 @@ import {
   statfsSync as statfsSync3,
   writeFileSync as writeFileSync6
 } from "node:fs";
-import { basename as basename5, dirname as dirname22, join as join37, relative as relative10, resolve as resolve13 } from "node:path";
+import { basename as basename5, dirname as dirname22, join as join37, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 
 // src/task-diff.ts
@@ -28537,6 +28537,26 @@ ${data2.toString("utf8")}`);
   return { fingerprint: hash3.digest("hex"), text: text2, complete, git: isGit };
 }
 
+// src/worker-workspace.mjs
+import { isAbsolute as isAbsolute12, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
+function withinRoot(root, path) {
+  const part = relative9(root, path);
+  return part === "" || !isAbsolute12(part) && part !== ".." && !part.startsWith(`..${sep7}`);
+}
+var absolute2 = (value) => {
+  if (typeof value !== "string" || !isAbsolute12(value) || value.includes("\x00"))
+    throw new Error("Invalid execution directory");
+  return resolve12(value);
+};
+function executionDirectory(execution, tree) {
+  const origin = absolute2(execution.checkoutRoot);
+  const cwd = absolute2(execution.cwd);
+  tree = absolute2(tree);
+  if (!withinRoot(origin, cwd))
+    throw new Error("Execution cwd escaped its checkout");
+  return resolve12(tree, relative9(origin, cwd));
+}
+
 // src/service/turn-capture.ts
 var TURN_BYTES = 384 * 1024;
 var OMITTED_FLAG2 = {
@@ -28672,7 +28692,7 @@ import {
   realpathSync as realpathSync11
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute12, join as join36, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute13, join as join36, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -28757,16 +28777,16 @@ async function gitHead(cwd) {
   return (await gitText(cwd, ["rev-parse", "--verify", "HEAD"])).trim();
 }
 function contains2(root, path) {
-  const within = relative9(root, path);
-  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute12(within);
+  const within = relative10(root, path);
+  return !within || !within.startsWith(`..${sep8}`) && within !== ".." && !isAbsolute13(within);
 }
 function nested(a, b) {
   return contains2(a, b) || contains2(b, a);
 }
 function safeWorkflowFile(cwd, name) {
   workflowPath(name);
-  const p = resolve12(cwd, name);
-  if (relative9(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   safeDirectory(dirname21(p));
   try {
@@ -28781,8 +28801,8 @@ function safeWorkflowFile(cwd, name) {
 }
 function declaredTarget(cwd, name) {
   workflowPath(name);
-  const p = resolve12(cwd, name);
-  if (relative9(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   safeDirectory(dirname21(p));
   try {
@@ -28866,13 +28886,13 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join36(directory, entry), relative10 = `${prefix}${entry}`;
+      const full = join36(directory, entry), relative11 = `${prefix}${entry}`;
       const st = lstatSync20(full);
       if (st.isDirectory()) {
-        rows.push(`${relative10}/`);
-        visit(full, `${relative10}/`);
+        rows.push(`${relative11}/`);
+        visit(full, `${relative11}/`);
       } else
-        rows.push(`${relative10}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
+        rows.push(`${relative11}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
     }
   };
   visit(root, "");
@@ -28888,13 +28908,13 @@ async function directoryIdentityAsync(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join36(directory, entry), relative10 = `${prefix}${entry}`;
+      const full = join36(directory, entry), relative11 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
-        rows.push(`${relative10}/`);
-        await visit(full, `${relative10}/`);
+        rows.push(`${relative11}/`);
+        await visit(full, `${relative11}/`);
       } else
-        rows.push(`${relative10}\x00${await fileIdentityAsync(full, st, DIRECTORY_HASH_BYTES)}`);
+        rows.push(`${relative11}\x00${await fileIdentityAsync(full, st, DIRECTORY_HASH_BYTES)}`);
     }
   };
   await visit(root, "");
@@ -28902,8 +28922,8 @@ async function directoryIdentityAsync(root, name) {
 `))}`;
 }
 function pathIdentity(cwd, name, walk = true) {
-  const p = resolve12(cwd, name);
-  if (relative9(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
@@ -28918,8 +28938,8 @@ function pathIdentity(cwd, name, walk = true) {
   return fileIdentity(p, st, HASH_BYTES);
 }
 async function pathIdentityAsync(cwd, name) {
-  const p = resolve12(cwd, name);
-  if (relative9(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
@@ -29122,13 +29142,13 @@ ${block}
 async function assertWorktree(root, cwd) {
   if (!safeDirectory(cwd))
     throw new ContractError("stale");
-  const real = (p) => realpathSync11(resolve12(p));
+  const real = (p) => realpathSync11(resolve13(p));
   if (real((await gitText(cwd, ["rev-parse", "--show-toplevel"])).trim()) !== real(cwd))
     throw new ContractError("stale");
-  const common = async (p) => real(resolve12(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
+  const common = async (p) => real(resolve13(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
-  const marker2 = resolve12(cwd, ".git");
+  const marker2 = resolve13(cwd, ".git");
   if (!lstatSync20(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
 }
@@ -29304,7 +29324,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.36",
-  build: "63891918b2036473bbbb9ed027dff1c19340ef72c43bdb7f4b619d34213ceb8f",
+  build: "80c9c996336c7b536989abf204a0203ec3048579142d692b8b35c6f3c02ee349",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -29639,7 +29659,14 @@ class Workflows {
     return execution.model;
   }
   executionCwd(live2, tree) {
-    const cwd = resolve13(tree, relative10(this.cwd, live2.execution.cwd));
+    if (live2.execution.checkoutRoot !== this.cwd)
+      throw new ContractError("stale");
+    let cwd;
+    try {
+      cwd = executionDirectory(live2.execution, tree);
+    } catch {
+      throw new ContractError("stale");
+    }
     if (!withinWorkspace(tree, cwd))
       throw new ContractError("stale");
     if (tree !== this.cwd) {
@@ -29951,8 +29978,8 @@ class Workflows {
     };
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve14) => {
-      begin = resolve14;
+    const ready2 = new Promise((resolve15) => {
+      begin = resolve15;
     });
     const live2 = {
       execution,
@@ -30165,7 +30192,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, runCwd, live2.abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets(),
-        roots: roots?.length ? roots.map((p) => resolve13(runCwd, p)) : [live2.run.phase === "research" ? runCwd : cwd],
+        roots: roots?.length ? roots.map((p) => resolve14(runCwd, p)) : [live2.run.phase === "research" ? runCwd : cwd],
         onLifecycle: (event) => {
           if (!step.timing)
             return;
@@ -31150,7 +31177,7 @@ async function predecessorExited() {
     } catch {
       return;
     }
-    await new Promise((resolve14) => setTimeout(resolve14, 100));
+    await new Promise((resolve15) => setTimeout(resolve15, 100));
   }
 }
 async function healBeforeStart(c) {
@@ -31326,8 +31353,8 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         let timer;
         await Promise.race([
           owner?.idle(),
-          new Promise((resolve14) => {
-            timer = setTimeout(resolve14, FAULT_SETTLE_MS);
+          new Promise((resolve15) => {
+            timer = setTimeout(resolve15, FAULT_SETTLE_MS);
           })
         ]);
         clearTimeout(timer);
