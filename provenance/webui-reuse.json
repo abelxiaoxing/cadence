@@ -382,7 +382,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "7885bc9e1401c2818f662e0d491a9bff17ba5bf82d56b14c20e2d32dadff7524",
+    "web/src/styles.css": "0a6d0030559d7b0895d3a8566a177b9d9af561177a589ce775de1d717d00a620",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",

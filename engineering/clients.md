@@ -44,20 +44,21 @@ That observation holds one of the owner's viewer attachments, so departure (incl
 `CADENCE_AGENT_PANEL=off` turns that observation off.
 It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
 A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-history` keeps the actual outcome.
+Workflow review rejections are announced and counted as `rejected`, never as agent errors; the browser dock also shows `rejected` separately from `failed`.
 Workflow research, implementation and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
 Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
 Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-history`.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
-Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
+Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `rejected`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
 The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
 Nothing shows while no agent runs.
 Agents whose start was observed form a batch: the first one opens it, and later starts join it until it closes.
 A start with `startedAt: null` joins no batch, so after a restart already finished children neither reopen the live view nor repeat a card.
-While a batch is open, one summary line above the input names its shared kind and running/done/failed/cancelled counts; individual rows belong only to the agent browser.
+While a batch is open, one summary line above the input names its shared kind and running/done/rejected/failed/cancelled counts; individual rows belong only to the agent browser.
 Once every member ended, the block shows the card it is about to become for `SETTLE_MS` (1.5s); a start in that time joins the same batch.
 Then the block is removed and the card is appended to the session as a display-only `cadence-agent-batch` entry, which is not part of the model's context and renders again on resume.
-A collapsed card is one line when every member finished cleanly and otherwise also lists the failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
+A collapsed card is one line when every member finished cleanly and otherwise also lists the rejected, failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
 A card holds only display text (kind, row text, status, elapsed), at most 64 members, and anything malformed in a session file renders nothing.
 A batch that settled is carded in the session it ran in, even on departure; one still running carries over to the next session, and one that ended while no session showed it gets no card.
 `CADENCE_AGENT_PANEL=always` keeps the last batch in the block, without a card, until the next batch begins.

@@ -214,6 +214,53 @@ describe("compact panel and durable cards", () => {
     h.emit("session_shutdown");
     expect(h.widgets.size).toBe(0);
   });
+  it("counts rejected reviews separately in the one-line summary and retained cards", () => {
+    vi.useFakeTimers();
+    const h = withAgents();
+    h.end("0", "rejected");
+    expect(h.live()).toHaveLength(1);
+    expect(h.live()[0]).toContain("1 rejected");
+    expect(h.live()[0]).not.toContain("failed");
+    h.end("1");
+    expect(h.live()[0]).toContain("⊘");
+    expect(h.live()[0]).toContain("1 done · 1 rejected");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.live()).toEqual([]);
+    expect(h.entries).toHaveLength(1);
+    const card = h.entries[0].data;
+    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    expect(card.agents.map((a: { status: string }) => a.status)).toEqual([
+      "rejected",
+      "done",
+    ]);
+    expect(h.card(0)).toHaveLength(2);
+    expect(h.card(0).join("\n")).toContain("1 done · 1 rejected");
+    expect(h.card(0).join("\n")).not.toContain("failed");
+    expect(h.card(0, true)).toHaveLength(3);
+    h.emit("session_shutdown");
+  });
+  it("keeps failures and cancellations distinct beside a rejected review", () => {
+    vi.useFakeTimers();
+    const h = withAgents(4);
+    h.end("0", "rejected");
+    h.end("1", "error");
+    h.end("2", "cancelled");
+    expect(h.live()[0]).toContain("1 failed · 1 rejected · 1 cancelled");
+    h.end("3");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.card(0)[0]).toContain("✘");
+    expect(h.card(0)[0]).toContain(
+      "1 done · 1 failed · 1 rejected · 1 cancelled",
+    );
+    expect(h.card(0)).toHaveLength(4);
+    expect(decodeCard(h.entries[0].data)?.agents.map((a) => a.status)).toEqual([
+      "rejected",
+      "error",
+      "cancelled",
+      "done",
+    ]);
+    h.emit("session_shutdown");
+  });
   it("joins a new start during settlement but cards a later batch separately", () => {
     vi.useFakeTimers();
     const h = withAgents(1);
@@ -353,6 +400,22 @@ describe("upstream agent browser integration", () => {
     await h.flush();
     expect(h.view()).toEqual([]);
     expect(h.live()).toHaveLength(1);
+    h.emit("session_shutdown");
+  });
+  it("updates the current browser transcript and list with rejection, not failure", () => {
+    const h = withAgents(1);
+    h.say("0", "Review found a missing acceptance test.");
+    h.key(DOWN);
+    h.key(ENTER);
+    expect(plain(h.view())).toContain("running");
+    h.end("0", "rejected");
+    expect(plain(h.view())).toContain("rejected");
+    expect(plain(h.view())).toContain(
+      "Review found a missing acceptance test.",
+    );
+    expect(plain(h.view())).not.toContain("error");
+    h.key(ESC);
+    expect(plain(h.view())).toContain("rejected");
     h.emit("session_shutdown");
   });
   it("uses the upstream docked mount in regular mode, without changing the browser", () => {
