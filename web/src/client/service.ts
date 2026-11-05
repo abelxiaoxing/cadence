@@ -48,7 +48,7 @@ async function get<T>(
 export function readService(signal?: AbortSignal): Promise<ServiceEntry> {
   return get("/workbench/v1/service", decodeServiceEntry, signal);
 }
-/** Contacts the npm registry; only on an explicit check. */
+/** Uses the identified installation's registry client; only on an explicit check. */
 export function readRelease(signal?: AbortSignal): Promise<ReleaseEntry> {
   return get("/workbench/v1/service/release", decodeReleaseEntry, signal);
 }

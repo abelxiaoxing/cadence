@@ -90,7 +90,7 @@ Os resultados reais permanecem separados da revisão automática do agente.
 ```sh
 cadence server status
 cadence server restart     # após um upgrade ou uma alteração de .env / models.json
-cadence server upgrade     # instalação global do npm: baixar, instalar e reiniciar
+cadence server upgrade
 cadence server stop        # permanece registrado e inicia de novo no próximo boot ou login
 cadence server uninstall   # executar antes de npm uninstall -g
 ```

@@ -102,7 +102,7 @@ WebUI 폴더 선택기도 같은 방법으로 프로젝트를 엽니다.
 ```sh
 cadence server status
 cadence server restart     # 업그레이드나 .env / models.json 변경 후
-cadence server upgrade     # npm 전역 설치: 받기, 설치, 재시작
+cadence server upgrade
 cadence server stop        # 등록은 유지되고 다음 부팅 또는 로그인 시 다시 시작
 cadence server uninstall   # npm uninstall -g 전에 실행
 ```
