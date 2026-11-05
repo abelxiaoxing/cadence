@@ -289,6 +289,22 @@ export function serviceEnvironment(s: AutostartSystem): [string, string][] {
   if (state && isAbsolute(state)) out.push(["XDG_STATE_HOME", state]);
   if (s.env.PI_CODING_AGENT_DIR)
     out.push(["PI_CODING_AGENT_DIR", agentDirectory(s)]);
+  // Package-manager locations are part of the installation, not secrets.
+  // Preserve custom prefixes/config directories for later WebUI maintenance;
+  // never bake registry tokens or copy the referenced configuration files.
+  for (const key of [
+    "XDG_CONFIG_HOME",
+    "BUN_INSTALL",
+    "BUN_INSTALL_GLOBAL_DIR",
+    "BUN_INSTALL_BIN",
+    "npm_config_prefix",
+    "NPM_CONFIG_PREFIX",
+    "npm_config_userconfig",
+    "NPM_CONFIG_USERCONFIG",
+  ]) {
+    const value = s.env[key];
+    if (value && isAbsolute(value)) out.push([key, value]);
+  }
   return out;
 }
 export function checked(value: string): string {

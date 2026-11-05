@@ -16,7 +16,6 @@ import {
   parseWireJson,
 } from "../service-contract.ts";
 import { effectiveWorkspace, privateWorkspace } from "../workspace.ts";
-
 import {
   type AutostartResult,
   type AutostartSystem,
@@ -46,6 +45,7 @@ import {
 } from "./doctor.ts";
 import { gatewayMain } from "./gateway-cli.ts";
 import { GatewayStore } from "./gateway-store.ts";
+import { packageCommands } from "./installation.ts";
 import {
   configureLaunchAgent,
   LABEL,
@@ -65,8 +65,6 @@ import {
   installedVersion,
   jobOutcome,
   MaintenanceRecord,
-  npm,
-  PACKAGE,
   restartInstalled,
   type UpgradeResult,
   upgradeService,
@@ -678,7 +676,7 @@ function upgrade(
 ): Promise<UpgradeResult> {
   if (s.platform !== "linux") return Promise.resolve({ status: "unsupported" });
   return upgradeService(s, to, {
-    npm,
+    commands: packageCommands(s),
     stop: () => serverAction(s, "stop", undefined, false),
     restart: () => restartInstalled(s),
   });
@@ -725,7 +723,7 @@ function managerDetail(s: AutostartSystem): string {
 const REASONS: Record<string, string> = {
   "fetch-failed": "the release could not be fetched; the service kept running",
   "stop-unconfirmed": "the running service did not confirm its orderly Stop",
-  "install-failed": "npm could not install it",
+  "install-failed": "the package manager could not install it",
   "not-ready": "the new version did not become ready",
 };
 function serverStatusGuidance(
@@ -749,14 +747,16 @@ function serverStatusGuidance(
         return `Cadence ${result.to} is deprecated on npm; nothing changed.\n`;
       case "rolled-back":
         return `Cadence ${result.to} did not become ready, so ${result.from} was reinstalled and is running; ${managerDetail(s)}.\n`;
-      case "not-npm-global":
-        return `This copy of Cadence (${s.root}) was not installed with npm install -g, so it cannot upgrade itself. ${terminal}\n`;
+      case "unsupported-install":
+        return `The installation method for this copy of Cadence (${s.root}) could not be safely identified. ${terminal}\n`;
+      case "pinned":
+        return `Pi pins this package version; change its package declaration explicitly before upgrading. ${terminal}\n`;
       case "not-writable":
-        return `npm cannot write ${s.root} as this account. ${terminal}\n`;
+        return `The package manager cannot write ${s.root} as this account. ${terminal}\n`;
       case "unsupported":
-        return `Cadence upgrades itself only on Linux. Run npm install -g ${PACKAGE}@latest, then: ${cli} server restart\n`;
+        return `Cadence upgrades itself only on Linux. ${terminal}\n`;
       case "failed":
-        return `Cadence was not upgraded: ${REASONS[result.reason ?? ""] ?? result.reason}. Running now: ${result.version ?? result.from}; ${managerDetail(s)}.\n`;
+        return `Cadence was not upgraded: ${REASONS[result.reason ?? ""] ?? result.reason}. Installed version: ${result.version ?? "not confirmed"}; ${managerDetail(s)}.\n`;
     }
   }
   if (
@@ -987,7 +987,9 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
         job,
         state,
         reason,
-        installedVersion(s.root),
+        action === "upgrade"
+          ? (result.version ?? null)
+          : installedVersion(s.root),
       );
     } catch {
       // Not recorded: the WebUI reads the ended job as interrupted.
@@ -1010,7 +1012,8 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       "project-running",
       "environment-changed",
       "inside-service",
-      "not-npm-global",
+      "unsupported-install",
+      "pinned",
       "not-writable",
       "deprecated",
       "rolled-back",
@@ -1250,7 +1253,7 @@ export async function managementMain(
     }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall|upgrade [--to VERSION]\nUpgrade (Linux, npm global installs) fetches the release while the service runs, then stops it, installs the release and restarts; a release that does not become ready is replaced by the previous version. Server commands that change the service refuse to run inside it; use the WebUI or a terminal.\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall|upgrade [--to VERSION]\nUpgrade (Linux, identified Pi/npm/Bun installs) fetches the release while the service runs, then stops it, installs the release and restarts; a release that does not become ready is replaced by the previous version. Server commands that change the service refuse to run inside it; use the WebUI or a terminal.\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
       );
       return;
     }

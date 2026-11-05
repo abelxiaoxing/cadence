@@ -2,10 +2,15 @@
 // test/service-maintenance-systemd.test.ts against a real systemd manager.
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import type { MaintenanceJob } from "../../src/service/contracts/gateway.ts";
+import {
+  canUpgrade,
+  type MaintenanceJob,
+  UPGRADE_ROUTES,
+} from "../../src/service/contracts/gateway.ts";
 import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
 import {
   describeJob,
+  installationMessage,
   ServiceDialog,
   unchanged,
 } from "../../web/src/components/workspace/ServiceDialog";
@@ -113,4 +118,22 @@ it("the entry offers the service dialog only when the workbench supplies it, and
   );
   expect(dialog).toContain("Reading the service…");
   expect(dialog).toMatch(/<button type="button" disabled="">.*Restart service/);
+});
+
+it("describes every installation route in both languages and enables all supported managers", () => {
+  for (const locale of ["en", "zh"] as const) {
+    const t: Translator["t"] = (key, vars) => translate(locale, key, vars);
+    for (const route of UPGRADE_ROUTES) {
+      const message = installationMessage(t, route);
+      expect(message.length).toBeGreaterThan(10);
+      if (locale === "zh") expect(message).toMatch(/[\u4e00-\u9fff]/);
+      expect(canUpgrade(route)).toBe(
+        ["npm", "bun", "pi-npm", "pi-bun", "npm-local", "bun-local"].includes(
+          route,
+        ),
+      );
+    }
+    expect(installationMessage(t, "pi-bun")).toContain("Pi");
+    expect(installationMessage(t, "pi-bun")).toContain("Bun");
+  }
 });
