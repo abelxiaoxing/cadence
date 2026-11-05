@@ -135,7 +135,7 @@ describe("subagent store", () => {
     expect(s.size).toBe(4);
   });
 
-  it("prunes the oldest ended agents outside the open batch", () => {
+  it("drops ended agents outside the open batch, retaining no history roster", () => {
     const { s } = store();
     for (const id of ["a", "b", "c"]) {
       s.apply(E.start, { id });
@@ -147,9 +147,9 @@ describe("subagent store", () => {
     s.apply(E.start, { id: "running" });
     const changed = vi.fn();
     s.subscribe(changed);
-    expect(s.prune(1, ["a"])).toEqual(["b"]);
-    expect(s.ordered().map((a) => a.id)).toEqual(["a", "c", "open", "running"]);
-    expect(s.prune(0)).toEqual(["a", "c"]);
+    expect(s.prune()).toEqual(["a", "b", "c"]);
+    expect(s.ordered().map((a) => a.id)).toEqual(["open", "running"]);
+    expect(s.prune()).toEqual([]);
     expect(changed).not.toHaveBeenCalled();
   });
 

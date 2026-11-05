@@ -26,7 +26,12 @@ Native mode is branch-aware; browser mode follows its server-owned conversation 
 The browser and the terminal share the conversation itself (it is the same Pi session), but each keeps its own Cadence mode and plan approval: entering Cadence in one does not enter it in the other.
 A workflow started in either place appears in that conversation in the browser as one line after the turn it started in.
 A saved native mode is active only in a trusted interactive terminal; print/RPC sessions keep ordinary tools and can still exit with `/cadence exit`.
-In Pi, the agent panel lists workflow subagents and opens their transcripts; `cadence_status` can read one step's transcript.
+In Pi, the agent panel shows only running subagents belonging to the current conversation, not other Pi conversations in the same directory.
+With an empty focused input, press ↓ to choose a running agent and Enter to read it; ended agents leave the list automatically.
+A transcript you already opened stays readable when its agent finishes, without further background queries.
+With none running, ↓ stays with the editor.
+Completion keeps a compact summary; use `/cadence-history` (or `cadence_status` for one step) when you explicitly need retained results/transcripts.
+Resuming the same Pi conversation can observe its ongoing work; new and forked conversations do not inherit that live display.
 Resume and compaction retain the mode/context, not execution grants.
 Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.

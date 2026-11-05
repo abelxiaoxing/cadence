@@ -21,7 +21,6 @@ import {
   decodeCard,
   SUBAGENT_EVENTS as E,
   liveLines,
-  MAX_ENDED,
   type Paint,
   SubagentStore,
 } from "../src/agent-panel-model.ts";
@@ -237,6 +236,7 @@ describe("compact panel and durable cards", () => {
     expect(h.entries).toEqual([]);
     expect(h.live()).toHaveLength(1);
     expect(h.live()[0]).toContain("finished");
+    expect(h.key(DOWN)).toBe("editor");
   });
   it("does not activate outside TUI or repeat a card for a first-seen settled child", () => {
     vi.useFakeTimers();
@@ -253,37 +253,86 @@ describe("compact panel and durable cards", () => {
     vi.advanceTimersByTime(SETTLE_MS);
     expect(h.live()).toEqual([]);
     expect(h.entries).toEqual([]);
-    h.key(DOWN);
-    expect(plain(h.view())).toContain("retained");
+    expect(h.key(DOWN)).toBe("editor");
+    expect(h.ctx.ui.custom).not.toHaveBeenCalled();
     h.emit("session_shutdown");
   });
-  it("cards a settled batch on departure, carries running agents and drops ended history on a new session", () => {
+  it("cards a settled batch on departure, but never carries live agents to a new session", () => {
     vi.useFakeTimers();
     const h = withAgents();
     h.end("0");
     h.emit("session_shutdown");
     expect(h.entries).toEqual([]);
     h.emit("session_start");
-    expect(h.live()[0]).toContain("1 Research agent running");
+    expect(h.live()).toEqual([]);
+    expect(h.key(DOWN)).toBe("editor");
     h.end("1");
+    expect(h.entries).toEqual([]);
+    h.start("new");
+    h.end("new");
     h.emit("session_shutdown");
     expect(h.entries).toHaveLength(1);
-    h.emit("session_start");
-    expect(h.widgets.size).toBe(0);
+    expect(h.entries[0].data.agents).toHaveLength(1);
   });
-  it("bounds ended agents while retaining an open transcript", async () => {
+  it("keeps an open transcript as a snapshot, not an ended list or producer subscription", async () => {
     vi.useFakeTimers();
-    const h = withAgents(MAX_ENDED + 6);
+    const h = withAgents(30);
+    const views: any[] = [];
+    h.pi.events.on("subagent:view", (event) => views.push(event.id));
     h.key(DOWN);
     h.key(ENTER);
-    for (let i = 0; i < MAX_ENDED + 6; i++) h.end(String(i));
+    h.say("0", "final output");
+    for (let i = 0; i < 30; i++) h.end(String(i));
     vi.advanceTimersByTime(SETTLE_MS);
     expect(h.entries).toHaveLength(1);
-    expect(plain(h.view())).toContain("Agent 0");
+    expect(plain(h.view())).toContain("final output");
+    expect(views.at(-1)).toBe(null);
     h.key(ESC);
-    expect(plain(h.view())).toContain(`1 / ${MAX_ENDED + 1}`);
+    expect(plain(h.view())).toContain("0 / 0");
+    expect(plain(h.view())).toContain("No agents running in this session");
+    expect(plain(h.view())).not.toContain("Agent 0");
     h.key(ESC);
     await h.flush();
+    expect(h.key(DOWN)).toBe("editor");
+    h.emit("session_shutdown");
+  });
+  it("removes completed rows immediately and keeps the nearest live selection", () => {
+    const h = withAgents(3);
+    h.key(DOWN);
+    h.key(DOWN);
+    h.end("1");
+    expect(plain(h.view())).toContain("2 / 2");
+    expect(plain(h.view())).not.toContain("Agent 1");
+    h.key(ENTER);
+    expect(plain(h.view())).toContain("Agent 2");
+    h.emit("session_shutdown");
+  });
+  it("does not open a stale row when it ends between rendering and Enter", () => {
+    const h = withAgents(1);
+    const views: any[] = [];
+    h.pi.events.on("subagent:view", (event) => views.push(event.id));
+    h.key(DOWN);
+    h.view();
+    h.end("0");
+    h.key(ENTER);
+    expect(views).not.toContain("0");
+    expect(plain(h.view())).toContain("No agents running in this session");
+    h.emit("session_shutdown");
+  });
+  it("does not open a stale row when it ends between mouse press and click", () => {
+    const h = withAgents(2);
+    const views: any[] = [];
+    h.pi.events.on("subagent:view", (event) => views.push(event.id));
+    h.key(DOWN);
+    h.view();
+    const event = { button: "left", x: 3, y: 1, width: 80, height: 4 };
+    h.component()?.handleMouse?.({ ...event, type: "press" } as any);
+    h.end("0");
+    // No render has happened yet: this click still names the old first row.
+    h.component()?.handleMouse?.({ ...event, type: "click" } as any);
+    expect(views).not.toContain("0");
+    expect(views).not.toContain("1");
+    expect(plain(h.view())).not.toContain("Agent 0");
     h.emit("session_shutdown");
   });
   it("validates retained cards and fits Unicode rows to terminal width", () => {
