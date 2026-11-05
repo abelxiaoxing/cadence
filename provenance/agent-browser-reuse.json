@@ -10,7 +10,7 @@
         "src/agent-browser/session-navigator.ts",
         "src/agent-browser/transcript-pane.ts"
       ],
-      "changes": "Reuse upstream selection-to-transcript flow, readonly pane, paging/follow, two-rule chrome, mouse handling and responsive viewport. Adapt selection to a live Pi SelectList with stable ids and in-place return; inject renderer mode at the host; keep reading position across visits; fold tools/thinking by default."
+      "changes": "Reuse upstream selection-to-transcript flow, readonly pane, paging/follow, two-rule chrome, mouse handling and responsive viewport. Adapt selection to a running-only Pi SelectList with stable ids, nearest-live-row fallback and in-place return; recheck the exact live id on keyboard/mouse opening; retain an open ended transcript as a snapshot without a producer subscription; inject renderer mode at the host; keep reading position across visits; fold tools/thinking by default."
     },
     {
       "upstreamPath": "packages/pi-subagents/src/ui/transcript-content.ts",
