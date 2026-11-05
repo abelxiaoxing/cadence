@@ -53,6 +53,7 @@ Use the installed public Pi declarations rather than assuming global documentati
 - `src/history/` owns durable recording and retained readers; `web/src/` owns the browser client.
 - `agents/`, `skills/` and `config/` contain the shipped independent profiles, skills and examples.
 - `engineering/architecture.md`: module ownership, maintained seams, packaging and shipped content.
+- `engineering/worker-tools.md`: worker capability composition, fixed workspaces, observation continuations and tool resource ownership.
 - `engineering/lifetimes.md`: admission, scheduling, Stop, registry and automatic recovery.
 - `engineering/checks-review.md`: checks, change observation, task publication and Review.
 - `engineering/history.md`: capture, redaction and retained history readers.
