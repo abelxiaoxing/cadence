@@ -286,6 +286,14 @@ it("real generated owner: task IDs cannot collide with the stable candidate; seq
       ),
     ).toBe(true);
     expect(run.mergedCommit).toBe(git("rev-parse", "HEAD").trim());
+    expect(run.delivery?.taskBranch).toMatch(/^refs\/heads\/cadence\//u);
+    expect(run.delivery?.acceptance?.candidate).toBe(run.mergedCommit);
+    expect(run.delivery?.integration.status).toBe("applied");
+    expect(run.delivery?.postChecks).toBe("passed");
+    expect(git("rev-parse", run.delivery?.taskBranch ?? "missing").trim()).toBe(
+      run.mergedCommit,
+    );
+
     expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe(
       "implemented a.txt\n",
     );

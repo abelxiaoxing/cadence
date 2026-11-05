@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import type { WorkbenchRead } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
+import { deliveryObservation } from "../../src/service/workflow-delivery.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { WorkflowCard } from "../../web/src/components/workspace/WorkflowPanel";
 import { transport } from "./fixtures";
@@ -56,6 +57,21 @@ it("browsing archived steps keeps polling current run status and does not expose
     mergedCommit: null,
     humanReviewed: false,
   };
+  fixture.current.delivery = deliveryObservation(
+    {
+      policy: "task-branch-v1",
+      target: {
+        checkoutRoot: "/project",
+        repository: "/project/.git",
+        repositoryIdentity: "a".repeat(64),
+        branch: "refs/heads/feature",
+        head: "b".repeat(40),
+      },
+    },
+    "/worktrees",
+    id,
+    "delivery",
+  );
   fixture.historical = {
     ...fixture.current,
     status: "running",
@@ -73,6 +89,11 @@ it("browsing archived steps keeps polling current run status and does not expose
       },
     ],
   };
+  if (fixture.historical.delivery)
+    fixture.historical.delivery = {
+      ...fixture.historical.delivery,
+      taskBranch: "refs/heads/cadence/stale",
+    };
   fixture.reads = [];
   const client = new ServiceClient(transport());
   const html = renderToStaticMarkup(<WorkflowCard client={client} id={id} />);
@@ -89,6 +110,10 @@ it("browsing archived steps keeps polling current run status and does not expose
   expect(html).not.toContain("Old notice");
   expect(html).not.toContain("Cancel workflow");
   expect(html).toContain("Latest workflow steps");
+  expect(html).toContain(fixture.current.delivery.taskBranch);
+  expect(html).toContain(fixture.current.delivery.worktreeRoot);
+  expect(html).toContain("refs/heads/feature");
+  expect(html).not.toContain("refs/heads/cadence/stale");
 });
 it("changing run identity remounts page selection, detail and polling state", () => {
   const client = new ServiceClient(transport());

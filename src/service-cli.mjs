@@ -6,7 +6,7 @@ import { spawn as spawn3 } from "node:child_process";
 import { mkdirSync as mkdirSync6 } from "node:fs";
 import { request } from "node:http";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname13, join as join19, resolve as resolve7 } from "node:path";
+import { dirname as dirname13, join as join20, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/install-config.mjs
@@ -1770,6 +1770,24 @@ class CaptureBudgetLease {
     this.forget();
   }
 }
+// src/git-environment.mjs
+function gitEnvironment() {
+  const root = process.getuid?.() === 0;
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    LC_ALL: "C"
+  };
+}
+function gitArguments(args) {
+  return [
+    "--no-replace-objects",
+    ...process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false"] : [],
+    ...args
+  ];
+}
+
 // src/workspace.ts
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -1889,17 +1907,6 @@ function readBounded(path2, max, packaged = false) {
   } finally {
     closeSync2(fd);
   }
-}
-function gitEnvironment() {
-  const root = process.getuid?.() === 0;
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C"
-  };
-}
-function gitArguments(args) {
-  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
 }
 function resolveWorkspace(cwd) {
   const actual = realpathSync(cwd);
@@ -3638,6 +3645,8 @@ class ServiceCoordination {
   }
   acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
     this.store;
+    if (rootsOverlap(this.store.root, join6(this.stateHome, "cadence-worktrees-v1")))
+      throw new ContractError("forbidden");
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))
@@ -4673,10 +4682,10 @@ function strayTemporaries(directory2) {
 }
 
 // src/service/self-heal.ts
-import { createHash as createHash4, randomUUID as randomUUID7 } from "node:crypto";
-import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { createHash as createHash4, randomUUID as randomUUID8 } from "node:crypto";
+import { lstatSync as lstatSync8, opendirSync as opendirSync5 } from "node:fs";
 import { hostname as hostname5 } from "node:os";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/service/process-ledger.ts
 import { rmSync as rmSync3 } from "node:fs";
@@ -4796,6 +4805,250 @@ class LiveLedger {
   }
 }
 
+// src/service/repository-coordination.ts
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { isAbsolute as isAbsolute6, join as join11 } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+var WAIT_MS = 30000;
+var POLL_MS = 50;
+var ACTIVE_RESOURCES = 256;
+function decode3(value) {
+  const o = closed(value, [
+    "schema",
+    "kind",
+    "resource",
+    "root",
+    "epoch",
+    "run",
+    "token",
+    "identity",
+    "holder"
+  ]);
+  if (o.schema !== "cadence-delivery-resource/1" || !["mutation", "workspace"].includes(String(o.kind)))
+    throw new ContractError("corrupt-selected");
+  for (const path2 of [o.resource, o.root])
+    if (typeof path2 !== "string" || !isAbsolute6(path2) || path2.includes("\x00"))
+      throw new ContractError("corrupt-selected");
+  const h = closed(o.holder, ["pid", "host", "boot", "started"]);
+  if (!Number.isSafeInteger(h.pid) || Number(h.pid) < 1 || typeof h.host !== "string" || ![h.boot, h.started].every((x) => x === null || typeof x === "string"))
+    throw new ContractError("corrupt-selected");
+  return {
+    schema: "cadence-delivery-resource/1",
+    kind: o.kind,
+    resource: text(o.resource, 4096, true),
+    root: text(o.root, 4096, true),
+    epoch: decodeId(o.epoch),
+    run: decodeId(o.run),
+    token: decodeId(o.token),
+    identity: o.identity === null ? null : decodeHash(o.identity),
+    holder: h
+  };
+}
+var directory2 = (files) => join11(files.namespace, "delivery-resources-v1");
+var resourcePath = (files, row) => join11(directory2(files), row.kind, `${hash(row.resource)}.json`);
+var ownerDirectory = (files, root, epoch) => join11(directory2(files), "owners", hash(root), decodeId(epoch));
+var indexPath = (files, row) => join11(ownerDirectory(files, row.root, row.epoch), `${row.kind}-${hash(row.resource)}.json`);
+function worktreeIdentity(path2) {
+  const root = lstatSync7(path2), marker = lstatSync7(join11(path2, ".git"));
+  if (!root.isDirectory() || root.isSymbolicLink() || !marker.isFile() || marker.nlink !== 1 || marker.size > 8192)
+    throw new ContractError("stale");
+  const body = readBounded(join11(path2, ".git"), 8192);
+  const after = lstatSync7(join11(path2, ".git")), afterRoot = lstatSync7(path2);
+  if (!body || after.dev !== marker.dev || after.ino !== marker.ino || after.ctimeMs !== marker.ctimeMs || after.size !== marker.size || afterRoot.dev !== root.dev || afterRoot.ino !== root.ino)
+    throw new ContractError("stale");
+  return hash(encoded([
+    root.dev,
+    root.ino,
+    marker.dev,
+    marker.ino,
+    body.toString("utf8")
+  ]));
+}
+
+class RepositoryCoordination {
+  c;
+  root;
+  epoch;
+  run;
+  assertOwner;
+  fault;
+  owned = new Map;
+  constructor(c, root, epoch, run, assertOwner, fault) {
+    this.c = c;
+    this.root = root;
+    this.epoch = epoch;
+    this.run = run;
+    this.assertOwner = assertOwner;
+    this.fault = fault;
+  }
+  write(operation) {
+    try {
+      return operation();
+    } catch (error) {
+      this.fault();
+      throw error;
+    }
+  }
+  reserve(kind, resource) {
+    this.assertOwner();
+    const row = {
+      schema: "cadence-delivery-resource/1",
+      kind,
+      resource,
+      root: this.root,
+      epoch: this.epoch,
+      run: this.run,
+      token: randomUUID7(),
+      identity: null,
+      holder: selfMark()
+    };
+    const target = resourcePath(this.c.files, row);
+    if (this.c.files.read(target))
+      return null;
+    const index = this.write(() => this.c.files.create(indexPath(this.c.files, row), encoded(row)));
+    let file;
+    try {
+      file = this.c.files.create(target, encoded(row));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+        this.write(() => this.c.files.remove(indexPath(this.c.files, row), index));
+        return null;
+      }
+      this.fault();
+      throw error;
+    }
+    const held = { row, file, index };
+    this.owned.set(row.token, held);
+    return held;
+  }
+  async mutate(repository, signal, operation, settled) {
+    const deadline = performance.now() + WAIT_MS;
+    let held;
+    for (;; ) {
+      this.assertOwner();
+      if (signal.aborted)
+        throw new ContractError("stale");
+      held = this.reserve("mutation", repository);
+      if (held)
+        break;
+      if (performance.now() >= deadline)
+        throw new ContractError("conflict");
+      await delay(POLL_MS, undefined, { signal });
+    }
+    try {
+      return await operation();
+    } finally {
+      if (settled())
+        this.release(held.row.token);
+    }
+  }
+  reserveWorkspace(path2) {
+    const held = this.reserve("workspace", path2);
+    if (!held)
+      throw new ContractError("conflict");
+    return held.row.token;
+  }
+  confirmWorkspace(token) {
+    const held = this.require(token);
+    held.row = { ...held.row, identity: worktreeIdentity(held.row.resource) };
+    this.write(() => this.c.files.create(join11(this.c.directory, "workflows-v1", "runs", this.run, "ownership", `${token}.json`), encoded({ ...held.row, schema: "cadence-workspace-observation/1" })));
+  }
+  assertWorkspace(token) {
+    this.assertOwner();
+    const held = this.require(token);
+    this.c.files.assert(resourcePath(this.c.files, held.row), held.file);
+    if (!held.row.identity || worktreeIdentity(held.row.resource) !== held.row.identity)
+      throw new ContractError("stale");
+  }
+  require(token) {
+    const held = this.owned.get(token);
+    if (!held)
+      throw new ContractError("stale");
+    return held;
+  }
+  release(token) {
+    this.assertOwner();
+    const held = this.require(token);
+    this.write(() => {
+      this.c.files.remove(resourcePath(this.c.files, held.row), held.file);
+      this.c.files.remove(indexPath(this.c.files, held.row), held.index);
+    });
+    this.owned.delete(token);
+  }
+  finish() {
+    for (const held of [...this.owned.values()])
+      if (held.row.kind === "workspace")
+        this.release(held.row.token);
+  }
+}
+function recoverDeliveryResources(files, root, epoch, options = {}) {
+  const home = ownerDirectory(files, root, epoch);
+  if (!files.directory(home))
+    return 0;
+  const dir = opendirSync4(home);
+  const actions = [];
+  let count = 0;
+  const read = (path2) => {
+    try {
+      const snapshot = files.read(path2);
+      if (!snapshot)
+        return { snapshot, row: undefined, broken: false };
+      try {
+        return { snapshot, row: decode3(json(snapshot)), broken: false };
+      } catch {
+        return { snapshot, row: undefined, broken: true };
+      }
+    } catch {
+      return { snapshot: undefined, row: undefined, broken: true };
+    }
+  };
+  const archive = (path2) => {
+    if (!options.archive)
+      throw new ContractError("corrupt-selected");
+    options.archive(path2);
+  };
+  try {
+    for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+      if (++count > ACTIVE_RESOURCES)
+        throw new ContractError("capacity");
+      const match = /^(mutation|workspace)-([a-f0-9]{64})\.json$/u.exec(entry.name);
+      const path2 = join11(home, entry.name);
+      if (!match) {
+        if (!options.takeOver)
+          throw new ContractError("corrupt-selected");
+        actions.push(() => archive(path2));
+        continue;
+      }
+      const [, kind, key] = match;
+      const index = read(path2), target = join11(directory2(files), kind, `${key}.json`), shared = read(target);
+      const matches = (row) => row.kind === kind && hash(row.resource) === key && row.root === root && row.epoch === epoch;
+      const ownerMatches = (row) => !options.expectedOwner || Object.entries(options.expectedOwner).every(([key2, value]) => value == null || row.holder[key2] === value);
+      const badIndex = index.broken || !index.row || !matches(index.row) || !ownerMatches(index.row);
+      const badShared = shared.broken || shared.row && (shared.row.kind !== kind || hash(shared.row.resource) !== key || matches(shared.row) && (!ownerMatches(shared.row) || index.row && !badIndex && index.row.token === shared.row.token && encoded(index.row.holder) !== encoded(shared.row.holder)));
+      if (badShared && !options.takeOver)
+        throw new ContractError("corrupt-selected");
+      actions.push(() => {
+        if (badShared)
+          archive(target);
+        else if (shared.row && shared.snapshot && matches(shared.row) && (!index.row || badIndex || index.row.token === shared.row.token)) {
+          files.remove(target, shared.snapshot);
+        }
+        if (badIndex)
+          archive(path2);
+        else if (index.snapshot)
+          files.remove(path2, index.snapshot);
+      });
+    }
+  } finally {
+    dir.closeSync();
+  }
+  if (!options.inspect)
+    for (const action of actions)
+      action();
+  return count;
+}
+
 // src/service/self-heal.ts
 function attempt(read) {
   try {
@@ -4804,7 +5057,7 @@ function attempt(read) {
     return null;
   }
 }
-function readFile(files, path2, decode3, maximum) {
+function readFile(files, path2, decode4, maximum) {
   let snapshot;
   try {
     snapshot = files.read(path2, maximum);
@@ -4817,7 +5070,7 @@ function readFile(files, path2, decode3, maximum) {
   return {
     path: path2,
     snapshot: bytes,
-    value: attempt(() => decode3(json(bytes, maximum)))
+    value: attempt(() => decode4(json(bytes, maximum)))
   };
 }
 function decodeOwnerLock(value) {
@@ -4927,7 +5180,7 @@ class RegistryHealer {
     this.ledger = new ProcessLedger(c.files);
   }
   path(name) {
-    return join11(this.c.registryDirectory, name);
+    return join12(this.c.registryDirectory, name);
   }
   async heal(options = {}) {
     const lockPath = this.path("registry.lock");
@@ -4938,7 +5191,7 @@ class RegistryHealer {
       lock = undefined;
       const age = (() => {
         try {
-          return Date.now() - lstatSync7(lockPath).mtimeMs;
+          return Date.now() - lstatSync8(lockPath).mtimeMs;
         } catch {
           return 0;
         }
@@ -5044,7 +5297,7 @@ class RegistryHealer {
     const lockPath = this.path("registry.lock");
     const lock = this.c.files.create(lockPath, encoded({
       schema: "cadence-service-registry-lock/1",
-      token: randomUUID7(),
+      token: randomUUID8(),
       pid: process.pid,
       host: hostname5()
     }));
@@ -5087,19 +5340,19 @@ class RegistryHealer {
 }
 function liveReservations(c) {
   const out = [];
-  const dir = opendirSync4(c.files.namespace);
+  const dir = opendirSync5(c.files.namespace);
   try {
     for (let e = dir.readSync();e; e = dir.readSync()) {
       if (!/^[a-f0-9]{64}$/.test(e.name))
         continue;
-      const service = join11(c.files.namespace, e.name, "service-v1");
-      const registration2 = readFile(c.files, join11(service, "registration.json"), decodeRegistrationLenient);
+      const service = join12(c.files.namespace, e.name, "service-v1");
+      const registration2 = readFile(c.files, join12(service, "registration.json"), decodeRegistrationLenient);
       if (!registration2 || registration2 === "unreadable")
         continue;
       const r = registration2.value;
       if (!r || r.phase === "stopped")
         continue;
-      const owner = readFile(c.files, join11(service, "owner.lock"), decodeOwnerLock);
+      const owner = readFile(c.files, join12(service, "owner.lock"), decodeOwnerLock);
       const mark = owner && owner !== "unreadable" && owner.value ? owner.value : r;
       if (holderState(mark, stampTime(registration2.snapshot.stamp)).state !== "live")
         continue;
@@ -5120,20 +5373,20 @@ function liveReservations(c) {
   return out;
 }
 function projectFiles(c, root) {
-  const privateRoot = join11(c.files.namespace, createHash4("sha256").update(root).digest("hex"));
+  const privateRoot = join12(c.files.namespace, createHash4("sha256").update(root).digest("hex"));
   return {
     root,
     privateRoot,
-    service: join11(privateRoot, "service-v1"),
-    checkoutPath: join11(privateRoot, "checkout.lock")
+    service: join12(privateRoot, "service-v1"),
+    checkoutPath: join12(privateRoot, "checkout.lock")
   };
 }
 function snapshotProject(c, p) {
   const s = { temporaries: [] };
-  s.registration = readFile(c.files, join11(p.service, "registration.json"), decodeRegistrationLenient);
-  s.owner = readFile(c.files, join11(p.service, "owner.lock"), decodeOwnerLock);
+  s.registration = readFile(c.files, join12(p.service, "registration.json"), decodeRegistrationLenient);
+  s.owner = readFile(c.files, join12(p.service, "owner.lock"), decodeOwnerLock);
   try {
-    s.capability = c.files.read(join11(p.service, "local-capability.json"));
+    s.capability = c.files.read(join12(p.service, "local-capability.json"));
   } catch {
     s.capability = "unreadable";
   }
@@ -5148,7 +5401,7 @@ function snapshotProject(c, p) {
   } catch {}
   s.temporaries = [
     ...strayTemporaries(p.service),
-    ...strayTemporaries(join11(p.service, "history-v2"))
+    ...strayTemporaries(join12(p.service, "history-v2"))
   ];
   return s;
 }
@@ -5217,6 +5470,28 @@ async function healProjectAt(c, root, options = {}) {
   const workers = takenOver ? { stopped: 0, running: 0 } : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
   if (workers.running)
     return { status: "blocked", reason: "workers-running", pid };
+  const selectedOwner = [
+    s.owner && s.owner !== "unreadable" ? s.owner.value : null,
+    s.registration && s.registration !== "unreadable" ? s.registration.value : null,
+    s.row
+  ].find((value) => value?.epoch === epoch);
+  const expectedOwner = selectedOwner ? {
+    pid: selectedOwner.pid,
+    host: selectedOwner.host,
+    ..."boot" in selectedOwner ? { boot: selectedOwner.boot ?? null } : {},
+    ..."started" in selectedOwner ? { started: selectedOwner.started ?? null } : {}
+  } : undefined;
+  if (epoch) {
+    try {
+      recoverDeliveryResources(c.files, root, epoch, {
+        inspect: true,
+        takeOver: options.takeOver,
+        expectedOwner
+      });
+    } catch {
+      return { status: "blocked", reason: "holder-unknown", pid };
+    }
+  }
   const restarted = epoch ? ledger.restartRequested(epoch) : false;
   const cause = !active(s) ? "storage" : holder.reboot ? "reboot" : restarted ? "restart" : "crash";
   if (options.inspect)
@@ -5227,6 +5502,12 @@ async function healProjectAt(c, root, options = {}) {
   if (workers.stopped)
     actions.add("stopped-workers");
   const archive = log.archive();
+  if (epoch && recoverDeliveryResources(c.files, root, epoch, {
+    takeOver: options.takeOver,
+    expectedOwner,
+    archive: (path2) => archive.keep(path2)
+  }))
+    actions.add("released-locks");
   if (active(s)) {
     reclaim(c, p, s, archive);
     actions.add("released-locks");
@@ -5261,8 +5542,8 @@ function metadataDamaged(c, p) {
     return false;
   }
   try {
-    const format = c.files.read(join11(p.service, "format.json"));
-    const config = c.files.read(join11(p.service, "config.json"));
+    const format = c.files.read(join12(p.service, "format.json"));
+    const config = c.files.read(join12(p.service, "config.json"));
     if (!format || !config)
       return true;
     const f = closed(json(format), [
@@ -5274,10 +5555,10 @@ function metadataDamaged(c, p) {
     if (f.schema !== "cadence-service-format/1" || f.root !== p.root || f.stateHome !== c.stateHome || f.configIdentity !== config.identity)
       return true;
     const selected = decodeOwnerConfig(json(config));
-    const host = c.files.read(join11(p.service, "host-config.json"));
+    const host = c.files.read(join12(p.service, "host-config.json"));
     if (host && host.identity !== selected.policyIdentity)
       return true;
-    const registration2 = c.files.read(join11(p.service, "registration.json"));
+    const registration2 = c.files.read(join12(p.service, "registration.json"));
     if (registration2) {
       const r = decodeRegistration(json(registration2));
       if (r.root !== p.root || r.stateHome !== c.stateHome || r.configIdentity !== config.identity)
@@ -5300,7 +5581,7 @@ function reclaim(c, p, expected, archive) {
     mutate();
     const registration2 = s.registration;
     if (registration2 === "unreadable")
-      archive.keep(join11(p.service, "registration.json"));
+      archive.keep(join12(p.service, "registration.json"));
     else if (registration2) {
       if (!registration2.value)
         archive.keep(registration2.path);
@@ -5308,7 +5589,7 @@ function reclaim(c, p, expected, archive) {
         c.files.replace(registration2.path, registration2.snapshot, encoded({ ...registration2.value, phase: "stopped" }));
     }
     if (s.row)
-      c.files.replace(join11(c.registryDirectory, "roots.json"), view.snapshot, encoded({
+      c.files.replace(join12(c.registryDirectory, "roots.json"), view.snapshot, encoded({
         ...view.value,
         entries: view.value.entries.filter((row) => row.root !== p.root)
       }), 1024 * 1024);
@@ -5321,8 +5602,8 @@ function reclaim(c, p, expected, archive) {
       }
       c.files.remove(path2, "snapshot" in value ? value.snapshot : value, maximum);
     };
-    drop(join11(p.service, "local-capability.json"), s.capability);
-    drop(join11(p.service, "owner.lock"), s.owner);
+    drop(join12(p.service, "local-capability.json"), s.capability);
+    drop(join12(p.service, "owner.lock"), s.owner);
     drop(p.checkoutPath, s.checkout, 8192);
   });
 }
@@ -5660,16 +5941,16 @@ Cadence releases whatever the old project owner left behind automatically.
 
 // src/service/gateway-cli.ts
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname9, join as join13, resolve as resolve6 } from "node:path";
+import { dirname as dirname9, join as join14, resolve as resolve6 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/service/runtime.ts
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute6, join as join12, resolve as resolve5 } from "node:path";
+import { dirname as dirname8, isAbsolute as isAbsolute7, join as join13, resolve as resolve5 } from "node:path";
 var STARTUP_INPUT_BYTES = 16 * 1024;
 function absolute(value) {
   const result = text(value, 4096, true);
-  if (!isAbsolute6(result))
+  if (!isAbsolute7(result))
     throw new ContractError("invalid");
   return result;
 }
@@ -5765,7 +6046,7 @@ function selectStart(options, ambient) {
       port: options.port ?? 17423,
       proxy: null
     },
-    agentDir: resolve5(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join12(ambient.HOME ?? ambient.USERPROFILE ?? homedir5(), ".pi", "agent")),
+    agentDir: resolve5(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join13(ambient.HOME ?? ambient.USERPROFILE ?? homedir5(), ".pi", "agent")),
     tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
     tokenFile: options.tokenFile ? resolve5(options.tokenFile) : null
   });
@@ -5897,7 +6178,7 @@ async function gatewayMain(argv, hostUrl) {
       kind: "workbench",
       serverConfig: config,
       stateHome: store.stateHome,
-      agentDir: agentDir ?? selected?.agentDir ?? resolve6(process.env.PI_CODING_AGENT_DIR ?? join13(homedir6(), ".pi", "agent")),
+      agentDir: agentDir ?? selected?.agentDir ?? resolve6(process.env.PI_CODING_AGENT_DIR ?? join14(homedir6(), ".pi", "agent")),
       policy: { ...policy, port: server.port }
     });
     const blocked = await healWorkbenchForStart(store, () => ownerResponsive(store));
@@ -5944,7 +6225,7 @@ import {
   accessSync,
   constants as constants4,
   existsSync as existsSync3,
-  lstatSync as lstatSync8,
+  lstatSync as lstatSync9,
   mkdtempSync,
   readFileSync as readFileSync3,
   realpathSync as realpathSync5,
@@ -5952,7 +6233,7 @@ import {
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename2, dirname as dirname10, isAbsolute as isAbsolute7, join as join14 } from "node:path";
+import { basename as basename2, dirname as dirname10, isAbsolute as isAbsolute8, join as join15 } from "node:path";
 var PACKAGE = "@abelxiaoxing/cadence";
 var VIEW_MS = 30000;
 var INSTALL_MS = 15 * 60000;
@@ -5980,19 +6261,19 @@ var unsupported = () => ({
 });
 function sameCopy(modules, root) {
   try {
-    const path2 = join14(modules, ...PACKAGE.split("/"));
-    return !lstatSync8(path2).isSymbolicLink() && realpathSync5(path2) === realpathSync5(root) && realpathSync5(path2) === join14(realpathSync5(modules), ...PACKAGE.split("/"));
+    const path2 = join15(modules, ...PACKAGE.split("/"));
+    return !lstatSync9(path2).isSymbolicLink() && realpathSync5(path2) === realpathSync5(root) && realpathSync5(path2) === join15(realpathSync5(modules), ...PACKAGE.split("/"));
   } catch {
     return false;
   }
 }
 function prefixManager(prefix) {
-  const npm = existsSync3(join14(prefix, "package-lock.json")) || existsSync3(join14(prefix, "npm-shrinkwrap.json"));
-  const bun = existsSync3(join14(prefix, "bun.lock")) || existsSync3(join14(prefix, "bun.lockb"));
+  const npm = existsSync3(join15(prefix, "package-lock.json")) || existsSync3(join15(prefix, "npm-shrinkwrap.json"));
+  const bun = existsSync3(join15(prefix, "bun.lock")) || existsSync3(join15(prefix, "bun.lockb"));
   return npm === bun ? undefined : bun ? "bun" : "npm";
 }
 function writable(installation, modules, root) {
-  if (installation.manager === "bun" && [".npmrc", "bunfig.toml", ".bunfig.toml"].some((name) => existsSync3(join14(installation.prefix, name))))
+  if (installation.manager === "bun" && [".npmrc", "bunfig.toml", ".bunfig.toml"].some((name) => existsSync3(join15(installation.prefix, name))))
     return unsupported();
   try {
     for (const path2 of [installation.prefix, modules, dirname10(root), root])
@@ -6004,18 +6285,18 @@ function writable(installation, modules, root) {
       "bun.lock",
       "bun.lockb"
     ])
-      if (existsSync3(join14(installation.prefix, name)))
-        accessSync(join14(installation.prefix, name), constants4.W_OK);
+      if (existsSync3(join15(installation.prefix, name)))
+        accessSync(join15(installation.prefix, name), constants4.W_OK);
     return installation;
   } catch {
     return { route: "not-writable" };
   }
 }
 async function installation(s, commands) {
-  const agent = agentDirectory(s), piPrefix = join14(agent, "npm");
-  if (sameCopy(join14(piPrefix, "node_modules"), s.root)) {
+  const agent = agentDirectory(s), piPrefix = join15(agent, "npm");
+  if (sameCopy(join15(piPrefix, "node_modules"), s.root)) {
     try {
-      const settings2 = JSON.parse(readFileSync3(join14(agent, "settings.json"), "utf8"));
+      const settings2 = JSON.parse(readFileSync3(join15(agent, "settings.json"), "utf8"));
       if (!settings2 || !Array.isArray(settings2.packages))
         return unsupported();
       const sources = settings2.packages.map((p) => typeof p === "string" ? p : p && typeof p === "object" && ("source" in p) ? p.source : undefined).filter((source) => typeof source === "string" && (source === `npm:${PACKAGE}` || source.startsWith(`npm:${PACKAGE}@`)));
@@ -6031,7 +6312,7 @@ async function installation(s, commands) {
         route: manager === "npm" ? "pi-npm" : "pi-bun",
         manager,
         prefix: piPrefix
-      }, join14(piPrefix, "node_modules"), s.root);
+      }, join15(piPrefix, "node_modules"), s.root);
     } catch {
       return unsupported();
     }
@@ -6039,27 +6320,27 @@ async function installation(s, commands) {
   const localModules = dirname10(dirname10(s.root)), local = dirname10(localModules);
   const manifest = (() => {
     try {
-      return JSON.parse(readFileSync3(join14(local, "package.json"), "utf8"));
+      return JSON.parse(readFileSync3(join15(local, "package.json"), "utf8"));
     } catch {
       return;
     }
   })();
-  if (manifest?.name === "pi-extensions" || basename2(dirname10(local)) === ".pi" || basename2(local) === "npm" && existsSync3(join14(dirname10(local), "settings.json")))
+  if (manifest?.name === "pi-extensions" || basename2(dirname10(local)) === ".pi" || basename2(local) === "npm" && existsSync3(join15(dirname10(local), "settings.json")))
     return unsupported();
   const bun = await commands.bun(["pm", "ls", "--global"]);
   const bunPrefix = bun.status === 0 ? /^(\/[^\r\n]+) node_modules(?: \(\d+(?: installed)?\))?\r?$/.exec(bun.stdout.split(`
 `)[0])?.[1] : undefined;
-  if (bunPrefix && sameCopy(join14(bunPrefix, "node_modules"), s.root)) {
+  if (bunPrefix && sameCopy(join15(bunPrefix, "node_modules"), s.root)) {
     const manager = prefixManager(bunPrefix);
     if (manager === "bun")
-      return writable({ route: "bun", manager: "bun", prefix: bunPrefix }, join14(bunPrefix, "node_modules"), s.root);
+      return writable({ route: "bun", manager: "bun", prefix: bunPrefix }, join15(bunPrefix, "node_modules"), s.root);
     if (!manager)
       return unsupported();
   }
   const npm = await commands.npm(["root", "--global"]);
   const modules = npm.status === 0 ? npm.stdout.trim() : "";
   const prefix = dirname10(dirname10(modules));
-  if (isAbsolute7(modules) && modules === join14(prefix, "lib", "node_modules") && sameCopy(modules, s.root))
+  if (isAbsolute8(modules) && modules === join15(prefix, "lib", "node_modules") && sameCopy(modules, s.root))
     return writable({ route: "npm", manager: "npm", prefix }, modules, s.root);
   if (basename2(localModules) !== "node_modules" || !sameCopy(localModules, s.root))
     return unsupported();
@@ -6124,9 +6405,9 @@ async function fetchVersions(i, versions, commands) {
         })).status !== 0)
           return false;
       } else {
-        const stage = mkdtempSync(join14(tmpdir(), "cadence-upgrade-"));
+        const stage = mkdtempSync(join15(tmpdir(), "cadence-upgrade-"));
         try {
-          writeFileSync4(join14(stage, "package.json"), JSON.stringify({ private: true }));
+          writeFileSync4(join15(stage, "package.json"), JSON.stringify({ private: true }));
           if ((await commands.bun([
             "add",
             "--cwd",
@@ -6150,12 +6431,12 @@ async function fetchVersions(i, versions, commands) {
 
 // src/service/launchd.ts
 import { rmSync as rmSync5 } from "node:fs";
-import { dirname as dirname11, join as join15 } from "node:path";
+import { dirname as dirname11, join as join16 } from "node:path";
 var LABEL = "com.abelxiaoxing.cadence";
 var MARKER2 = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated by @abelxiaoxing/cadence`;
 function plistPath(s) {
-  return join15(s.home, "Library", "LaunchAgents", `${LABEL}.plist`);
+  return join16(s.home, "Library", "LaunchAgents", `${LABEL}.plist`);
 }
 var xml = (value) => checked(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 function buildPlist(u) {
@@ -6235,11 +6516,11 @@ async function configureLaunchAgent(s, mode, requested) {
     s.launchctl(["bootout", target(s)]);
   write(path2, buildPlist({
     node: s.node,
-    cli: join15(s.root, "src", "service-cli.mjs"),
+    cli: join16(s.root, "src", "service-cli.mjs"),
     workspace,
     serverConfig: serverConfigPath(s.home),
     environment: serviceEnvironment(s),
-    log: join15(s.home, "Library", "Logs", "cadence.log")
+    log: join16(s.home, "Library", "Logs", "cadence.log")
   }));
   const result = {
     unit: path2,
@@ -6250,7 +6531,7 @@ async function configureLaunchAgent(s, mode, requested) {
     s.launchctl(["enable", target(s)]);
   else if (disabled(s))
     return { status: "disabled", ...result };
-  if (workspace !== null && !regularFile(join15(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join16(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   const started = s.launchctl(["bootstrap", domain(s), path2]).status === 0;
   return { status: started ? "started" : "failed", ...result };
@@ -6299,14 +6580,14 @@ function launchAgentStatus(s) {
 
 // src/service/login-run.ts
 import { rmSync as rmSync6 } from "node:fs";
-import { dirname as dirname12, isAbsolute as isAbsolute8, join as join16 } from "node:path";
+import { dirname as dirname12, isAbsolute as isAbsolute9, join as join17 } from "node:path";
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 var RUN_VALUE = "Cadence";
 var MARKER3 = "' Generated by @abelxiaoxing/cadence";
 function launcherPath(s) {
   const local = s.env.LOCALAPPDATA;
-  return join16(local && isAbsolute8(local) ? local : join16(s.home, "AppData", "Local"), "cadence-server", "cadence.vbs");
+  return join17(local && isAbsolute9(local) ? local : join17(s.home, "AppData", "Local"), "cadence-server", "cadence.vbs");
 }
 var literal2 = (value) => `"${checked(value).replaceAll('"', '""')}"`;
 function argument2(value) {
@@ -6362,7 +6643,7 @@ async function configureLoginRun(s, mode, requested) {
   const environment = s.env.PI_CODING_AGENT_DIR ? [["PI_CODING_AGENT_DIR", agentDirectory(s)]] : [];
   write(path2, utf16(buildLauncher({
     node: s.node,
-    cli: join16(s.root, "src", "service-cli.mjs"),
+    cli: join17(s.root, "src", "service-cli.mjs"),
     workspace,
     serverConfig: serverConfigPath(s.home),
     environment
@@ -6378,7 +6659,7 @@ async function configureLoginRun(s, mode, requested) {
       return { status: "failed", ...result };
     s.reg(["delete", APPROVED_KEY, "/v", RUN_VALUE, "/f"]);
   }
-  if (workspace !== null && !regularFile(join16(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join17(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   return { status: s.launch(path2) ? "started" : "failed", ...result };
 }
@@ -6429,7 +6710,7 @@ async function loginRunStatus(s) {
 // src/service/maintenance.ts
 import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 var RESTART_MS = 5 * 60000;
 function cgroupPath(text2) {
   const lines = text2?.split(`
@@ -6447,7 +6728,7 @@ function insideUnit(s) {
   return unit !== "" && (own === unit || own.startsWith(`${unit}/`));
 }
 function installedVersion(root) {
-  const value = JSON.parse(readFileSync4(join17(root, "package.json"), "utf8"));
+  const value = JSON.parse(readFileSync4(join18(root, "package.json"), "utf8"));
   if (!value || typeof value !== "object" || !("name" in value))
     throw new ContractError("invalid");
   literal(value.name, PACKAGE);
@@ -6539,7 +6820,7 @@ function releaseForInstallation(selected, commands, spec) {
 async function restartInstalled(s) {
   const name = serviceName(s);
   const result = await run(s.node, [
-    join17(s.root, "src", "service-cli.mjs"),
+    join18(s.root, "src", "service-cli.mjs"),
     "server",
     "restart",
     s.scope === "system" ? "--system" : "--user",
@@ -6625,7 +6906,7 @@ function jobOutcome(action, result) {
 
 // src/service/system-service.ts
 import { existsSync as existsSync4, realpathSync as realpathSync6, rmSync as rmSync7 } from "node:fs";
-import { isAbsolute as isAbsolute9, join as join18 } from "node:path";
+import { isAbsolute as isAbsolute10, join as join19 } from "node:path";
 var MARKER4 = "# Generated by @abelxiaoxing/cadence";
 function boundary(s) {
   if (s.platform !== "linux" || s.scope !== "system")
@@ -6639,7 +6920,7 @@ function legacyPath(s) {
 function observed(s) {
   const path2 = unitPath(s);
   let previous = readGenerated(path2, MARKER4);
-  if (typeof previous === "string" && (unitWorkspace(previous) !== null && !isAbsolute9(unitWorkspace(previous) ?? "") || !previous.includes(`
+  if (typeof previous === "string" && (unitWorkspace(previous) !== null && !isAbsolute10(unitWorkspace(previous) ?? "") || !previous.includes(`
 User=root
 `)))
     previous = null;
@@ -6656,7 +6937,7 @@ function sameStateEnvironment(s, previous) {
     if (values.size !== kept.length)
       return false;
     const state = s.env.XDG_STATE_HOME;
-    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute9(state) ? state : undefined);
+    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute10(state) ? state : undefined);
   } catch {
     return false;
   }
@@ -6699,7 +6980,7 @@ async function configureSystemService(s, mode, requested) {
   const content = buildUnit({
     system: true,
     node: s.node,
-    cli: join18(s.root, "src", "service-cli.mjs"),
+    cli: join19(s.root, "src", "service-cli.mjs"),
     workspace: selected.workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
@@ -6748,7 +7029,7 @@ async function configureSystemService(s, mode, requested) {
     return { status: "failed", ...result, ...selected };
   if (mode === "install" && s.systemctl(["enable", s.unit]).status !== 0)
     return { status: "failed", ...result, ...selected };
-  if (selected.workspace !== null && !regularFile(join18(agentDir, "auth.json")))
+  if (selected.workspace !== null && !regularFile(join19(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result, ...selected };
   s.systemctl(["reset-failed", s.unit]);
   return {
@@ -6988,10 +7269,10 @@ function startupGuidance(result, input) {
       return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
 `;
     case "pi-auth":
-      return `${join19(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+      return `${join20(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
 `;
     case "pi-models":
-      return `${join19(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+      return `${join20(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.
@@ -7228,7 +7509,7 @@ function upgrade(s, to) {
   });
 }
 function serverGuidance(s, action, result, link) {
-  const cli = piUserInstall(s) ? `node ${JSON.stringify(join19(s.root, "src", "service-cli.mjs"))}` : "cadence";
+  const cli = piUserInstall(s) ? `node ${JSON.stringify(join20(s.root, "src", "service-cli.mjs"))}` : "cadence";
   const note = result.redirectedFrom ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)
 ` : "";
   return note + serverStatusGuidance(s, action, result, cli, link);
@@ -7335,7 +7616,7 @@ ${manage}
 ${linger}`;
     }
     case "waiting-for-pi-login":
-      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join19(agentDirectory(s), "auth.json")}.
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join20(agentDirectory(s), "auth.json")}.
 Log in to Pi, then: ${cli} server restart${flags}
 ${config}
 ${lingerGuidance(result.linger)}`;

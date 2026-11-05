@@ -39,7 +39,9 @@ The private worker image pipe is checked against the exact owner-declared byte l
 
 Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters), two concurrent readonly research workers, 16 checks per set and four explicit setup commands.
 Adaptive delivery has no fixed repair-round count or total deadline; native worker/check deadlines still apply.
-Implementation uses one stable candidate.
+Implementation uses one stable candidate on a new named branch after approval.
+`CHANGE_LIMITS` in `src/change-tools.mjs` bounds four live Git evidence streams, 2KiB raw pages, 120s idle expiry and a 30s active-page budget; stop joins actual child closure.
+`src/service/repository-coordination.ts` bounds lease waiting at 30s with 50ms polling and recovery inspection at 256 active owner intents; no live lease expires by age.
 Proven provider 429/5xx failures back off from 2s to 60s after actual cleanup; this is a wait interval, not a lifetime retry quota.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
@@ -50,7 +52,7 @@ Workflow check/Git results use the existing 256KiB launcher output bound (`Proce
 `WORKFLOW_RESULT_BYTES` in `src/service/workflow-result.ts` bounds the redacted JSON-encoded result to 240KiB, reserving wrapper space below the 384KiB record, 256KiB file-text DTO and 512KiB reply limits.
 Diagnostic head/tail clipping is explicitly flagged, including JSON escaping and redaction expansion; an implementation report is independently parsed from its complete selected message within 16KiB before field sanitation or display clipping.
 A subagent transcript beyond the conversation capture bounds (384KiB, 256 items) keeps a labelled prefix and the worker continues.
-Clean worktrees at their expected commit are removed after a merge with plain `git worktree remove`; any other worktree is retained and listed.
+Only owned worktrees at their accepted, delivered commit and without any residue (ignored files included) are removed after successful post-merge checks with plain `git worktree remove`; other worktrees and the named task branch remain.
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
 Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`).

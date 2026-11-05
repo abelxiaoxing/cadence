@@ -1,3 +1,7 @@
+import { gitArguments, gitEnvironment } from "./git-environment.mjs";
+
+export { gitArguments, gitEnvironment } from "./git-environment.mjs";
+
 /** Workspace identity and bounded filesystem operations, independent of task records. */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -158,30 +162,6 @@ export function readBounded(
   }
 }
 
-/** Git observations describe the physical cwd, not inherited alternate
- * index/worktree overrides. Root never borrows sudo's original user's trust. */
-export function gitEnvironment(): NodeJS.ProcessEnv {
-  const root = process.getuid?.() === 0;
-  return {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"),
-      ),
-    ),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C",
-  };
-}
-/** Observation is not permission to trust another account's repository.
- * Even with fsmonitor/textconv/ext-diff disabled, status/diff can invoke clean
- * or process filters. Root therefore requires Git's own ownership check, with
- * no safe.directory exceptions (including inherited wildcards). No config is
- * written and ordinary-user trust behavior stays unchanged. */
-export function gitArguments(args: string[]): string[] {
-  return process.platform !== "win32" && process.getuid?.() === 0
-    ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args]
-    : args;
-}
 export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
   const actual = realpathSync(cwd);
   const result = spawnSync(

@@ -1,6 +1,7 @@
 /** Trusted capability composition. No discovery, plugin claims or model-selected
  * permissions. Role prompts do not grant tools; the validated owner request does. */
 import { Type } from "typebox";
+import { createChangeTools } from "./change-tools.mjs";
 import { createCoordinatorTools } from "./coordinator-tools.mjs";
 import { createResearchTools } from "./research-tools.mjs";
 import { sanitizeText } from "./worker-redaction.mjs";
@@ -32,6 +33,7 @@ const bundles = {
     ],
   }),
   observation: ({ workspace }) => createResearchTools(workspace),
+  changes: ({ changes }) => createChangeTools(changes),
   coordination: () => createCoordinatorTools(),
 };
 
@@ -43,7 +45,16 @@ export function createWorkerToolkit(options) {
     (coordinator && purpose !== "research")
   )
     throw new Error("Invalid worker capability selection");
-  const capabilities = policies[coordinator ? "coordination" : purpose];
+  if (
+    options.changes &&
+    (purpose !== "review" ||
+      coordinator ||
+      options.changes.root !== options.workspace.roots[0])
+  )
+    throw new Error("Invalid review capability binding");
+  const capabilities = options.changes
+    ? Object.freeze([...policies[purpose], "changes"])
+    : policies[coordinator ? "coordination" : purpose];
   const owned = capabilities.map((capability) => bundles[capability](options));
   const customTools = owned.flatMap((bundle) => bundle.tools);
   if (options.reporting && !coordinator && purpose === "edit")

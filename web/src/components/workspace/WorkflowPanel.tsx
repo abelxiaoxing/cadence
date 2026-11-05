@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { FiSquare } from "react-icons/fi";
 import {
+  type DeliveryObservation,
+  readableDelivery,
   readableWorkflowPlan,
   type WorkflowProposal,
   type WorkflowRun,
@@ -254,6 +256,9 @@ export function PlanCard({
         <summary>{t("Complete delivery agreement")}</summary>
         <Markdown text={readableWorkflowPlan(proposal.plan)} />
       </details>
+      {proposal.delivery && (
+        <Markdown text={readableDelivery(proposal.delivery)} />
+      )}
       <button
         type="button"
         className="primary"
@@ -366,6 +371,7 @@ function WorkflowCardView({
         </p>
       )}
       {run?.notice && <p>{run.notice}</p>}
+      {run?.delivery && <DeliveryDetails delivery={run.delivery} />}
       {run && (
         <details>
           <summary>Owner timing and runtime</summary>
@@ -490,5 +496,56 @@ function WorkflowCardView({
         {t("Observe current state")}
       </button>
     </article>
+  );
+}
+
+/** Only owner-recorded facts; an accepted candidate is not an applied merge. */
+export function DeliveryDetails({
+  delivery: d,
+}: {
+  delivery: DeliveryObservation;
+}) {
+  const { t, tx } = useT();
+  const rows = [
+    [t("Task branch"), d.taskBranch],
+    [t("Task worktree"), d.worktreeRoot],
+    [
+      t("Delivery target"),
+      `${d.binding.target.branch} @ ${d.binding.target.head}`,
+    ],
+    [t("Worktree preparation"), tx(d.preparation)],
+    [t("Candidate commit"), d.candidate ?? t("Not recorded")],
+    [
+      t("Candidate acceptance"),
+      d.acceptance
+        ? `${t("Checks and automatic Agent review passed")} · ${d.acceptance.candidate}`
+        : t("Not recorded"),
+    ],
+    [
+      t("Local integration"),
+      `${tx(d.integration.status)}${d.integration.after ? ` · ${d.integration.after}` : ""}`,
+    ],
+    [t("Post-merge checks"), tx(d.postChecks)],
+    [t("Worktree cleanup"), tx(d.cleanup.status)],
+  ];
+  return (
+    <section
+      className="workflow-delivery"
+      aria-label={t("Task branch delivery")}
+    >
+      <dl>
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>
+              <code>{value}</code>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {d.integration.reason && <p>{d.integration.reason}</p>}
+      {d.cleanup.reason && <p>{d.cleanup.reason}</p>}
+      <p>{t("Policy: keep the task branch; no push or deployment.")}</p>
+    </section>
   );
 }

@@ -8,26 +8,9 @@ import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
-const git = vi.hoisted(() => ({
-  head: "delivered",
-  dirty: false,
-  targetChecks: 0,
-  refuseTarget: false,
-}));
 vi.mock("../src/service/workflow-git.ts", async (original) => ({
   ...(await original<typeof import("../src/service/workflow-git.ts")>()),
-  assertWorktree: async () => {},
-  gitHead: async () => git.head,
   sourceIdentityAsync: async () => "source",
-  pathIdentity: () => null,
-  documentPlacement: async () => "commit",
-  tracked: async () => true,
-  committedPaths: async () => ["a.txt"],
-  assertWorkflowScope: async () => (git.dirty ? ["a.txt"] : []),
-  assertTarget: async () => {
-    if (++git.targetChecks > 1 && git.refuseTarget)
-      throw new Error("Target moved; preserve the undelivered repair");
-  },
 }));
 const success = {
   outcome: "completed",
@@ -196,81 +179,6 @@ it("baseline recovery cites only the failed checks of the current round", async 
   };
   await expect(owner.implement(live, proposal)).rejects.toThrow("fixture stop");
   expect(failures).toEqual([[live.run.steps[0].id], [live.run.steps[3].id]]);
-});
-it("failed post-merge repair preserves its clean but undelivered candidate commit", async () => {
-  Object.assign(git, {
-    head: "delivered",
-    dirty: false,
-    targetChecks: 0,
-    refuseTarget: true,
-  });
-  const { owner, live, proposal } = fixture();
-  Object.assign(proposal.plan, { delivery: "local-merge" });
-  Object.assign(live, { target: { head: "baseline", branch: "main" } });
-  owner.worktreeHome = () => join(owner.cwd, "trees");
-  owner.gitStep = vi.fn(async () => {});
-  owner.unchangedHead = async () => {};
-  owner.commit = async (
-    _l: unknown,
-    _c: string,
-    _scope: unknown,
-    _message: string,
-    _before: string,
-    title: string,
-  ) => {
-    if (title === "commit-post-integration-repair") {
-      git.head = "undelivered-repair";
-      git.dirty = false;
-    }
-    return git.head;
-  };
-  owner.merge = async (_l: unknown, candidate: string) => {
-    live.run.mergedCommit = candidate;
-  };
-  owner.checks = async (
-    _l: unknown,
-    cwd: string,
-    _p: unknown,
-    baseline: boolean,
-    observed: unknown[],
-  ) => {
-    if (baseline) return true;
-    expect(cwd).toBe(owner.cwd);
-    const step = owner.step(live, "post-merge", "check");
-    step.status = "failed";
-    observed.push(step);
-    return false;
-  };
-  owner.recoverStage = async (
-    _l: unknown,
-    _c: string,
-    _p: unknown,
-    stage: string,
-    action: () => Promise<unknown>,
-  ) => {
-    try {
-      return await action();
-    } catch (error) {
-      if (
-        stage !== "post-merge verification" ||
-        !(error instanceof AttemptFailure)
-      )
-        throw error;
-      git.dirty = true;
-      return action();
-    }
-  };
-  const cleanup = vi.fn();
-  owner.removeWorktrees = cleanup;
-  await expect(owner.implement(live, proposal)).rejects.toThrow("Target moved");
-  expect(live.run.mergedCommit).toBe("delivered");
-  const [, entries, home] = cleanup.mock.calls[0];
-  expect(entries[0].expected).toBe("delivered");
-  delete owner.removeWorktrees;
-  owner.run = vi.fn();
-  await owner.removeWorktrees(live, entries, home);
-  expect(owner.run).not.toHaveBeenCalled();
-  expect(live.notes.join(" ")).toContain("HEAD moved");
 });
 it("cleanup quarantine cannot be overwritten by a completed workflow status", async () => {
   const { owner, live } = fixture();

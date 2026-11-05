@@ -54,9 +54,12 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/worker-toolkit.mjs` owns trusted capability composition and tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
 `src/research-tools.mjs` owns observation schemas/cursors; `src/research-scan.mjs` owns their streaming filesystem operations.
+`src/change-tools.mjs` adds fixed-revision readonly review evidence; `src/git-environment.mjs` shares the physical-checkout Git policy without replacement objects.
+See [worktree delivery](worktree-delivery.md) for the approved-plan-to-local-delivery contract.
 See [worker tools](worker-tools.md) for capability, continuation, coverage and disposal contracts; SDK bootstrap no longer duplicates role-specific tool lists.
 `src/service/workflow-history.ts` owns bounded readonly ID-selection continuations and their idle/owner-close cleanup.
 `src/service/workflows.ts` owns the private agreement/grant/run journal, original processes and delivery operations; `workflow-controller.ts` owns evidence-led continuation and route revisions, `workflow-report.ts` owns structured reports and bounded capture projection, while `project-knowledge.ts` owns source selection and verified knowledge-assignment policy (see [project knowledge](project-knowledge.md)); `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
+`src/service/workflow-delivery.ts` owns the named stable candidate, exact-candidate acceptance preflight and safe retention; `src/service/repository-coordination.ts` owns short common-directory Git mutation leases and indexed workspace identity, without replacing the adaptive controller or execution owner.
 `src/service/workflow-result.ts` owns the shared bounded, redacted process-result projection for workflow retention and reads, independent of native settlement and structured task completion.
 `src/service/conversation-contexts.ts` owns readonly context records and explicit per-conversation model installation/capture; it shares the existing bounded `OwnerModelContext` source cache, not one runtime per conversation.
 `src/conversation-identity.ts` supplies domain-separated context-version identities without importing the executor into Pi.

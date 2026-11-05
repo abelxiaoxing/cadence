@@ -9,6 +9,7 @@ import type {
   WorkflowRun,
   WorkflowStep,
 } from "../../src/service/contracts/workflow.ts";
+import { deliveryObservation } from "../../src/service/workflow-delivery.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import {
   approveWorkflow,
@@ -20,6 +21,7 @@ import {
   workflowAgentLabel,
 } from "../../web/src/components/workspace/AgentDock";
 import {
+  DeliveryDetails,
   nextRunWindow,
   PlanCard,
   placeWorkflows,
@@ -406,4 +408,73 @@ it("automatic recovery and knowledge progress remain live and do not request ano
   expect(html).toContain("<details>");
   expect(html).toContain("adaptive implementation");
   expect(html).not.toContain("At most 2 repair rounds");
+});
+it("delivery UI distinguishes an accepted candidate from an applied merge and names retained workspaces", () => {
+  const d = deliveryObservation(
+    {
+      policy: "task-branch-v1",
+      target: {
+        checkoutRoot: "/fixture",
+        repository: "/fixture/.git",
+        repositoryIdentity: "a".repeat(64),
+        branch: "refs/heads/main",
+        head: "a".repeat(40),
+      },
+    },
+    "/worktrees",
+    randomUUID(),
+    "feature",
+  );
+  d.candidate = "b".repeat(40);
+  d.acceptance = {
+    candidate: d.candidate,
+    tree: "c".repeat(40),
+    planDigest: "d".repeat(64),
+    contextDigest: "e".repeat(64),
+    checks: ["check"],
+    review: "review",
+  };
+  d.integration.status = "blocked";
+  d.integration.reason = "Target changed; candidate retained.";
+  d.cleanup = { status: "retained", reason: "Ignored user data remains." };
+  const html = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <DeliveryDetails delivery={d} />
+    </LocaleProvider>,
+  );
+  expect(html).toContain(d.taskBranch);
+  expect(html).toContain(d.worktreeRoot);
+  expect(html).toContain("Checks and automatic Agent review passed");
+  expect(html).toContain("blocked");
+  expect(html).toContain("Target changed; candidate retained.");
+  expect(html).toContain("Ignored user data remains.");
+  expect(html).not.toContain("Actual local merge commit");
+  const zh = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <DeliveryDetails delivery={d} />
+    </LocaleProvider>,
+  );
+  expect(zh).toContain("任务分支");
+  expect(zh).toContain("候选验收");
+});
+it("approval card displays the owner-bound target and branch/worktree delivery policy", () => {
+  const s = state();
+  if (!s.proposal) throw new Error("fixture");
+  s.proposal.delivery = {
+    policy: "task-branch-v1",
+    target: {
+      checkoutRoot: "/fixture",
+      repository: "/fixture/.git",
+      repositoryIdentity: "a".repeat(64),
+      branch: "refs/heads/release",
+      head: "b".repeat(40),
+    },
+  };
+  const html = renderToStaticMarkup(
+    <PlanCard proposal={s.proposal} canApprove={true} onApprove={() => {}} />,
+  );
+  expect(html).toContain("refs/heads/release");
+  expect(html).toContain("b".repeat(40));
+  expect(html).toContain("after approval");
+  expect(html).toContain("Keep the task branch");
 });
