@@ -435,6 +435,7 @@ export interface DependencyHandoff {
 }
 export declare function decodeHandoff(v: unknown): DependencyHandoff;
 export interface WorkerPublicRequest {
+  changes?: { root: string; base: string; candidate: string };
   protocol: 2;
   taskId: string;
   taskKind: TaskKind;

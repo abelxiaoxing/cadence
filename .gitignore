@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .rumdl_cache/
 *.tgz
 .DS_Store

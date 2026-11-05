@@ -8,8 +8,11 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
 Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
-Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` plus a disjoint `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
+Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` on one named task branch plus a disjoint detached `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
 Worktrees created by 2.0.21 inside the service namespace are left where they are.
+Git mutation groups also hold a common-directory repository lease, after the checkout permit; cancellation cannot release it before original settlement.
+Managed worktrees cannot start a second project owner; indexed resources recover only through the existing exact-owner/worker proof, with damaged records archived and unidentified shared holders requiring doctor confirmation.
+See [worktree delivery](worktree-delivery.md) for exact candidate, retention and recovery details.
 Direct working-copy delivery serializes edits.
 The terminal is never an embedded executor.
 One fresh 120s grant binds the exact proposal/plan, model source, project observation and owner epoch; accepted durable work owns the declared finite steps, not fabricated user clicks.

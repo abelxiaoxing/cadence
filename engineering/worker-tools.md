@@ -11,7 +11,7 @@ Parent process, Stop and checkout ownership remain in [lifetimes](lifetimes.md).
   The service retains canonical-path validation and its existing empty-subdirectory preparation.
 - `src/worker-toolkit.mjs` is the one trusted capability registry and request-to-capability policy.
   An owner-validated `edit` purpose receives SDK file tools and the captured no-spill shell adapter; `research`, `diagnosis` and the protocol's explicit `review` purpose receive the observation bundle.
-  Automatic review uses that same readonly bundle, not editing authority.
+  Automatic review uses that same readonly bundle, plus `changes` only when its trusted review request carries the owner-fixed root/base/candidate binding, never editing authority.
   A browser coordinator receives only its owner bridge.
   Prompt roles, repository files, model arguments and arbitrary plugins cannot register tools or grant capabilities.
 - `src/sdk-worker.mjs` passes the toolkit's explicit names/custom definitions and bound cwd to the installed public Pi SDK.
@@ -27,7 +27,17 @@ Tool implementation is replaceable inside a trusted capability bundle; adding a 
 These are host tools, not an OS sandbox.
 In particular, a shell is not made readonly by its cwd, a prompt, or a Git worktree.
 Git commits/integration, approvals and delivery remain service-owned operations under the existing consent contracts.
-No new branch/worktree lifecycle or implicit tool discovery is introduced here.
+Branch/worktree creation and integration live in the service-owned [delivery lifecycle](worktree-delivery.md), not this registry; there is no implicit tool discovery.
+
+## Fixed Git review evidence
+
+`src/change-tools.mjs` owns the `changes` capability, whose only inputs are paths/diff/base/candidate observation modes, literal checkout-relative paths and one-use continuation/close cursors.
+The owner supplies immutable full OIDs and the review root; model arguments cannot substitute them or grant this capability to an editing/coordinating worker.
+The tool streams native Git output under backpressure, with bounded active/idle pipes and actual-child closure on cancellation, expiry or disposal; it creates no source copies or spill files.
+Coverage is complete only at successful native EOF/close; binary, invalid UTF-8 and unavailable objects cannot become complete empty results.
+The shared Git policy removes inherited alternate index/worktree overrides and disables replacement objects; observation commands disable external diff/textconv/pager and use literal pathspecs.
+These are readonly Git observations, not arbitrary shell access or a guarantee that an Agent inspected all evidence.
+Limits live beside `CHANGE_LIMITS`; evidence, capture and status-preview coverage remain separate.
 
 ## Observation requests
 
@@ -109,6 +119,7 @@ The parent total deadline remains the hard bound for stuck work; cursor activity
 
 ## Regression owners
 
+- `test/change-tools.test.mjs`: fixed-revision evidence, UTF-8 continuation, cursor ownership, cleanup and trusted review-only composition.
 - `test/worker-toolkit.test.mjs`: trusted capability selection, explicit SDK allowlists, shared cwd, original-operation cleanup and noncreating worktree-relative placement.
 - `test/research-tools.test.mjs`: batch/range semantics, actual continuations, multi-pattern evidence, output accounting, source changes and honest coverage.
 - `test/research-tools-schema.test.mjs`: object-root parameter schemas through the installed public SDK validator and Responses adapter's pre-send hook, without network/provider execution.

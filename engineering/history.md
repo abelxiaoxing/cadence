@@ -88,6 +88,9 @@ The terminal's workflows are found from its `cadence-conversation-mode/1` entrie
 
 The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
 It stores immutable proposals/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and bounded process results with explicit diagnostic truncation.
+New run snapshots include owner-bound delivery placement, exact-candidate acceptance references, actual integration/post-check results and separate artifact cleanup outcomes; old snapshots omit them without migration.
+An interrupted applying/preparing phase becomes explicitly unknown, with artifacts retained and no replay.
+Shared delivery-resource records are coordination only, not another transcript/history store.
 One-use confirmation grants remain ephemeral; persisted mode or Markdown never reconstructs them.
 The shared capture sanitizer is reused, not a second credential policy.
 Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.

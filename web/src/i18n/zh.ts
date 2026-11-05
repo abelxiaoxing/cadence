@@ -2,6 +2,25 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Not recorded": "未记录",
+  "Task branch": "任务分支",
+  "Task worktree": "任务工作区",
+  "Delivery target": "交付目标",
+  "Worktree preparation": "工作区准备",
+  "Candidate commit": "候选提交",
+  "Candidate acceptance": "候选验收",
+  "Checks and automatic Agent review passed": "检查和自动 Agent review 已通过",
+  "Local integration": "本地合回",
+  "Post-merge checks": "合回后检查",
+  "Worktree cleanup": "工作区清理",
+  "Task branch delivery": "任务分支交付",
+  "Policy: keep the task branch; no push or deployment.":
+    "策略：保留任务分支；不推送或部署。",
+  retained: "已保留",
+  removed: "已移除",
+  applied: "已合回",
+  applying: "合回中",
+
   "Invalid image.": "图片格式无效。",
   "Add images": "添加图片",
   "Remove image: {name}": "移除图片：{name}",

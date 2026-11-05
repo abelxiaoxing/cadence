@@ -97,6 +97,24 @@ function diagnosticText(value, maximum = 4096, secrets = []) {
   return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
 }
 
+// src/git-environment.mjs
+function gitEnvironment() {
+  const root = process.getuid?.() === 0;
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
+    GIT_OPTIONAL_LOCKS: "0",
+    GIT_NO_LAZY_FETCH: "1",
+    LC_ALL: "C"
+  };
+}
+function gitArguments(args) {
+  return [
+    "--no-replace-objects",
+    ...process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false"] : [],
+    ...args
+  ];
+}
+
 // src/workspace.ts
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -216,17 +234,6 @@ function readBounded(path, max, packaged = false) {
   } finally {
     closeSync(fd);
   }
-}
-function gitEnvironment() {
-  const root = process.getuid?.() === 0;
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C"
-  };
-}
-function gitArguments(args) {
-  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
 }
 function resolveWorkspace(cwd) {
   const actual = realpathSync(cwd);

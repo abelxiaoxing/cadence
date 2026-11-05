@@ -56,7 +56,53 @@ export interface WorkflowPlan {
   repairAttempts: number;
   delivery: "local-merge" | "working-copy";
 }
+/** Owner-selected Git placement, not a model's permission to pick refs. */
+export interface DeliveryTarget {
+  checkoutRoot: string;
+  repository: string;
+  repositoryIdentity: string;
+  branch: string;
+  head: string;
+}
+export interface DeliveryBinding {
+  policy: "task-branch-v1";
+  target: DeliveryTarget;
+}
+export interface AcceptanceRecord {
+  candidate: string;
+  tree: string;
+  planDigest: string;
+  contextDigest: string;
+  checks: string[];
+  review: string;
+}
+export interface DeliveryArtifact {
+  id: string;
+  path: string;
+  branch: string | null;
+  head: string;
+  appliedCommit: string | null;
+  state: "preparing" | "ready" | "removed" | "retained";
+}
+export interface DeliveryObservation {
+  binding: DeliveryBinding;
+  taskBranch: string;
+  worktreeRoot: string;
+  preparation: "pending" | "ready" | "unknown";
+  artifacts: DeliveryArtifact[];
+  candidate: string | null;
+  acceptance: AcceptanceRecord | null;
+  integration: {
+    status: "pending" | "blocked" | "applying" | "applied" | "unknown";
+    before: string;
+    after: string | null;
+    reason: string;
+  };
+  postChecks: "not-run" | "passed" | "failed" | "unknown";
+  cleanup: { status: "pending" | "removed" | "retained"; reason: string };
+}
 export interface WorkflowProposal {
+  delivery?: DeliveryBinding;
   id: string;
   epoch: string;
   digest: string;
@@ -110,6 +156,7 @@ export interface WorkflowStep {
   truncated: boolean;
 }
 export interface WorkflowRun {
+  delivery?: DeliveryObservation;
   execution?: ExecutionContext;
   diagnostics?: WorkflowDiagnostics;
   id: string;
@@ -352,6 +399,167 @@ export function workflowContext(p: WorkflowPlan): string {
     true,
   );
 }
+export function gitOid(value: unknown): string {
+  const oid = text(value, 64, true);
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid))
+    throw new Error("Invalid Git object");
+  return oid;
+}
+function localRef(value: unknown): string {
+  const ref = text(value, 1024, true);
+  if (
+    !ref.startsWith("refs/heads/") ||
+    /[\s~^:?*[\\]/u.test(ref) ||
+    [...ref].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) ||
+    ref.includes("..") ||
+    ref.includes("@{") ||
+    ref
+      .split("/")
+      .some(
+        (p) =>
+          !p || p.startsWith(".") || p.endsWith(".") || p.endsWith(".lock"),
+      )
+  )
+    throw new Error("Invalid local ref");
+  return ref;
+}
+function deliveryPath(value: unknown): string {
+  const path = text(value, 4096, true);
+  if (!/^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(path) || path.includes("\0"))
+    throw new Error("Invalid delivery path");
+  return path;
+}
+export function decodeDeliveryBinding(value: unknown): DeliveryBinding {
+  const b = closed(value, ["policy", "target"]);
+  const t = closed(b.target, [
+    "checkoutRoot",
+    "repository",
+    "repositoryIdentity",
+    "branch",
+    "head",
+  ]);
+  return {
+    policy: oneOf(b.policy, ["task-branch-v1"]),
+    target: {
+      checkoutRoot: deliveryPath(t.checkoutRoot),
+      repository: deliveryPath(t.repository),
+      repositoryIdentity: decodeHash(t.repositoryIdentity),
+      branch: localRef(t.branch),
+      head: gitOid(t.head),
+    },
+  };
+}
+export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
+  const d = closed(value, [
+    "binding",
+    "taskBranch",
+    "worktreeRoot",
+    "preparation",
+    "artifacts",
+    "candidate",
+    "acceptance",
+    "integration",
+    "postChecks",
+    "cleanup",
+  ]);
+  const i = closed(d.integration, ["status", "before", "after", "reason"]);
+  const c = closed(d.cleanup, ["status", "reason"]);
+  const step = (x: unknown) => text(x, 160, true);
+  const acceptance = nullable(d.acceptance, (v) => {
+    const a = closed(v, [
+      "candidate",
+      "tree",
+      "planDigest",
+      "contextDigest",
+      "checks",
+      "review",
+    ]);
+    const checks = list(a.checks, WORKFLOW_LIMITS.checks, step);
+    if (!checks.length || new Set(checks).size !== checks.length)
+      throw new Error("Invalid acceptance checks");
+    return {
+      candidate: gitOid(a.candidate),
+      tree: gitOid(a.tree),
+      planDigest: decodeHash(a.planDigest),
+      contextDigest: decodeHash(a.contextDigest),
+      checks,
+      review: step(a.review),
+    };
+  });
+  const candidate = nullable(d.candidate, gitOid);
+  if (acceptance && acceptance.candidate !== candidate)
+    throw new Error("Stale candidate acceptance");
+  const artifacts = list(d.artifacts, WORKFLOW_LIMITS.tasks + 1, (v) => {
+    const a = closed(v, [
+      "id",
+      "path",
+      "branch",
+      "head",
+      "appliedCommit",
+      "state",
+    ]);
+    return {
+      id: text(a.id, 80, true),
+      path: deliveryPath(a.path),
+      branch: nullable(a.branch, localRef),
+      head: gitOid(a.head),
+      appliedCommit: nullable(a.appliedCommit, gitOid),
+      state: oneOf(a.state, [
+        "preparing",
+        "ready",
+        "removed",
+        "retained",
+      ] as const),
+    };
+  });
+  if (new Set(artifacts.map((a) => a.path)).size !== artifacts.length)
+    throw new Error("Duplicate worktree");
+  const binding = decodeDeliveryBinding(d.binding),
+    taskBranch = localRef(d.taskBranch);
+  if (
+    !taskBranch.startsWith("refs/heads/cadence/") ||
+    i.before !== binding.target.head ||
+    (i.status === "applied" &&
+      (!acceptance || !candidate || i.after !== candidate))
+  )
+    throw new Error("Inconsistent delivery evidence");
+  return {
+    binding,
+    taskBranch,
+    worktreeRoot: deliveryPath(d.worktreeRoot),
+    preparation: oneOf(d.preparation, ["pending", "ready", "unknown"]),
+    artifacts,
+    candidate,
+    acceptance,
+    integration: {
+      status: oneOf(i.status, [
+        "pending",
+        "blocked",
+        "applying",
+        "applied",
+        "unknown",
+      ]),
+      before: gitOid(i.before),
+      after: nullable(i.after, gitOid),
+      reason: text(i.reason, 2048),
+    },
+    postChecks: oneOf(d.postChecks, ["not-run", "passed", "failed", "unknown"]),
+    cleanup: {
+      status: oneOf(c.status, ["pending", "removed", "retained"]),
+      reason: text(c.reason, 2048),
+    },
+  };
+}
+/** Shared native/browser copy: placement is part of the visible approval. */
+export function readableDelivery(binding?: DeliveryBinding): string {
+  if (!binding) return "";
+  const t = binding.target;
+  return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and isolated worktree after approval.\nAcceptance: checks and automatic Agent review of the exact candidate.\nDelivery: fast-forward only while the approved target is unchanged. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
+}
+export function readableDeliveryRun(d?: DeliveryObservation): string {
+  if (!d) return "";
+  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${d.preparation}\nCandidate: ${d.candidate ?? "not recorded"}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : "not recorded"}\nIntegration: ${d.integration.status}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${d.cleanup.status}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
+}
 export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
   const modern =
     v !== null && typeof v === "object" && Object.hasOwn(v, "display");
@@ -364,9 +572,13 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
     "plan",
     "cwd",
     ...(Object.hasOwn(v ?? {}, "checkoutRoot") ? ["checkoutRoot"] : []),
+    ...(Object.hasOwn(v ?? {}, "delivery") ? ["delivery"] : []),
     ...(modern ? ["display"] : []),
   ]);
   return {
+    ...(o.delivery === undefined
+      ? {}
+      : { delivery: decodeDeliveryBinding(o.delivery) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     digest: decodeHash(o.digest),
@@ -458,6 +670,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     "humanReviewed",
     ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
+    ...(Object.hasOwn(v ?? {}, "delivery") ? ["delivery"] : []),
   ]);
   const status = (x: unknown) =>
     oneOf(x, [
@@ -471,6 +684,9 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
   if (o.humanReviewed !== false)
     throw new Error("Automatic execution is not human review");
   return {
+    ...(o.delivery === undefined
+      ? {}
+      : { delivery: decodeDeliveryObservation(o.delivery) }),
     ...(o.execution === undefined
       ? {}
       : { execution: decodeExecutionContext(o.execution) }),
@@ -571,7 +787,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
+    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize a new named task branch, isolated worktrees, local task commits and fast-forward integration into the displayed unchanged target after exact-candidate checks and automatic Agent review. Keep the task branch; remove only owned worktrees without any uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
 }
 
 const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);

@@ -43,6 +43,8 @@ Retained slow tests are for explicitly requested, file-targeted diagnosis only, 
 The real systemd diagnostic additionally requires `CADENCE_SYSTEMD_E2E=1` and a running user manager; it uses and removes a temporary unit under `$XDG_RUNTIME_DIR/systemd/user`, never a production service.
 
 Use the external private temp root described above for targeted tests too.
+Development may explicitly link already installed matching dependencies rather than copy/install them; `node_modules` links are ignored and Vite preserves their logical module paths, while the unchanged notice audit verifies all module bytes and membership.
+This is not implicit dependency setup for consumer workflows.
 A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and triggers `Private state home must be outside the working copy`; this is an invalid test environment, not evidence that unrelated features broke.
 A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 When a plan's one-time setup has already created and marked its private temp root, implementation/check/review/repair reuse that exact directory: validate its owner marker and `assertVerificationTemp`, never recreate it or treat its expected existence as a conflict.
@@ -68,6 +70,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 
 - `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
 - `service-conversation-workflow`, `test/web/workflow.test.tsx`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
+- `workflow-delivery`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: named branch/receipt binding, exact acceptance, original-operation leases, readonly Git evidence, staged/committed scope, false merge/cleanup success and preservation/recovery.
+  The full real admission case is tagged slow; controlled runtime/recovery seams are not paid-provider or real-owner qualification.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
 - `pi-sessions`, `service-conversation-pages`, `service-conversation-retention`, `conversation-retirement`, `conversation-records`, `test/web/conversation-reader.test.tsx`: conversations as the project's Pi sessions (directory precedence, incremental and torn-line reads, turns, read redaction, lossless parts), a browser turn's file and branches, the branch tree, live-preview counting, noncreating oversized-session refusal, command/entry correlation, current redaction, durable status and unsupported old identities without storage changes.
 - `conversation-images`, `service-conversation-images`, `test/web/images.test.tsx` plus `pi-sessions`/`gateway-conversations`: chunked image uploads without count/size quotas, exact Send/caller binding, SDK images through the private pipe, model capability refusal, readonly history/branch/media projection, image-only Send, upload failure and retained preview projection.
