@@ -1,9 +1,16 @@
-import { mkdir, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  rename,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { RESEARCH_LIMITS as L } from "../src/research-scan.mjs";
+import { RESEARCH_LIMITS as L, ResearchScan } from "../src/research-scan.mjs";
 import { createResearchTools } from "../src/research-tools.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
 
@@ -37,7 +44,7 @@ async function fixture(now) {
   };
   return { root, call, collect, session };
 }
-it("scoped scans include backup trees, return real continuations and refuse parent escapes", async () => {
+it("default-root scans include backup trees and allow explicit external observations", async () => {
   const { root, call, collect } = await fixture();
   await mkdir(join(root, "backup"));
   for (const name of ["a", "b", "c"])
@@ -62,9 +69,15 @@ it("scoped scans include backup trees, return real continuations and refuse pare
     text: "literal.* evidence a",
     matchedPatterns: [0],
   });
-  await expect(call("ls", { path: ".." })).rejects.toThrow(
-    "outside investigation roots",
-  );
+  const external = await mkdtemp(join(tmpdir(), "research-package-"));
+  await writeFile(join(external, "package.json"), '{"name":"fixture"}');
+  expect(
+    (await call("read", { path: join(external, "package.json") })).items[0],
+  ).toMatchObject({
+    root: null,
+    path: join(external, "package.json"),
+    text: '{"name":"fixture"}',
+  });
   const shallow = await call("find", { pattern: "*.txt", depth: 0 });
   expect(shallow.items).toEqual([]);
   expect(shallow.state).toBe("done");
@@ -73,9 +86,14 @@ it("scoped scans include backup trees, return real continuations and refuse pare
     reason: "depth limit",
     count: 1,
   });
-  await expect(
-    call("grep", { pattern: "a.*", literal: false }),
-  ).rejects.toThrow("literal");
+  const regex = await collect("grep", {
+    pattern: "evidence [ab]$",
+    literal: false,
+  });
+  expect(regex.items).toHaveLength(2);
+  expect(
+    (await collect("grep", { pattern: "evidence [ab]$", literal: true })).items,
+  ).toEqual([]);
 });
 it("line/range batches merge overlaps, scan a file once and complete the requested range independently of EOF", async () => {
   const { root, collect, call } = await fixture();
@@ -267,29 +285,44 @@ it("elapsed worker time and more than 64 calls do not impose cumulative admissio
   }
 });
 it.skipIf(process.platform === "win32")(
-  "tree symlinks and default exclusions never silently expand coverage",
+  "dependency trees and symlinks are readable without losing logical paths or entering cycles",
   async () => {
     const { root, call, collect } = await fixture();
     const outside = await mkdtemp(join(tmpdir(), "research-outside-"));
-    await writeFile(join(outside, "private.txt"), "not selected");
-    await symlink(outside, join(root, "link"));
+    await writeFile(
+      join(outside, "index.ts"),
+      "export const npmCommand = true;",
+    );
     await mkdir(join(root, "node_modules"));
-    await writeFile(join(root, "node_modules", "omitted.txt"), "not selected");
-    const result = await collect("find", { pattern: "*.txt" });
-    expect(result.items).toEqual([]);
-    expect(result.final.coverage.omissions).toEqual(
-      expect.arrayContaining([
-        { reason: "symlink omitted", count: 1 },
-        { reason: ".git/node_modules omitted", count: 1 },
-      ]),
-    );
-    await expect(call("read", { path: "link/private.txt" })).rejects.toThrow(
-      "outside investigation roots",
-    );
-    const listing = await collect("ls", { pageSize: 1 });
+    await symlink(outside, join(root, "node_modules", "pi"));
+    await symlink(root, join(outside, "loop"));
+    const result = await collect("glob", {
+      pattern: "node_modules/pi/**/*.{ts,js}",
+    });
+    expect(result.items).toContainEqual({
+      root: 0,
+      path: "node_modules/pi/index.ts",
+      kind: "file",
+    });
+    expect(result.final.coverage.omissions).toContainEqual({
+      reason: "symlink cycle omitted",
+      count: 1,
+    });
+    const grep = await collect("grep", {
+      path: "node_modules",
+      pattern: "npmCommand",
+    });
+    expect(grep.items[0]).toMatchObject({
+      path: "node_modules/pi/index.ts",
+      text: "export const npmCommand = true;",
+    });
+    expect(
+      (await call("read", { path: "node_modules/pi/index.ts" })).items[0].text,
+    ).toContain("npmCommand");
+    const listing = await collect("ls", { path: "node_modules" });
     expect(listing.items).toContainEqual({
       root: 0,
-      path: "link",
+      path: "node_modules/pi",
       kind: "symlink",
     });
     expect(listing.final.coverage.complete).toBe(true);
@@ -307,7 +340,7 @@ it("explicit roots, not an unrelated checkout, bind relative requests; schema er
   expect(result.content[0].text).toContain("selected evidence");
   for (let i = 0; i < 8; i++)
     await expect(call("find", { pattern: "{1..100000000}" })).rejects.toThrow(
-      "simple glob",
+      "Glob expansion",
     );
   await expect(
     call("read", { files: [{ path: "a", ranges: [{ start: 5, end: 1 }] }] }),
@@ -398,4 +431,120 @@ it("concurrent cursor consumption has one owner; pre-cancel and foreign workers 
     "consumed",
   );
   expect((await first).items[0].line).toBe(2);
+});
+
+it("regex, brace alternatives, extglobs and explicit depth work while malformed requests allocate no scans", async () => {
+  const { root, call, collect } = await fixture();
+  await mkdir(join(root, "src"));
+  await writeFile(
+    join(root, "src", "api.ts"),
+    "npmCommand\nNPM_CONFIG\nother\nliteral.*\n",
+  );
+  await writeFile(join(root, "src", "api.js"), "NPM_COMMAND\n");
+  expect(
+    (await collect("glob", { pattern: "**/api.{ts,js}" })).items,
+  ).toHaveLength(2);
+  expect(
+    (await collect("find", { pattern: "**/api.@(ts|js)" })).items,
+  ).toHaveLength(2);
+  const matches = await collect("grep", {
+    patterns: ["^npm(Command|_COMMAND)$", "CONFIG$"],
+    ignoreCase: true,
+    glob: "**/*.{ts,js}",
+  });
+  expect(matches.items.map((i) => i.text).sort()).toEqual([
+    "NPM_COMMAND",
+    "NPM_CONFIG",
+    "npmCommand",
+  ]);
+  expect(
+    (await collect("grep", { pattern: "literal.*", literal: true })).items.map(
+      (i) => i.text,
+    ),
+  ).toEqual(["literal.*"]);
+  for (let i = 0; i < 6; i++)
+    await expect(call("grep", { pattern: "(" })).rejects.toThrow(
+      "Invalid regular expression",
+    );
+  expect(
+    (await collect("find", { pattern: "*.ts", depth: 20 })).items,
+  ).toHaveLength(1);
+  await expect(call("find", { pattern: "{a,b}".repeat(20) })).rejects.toThrow(
+    "Glob expansion",
+  );
+});
+it.skipIf(process.platform === "win32")(
+  "a retargeted symlink invalidates its continuation instead of mixing sources",
+  async () => {
+    const { call } = await fixture();
+    const external = await mkdtemp(join(tmpdir(), "research-link-target-"));
+    await writeFile(join(external, "a"), "first\nsecond\nthird");
+    await writeFile(join(external, "b"), "different\ncontent");
+    await symlink(join(external, "a"), join(external, "link"));
+    const first = await call("read", {
+      path: join(external, "link"),
+      pageSize: 1,
+    });
+    await unlink(join(external, "link"));
+    await symlink(join(external, "b"), join(external, "link"));
+    await expect(call("read", { cursor: first.nextCursor })).rejects.toThrow(
+      "source changed",
+    );
+  },
+);
+it("find and glob share implementation but never consume each other's cursors", async () => {
+  const { root, call } = await fixture();
+  await writeFile(join(root, "a.ts"), "a");
+  await writeFile(join(root, "b.ts"), "b");
+  const first = await call("glob", { pattern: "*.ts", pageSize: 1 });
+  await expect(call("find", { cursor: first.nextCursor })).rejects.toThrow(
+    "foreign",
+  );
+  expect((await call("glob", { cursor: first.nextCursor })).state).toBe("done");
+});
+
+it.skipIf(process.platform === "win32")(
+  "completed traversal aliases release their binding observations",
+  async () => {
+    const { root } = await fixture();
+    const external = await mkdtemp(join(tmpdir(), "research-bindings-"));
+    await writeFile(join(external, "source.ts"), "evidence");
+    for (const name of ["first", "second", "third"])
+      await symlink(external, join(root, name));
+    const scan = new ResearchScan(bindWorkerWorkspace(root), {
+      kind: "find",
+      glob: "*.ts",
+      depth: 8,
+    });
+    scan.begin();
+    try {
+      const paths = [];
+      for await (const next of scan.iterator)
+        if (next?.item) paths.push(next.item.path);
+      expect(paths.sort()).toEqual([
+        "first/source.ts",
+        "second/source.ts",
+        "third/source.ts",
+      ]);
+      expect(scan.bindings.size).toBe(0);
+    } finally {
+      await scan.close();
+    }
+  },
+);
+it("tilde selects this account's configured home without copying a profile", async () => {
+  const { root, call } = await fixture();
+  const home = await mkdtemp(join(tmpdir(), "research-home-"));
+  await writeFile(join(home, "public-package.ts"), "installed source");
+  vi.stubEnv(process.platform === "win32" ? "USERPROFILE" : "HOME", home);
+  try {
+    const result = await call("read", { path: "~/public-package.ts" });
+    expect(result.items[0]).toMatchObject({
+      root: null,
+      text: "installed source",
+    });
+    expect((await call("ls", { path: root })).items).toEqual([]);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });

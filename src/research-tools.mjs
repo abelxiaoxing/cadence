@@ -34,12 +34,55 @@ const array = (value, maximum) => {
     throw new Error("Invalid investigation batch");
   return value;
 };
+// Bound expansion work, not ordinary glob syntax. Native matchesGlob supports
+// brace alternatives/extglobs; huge ranges/products must not allocate unboundedly.
+const GLOB_EXPANSIONS = 4096;
 const glob = (value) => {
   string(value, 256);
-  if (/[{}()]/u.test(value))
-    throw new Error("Use a simple glob without braces or extglobs");
+  const stack = [{ alternatives: 0, product: 1, start: 0 }];
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === "\\") {
+      i++;
+      continue;
+    }
+    const current = stack.at(-1);
+    if (value[i] === "{")
+      stack.push({ alternatives: 0, product: 1, start: i + 1 });
+    else if (value[i] === "," && stack.length > 1) {
+      current.alternatives += current.product;
+      current.product = 1;
+    } else if (value[i] === "}" && stack.length > 1) {
+      stack.pop();
+      let size = current.alternatives + current.product;
+      const range =
+        /^(-?\d+|[a-zA-Z])\.\.(-?\d+|[a-zA-Z])(?:\.\.(-?\d+))?$/.exec(
+          value.slice(current.start, i),
+        );
+      if (range) {
+        const number = (part) =>
+          /^-?\d+$/.test(part) ? Number(part) : part.charCodeAt(0);
+        const step = Math.abs(Number(range[3] ?? 1)) || 1;
+        size =
+          Math.floor(Math.abs(number(range[2]) - number(range[1])) / step) + 1;
+      }
+      stack.at(-1).product *= size;
+    }
+    if (
+      stack.some(
+        (entry) =>
+          !Number.isFinite(entry.product) ||
+          entry.product + entry.alternatives > GLOB_EXPANSIONS,
+      )
+    )
+      throw new Error(
+        "Glob expansion is too large; use * or a smaller set of alternatives",
+      );
+  }
   return value;
 };
+export const RESEARCH_INSTRUCTIONS =
+  "Readonly investigation: use read, grep, find/glob and ls directly, not shell command strings. Explicit absolute paths (including installed packages outside the checkout) and symlinks are readable; roots only choose the default search location. grep accepts regular expressions by default; use literal:true for exact text. find/glob accept brace alternatives and extglobs. There is no bash, write or edit tool in this readonly role: use ls for listing, read for file contents, grep for matching and find/glob for file discovery. Keep credentials and private session content out of reports. A returned cursor continues the same query; an empty page with a cursor is not absence.";
+
 function query(kind, args) {
   const common = ["pageSize", "path"];
   object(args, [
@@ -48,7 +91,7 @@ function query(kind, args) {
       ? ["files", "offset", "limit"]
       : kind === "grep"
         ? ["pattern", "patterns", "glob", "depth", "ignoreCase", "literal"]
-        : kind === "find"
+        : ["find", "glob"].includes(kind)
           ? ["pattern", "depth"]
           : []),
   ]);
@@ -93,11 +136,12 @@ function query(kind, args) {
     });
   } else {
     result.path = args.path === undefined ? undefined : string(args.path);
-    result.depth = integer(args.depth ?? L.depth, L.depth, 0);
-    if (kind === "find") result.glob = glob(args.pattern);
+    result.depth = integer(args.depth ?? L.depth, Number.MAX_SAFE_INTEGER, 0);
+    if (["find", "glob"].includes(kind)) result.glob = glob(args.pattern);
     if (kind === "grep") {
-      if (args.literal !== undefined && args.literal !== true)
-        throw new Error("Research grep supports literal text only, not regex");
+      if (args.literal !== undefined && typeof args.literal !== "boolean")
+        throw new Error("Invalid literal selection");
+      result.literal = args.literal === true;
       if (args.ignoreCase !== undefined && typeof args.ignoreCase !== "boolean")
         throw new Error("Invalid case selection");
       if ((args.pattern === undefined) === (args.patterns === undefined))
@@ -106,9 +150,22 @@ function query(kind, args) {
       result.patterns = array(args.patterns ?? [args.pattern], L.patterns).map(
         (pattern) => {
           const text = string(pattern, 256);
-          return result.ignoreCase ? text.toLowerCase() : text;
+          return result.literal && result.ignoreCase
+            ? text.toLowerCase()
+            : text;
         },
       );
+      if (!result.literal) {
+        try {
+          result.regex = result.patterns.map(
+            (pattern) => new RegExp(pattern, result.ignoreCase ? "iu" : "u"),
+          );
+        } catch {
+          throw new Error(
+            "Invalid regular expression; use literal:true for exact text",
+          );
+        }
+      }
       if (args.glob !== undefined) result.glob = glob(args.glob);
     }
   }
@@ -120,13 +177,15 @@ const path = Type.Optional(
     minLength: 1,
     maxLength: 4096,
     description:
-      "Within the admitted roots; relative paths use the first root.",
+      "An explicit host path, including outside the checkout. Relative paths use the first search root; ~ uses this account's home.",
   }),
 );
 const pageSize = Type.Optional(
   Type.Integer({ minimum: 1, maximum: L.results }),
 );
-const depth = Type.Optional(Type.Integer({ minimum: 0, maximum: L.depth }));
+const depth = Type.Optional(
+  Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+);
 const pattern = Type.String({ minLength: 1, maxLength: 256 });
 // Provider function schemas require an object root, not a union of objects.
 // Initial-query versus continuation exclusivity is checked before admission;
@@ -175,7 +234,7 @@ const definitions = [
   {
     name: "grep",
     description:
-      "Search literal text, not regex, in one file or a tree. Supply pattern or patterns (OR; matchedPatterns are zero-based input indexes). Each file is scanned once per query. Optional simple glob, ignoreCase and depth. No symlink traversal, .gitignore interpretation, or .git/node_modules scan. Empty pages with a cursor are progress, NOT absence. Resume with {cursor}, or release with {cursor,close:true}.",
+      "Search regular expressions in one file or a tree; literal:true selects exact text. Supply pattern or patterns (OR; matchedPatterns are zero-based input indexes). Each matching logical path is scanned without replaying its consumed prefix. Optional glob, ignoreCase and depth. Explicit host paths, dependencies and symlinks are supported; .git is skipped during tree traversal, and .gitignore is not interpreted. Empty pages with a cursor are progress, NOT absence. Resume with {cursor}, or release with {cursor,close:true}.",
     parameters: parameters({
       path,
       pattern: Type.Optional(pattern),
@@ -183,18 +242,18 @@ const definitions = [
         Type.Array(pattern, { minItems: 1, maxItems: L.patterns }),
       ),
       glob: Type.Optional(pattern),
-      literal: Type.Optional(Type.Literal(true)),
+      literal: Type.Optional(Type.Boolean()),
       ignoreCase: Type.Optional(Type.Boolean()),
       depth,
       pageSize,
     }),
   },
-  {
-    name: "find",
+  ...["find", "glob"].map((name) => ({
+    name,
     description:
-      "Find file paths with a simple glob (*, **, ?, brackets; no braces/extglobs). Bounded traversal in filesystem order, skipping tree symlinks and .git/node_modules, not backup trees; .gitignore is not interpreted. Resume actual directory positions with {cursor}; {cursor,close:true} releases them. Coverage/omissions are explicit.",
+      "Find file paths by glob (*, **, ?, brackets, brace alternatives and extglobs). Explicit host paths, dependencies and symlinks are supported. Traversal defaults to depth 8; set depth explicitly for deeper trees. Symlink cycles and .git traversal are omitted visibly; .gitignore is not interpreted. Resume with this tool's {cursor}; {cursor,close:true} releases it. Coverage/omissions are explicit.",
     parameters: parameters({ path, pattern, depth, pageSize }),
-  },
+  })),
   {
     name: "ls",
     description:

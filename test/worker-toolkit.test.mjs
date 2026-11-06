@@ -35,6 +35,9 @@ it.each(["research", "diagnosis", "review"])(
     await writeFile(join(root, "a"), "evidence");
     const kit = toolkit(purpose, root, { tools: ["bash", "write"] });
     expect(kit.capabilities).toEqual(["observation"]);
+    expect(kit.instructions).toContain("Explicit absolute paths");
+    expect(kit.instructions).toContain("no bash, write or edit");
+    expect(kit.sessionOptions.tools).toContain("glob");
     expect(kit.sessionOptions.cwd).toBe(root);
     expect(kit.sessionOptions.tools).toEqual(
       kit.sessionOptions.customTools.map((tool) => tool.name),
@@ -63,6 +66,7 @@ it("coding capabilities preserve the standard SDK file tools and the no-spill ba
     queue: { reserve: () => lease },
   });
   expect(kit.capabilities).toEqual(["files", "shell"]);
+  expect(kit.instructions).toBe("");
   expect(kit.sessionOptions.tools).toEqual([
     "read",
     "grep",
@@ -213,4 +217,28 @@ it("only admitted editing workers get structured reporting; it grants no executi
   expect(toolkit("edit", resolve(".")).sessionOptions.tools).not.toContain(
     "cadence_report",
   );
+});
+
+it("a research worker can inspect an installed-package fixture outside its cwd without new execution rights", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "worker-project-"));
+  const installed = await mkdtemp(join(tmpdir(), "worker-installed-pi-"));
+  await writeFile(
+    join(installed, "sdk.ts"),
+    "export const npmCommand = 'npm';",
+  );
+  const kit = toolkit("research", cwd);
+  const grep = kit
+    .wrap(kit.sessionOptions.customTools)
+    .find((tool) => tool.name === "grep");
+  const result = await grep.execute("lookup", {
+    path: installed,
+    pattern: "npm(Command|Config)",
+  });
+  expect(JSON.parse(result.content[0].text).items[0]).toMatchObject({
+    root: null,
+    path: join(installed, "sdk.ts"),
+  });
+  expect(kit.sessionOptions.cwd).toBe(cwd);
+  for (const name of ["bash", "edit", "write", "cadence_report"])
+    expect(kit.sessionOptions.tools).not.toContain(name);
 });
