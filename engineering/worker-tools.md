@@ -6,7 +6,7 @@ Parent process, Stop and checkout ownership remain in [lifetimes](lifetimes.md).
 
 ## Ownership
 
-- `src/worker-workspace.mjs` binds an immutable cwd and investigation roots without filesystem access.
+- `src/worker-workspace.mjs` binds an immutable cwd and default investigation roots without filesystem access.
   `executionDirectory` maps the existing pinned `ExecutionContext` into an owner-selected tree; it never creates a directory, branch or worktree.
   The service retains canonical-path validation and its existing empty-subdirectory preparation.
 - `src/worker-toolkit.mjs` is the one trusted capability registry and request-to-capability policy.
@@ -41,11 +41,14 @@ Limits live beside `CHANGE_LIMITS`; evidence, capture and status-preview coverag
 
 ## Observation requests
 
-The default observation bundle has familiar `read`, `grep`, `find` and `ls` entrypoints; those names are not the capability model.
+The default observation bundle has familiar `read`, `grep`, `find`, `glob` and `ls` entrypoints; those names are not the capability model.
 Each accepts an initial query or exclusively `{cursor}` / `{cursor, close: true}`.
 Continuation cannot change a query's paths, patterns, ranges or page size.
 Provider schemas use an object root, not an object union; the execution boundary validates initial-query versus continuation exclusivity before admitting or consuming a scan.
-Paths are resolved within the worker's admitted roots; relative paths use the first root, and output paths name that root's zero-based index.
+Roots choose the default search location, not a readonly filesystem permission boundary.
+Explicit absolute paths and `~` can inspect installed dependencies outside the checkout; relative paths still use the first root.
+Output paths inside a default root name its zero-based index; other explicitly selected paths use `root: null` and an absolute path.
+This does not change the pinned execution cwd, grant editing authority, copy profiles or initialize another owner.
 
 ```js
 read({ path: "src/service/workflows.ts", offset: 100, limit: 30 });
@@ -53,7 +56,8 @@ read({ files: [
   { path: "src/a.ts", ranges: [{ start: 20, end: 60 }, { start: 90, end: 110 }] },
   { path: "src/b.ts" },
 ], pageSize: 20 });
-grep({ path: "src", patterns: ["CheckoutGate", "settle"], glob: "**/*.ts" });
+grep({ path: "src", patterns: ["CheckoutGate", "settle"], literal: true, glob: "**/*.ts" });
+glob({ path: "node_modules", pattern: "**/*.{ts,js}", depth: 16 });
 find({ path: "src", pattern: "*.ts", pageSize: 20 });
 ls({ path: "src", pageSize: 20 });
 read({ cursor: "<returned token>" });
@@ -66,12 +70,19 @@ Locating a far line may return progress before reaching it.
 The scanner reads chunks and retains its actual byte/line position and pending lookahead across pages, never rereading a consumed prefix.
 A complete requested range is complete even when the file has further lines.
 
-`grep` accepts one `pattern` or a `patterns` array with literal OR semantics, optional case folding and a simple file glob.
+`grep` accepts one `pattern` or a `patterns` array with OR semantics, optional case folding and a file glob.
+Patterns are JavaScript regular expressions by default; `literal: true` selects exact text.
+Malformed expressions refuse before allocating a scan; the unchanged parent worker deadline remains the hard bound for model-selected computation, not the cooperative page quantum.
 Each line is scanned for all patterns; `matchedPatterns` names zero-based input indexes, with one result per matching line.
-There is no regex engine, query DSL or search subprocess.
-`find` and `grep` traverse directories in filesystem order, without following tree symlinks, interpreting `.gitignore`, or silently excluding backup trees.
-Their existing `.git`/`node_modules`, special-file and depth omissions remain visible.
-`ls` describes entries, including symlinks, without traversing them.
+`find` and `glob` are two entrypoints to the same scanner, with separate tool-bound cursors, not duplicate implementations.
+Globs accept brace alternatives and extglobs; expansion-resource protection lives beside `GLOB_EXPANSIONS` in the tool module.
+`find`, `glob` and `grep` traverse in filesystem order, including `node_modules`, backup trees and symlink targets, without interpreting `.gitignore`.
+Logical alias paths are retained, symlink cycles are omitted explicitly, and live alias bindings are checked across continuation and before release.
+Separate aliases may produce separate path evidence; completed traversal aliases are released, not kept as an unbounded query-wide inode index.
+The default traversal depth is a search preference that callers can override, not a maximum permissible depth.
+`.git`, special-file and requested-depth omissions remain visible; an explicitly selected `.git` path is still readable.
+`ls` describes entries, including symlinks, without traversing each entry; an explicitly selected symlink directory can be listed.
+The SDK worker appends the observation bundle's own instructions to readonly role prompts so ordinary listing/search/read operations are not attempted as unavailable shell tools.
 An explicitly selected special file is also omitted by `find`/`grep`, not labelled as regular text; `read` refuses a known nonregular target before opening it and rechecks the actual opened file.
 
 ## Responses and coverage

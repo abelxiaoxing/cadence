@@ -3,7 +3,10 @@
 import { Type } from "typebox";
 import { createChangeTools } from "./change-tools.mjs";
 import { createCoordinatorTools } from "./coordinator-tools.mjs";
-import { createResearchTools } from "./research-tools.mjs";
+import {
+  createResearchTools,
+  RESEARCH_INSTRUCTIONS,
+} from "./research-tools.mjs";
 import { sanitizeText } from "./worker-redaction.mjs";
 import { captureBash } from "./worker-tools.mjs";
 
@@ -101,6 +104,9 @@ export function createWorkerToolkit(options) {
     closing;
   return {
     capabilities,
+    instructions: capabilities.includes("observation")
+      ? RESEARCH_INSTRUCTIONS
+      : "",
     // Explicit allowlists are required by the installed public Pi SDK. Omitting
     // one would enable its defaults, not mean "only our custom capabilities".
     sessionOptions: {

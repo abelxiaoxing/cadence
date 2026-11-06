@@ -2,6 +2,7 @@
  * not a page number or a replay of an earlier scan. No shell or spill files. */
 import { constants } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join, matchesGlob, relative, resolve, sep } from "node:path";
 import { withinRoot } from "./worker-workspace.mjs";
 
@@ -45,6 +46,7 @@ export class ResearchScan {
     this.page = counters();
     this.fileBytes = new Map();
     this.sources = new Set();
+    this.bindings = new Map();
     this.stopping = false;
     this.iterator = this.records();
   }
@@ -88,7 +90,19 @@ export class ResearchScan {
       throw new SourceChanged();
     this.check();
   }
+  async validateBinding(path, selected) {
+    this.check();
+    try {
+      if ((await realpath(path)) !== selected) throw new SourceChanged();
+    } catch (e) {
+      if (unavailable(e)) throw new SourceChanged();
+      throw e;
+    }
+    this.check();
+  }
   async validate() {
+    for (const [path, selected] of this.bindings)
+      await this.validateBinding(path, selected);
     for (const source of this.sources) await this.validateSource(source);
   }
   async closeHandle(handle) {
@@ -100,23 +114,45 @@ export class ResearchScan {
       throw new Error("Investigation handle closure failed");
     }
   }
+  async canonical(path) {
+    this.check();
+    const selected = await realpath(path);
+    this.check();
+    return selected;
+  }
+  bind(path, selected) {
+    if (path === selected) return () => {};
+    const previous = this.bindings.get(path);
+    if (previous !== undefined && previous !== selected)
+      throw new SourceChanged();
+    this.bindings.set(path, selected);
+    return () => {
+      if (previous === undefined) this.bindings.delete(path);
+    };
+  }
   async target(path) {
-    this.check();
-    const selected = await realpath(resolve(this.roots[0], path ?? "."));
-    this.check();
-    const root = this.roots.findIndex((p) => withinRoot(p, selected));
-    if (root < 0)
-      throw new Error(
-        "Path outside investigation roots; select the intended root explicitly.",
-      );
-    return { path: selected, root };
+    const expanded =
+      path === "~"
+        ? homedir()
+        : path?.startsWith("~/")
+          ? join(homedir(), path.slice(2))
+          : path;
+    const requested = resolve(this.roots[0], expanded ?? ".");
+    const selected = await this.canonical(requested);
+    this.bind(requested, selected);
+    // Roots choose the default query scope, not permission to read host files.
+    const root = this.roots.findIndex((p) => withinRoot(p, requested));
+    return { path: selected, display: requested, root: root < 0 ? null : root };
   }
   location(target) {
+    const path = target.display ?? target.path;
     return {
       root: target.root,
       path:
-        relative(this.roots[target.root], target.path).split(sep).join("/") ||
-        basename(target.path),
+        target.root === null
+          ? path
+          : relative(this.roots[target.root], path).split(sep).join("/") ||
+            basename(path),
     };
   }
   async *records() {
@@ -174,16 +210,16 @@ export class ResearchScan {
       }
       const glob = this.query.glob;
       const name =
-        relative(target.path, file.path).split(sep).join("/") ||
-        basename(file.path);
+        relative(target.display, file.display).split(sep).join("/") ||
+        basename(file.display);
       if (
         glob &&
-        !matchesGlob(glob.includes("/") ? name : basename(file.path), glob)
+        !matchesGlob(glob.includes("/") ? name : basename(file.display), glob)
       ) {
         yield null;
         continue;
       }
-      if (this.query.kind === "find")
+      if (["find", "glob"].includes(this.query.kind))
         yield { item: { ...this.location(file), kind: "file" } };
       else {
         try {
@@ -196,7 +232,12 @@ export class ResearchScan {
       }
     }
   }
-  async *walk(target, remaining) {
+  async *walk(target, remaining, ancestors = new Set()) {
+    if (ancestors.has(target.path)) {
+      this.omit("symlink cycle omitted");
+      return;
+    }
+    const branch = new Set(ancestors).add(target.path);
     const source = await this.source(target.path);
     this.check();
     const dir = await opendir(target.path);
@@ -213,7 +254,11 @@ export class ResearchScan {
         this.check();
         if (!entry) return;
         this.count("inspectedEntries");
-        const file = { path: join(target.path, entry.name), root: target.root };
+        const file = {
+          path: join(target.path, entry.name),
+          display: join(target.display, entry.name),
+          root: target.root,
+        };
         if (this.query.kind === "ls") {
           yield {
             ...file,
@@ -227,25 +272,54 @@ export class ResearchScan {
           };
           continue;
         }
-        if (entry.isSymbolicLink()) this.omit("symlink omitted");
-        else if (entry.isDirectory()) {
-          if ([".git", "node_modules"].includes(entry.name))
-            this.omit(".git/node_modules omitted");
-          else if (!remaining) this.omit("depth limit");
-          else {
-            // Yield before descent too, so unmatched directories consume a quantum.
-            yield null;
+        let release = () => {};
+        const binding = file.path;
+        try {
+          let info = entry;
+          if (entry.isSymbolicLink()) {
             try {
-              yield* this.walk(file, remaining - 1);
+              file.path = await this.canonical(file.path);
+              release = this.bind(binding, file.path);
+              this.check();
+              info = await lstat(file.path);
+              this.check();
             } catch (e) {
               if (!unavailable(e)) throw e;
-              this.omit("unreadable directory omitted");
+              this.omit("unreadable symlink omitted");
+              yield null;
+              continue;
             }
           }
-        } else if (entry.isFile()) {
-          yield file;
-          continue;
-        } else this.omit("special file omitted");
+          if (info.isDirectory()) {
+            if (entry.name === ".git") this.omit(".git omitted");
+            else if (!remaining) this.omit("depth limit");
+            else {
+              yield null;
+              try {
+                yield* this.walk(file, remaining - 1, branch);
+              } catch (e) {
+                if (!unavailable(e)) throw e;
+                this.omit("unreadable directory omitted");
+              }
+            }
+          } else if (info.isFile()) {
+            yield file;
+            continue;
+          } else this.omit("special file omitted");
+        } finally {
+          try {
+            if (
+              entry.isSymbolicLink() &&
+              this.bindings.has(binding) &&
+              !this.stopping &&
+              !this.signal?.aborted
+            ) {
+              await this.validateBinding(binding, file.path);
+            }
+          } finally {
+            release();
+          }
+        }
         yield null;
       }
     } finally {
@@ -316,7 +390,13 @@ export class ResearchScan {
         if (!ranges) {
           const haystack = this.query.ignoreCase ? text.toLowerCase() : text;
           const matched = this.query.patterns.flatMap((pattern, index) =>
-            haystack.includes(pattern) ? [index] : [],
+            (
+              this.query.literal
+                ? haystack.includes(pattern)
+                : this.query.regex[index].test(text)
+            )
+              ? [index]
+              : [],
           );
           if (!matched.length) return null;
           item.matchedPatterns = matched;

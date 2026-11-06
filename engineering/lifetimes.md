@@ -145,9 +145,10 @@ Recovery never replays work: interrupted runs and turns settle as interrupted (`
 
 Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
 Queue time is outside the process deadlines; ongoing tool/model activity never renews a worker's total deadline.
-Readonly investigations use bounded native filesystem tools at explicit roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
-They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
-Grep is explicitly literal-only.
+Readonly investigations use native filesystem tools with explicit paths and default search roots (conversation cwd by default), not bash or an unbounded SDK search subprocess.
+They report partial coverage for time, entry, requested depth, byte/output bounds and omitted files; explicit host paths, dependencies and symlink targets are readable, with cycle detection and source-change checks.
+They do not interpret `.gitignore`, copy sources or silently drop backup trees.
+Grep supports regular expressions or explicit literal matching; no tool call grants editing or execution consent.
 Tool calls have no cumulative quota or early final-report cutoff; per-call bounds never abandon outstanding I/O, and the parent process deadline and explicit cancellation remain authoritative.
 The worker toolkit joins original tools and owned observation/bridge disposal during SDK cleanup; a suspended scan or an idle-expiry close still holds its resource reservation until actual closure.
 Continuation and coverage semantics are defined in [worker tools](worker-tools.md).

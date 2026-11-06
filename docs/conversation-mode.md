@@ -222,3 +222,16 @@ A fixed observed branch stays fixed until you choose another branch; background 
 Finished activity leaves the list without closing its history page.
 Lost or partial observations are explicitly stale/unknown, not evidence of success or completion; uncertain rows have a short retention window.
 This discovers neither idle terminals nor other accounts/hosts, and does not provide remote control of ordinary CLI Pi.
+
+## Investigating installed packages
+
+Cadence research, diagnosis and review remain readonly, but their search roots are defaults rather than a barrier around the checkout.
+Use `read`, `ls`, `grep` and `find`/`glob` with an explicit host path to inspect an installed package; `~` refers to the service account's home.
+Searches include dependency directories and follow symlinks with cycle detection.
+`grep` supports regular expressions by default and `literal: true` for exact text; `find`/`glob` support patterns such as `**/*.{ts,js}`.
+For deep package trees, set `depth` explicitly.
+A result with `nextCursor` is a continuing observation, not a failed search or evidence of absence.
+
+Readonly subagents do not have shell or editing tools: use the direct listing, search and read tools rather than a `bash` pipeline.
+Approved implementation workers keep their existing shell and editing tools.
+This distinction preserves execution consent; it is not an OS sandbox or permission to copy credentials or profiles.

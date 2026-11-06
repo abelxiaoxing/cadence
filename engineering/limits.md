@@ -70,9 +70,9 @@ Workflow history reads at most 200 directory entries per quantum and returns at 
 At most 16 scans hold readonly directory handles; 120s idle expiry or owner teardown closes them (`historyScans`, `historyIdleMs`).
 These are read budgets, not a lifetime retained-run cap; history is never evicted to satisfy them.
 
-Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-scan.mjs`: 30s cooperative work per call, 2000 visited entries per page, depth 8, 100 results per page, 1MiB per file per page, 8MiB read per call and 32KiB for the complete encoded tool result.
+Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-scan.mjs`: 30s cooperative work per call, 2000 visited entries per page, default traversal depth 8 (caller-selectable), 100 results per page, 1MiB per file per page, 8MiB read per call and 32KiB for the complete encoded tool result.
 Streaming uses 64KiB chunks and 8KiB line buffers; oversized lines are labelled and skipped, not retained without bound.
-There are at most four opening/active/suspended/closing scans per worker, with 120s idle cursor expiry; batch reads admit eight file requests and 32 total ranges, and literal searches admit 16 patterns.
+There are at most four opening/active/suspended/closing scans per worker, with 120s idle cursor expiry; batch reads admit eight file requests and 32 total ranges, and grep admits 16 literal or regular-expression patterns.
 The per-page file quantum does not hide the rest of a file: a continuation resumes its actual position.
 There is no cumulative tool-call quota or early final-report cutoff.
 The parent launcher alone enforces the total process deadline, including SDK bootstrap.

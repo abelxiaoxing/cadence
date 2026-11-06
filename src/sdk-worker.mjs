@@ -429,7 +429,10 @@ try {
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => instructions,
+    getSystemPrompt: () =>
+      toolkit?.instructions
+        ? `${instructions}\n\n${toolkit.instructions}`
+        : instructions,
     getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
     getAppendSystemPromptSources: () => [],

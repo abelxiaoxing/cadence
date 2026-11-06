@@ -9,8 +9,9 @@ import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
 
 const queries = {
   read: { path: "example.ts" },
-  grep: { patterns: ["first", "second"] },
+  grep: { patterns: ["first", "second"], literal: false },
   find: { pattern: "*.ts" },
+  glob: { pattern: "**/*.{ts,js}" },
   ls: {},
 };
 it("provider object schemas accept initial, continuation and explicit close arguments through the public SDK validator", async () => {
