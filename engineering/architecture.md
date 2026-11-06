@@ -23,6 +23,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `web/src/`                                                                                                 | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                   |
 | `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
+`src/activity.ts` and `src/service/activity-files.ts` own activity-only native reports; `src/service/activity-discovery.ts` is the readonly registry/report aggregation boundary, with closed projections in `contracts/activity.ts`.
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution.
 `src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the upgrade with rollback; `src/service/installation.ts` identifies the exact Pi/npm/Bun installation and owns its package-manager commands.
 Both stay SDK-free like the rest of management.

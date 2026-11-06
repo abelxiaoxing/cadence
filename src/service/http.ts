@@ -91,7 +91,13 @@ export interface HttpAdapters {
 }
 export interface ManagementPort {
   invoke(
-    operation: "status" | "diagnose" | "stop" | "token-link" | "token-rotate",
+    operation:
+      | "activity"
+      | "status"
+      | "diagnose"
+      | "stop"
+      | "token-link"
+      | "token-rotate",
   ): unknown;
 }
 interface HttpConfiguration {
@@ -726,10 +732,11 @@ export class ServiceHttpServer {
         "token-link",
         "token-rotate",
         "detach-viewers",
+        "activity",
       ].includes(operation ?? "")
     )
       throw new ContractError("invalid");
-    const write = operation !== "status" && operation !== "diagnose";
+    const write = !["status", "diagnose", "activity"].includes(operation ?? "");
     const caller = this.options.auth.authenticate(
       boundary,
       randomUUID(),

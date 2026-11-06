@@ -17,6 +17,7 @@ import {
 import { DetailSanitizer, sanitizeText } from "../worker-redaction.mjs";
 import { resolveWorkspace } from "../workspace.ts";
 import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
+import { managedActivity } from "./contracts/activity.ts";
 import { ContractError, canonicalJson } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
 import {
@@ -276,6 +277,26 @@ export class Conversations {
   readonly records: ConversationRecords;
   readonly contexts: ConversationContexts;
   private readonly active = new Map<string, LiveTurn>();
+  activity() {
+    return [...this.active.values()].map((live) =>
+      managedActivity({
+        id: live.commandId,
+        source: "turn",
+        execution: live.execution,
+        root: this.o.coordination.store.root,
+        epoch: live.epoch,
+        now: Date.now(),
+        leaf: live.accepted.parent,
+        phase: live.abort.signal.aborted
+          ? "stopping"
+          : live.state.status === "queued"
+            ? "queued"
+            : live.state.status === "running"
+              ? "running"
+              : "settling",
+      }),
+    );
+  }
   constructor(private readonly o: Options) {
     this.records = new ConversationRecords({
       ...o,

@@ -91,7 +91,9 @@
     "src/data-shapes.ts",
     "src/service/checkout-lock.ts",
     "src/service/liveness.ts",
-    "src/agent-browser"
+    "src/agent-browser",
+    "src/activity.ts",
+    "src/service/activity-files.ts"
   ],
   "pi": {
     "extensions": [

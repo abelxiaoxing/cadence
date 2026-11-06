@@ -24,6 +24,7 @@ import {
   withinWorkspace,
 } from "../workspace.ts";
 import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
+import { managedActivity } from "./contracts/activity.ts";
 import {
   ContractError,
   canonicalJson,
@@ -507,6 +508,26 @@ export class Workflows {
           ),
         }
       : run;
+  }
+  activity() {
+    return [...this.active.values()].map((live) =>
+      managedActivity({
+        id: live.run.id,
+        source: "workflow",
+        execution: live.execution,
+        root: this.o.coordination.store.root,
+        epoch: live.run.epoch,
+        now: Date.now(),
+        executionCwd: live.run.delivery?.worktreeRoot ?? null,
+        phase: live.abort.signal.aborted
+          ? "stopping"
+          : live.run.status === "queued"
+            ? "queued"
+            : live.run.phase === "finished"
+              ? "settling"
+              : live.run.phase,
+      }),
+    );
   }
   activeRuns(): WorkbenchResult & { kind: "workflow-active" } {
     this.o.owner.lease.assert();

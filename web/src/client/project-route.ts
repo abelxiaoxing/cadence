@@ -1,4 +1,7 @@
-import { decodeSessionId } from "../../../src/service/contracts/workbench.ts";
+import {
+  decodeEntryId,
+  decodeSessionId,
+} from "../../../src/service/contracts/workbench.ts";
 
 /** Complete links name server-owned identities, never a draft, path or token.
  * Pure parsing does not consult either browser storage or the recent project. */
@@ -29,4 +32,22 @@ export function chatFromLocation(
 export function projectPrefix(): string {
   const id = currentProject();
   return id ? `/projects/${id}` : "";
+}
+
+/** Activity navigation names an existing Pi branch, never a transcript path. */
+export function activityRoute(
+  hash = typeof window === "undefined" ? "" : window.location.hash,
+  sessionId?: string,
+): { selected: boolean; leaf: string | null } {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  if (sessionId !== undefined && projectRoute("", hash).chat !== sessionId)
+    return { selected: false, leaf: null };
+  try {
+    return {
+      selected: params.get("activity") === "1",
+      leaf: params.has("leaf") ? decodeEntryId(params.get("leaf")) : null,
+    };
+  } catch {
+    return { selected: false, leaf: null };
+  }
 }

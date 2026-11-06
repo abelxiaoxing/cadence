@@ -23,6 +23,11 @@ import type {
   WorkspaceBootstrap,
 } from "../../types";
 import { PageControls } from "../history/PageControls";
+import {
+  ActivityList,
+  type ActivityListProps,
+  activityKey,
+} from "./ActivityList";
 import { ConversationActions } from "./ConversationActions";
 import { workflowActivity } from "./WorkflowPanel";
 
@@ -231,6 +236,7 @@ export function TaskSidebar({
   workflows,
   workflowLinks = [],
   workflowError = false,
+  discovery,
   selectedWorkflow,
   onWorkflow,
   onCancelWorkflow,
@@ -259,6 +265,7 @@ export function TaskSidebar({
   workflows?: WorkflowRun[];
   workflowLinks?: { runId: string; conversationId: string }[];
   workflowError?: boolean;
+  discovery?: ActivityListProps;
   selectedWorkflow?: string;
   onWorkflow?: (run: WorkflowRun, conversationId: string | null) => void;
   onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
@@ -403,6 +410,37 @@ export function TaskSidebar({
   };
   return (
     <aside className="panel panel-left lp-panel">
+      {discovery && (
+        <ActivityList
+          {...discovery}
+          represented={
+            !executionStopped && discovery.project
+              ? [
+                  ...(workflows ?? []).map((r) =>
+                    activityKey(
+                      discovery.project as string,
+                      "workflow",
+                      r.id,
+                      r.epoch,
+                    ),
+                  ),
+                  ...liveChats.flatMap((chat) =>
+                    chat.live
+                      ? [
+                          activityKey(
+                            discovery.project as string,
+                            "turn",
+                            chat.live.commandId,
+                            chat.live.epoch,
+                          ),
+                        ]
+                      : [],
+                  ),
+                ]
+              : []
+          }
+        />
+      )}
       <ConversationActions onConversation={onNewConversation} />
       {!executionStopped && (
         <SidebarSection

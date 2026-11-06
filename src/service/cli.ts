@@ -121,17 +121,22 @@ export function nativeCall(
   operation: string,
   reveal = false,
   controlBody?: { attachments: string[] },
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  if (signal?.aborted) return Promise.reject(new ContractError("unavailable"));
   const access = c.localAccess();
   const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
-  const write = !["status", "diagnose"].includes(operation);
+  const write = !["status", "diagnose", "activity"].includes(operation);
+  const maximum = operation === "activity" ? 256 * 1024 : 16384;
   const body = write
     ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {}))
     : undefined;
   return new Promise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let removeAbort = () => {};
     const fail = () => {
       clearTimeout(timer);
+      removeAbort();
       reject(new ContractError("unavailable"));
     };
     const req = request(
@@ -159,7 +164,7 @@ export function nativeCall(
         res.on("error", fail);
         res.on("data", (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > 16384) {
+          if (bytes > maximum) {
             res.destroy();
             fail();
           } else chunks.push(chunk);
@@ -172,12 +177,14 @@ export function nativeCall(
                 new TextDecoder("utf-8", { fatal: true }).decode(
                   Buffer.concat(chunks),
                 ),
-                16384,
+                maximum,
               ),
               ["kind", "value"],
             );
             if (reply.kind !== "ok") throw new ContractError("unavailable");
-            if (["status", "diagnose", "stop"].includes(operation)) {
+            if (
+              ["status", "diagnose", "stop", "activity"].includes(operation)
+            ) {
               if (
                 !reply.value ||
                 typeof reply.value !== "object" ||
@@ -187,6 +194,7 @@ export function nativeCall(
                 throw new ContractError("stale");
             }
             clearTimeout(timer);
+            removeAbort();
             resolve(reply.value);
           } catch {
             fail();
@@ -200,9 +208,16 @@ export function nativeCall(
       fail();
       req.destroy();
     }, 2000);
+    const cancel = () => {
+      fail();
+      req.destroy();
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    removeAbort = () => signal?.removeEventListener("abort", cancel);
     req.on("error", fail);
     req.on("close", fail);
-    req.end(body);
+    if (signal?.aborted) cancel();
+    else req.end(body);
   });
 }
 const pause = (ms: number) =>

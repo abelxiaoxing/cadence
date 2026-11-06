@@ -312,8 +312,7 @@ it("one unusable control record degrades only its conversation and is never repa
       ),
     ).toThrow(UnacceptedConversationCommand);
   }
-  // Missing durable membership is not reconstructed by scanning old state.
-  expect(f.cw.links([runId])).toEqual([]);
+  // Unrelated conversation state remains readable without a history link scan.
   expect(f.cw.records.state(good)).toMatchObject({ enabled: true, head: turn });
   expect(f.cw.records.state(good).notice).toBeUndefined();
   expect(snapshot(f.root)).toEqual(before);
@@ -696,10 +695,11 @@ it("a refusal before admission never consumes the browser grant", async () => {
   expect(f.runs.size).toBe(1);
   expect(f.cw.records.state(id).runs).toHaveLength(200);
   expect(f.cw.records.state(id).runs.at(-1)).toBe(runId);
-  expect(f.cw.links([full.state.runs[0], runId])).toEqual([
-    { runId: full.state.runs[0], conversationId: id },
-    { runId, conversationId: id },
-  ]);
+  // Historical links are no longer an activity attribution index. They remain
+  // untouched; the owner's immutable execution context supplies live attribution.
+  expect(
+    readFileSync(join(linkDirectory, `${full.state.runs[0]}.json`), "utf8"),
+  ).toBe(JSON.stringify({ runId: full.state.runs[0], conversationId: id }));
 });
 
 it("a transient read failure is reported as unavailable and never remembered", async () => {
@@ -715,11 +715,11 @@ it("a transient read failure is reported as unavailable and never remembered", a
   expect(f.cw.records.observe(id).notice).toMatch(
     /could not be read just now/u,
   );
-  expect(f.cw.links([runId])).toEqual([{ runId, conversationId: id }]);
+  expect(f.cw.records.observe(id).notice).toBeDefined();
   f.ioFault();
   // Unchanged record bytes: the next read is a fresh, usable observation.
   expect(f.cw.records.observe(id)).toMatchObject({ enabled: true });
   expect(f.cw.records.observe(id).notice).toBeUndefined();
   expect(f.cw.records.state(id).notice).toBeUndefined();
-  expect(f.cw.links([runId])).toEqual([{ runId, conversationId: id }]);
+  expect(f.cw.records.state(id).runs).toContain(runId);
 });

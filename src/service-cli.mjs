@@ -1789,7 +1789,7 @@ function gitArguments(args) {
 }
 
 // src/workspace.ts
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync as closeSync2,
@@ -1918,6 +1918,9 @@ function resolveWorkspace(cwd) {
     maxBuffer: 8192,
     windowsHide: true
   });
+  return workspaceResult(actual, result);
+}
+function workspaceResult(actual, result) {
   const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
   if (result.status === 0 && topLevel)
     return { root: realpathSync(topLevel), cwd: actual };
@@ -3411,7 +3414,7 @@ class ServiceCoordination {
   registryDirectory;
   stateHome;
   constructor(workspace, stateHome) {
-    this.project = workspace === null ? undefined : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
+    this.project = workspace === null ? undefined : workspace instanceof CheckoutStore ? workspace : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
     this.stateHome = this.project ? dirname6(dirname6(this.project.privateRoot)) : canonicalAmbientRoot(stateHome ?? defaultStateHome());
     const namespace = join6(this.stateHome, "cadence-assistant-v1");
     this.files = new PrivateFiles(namespace);
@@ -7098,15 +7101,20 @@ function systemServiceStatus(s) {
 }
 
 // src/service/cli.ts
-function nativeCall(c, operation, reveal = false, controlBody) {
+function nativeCall(c, operation, reveal = false, controlBody, signal) {
+  if (signal?.aborted)
+    return Promise.reject(new ContractError("unavailable"));
   const access = c.localAccess();
   const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
-  const write2 = !["status", "diagnose"].includes(operation);
+  const write2 = !["status", "diagnose", "activity"].includes(operation);
+  const maximum = operation === "activity" ? 256 * 1024 : 16384;
   const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
   return new Promise((resolve8, reject) => {
     let timer;
+    let removeAbort = () => {};
     const fail = () => {
       clearTimeout(timer);
+      removeAbort();
       reject(new ContractError("unavailable"));
     };
     const req = request(url, {
@@ -7126,7 +7134,7 @@ function nativeCall(c, operation, reveal = false, controlBody) {
       res.on("error", fail);
       res.on("data", (chunk) => {
         bytes += chunk.length;
-        if (bytes > 16384) {
+        if (bytes > maximum) {
           res.destroy();
           fail();
         } else
@@ -7136,14 +7144,15 @@ function nativeCall(c, operation, reveal = false, controlBody) {
         try {
           if (res.statusCode !== 200)
             throw new ContractError("unavailable");
-          const reply = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), 16384), ["kind", "value"]);
+          const reply = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), maximum), ["kind", "value"]);
           if (reply.kind !== "ok")
             throw new ContractError("unavailable");
-          if (["status", "diagnose", "stop"].includes(operation)) {
+          if (["status", "diagnose", "stop", "activity"].includes(operation)) {
             if (!reply.value || typeof reply.value !== "object" || !("epoch" in reply.value) || reply.value.epoch !== access.epoch)
               throw new ContractError("stale");
           }
           clearTimeout(timer);
+          removeAbort();
           resolve8(reply.value);
         } catch {
           fail();
@@ -7154,9 +7163,18 @@ function nativeCall(c, operation, reveal = false, controlBody) {
       fail();
       req.destroy();
     }, 2000);
+    const cancel = () => {
+      fail();
+      req.destroy();
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    removeAbort = () => signal?.removeEventListener("abort", cancel);
     req.on("error", fail);
     req.on("close", fail);
-    req.end(body);
+    if (signal?.aborted)
+      cancel();
+    else
+      req.end(body);
   });
 }
 var pause = (ms) => new Promise((resolve8) => setTimeout(resolve8, ms));

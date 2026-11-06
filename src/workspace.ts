@@ -3,7 +3,7 @@ import { gitArguments, gitEnvironment } from "./git-environment.mjs";
 export { gitArguments, gitEnvironment } from "./git-environment.mjs";
 
 /** Workspace identity and bounded filesystem operations, independent of task records. */
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -176,6 +176,63 @@ export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
       windowsHide: true,
     },
   );
+  return workspaceResult(actual, result);
+}
+const WORKSPACE_OBSERVATION_MS = 500;
+/** Discovery must not block the Pi/HTTP event loop on a stalled Git command.
+ * Same physical-checkout policy as resolveWorkspace, with a caller-owned wait. */
+export function resolveWorkspaceAsync(
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<{ root: string; cwd: string }> {
+  const actual = realpathSync(cwd);
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      gitArguments(["rev-parse", "--show-toplevel"]),
+      {
+        cwd: actual,
+        env: gitEnvironment(),
+        encoding: "utf8",
+        timeout: WORKSPACE_OBSERVATION_MS,
+        maxBuffer: 8192,
+        windowsHide: true,
+        signal,
+        killSignal: "SIGKILL",
+      },
+      (error, stdout, stderr) => {
+        try {
+          if (error?.killed || error?.signal || signal?.aborted)
+            throw new Error("Workspace lookup interrupted");
+          resolve(
+            workspaceResult(actual, {
+              stdout,
+              stderr,
+              status: error
+                ? typeof error.code === "number"
+                  ? error.code
+                  : null
+                : 0,
+              error:
+                error && typeof error.code !== "number" ? error : undefined,
+            }),
+          );
+        } catch (error) {
+          reject(error);
+        }
+      },
+    );
+  });
+}
+function workspaceResult(
+  actual: string,
+  result: {
+    stdout?: string;
+    stderr: string;
+    status: number | null;
+    error?: Error | null;
+  },
+): { root: string; cwd: string } {
   // Remove only Git's record terminator, not valid whitespace in a path.
   const topLevel = result.stdout?.replace(
     process.platform === "win32" ? /\r?\n$/ : /\n$/,

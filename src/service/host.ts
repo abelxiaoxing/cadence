@@ -561,6 +561,20 @@ export async function createServiceHost(
       management: {
         invoke: (operation) => {
           lease.assert();
+          if (operation === "activity") {
+            if (!workbench || !ready) throw new ContractError("unavailable");
+            const activities = workbench.activity();
+            return {
+              kind: "owner-activity",
+              complete:
+                heldOwner.state === "idle" &&
+                heldOwner.acceptedPending === activities.length,
+              readerScope: workbench.activityReaderScope(),
+              epoch: native.epoch,
+              build,
+              activities,
+            };
+          }
           if (operation === "status" || operation === "diagnose")
             return {
               status:

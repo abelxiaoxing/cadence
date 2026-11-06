@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Activity } from "../../src/service/contracts/activity.ts";
 import {
   decodeWorkbenchEntry,
   type ProjectEntry,
@@ -20,9 +21,15 @@ import {
   rememberProject,
   restorableProject,
 } from "./client/last-project";
-import { prepareDirectorySend, selectDirectory } from "./client/project-entry";
+import {
+  prepareDirectorySend,
+  selectActivity,
+  selectDirectory,
+} from "./client/project-entry";
 import { currentProject } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
+import { useActivity } from "./client/use-activity";
+import type { ActivityListProps } from "./components/workspace/ActivityList";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
 import { ServiceDialog } from "./components/workspace/ServiceDialog";
@@ -47,6 +54,10 @@ export function Workbench() {
     status: "checking" | "unavailable";
     path: string;
   } | null>(null);
+  const epochChanged = useCallback(() => refresh((n) => n + 1), []);
+  const activities = useActivity(entry?.epoch, epochChanged);
+  const navigation = useRef<AbortController | null>(null);
+  useEffect(() => () => navigation.current?.abort(), []);
   const hashes = useRef(new Map<string, string>());
   const firstEntry = useRef(!selected);
   const restoring = useRef<AbortController | null>(null);
@@ -86,6 +97,7 @@ export function Workbench() {
   }, [revision]);
   useEffect(() => {
     const changed = () => {
+      navigation.current?.abort();
       cancelRestore();
       setRestore(null);
       setSelected(currentProject());
@@ -115,7 +127,7 @@ export function Workbench() {
     });
   }, [entry]);
   const navigate = useCallback(
-    (project: ProjectEntry | null) => {
+    (project: ProjectEntry | null, activity?: Activity) => {
       cancelRestore();
       setRestore(null);
       if (
@@ -125,10 +137,13 @@ export function Workbench() {
       )
         hashes.current.set(selected, window.location.hash);
       history.pushState(
-        { cadenceCwd: project?.cwd },
+        {
+          cadenceCwd: activity?.cwd ?? project?.cwd,
+          cadenceConversationId: activity?.sessionId,
+        },
         "",
         project
-          ? `/app?project=${project.id}${hashes.current.get(project.id) ?? `#chat=${crypto.randomUUID()}`}`
+          ? `/app?project=${project.id}${activity?.sessionId ? `#chat=${encodeURIComponent(activity.sessionId)}&activity=1${activity.leaf ? `&leaf=${encodeURIComponent(activity.leaf)}` : ""}` : (hashes.current.get(project.id) ?? `#chat=${crypto.randomUUID()}`)}`
           : "/app",
       );
       setSelected(project?.id ?? null);
@@ -139,12 +154,47 @@ export function Workbench() {
   );
   const open = useCallback(
     async (path: string) => {
-      const selected = await selectDirectory(path);
+      navigation.current?.abort();
+      const abort = new AbortController();
+      navigation.current = abort;
+      const selected = await selectDirectory(path, abort.signal);
+      if (abort.signal.aborted) return;
       setEntry(selected.entry);
       navigate(selected.project);
     },
     [navigate],
   );
+  const discovery: ActivityListProps | undefined = entry
+    ? {
+        value: activities.value,
+        error: activities.error,
+        opening: !!opening,
+        project: entry.projects.find((p) => p.id === selected)?.path,
+        onOpen: (path, activity) => {
+          navigation.current?.abort();
+          cancelRestore();
+          const abort = new AbortController();
+          navigation.current = abort;
+          setOpening(activity.cwd);
+          setOpenError("");
+          void selectActivity(path, activity, abort.signal)
+            .then((selected) => {
+              if (abort.signal.aborted) return;
+              setEntry(selected.entry);
+              navigate(selected.project, activity);
+            })
+            .catch((error: unknown) => {
+              if (!abort.signal.aborted)
+                setOpenError(
+                  error instanceof Error ? error.message : "unavailable",
+                );
+            })
+            .finally(() => {
+              if (navigation.current === abort) setOpening(null);
+            });
+        },
+      }
+    : undefined;
   const prepareSend = async (
     signal: AbortSignal,
     location?: ConversationLocation,
@@ -236,8 +286,12 @@ export function Workbench() {
             .filter((p) => p.path === project.path)
             .map((p) => p.id)
             .sort()}
+          discovery={discovery}
           onPrepareSend={prepareSend}
-          onChooseFolder={(cwd) => setPicker(cwd ?? project.cwd)}
+          onChooseFolder={(cwd) => {
+            navigation.current?.abort();
+            setPicker(cwd ?? project.cwd);
+          }}
           onOpenProject={open}
           onWorkbenchHome={() => navigate(null)}
           workbenchHome={entry.home}
@@ -246,10 +300,14 @@ export function Workbench() {
             current: p.id === selected,
           }))}
           notices={
-            <RecoveryNotices
-              notices={entry.recoveries}
-              project={project.path}
-            />
+            <>
+              {" "}
+              {openError && <p role="alert">{openError}</p>}
+              <RecoveryNotices
+                notices={entry.recoveries}
+                project={project.path}
+              />{" "}
+            </>
           }
           onOpenService={openService}
         />
@@ -260,6 +318,7 @@ export function Workbench() {
   return (
     <>
       <WorkbenchHome
+        discovery={discovery}
         ready={!!entry}
         projects={entry?.projects.map((p) => p.cwd) ?? []}
         restore={restore}
@@ -268,6 +327,7 @@ export function Workbench() {
         onOpenFolder={(path) => {
           cancelRestore();
           setOpenError("");
+          navigation.current?.abort();
           setPicker(path ?? entry?.home ?? "");
         }}
         onOpenProject={(path) => {
