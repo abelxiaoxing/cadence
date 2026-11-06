@@ -13,7 +13,8 @@ const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const stableVersion = (value) =>
   typeof value === "string" && versionPattern.exec(value)?.[0] === value;
 // Only readonly publication observations are retried, never npm publish.
-const observationAttempts = 6;
+// One monotonic deadline includes metadata, tarball bodies and polling delays.
+const observationTimeoutMs = 5 * 60_000;
 const observationDelayMs = 5000;
 const requestTimeoutMs = 30_000;
 const refuse = (reason) => {
@@ -97,34 +98,76 @@ export function assertUnpublished(version, latest, existing) {
     refuse("version-not-newer-than-latest");
 }
 
-const requestOptions = () => ({
-  redirect: "error",
-  cache: "no-store",
-  signal: AbortSignal.timeout(requestTimeoutMs),
-});
+const confirmationTimeout = () =>
+  new Error(
+    "npm-release-confirmation-timeout: registry visibility, latest and exact package bytes remain unconfirmed at the observation deadline",
+  );
+
+// Await the original fetch/body operation, not a Promise.race that abandons it.
+// The request timer stays owned through body consumption and is always cleared.
+async function request(url, fetcher, consume, deadline = Infinity) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw confirmationTimeout();
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("Registry request timed out", "TimeoutError"),
+      ),
+    Math.min(requestTimeoutMs, Math.ceil(remaining)),
+  );
+  try {
+    const response = await fetcher(url, {
+      redirect: "error",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    try {
+      const value = await consume(response);
+      controller.signal.throwIfAborted();
+      if (performance.now() >= deadline) throw confirmationTimeout();
+      return value;
+    } finally {
+      if (response.body && !response.bodyUsed) await response.body.cancel();
+    }
+  } catch (error) {
+    if (
+      controller.signal.aborted &&
+      performance.now() >= deadline &&
+      (error === controller.signal.reason || error?.name === "AbortError")
+    )
+      throw confirmationTimeout();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function registryVersion(
   version,
   missing = false,
   fetcher = fetch,
+  deadline = Infinity,
 ) {
-  const response = await fetcher(
+  return request(
     `${registry}/${packageName.replace("/", "%2f")}/${encodeURIComponent(version)}`,
-    requestOptions(),
+    fetcher,
+    async (response) => {
+      if (!response.ok) {
+        if (missing && response.status === 404) return null;
+        refuse(`registry-http-${response.status}`);
+      }
+      const value = await response.json();
+      if (
+        value?.name !== packageName ||
+        !stableVersion(value.version) ||
+        (version !== "latest" && value.version !== version)
+      )
+        refuse("registry-version-identity");
+      return value;
+    },
+    deadline,
   );
-  if (!response.ok) {
-    await response.body?.cancel();
-    if (missing && response.status === 404) return null;
-    refuse(`registry-http-${response.status}`);
-  }
-  const value = await response.json();
-  if (
-    value?.name !== packageName ||
-    !stableVersion(value.version) ||
-    (version !== "latest" && value.version !== version)
-  )
-    refuse("registry-version-identity");
-  return value;
 }
 
 /** Reuse the independently enumerated member/body/pin/notice audit, on both jobs. */
@@ -157,45 +200,64 @@ export function releaseArchive(root, directory, version, expectedSha256) {
   };
 }
 
-export async function confirmPublished(
-  version,
-  artifact,
-  fetcher = fetch,
-  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-) {
-  for (let attempt = 0; attempt < observationAttempts; attempt++) {
-    const published = await registryVersion(version, true, fetcher);
-    const latest = await registryVersion("latest", false, fetcher);
+export async function confirmPublished(version, artifact, fetcher = fetch) {
+  const deadline = performance.now() + observationTimeoutMs;
+  const url = `${registry}/${packageName}/-/cadence-${version}.tgz`;
+  while (performance.now() < deadline) {
+    const published = await registryVersion(version, true, fetcher, deadline);
+    // Reject definite corruption before a stale/stalled latest can hide it.
     if (published) {
       if (
         published.dist?.shasum !== artifact.shasum ||
         published.dist?.integrity !== artifact.integrity
       )
         refuse("published-digest-mismatch");
-      if (latest.version === version) {
-        const url = `${registry}/${packageName}/-/cadence-${version}.tgz`;
-        if (published.dist.tarball !== url) refuse("published-tarball-url");
-        const response = await fetcher(url, requestOptions());
-        if (!response.ok) {
-          await response.body?.cancel();
-          refuse(`tarball-http-${response.status}`);
-        }
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of response.body) {
-          size += chunk.byteLength;
-          if (size > artifact.bytes.length) refuse("published-byte-mismatch");
-          chunks.push(chunk);
-        }
-        if (!Buffer.concat(chunks).equals(artifact.bytes))
-          refuse("published-byte-mismatch");
-        return;
-      }
+      if (published.dist.tarball !== url) refuse("published-tarball-url");
     }
+    const latest = await registryVersion("latest", false, fetcher, deadline);
     if (newerThan(latest.version, version)) refuse("latest-moved-ahead");
-    if (attempt + 1 < observationAttempts) await sleep(observationDelayMs);
+    if (published && latest.version === version) {
+      const confirmed = await request(
+        url,
+        fetcher,
+        async (response) => {
+          // Metadata and tarball visibility can propagate independently.
+          if (response.status === 404) return false;
+          if (!response.ok) refuse(`tarball-http-${response.status}`);
+          let size = 0;
+          for await (const chunk of response.body) {
+            const end = size + chunk.byteLength;
+            if (
+              end > artifact.bytes.length ||
+              !artifact.bytes.subarray(size, end).equals(chunk)
+            )
+              refuse("published-byte-mismatch");
+            size = end;
+          }
+          if (size !== artifact.bytes.length) refuse("published-byte-mismatch");
+          return true;
+        },
+        deadline,
+      );
+      if (confirmed) return;
+    }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(observationDelayMs, remaining)),
+    );
   }
-  refuse("publication-not-visible");
+  throw confirmationTimeout();
+}
+
+export function confirmationFailure(outcome, error) {
+  const receipt =
+    outcome === "success"
+      ? "npm publish succeeded, but registry confirmation failed."
+      : outcome === "failure"
+        ? "npm publish failed; registry publication remains unconfirmed."
+        : "The npm publish outcome is unknown; registry publication remains unconfirmed.";
+  return `${receipt}\n${error.message}\nKeep the original audited CI artifact and digest. Recheck registry metadata, latest and downloaded bytes with readonly requests. Do not rerun npm publish or the publish job, move/delete the tag, or repair dist-tags automatically.`;
 }
 
 async function main() {
@@ -238,7 +300,15 @@ async function main() {
     console.log(`Audited ${packageName}@${version}: sha256 ${artifact.sha256}`);
     return;
   }
-  await confirmPublished(version, artifact);
+  try {
+    await confirmPublished(version, artifact);
+  } catch (error) {
+    const message = confirmationFailure(env.RELEASE_PUBLISH_OUTCOME, error);
+    console.error(message);
+    if (env.GITHUB_STEP_SUMMARY)
+      appendFileSync(env.GITHUB_STEP_SUMMARY, `${message}\n`);
+    throw error;
+  }
   const message = `Registry confirmed ${packageName}@${version}, latest, and exact tarball bytes; SHA-256 ${artifact.sha256}.`;
   console.log(message);
   if (env.GITHUB_STEP_SUMMARY)

@@ -113,4 +113,6 @@ jobs:
         run: npm publish "$RELEASE_ARCHIVE" --access public --tag latest --ignore-scripts --registry https://registry.npmjs.org
       - name: Confirm registry metadata and downloaded package bytes
         if: ${{ !cancelled() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') }}
+        env:
+          RELEASE_PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: node scripts/npm-release.mjs confirm "$TMPDIR/release" "$RELEASE_SHA256"
