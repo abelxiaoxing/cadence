@@ -14,6 +14,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   assertReleaseCheckout,
   assertUnpublished,
+  confirmationFailure,
   confirmPublished,
   registryVersion,
   releaseArchive,
@@ -47,6 +48,8 @@ function temp() {
   return root;
 }
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -337,24 +340,312 @@ it("confirms both registry digests, latest and actually downloaded bytes without
   for (const [, options] of f.fetcher.mock.calls)
     expect(options.method).toBeUndefined();
 });
-it("bounded readonly observations tolerate initial propagation, never replaying publication", async () => {
+function fakeObservationClock() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+}
+it("readonly observation tolerates minutes of propagation without resetting the deadline or publishing", async () => {
+  fakeObservationClock();
+  const visibleAt = performance.now() + 120_000;
+  const f = registryFixture({
+    get missing() {
+      return performance.now() < visibleAt;
+    },
+    get latest() {
+      return performance.now() < visibleAt ? "2.0.38" : version;
+    },
+  });
+  const done = vi.fn();
+  const operation = confirmPublished(version, f.artifact, f.fetcher).then(done);
+  await vi.advanceTimersByTimeAsync(119_999);
+  expect(done).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await operation;
+  expect(done).toHaveBeenCalledOnce();
+  for (const [, options] of f.fetcher.mock.calls) {
+    expect(options.method).toBeUndefined();
+    expect(options.body).toBeUndefined();
+    expect(options.headers).toBeUndefined();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each(["version", "latest", "tarball"])(
+  "%s never becoming visible consumes one fixed observation window",
+  async (phase) => {
+    fakeObservationClock();
+    const f = registryFixture({
+      missing: phase === "version",
+      latest: phase === "tarball" ? version : "2.0.38",
+    });
+    const fetcher = vi.fn((url, options) =>
+      phase === "tarball" && url.endsWith(".tgz")
+        ? Promise.resolve(new Response("not yet", { status: 404 }))
+        : f.fetcher(url, options),
+    );
+    const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect((await outcome).message).toContain("confirmation-timeout");
+    expect(performance.now()).toBe(5 * 60_000);
+    const calls = fetcher.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+it("a tarball 404 after valid metadata is propagation, not proof of missing or corrupt bytes", async () => {
+  fakeObservationClock();
   const f = registryFixture();
-  f.fetcher.mockImplementationOnce(
-    async () => new Response("{}", { status: 404 }),
+  const fetcher = vi.fn((url, options) =>
+    url.endsWith(".tgz") && performance.now() < 120_000
+      ? Promise.resolve(new Response("not yet", { status: 404 }))
+      : f.fetcher(url, options),
   );
-  f.fetcher.mockImplementationOnce(async () =>
-    Response.json({ name, version: "2.0.38" }),
+  const operation = confirmPublished(version, f.artifact, fetcher);
+  await vi.advanceTimersByTimeAsync(120_000);
+  await operation;
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each(["headers", "json-body", "tarball-body"])(
+  "the remaining deadline aborts a stalled %s and joins the original read",
+  async (phase) => {
+    fakeObservationClock();
+    const f = registryFixture({
+      get missing() {
+        return performance.now() < 290_000;
+      },
+      latest: "2.0.38",
+    });
+    let signal,
+      aborted = false;
+    const fetcher = vi.fn((url, options) => {
+      if (performance.now() < 290_000) return f.fetcher(url, options);
+      const stalled =
+        phase === "tarball-body"
+          ? url.endsWith(".tgz")
+          : !url.endsWith("/latest");
+      if (!stalled)
+        return Promise.resolve(
+          Response.json(
+            url.endsWith("/latest") ? { name, version } : f.metadata,
+          ),
+        );
+      signal = options.signal;
+      if (phase === "headers")
+        return new Promise((_, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          ),
+        );
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  aborted = true;
+                  controller.error(signal.reason);
+                },
+                { once: true },
+              );
+            },
+          }),
+        ),
+      );
+    });
+    const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+      (error) => error,
+    );
+    await vi.advanceTimersByTimeAsync(299_999);
+    expect(signal.aborted).toBe(false);
+    expect(aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect((await outcome).message).toContain("confirmation-timeout");
+    expect(aborted).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+it("keeps the original per-request timeout rather than granting each request five minutes", async () => {
+  fakeObservationClock();
+  const f = registryFixture();
+  const fetcher = vi.fn(
+    (_, { signal }) =>
+      new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
   );
-  const sleep = vi.fn(async () => {});
-  await confirmPublished(version, f.artifact, f.fetcher, sleep);
-  expect(sleep).toHaveBeenCalledOnce();
-  const missing = registryFixture({ missing: true, latest: "2.0.38" });
-  sleep.mockClear();
-  await expect(
-    confirmPublished(version, missing.artifact, missing.fetcher, sleep),
-  ).rejects.toThrow("publication-not-visible");
-  expect(sleep).toHaveBeenCalledTimes(5);
-  expect(missing.fetcher).toHaveBeenCalledTimes(12);
+  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+    (error) => error,
+  );
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect((await outcome).name).toBe("TimeoutError");
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("network time consumes the total deadline and the final sleep is shortened", async () => {
+  fakeObservationClock();
+  const f = registryFixture({ missing: true, latest: "2.0.38" });
+  const fetcher = vi.fn(
+    (url, options) =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(f.fetcher(url, options)), 700);
+      }),
+  );
+  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+    (error) => error,
+  );
+  await vi.advanceTimersByTimeAsync(300_000);
+  expect((await outcome).message).toContain("confirmation-timeout");
+  // 47 rounds use 1400ms network + 5000ms sleep; last sleep has only 4200ms.
+  expect(fetcher).toHaveBeenCalledTimes(94);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each(["digest", "url"])(
+  "a %s mismatch refuses before reading stale latest",
+  async (kind) => {
+    fakeObservationClock();
+    const good = registryFixture();
+    const dist = {
+      ...good.metadata.dist,
+      ...(kind === "digest"
+        ? { shasum: "wrong" }
+        : { tarball: "https://other.invalid/pkg.tgz" }),
+    };
+    const f = registryFixture({ metadata: { dist }, latest: "2.0.38" });
+    await expect(
+      confirmPublished(version, f.artifact, f.fetcher),
+    ).rejects.toThrow(kind === "digest" ? "digest-mismatch" : "tarball-url");
+    expect(f.fetcher).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+it.each([401, 403, 429, 500])(
+  "confirmation does not disguise HTTP %s as propagation",
+  async (status) => {
+    fakeObservationClock();
+    const f = registryFixture();
+    const response = new Response("refused", { status });
+    const fetcher = vi.fn(async () => response);
+    await expect(
+      confirmPublished(version, f.artifact, fetcher),
+    ).rejects.toThrow(`registry-http-${status}`);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(response.bodyUsed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+it.each(["success", "failure", undefined])(
+  "confirmation failure preserves the %s publish receipt and gives readonly recovery guidance",
+  (outcome) => {
+    const text = confirmationFailure(
+      outcome,
+      new Error("npm-release-confirmation-timeout"),
+    );
+    expect(text).toContain("confirmation-timeout");
+    expect(text).toContain("readonly requests");
+    expect(text).toContain("Do not rerun npm publish or the publish job");
+    if (outcome === "success")
+      expect(text).toContain(
+        "npm publish succeeded, but registry confirmation failed",
+      );
+    else {
+      expect(text).not.toContain("npm publish succeeded");
+      expect(text).toContain(
+        outcome === "failure" ? "npm publish failed" : "outcome is unknown",
+      );
+    }
+  },
+);
+it("does not detach a request or accept its late response after abort", async () => {
+  fakeObservationClock();
+  const f = registryFixture();
+  let settled = false;
+  const fetcher = vi.fn(
+    (_, { signal }) =>
+      new Promise((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            setTimeout(() => resolve(Response.json(f.metadata)), 10);
+          },
+          { once: true },
+        );
+      }),
+  );
+  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+    (error) => {
+      settled = true;
+      return error;
+    },
+  );
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(settled).toBe(false);
+  expect(fetcher).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(10);
+  expect((await outcome).name).toBe("TimeoutError");
+  expect(settled).toBe(true);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("a mismatched streamed prefix fails without waiting for EOF and cancels the body", async () => {
+  fakeObservationClock();
+  const f = registryFixture(),
+    cancelled = vi.fn();
+  const fetcher = vi.fn((url, options) =>
+    url.endsWith(".tgz")
+      ? Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(Uint8Array.of(0));
+              },
+              cancel() {
+                cancelled();
+              },
+            }),
+          ),
+        )
+      : f.fetcher(url, options),
+  );
+  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
+    (error) => error,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(cancelled).toHaveBeenCalledOnce();
+  expect((await outcome).message).toContain("published-byte-mismatch");
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("compares streamed bytes at their actual offsets across chunks", async () => {
+  fakeObservationClock();
+  const f = registryFixture();
+  const fetcher = vi.fn((url, options) =>
+    url.endsWith(".tgz")
+      ? Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(f.artifact.bytes.subarray(0, 3));
+                controller.enqueue(f.artifact.bytes.subarray(3, 9));
+                controller.enqueue(f.artifact.bytes.subarray(9));
+                controller.close();
+              },
+            }),
+          ),
+        )
+      : f.fetcher(url, options),
+  );
+  await confirmPublished(version, f.artifact, fetcher);
+  expect(vi.getTimerCount()).toBe(0);
 });
 it.each(["digest", "url", "short", "long", "same-size", "latest"])(
   "refuses published %s mismatches without repairing the registry",
@@ -419,6 +710,7 @@ it("the parsed workflow isolates OIDC, pins actions and transports only the audi
   expect(prepare.if).toContain("!github.event.forced");
   expect(prepare.permissions).toBeUndefined();
   expect(publish.needs).toBe("prepare");
+  expect(publish["timeout-minutes"]).toBe(10);
   expect(publish.environment).toBe("npm-release");
   expect(publish.permissions).toEqual({
     contents: "read",
@@ -479,6 +771,9 @@ it("the parsed workflow isolates OIDC, pins actions and transports only the audi
   expect(publish.steps.at(-1).if).toContain(
     "steps.publish.outcome == 'failure'",
   );
+  expect(publish.steps.at(-1).env.RELEASE_PUBLISH_OUTCOME).toBe(
+    `\${{ steps.publish.outcome }}`,
+  );
   for (const job of [prepare, publish]) {
     expect(job["runs-on"]).toBe("ubuntu-24.04");
     expect(runs(job)).toContain("umask 077");
@@ -487,6 +782,9 @@ it("the parsed workflow isolates OIDC, pins actions and transports only the audi
     );
     expect(runs(job)).toContain("TMPDIR=%s\\nTEMP=%s\\nTMP=%s\\n");
     expect(runs(job)).toContain("node scripts/npm-release.mjs preflight");
+    expect(job["continue-on-error"]).toBeUndefined();
+    for (const step of job.steps)
+      expect(step["continue-on-error"]).toBeUndefined();
     for (const step of job.steps.filter((s) => s.uses)) {
       expect(step.uses).toMatch(/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/);
       if (step.uses.startsWith("actions/checkout@")) {

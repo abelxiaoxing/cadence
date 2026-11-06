@@ -109,3 +109,17 @@ There is no automatic retry of `npm publish`, version bump, unpublish, dist-tag 
 After a failed or interrupted publish, inspect npm before retrying: the registry may have accepted the request despite a lost client reply.
 Confirmation makes bounded readonly observations for propagation and does not convert a failed publish command into a successful command receipt.
 The live-ref/latest checks are not a transaction with other maintainers; an external publication can still race and must be investigated rather than overwritten.
+
+### Delayed or unconfirmed publication
+
+npm can accept `npm publish` and then process the package asynchronously before its version, `latest` and tarball become publicly visible.
+The confirmation helper uses one monotonic observation deadline for metadata requests, body reads and polling delays; its total window, interval and unchanged per-request ceiling live beside the constants in `scripts/npm-release.mjs`.
+Candidate-version or tarball 404s and a lagging `latest` are retried with readonly requests only.
+Digest, identity, tarball URL, streamed-byte mismatches and a newer `latest` refuse immediately; other HTTP, transport and malformed-response failures are not treated as propagation.
+Each request is limited by the remaining total time, aborted on expiry and awaited through settlement; successful or failed reads dispose their timers.
+
+The confirmation step records the original publish-step outcome separately in its failure log and job summary.
+A successful publish followed by an observation timeout means **publication is still unconfirmed**, not that the publish command failed or the version is safe to reuse.
+Keep that run's original audited artifact and digest, then independently recheck registry metadata, `latest` and downloaded bytes against that same artifact.
+Do not rerun the publish job or workflow, replay `npm publish`, move/delete its tag, or repair registry state automatically.
+A later matching readonly observation can confirm publication, but does not rewrite the earlier run's failed outcome; confirmation also cannot turn an originally failed publish command into a successful receipt.
