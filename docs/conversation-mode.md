@@ -205,3 +205,20 @@ A parent session may record a whole batch of tool results together, so those tim
 Long workflows retain earlier steps in readonly pages rather than stopping at a step count.
 Open **Earlier workflow steps** in the WebUI, **Earlier steps** in native history, or use `cadence_status` with the returned `stepsBefore` as `before`.
 Route revisions and failed attempts remain visible; a later successful attempt never rewrites their original outcomes.
+
+## Discover active Pi work
+
+The unified WebUI sidebar automatically lists active work in this account and state home, including projects you have never selected.
+An interactive terminal must load the Cadence extension: a real model/tool round appears even without `/cadence`, but an idle terminal or idle owner does not.
+Terminal rounds are observe-only; owner turns and workflows retain their actual queue, execution, recovery and settlement phases and existing authorized controls.
+The counts deduplicate projects and sessions, while separate terminal instances and owner work keep their own sources.
+
+Click an activity to remember its directory and read the shared Pi session at the observed branch.
+This does not start or associate an owner, grant execution consent or expand workbench Stop.
+If Pi has not flushed its first session file, the page says history is not yet readable; it never invents messages or treats that session as a new draft.
+A different session-directory configuration can leave an activity visible but its history unavailable; Cadence never follows an arbitrary reported session path.
+A fixed observed branch stays fixed until you choose another branch; background discovery cannot take over your open page.
+
+Finished activity leaves the list without closing its history page.
+Lost or partial observations are explicitly stale/unknown, not evidence of success or completion; uncertain rows have a short retention window.
+This discovers neither idle terminals nor other accounts/hosts, and does not provide remote control of ordinary CLI Pi.

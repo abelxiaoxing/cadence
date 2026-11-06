@@ -138,6 +138,7 @@ Full plan cards and retained run/step details replace daily task/Save/Start/Chec
 Workflow progress is distinct from the ordinary/coordinator response status, including actual merge commits after failed post-merge checks.
 Browsing an archived step page keeps the current run status polling independently; navigation to another run resets the archive cursor, selected detail and polling state.
 The independent project workflow roster includes native-started work; missing observations never render as an empty complete roster.
+Active workflow links come only from immutable admission context, never copied/forked terminal entries or the retired browser workflow-link index; existing index files remain untouched.
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
 A failed or interrupted coordinator turn stays in the session; a new explicit Send continues that branch as Pi would (errored replies are skipped and orphaned tool calls closed); no incomplete tool call is resumed.
 A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
@@ -331,3 +332,34 @@ Session changes invalidate in-flight dispatch/response handling; no command is r
 Adaptive delivery progress adds `recovering` and `learning` phases, route-revision counts and readonly earlier-step paging.
 A child failure remains visible while the service diagnoses or continues the same admitted goal; no client-triggered Send or automatic mutation replay is involved.
 Version-1 plans stay readable but cannot authorize the new executor.
+
+## Activity discovery
+
+`src/activity.ts` reports real interactive TUI activity independently of `/cadence` and the Agent panel.
+It registers no idle timer: `agent_start` creates one instance/activity/session-bound report, automatic retries and continuations keep it, and `agent_settled` or session shutdown withdraws it.
+Pi 1.5's public settlement event, not `agent_end`, is authoritative; new/resume/fork/reload retires the old runtime, while idle tree navigation creates no activity.
+Publication failures never cancel Pi work, and renewal timers are unreferenced.
+Reports contain no prompt, output, token, capability or session-file path.
+`activity-files.ts` owns the private same-agent-directory/host namespace, atomic single-writer publication, finite scans and exact dead-report archival; corrupt/uncertain bytes are retained rather than silently repaired.
+The normal 30-day recovery archive policy applies to archived dead reports.
+No report is execution authority or a checkout lock.
+
+`activity-discovery.ts` combines those reports with the registry's authenticated compatible owner summaries.
+Owner summaries project original in-memory turn/workflow lifetimes without reading history or creating viewer attachments; queued, recovery, Stop and settlement remain separate phases.
+A summary is complete only for a healthy owner whose original accepted-work count matches the projected roster; quarantine or an unprojected original cannot prove absence.
+The admitted execution context alone supplies conversation/cwd attribution; missing context stays unattributed.
+Candidate worktrees remain execution locations of their original owner; native reports inside the managed namespace cannot create a second project.
+One gateway shares a bounded, round-robin cached sweep across tabs; discovery neither prepares owners nor adds Stop associations.
+Native checkout resolution is asynchronous and cancellable; registry owners reuse their already canonical checkout identity without a new Git process.
+Closing or invalidating the observer aborts only its reads; it cannot cancel execution.
+The project sidebar suppresses only exact owner rows already shown by its existing roster; unavailable and unassociated owners remain in discovery.
+Limits and uncertainty windows live beside the constants in these modules.
+A failed/changed-epoch observation retains briefly unknown work, never fabricates completion; capacity, corrupt state and missing observations make the response partial, including empty responses.
+Discovery does not locate idle terminals, other hosts/accounts or another Pi configuration scope.
+
+The unified sidebar discovers never-selected working projects and preserves independent source rows while deduplicating project/session counts.
+Only an explicit click remembers a directory and reads its session/branch; no background refresh navigates.
+A session whose first JSONL has not been flushed stays visibly history-unavailable, not a fabricated empty transcript, and cannot be sent to as a new session.
+Custom session-directory overrides that differ from the gateway's existing reader remain visible but cannot navigate history: the report's directory-scope hash must match the configured reader, and discovery never follows a reported session-file path.
+Ordinary CLI work has no remote Stop or control endpoint.
+History outcomes and the existing owner's authorized exact-run controls remain independent of discovery.

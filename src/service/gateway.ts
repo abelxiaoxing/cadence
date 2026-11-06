@@ -28,6 +28,7 @@ import {
 } from "../service-contract.ts";
 import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
 import { effectiveWorkspace } from "../workspace.ts";
+import { ActivityDiscoveryReader } from "./activity-discovery.ts";
 import { HttpAuthentication, requestBoundary } from "./auth.ts";
 import { hostSystem, serviceConfigPath } from "./autostart.ts";
 import {
@@ -280,6 +281,16 @@ export async function createGateway(
     server.close();
     throw error;
   }
+  const activity = new ActivityDiscoveryReader({
+    stateHome: input.stateHome,
+    agentDir: input.agentDir,
+    epoch: auth.epoch,
+    build,
+    readOwner: (c, signal) =>
+      nativeCall(c, "activity", false, undefined, signal),
+    secrets: () => acquired.access.redactionLiterals(),
+  });
+  acquired.access.onRevoke(() => activity.invalidate());
   const files = new WorkbenchFiles(
     homedir(),
     [store.files.namespace, input.agentDir],
@@ -597,6 +608,7 @@ export async function createGateway(
   function stop(): void {
     if (stopping) return;
     accepting = false;
+    activity.close();
     store.phase("stopping");
     stopping = (async () => {
       // An accepted Send preparation settles first; its owner (if any) is stopped
@@ -1021,6 +1033,14 @@ export async function createGateway(
               : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null,
         });
+        return;
+      }
+      if (raw === "/workbench/v1/activity" && req.method === "GET") {
+        browserBuild(boundary);
+        const value = await activity.read();
+        auth.current(caller);
+        assert();
+        reply(res, 200, value);
         return;
       }
       if (raw === "/workbench/v1" && req.method === "GET") {

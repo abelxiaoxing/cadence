@@ -100,6 +100,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `gateway-conversations`, `gateway-send`, `test/web/{conversation-send,send-observation}.test.tsx`: stopped-owner history/mode/step reads without startup or writes, unchanged draft identity across selection/first startup/Stop/refresh, exact stopped-state guards and readonly restoration; real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work, nonactivating selection followed by a Send that reclaims a provably dead registry lock and genuine multi-owner Stop over loopback.
   Preparation needs fresh auth/build/CSRF, sends no message or approval, does not adopt a merely browsed independent owner, and adds no warm-Send receipt quota; lost preparation/Send replies and departure cannot replay or rebind a message.
   Same-epoch re-entry waits for the new observation generation, never the previous attachment.
+- `activity`, `activity-discovery`, `activity-auth`, `test/web/activity.test.tsx`: real-turn-only native metadata, final settlement, exact admission attribution, nonactivating registry discovery, partial/stale observations, private-file preservation, cancellable browser polling and branch navigation.
+  Controlled observations do not qualify real browsers, providers or production services.
 
 ## Builds and packaging
 

@@ -3,6 +3,7 @@ import { opendirSync } from "node:fs";
 import { join } from "node:path";
 import { CadencePreferences } from "../cadence-preferences.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
+import { activityReaderScope } from "./activity-files.ts";
 import type { CheckoutGate } from "./checkout-gate.ts";
 import { openProjectDirectory } from "./cli.ts";
 import {
@@ -86,6 +87,13 @@ export class Workbench implements WorkbenchPort {
       "workbench-projects-v1",
     );
   }
+  activityReaderScope() {
+    return activityReaderScope(this.o.agentDir, this.o.sessionDir);
+  }
+  activity() {
+    this.o.owner.lease.assert();
+    return [...this.conversations.activity(), ...this.workflows.activity()];
+  }
   closeReads(): void {
     this.images.clear();
     this.workflows.closeHistory();
@@ -112,13 +120,18 @@ export class Workbench implements WorkbenchPort {
         };
       case "workflow-active": {
         const active = this.workflows.activeRuns();
-        const ids = active.runs.map((run) => run.id);
-        const browser = this.cadence.links(ids);
-        // A run started in the terminal belongs to the session that recorded it.
-        const terminal = this.conversations.records
-          .nativeLinks(ids)
-          .filter((link) => !browser.some((b) => b.runId === link.runId));
-        return { ...active, links: [...browser, ...terminal] };
+        // Admission identity is authoritative; copied/forked history is not.
+        const links = active.runs.flatMap((run) => {
+          const context = run.execution;
+          const location = context?.version.conversation;
+          return location &&
+            context?.checkoutRoot === this.o.coordination.store.root &&
+            context.version.epoch === run.epoch &&
+            context.cwd === location.cwd
+            ? [{ runId: run.id, conversationId: location.id }]
+            : [];
+        });
+        return { ...active, links };
       }
       case "workflow-history":
         return this.workflows.history(request.after, request.scan);

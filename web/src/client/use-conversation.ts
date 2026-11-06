@@ -11,6 +11,7 @@ export function useConversation(
   client: Pick<ServiceClient, "workbenchRead">,
   id: string,
   enabled: boolean,
+  initialLeaf: string | null = null,
 ): ConversationView & {
   refresh(): void;
   loadEarlier(): void;
@@ -20,10 +21,11 @@ export function useConversation(
   const [view, setView] = useState<ConversationView | null>(null);
   useEffect(() => {
     const next = new ConversationReader(client, id, () => setView(next.view()));
+    next.choose(initialLeaf);
     setReader(next);
     setView(next.view());
     return () => next.close();
-  }, [client, id]);
+  }, [client, id, initialLeaf]);
   useEffect(() => {
     reader?.setActive(enabled);
   }, [reader, enabled]);

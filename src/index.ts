@@ -1,5 +1,6 @@
 import os from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerActivity } from "./activity.ts";
 import { registerAgentPanel } from "./agent-panel.ts";
 import { registerCadenceAgentFeed } from "./agent-panel-cadence.ts";
 import { registerCadenceMode } from "./cadence-mode.ts";
@@ -12,6 +13,7 @@ import { CONFIG_MISSING, startupCardLines } from "./startup-card.ts";
  * actual host binding belongs to the readonly history shell’s session_start. */
 export default function register(pi: ExtensionAPI): void {
   if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
+  registerActivity(pi);
   registerHistoryShell(pi);
   registerCadenceMode(pi);
   // Readonly: notices the browser continuing the session this terminal holds.

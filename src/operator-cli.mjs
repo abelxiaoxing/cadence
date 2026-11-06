@@ -116,7 +116,7 @@ function gitArguments(args) {
 }
 
 // src/workspace.ts
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -245,6 +245,9 @@ function resolveWorkspace(cwd) {
     maxBuffer: 8192,
     windowsHide: true
   });
+  return workspaceResult(actual, result);
+}
+function workspaceResult(actual, result) {
   const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
   if (result.status === 0 && topLevel)
     return { root: realpathSync(topLevel), cwd: actual };

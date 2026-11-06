@@ -21,7 +21,6 @@ import {
   decodeSessionId,
   type WorkbenchCommand,
   type WorkbenchResult,
-  type WorkflowLink,
 } from "./contracts/workbench.ts";
 import {
   decodeWorkflowPlan,
@@ -127,24 +126,6 @@ export class ConversationWorkflow {
       BYTES,
     );
     try {
-      const prior = file
-        ? decodeCadenceConversation(
-            closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
-              "schema",
-              "state",
-            ]).state,
-          ).runs
-        : [];
-      for (const runId of state.runs) {
-        if (prior.includes(runId)) continue;
-        const path = this.runLink(runId);
-        const old = this.o.coordination.files.read(path);
-        const value = canonicalJson({ runId, conversationId: state.id });
-        if (old) {
-          if (old.bytes.toString("utf8") !== value)
-            throw new ContractError("conflict");
-        } else this.o.coordination.files.create(path, value);
-      }
       if (file)
         this.o.coordination.files.replace(
           this.records.path(state.id),
@@ -162,36 +143,6 @@ export class ConversationWorkflow {
       this.o.owner.quarantine();
       throw e;
     }
-  }
-  private runLink(runId: string): string {
-    return join(
-      this.o.coordination.directory,
-      "conversations-v1",
-      "workflow-links",
-      `${decodeId(runId)}.json`,
-    );
-  }
-  /** Browser owners of the given runs. Partial when records are unusable. */
-  links(runIds: readonly string[]): WorkflowLink[] {
-    this.o.owner.lease.assert();
-    const links: WorkflowLink[] = [];
-    for (const runId of runIds) {
-      try {
-        const file = this.o.coordination.files.read(this.runLink(runId));
-        if (!file) continue;
-        const row = closed(parseWireJson(file.bytes.toString("utf8")), [
-          "runId",
-          "conversationId",
-        ]);
-        if (row.runId !== runId) continue;
-        const conversationId = decodeSessionId(row.conversationId);
-        this.o.conversations.records.assertSupported(conversationId);
-        links.push({ runId, conversationId });
-      } catch {
-        this.o.owner.lease.assert();
-      }
-    }
-    return links;
   }
   private run(id: string): WorkflowRun {
     const view = this.o.workflows.view(id);

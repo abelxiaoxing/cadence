@@ -1131,14 +1131,6 @@ export class PiSessions {
       this.built.delete(this.built.keys().next().value as string);
     return turn;
   }
-  /** Run ids recorded by the terminal, by session. */
-  nativeRuns(): Map<string, string> {
-    const out = new Map<string, string>();
-    for (const listed of this.list())
-      for (const run of listed.summary.runs)
-        if (!out.has(run)) out.set(run, listed.summary.id);
-    return out;
-  }
 }
 export function summaryTitle(summary: SessionSummary): string {
   return summary.name ?? summary.firstUser ?? "Conversation";

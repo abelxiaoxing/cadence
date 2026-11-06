@@ -2,6 +2,31 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "History configuration differs. Activity remains observe-only.":
+    "历史读取配置不同。此活动仅供观察。",
+  "Discovered session": "发现的会话",
+  "Owner work already listed below is not duplicated here.":
+    "下方已经列出的 owner 工作不在此重复显示。",
+  "Active Pi work": "Pi 活动工作",
+  "{projects} projects · {sessions} sessions":
+    "{projects} 个项目 · {sessions} 个会话",
+  "Activity observation is partial. Missing work is not known to have finished.":
+    "活动观察不完整。未显示的工作不代表已经结束。",
+  "Discovering active work…": "正在发现活动工作…",
+  "No active work observed. Idle terminals and owners are not listed.":
+    "未观察到活动工作。空闲终端和 owner 不列入此处。",
+  "Unattributed work": "无法归属的工作",
+  "Terminal turn (observe only)": "终端回合（只读观察）",
+  "Owner turn": "Owner 回合",
+  "Owner workflow": "Owner 工作流",
+  "Current observation": "当前观察",
+  "Stale observation": "观察已过期",
+  "Unknown activity": "活动状态未知",
+  "Activity was discovered; session history is not yet readable. No transcript was created.":
+    "已发现活动；会话历史暂不可读。未创建或伪造对话记录。",
+  turn: "回合中",
+  settling: "收尾中",
+
   "Complete delivery agreement": "完整交付约定",
   "Implementation route updates": "实现路线调整次数",
   "Earlier workflow steps": "更早的执行步骤",

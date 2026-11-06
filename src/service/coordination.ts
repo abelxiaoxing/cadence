@@ -227,12 +227,15 @@ export class ServiceCoordination {
   readonly files: PrivateFiles;
   readonly registryDirectory: string;
   readonly stateHome: string;
-  /** null addresses only account-wide registry recovery, never an implicit cwd. */
-  constructor(workspace: string | null, stateHome?: string) {
+  /** null addresses only the account registry. An already validated CheckoutStore
+   * lets registry observation retain the registered root without running Git. */
+  constructor(workspace: string | CheckoutStore | null, stateHome?: string) {
     this.project =
       workspace === null
         ? undefined
-        : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
+        : workspace instanceof CheckoutStore
+          ? workspace
+          : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
     this.stateHome = this.project
       ? dirname(dirname(this.project.privateRoot))
       : canonicalAmbientRoot(stateHome ?? defaultStateHome());

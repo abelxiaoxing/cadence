@@ -1,3 +1,4 @@
+import type { Activity } from "../../../src/service/contracts/activity.ts";
 /** Explicit directory selection and Send preparation. Neither route sends a
  * conversation message or acquires execution consent. No automatic retry. */
 import {
@@ -68,9 +69,9 @@ async function command(
     },
   };
 }
-export async function selectDirectory(path: string) {
-  const current = await entry();
-  return command("/workbench/v1/select", { path }, current);
+export async function selectDirectory(path: string, signal?: AbortSignal) {
+  const current = await entry(signal);
+  return command("/workbench/v1/select", { path }, current, signal);
 }
 /** Re-read the gateway epoch/CSRF after a restart, but never substitute another
  * directory. This is preparation for the current Send, not replay of a Send. */
@@ -104,5 +105,24 @@ export async function prepareDirectorySend(
     throw new Error("stale");
   // Confirmation precedes attachment waiting; a later timeout cannot undo it.
   progress?.("confirmed");
+  return result;
+}
+
+/** A click may save a reference, but a changed canonical directory cannot
+ * silently redirect this activity's session into another project. */
+export async function selectActivity(
+  path: string,
+  activity: Pick<Activity, "sessionId" | "cwd" | "history">,
+  signal: AbortSignal,
+) {
+  if (!activity.sessionId || activity.history !== "shared")
+    throw new Error("unavailable");
+  const result = await selectDirectory(activity.cwd, signal);
+  if (
+    signal.aborted ||
+    result.project.path !== path ||
+    result.project.cwd !== activity.cwd
+  )
+    throw new Error("stale");
   return result;
 }

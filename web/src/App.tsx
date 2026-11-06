@@ -36,7 +36,7 @@ import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
 import type { PreparationProgress } from "./client/conversation-send";
-import { chatFromLocation } from "./client/project-route";
+import { activityRoute, chatFromLocation } from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
@@ -55,6 +55,10 @@ import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
+import {
+  ActivityList,
+  type ActivityListProps,
+} from "./components/workspace/ActivityList";
 import {
   AgentDock,
   type WorkflowAgent,
@@ -148,6 +152,7 @@ export function App({
   workbenchHome,
   projectEntries,
   notices,
+  discovery,
   onOpenService,
   project,
   onChooseFolder,
@@ -169,17 +174,22 @@ export function App({
   projectEntries?: { path: string; current: boolean }[];
   /** Workbench-supplied banners (automatic recovery). */
   notices?: ReactNode;
+  discovery?: ActivityListProps;
   /** The workbench's service restart and upgrade; absent on a direct owner. */
   onOpenService?(): void;
 }) {
   const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
+  const [activityHash, setActivityHash] = useState(() =>
+    typeof window === "undefined" ? "" : window.location.hash,
+  );
   const [detached, setDetached] = useState(false);
   const [initial] = useState(readHistoryUrl),
     [taskId, setTaskId] = useState<string | null>(initial?.taskId ?? null);
   const [chatId, setChatId] = useState<string | null>(() =>
     initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
   );
+  const activitySelection = activityRoute(activityHash, chatId ?? "");
   // A workflow subagent (or run) shown in the main area over the current view.
   const [agent, setAgent] = useState<WorkflowAgent | null>(null);
   const [chatRuns, setChatRuns] = useState<string[]>([]);
@@ -410,6 +420,7 @@ export function App({
     };
   }, []);
   const selectChat = (selected?: string) => {
+    setActivityHash("");
     const id = selected ?? crypto.randomUUID();
     if (!selected) setNewConversationCwd(workingFolder ?? initialCwd);
     setAgent(null);
@@ -466,6 +477,7 @@ export function App({
       if (!target) {
         const chat = chatFromLocation();
         if (chat) {
+          setActivityHash(window.location.hash);
           const cwd = history.state?.cadenceCwd;
           if (typeof cwd === "string") setNewConversationCwd(cwd);
           setReference(undefined);
@@ -984,8 +996,14 @@ export function App({
           tabIndex={-1}
           inert={mobile && drawer !== "left"}
         >
+          {!conversationAvailable && discovery && (
+            <aside className="panel panel-left lp-panel">
+              <ActivityList {...discovery} />
+            </aside>
+          )}
           {conversationAvailable && (
             <TaskSidebar
+              discovery={discovery}
               client={api.client}
               workspace={workspace.workspace}
               executionStopped={executionStopped}
@@ -1116,9 +1134,11 @@ export function App({
           )}
           {chatId && (!project || projectObserved) && (
             <ChatWorkspace
-              key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}`}
+              key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}:${activitySelection.leaf ?? ""}`}
               client={api.client}
               id={chatId}
+              activitySelected={activitySelection.selected}
+              initialLeaf={activitySelection.leaf}
               initialCwd={initialCwd}
               onLocation={setChatLocation}
               hidden={!!agent}

@@ -10,7 +10,10 @@ import {
   unsentMessage,
   waitForPreparation,
 } from "../../web/src/client/conversation-send";
-import { prepareDirectorySend } from "../../web/src/client/project-entry";
+import {
+  prepareDirectorySend,
+  selectActivity,
+} from "../../web/src/client/project-entry";
 import { sourceBuild } from "../helpers/source-build.ts";
 
 const build = vi.hoisted(() => ({ available: true }));
@@ -199,4 +202,53 @@ it("pre-cancel and successful preparation both release the wait without cancelin
   );
   expect(prepare).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["changed-root", "changed-cwd", "late-abort", "selected"])(
+  "R3: activity selection %s never prepares execution or rebinds a session",
+  async (failure) => {
+    const abort = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      if (init?.method !== "POST") return Response.json(entry);
+      if (failure === "late-abort") abort.abort();
+      return Response.json({
+        kind: "project",
+        project: {
+          ...selected,
+          ...(failure === "changed-root" ? { path: "/other" } : {}),
+          ...(failure === "changed-cwd" ? { cwd: "/other" } : {}),
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const pending = selectActivity(
+      selected.path,
+      { sessionId: "pi-session", history: "shared", cwd: selected.cwd },
+      abort.signal,
+    );
+    if (failure === "selected")
+      expect((await pending).project.epoch).toBeNull();
+    else await expect(pending).rejects.toThrow("stale");
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "/workbench/v1",
+      "/workbench/v1/select",
+    ]);
+  },
+);
+
+it("R6: incompatible activity history refuses before any directory read or write", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  await expect(
+    selectActivity(
+      selected.path,
+      {
+        sessionId: "pi-session",
+        history: "unavailable",
+        cwd: selected.cwd,
+      },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("unavailable");
+  expect(fetcher).not.toHaveBeenCalled();
 });

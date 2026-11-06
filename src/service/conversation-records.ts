@@ -290,16 +290,6 @@ export class ConversationRecords {
       ? { commandId, status: this.state(commandId).status }
       : null;
   }
-  nativeLinks(
-    runIds: readonly string[],
-  ): { runId: string; conversationId: string }[] {
-    if (!runIds.length) return [];
-    const recorded = this.sessions.nativeRuns();
-    return runIds.flatMap((runId) => {
-      const conversationId = recorded.get(runId);
-      return conversationId ? [{ runId, conversationId }] : [];
-    });
-  }
   summary(id: string, live: LiveTurn | undefined): ChatSummary | null {
     this.assertSupported(id);
     const listed = this.sessions.find(id);

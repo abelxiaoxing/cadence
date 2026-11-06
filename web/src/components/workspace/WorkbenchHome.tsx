@@ -20,6 +20,7 @@ import { useT } from "../../i18n/locale";
 import type { DrawerSide } from "../../layout/swipe-drawer";
 import { useDrawerFocus } from "../../layout/use-drawer-focus";
 import { useSwipeDrawer } from "../../layout/use-swipe-drawer";
+import { ActivityList, type ActivityListProps } from "./ActivityList";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkingFolderButton } from "./WorkingFolderButton";
 
@@ -32,6 +33,7 @@ export function WorkbenchHome({
   onOpenProject,
   onOpenService,
   children,
+  discovery,
 }: {
   ready: boolean;
   projects?: readonly string[];
@@ -44,6 +46,7 @@ export function WorkbenchHome({
   /** The workbench's service restart and upgrade. */
   onOpenService?(): void;
   children?: ReactNode;
+  discovery?: ActivityListProps;
 }) {
   const { t, locale, setLocale } = useT();
   const [drawer, setDrawer] = useState<DrawerSide | null>(null);
@@ -154,6 +157,7 @@ export function WorkbenchHome({
           inert={mobile && drawer !== "left"}
         >
           <aside className="panel panel-left lp-panel">
+            {discovery && <ActivityList {...discovery} />}
             <section className="lp-section grow">
               <header className="lp-section-header">
                 <span className="lp-section-title">

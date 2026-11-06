@@ -84,6 +84,8 @@ export function ChatWorkspace({
   id,
   workspaceId,
   initialCwd,
+  initialLeaf = null,
+  activitySelected = false,
   onLocation,
   enabled,
   actionsReady = enabled,
@@ -105,6 +107,8 @@ export function ChatWorkspace({
   id: string;
   workspaceId: string;
   initialCwd?: string;
+  initialLeaf?: string | null;
+  activitySelected?: boolean;
   onLocation?(location: ConversationLocation): void;
   enabled: boolean;
   actionsReady?: boolean;
@@ -190,7 +194,7 @@ export function ChatWorkspace({
     if (contextKnown && locationCwd)
       onLocationRef.current?.({ id, cwd: locationCwd });
   }, [contextKnown, id, locationCwd]);
-  const conversation = useConversation(client, id, available);
+  const conversation = useConversation(client, id, available, initialLeaf);
   const { turns } = conversation;
   // Undefined until observed; null is a conversation not started yet.
   const observed = conversation.summary !== undefined;
@@ -218,6 +222,7 @@ export function ChatWorkspace({
   const input = cadenceInput(draft, cadence ? "cadence" : mode);
   const canSend =
     enabled &&
+    !(activitySelected && !conversation.summary) &&
     contextKnown &&
     observed &&
     !conversation.error &&
@@ -823,7 +828,12 @@ export function ChatWorkspace({
       <header className="conversation-header">
         <div className="conversation-heading">
           <FiMessageSquare aria-hidden="true" />
-          <h2>{summary?.title ?? t("New conversation")}</h2>
+          <h2>
+            {summary?.title ??
+              (activitySelected
+                ? t("Discovered session")
+                : t("New conversation"))}
+          </h2>
           <span className="conversation-badge">
             {cadence ? t("Cadence on") : t("Ordinary")}
           </span>
@@ -922,7 +932,14 @@ export function ChatWorkspace({
           }
         }}
       >
-        {conversation.summary === null && (
+        {activitySelected && !conversation.summary && (
+          <p role="status" className="panel-hint">
+            {t(
+              "Activity was discovered; session history is not yet readable. No transcript was created.",
+            )}
+          </p>
+        )}
+        {conversation.summary === null && !activitySelected && (
           <ChatWelcome
             hint={t(
               "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
