@@ -442,6 +442,12 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
       <DeliveryDetails delivery={d} />
     </LocaleProvider>,
   );
+  // The shared dl grid expects direct term/value children. Nested row divs
+  // become max-content outer columns and clip the remaining delivery facts.
+  expect(html).toContain("<dl><dt>");
+  expect(html).not.toContain("<dl><div");
+  expect(html.match(/<dt>/g)).toHaveLength(9);
+  expect(html.match(/<dd>/g)).toHaveLength(9);
   expect(html).toContain(d.taskBranch);
   expect(html).toContain(d.worktreeRoot);
   expect(html).toContain("Checks and automatic Agent review passed");

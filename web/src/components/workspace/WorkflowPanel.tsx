@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { FiSquare } from "react-icons/fi";
 import {
   type DeliveryObservation,
@@ -535,12 +535,12 @@ export function DeliveryDetails({
     >
       <dl>
         {rows.map(([label, value]) => (
-          <div key={label}>
+          <Fragment key={label}>
             <dt>{label}</dt>
             <dd>
               <code>{value}</code>
             </dd>
-          </div>
+          </Fragment>
         ))}
       </dl>
       {d.integration.reason && <p>{d.integration.reason}</p>}

@@ -290,7 +290,13 @@ for (const tool of [false, true, "invalid-utf8" as const])
             (message: { role: string }) => message.role === "tool",
           );
           expect(results).toHaveLength(1);
-          const actual = String(results[0].content);
+          const content = results[0].content;
+          const actual =
+            typeof content === "string"
+              ? content
+              : content
+                  .map((part: { text?: string }) => part.text ?? "")
+                  .join("\n");
           expect(actual).toBe(
             `[redacted]${"bash-public-output\n".repeat(4096)}`,
           );
@@ -327,6 +333,8 @@ for (const tool of [false, true, "invalid-utf8" as const])
         },
       });
       let native: NativeSettlement | undefined;
+      let systemContextObserved = false;
+      const messageRoles: string[] = [];
       const accountingPath = `${root}.accounting.json`;
       const result = await runProcess({
         command: process.execPath,
@@ -349,6 +357,15 @@ for (const tool of [false, true, "invalid-utf8" as const])
         },
         onNative: (facts) => {
           native = facts;
+        },
+        onFrame: ({ event }) => {
+          if (event.kind === "message-start") messageRoles.push(event.role);
+          if (
+            event.kind === "omitted-block" &&
+            event.block.owner.kind === "context" &&
+            event.block.owner.component === "effective-system"
+          )
+            systemContextObserved = true;
         },
         protocol: true,
         childRunId: material.request.childRunId,
@@ -395,6 +412,16 @@ for (const tool of [false, true, "invalid-utf8" as const])
         output: "",
       });
       expect(requests).toBe(tool ? 2 : 1);
+      // Actual createAgentSession, not a low-level Agent: Pi 1.5 emits system
+      // input-control events before the first provider invocation.
+      expect(systemContextObserved).toBe(true);
+      expect(messageRoles).toContain("assistant");
+      expect(messageRoles).not.toContain("system");
+      expect(native?.capture).toMatchObject({
+        observed: "complete",
+        source: "limited",
+        omissions: ["unsupported"],
+      });
       expect(readdirSync(root)).toEqual([]);
       expect(observationAvailable).toBe(true);
       expect(native).toMatchObject({
@@ -919,5 +946,165 @@ it("a provider HTTP error retains its error message and reports prompt failure, 
     observer.mockRestore();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it("Pi system messages are paired input-control omissions, never assistant output or unredacted tool definitions", async () => {
+  let raw = "";
+  const emitter = new CaptureEmitter(
+    randomUUID(),
+    new Writable({
+      write(chunk, _encoding, done) {
+        raw += chunk;
+        done();
+      },
+    }),
+    () => {},
+  );
+  const capture = new SdkCapture(emitter, ["system-private-canary"]);
+  await emitter.emit({ kind: "ready", requestProtocol: 2 });
+  for (const content of [
+    "system-private-canary",
+    [{ type: "text", text: "new instructions" }],
+  ]) {
+    const message = {
+      role: "system",
+      content,
+      sections: { private: "system-private-canary", retired: null },
+      toolsAdded: [
+        { name: "newTool", parameters: { secret: "system-private-canary" } },
+      ],
+      toolsRemoved: [{ name: "oldTool" }],
+    };
+    await capture.event({ type: "message_start", message });
+    await capture.event({ type: "message_end", message });
+  }
+  await capture.event({
+    type: "message_start",
+    message: { role: "assistant" },
+  });
+  await capture.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Actual answer" }],
+      stopReason: "stop",
+    },
+  });
+  await capture.final();
+  const events = raw
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).event);
+  expect(
+    events.filter((e) => e.kind === "message-start").map((e) => e.role),
+  ).toEqual(["assistant"]);
+  expect(events.filter((e) => e.kind === "omitted-block")).toHaveLength(2);
+  expect(
+    events.find((e) => e.kind === "capture-status").coverage,
+  ).toMatchObject({
+    observed: "complete",
+    source: "limited",
+    omissions: ["unsupported"],
+  });
+  expect(emitter.state.preview).toBe("Actual answer");
+  expect(raw).not.toContain("system-private-canary");
+  expect(raw).not.toContain("newTool");
+});
+
+it.each(["overlap", "wrong-end", "update", "unfinished", "unknown-role"])(
+  "system-message support does not loosen capture ordering: %s",
+  async (scenario) => {
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(_chunk, _encoding, done) {
+          done();
+        },
+      }),
+      () => {},
+    );
+    const capture = new SdkCapture(emitter);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    if (scenario === "unfinished") {
+      // A previous valid answer must not hide a later unfinished control event.
+      await capture.event({
+        type: "message_start",
+        message: { role: "assistant" },
+      });
+      await capture.event({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "previous answer" }],
+          stopReason: "stop",
+        },
+      });
+      expect(capture.selected).not.toBeNull();
+    }
+    await capture.event({
+      type: "message_start",
+      message: { role: "system", content: "instructions" },
+    });
+    const bad =
+      scenario === "overlap"
+        ? () =>
+            capture.event({ type: "message_start", message: { role: "user" } })
+        : scenario === "wrong-end"
+          ? () =>
+              capture.event({
+                type: "message_end",
+                message: { role: "assistant", content: [] },
+              })
+          : scenario === "update"
+            ? () =>
+                capture.event({
+                  type: "message_update",
+                  assistantMessageEvent: {
+                    type: "text_delta",
+                    contentIndex: 0,
+                    delta: "not assistant output",
+                  },
+                })
+            : scenario === "unfinished"
+              ? () => capture.final()
+              : async () => {
+                  await capture.event({
+                    type: "message_end",
+                    message: { role: "system", content: "instructions" },
+                  });
+                  return capture.event({
+                    type: "message_start",
+                    message: { role: "unrecognized" },
+                  });
+                };
+    await expect(bad()).rejects.toThrow();
+    capture.dispose();
+  },
+);
+
+it("a streamed key/delimiter waits for its value across whitespace and repeated redaction stays stable", () => {
+  for (const prefix of ["token: ", "password=\t ", "Bearer "]) {
+    const original = `Implemented ${prefix}unconfigured-value end`;
+    const expected = `Implemented ${prefix}[redacted] end`;
+    for (let size = 1; size < 20; size++) {
+      let value = original;
+      for (let pass = 0; pass < 3; pass++) {
+        const sanitizer = new TextSanitizer();
+        let text = "";
+        for (let at = 0; at < value.length; at += size)
+          text += sanitizer.write(value.slice(at, at + size));
+        text += sanitizer.end();
+        expect(text).toBe(expected);
+        value = text;
+      }
+      const json = new DetailSanitizer("canonical-json");
+      const encoded = JSON.stringify({ summary: expected });
+      let kept = "";
+      for (let at = 0; at < encoded.length; at += size)
+        kept += json.write(encoded.slice(at, at + size));
+      kept += json.end();
+      expect(JSON.parse(kept)).toEqual({ summary: expected });
+    }
   }
 });

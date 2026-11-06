@@ -219,6 +219,17 @@ export class TextSanitizer {
         this.redacted ||= pos >= 0;
         this.heuristic = this.heuristic.slice(size);
       } else if (match) {
+        // A key/delimiter can arrive before its whitespace and value. Starting
+        // the skip state now would let that whitespace end it before any value
+        // was consumed, leaking a split value or duplicating an old marker.
+        // Keep only the bounded prefix until the first value character arrives.
+        if (!final && match.index + match[0].length === this.heuristic.length) {
+          output += this.heuristic.slice(0, match.index);
+          this.heuristic = this.heuristic.slice(match.index);
+          if (utf8Bytes(this.heuristic) > 8192)
+            throw new ContractError("oversize");
+          break;
+        }
         output += this.heuristic.slice(0, match.index) + match[0] + marker;
         this.heuristic = this.heuristic.slice(match.index + match[0].length);
         this.skipping = true;

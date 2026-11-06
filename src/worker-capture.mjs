@@ -947,7 +947,9 @@ export class SdkCapture {
         const message = own(event, "message");
         const rawRole = own(message, "role");
         const role = rawRole === "toolResult" ? "tool-result" : rawRole;
-        requireFact(["user", "assistant", "tool-result"].includes(role));
+        requireFact(
+          ["system", "user", "assistant", "tool-result"].includes(role),
+        );
         const matches =
           role === "tool-result"
             ? this.matches(
@@ -964,6 +966,23 @@ export class SdkCapture {
           streams: new Map(),
           declarations: new Map(),
         };
+        if (role === "system") {
+          // Pi emits prompt/section/tool-loadout changes as paired system
+          // messages. The initial effective prompt is already captured as
+          // context; these additional SDK control bodies are not chat output.
+          // Keep their lifecycle strict and their omitted source explicit,
+          // without copying tool definitions or claiming complete capture.
+          await this.emit({
+            kind: "omitted-block",
+            block: {
+              owner: { kind: "context", component: "effective-system" },
+              sourceType: "unsupported",
+              mimeType: null,
+              reason: "unsupported",
+            },
+          });
+          break;
+        }
         await this.emit({
           kind: "message-start",
           messageId: this.current.id,
@@ -1054,6 +1073,10 @@ export class SdkCapture {
             ? "tool-result"
             : own(message, "role")) === m.role,
         );
+        if (m.role === "system") {
+          this.current = null;
+          break;
+        }
         for (const stream of m.streams.values())
           await this.streamWrite(stream, "", true);
         const { texts, count } = await this.blocks(

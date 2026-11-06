@@ -71,6 +71,7 @@ export class SdkCapture {
   constructor(emitter: CaptureEmitter, secrets?: string[]);
   selected: FinalSelection | null;
   events: number;
+  dispose(): void;
   context(request: WorkerPublicRequest, system: string): Promise<void>;
   event(event: unknown): Promise<void>;
   final(): Promise<void>;

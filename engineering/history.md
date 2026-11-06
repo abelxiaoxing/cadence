@@ -23,6 +23,9 @@ Verify exact model and effective thinking before READY/prompt; no provider disco
 Use the awaited public core-agent subscription for backpressure, reserving synchronous tool/update ingress before any copy or await.
 Custom bash uses public local operations plus the bounded redacted accumulator, not the stock raw-spill accumulator.
 Never await a run's own settlement from inside its awaited subscriber.
+Pi system-message start/end events are input-control occurrences, not user or assistant output.
+Their pairing remains checked; the initial effective prompt is captured once as context, while SDK system-message bodies (including section/tool-loadout patches) carry explicit context-source omissions rather than being copied into chat or silently labelled complete.
+Unknown message roles, overlapping occurrences and unfinished system messages still refuse capture.
 
 Sanitize known literals, structured sensitive values and terminal controls before stdout and again before owner persistence.
 Preserve split UTF-8, escaped literals, surrogate pairs and possible secret prefixes across chunks; independent per-chunk string replacement is insufficient.
