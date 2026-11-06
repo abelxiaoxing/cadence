@@ -755,3 +755,23 @@ No slow suite, browser automation, paid provider, native macOS/Windows operation
 Publication uses the repository's tag-triggered GitHub Actions/OIDC lane, not local npm credentials.
 The active workflow and the existing npm-release environment's v* tag policy were observed without changing protection settings.
 This unshipped appendix records local pre-publication evidence: the CI-built archive must independently pass its source/body audit, and actual npm metadata, latest and downloaded bytes must be confirmed against that CI artifact before claiming publication success.
+
+## Release 2.0.40 qualification (2026-11-06)
+
+The user explicitly approved diagnosing the failed 2.0.39 CI gate and publishing a newly qualified 2.0.40, without moving or deleting v2.0.39.
+The earlier [2.0.39 run](https://github.com/abelxiaoxing/cadence/actions/runs/42236251846) failed two foreign-ownership fixture cases before its publish job; registry observations confirmed 2.0.39 was not published and latest remained 2.0.38.
+The exact runner image's Git installation script adds system `safe.directory = *`.
+Supplying that same system setting locally reproduced both failures on Git 2.55.0: an isolated HOME did not isolate the system configuration, so no Git version change was needed to reproduce the failure.
+
+The fix gives the ownership fixture its own system Git configuration after the production environment sanitizer, without changing production Git policy.
+Both user and system wildcard cases now have positive controls showing Git honors the fixture trust without Cadence's policy, followed by assertions that root observation refuses, filters never run and configuration bytes remain unchanged.
+All five directly affected tests passed in both normal and simulated-runner environments; no assertion was removed, no test was skipped and no budget was enlarged.
+The failed reproduction and passing targeted reports are retained under `/home/mirako/abel/cadence-release-2.0.40.vUWkuo0n/`.
+
+Canonical versioned outputs were regenerated for the unused 2.0.40.
+Fresh `bun run verify` passed: **1699 fast root tests passed, 282 skipped**, **260 Web tests passed**, plus types, syntax, lint, Agent pins, deterministic builds and real-pack auditing.
+A separate Bun tarball passed the exact **169 regular-member** and source-body audit.
+Local artifact: `/home/mirako/abel/cadence-release-2.0.40.vUWkuo0n/pack/abelxiaoxing-cadence-2.0.40.tgz`; SHA-256 `ad6acb3ef48f402b32e1b6254eb4e2106e817e861322790e2e65a982d18ef4fc`; SHA-1 `a39e1f92cb45eeb23468837069eb46f04343d9bf`.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one private disk-backed temp directory outside Git checkouts.
+No local dependency installation, slow suite, browser/provider/native-platform qualification or production service operation was performed.
+This unshipped appendix records pre-publication qualification; the tag-triggered OIDC workflow, CI artifact audit and actual registry bytes must still be observed independently before claiming publication success.
