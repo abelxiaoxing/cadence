@@ -738,3 +738,20 @@ An earlier canceled attempt remains canceled, all diagnostic failures are retain
 Detailed evidence is `/home/mirako/cadence-sdk-fix.xVucgguI/REPORT.md`; these optional diagnostics are not new release prerequisites and were not rerun for the version bump.
 No physical-human review, macOS/Windows execution, installation or deployment is claimed.
 This evidence-only appendix is not shipped in the archive; actual GitHub push and npm publication must be confirmed separately against the audited artifact.
+
+## Release 2.0.39 qualification (2026-11-06)
+
+The user explicitly requested a new npm release after integrating active Pi discovery and the readonly research-tool repair into main.
+This release discovers active native turns and owner-managed work without activating idle owners, and permits explicit installed-package investigation with external paths, symlinks, regex grep and glob patterns while keeping research/diagnosis/review readonly.
+Release preparation changes only the package version, canonical generated outputs and this evidence appendix; integrated implementation remains based on `41be1cf`.
+The public registry reported latest 2.0.38 and no 2.0.39, and both local and remote v2.0.39 tags were absent before preparation.
+
+Fresh `bun run verify` passed: **1699 fast root tests passed, 282 skipped** (105 passing files, two skipped), **260 Web tests passed** (24 files), plus types, syntax, lint, Agent pins, deterministic generated-byte checks and real-pack auditing.
+A separate real Bun tarball passed exact auditing of **169 regular members**, source bodies, Agent pins, notices and fonts.
+Local qualification artifact: `/home/mirako/abel/cadence-release-2.0.39.lqJ7Bayu/pack/abelxiaoxing-cadence-2.0.39.tgz`; SHA-256 `3b99c55685326f214fca55ee93bf2103955fec2f996fc5b8856bb19973319c94`; SHA-1 `e26937fc06e17b02f4fcef8a2fe247ba8edb7ae4`.
+Qualification used Linux, Node 26.7.0 and Bun 1.3.14, with all three temporary-directory variables bound to the same fresh private disk directory outside Git checkouts.
+No slow suite, browser automation, paid provider, native macOS/Windows operation, local dependency installation or production service operation was performed.
+
+Publication uses the repository's tag-triggered GitHub Actions/OIDC lane, not local npm credentials.
+The active workflow and the existing npm-release environment's v* tag policy were observed without changing protection settings.
+This unshipped appendix records local pre-publication evidence: the CI-built archive must independently pass its source/body audit, and actual npm metadata, latest and downloaded bytes must be confirmed against that CI artifact before claiming publication success.
