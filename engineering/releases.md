@@ -715,3 +715,26 @@ Qualification used Linux, Node 26.7.0, npm 12.0.2, Bun 1.3.14 and installed Pi S
 No slow suite, physical terminal, paid-provider request, browser automation, macOS/Windows execution, global installation or production service operation was performed; no dependency or browser was downloaded.
 Logs, package auditing, the release artifact and subsequent publication observations are retained in the checkout's ignored `.cache/releases/2.0.37/` directory; temporary fixtures are disposable, not consumer history or profiles.
 This evidence-only appendix follows qualification and is not shipped in the archive; remote push and registry publication must still be confirmed independently against that audited artifact.
+
+## Release 2.0.38 qualification (2026-11-06)
+
+The user explicitly authorized one release commit, GitHub push and npm publication of the reviewed fixes.
+This release includes conversation-scoped native agent observation, approved-only named stable worktrees with adaptive local delivery, and the Pi 1.5 capture, redaction and delivery-layout corrections.
+Paired SDK system messages retain strict lifecycle checks and explicit context-source omissions instead of becoming chat output or falsely complete source coverage.
+Streaming credential-value detection waits across a split delimiter/whitespace boundary; the delivery panel uses a flat definition-list grid so long refs and worktree paths do not clip later facts.
+The real-owner fixture now reads both string and typed text-part messages and checks current observation cursors and workflow step identities.
+Version 2.0.37 was already published; 2.0.38 was unused, and canonical operator/service/Web outputs were regenerated after the version change.
+
+Fresh `bun run verify` passed: **1615 fast root tests passed, 282 skipped** (101 passing files, two skipped), **246 Web tests passed** (23 files), plus types, syntax, lint, Agent pins, deterministic generated-byte checks and real-pack auditing.
+A separate Bun tarball passed exact auditing of **167 regular members**, every body, Agent pin, notice and font; npm 12's package-keyed publish dry-run matched the complete member set, SHA-1 and SHA-512 integrity.
+Artifact: `/home/mirako/cadence-release.a0bxwZT7/pack/abelxiaoxing-cadence-2.0.38.tgz`; SHA-256 `ff7215d64696b63fe6fe28140504ebeb2298f3d80dd5bc96399c4d561482269c`; SHA-1 `ec7923732601db064a592a7dff5215370e65de81`.
+Release receipts are in `/home/mirako/cadence-release.a0bxwZT7/`, using a fresh 0700 disk-backed temporary directory outside Git checkouts for `TMPDIR`, `TEMP` and `TMP`.
+Qualification used Linux, Node 26.7.0, npm 12.0.2, Bun 1.3.14 and installed public Pi SDK/TUI 1.5.0; no dependency or browser was downloaded and no production service was changed.
+
+Earlier, separately user-requested diagnostics of the same implementation passed **35 slow tests across seven exact files** (65 skipped), actual Chromium approval/delivery and desktop/narrow layout checks, and two authorized real-model local deliveries with four native checks and three independent Agent reviews each.
+The real-model knowledge phases completed without creating a new knowledge index, so they do not qualify knowledge-file writes.
+The original paid drivers misread a fully qualified branch ref after successful delivery; a corrected offline validator checked the same durable runs, actual Git refs/trees, native settlements and real checks without replaying paid work.
+An earlier canceled attempt remains canceled, all diagnostic failures are retained, personal configuration contents stayed unchanged, and the isolated owners/workers were stopped.
+Detailed evidence is `/home/mirako/cadence-sdk-fix.xVucgguI/REPORT.md`; these optional diagnostics are not new release prerequisites and were not rerun for the version bump.
+No physical-human review, macOS/Windows execution, installation or deployment is claimed.
+This evidence-only appendix is not shipped in the archive; actual GitHub push and npm publication must be confirmed separately against the audited artifact.

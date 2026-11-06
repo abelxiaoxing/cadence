@@ -255,9 +255,9 @@ it("real generated owner: task IDs cannot collide with the stable candidate; seq
     const operations = run.steps.filter((s) => s.kind === "git");
     for (const name of [
       "worktree-integration",
-      "commit-implementation",
+      "commit-candidate",
       "merge",
-      "remove-merged-worktrees",
+      "remove-merged-worktree",
     ])
       expect(
         operations.some(
@@ -520,7 +520,7 @@ it("explicit working-copy delivery works without Git and never initializes or co
     );
     const prompts = f.observations.map((o) => JSON.stringify(o.messages));
     const second = prompts.find((text) =>
-      text.includes("Execute only assignment b:"),
+      text.includes("Execute the remaining work for assignment b:"),
     );
     expect(second).toContain("Predecessor assignments already applied here: a");
     expect(second).toContain("Do not rerun initial cleanliness preconditions");
@@ -1099,7 +1099,9 @@ it("real SDK research uses the explicitly selected root and retains partial scan
     if (accepted.type !== "run") throw Error("run");
     const run = await wait(accepted.run.id);
     expect(run.status).toBe("completed");
-    expect(run.steps[0].text).toContain("Partial coverage: result limit");
+    expect(run.steps[0].text).toContain('"state":"more"');
+    expect(run.steps[0].text).toContain('"complete":false');
+    expect(run.steps[0].text).toContain('"nextCursor":');
     expect(run.steps[0].text).not.toContain("existing.txt");
     expect(
       f.observations.every(
@@ -1111,9 +1113,21 @@ it("real SDK research uses the explicitly selected root and retains partial scan
       id: run.id,
       stepId: run.steps[0].id,
     });
-    expect(JSON.stringify(transcript)).toContain(
-      "Partial coverage: result limit",
+    if (
+      transcript.kind !== "ok" ||
+      transcript.value.kind !== "workflow-transcript"
+    )
+      throw Error("transcript");
+    const tool = transcript.value.turn?.items.find(
+      (item) => item.name === "find",
     );
+    expect(tool?.error).toBe(false);
+    const result = JSON.parse(tool!.text);
+    const observation = JSON.parse(result.content[0].text);
+    expect(observation.state).toBe("more");
+    expect(observation.coverage.complete).toBe(false);
+    expect(observation.nextCursor).toEqual(expect.any(String));
+    expect(observation.items).toHaveLength(1);
   } finally {
     await f.close();
   }

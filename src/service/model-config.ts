@@ -198,9 +198,8 @@ function compat(value: unknown): void {
     "allowEmptySignature",
     "supportsStrictTools",
     "supportsToolReferences",
-    // Newer Pi (1.x) keeps or collapses mid-conversation system messages. The
-    // pinned SDK's messages have no system role, so this flag is inert here.
-    // Other newer keys may change requests or thinking and stay refused.
+    // Pi 1.5 keeps or collapses mid-conversation system messages according to
+    // this public provider capability. Unknown request/thinking keys stay refused.
     "supportsMidConvoSystemMessages",
   ];
   const enums: Record<string, readonly string[]> = {

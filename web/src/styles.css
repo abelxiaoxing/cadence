@@ -2933,24 +2933,17 @@ summary.chat-steps-head:hover {
   color: var(--text-dim);
   font-size: 12px;
 }
-.workflow-delivery dl > div {
-  display: grid;
+.workflow-delivery dl {
   grid-template-columns: minmax(8rem, 1fr) minmax(0, 3fr);
   gap: 8px;
-  margin: 8px 0;
-}
-.workflow-delivery dt {
-  color: var(--text-dim);
-}
-.workflow-delivery dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 @media (max-width: 640px) {
-  .workflow-delivery dl > div {
+  .workflow-delivery dl {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
+  }
+  .workflow-delivery dd {
+    margin-bottom: 8px;
   }
 }
 .workflow-plan {

@@ -11440,6 +11440,13 @@ class TextSanitizer {
         this.redacted ||= pos >= 0;
         this.heuristic = this.heuristic.slice(size2);
       } else if (match) {
+        if (!final && match.index + match[0].length === this.heuristic.length) {
+          output += this.heuristic.slice(0, match.index);
+          this.heuristic = this.heuristic.slice(match.index);
+          if (utf8Bytes(this.heuristic) > 8192)
+            throw new ContractError("oversize");
+          break;
+        }
         output += this.heuristic.slice(0, match.index) + match[0] + marker;
         this.heuristic = this.heuristic.slice(match.index + match[0].length);
         this.skipping = true;
@@ -30607,8 +30614,8 @@ function workflowResultDetail(value, secrets) {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.37",
-  build: "38a1a6b168161bf9f527db050fabbf0b1109b1f2c37f5166eaccb6591b566118",
+  version: "2.0.38",
+  build: "5bbc714e904a143f662abcac46114d2dfd3f4e445e81b0d79464a48402d4bb6e",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

@@ -18,6 +18,17 @@ import { nativeBuild, sourceContract } from "./source-build.ts";
 import { windowsSystemEnvironment } from "./windows-environment.ts";
 import { plan as workflowPlan } from "./workflow-plan.ts";
 
+/** Current OpenAI-compatible messages use either strings or typed text parts. */
+function messageText(content: unknown): string {
+  return typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content
+          .map((part) => (typeof part?.text === "string" ? part.text : ""))
+          .join("\n")
+      : "";
+}
+
 export async function acceptingFixture(
   mode: "source" | "generated",
   environment?: (env: NodeJS.ProcessEnv) => void,
@@ -136,10 +147,13 @@ export async function acceptingFixture(
       if (input.messages.at(-1)?.role === "tool")
         finish(
           res,
-          `Observed partial research evidence: ${input.messages.at(-1).content}`,
+          `Observed partial research evidence: ${messageText(input.messages.at(-1).content)}`,
         );
       else
-        callTool(res, "bounded-find", "find", { pattern: "*.txt", limit: 1 });
+        callTool(res, "bounded-find", "find", {
+          pattern: "*.txt",
+          pageSize: 1,
+        });
       return;
     }
     if (
@@ -147,16 +161,11 @@ export async function acceptingFixture(
       toolNames.includes("cadence_research")
     ) {
       const last = input.messages.at(-1);
-      const user =
-        typeof last?.content === "string"
-          ? last.content
-          : (last?.content ?? [])
-              .map((c: { text?: string }) => c.text ?? "")
-              .join("");
+      const user = messageText(last?.content);
       if (last?.role === "tool") {
         finish(
           res,
-          String(last.content).includes("proposalId")
+          messageText(last.content).includes("proposalId")
             ? "The complete plan is ready for your approval."
             : "Investigation complete. Should we write both files?",
         );
@@ -181,9 +190,7 @@ export async function acceptingFixture(
       )
     ) {
       const prompt = input.messages
-        .map((m: { content?: unknown }) =>
-          typeof m.content === "string" ? m.content : "",
-        )
+        .map((m: { content?: unknown }) => messageText(m.content))
         .join("\n");
       const stepId = /"stepId":"([^"]+)"/.exec(prompt)?.[1];
       if (!stepId) throw new Error("No native evidence in recovery fixture");
@@ -253,17 +260,7 @@ export async function acceptingFixture(
         }
       } else {
         const messages = input.messages
-          .map((m: { content?: unknown }) =>
-            typeof m.content === "string"
-              ? m.content
-              : Array.isArray(m.content)
-                ? m.content
-                    .map((p: { text?: unknown }) =>
-                      typeof p.text === "string" ? p.text : "",
-                    )
-                    .join("\n")
-                : "",
-          )
+          .map((m: { content?: unknown }) => messageText(m.content))
           .join("\n");
         const requested =
           /Write only these exact files: ([^(\n]+)/
