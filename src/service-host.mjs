@@ -31066,7 +31066,7 @@ function workflowResultDetail(value, secrets) {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.38",
+  version: "2.0.39",
   build: "d855120ead3c2b3ebdfb42215818a8a1e42a76007134a38fefb233cfa97645a3",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
