@@ -95,6 +95,14 @@ Pi's package installer omits peers and supplies only its own packages and Typebo
 The standalone owner and workers run outside Pi and import `pi-coding-agent`/`pi-ai` by bare name, so they load the exact tested copy (1.5.0) from optional dependencies; an install that omits optional dependencies cannot start an owner.
 Browser assets are prebuilt, not compiled by consumer postinstall.
 
+## Repository release automation
+
+`.github/workflows/publish.yml` owns the explicitly pushed stable-tag release lane; `scripts/npm-release.mjs` owns exact source/tag/package/registry binding and post-publication byte confirmation.
+The readonly preparation job uses the existing sole gate and `scripts/package-audit.mjs`; the separate OIDC job re-audits the immutable artifact against a clean checkout and publishes it without project dependencies or lifecycle scripts.
+These are repository tooling, not shipped runtime entrypoints or service activation.
+Repository/tag/workflow protections and the npm trusted-publisher binding remain external authority, not guarantees supplied by editable workflow code.
+Setup and release operations live in [reuse and distribution](../docs/reuse-and-distribution.md#maintainer-releases-from-any-computer).
+
 ## Shipped content
 
 - `skills/context7-auto-research` and `skills/grok-search` remain independent research tools.
