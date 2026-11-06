@@ -53,6 +53,8 @@ Before a targeted run, assert that every named test file exists; afterward requi
 Missing files, omitted files and files containing only skipped/todo cases fail coverage even if Vitest exits zero.
 This targeted coverage check is not a substitute for the sole integration gate or independent automatic Agent review.
 Use fabricated credentials, isolated homes/state and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
+Git ownership fixtures must select their own system configuration as well as an isolated home: hosted runner images can set system-wide `safe.directory = *`, which changing `HOME` does not remove.
+`project-start` supplies that fixture-only configuration inside its Git shim, after the production environment sanitizer, and separately proves root refusal under user and system wildcard trust without modifying host configuration.
 A DIRECT process-test environment has all routing variables absent, including `NO_PROXY`/`no_proxy`; wildcard bypass variables are unsupported, not a way to request direct access.
 The `cadence-mode`, `history-shell`, `startup-card` and `agent-panel-cadence` fake terminal fixtures explicitly clear an inherited `CADENCE_SUBAGENT_CHILD` for their external-Pi scenario and restore it afterward; child-refusal cases set it themselves.
 Production workers and checks retain the guard, including when they run verification.

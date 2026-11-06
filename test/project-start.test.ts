@@ -125,10 +125,14 @@ it.skipIf(process.platform === "win32").each(["clean", "process"])(
     );
     writeFileSync(join(root, "file.txt"), "changed content\n");
     const config = readFileSync(path);
+    // HOME alone does not isolate system safe.directory=* on hosted runners.
+    // Supply only this fixture's system config after gitEnvironment strips GIT_*.
+    const system = join(dir, "system.gitconfig");
+    writeFileSync(system, "");
     // Real Git's seam simulates a foreign checkout without chown or sudo.
     writeFileSync(
       join(bin, "git"),
-      `#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec '${git}' "$@"\n`,
+      `#!/bin/sh\nGIT_CONFIG_SYSTEM='${system}' GIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec '${git}' "$@"\n`,
       { mode: 0o700 },
     );
     vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
@@ -147,17 +151,30 @@ it.skipIf(process.platform === "win32").each(["clean", "process"])(
       expect(existsSync(marker)).toBe(false);
       expect(readFileSync(path)).toEqual(config);
     }
-    // Even an ambient wildcard is not a grant to run another account's filters
-    // during root observation. Leave the user's configuration bytes untouched.
-    const global = join(dir, ".gitconfig");
-    writeFileSync(global, "[safe]\n\tdirectory = *\n");
-    uid.mockReturnValue(0);
-    expect(() => resolveWorkspace(nested)).toThrow(
-      "Git workspace lookup refused",
-    );
-    expect(captureChanges(root)).toMatchObject({ git: false, complete: false });
-    expect(existsSync(marker)).toBe(false);
-    expect(readFileSync(global, "utf8")).toBe("[safe]\n\tdirectory = *\n");
+    // Neither a user nor a system wildcard grants root another account's
+    // filters. Exercise each source separately and preserve its original bytes.
+    for (const trusted of [join(dir, ".gitconfig"), system]) {
+      writeFileSync(trusted, "[safe]\n\tdirectory = *\n");
+      uid.mockReturnValue(0);
+      // Positive control: Git honors this fixture's trust without our policy.
+      expect(
+        spawnSync("git", ["rev-parse", "--show-toplevel"], {
+          cwd: nested,
+          env: gitEnvironment(),
+        }).status,
+      ).toBe(0);
+      expect(() => resolveWorkspace(nested)).toThrow(
+        "Git workspace lookup refused",
+      );
+      expect(captureChanges(root)).toMatchObject({
+        git: false,
+        complete: false,
+      });
+      expect(existsSync(marker)).toBe(false);
+      expect(readFileSync(path)).toEqual(config);
+      expect(readFileSync(trusted, "utf8")).toBe("[safe]\n\tdirectory = *\n");
+      writeFileSync(trusted, "");
+    }
   },
 );
 
