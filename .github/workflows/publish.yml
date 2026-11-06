@@ -1,0 +1,116 @@
+name: Publish npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+# Serialize releases without cancelling a publish already in progress.
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'abelxiaoxing/cadence' &&
+      github.event.created && !github.event.deleted && !github.event.forced
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.candidate.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.7.0'
+          package-manager-cache: false
+      - name: Private disk-backed temporary directory
+        run: |
+          umask 077
+          temp=$(mktemp -d "$RUNNER_TEMP/cadence-release.XXXXXXXX")
+          printf 'TMPDIR=%s\nTEMP=%s\nTMP=%s\n' "$temp" "$temp" "$temp" >> "$GITHUB_ENV"
+      - name: Check tag, main ancestry and unused version
+        run: node scripts/npm-release.mjs preflight
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.3.14'
+          no-cache: true
+      - name: Install locked development dependencies
+        run: bun install --frozen-lockfile
+      - name: Sole integration and release gate
+        run: bun run verify
+      - name: Pack the exact release candidate
+        run: |
+          mkdir "$TMPDIR/release"
+          bun pm pack --destination "$TMPDIR/release"
+      - name: Audit every package member and body
+        id: candidate
+        run: node scripts/npm-release.mjs audit "$TMPDIR/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: npm-package
+          path: ${{ env.TMPDIR }}/release/*.tgz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_SHA256: ${{ needs.prepare.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.7.0'
+          package-manager-cache: false
+      - name: Private disk-backed temporary directory
+        run: |
+          umask 077
+          temp=$(mktemp -d "$RUNNER_TEMP/cadence-release.XXXXXXXX")
+          printf 'TMPDIR=%s\nTEMP=%s\nTMP=%s\n' "$temp" "$temp" "$temp" >> "$GITHUB_ENV"
+      - name: Recheck live refs and registry before publishing
+        run: node scripts/npm-release.mjs preflight
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact-id }}
+          path: ${{ env.TMPDIR }}/release
+          digest-mismatch: error
+      - name: Bind downloaded bytes to the verified candidate and clean source
+        id: candidate
+        run: node scripts/npm-release.mjs audit "$TMPDIR/release" "$RELEASE_SHA256"
+      # No dependency installation, builds or lifecycle scripts in this OIDC job.
+      - name: Publish the audited tarball using OIDC
+        id: publish
+        env:
+          RELEASE_ARCHIVE: ${{ steps.candidate.outputs.archive }}
+        run: npm publish "$RELEASE_ARCHIVE" --access public --tag latest --ignore-scripts --registry https://registry.npmjs.org
+      - name: Confirm registry metadata and downloaded package bytes
+        if: ${{ !cancelled() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') }}
+        run: node scripts/npm-release.mjs confirm "$TMPDIR/release" "$RELEASE_SHA256"
