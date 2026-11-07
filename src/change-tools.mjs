@@ -5,6 +5,27 @@ import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { gitArguments, gitEnvironment } from "./git-environment.mjs";
 
+// Only fixed-revision evidence retains a cursor protocol. Inactive fields have
+// a legal wire value even if a provider requires every declared property.
+const optional = (schema) =>
+  Type.Optional({
+    ...schema,
+    type: [schema.type, "null"],
+    ...(schema.enum ? { enum: [...schema.enum, null] } : {}),
+  });
+
+const parameters = Type.Object(
+  {
+    mode: optional(
+      Type.String({ enum: ["paths", "diff", "base", "candidate"] }),
+    ),
+    path: optional(Type.String({ maxLength: 1024 })),
+    cursor: optional(Type.String({ maxLength: 128 })),
+    close: optional(Type.Boolean({ enum: [true] })),
+  },
+  { additionalProperties: false },
+);
+
 export const CHANGE_LIMITS = Object.freeze({
   scans: 4,
   pageBytes: 2048,
@@ -42,15 +63,29 @@ export function createChangeTools(binding) {
   const execute = async (_id, args, signal) => {
     if (closing) throw new Error("Change observations closed");
     if (signal?.aborted) throw new Error("Change observation canceled");
-    if (!args || typeof args !== "object" || Array.isArray(args))
-      throw new Error("Invalid change arguments");
+    if (
+      !args ||
+      typeof args !== "object" ||
+      Array.isArray(args) ||
+      Object.keys(args).some(
+        (key) => !Object.hasOwn(parameters.properties, key),
+      )
+    )
+      throw new Error(
+        "Invalid change arguments: use only declared fields; omit unused fields or set them to null",
+      );
+    args = Object.fromEntries(
+      Object.entries(args).filter(([, value]) => value !== null),
+    );
     let scan;
     if (args.cursor !== undefined) {
       if (
         Object.keys(args).some((k) => !["cursor", "close"].includes(k)) ||
         (args.close !== undefined && args.close !== true)
       )
-        throw new Error("A change cursor cannot change its query");
+        throw new Error(
+          "A change cursor request accepts only cursor and optional close:true; omit mode/path or set them to null. For a new query, omit cursor/close or set them to null",
+        );
       scan = cursors.get(args.cursor);
       if (!scan)
         throw new Error(
@@ -59,8 +94,10 @@ export function createChangeTools(binding) {
       cursors.delete(args.cursor);
       clearTimeout(scan.timer);
     } else {
-      if (Object.keys(args).some((k) => !["mode", "path"].includes(k)))
-        throw new Error("Invalid change arguments");
+      if (args.close !== undefined)
+        throw new Error(
+          "Invalid change arguments: close:true requires a returned cursor; omit close and cursor or set them to null for a new query",
+        );
       const mode = args.mode ?? "paths",
         path = args.path;
       if (!["paths", "diff", "base", "candidate"].includes(mode))
@@ -233,18 +270,9 @@ export function createChangeTools(binding) {
         name: "changes",
         label: "changes",
         description:
-          "Readonly evidence for the owner's fixed base/candidate commits. mode paths lists changed paths (Git-quoted), diff reads patches, base/candidate reads one file at that revision. Optional checkout-relative path narrows a diff. Text may split across pages: continue exclusively with {cursor}; {cursor,close:true} releases it. more is incomplete, including empty progress. No arbitrary refs, Git commands, shell or writes.",
-        parameters: Type.Object(
-          {
-            mode: Type.Optional(
-              Type.String({ enum: ["paths", "diff", "base", "candidate"] }),
-            ),
-            path: Type.Optional(Type.String({ maxLength: 1024 })),
-            cursor: Type.Optional(Type.String({ maxLength: 128 })),
-            close: Type.Optional(Type.Literal(true)),
-          },
-          { additionalProperties: false },
-        ),
+          "Readonly evidence for the owner's fixed base/candidate commits. mode paths lists changed paths (Git-quoted), diff reads patches, base/candidate reads one file at that revision. Optional checkout-relative path narrows a diff. Text may split across pages: continue exclusively with {cursor}; {cursor,close:true} releases it. more is incomplete, including empty progress. No arbitrary refs, Git commands, shell or writes. Omit unused parameters or set them to null; never invent a cursor or mix query and cursor fields.",
+        parameters,
+        constrainedSampling: { type: "json_schema", strict: "prefer" },
         execute,
       },
     ],

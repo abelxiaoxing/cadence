@@ -61,7 +61,6 @@
   "package/src/native-history.ts",
   "package/src/native-workflow-history.ts",
   "package/src/operator-cli.mjs",
-  "package/src/research-scan.mjs",
   "package/src/research-tools.mjs",
   "package/src/sdk-worker.mjs",
   "package/src/service-cli.mjs",

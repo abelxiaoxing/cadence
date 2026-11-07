@@ -1,98 +1,91 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { normalizeContext, validateToolArguments } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-responses";
+import {
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { expect, it, vi } from "vitest";
-import { createResearchTools } from "../src/research-tools.mjs";
+import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
 
 const queries = {
   read: { path: "example.ts" },
-  grep: { patterns: ["first", "second"], literal: false },
+  grep: { pattern: "first|second" },
   find: { pattern: "*.ts" },
-  glob: { pattern: "**/*.{ts,js}" },
   ls: {},
 };
-it("provider object schemas accept initial, continuation and explicit close arguments through the public SDK validator", async () => {
-  const kit = createResearchTools(
-    bindWorkerWorkspace(resolve("/unused-schema-fixture")),
-  );
+const validate = (tool, args) =>
+  validateToolArguments(tool, {
+    type: "toolCall",
+    id: "fixture",
+    name: tool.name,
+    arguments: args,
+  });
+function toolkit() {
+  const workspace = bindWorkerWorkspace(resolve("/unused-schema-fixture"));
+  return createWorkerToolkit({
+    purpose: "review",
+    workspace,
+    changes: {
+      root: workspace.cwd,
+      base: "a".repeat(40),
+      candidate: "b".repeat(40),
+    },
+  });
+}
+it("ordinary observation uses the installed Pi definitions without a second parameter protocol", async () => {
+  const kit = toolkit();
+  const stock = [
+    createReadToolDefinition,
+    createGrepToolDefinition,
+    createFindToolDefinition,
+    createLsToolDefinition,
+  ].map((create) => create(resolve("/unused-schema-fixture")));
   try {
-    for (const tool of kit.tools) {
-      const schema = JSON.parse(JSON.stringify(tool.parameters));
-      expect(schema.type, tool.name).toBe("object");
-      expect(schema.anyOf, tool.name).toBeUndefined();
-      expect(schema.additionalProperties, tool.name).toBe(false);
-      for (const args of [
-        queries[tool.name],
-        { cursor: "opaque" },
-        { cursor: "opaque", close: true },
-      ]) {
-        for (const input of [
-          args,
-          {
-            ...Object.fromEntries(
-              Object.keys(schema.properties).map((key) => [key, null]),
-            ),
-            ...args,
-          },
-        ]) {
-          expect(
-            validateToolArguments(tool, {
-              type: "toolCall",
-              id: "fixture",
-              name: tool.name,
-              arguments: input,
-            }),
-          ).toEqual(args);
-        }
-      }
+    for (const original of stock) {
+      const tool = kit.sessionOptions.customTools.find(
+        (entry) => entry.name === original.name,
+      );
+      expect(tool.parameters).toEqual(original.parameters);
+      expect(tool.description).toBe(original.description);
+      expect(tool.constrainedSampling).toEqual(original.constrainedSampling);
+      for (const retired of [
+        "files",
+        "ranges",
+        "patterns",
+        "pageSize",
+        "cursor",
+        "close",
+      ])
+        expect(tool.parameters.properties).not.toHaveProperty(retired);
+      const args = queries[tool.name];
+      expect(validate(tool, args)).toEqual(args);
+      expect(
+        validate(tool, {
+          ...Object.fromEntries(
+            Object.keys(tool.parameters.properties).map((key) => [key, null]),
+          ),
+          ...args,
+        }),
+      ).toEqual(args);
     }
+    const read = kit.sessionOptions.customTools.find(
+      (tool) => tool.name === "read",
+    );
+    expect(() => validate(read, { cursor: "invented", close: true })).toThrow();
+    expect(kit.sessionOptions.tools).not.toContain("glob");
   } finally {
     await kit.close();
   }
 });
-it("SDK validation cannot turn a mixed query/cursor request into permission to consume a cursor", async () => {
-  const root = await mkdtemp(join(tmpdir(), "research-schema-"));
-  await writeFile(join(root, "a"), "first\nsecond");
-  const kit = createResearchTools(bindWorkerWorkspace(root));
-  const tool = kit.tools.find((entry) => entry.name === "read");
-  const call = (args) =>
-    tool.execute(
-      "fixture",
-      validateToolArguments(tool, {
-        type: "toolCall",
-        id: "fixture",
-        name: tool.name,
-        arguments: args,
-      }),
-    );
-  try {
-    const page = await call({ path: "a", pageSize: 1 });
-    const cursor = page.details.nextCursor;
-    await expect(call({ cursor, path: "a" })).rejects.toThrow("arguments");
-    const next = await call({ cursor });
-    expect(
-      JSON.parse(next.content[0].text).items.map((item) => item.text),
-    ).toEqual(["second"]);
-    expect(next.details.state).toBe("done");
-  } finally {
-    await kit.close();
-  }
-});
-it.each([false, true])(
-  "public Responses adapter serializes observation tools as root objects (strict=%s), without network",
-  async (strict) => {
-    const kit = createResearchTools(
-      bindWorkerWorkspace(resolve("/unused-schema-fixture")),
-    );
-    const tools = kit.tools.map((tool) => ({
-      ...tool,
-      ...(strict
-        ? { constrainedSampling: { type: "json_schema", strict: "require" } }
-        : {}),
-    }));
+it.each([undefined, false, true])(
+  "public Responses serialization preserves Pi's ordinary tool shapes (strict capability=%s)",
+  async (supportsStrictMode) => {
+    const kit = toolkit();
+    const tools = kit.wrap(kit.sessionOptions.customTools);
     const model = {
       id: "schema-fixture",
       name: "Schema fixture",
@@ -104,16 +97,17 @@ it.each([false, true])(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 8192,
       maxTokens: 128,
-      compat: { supportsStrictMode: true },
+      ...(supportsStrictMode === undefined
+        ? {}
+        : { compat: { supportsStrictMode } }),
     };
     const fetch = vi.fn(async () => {
-      throw new Error("Network forbidden in schema fixture");
+      throw new Error("Network forbidden");
     });
     let payload;
     try {
       const result = await stream(
         model,
-        // Pi 1.5 API adapters receive a normalized transcript, not raw Context.
         normalizeContext({ messages: [], tools }),
         {
           apiKey: "fabricated-schema-key",
@@ -121,20 +115,46 @@ it.each([false, true])(
           maxRetries: 0,
           onPayload(value) {
             payload = value;
-            throw new Error("intentional pre-send fixture stop");
+            throw new Error("intentional pre-send stop");
           },
         },
       ).result();
       expect(fetch).not.toHaveBeenCalled();
       expect(payload, result.errorMessage).toBeDefined();
-      expect(result.errorMessage).toContain(
-        "intentional pre-send fixture stop",
-      );
-      expect(payload.tools).toHaveLength(kit.tools.length);
-      for (const tool of payload.tools) {
-        expect(tool.parameters.type, tool.name).toBe("object");
-        expect(tool.parameters.anyOf, tool.name).toBeUndefined();
-        if (strict) expect(tool.strict).toBe(true);
+      expect(payload.tools).toHaveLength(5);
+      for (const wire of payload.tools) {
+        expect(wire.parameters.type).toBe("object");
+        expect(wire.parameters.anyOf).toBeUndefined();
+        if (wire.name === "changes") {
+          // The specialized fixed-Git tool alone retains a cursor. Its inactive
+          // fields stay nullable, even without strict conversion by the SDK.
+          const parameters = {
+            ...wire.parameters,
+            required: Object.keys(wire.parameters.properties),
+          };
+          const args = {
+            mode: null,
+            path: null,
+            cursor: "returned",
+            close: true,
+          };
+          expect(validate({ ...wire, parameters }, args)).toEqual(args);
+        } else {
+          expect(wire.parameters.properties).not.toHaveProperty("cursor");
+          expect(wire.parameters.properties).not.toHaveProperty("close");
+          const input = wire.strict
+            ? {
+                ...Object.fromEntries(
+                  Object.keys(wire.parameters.properties).map((key) => [
+                    key,
+                    null,
+                  ]),
+                ),
+                ...queries[wire.name],
+              }
+            : queries[wire.name];
+          expect(() => validate(wire, input)).not.toThrow();
+        }
       }
     } finally {
       await kit.close();

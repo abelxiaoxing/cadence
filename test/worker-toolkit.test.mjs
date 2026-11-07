@@ -37,7 +37,7 @@ it.each(["research", "diagnosis", "review"])(
     expect(kit.capabilities).toEqual(["observation"]);
     expect(kit.instructions).toContain("Explicit absolute paths");
     expect(kit.instructions).toContain("no bash, write or edit");
-    expect(kit.sessionOptions.tools).toContain("glob");
+    expect(kit.sessionOptions.tools).toEqual(["read", "grep", "find", "ls"]);
     expect(kit.sessionOptions.cwd).toBe(root);
     expect(kit.sessionOptions.tools).toEqual(
       kit.sessionOptions.customTools.map((tool) => tool.name),
@@ -138,6 +138,36 @@ it("close joins already executing stock tools, but refuses queued and later invo
   await observed;
   expect(execute).toHaveBeenCalledTimes(1);
 });
+it.each(["read", "find", "ls", "write", "edit"])(
+  "%s cancellation never releases its original SDK operation early",
+  async (name) => {
+    const kit = toolkit("edit", resolve("."));
+    let release;
+    const pending = new Promise((done) => {
+      release = done;
+    });
+    const execute = vi.fn((_id, _input, signal) => {
+      expect(signal).toBeUndefined();
+      return pending;
+    });
+    const [tool] = kit.wrap([{ name, execute }]);
+    const abort = new AbortController();
+    const running = tool.execute("id", {}, abort.signal);
+    const rejected = expect(running).rejects.toThrow("may have completed");
+    await Promise.resolve();
+    abort.abort();
+    let closed = false;
+    const closing = kit.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release({ content: [] });
+    await rejected;
+    await closing;
+    expect(execute).toHaveBeenCalledTimes(1);
+  },
+);
 it("a pre-canceled call performs no operation; a tool error is not a cleanup failure", async () => {
   const kit = toolkit("edit", resolve("."));
   const execute = vi.fn(async () => {
@@ -227,17 +257,13 @@ it("a research worker can inspect an installed-package fixture outside its cwd w
     "export const npmCommand = 'npm';",
   );
   const kit = toolkit("research", cwd);
-  const grep = kit
+  const read = kit
     .wrap(kit.sessionOptions.customTools)
-    .find((tool) => tool.name === "grep");
-  const result = await grep.execute("lookup", {
-    path: installed,
-    pattern: "npm(Command|Config)",
-  });
-  expect(JSON.parse(result.content[0].text).items[0]).toMatchObject({
-    root: null,
+    .find((tool) => tool.name === "read");
+  const result = await read.execute("lookup", {
     path: join(installed, "sdk.ts"),
   });
+  expect(result.content[0].text).toContain("npmCommand");
   expect(kit.sessionOptions.cwd).toBe(cwd);
   for (const name of ["bash", "edit", "write", "cadence_report"])
     expect(kit.sessionOptions.tools).not.toContain(name);

@@ -54,7 +54,7 @@ The daily native path is `index → cadence-mode → native client → Workbench
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/worker-toolkit.mjs` owns trusted capability composition and tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
-`src/research-tools.mjs` owns observation schemas/cursors; `src/research-scan.mjs` owns their streaming filesystem operations.
+`src/research-tools.mjs` binds the installed public Pi readonly file tools to investigation roots; ordinary file schemas, output and search semantics remain Pi-owned.
 `src/change-tools.mjs` adds fixed-revision readonly review evidence; `src/git-environment.mjs` shares the physical-checkout Git policy without replacement objects.
 See [worktree delivery](worktree-delivery.md) for the approved-plan-to-local-delivery contract.
 See [worker tools](worker-tools.md) for capability, continuation, coverage and disposal contracts; SDK bootstrap no longer duplicates role-specific tool lists.

@@ -123,10 +123,31 @@ export function createWorkerToolkit(options) {
           ...tool,
           execute: (...args) => {
             if (closed) return Promise.reject(new Error("Worker tools closed"));
-            const original = Promise.resolve().then(() => {
+            const original = Promise.resolve().then(async () => {
               if (closed) throw new Error("Worker tools closed");
-              if (args[2]?.aborted) throw new Error("Worker tool canceled");
-              return tool.execute(...args);
+              const signal = args[2];
+              if (signal?.aborted) throw new Error("Worker tool canceled");
+              const fileTool = [
+                "read",
+                "grep",
+                "find",
+                "ls",
+                "write",
+                "edit",
+              ].includes(tool.name);
+              // Stock file tools may reject an abort observer before their real
+              // I/O finishes. Join this admitted call under the worker deadline,
+              // then suppress its result if canceled. Pi grep already waits for
+              // child close on abort, so preserve its stop signal like shell and
+              // changes; no mutation is replayed.
+              const forwarded = [...args];
+              if (fileTool && tool.name !== "grep") forwarded[2] = undefined;
+              const result = await tool.execute(...forwarded);
+              if (fileTool && signal?.aborted)
+                throw new Error(
+                  "Worker tool canceled; its original operation settled and may have completed",
+                );
+              return result;
             });
             const tracked = original.finally(() => originals.delete(tracked));
             originals.add(tracked);

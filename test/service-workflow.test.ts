@@ -1081,7 +1081,7 @@ it("timed-out real workers retain exact step results and transcripts after a lat
   }
 }, 30000);
 
-it("real SDK research uses the explicitly selected root and retains partial scan evidence", async () => {
+it("real SDK research uses the explicitly selected root and retains Pi truncation notices", async () => {
   const { f, command, wait, model } = await setup(false);
   try {
     const selected = join(f.dir, "selected-backups");
@@ -1099,9 +1099,8 @@ it("real SDK research uses the explicitly selected root and retains partial scan
     if (accepted.type !== "run") throw Error("run");
     const run = await wait(accepted.run.id);
     expect(run.status).toBe("completed");
-    expect(run.steps[0].text).toContain('"state":"more"');
-    expect(run.steps[0].text).toContain('"complete":false');
-    expect(run.steps[0].text).toContain('"nextCursor":');
+    expect(run.steps[0].text).toContain("1 results limit reached");
+    expect(run.steps[0].text).not.toContain("nextCursor");
     expect(run.steps[0].text).not.toContain("existing.txt");
     expect(
       f.observations.every(
@@ -1123,11 +1122,8 @@ it("real SDK research uses the explicitly selected root and retains partial scan
     );
     expect(tool?.error).toBe(false);
     const result = JSON.parse(tool!.text);
-    const observation = JSON.parse(result.content[0].text);
-    expect(observation.state).toBe("more");
-    expect(observation.coverage.complete).toBe(false);
-    expect(observation.nextCursor).toEqual(expect.any(String));
-    expect(observation.items).toHaveLength(1);
+    expect(result.content[0].text).toContain("1 results limit reached");
+    expect(result.details.resultLimitReached).toBe(1);
   } finally {
     await f.close();
   }
