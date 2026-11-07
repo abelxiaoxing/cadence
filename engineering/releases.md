@@ -775,3 +775,25 @@ Local artifact: `/home/mirako/abel/cadence-release-2.0.40.vUWkuo0n/pack/abelxiao
 Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one private disk-backed temp directory outside Git checkouts.
 No local dependency installation, slow suite, browser/provider/native-platform qualification or production service operation was performed.
 This unshipped appendix records pre-publication qualification; the tag-triggered OIDC workflow, CI artifact audit and actual registry bytes must still be observed independently before claiming publication success.
+
+## Release 2.0.41 qualification (2026-11-07)
+
+The user explicitly requested review, repair, commit, integration into main, push and npm publication of the Pi-native worker-tool simplification.
+Ordinary research/diagnosis/review now use the installed Pi read/grep/find/ls definitions instead of the separate scan/batch/cursor protocol; authorized implementation retains shell and editing tools.
+The retired scanner is removed from source and the reviewed package member list, while fixed-revision `changes` evidence retains its separate nullable cursor protocol.
+
+Review found that the first lifetime adapter unnecessarily suppressed grep cancellation even though the pinned SDK signals its child and awaits actual close.
+A controlled native-process fixture reproduced the missing stop signal, then passed after preserving grep's signal; find and the other early-aborting file tools still join their admitted originals, without replay or rollback claims.
+The operational guide also still advertised the removed glob/depth/nextCursor interface; it now describes Pi's parameters, ignore rules, truncation and existing-binary requirement.
+All **40 directly affected tests in six files passed** with exact file coverage confirmed.
+The initial fixture mock did not reach the externalized SDK's builtin imports and timed out; the fixture was corrected to control the actual builtin exports, without increasing timeouts, before reproducing and repairing the production cancellation defect.
+Failed and passing reports are retained under `/home/mirako/cadence-review-release.dU3Nmz/`.
+
+Version 2.0.41 was unused and newer than observed npm latest 2.0.40; local and remote release tags were absent before preparation.
+Canonical operator/service/Web outputs were regenerated.
+Fresh `bun run verify` passed: **1707 fast root tests passed, 282 skipped** (106 passing files, two skipped), **260 Web tests passed** (24 files), plus types, syntax, lint, Agent pins, generated-byte checks and real-pack auditing.
+A separate real Bun tarball passed the reviewed member/body/notice audit.
+Local artifact: `/home/mirako/cadence-review-release.dU3Nmz/pack/abelxiaoxing-cadence-2.0.41.tgz`; SHA-256 `57810ff3635a16e761c85f5eadff83554dae4794cb6573b7d36bf12a95fa2f93`; SHA-1 `fb00bcdfbf3a03efef0351de1d5b602f4ecb075e`.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one external private disk-backed temporary directory.
+No slow suite, paid provider, native Windows/macOS qualification, local dependency installation or production service operation was performed.
+This unshipped appendix records local qualification, not publication; the tag-triggered OIDC run and exact CI artifact/registry bytes require independent confirmation.

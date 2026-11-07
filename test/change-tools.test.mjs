@@ -50,6 +50,46 @@ it("fixed Git content streams real continuations, retains split UTF-8/BOM, and d
   );
   expect((await f.collect({ mode: "paths" })).text).toContain("a.txt");
 });
+it("nullable wire fields do not invent queries, close work or consume conflicting cursors", async () => {
+  const f = fixture();
+  const page = await f.call({
+    mode: "candidate",
+    path: "a.txt",
+    cursor: null,
+    close: null,
+  });
+  await expect(
+    f.call({ cursor: page.nextCursor, mode: "paths", path: null, close: null }),
+  ).rejects.toThrow(/cursor request/i);
+  await expect(
+    f.call({ cursor: page.nextCursor, unknown: null }),
+  ).rejects.toThrow("arguments");
+  const next = await f.call({
+    cursor: page.nextCursor,
+    mode: null,
+    path: null,
+    close: null,
+  });
+  expect(next.state).toBe("more");
+  expect(
+    (
+      await f.call({
+        cursor: next.nextCursor,
+        mode: null,
+        path: null,
+        close: true,
+      })
+    ).state,
+  ).toBe("closed");
+  await expect(f.call({ cursor: next.nextCursor })).rejects.toThrow("consumed");
+  await expect(
+    f.call({ mode: "paths", close: true, cursor: null }),
+  ).rejects.toThrow(/close.*cursor/i);
+  expect(
+    (await f.collect({ mode: null, path: null, cursor: null, close: null }))
+      .text,
+  ).toContain("a.txt");
+});
 it("queries cannot escape the bound path/revisions or rebind/consume a cursor twice", async () => {
   const f = fixture(),
     page = await f.call({ mode: "candidate", path: "a.txt" });

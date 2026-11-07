@@ -152,7 +152,7 @@ export async function acceptingFixture(
       else
         callTool(res, "bounded-find", "find", {
           pattern: "*.txt",
-          pageSize: 1,
+          limit: 1,
         });
       return;
     }

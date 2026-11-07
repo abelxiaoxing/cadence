@@ -226,11 +226,12 @@ This discovers neither idle terminals nor other accounts/hosts, and does not pro
 ## Investigating installed packages
 
 Cadence research, diagnosis and review remain readonly, but their search roots are defaults rather than a barrier around the checkout.
-Use `read`, `ls`, `grep` and `find`/`glob` with an explicit host path to inspect an installed package; `~` refers to the service account's home.
-Searches include dependency directories and follow symlinks with cycle detection.
-`grep` supports regular expressions by default and `literal: true` for exact text; `find`/`glob` support patterns such as `**/*.{ts,js}`.
-For deep package trees, set `depth` explicitly.
-A result with `nextCursor` is a continuing observation, not a failed search or evidence of absence.
+Use Pi's standard `read`, `ls`, `grep` and `find` with an explicit host path to inspect an installed package; `~` refers to the service account's home.
+Searches follow Pi's `.gitignore` behavior; inspect ignored dependencies and backups with explicit file paths and directory listings rather than treating no matches as proof that they do not exist.
+`grep` accepts one regular expression by default, or `literal: true` for exact text; `find` accepts glob patterns such as `**/*.ts`.
+Read one file at a time with `offset` and `limit`, following the next-offset notice for remaining text.
+For truncated searches or listings, follow the tool's limit notice or narrow the query; ordinary file tools have no `depth`, batch or cursor parameters.
+Searches use already available `rg` and `fd`/`fdfind` binaries or Pi's existing tool cache; missing tools are reported without automatically downloading or installing them.
 
 Readonly subagents do not have shell or editing tools: use the direct listing, search and read tools rather than a `bash` pipeline.
 Approved implementation workers keep their existing shell and editing tools.

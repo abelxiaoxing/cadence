@@ -688,7 +688,7 @@ try {
     publicRequest.context,
     ...(!conversation && kind !== "code"
       ? [
-          `Investigation roots: ${JSON.stringify(workspace.roots)}. Start at these specific paths, not / or their parents. Observation tools support file/range batches, literal multi-pattern searches and one-use continuation cursors; no shell is available. Read their schemas. Continue a cursor to advance actual I/O, including empty progress pages; do not repeat the initial query to paginate. Close unused cursors. Source-changed/expired cursors require an explicit fresh query, never an assumed continuation. Coverage names omissions and live-filesystem observation, not a snapshot. Search filenames and shallow directories before content; do not silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. There is no cumulative tool-call quota or early tool cutoff. Use nextCursor when available; for terminal omissions, narrow the scope as needed. Never claim exhaustive absence from a progress page or incomplete coverage. Report retained evidence and unresolved questions honestly.`,
+          `Investigation roots: ${JSON.stringify(workspace.roots)}. Relative file-tool paths use the first root; select other roots explicitly. Start with these paths rather than broad parent trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. Report observed evidence, truncation and unresolved questions honestly.`,
         ]
       : []),
     ...publicRequest.handoff.inputs.map(
