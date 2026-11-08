@@ -195,6 +195,7 @@ Desktop navigation/inspector visibility and widths are display-only browser pref
 Effective widths shrink without overwriting wider-window preferences; phones use independent drawers, and overlays retain focus containment, Escape, a backdrop and inert covered content.
 Headings and messages share the reading width; the composer frame allows inset padding and its toolbar wraps instead of pushing controls out of a narrow center.
 The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
+The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading.
 One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
 Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.

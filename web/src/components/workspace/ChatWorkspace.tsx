@@ -1087,11 +1087,6 @@ export function ChatWorkspace({
             )}
         </div>
       </header>
-      {locationCwd && (
-        <p className="conversation-cwd" title={locationCwd}>
-          {t("Conversation folder:")} <code>{locationCwd}</code>
-        </p>
-      )}
       {contextRead.error && !canPrepareOnly && (
         <p role="alert" className="inspector-note">
           {describeError(t, contextRead.error)}

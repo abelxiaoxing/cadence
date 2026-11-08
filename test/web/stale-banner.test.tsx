@@ -100,6 +100,38 @@ function render(locale: "en" | "zh", project = false) {
   );
 }
 it.each(["en", "zh"] as const)(
+  "%s: the conversation folder stays in the lower-right statusbar, not beneath the heading",
+  (locale) => {
+    execution.value = {
+      kind: "project-observation",
+      status: "not-started",
+      epoch: null,
+      workspaceId: null,
+    };
+    const html = render(locale, true);
+    const conversation = html.match(
+      /<section class="chat-workspace"[\s\S]*?<\/section>/,
+    )?.[0];
+    expect(conversation).toBeDefined();
+    expect(conversation).toContain('class="conversation-header"');
+    expect(conversation).not.toContain("conversation-cwd");
+    expect(conversation).not.toContain(
+      locale === "zh" ? "会话目录：" : "Conversation folder:",
+    );
+    expect(conversation).not.toContain("/fixture");
+    const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
+    expect(statusbar).toMatch(
+      /class="statusbar-right".*class="status-cwd" title="\/fixture"/,
+    );
+    expect(statusbar).toContain("<span>/fixture</span>");
+    expect(statusbar).toContain(
+      locale === "zh"
+        ? 'aria-label="切换工作文件夹"'
+        : 'aria-label="Switch working folder"',
+    );
+  },
+);
+it.each(["en", "zh"] as const)(
   "%s: generic stale asks for fresh observation/confirmation, not a source diagnosis or service command",
   (locale) => {
     viewer.error = "stale";
