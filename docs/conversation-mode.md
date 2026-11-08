@@ -154,7 +154,8 @@ No dependency/browser download or source-profile copying is implicit.
 Baseline checks are separate from acceptance checks that need newly implemented files.
 Failed setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.
 Cadence can preserve partial outputs, split remaining work and choose alternative implementations within the approval; it never expands permissions or weakens acceptance.
-Known transient provider HTTP failures back off automatically after actual cleanup, without holding the checkout while waiting; re-entry checks that the approved files have not changed.
+Transient model-request failures recover inside the original SDK worker, with visible, cancellable backoff; completed tool results and the checkout gate stay with that worker.
+An exhausted or nonretryable model request stops the delivery with partial work preserved, rather than rerunning the entire step or launching another model just to diagnose an unavailable provider.
 An unchanged failure and identical recovery strategy cannot become an endless replay loop.
 A concrete external blocker is reported with preserved work, not a generic request to type “continue”.
 Final candidate checks must pass before merge.
@@ -168,6 +169,23 @@ Automatic review is never recorded as human review.
 To request orderly closure, ask Cadence to cancel in Pi, or use **Cancel workflow — request stop** in the browser (the browser coordinator cannot cancel).
 A pending or unknown cancellation is not reported as stopped.
 Failures, timeouts and unknown process/auth/storage outcomes remain distinct; an owner that cannot settle unknown work restarts itself and recovers automatically.
+
+## Waiting for an unstable provider
+
+The WebUI shows the retry number and scheduled delay when a model stream breaks, then shows when the replacement request is in progress.
+There is no need to send the same message again while recovery is active.
+Refreshing or leaving the page only detaches; return to observe the same accepted turn, or use its existing Stop/Cancel control.
+Automatic recovery resends only the failed model request: it does not repeat completed tool operations, renew approval, switch models or replay work after a service restart.
+A failed partial answer stays in history and is not presented as a complete reply.
+Waiting and request time count against the worker's original deadline.
+
+`OpenAI Responses stream ended before a terminal response event` means the stream ended without a protocol completion event, not necessarily that the local timeout was too short.
+An already closed stream cannot be repaired by waiting on that connection.
+If every attempt fails the same way, check the upstream provider/proxy's streaming support and timeout policy; automatic recovery is not a fix for a consistently malformed stream.
+
+Native Pi's main dialogue uses Pi's own retry settings, separately from Cadence's service workers.
+Cadence does not change those settings or load a user profile into a worker.
+If a native dialogue stops, distinguish exhausted retries from disabled/overridden settings or cancellation before changing its retry limits.
 
 ## Service and compatibility
 

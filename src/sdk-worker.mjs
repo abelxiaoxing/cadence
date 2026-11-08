@@ -32,6 +32,7 @@ import {
   WEBUI_SESSION_ENTRY,
 } from "./session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
+import { WORKER_MODEL_SETTINGS, WorkerModelState } from "./worker-model.mjs";
 import {
   closed,
   decodeWorkerPublicRequest,
@@ -64,6 +65,8 @@ let toolkit;
 let ownsCoordinatorChannel = false;
 let ownedAgent;
 let unsubscribe;
+let unsubscribeRetry;
+let modelState;
 let emitter;
 let capture;
 let ingress;
@@ -75,8 +78,6 @@ let modelOutputBytes = 0;
 let stage = "guards";
 let failure;
 let terminalStopReason = "UNKNOWN";
-let requestPrepared = false;
-let actualResponseStatus = "UNKNOWN";
 let preflight = "UNKNOWN";
 let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, session/tool dispose=4, owned close=8.
 let pendingAbort;
@@ -199,8 +200,9 @@ const emitFailure = () => {
     ),
     terminalStopReason,
     preflight,
-    requestPrepared,
-    actualResponseStatus,
+    requestPrepared: modelState?.requestPrepared ?? false,
+    actualResponseStatus: modelState?.actualResponseStatus ?? "UNKNOWN",
+    retryAttempts: modelState?.retryAttempts ?? 0,
     cleanupFailures,
     cleanupSettled,
   })}\n`;
@@ -368,27 +370,35 @@ try {
     refuse("auth-model", "unsupported-model");
   stage = "setup";
   const api = await adapters[model.api]();
-  if (proxy) {
-    stage = "network";
-    try {
-      // SDK/adapter imports can reset native startup routing. Configure only
-      // this disposable child, using our declared public peer after imports.
-      const { EnvHttpProxyAgent, setGlobalDispatcher, getGlobalDispatcher } =
-        await import("undici");
-      if (
-        typeof EnvHttpProxyAgent !== "function" ||
-        typeof setGlobalDispatcher !== "function" ||
-        typeof getGlobalDispatcher !== "function"
-      )
-        refuse("network", "unsupported-network");
-      ownedAgent = new EnvHttpProxyAgent(proxy);
-      // Retain ownership even when installation or its identity check fails.
-      setGlobalDispatcher(ownedAgent);
-      if (getGlobalDispatcher() !== ownedAgent)
-        refuse("network", "unsupported-network");
-    } catch {
+  stage = "network";
+  try {
+    // SDK settings supply request timeouts, not the CLI's dispatcher setup.
+    // Own both direct and proxy stream-idle timeouts in this disposable child.
+    const {
+      Agent,
+      EnvHttpProxyAgent,
+      setGlobalDispatcher,
+      getGlobalDispatcher,
+    } = await import("undici");
+    if (
+      typeof (proxy ? EnvHttpProxyAgent : Agent) !== "function" ||
+      typeof setGlobalDispatcher !== "function" ||
+      typeof getGlobalDispatcher !== "function"
+    )
       refuse("network", "unsupported-network");
-    }
+    const timeouts = {
+      headersTimeout: WORKER_MODEL_SETTINGS.httpIdleTimeoutMs,
+      bodyTimeout: WORKER_MODEL_SETTINGS.httpIdleTimeoutMs,
+    };
+    ownedAgent = proxy
+      ? new EnvHttpProxyAgent({ ...proxy, ...timeouts })
+      : new Agent(timeouts);
+    // Retain ownership even when installation or its identity check fails.
+    setGlobalDispatcher(ownedAgent);
+    if (getGlobalDispatcher() !== ownedAgent)
+      refuse("network", "unsupported-network");
+  } catch {
+    refuse("network", "unsupported-network");
   }
   stage = "setup";
   const runtime = await ModelRuntime.create({
@@ -494,11 +504,7 @@ try {
           )
         : resourceLoader,
     sessionManager: manager,
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: false },
-      cacheWarming: "off",
-    }),
+    settingsManager: SettingsManager.inMemory(WORKER_MODEL_SETTINGS),
   });
   session = created.session;
   let effectiveThinkingLevel;
@@ -515,14 +521,29 @@ try {
     effectiveThinkingLevel !== requestedThinkingLevel
   )
     refuse("session", "model-substitution");
-  // Adapter retry defaults are not workflow retries; explicitly disable both.
+  modelState = new WorkerModelState(
+    (event) => emitter.emit(event),
+    captureFailure,
+  );
+  unsubscribeRetry = session.subscribe((event) => modelState.event(event));
+  // AgentSession alone retries a failed model response. No provider retries,
+  // second prompt, worker restart, model substitution or tool replay.
   const stream = session.agent.streamFunction;
-  session.agent.streamFunction = (selected, context, options) => {
+  session.agent.streamFunction = async (selected, context, options) => {
+    await modelState.beginRequest();
+    if (failure) refuse("events", "event-projection-failed");
+    if (
+      selected.id !== model.id ||
+      selected.provider !== model.provider ||
+      selected.api !== model.api ||
+      session.thinkingLevel !== requestedThinkingLevel
+    )
+      refuse("session", "model-substitution");
     const snapshot = { ...options, maxRetries: 0 };
     const { onPayload, onResponse } = snapshot;
     snapshot.onPayload = function (...args) {
       // Preparation is not proof of sending, an HTTP response or inference.
-      requestPrepared = true;
+      modelState.requestPrepared = true;
       return onPayload == null
         ? undefined
         : Reflect.apply(onPayload, this, args);
@@ -530,11 +551,11 @@ try {
     snapshot.onResponse = function (...args) {
       // Observation must not bypass the original callback, even for a bad peer.
       // Public HTTP hook only; WS transports may never report a status here.
-      actualResponseStatus = "UNKNOWN";
+      modelState.actualResponseStatus = "UNKNOWN";
       try {
         const status = args[0]?.status;
         if (Number.isInteger(status) && status >= 100 && status <= 599)
-          actualResponseStatus = status;
+          modelState.actualResponseStatus = status;
       } catch {
         // Do not inspect/coerce the response or exception.
       }
@@ -708,6 +729,8 @@ try {
     },
   });
   stage = "assistant-final";
+  if (!failure && terminalStopReason === "error")
+    refuse("assistant-final", "model-request-failed");
   if (failure || terminalStopReason !== "stop" || ingress.frames !== 0)
     refuse("assistant-final", "terminal-incomplete");
   await capture.final();
@@ -732,14 +755,16 @@ try {
       fail("cleanup", "cleanup-failure");
     }
   })();
-  const unsubscribing = (async () => {
-    try {
-      await unsubscribe?.();
-    } catch {
-      cleanupFailures |= 1;
-      fail("cleanup", "cleanup-failure");
-    }
-  })();
+  const unsubscribing = Promise.all(
+    [unsubscribeRetry, unsubscribe].map(async (stopListening) => {
+      try {
+        await stopListening?.();
+      } catch {
+        cleanupFailures |= 1;
+        fail("cleanup", "cleanup-failure");
+      }
+    }),
+  );
   const aborting = (async () => {
     if (!session) return;
     try {

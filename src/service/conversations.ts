@@ -116,9 +116,11 @@ export interface LiveTurn {
 /** What a browser turn's worker streams that Pi has not written yet: the
  * message being generated and the tool running, as bounded previews. */
 export class LiveCapture {
+  retry: ChatTurn["retry"];
   readonly omitted = { thinking: false, media: false, other: false };
   notice = "";
-  private readonly assistants: { id: string; text: string }[] = [];
+  private readonly assistants: { id: string; text: string; error: boolean }[] =
+    [];
   private readonly tools: {
     id: string;
     name: string;
@@ -161,7 +163,7 @@ export class LiveCapture {
       this.imageUser = e.messageId;
     } else if (e.kind === "message-start" && e.role === "assistant") {
       if (!this.assistants.some((a) => a.id === e.messageId)) {
-        this.assistants.push({ id: e.messageId, text: "" });
+        this.assistants.push({ id: e.messageId, text: "", error: false });
         const stale =
           this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
         if (stale) stale.text = "";
@@ -210,11 +212,17 @@ export class LiveCapture {
       }
       if (e.kind === "detail-end") this.details.delete(e.detailId);
     } else if (e.kind === "message-end") {
+      const message = this.assistants.find((a) => a.id === e.messageId);
+      if (message)
+        message.error = ["error", "aborted", "length"].includes(e.stopReason);
       for (const [id, block] of this.blocks)
         if (block.messageId === e.messageId) this.blocks.delete(id);
-    } else if (e.kind === "worker-failure")
+    } else if (e.kind === "model-retry") {
+      this.retry = e.progress ?? undefined;
+    } else if (e.kind === "worker-failure") {
+      this.retry = undefined;
       this.notice = `worker-failure: ${e.code}`;
-    else if (
+    } else if (
       e.kind === "omitted-block" &&
       e.block.owner.kind !== "context" &&
       e.block.owner.kind !== "handoff" &&
@@ -266,7 +274,7 @@ export class LiveCapture {
         text: message.text,
         name: "",
         args: "",
-        error: false,
+        error: message.error,
       });
     });
     return { items: out, stable };
@@ -685,6 +693,7 @@ export class Conversations {
       const tracked = running.then(() => native);
       this.o.owner.trackConversationProcess(tracked, () => abort.abort());
       const result = await running;
+      capture.retry = undefined;
       uncertain = !result.closed;
       state.status = result.outcome;
     } catch (error) {
@@ -705,6 +714,7 @@ export class Conversations {
         // Preserve actual process closure even if the final state write fails.
         this.write(this.records.path(commandId, "native.json"), native);
         if (live.capture) {
+          live.capture.retry = undefined;
           if (state.status !== "completed")
             state.notice ||= live.capture.notice;
           state.omitted = { ...live.capture.omitted };

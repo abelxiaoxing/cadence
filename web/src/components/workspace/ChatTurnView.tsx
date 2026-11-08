@@ -76,6 +76,26 @@ export const ChatTurnView = memo(function ChatTurnView({
           </p>
         </details>
       )}
+      {header.status === "running" && header.retry && (
+        <p className="inspector-note chat-turn-retry" role="status">
+          {header.retry.phase === "waiting"
+            ? t(
+                "Upstream interrupted. Retry {attempt}/{maxAttempts} is scheduled after {seconds}s; completed tool results are kept.",
+                {
+                  attempt: header.retry.attempt,
+                  maxAttempts: header.retry.maxAttempts,
+                  seconds: Math.ceil(header.retry.delayMs / 1000),
+                },
+              )
+            : t(
+                "Retrying the model request ({attempt}/{maxAttempts}); completed tool results are kept.",
+                {
+                  attempt: header.retry.attempt,
+                  maxAttempts: header.retry.maxAttempts,
+                },
+              )}
+        </p>
+      )}
       {notice.length > 0 && (
         <p className="inspector-note chat-turn-notice">
           {notice.map((line) => tx(line)).join("\n")}

@@ -707,6 +707,19 @@ function sourceId(v) {
     invalid();
   return s;
 }
+function decodeModelRetry(v) {
+  const o = closed(v, ["phase", "attempt", "maxAttempts", "delayMs"]);
+  const maxAttempts = integer(o.maxAttempts, 1);
+  const progress = {
+    phase: oneOf(o.phase, ["waiting", "requesting"]),
+    attempt: integer(o.attempt, 1, maxAttempts),
+    maxAttempts,
+    delayMs: integer(o.delayMs, 0, 2147483647)
+  };
+  if (progress.phase === "requesting" && progress.delayMs !== 0)
+    throw new ContractError("invalid");
+  return progress;
+}
 function decodeCaptureEvent(v) {
   const kind = tag(v);
   switch (kind) {
@@ -893,6 +906,10 @@ function decodeCaptureEvent(v) {
         sha256: decodeHash(o.sha256),
         coverage: decodeCoverage(o.coverage)
       };
+    }
+    case "model-retry": {
+      const o = closed(v, ["kind", "progress"]);
+      return { kind, progress: nullable(o.progress, decodeModelRetry) };
     }
     case "capture-status": {
       const o = closed(v, ["kind", "coverage"]);

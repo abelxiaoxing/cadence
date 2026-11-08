@@ -568,6 +568,13 @@ export declare function decodeOmittedBlock(v: unknown): OmittedBlock;
  * W2's stateful producer correlates actual block/call occurrences; a nullable or
  * reused source value never supplies an inferred nearest-message association.
  */
+export interface ModelRetry {
+  phase: "waiting" | "requesting";
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+}
+export declare function decodeModelRetry(v: unknown): ModelRetry;
 export type CaptureEvent =
   | {
       kind: "ready";
@@ -656,6 +663,10 @@ export type CaptureEvent =
       bytes: number;
       sha256: string;
       coverage: CaptureCoverage;
+    }
+  | {
+      kind: "model-retry";
+      progress: ModelRetry | null;
     }
   | {
       kind: "capture-status";

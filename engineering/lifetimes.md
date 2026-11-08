@@ -7,7 +7,9 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
-A proven transient provider HTTP failure may then release the gate during abortable backoff; before continuing, the owner reacquires it and rechecks approved target contents.
+Model-request recovery stays inside the original SDK session and worker deadline; its checkout gate remains held during abortable backoff.
+The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
+A terminal model-request failure (recovery exhausted or nonretryable) ends delivery after actual cleanup, rather than starting a second network retry or provider-dependent diagnosis loop.
 Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
 Within that barrier, implementation assignments run in one stable candidate, preserving predecessor and partial-attempt outputs.
 The initial dependency order can share write paths; readonly questions within a research run may still overlap.

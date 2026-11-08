@@ -42,7 +42,10 @@ Adaptive delivery has no fixed repair-round count or total deadline; native work
 Implementation uses one stable candidate on a new named branch after approval.
 `CHANGE_LIMITS` in `src/change-tools.mjs` bounds four live Git evidence streams, 2KiB raw pages, 120s idle expiry and a 30s active-page budget; stop joins actual child closure.
 `src/service/repository-coordination.ts` bounds lease waiting at 30s with 50ms polling and recovery inspection at 256 active owner intents; no live lease expires by age.
-Proven provider 429/5xx failures back off from 2s to 60s after actual cleanup; this is a wait interval, not a lifetime retry quota.
+`WORKER_MODEL_SETTINGS` in `src/worker-model.mjs` owns model-request recovery: six retries after the initial request, 5s exponential backoff capped at 120s, and zero provider-internal retries.
+A successful model response resets that request's retry counter; waits and requests remain inside the original worker deadline, with no second workflow-level network retry loop.
+The same settings fix HTTP request/header/body idle tolerance at 5min; `src/sdk-worker.mjs` applies the latter to its owned direct or proxy dispatcher as well as supplying SDK request settings.
+This does not extend an upstream proxy's timeout, reconnect an ended stream or promise a maximum total latency of only the summed backoff.
 At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
 A declared directory's identity hashes up to 20,000 entries; a larger one is refused as `invalid` with a request for narrower paths.

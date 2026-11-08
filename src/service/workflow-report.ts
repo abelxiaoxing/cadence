@@ -246,7 +246,19 @@ export class WorkflowTranscript {
       this.reportCapture = undefined;
     }
     this.track(frame);
-    if (this.overflowed) return false;
+    if (this.overflowed) {
+      // Progress is bounded metadata, independent of retained transcript text.
+      if (frame.event.kind === "model-retry") {
+        if (frame.event.progress) this.turn.retry = frame.event.progress;
+        else delete this.turn.retry;
+        return true;
+      }
+      if (frame.event.kind === "worker-failure") {
+        delete this.turn.retry;
+        return true;
+      }
+      return false;
+    }
     try {
       this.capture.accept(frame);
     } catch {

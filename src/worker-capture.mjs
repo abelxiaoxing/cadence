@@ -58,6 +58,7 @@ export class CaptureState {
     this.bytes = 0;
     this.coverage = completeCoverage();
     this.selected = null;
+    this.retry = null;
     this.failed = false;
     this.request = request;
     this.contexts = new Set();
@@ -326,6 +327,9 @@ export class CaptureState {
           omissions: [e.block.reason],
         });
         break;
+      case "model-retry":
+        this.retry = e.progress;
+        break;
       case "capture-status":
         this.mergeCoverage(e.coverage);
         break;
@@ -347,6 +351,7 @@ export class CaptureState {
         const m = message(e.messageId);
         requireFact(
           !this.failed &&
+            this.retry === null &&
             m.ended &&
             m.role === "assistant" &&
             m.stopReason === "stop" &&

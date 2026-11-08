@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import { ConversationRecords } from "../src/service/conversation-records.ts";
-import type { LiveTurn } from "../src/service/conversations.ts";
+import { LiveCapture, type LiveTurn } from "../src/service/conversations.ts";
 import type { ServiceCoordination } from "../src/service/coordination.ts";
 import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
@@ -141,13 +142,14 @@ it("a failed attempt from the current leaf is not masked by its previous complet
   });
 });
 
-it("an unwritten live Send also applies current read redaction", () => {
+it("an unwritten live Send preserves read redaction and recovery across readonly refreshes", () => {
   const f = fixture(),
     id = randomUUID(),
     secret = "new-live-credential";
   const commandId = f.command(id, "queued", null, `Question ${secret}`),
     accepted = f.records.accepted(commandId);
   if (!accepted) throw Error("admission");
+  const capture = new LiveCapture(() => [secret]);
   f.active.set(commandId, {
     commandId,
     accepted,
@@ -166,7 +168,7 @@ it("an unwritten live Send also applies current read redaction", () => {
       omitted: { thinking: false, media: false, other: false },
     },
     stateFile: null,
-    capture: null,
+    capture,
     abort: new AbortController(),
     original: new Promise(() => {}),
   });
@@ -177,4 +179,33 @@ it("an unwritten live Send also applies current read redaction", () => {
   expect(turn).toMatchObject({
     steps: [{ text: "Question [redacted]" }],
   });
+  const live = f.active.get(commandId)!;
+  live.state.status = "running";
+  const progress = {
+    phase: "waiting" as const,
+    attempt: 2,
+    maxAttempts: 6,
+    delayMs: 10000,
+  };
+  const observed = {
+    protocol: 2 as const,
+    childRunId: randomUUID(),
+    workerSeq: 1,
+    observedMs: 0,
+    event: { kind: "model-retry" as const, progress },
+  };
+  capture.accept(observed);
+  for (let i = 0; i < 2; i++) {
+    expect(
+      decodeWorkbenchResult(f.records.turnSteps(id, null, 0, null)),
+    ).toMatchObject({ turn: { status: "running", retry: progress } });
+    expect(f.active.size).toBe(1);
+  }
+  capture.accept({
+    ...observed,
+    event: { kind: "model-retry", progress: null },
+  });
+  expect(f.records.turnSteps(id, null, 0, null)).not.toHaveProperty(
+    "turn.retry",
+  );
 });

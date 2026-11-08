@@ -42,6 +42,7 @@ The conversation launcher delivers admitted bytes on its private image pipe, not
 `src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, and `src/session-entries.mjs` names the custom entries Cadence adds.
 Pre-Pi Cadence conversations are unsupported: no migration endpoint, old checkpoint codec or transcript reader remains.
 A readonly identity-presence guard refuses reuse and preserves the old files; current context/binding/link metadata retains its existing paths.
+`src/worker-model.mjs` owns the service worker's bounded SDK request-recovery settings and credential-free attempt/progress observations, not a second retry loop or a profile loader.
 `src/service/turn-capture.ts` retains workflow subagent turns from capture frames; `src/session-sharing.ts` is the extension's readonly notice when the browser continued the session a terminal holds.
 
 `src/service/{conversation-records,conversation-controls}.ts` owns readonly conversation, transcript and mode/plan decoding; it has no execution owner, SDK or write path.
