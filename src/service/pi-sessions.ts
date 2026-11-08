@@ -657,6 +657,7 @@ function shown(entry: SessionEntry): boolean {
 /** One turn as listed steps, with every item redacted and split into the parts
  * a step-detail read returns. */
 export interface BuiltTurn {
+  retry?: ChatTurn["retry"];
   id: string;
   entry: string | null;
   at: number;
@@ -740,7 +741,9 @@ export function turnItems(
                 text: value,
                 name: "",
                 args: "",
-                error: false,
+                error: ["error", "aborted", "length"].includes(
+                  own(m, "stopReason") as string,
+                ),
               });
           } else if (type === "toolCall") {
             const id = own(b, "id"),

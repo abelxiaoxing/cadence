@@ -1,4 +1,5 @@
 import { IMAGE_LIMITS, IMAGE_TYPES } from "../../image-content.mjs";
+import { decodeModelRetry, type ModelRetry } from "../../worker-public.mjs";
 /** Finite, authenticated workbench API. Ordinary chat is not task admission. */
 import {
   bool,
@@ -257,6 +258,8 @@ export interface ChatItem {
 }
 export interface ChatTurn {
   execution?: ExecutionContext;
+  /** Active model-request recovery only; never a persisted resumption command. */
+  retry?: ModelRetry;
   id: string;
   epoch: string;
   status: ChatStatus;
@@ -288,6 +291,7 @@ export interface ChatStep {
 /** One turn of a conversation branch: a user message and what followed it. */
 export interface ChatTurnHeader {
   execution?: ExecutionContext;
+  retry?: ModelRetry;
   /** The user message's session entry id; a browser command id while Pi has not
    * written that message yet. */
   id: string;
@@ -884,6 +888,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     ...(current ? ["omitted"] : []),
     ...(paged ? ["transcript"] : []),
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
+    ...(Object.hasOwn(v ?? {}, "retry") ? ["retry"] : []),
   ]);
   const transcript = paged ? closed(o.transcript, ["pages"]) : null;
   const omitted = current
@@ -893,6 +898,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     ...(o.execution === undefined
       ? {}
       : { execution: decodeExecutionContext(o.execution) }),
+    ...(o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
@@ -982,6 +988,7 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     "steps",
     "stable",
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
+    ...(Object.hasOwn(v ?? {}, "retry") ? ["retry"] : []),
     "entry",
     "at",
   ]);
@@ -991,6 +998,7 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     ...(o.execution === undefined
       ? {}
       : { execution: decodeExecutionContext(o.execution) }),
+    ...(o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) }),
     id: decodeEntryId(o.id),
     entry: nullable(o.entry, decodeEntryId),
     at: integer(o.at, 0),

@@ -610,6 +610,7 @@ export class ConversationRecords {
       at: live.accepted.at,
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
+      ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
       omitted: {
         thinking: written.omitted.thinking || !!omitted?.thinking,
         media: written.omitted.media || !!omitted?.media,
@@ -645,6 +646,7 @@ export class ConversationRecords {
       ordinal,
       turn: {
         ...(turn.execution ? { execution: turn.execution } : {}),
+        ...(turn.retry ? { retry: turn.retry } : {}),
         id: turn.id,
         status: turn.status,
         notice: turn.notice,

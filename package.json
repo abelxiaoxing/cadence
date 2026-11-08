@@ -29,6 +29,7 @@
     "src/native-history.ts",
     "src/operator-cli.mjs",
     "src/sdk-worker.mjs",
+    "src/worker-model.mjs",
     "src/service-cli.mjs",
     "src/service-client.ts",
     "src/service-contract.ts",

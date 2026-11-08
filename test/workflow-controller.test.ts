@@ -3,10 +3,10 @@ import {
   AttemptFailure,
   DeliveryController,
   decodeRecoveryDecision,
+  modelRequestFailed,
   type RecoveryDecision,
   type RecoveryPorts,
   type RecoveryRecord,
-  transientWorkerFailure,
 } from "../src/service/workflow-controller.ts";
 
 const decision = (
@@ -159,59 +159,8 @@ it("replanning can only name approved paths and actual evidence, never new comma
       decodeRecoveryDecision(JSON.stringify(invalid), ["src"], ["step-a"]),
     ).toThrow();
 });
-it("known transient worker errors back off without another grant or provider-dependent diagnosis", async () => {
-  let calls = 0,
-    paused = 0;
-  const f = fixture({
-    pause: async () => {
-      paused++;
-    },
-  });
-  const value = await f.controller.complete("implementation", async () => {
-    if (++calls < 5)
-      throw new AttemptFailure(
-        "observed HTTP 429, cleanup settled",
-        ["step-a"],
-        true,
-      );
-    return "done";
-  });
-  expect(value).toBe("done");
-  expect(paused).toBe(4);
-  expect(f.ports.diagnose).not.toHaveBeenCalled();
-});
-
-it("provider retry uses actual HTTP and cleanup observations, never an error-looking sentence", () => {
-  const observed = {
-    outcome: "failed",
-    stage: "prompt",
-    cleanupSettled: true,
-    cleanupFailures: 0,
-    requestPrepared: true,
-    actualResponseStatus: 429,
-  };
-  expect(transientWorkerFailure(JSON.stringify(observed))).toBe(true);
-  expect(
-    transientWorkerFailure(
-      JSON.stringify({ ...observed, actualResponseStatus: 503 }),
-    ),
-  ).toBe(true);
-  for (const invalid of [
-    { ...observed, actualResponseStatus: "UNKNOWN" },
-    { ...observed, actualResponseStatus: 401 },
-    { ...observed, cleanupSettled: false },
-    { ...observed, cleanupFailures: 1 },
-    { ...observed, stage: "cleanup" },
-  ])
-    expect(transientWorkerFailure(JSON.stringify(invalid))).toBe(false);
-  expect(transientWorkerFailure("The model said HTTP 429, please retry")).toBe(
-    false,
-  );
-});
-
-it("transient failure in a split recovery preserves earlier successful assignments", async () => {
-  let original = 0,
-    second = 0;
+it("model recovery exhaustion never starts diagnosis or replays an earlier repair", async () => {
+  let original = 0;
   const writes: string[] = [];
   const f = fixture({
     diagnose: async () => ({
@@ -224,17 +173,44 @@ it("transient failure in a split recovery preserves earlier successful assignmen
     }),
     execute: async (work) => {
       writes.push(work.title);
-      if (work.title === "second" && ++second === 1)
-        throw new AttemptFailure("observed 503", ["step-a"], true);
+      if (work.title === "second")
+        throw new Error("Model request recovery exhausted");
     },
-    pause: async () => {},
   });
-  await f.controller.complete("implementation", async () => {
-    if (++original === 1)
-      throw new AttemptFailure("needs splitting", ["step-a"]);
-  });
-  expect(writes).toEqual(["first", "second", "second"]);
+  await expect(
+    f.controller.complete("implementation", async () => {
+      if (++original === 1)
+        throw new AttemptFailure("needs splitting", ["step-a"]);
+    }),
+  ).rejects.toThrow("Model request recovery exhausted");
+  expect(writes).toEqual(["first", "second"]);
+  expect(original).toBe(1);
   expect(f.records).toHaveLength(1);
+});
+
+it("terminal model failure requires its fixed diagnostic and settled cleanup, not HTTP or model prose", () => {
+  const observed = {
+    outcome: "failed",
+    stage: "assistant-final",
+    class: "model-request-failed",
+    terminalStopReason: "error",
+    cleanupSettled: true,
+    cleanupFailures: 0,
+  };
+  expect(modelRequestFailed(JSON.stringify(observed))).toBe(true);
+  for (const invalid of [
+    { ...observed, outcome: "completed" },
+    { ...observed, terminalStopReason: "aborted" },
+    { ...observed, class: "terminal-incomplete" },
+    { ...observed, cleanupSettled: false },
+    { ...observed, cleanupFailures: 1 },
+    { ...observed, stage: "cleanup" },
+    { actualResponseStatus: 429 },
+  ])
+    expect(modelRequestFailed(JSON.stringify(invalid))).toBe(false);
+  expect(modelRequestFailed("The model said HTTP 429, please retry")).toBe(
+    false,
+  );
 });
 
 it("recovery records sanitize decoded field values without reviving escaped secrets", () => {

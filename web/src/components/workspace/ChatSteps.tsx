@@ -20,7 +20,7 @@ export interface IndexedStep {
   step: ChatStep;
   index: number;
 }
-/** Steps run through the last tool call; assistant text after it is the answer. */
+/** Failed/incomplete attempts stay in steps, never in the successful answer. */
 export function turnParts(steps: readonly ChatStep[]): {
   user: IndexedStep[];
   steps: IndexedStep[];
@@ -28,7 +28,9 @@ export function turnParts(steps: readonly ChatStep[]): {
 } {
   const indexed = steps.map((step, index) => ({ step, index }));
   const replies = indexed.filter(({ step }) => step.role !== "user");
-  const last = replies.findLastIndex(({ step }) => step.role === "tool");
+  const last = replies.findLastIndex(
+    ({ step }) => step.role === "tool" || step.error,
+  );
   const shown = ({ step }: IndexedStep) =>
     step.role === "tool" || step.text.trim() !== "";
   return {
@@ -169,6 +171,11 @@ export function ChatSteps({
                 <ToolStep turn={turn} index={index} step={step} />
               ) : (
                 <div className="chat-step-note">
+                  {step.error && (
+                    <span className="ep-state failed">
+                      {t("Incomplete model response")}
+                    </span>
+                  )}
                   <StepText turn={turn} index={index} step={step} />
                 </div>
               )}

@@ -274,7 +274,11 @@ A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence
 A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns; a turn whose closure is unknown keeps fences.
-There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction; a terminal `/compact` is honoured when the session is continued.
+There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic compaction; a terminal `/compact` is honoured when the session is continued.
+The service-owned SDK session retries transient model-request errors with the bounded policy in `src/worker-model.mjs`; native Pi's main dialogue retains its own settings, which Cadence neither changes nor copies.
+The owner projects credential-free waiting/requesting progress separately from error notices; refresh observes the same admitted turn and never resends it.
+Pi keeps failed attempts in raw history and appends context edits to omit them from later model requests; completed tool results remain in context.
+Low-level `agent_end` and retry-end events do not establish turn completion: the original prompt, actual stop reason and native/auth/storage closure still decide the result.
 Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers, so a terminal extension's tools are shown in history but not offered to a browser turn.
 When a turn's model or thinking level differs from the session's, the worker records the change, so a terminal resume keeps it.
 Conversation and per-conversation turn counts have no lifetime admission cap; only active-work concurrency is bounded.

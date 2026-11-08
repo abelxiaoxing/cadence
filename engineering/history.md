@@ -17,7 +17,10 @@ Storage exhaustion refuses new work rather than silently evicting history.
 
 ## Capture, retained history and privacy
 
-Task workers use public SDK APIs, explicit empty resources, in-memory session/settings and disabled retries/compaction/cache warming.
+Task workers use public SDK APIs, explicit empty resources, in-memory session/settings and disabled compaction/cache warming.
+Model-request recovery is SDK-owned (see [lifetimes](lifetimes.md)); the separate synchronous session listener projects only bounded `model-retry` phase/count/delay frames into the existing capture queue, never provider error text or headers.
+These progress frames use the data budget, not the reserved final/failure lane, and every asynchronous emission failure aborts through the existing capture-failure path.
+Retry end clears progress but never establishes success; a final capture cannot select a response while recovery remains active.
 Ordinary-conversation workers share that launcher/auth/capture boundary but load only the explicit ordinary resource policy in [clients](clients.md#ordinary-conversations) and continue the selected branch through Pi's file-backed SessionManager.
 Verify exact model and effective thinking before READY/prompt; no provider discovery, credential argv/file envelope or implicit network fallback.
 Use the awaited public core-agent subscription for backpressure, reserving synchronous tool/update ingress before any copy or await.

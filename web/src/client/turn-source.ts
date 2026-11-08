@@ -18,6 +18,7 @@ export function recordedTurn(turn: ChatTurn): TurnSource {
       id: turn.id,
       status: turn.status,
       notice: turn.notice,
+      ...(turn.retry ? { retry: turn.retry } : {}),
       omitted: turn.omitted,
       steps: steps.length,
       stable: steps.length,

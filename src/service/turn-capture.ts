@@ -131,9 +131,19 @@ export class TurnCapture {
       const item = this.item(e.callId, "tool");
       this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
       if (e.kind === "tool-end") item.error = e.isError;
-    } else if (e.kind === "worker-failure")
+    } else if (e.kind === "message-end") {
+      const item = this.turn.items.find(
+        (i) => i.id === e.messageId && i.role === "assistant",
+      );
+      if (item)
+        item.error = ["error", "aborted", "length"].includes(e.stopReason);
+    } else if (e.kind === "model-retry") {
+      if (e.progress) this.turn.retry = e.progress;
+      else delete this.turn.retry;
+    } else if (e.kind === "worker-failure") {
+      delete this.turn.retry;
       this.turn.notice = `worker-failure: ${e.code}`;
-    else if (
+    } else if (
       e.kind === "omitted-block" &&
       e.block.owner.kind !== "context" &&
       e.block.owner.kind !== "handoff"
@@ -151,6 +161,11 @@ export class TurnCapture {
     if (e.kind === "message-end")
       for (const [id, block] of this.messageText)
         if (block.messageId === e.messageId) this.messageText.delete(id);
-    if (e.kind === "message-end" || e.kind === "tool-end") this.save();
+    if (
+      ["message-end", "tool-end", "model-retry", "worker-failure"].includes(
+        e.kind,
+      )
+    )
+      this.save();
   }
 }

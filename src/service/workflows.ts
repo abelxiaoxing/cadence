@@ -76,10 +76,10 @@ import {
   AttemptFailure,
   DeliveryController,
   decodeRecoveryDecision,
+  modelRequestFailed,
   RECOVERY_BYTES,
   RECOVERY_INSTRUCTIONS,
   settledWorkerCleanup,
-  transientWorkerFailure,
 } from "./workflow-controller.ts";
 import {
   acceptanceRecord,
@@ -178,7 +178,6 @@ interface Live {
   controllers?: Map<string, DeliveryController>;
   knowledgeDone?: boolean;
   barrier?: CheckoutPermit;
-  backoffMs?: number;
 }
 type Verdict = "approved" | "rejected" | "unparseable";
 /** A native workflow command refused before any record or admission of its
@@ -714,6 +713,8 @@ export class Workflows {
         turn.notice =
           "Retained transcript is incomplete; original activity is not inferred.";
       }
+      if (turn.status !== "running" || run.status !== "running")
+        delete turn.retry;
     }
     return { kind: "workflow-transcript", runId: id, stepId, turn };
   }
@@ -1499,6 +1500,7 @@ ${knowledge.text}`,
         }
       }
       transcript.status = completed.outcome;
+      delete transcript.retry;
       saveTranscript();
       this.finishStep(
         live,
@@ -1507,6 +1509,14 @@ ${knowledge.text}`,
         undefined,
         readonly ? undefined : report,
       );
+      if (
+        completed.closed &&
+        completed.outcome === "failed" &&
+        modelRequestFailed(completed.output)
+      )
+        throw new Error(
+          "The model request failed after automatic recovery or was not retryable. Partial work is preserved; no workflow step was replayed.",
+        );
       return { result: completed, step, report };
     } finally {
       await auth.settled;
@@ -1946,53 +1956,6 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       throw new AttemptFailure(
         `Settled ${step.kind} attempt ${result.outcome}: ${diagnosticText(result.output || result.text, 2048, this.o.secrets())}`,
         [step.id],
-        transientWorkerFailure(result.output),
-      );
-    live.backoffMs = 0;
-  }
-  private async pauseDelivery(
-    live: Live,
-    cwd: string,
-    allowed: string[],
-    failure: AttemptFailure,
-  ): Promise<void> {
-    const observed = await contentsIdentityAsync(cwd, allowed);
-    live.backoffMs = Math.min(60000, Math.max(2000, (live.backoffMs ?? 0) * 2));
-    live.run.phase = "recovering";
-    live.run.notice = this.notice(
-      `Provider temporarily unavailable; waiting ${live.backoffMs}ms before continuing from actual outputs.`,
-      failure.message,
-    );
-    this.save(live);
-    // The failed worker and its auth/storage originals have already settled.
-    // Waiting is control flow, not a checkout write window.
-    live.barrier?.release();
-    live.barrier = undefined;
-    await new Promise<void>((resolve, reject) => {
-      const stop = () => {
-        clearTimeout(timer);
-        live.abort.signal.removeEventListener("abort", stop);
-        reject(
-          new WorkflowFailure(
-            "canceled",
-            "Canceled while waiting for provider",
-          ),
-        );
-      };
-      const timer = setTimeout(() => {
-        live.abort.signal.removeEventListener("abort", stop);
-        resolve();
-      }, live.backoffMs);
-      live.abort.signal.addEventListener("abort", stop, { once: true });
-      if (live.abort.signal.aborted) stop();
-    });
-    this.assertRunning(live);
-    live.barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
-    live.barrier.assertHeld();
-    if (observed !== (await contentsIdentityAsync(cwd, allowed)))
-      throw new WorkflowRefusal(
-        "stale",
-        "Approved files changed while waiting; preserved work is not replayed over them.",
       );
   }
   private controller(
@@ -2007,7 +1970,6 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live),
       observe: () => sourceIdentityAsync(cwd, allowed, live.abort.signal),
-      pause: (failure) => this.pauseDelivery(live, cwd, allowed, failure),
       diagnose: async (failure, previous) => {
         live.run.phase = "recovering";
         live.run.notice = this.notice(
@@ -2019,31 +1981,23 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           .map((id) => this.findStep(live.run, id))
           .filter((s): s is WorkflowStep => !!s);
         const evidence = this.evidence(live, steps);
-        for (;;) {
-          try {
-            const { result, step } = await this.worker(
-              live,
-              cwd,
-              "diagnose",
-              `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nApproved paths: ${allowed.join(", ")}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
-              true,
-              p.model,
-              undefined,
-              "diagnosis",
-            );
-            this.attemptResult(live, result, step);
-            return decodeRecoveryDecision(
-              result.text,
-              allowed,
-              failure.steps,
-              this.o.secrets(),
-            );
-          } catch (error) {
-            if (!(error instanceof AttemptFailure) || !error.transient)
-              throw error;
-            await this.pauseDelivery(live, cwd, allowed, error);
-          }
-        }
+        const { result, step } = await this.worker(
+          live,
+          cwd,
+          "diagnose",
+          `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nApproved paths: ${allowed.join(", ")}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
+          true,
+          p.model,
+          undefined,
+          "diagnosis",
+        );
+        this.attemptResult(live, result, step);
+        return decodeRecoveryDecision(
+          result.text,
+          allowed,
+          failure.steps,
+          this.o.secrets(),
+        );
       },
       record: (record) => {
         const revision = (live.run.revision ?? 0) + 1;
@@ -2126,26 +2080,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           ) {
             if (step.kind === "check" && error.outcome === "timeout")
               throw error;
-            const file = this.files.read(
-              this.path(live.run.id, `results/${hash(step.id)}.json`),
-              RECORD_BYTES,
-            );
-            const retained = file
-              ? closed(
-                  parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES),
-                  ["stepId", "result"],
-                )
-              : null;
-            if (retained && retained.stepId !== step.id)
-              throw new ContractError("corrupt-selected");
-            const result = retained?.result as RunResult | undefined;
-            throw new AttemptFailure(
-              error.message,
-              [step.id],
-              step.kind !== "check" &&
-                !!result?.closed &&
-                transientWorkerFailure(result.output),
-            );
+            throw new AttemptFailure(error.message, [step.id]);
           }
         }
         throw error;

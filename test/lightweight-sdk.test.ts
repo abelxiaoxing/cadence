@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { modelRequestFailed } from "../src/service/workflow-controller.ts";
 import {
   legacyWorkerEnvelope,
   runProcess,
@@ -20,6 +21,10 @@ import {
   safeChildEnv,
   type WorkerRequest,
 } from "../src/subagent-process.ts";
+import {
+  WORKER_MODEL_SETTINGS,
+  WorkerModelState,
+} from "../src/worker-model.mjs";
 import { LIMITS } from "../src/worker-public.mjs";
 import { captureSummary } from "./helpers/worker-v2.ts";
 
@@ -466,6 +471,7 @@ const diagnosticKeys = [
   "preflight",
   "requestPrepared",
   "actualResponseStatus",
+  "retryAttempts",
   "cleanupFailures",
   "cleanupSettled",
 ];
@@ -564,6 +570,7 @@ const memoryDiagnostic = {
   preflight: "accepted",
   requestPrepared: true,
   actualResponseStatus: "UNKNOWN",
+  retryAttempts: 0,
   cleanupFailures: 0,
   cleanupSettled: false,
 };
@@ -1119,7 +1126,9 @@ for (const lane of [
             ? "event-projection-failed"
             : lane === "model-bound"
               ? "event-projection-failed"
-              : "terminal-incomplete",
+              : lane.startsWith("codex-") || lane === "refusal"
+                ? "model-request-failed"
+                : "terminal-incomplete",
         preflight: "accepted",
         requestPrepared: lane !== "codex-local-error",
         actualResponseStatus:
@@ -1443,11 +1452,7 @@ const mockedWorker = async (scenario: string) => {
     },
     SettingsManager: {
       inMemory: (settings: any) => {
-        expect(settings).toEqual({
-          compaction: { enabled: false },
-          retry: { enabled: false },
-          cacheWarming: "off",
-        });
+        expect(settings).toEqual(WORKER_MODEL_SETTINGS);
         return {};
       },
     },
@@ -1550,6 +1555,21 @@ it.each(["stop", "session", "prompt-throw", "tool-cleanup"])(
   },
 );
 
+it("terminal SDK model failure keeps settled evidence and cannot request workflow replay", async () => {
+  const result = await mockedWorker("error");
+  expect(result.exitCode).toBe(1);
+  expect(result.requests).toBe(1);
+  expect(diagnostic(result.stderr)).toMatchObject({
+    stage: "assistant-final",
+    class: "model-request-failed",
+    terminalStopReason: "error",
+    cleanupSettled: true,
+    cleanupFailures: 0,
+    retryAttempts: 0,
+  });
+  expect(modelRequestFailed(result.stderr)).toBe(true);
+});
+
 for (const scenario of [
   "payload-undefined",
   "payload-replace",
@@ -1571,7 +1591,7 @@ for (const scenario of [
       );
       const output = new Function(
         "LIMITS",
-        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",requestPrepared=false,actualResponseStatus="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
       )(LIMITS);
       expect(output).toBe("");
       return;
@@ -1646,7 +1666,7 @@ for (const scenario of [
       );
       const output = new Function(
         "LIMITS",
-        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",requestPrepared=false,actualResponseStatus="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
       )(LIMITS);
       expect(output).toBe("");
       return;
@@ -1798,7 +1818,8 @@ for (const scenario of [
     else
       expect(d).toMatchObject({
         stage: "assistant-final",
-        class: "terminal-incomplete",
+        class:
+          scenario === "error" ? "model-request-failed" : "terminal-incomplete",
         terminalStopReason: ["secret-stop", "missing-assistant"].includes(
           scenario,
         )
@@ -1830,17 +1851,24 @@ const observedHooks = (stream: (...args: any[]) => any) => {
   expect(end).toBeGreaterThan(start);
   return new Function(
     "session",
+    "WorkerModelState",
+    "model",
     `
     "use strict";
-    let requestPrepared = false;
-    let actualResponseStatus = "UNKNOWN";
+    const modelState = new WorkerModelState(() => {}, () => {});
+    const requestedThinkingLevel = "off", failure = undefined;
+    const refuse = () => { throw new Error("Unexpected refusal"); };
     ${source.slice(start, end)}
     return {
       stream: session.agent.streamFunction,
-      facts: () => ({requestPrepared, actualResponseStatus}),
+      facts: () => ({requestPrepared: modelState.requestPrepared, actualResponseStatus: modelState.actualResponseStatus}),
     };
   `,
-  )({ agent: { streamFunction: stream } });
+  )(
+    { agent: { streamFunction: stream }, thinkingLevel: "off" },
+    WorkerModelState,
+    fixtureModel(),
+  );
 };
 
 for (const hook of ["onPayload", "onResponse"] as const) {
@@ -1965,7 +1993,7 @@ for (const hook of ["onPayload", "onResponse"] as const) {
             ? (model: unknown, ctx: unknown, options: any) =>
                 adapter(model, ctx, { ...options, maxRetries: 0 })
             : observed.stream;
-        expect(wrapper(selected, context, incoming)).toBe(streamResult);
+        expect(await wrapper(selected, context, incoming)).toBe(streamResult);
         expect(payloadReads).toBe(1);
         expect(responseReads).toBe(1);
         expect(incoming.maxRetries).toBe(7);
@@ -2019,7 +2047,7 @@ for (const lane of [
   "599",
 ] as const) {
   for (const callback of [false, true]) {
-    it(`nonthrowing response observation/forwarding: ${lane}/callback=${callback}`, () => {
+    it(`nonthrowing response observation/forwarding: ${lane}/callback=${callback}`, async () => {
       const secretFault = new Error("fabricated-response-canary");
       let statusReads = 0;
       const response =
@@ -2089,13 +2117,13 @@ for (const lane of [
             );
           },
         );
-        withCallback.stream(selected, {}, { onResponse: original });
+        await withCallback.stream(selected, {}, { onResponse: original });
         expect(original).toHaveBeenCalledTimes(1);
         expect(withCallback.facts().actualResponseStatus).toBe(
           lane === "100" ? 100 : lane === "599" ? 599 : "UNKNOWN",
         );
       } else {
-        observed.stream(selected, {}, {});
+        await observed.stream(selected, {}, {});
         expect(original).not.toHaveBeenCalled();
         expect(observed.facts().actualResponseStatus).toBe(
           lane === "100" ? 100 : lane === "599" ? 599 : "UNKNOWN",
@@ -2132,7 +2160,8 @@ const eventFaults = [
   "tool-getter",
 ] as const;
 const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
-const captureFixtureImports = `    import { createHash } from "node:crypto";
+const captureFixtureImports = `    import { WorkerModelState, WORKER_MODEL_SETTINGS } from ${JSON.stringify(new URL("../src/worker-model.mjs", import.meta.url).href)};
+    import { createHash } from "node:crypto";
     const VERSION = "fixture-sdk";
     const readFileSync = () => Buffer.from("explicit public-boundary fixture worker source");
     import { createWorkerToolkit } from ${JSON.stringify(new URL("../src/worker-toolkit.mjs", import.meta.url).href)};
@@ -2285,7 +2314,7 @@ const mockBootstrap = (
     const createExtensionRuntime = () => ({});
     const SessionManager = {inMemory:()=>({})};
     const SettingsManager = {inMemory:settings=>{
-      assert.deepEqual(settings,{compaction:{enabled:false},retry:{enabled:false},cacheWarming:"off"});
+      assert.deepEqual(settings,WORKER_MODEL_SETTINGS);
       return {};
     }};
     const createAgentSession = async options => {
@@ -2296,12 +2325,13 @@ const mockBootstrap = (
       return {session:fixtureSession};
     };
 
+    import * as undiciFixture from ${JSON.stringify(import.meta.resolve("undici"))};
     ${captureFixtureImports}
-    ${source.slice(start)}
-    assert.equal(thinkingReads,lane === "thinking-absent" ? 0 : 1);
+    ${source.slice(start).replace('await import("undici")', "Promise.resolve(undiciFixture)")}
+    assert.equal(thinkingReads,lane === "thinking-absent" ? 0 : lane === "thinking-match" ? 2 : 1);
     if (thinkingLane) {
       const success = lane === "thinking-match";
-      assert.deepEqual(counts,{subscribes:success?1:0,prompts:success?1:0,streamReads:success?1:0,requests:success?1:0});
+      assert.deepEqual(counts,{subscribes:success?2:0,prompts:success?1:0,streamReads:success?1:0,requests:success?1:0});
       // Mismatch is rejected even after all three public identity reads match.
       if (!success && lane !== "thinking-throw") assert.equal(modelReads,3);
     }
@@ -2382,7 +2412,10 @@ for (const lane of [
   });
 }
 
-it("raw native mock preserves first failure before unsettled cleanup", async () => {
+it("raw native mock preserves first failure before unsettled cleanup", {
+  tags: ["slow"],
+  timeout: 20000,
+}, async () => {
   const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-unsettled-"));
   const result = await nativeWorker(
     cwd,
@@ -2410,7 +2443,7 @@ it("raw native mock preserves first failure before unsettled cleanup", async () 
     actualResponseStatus: "UNKNOWN",
   });
   expect(readdirSync(cwd)).toEqual([]);
-}, 20000);
+});
 
 for (const delivery of ["awaited", "independent"] as const) {
   for (const lane of [...eventFaults, "event-abort-reject"]) {
@@ -2540,7 +2573,7 @@ for (const mode of ["throw", "reject", "promise"] as const) {
         } else expect(effective.onResponse(response)).toBe(promise);
       },
     );
-    observed.stream(fixtureModel(), {}, { onResponse: original });
+    await observed.stream(fixtureModel(), {}, { onResponse: original });
     expect(calls).toBe(1);
     expect(reads).toBe(1);
     expect(observed.facts().actualResponseStatus).toBe("UNKNOWN");
@@ -2866,7 +2899,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         expect(stdout + stderr).not.toContain(canary); // Original raw bytes, not the parsed or parent-redacted projection.
       expect(diagnostic(startup.workerStderr)).toMatchObject({
         stage: "assistant-final",
-        class: "terminal-incomplete",
+        class: "model-request-failed",
         preflight: "accepted",
         requestPrepared: true,
         terminalStopReason: "error",
@@ -2981,7 +3014,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
         EnvHttpProxyAgent: class {
           constructor(options) {
             order.push("construct"); counts.constructors++;
-            assert.deepEqual(options,{httpProxy:route,httpsProxy:route,noProxy:""});
+            assert.deepEqual(options,lane === "direct" ? {headersTimeout:300000,bodyTimeout:300000} : {httpProxy:route,httpsProxy:route,noProxy:"",headersTimeout:300000,bodyTimeout:300000});
             if (lane === "constructor-throw") throw fault;
             instance = this;
             if (lane === "close-getter") Object.defineProperty(this,"close",{get(){
@@ -3011,6 +3044,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
           return lane === "getter-mismatch" ? {} : installed;
         },
       };
+      api.Agent = api.EnvHttpProxyAgent;
       for (const name of ["EnvHttpProxyAgent","setGlobalDispatcher","getGlobalDispatcher"]) {
         if (lane === "missing-" + name) delete api[name];
         if (lane === "bad-" + name) api[name] = 42;
@@ -3062,7 +3096,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
         if (order.includes("abort")) assert.ok(close < order.lastIndexOf("abort"));
       }
       if (counts.prompts) {
-        assert.equal(counts.unsubscribes,1);
+        assert.equal(counts.unsubscribes,2);
         assert.equal(counts.disposes,1);
         assert.equal(counts.aborts,lane.startsWith("pending-abort") ? 2 : 1);
         if (lane !== "direct")
@@ -3072,7 +3106,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
         assert.equal(counts.unsubscribes+counts.aborts+counts.disposes,0);
       }
       if (lane === "direct") {
-        assert.equal(counts.imports+counts.constructors+counts.sets+counts.gets+counts.closes,0);
+        assert.equal(counts.imports+counts.constructors+counts.sets+counts.gets+counts.closes,5);
         assert.equal(counts.prompts,1);
       } else if (["success","captured","close-throw","close-reject","close-getter","cleanup-mask"].includes(lane)) {
         assert.equal(counts.prompts,1);
