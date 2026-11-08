@@ -87,7 +87,8 @@ export interface ModelCandidate {
   }[];
   eligibility: "candidate" | "unsupported" | "auth-unavailable";
 }
-export interface ModelCatalog extends ModelChoiceState {
+/** Credential-free discovery only: no owner version or installed selection. */
+export interface ModelPreview {
   status: "complete" | "capacity";
   entries: ModelCandidate[];
   /** Models left out because a provider/model ID contains a known credential
@@ -97,6 +98,7 @@ export interface ModelCatalog extends ModelChoiceState {
    * offered only when it names a selectable entry of this catalog. */
   remembered: ModelSelector | null;
 }
+export interface ModelCatalog extends ModelChoiceState, ModelPreview {}
 export interface ChooseModelRequest {
   expected: ChoiceVersion;
   choice: ModelSelector;
@@ -189,16 +191,9 @@ export function catalogOffers(
       e.thinking.some((t) => t.selectable && t.level === selector.thinking),
   );
 }
-export function decodeModelCatalog(value: unknown): ModelCatalog {
+export function decodeModelPreview(value: unknown): ModelPreview {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
-  const o = closed(value, [
-    "version",
-    "selected",
-    "status",
-    "entries",
-    "withheld",
-    "remembered",
-  ]);
+  const o = closed(value, ["status", "entries", "withheld", "remembered"]);
   const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
   const remembered = nullable(o.remembered, decodeModelSelector);
   const status = oneOf(o.status, ["complete", "capacity"]);
@@ -212,11 +207,27 @@ export function decodeModelCatalog(value: unknown): ModelCatalog {
   )
     invalid();
   return {
-    version: decodeChoiceVersion(o.version),
-    selected: nullable(o.selected, decodeModelSelection),
     status,
     entries,
     withheld,
     remembered,
+  };
+}
+
+export function decodeModelCatalog(value: unknown): ModelCatalog {
+  const o = closed(value, [
+    "version",
+    "selected",
+    "status",
+    "entries",
+    "withheld",
+    "remembered",
+  ]);
+  const { version, selected, ...preview } = o;
+  canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
+  return {
+    ...decodeModelPreview(preview),
+    version: decodeChoiceVersion(version),
+    selected: nullable(selected, decodeModelSelection),
   };
 }

@@ -1,4 +1,4 @@
-/** One authenticated UI origin, no default project, no SDK/runtime on discovery.
+/** One authenticated UI origin, no default project, no execution runtime on discovery.
  * Project traffic remains browser-authority traffic on the real owner; the gateway
  * never turns a browser command into a native-capability action. */
 
@@ -70,6 +70,7 @@ import {
   GatewayConversations,
   unpreparedDirectory,
 } from "./gateway-conversations.ts";
+import { readGatewayModels } from "./gateway-models.ts";
 import {
   decodeGatewayInput,
   type GatewayInput,
@@ -91,7 +92,9 @@ import {
   releaseForInstallation,
   supervisingUnit,
 } from "./maintenance.ts";
+import { ModelPreviewProcesses } from "./model-preview-process.ts";
 import { encoded, hash, json } from "./private-files.ts";
+import { type LiveLedger, ProcessLedger } from "./process-ledger.ts";
 import { RecoveryLog } from "./recovery-log.ts";
 import { healWorkbench, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
@@ -300,6 +303,18 @@ export async function createGateway(
     store.assert();
     if (!accepting) throw new ContractError("quarantine");
   };
+  let previewLedger: LiveLedger | undefined;
+  const modelPreviews = new ModelPreviewProcesses({
+    worker: new URL("./model-preview.mjs", hostUrl),
+    assertCurrent: () => store.assert(),
+    launched: (pid) => {
+      previewLedger ??= new ProcessLedger(store.files).open(auth.epoch);
+      previewLedger.add(pid);
+    },
+    closed: (pid) => previewLedger?.remove(pid),
+    unconfirmed: () => stop(),
+  });
+  acquired.access.onRevoke(() => modelPreviews.invalidate());
   const root = dirname(dirname(fileURLToPath(hostUrl))),
     version = installedVersion(root),
     record = new MaintenanceRecord(store);
@@ -609,6 +624,8 @@ export async function createGateway(
     if (stopping) return;
     accepting = false;
     activity.close();
+    const previewsClosed = modelPreviews.close();
+    void previewsClosed.catch(() => {});
     store.phase("stopping");
     stopping = (async () => {
       // An accepted Send preparation settles first; its owner (if any) is stopped
@@ -637,6 +654,8 @@ export async function createGateway(
         if ((await stopService(c)).status !== "stopped")
           throw new ContractError("quarantine");
       });
+      await previewsClosed;
+      previewLedger?.close();
       conversations.close();
       store.release();
       for (const close of relays) close();
@@ -653,6 +672,9 @@ export async function createGateway(
       }
       server.close();
       for (const socket of connections) socket.destroy();
+      // Preserve quarantine and the exact worker ledger for startup recovery.
+      // A supervisor may restart this workbench; no admitted project is replayed.
+      if (modelPreviews.uncertain) process.exit(75);
     });
   }
   async function body(req: IncomingMessage, maximum = 16384): Promise<unknown> {
@@ -1033,6 +1055,28 @@ export async function createGateway(
               : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null,
         });
+        return;
+      }
+      if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
+        browserBuild(boundary);
+        const keys = [...url.searchParams.keys()];
+        if (keys.length && (keys.length !== 1 || keys[0] !== "project"))
+          throw new ContractError("invalid");
+        const id = url.searchParams.get("project");
+        const selected =
+          id === null
+            ? undefined
+            : store.projects().find((p) => p.id === decodeHash(id));
+        if (id !== null && !selected) throw new ContractError("unavailable");
+        const catalog = await readGatewayModels(
+          selected,
+          input,
+          acquired.access.redactionLiterals(),
+          (source) => modelPreviews.read(source),
+        );
+        auth.current(caller);
+        assert();
+        reply(res, 200, catalog, LIMITS.pageBytes);
         return;
       }
       if (raw === "/workbench/v1/activity" && req.method === "GET") {

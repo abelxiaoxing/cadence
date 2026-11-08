@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { ServiceClient } from "../../src/service-client.ts";
-import { publicError } from "../../src/service-contract.ts";
+import {
+  type ModelCatalog,
+  publicError,
+  type Reply,
+} from "../../src/service-contract.ts";
 import {
   assertSendModel,
   captureSend,
   dispatchSend,
   draftKey,
+  installSendModel,
   sendCommand,
   sendFailureMessage,
   withSendModel,
@@ -168,3 +173,164 @@ it.each(["lost", "uncertain", "none"])(
     }
   },
 );
+
+function preselected() {
+  const choice = {
+    provider: "fixture",
+    model: "chosen",
+    api: "openai-completions",
+    thinking: "high",
+  } as const;
+  const location = { id: "conversation", cwd: "/project" };
+  const intent = captureSend({
+    id: location.id,
+    location,
+    text: "original",
+    head: null,
+    revision: 1,
+    intent: "ordinary",
+    model: choice,
+    installModel: true,
+  });
+  const catalog: ModelCatalog = {
+    version: { ...model, conversation: location },
+    selected: null,
+    remembered: null,
+    status: "complete",
+    withheld: 0,
+    entries: [
+      {
+        ...choice,
+        thinking: [{ level: "high", selectable: true }],
+        eligibility: "candidate",
+      },
+    ],
+  };
+  const selected = { ...choice, sourceSelectionId: "fresh-source" };
+  const client = {
+    chooseModel: vi.fn(async () => ({
+      kind: "ok" as const,
+      value: { version: catalog.version, selected },
+    })),
+    models: vi.fn(
+      async (): Promise<Reply<ModelCatalog>> => ({
+        kind: "ok" as const,
+        value: { ...catalog, selected },
+      }),
+    ),
+  };
+  return { choice, location, intent, catalog, selected, client };
+}
+it("Send installs only its captured preselection against a fresh live catalog, without changing message identity", async () => {
+  const f = preselected();
+  const result = await installSendModel(
+    f.client,
+    f.intent,
+    f.catalog,
+    () => true,
+  );
+  expect(f.client.chooseModel).toHaveBeenCalledExactlyOnceWith(
+    { expected: f.catalog.version, choice: f.choice },
+    f.location,
+  );
+  expect(f.client.models).toHaveBeenCalledExactlyOnceWith(
+    undefined,
+    f.location,
+  );
+  expect(result.selected).toEqual(f.selected);
+  expect(sendCommand(f.intent, result.version)).toMatchObject({
+    text: "original",
+    commandId: f.intent.command.commandId,
+    conversationId: f.location.id,
+  });
+  expect(f.intent.installModel).toBe(true);
+});
+it("an unavailable preselection refuses without substitution, startup replay or a model write", async () => {
+  const f = preselected();
+  await expect(
+    installSendModel(
+      f.client,
+      f.intent,
+      { ...f.catalog, entries: [] },
+      () => true,
+    ),
+  ).rejects.toThrow("unsupported-context");
+  expect(f.client.chooseModel).not.toHaveBeenCalled();
+  expect(f.client.models).not.toHaveBeenCalled();
+});
+it("a choice lost or made obsolete while installing never continues a message", async () => {
+  const f = preselected();
+  let current = true;
+  f.client.chooseModel.mockImplementationOnce(async () => {
+    current = false;
+    return {
+      kind: "ok",
+      value: { version: f.catalog.version, selected: f.selected },
+    };
+  });
+  await expect(
+    installSendModel(f.client, f.intent, f.catalog, () => current),
+  ).rejects.toThrow("stale");
+  expect(f.client.models).not.toHaveBeenCalled();
+  const client = {
+    ...f.client,
+    chooseModel: vi.fn(async () => ({
+      kind: "error" as const,
+      error: publicError("unavailable", "uncertain"),
+    })),
+  };
+  await expect(
+    installSendModel(client, f.intent, f.catalog, () => true),
+  ).rejects.toThrow("unavailable");
+  expect(client.chooseModel).toHaveBeenCalledTimes(1);
+  expect(f.intent.text).toBe("original");
+});
+it("a confirmed choice still cannot substitute a different observed model", async () => {
+  const f = preselected();
+  f.client.models.mockResolvedValueOnce({
+    kind: "ok",
+    value: {
+      ...f.catalog,
+      selected: { ...f.selected, model: "another-model" },
+    },
+  });
+  await expect(
+    installSendModel(f.client, f.intent, f.catalog, () => true),
+  ).rejects.toThrow("stale");
+});
+it("an already installed exact preselection needs no mutation, and remembered models never acquire preselection authority", async () => {
+  const f = preselected();
+  const catalog = { ...f.catalog, selected: f.selected };
+  expect(await installSendModel(f.client, f.intent, catalog, () => true)).toBe(
+    catalog,
+  );
+  expect(
+    await installSendModel(
+      f.client,
+      { ...f.intent, installModel: false },
+      f.catalog,
+      () => true,
+    ),
+  ).toBe(f.catalog);
+  expect(f.client.chooseModel).not.toHaveBeenCalled();
+});
+
+it("a new owner or choice revision after installation cannot rebind the waiting Send", async () => {
+  for (const version of [
+    { ...model, epoch: "replacement" },
+    { ...model, configRev: 2 },
+  ]) {
+    const f = preselected();
+    f.client.models.mockResolvedValueOnce({
+      kind: "ok",
+      value: {
+        ...f.catalog,
+        selected: f.selected,
+        version: { ...version, conversation: f.location },
+      },
+    });
+    await expect(
+      installSendModel(f.client, f.intent, f.catalog, () => true),
+    ).rejects.toThrow("stale");
+  }
+});

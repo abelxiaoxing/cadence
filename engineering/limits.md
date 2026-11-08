@@ -109,3 +109,7 @@ The one shared reader retains its existing eight parsed-session and 64 built-tur
 Project knowledge observations use `KNOWLEDGE_LIMITS` in `src/service/project-knowledge.ts`: 160 candidate documents, depth 3, 64KiB observed per file and at most 12KiB of selected context (less when the existing 32KiB worker context needs the room).
 Selected excerpts and omitted sources are labelled.
 These are per-observation bounds, not delivery budgets.
+
+Model preview discovery (`src/service/model-preview-protocol.ts`) permits two original child processes, a 15s total startup/import/read deadline and a 1MiB private input; output shares `LIMITS.pageBytes`.
+Identical in-flight inputs coalesce, but completed results and SDK runtimes are not cached in the gateway.
+A timed-out child uses the existing `LIMITS.terminateGraceMs` and `LIMITS.unconfirmedStopMs`; a reporting failure never releases its process charge before native close.

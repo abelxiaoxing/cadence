@@ -8,6 +8,7 @@ import {
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../src/service-client.ts";
+import type { ModelSelector } from "../../src/service-contract.ts";
 import {
   ContractError,
   ERROR_CODES,
@@ -21,6 +22,7 @@ import {
   rememberProject,
   restorableProject,
 } from "./client/last-project";
+import { readModelPreview } from "./client/model-preview";
 import {
   prepareDirectorySend,
   selectActivity,
@@ -43,7 +45,16 @@ import { useT } from "./i18n/locale";
 export function Workbench() {
   const { t } = useT();
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
+  const [homeModel, setHomeModel] = useState<ModelSelector | null>(null);
+  const [initialModel, setInitialModel] = useState<{
+    conversationId: string;
+    model: ModelSelector;
+  }>();
   const [selected, setSelected] = useState(currentProject);
+  const previewModels = useCallback(
+    (signal?: AbortSignal) => readModelPreview(selected ?? undefined, signal),
+    [selected],
+  );
   const [picker, setPicker] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [openError, setOpenError] = useState("");
@@ -136,6 +147,11 @@ export function Workbench() {
           entry?.projects.find((p) => p.id === selected)?.cwd
       )
         hashes.current.set(selected, window.location.hash);
+      const newConversation = crypto.randomUUID();
+      if (!selected && project && !activity && homeModel) {
+        setInitialModel({ conversationId: newConversation, model: homeModel });
+        setHomeModel(null);
+      } else setInitialModel(undefined);
       history.pushState(
         {
           cadenceCwd: activity?.cwd ?? project?.cwd,
@@ -143,14 +159,14 @@ export function Workbench() {
         },
         "",
         project
-          ? `/app?project=${project.id}${activity?.sessionId ? `#chat=${encodeURIComponent(activity.sessionId)}&activity=1${activity.leaf ? `&leaf=${encodeURIComponent(activity.leaf)}` : ""}` : (hashes.current.get(project.id) ?? `#chat=${crypto.randomUUID()}`)}`
+          ? `/app?project=${project.id}${activity?.sessionId ? `#chat=${encodeURIComponent(activity.sessionId)}&activity=1${activity.leaf ? `&leaf=${encodeURIComponent(activity.leaf)}` : ""}` : !selected && homeModel ? `#chat=${newConversation}` : (hashes.current.get(project.id) ?? `#chat=${newConversation}`)}`
           : "/app",
       );
       setSelected(project?.id ?? null);
       setPicker(null);
       window.dispatchEvent(new PopStateEvent("popstate"));
     },
-    [selected, cancelRestore, entry],
+    [selected, cancelRestore, entry, homeModel],
   );
   const open = useCallback(
     async (path: string) => {
@@ -282,6 +298,8 @@ export function Workbench() {
           key={project.id}
           api={api}
           project={project}
+          previewModels={previewModels}
+          initialModel={initialModel}
           directoryNamespaces={entry?.projects
             .filter((p) => p.path === project.path)
             .map((p) => p.id)
@@ -320,6 +338,12 @@ export function Workbench() {
       <WorkbenchHome
         discovery={discovery}
         ready={!!entry}
+        previewModels={entry ? previewModels : undefined}
+        model={homeModel}
+        onModelChoice={(model) => {
+          cancelRestore();
+          setHomeModel(model);
+        }}
         projects={entry?.projects.map((p) => p.cwd) ?? []}
         restore={restore}
         opening={opening}

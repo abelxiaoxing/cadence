@@ -863,3 +863,21 @@ Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh 0700 disk-backed
 No local dependency installation, browser/slow-suite release gate, paid-provider request or production service operation was performed during qualification.
 Controlled hook/SSR callback regressions do not claim real-browser, provider or native-platform qualification.
 This records pre-publication evidence only; the existing tag-triggered GitHub Actions/OIDC lane must audit its own immutable artifact and confirm npm metadata, latest and downloaded bytes before publication is claimed.
+
+## Release 2.0.45 preparation: model selection before execution (2026-11-08)
+
+The WebUI exposes configured model/thinking selection before project execution starts, including on the folder-less entry; preview choices remain local draft intent and Send installs only the exact captured choice against the live owner.
+The gateway remains SDK-free: one audited ordinary-JavaScript child reads an offline model registry with readonly credentials and memory-only catalog storage, shares the owner's projection/validation, and exits after its bounded read.
+Concurrent identical reads coalesce through native close; Stop joins discovery children and dead-workbench recovery consults their exact-identity ledger without reclaiming unknown workers.
+The picker reuses scoped preview data until explicit refresh, without a server-side SDK/runtime cache.
+Both live and preview choices can complete a waiting Send on the same prepared epoch; dismissal, Stop or epoch replacement retires the unsent continuation without restarting an owner.
+Cadence exit preserves unused model choices on both direct and observed confirmation; only the matching model-consuming command may clear that draft.
+
+Observed npm latest was 2.0.44 and the local/remote v2.0.45 tag was absent before preparation; package version and canonical outputs were advanced to 2.0.45.
+The final `bun run verify` passed in 12.9s: **1750 fast root tests passed, 283 skipped** (111 passing files, two skipped), **338 Web tests passed** (29 files), plus syntax, root/web types, lint, Agent pins, deterministic bundles/web output and real-pack audit.
+The first integration attempt exposed an omitted generated-file lint override and stale provenance hashes after a local provenance update script refused a historical record without an `id`; these causes were corrected before the passing gate, with the failed evidence retained outside the checkout.
+A separate real Bun pack passed the independent member/body/notice audit: **169 unique regular members**, including the new `src/model-preview.mjs` child.
+Local archive SHA-256: `9132cb2148d6a8a4702b7c2766f89ecd927e6e9d94adb78d6492c59f4153f27b`; SHA-1: `53454171ce47850b5dac6146447ac724179be6f4`; size: 2133314 bytes.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh external 0700 disk-backed temporary directory; targeted file coverage was checked against exact JSON report paths.
+No slow-suite follow-up, browser automation, paid provider, native Windows/macOS qualification, dependency installation or production-service restart was performed.
+This unshipped appendix records local qualification only; publication requires the explicitly pushed v2.0.45 tag, its OIDC workflow outcome and confirmation of the actual CI artifact against registry bytes.

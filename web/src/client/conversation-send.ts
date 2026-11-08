@@ -5,6 +5,7 @@ import { abortScope } from "../../../src/abort-scope.ts";
 import {
   ContractError,
   canonicalJson,
+  decodeId,
   integer,
   text,
 } from "../../../src/service/contracts/core.ts";
@@ -15,7 +16,9 @@ import {
 import {
   type ChoiceVersion,
   type ConversationLocation,
+  catalogOffers,
   decodeConversationLocation,
+  type ModelCatalog,
 } from "../../../src/service/contracts/models.ts";
 import {
   CONVERSATION_SEND_BYTES,
@@ -35,6 +38,10 @@ export interface PendingSend {
   readonly images: readonly File[];
   readonly location?: ConversationLocation;
   readonly model?: ModelSelector;
+  /** Explicit local preselection, installed only by this Send. */
+  readonly installModel?: boolean;
+  /** A waiting Send may continue only this prepared owner, never start another. */
+  readonly preparedEpoch?: string;
   readonly command: Readonly<Intent>;
 }
 /** Same finite startup reporting budget as native on-demand entry. It never
@@ -103,6 +110,7 @@ export function captureSend(input: {
   intent: "ordinary" | "enter" | "message" | "exit";
   location?: ConversationLocation;
   model?: ModelSelector;
+  installModel?: boolean;
 }): PendingSend {
   const common = {
     commandId: crypto.randomUUID(),
@@ -138,6 +146,7 @@ export function captureSend(input: {
           };
   return Object.freeze({
     text: message,
+    ...(input.installModel ? { installModel: true } : {}),
     images: Object.freeze([...(input.images ?? [])]),
     command: Object.freeze(command),
     ...(location ? { location: Object.freeze(location) } : {}),
@@ -168,6 +177,81 @@ export function assertSendModel(
   )
     throw new ContractError("stale");
 }
+/** A model choice completes one original Send; no new message/head/ID is captured. */
+export function waitingModelSend(
+  intent: PendingSend,
+  epoch: string,
+): PendingSend {
+  return Object.freeze({ ...intent, preparedEpoch: decodeId(epoch) });
+}
+export function chooseWaitingModel(
+  intent: PendingSend,
+  choice: ModelSelector,
+  installed: boolean,
+): PendingSend {
+  return Object.freeze({
+    ...withSendModel(intent, choice),
+    installModel: !installed,
+  });
+}
+export function modelWaitDisposition(
+  intent: PendingSend,
+  availability: { status: string; epoch?: string },
+): "wait" | "ready" | "cancel" {
+  if (!intent.preparedEpoch) return "cancel";
+  if (availability.status === "ready")
+    return availability.epoch === intent.preparedEpoch ? "ready" : "cancel";
+  return ["stopped", "not-started", "incompatible"].includes(
+    availability.status,
+  )
+    ? "cancel"
+    : "wait";
+}
+/** Exit changes mode, not model preference. Unknown/older receipts keep the draft. */
+export function modelDraftConsumed(
+  commandId: string,
+  modelCommandId: string,
+): boolean {
+  return !!commandId && commandId === modelCommandId;
+}
+
+/** Apply only an explicit preselection captured by this Send. A preview is
+ * never authority: the current live catalog must offer the exact selector. */
+export async function installSendModel(
+  client: Pick<ServiceClient, "chooseModel" | "models">,
+  intent: PendingSend,
+  catalog: ModelCatalog,
+  current: () => boolean,
+): Promise<ModelCatalog> {
+  if (!current()) throw new ContractError("stale");
+  if (!intent.installModel || !intent.model) return catalog;
+  if (!catalogOffers(catalog.entries, intent.model))
+    throw new ContractError("unsupported-context");
+  if (
+    catalog.selected &&
+    canonicalJson(selector(catalog.selected)) === canonicalJson(intent.model)
+  )
+    return catalog;
+  const chosen = await client.chooseModel(
+    { expected: catalog.version, choice: intent.model },
+    intent.location,
+  );
+  if (!current()) throw new ContractError("stale");
+  if (chosen.kind === "error") throw new ContractError(chosen.error.code);
+  const observed = await client.models(undefined, intent.location);
+  if (!current()) throw new ContractError("stale");
+  if (observed.kind === "error") throw new ContractError(observed.error.code);
+  if (
+    !observed.value.selected ||
+    canonicalJson(observed.value.version) !==
+      canonicalJson(chosen.value.version) ||
+    canonicalJson(observed.value.selected) !==
+      canonicalJson(chosen.value.selected)
+  )
+    throw new ContractError("stale");
+  assertSendModel(intent, observed.value.selected);
+  return observed.value;
+}
 export function sendCommand(
   intent: PendingSend,
   model?: ChoiceVersion,
@@ -180,6 +264,12 @@ export function sendCommand(
     intent.command.kind !== "cadence-exit" &&
     canonicalJson(intent.location) !==
       canonicalJson(model?.conversation ?? null)
+  )
+    throw new ContractError("stale");
+  if (
+    intent.preparedEpoch &&
+    intent.command.kind !== "cadence-exit" &&
+    model?.epoch !== intent.preparedEpoch
   )
     throw new ContractError("stale");
   const command = decodeWorkbenchCommand(

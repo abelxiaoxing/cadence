@@ -726,3 +726,27 @@ it.each([false, true])(
     expect(send).not.toHaveBeenCalled();
   },
 );
+
+it("the project-less shell already exposes the model choice while Send still requires a folder", () => {
+  const previewModels = vi.fn(),
+    onOpenFolder = vi.fn();
+  const html = renderToStaticMarkup(
+    <WorkbenchHome
+      ready
+      previewModels={previewModels}
+      onOpenFolder={onOpenFolder}
+      model={{
+        provider: "fixture",
+        model: "preselected",
+        api: "openai-completions",
+        thinking: "high",
+      }}
+      onModelChoice={vi.fn()}
+    />,
+  );
+  expect(html).toContain('aria-label="Model: preselected · High"');
+  expect(html).toContain("Choose a working folder to start chatting.");
+  expect(html).toMatch(/<button[^>]*class="primary"[^>]*disabled=""/);
+  expect(previewModels).not.toHaveBeenCalled(); // SSR never activates a read or work.
+  expect(onOpenFolder).not.toHaveBeenCalled();
+});

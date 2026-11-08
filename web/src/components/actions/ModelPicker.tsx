@@ -81,36 +81,47 @@ export function ModelPicker({
   availability,
   read,
   lastModel,
+  draftModel,
+  onPreviewChoice,
   locked,
   open,
   onOpenChange,
   onChanged,
   onChosen,
   awaitingSend = false,
+  scope = "conversation",
 }: {
-  client: Pick<ServiceClient, "chooseModel">;
+  client?: Pick<ServiceClient, "chooseModel">;
   availability: ModelAvailability;
   read: ModelCatalogRead;
   /** Retained conversation preference only; never a verified/installed choice. */
   lastModel?: ModelSelector | null;
+  /** Local intent, not an installed owner selection. */
+  draftModel?: ModelSelector | null;
+  onPreviewChoice?(choice: ModelSelector): void;
   /** This conversation's reply is live; the owner refuses a change now. */
   locked: boolean;
   open: boolean;
-  onOpenChange(open: boolean): void;
+  onOpenChange(open: boolean, reason?: "chosen"): void;
   /** An installed choice changed the owner configuration. */
   onChanged(): void;
   /** The panel closed on an installed choice. */
   onChosen?(choice: ModelSelector): void;
   /** A Send is waiting for this choice and continues after it. */
   awaitingSend?: boolean;
+  scope?: "conversation" | "next-conversation";
 }) {
   const { t } = useT();
   const label = useModelLabel();
   const ready = availability.status === "ready";
+  const preview = read.preview;
+  const browsable =
+    ready || !!preview || (read.loading && availability.status !== "preparing");
   const epoch = ready ? availability.epoch : null;
   const attachment = ready ? availability.attachmentVersion : null;
   const { error: catalogError, loading, reread } = read;
-  const catalog = ready ? read.catalog : undefined;
+  const liveCatalog = ready ? read.catalog : undefined;
+  const catalog = liveCatalog ?? preview;
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [query, setQuery] = useState("");
@@ -127,23 +138,29 @@ export function ModelPicker({
     void attachment;
     setError("");
   }, [client, epoch, attachment]);
-  const close = useCallback((focus = true) => {
-    changeOpen.current(false);
+  const close = useCallback((focus = true, reason?: "chosen") => {
+    if (reason) changeOpen.current(false, reason);
+    else changeOpen.current(false);
     setQuery("");
     setError("");
     if (focus) trigger.current?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
     if (!open) return;
-    if (ready) search.current?.focus({ preventScroll: true });
+    if (browsable) search.current?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) close(false);
     };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [open, close, ready]);
-  const selected = catalog?.selected ?? null;
-  const current: ModelSelector | null = selected ?? catalog?.remembered ?? null;
+  }, [open, close, browsable]);
+  const selected = liveCatalog?.selected ?? null;
+  const current: ModelSelector | null =
+    draftModel ??
+    selected ??
+    (preview ? lastModel : null) ??
+    catalog?.remembered ??
+    null;
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const map = new Map<string, ModelCandidate[]>();
@@ -161,7 +178,11 @@ export function ModelPicker({
     sameModel(entry, current),
   );
   const selectionEnabled =
-    ready && !!catalog && !loading && !catalogError && read.isCurrent();
+    (ready || !!preview) &&
+    !!catalog &&
+    !loading &&
+    !catalogError &&
+    read.isCurrent();
   const choose = async (entry: ModelCandidate, level: Level) => {
     if (
       !selectionEnabled ||
@@ -178,8 +199,14 @@ export function ModelPicker({
       api: entry.api,
       thinking: level,
     });
+    if (preview && onPreviewChoice) {
+      onPreviewChoice(choice);
+      close(true, "chosen");
+      return;
+    }
+    if (!liveCatalog || !client) return;
     if (selected && same(selected, choice)) {
-      close();
+      close(true, "chosen");
       onChosen?.(choice);
       return;
     }
@@ -187,7 +214,7 @@ export function ModelPicker({
     setError("");
     try {
       const reply = await client.chooseModel({
-        expected: catalog.version,
+        expected: liveCatalog.version,
         choice,
       });
       if (!read.isCurrent()) return;
@@ -197,13 +224,13 @@ export function ModelPicker({
         return;
       }
       const next = {
-        ...catalog,
+        ...liveCatalog,
         version: reply.value.version,
         selected: reply.value.selected,
       };
       if (!read.accept(next)) return;
       onChanged();
-      close();
+      close(true, "chosen");
       onChosen?.(choice);
     } catch {
       if (read.isCurrent()) {
@@ -232,21 +259,30 @@ export function ModelPicker({
   const deferred =
     availability.status === "stopped" || availability.status === "not-started";
   const history = !catalog ? lastModel : null;
-  const statusText = deferred
-    ? t("Models load when you send")
-    : availability.status === "preparing"
-      ? t("Preparing execution…")
-      : availability.status === "incompatible"
-        ? t("Model selection needs a compatible connection")
-        : availability.status === "connecting"
-          ? t("Checking execution state…")
-          : availability.status === "unavailable"
-            ? t("Execution state unavailable")
-            : loading
-              ? t("Reading models…")
-              : catalogError
-                ? t("Model list unavailable")
-                : t("Choose a model");
+  const statusText =
+    read.preview ||
+    (read.loading && onPreviewChoice) ||
+    (catalogError && onPreviewChoice)
+      ? loading
+        ? t("Reading models…")
+        : catalogError
+          ? t("Model list unavailable")
+          : t("Choose a model")
+      : deferred
+        ? t("Choose a model")
+        : availability.status === "preparing"
+          ? t("Preparing execution…")
+          : availability.status === "incompatible"
+            ? t("Model selection needs a compatible connection")
+            : availability.status === "connecting"
+              ? t("Checking execution state…")
+              : availability.status === "unavailable"
+                ? t("Execution state unavailable")
+                : loading
+                  ? t("Reading models…")
+                  : catalogError
+                    ? t("Model list unavailable")
+                    : t("Choose a model");
   const buttonText = current
     ? label(current)
     : deferred && history
@@ -264,13 +300,15 @@ export function ModelPicker({
         title={
           locked
             ? t("Switch models after the current reply finishes.")
-            : history
-              ? t("Last used model; availability is checked when you send.")
-              : current && !selected
-                ? t("Last used model; it is used again when you send.")
-                : current
-                  ? `${current.provider}/${current.model} · ${current.api}`
-                  : statusText
+            : draftModel
+              ? t("Choose now; the model is verified when you send.")
+              : history
+                ? t("Last used model; availability is checked when you send.")
+                : current && !selected
+                  ? t("Last used model; it is used again when you send.")
+                  : current
+                    ? `${current.provider}/${current.model} · ${current.api}`
+                    : statusText
         }
         onClick={() => {
           if (open) close();
@@ -301,23 +339,24 @@ export function ModelPicker({
               {t("Choose a model; your message is sent right after.")}
             </p>
           )}
-          {!ready && (
+          {preview && (
+            <p className="model-popover-lead">
+              {t("Choose now; the model is verified when you send.")}
+            </p>
+          )}
+          {!browsable && !catalogError && (
             <p className="model-popover-lead" role="status">
-              {deferred
+              {availability.status === "preparing"
                 ? t(
-                    "Execution is not running. Send prepares it and loads models; opening this panel does not start anything.",
+                    "Execution is being prepared for your Send. Models will load when it is ready.",
                   )
-                : availability.status === "preparing"
+                : availability.status === "incompatible"
                   ? t(
-                      "Execution is being prepared for your Send. Models will load when it is ready.",
+                      "Reload the page to observe a compatible execution connection before choosing a model.",
                     )
-                  : availability.status === "incompatible"
-                    ? t(
-                        "Reload the page to observe a compatible execution connection before choosing a model.",
-                      )
-                    : t(
-                        "Model selection is unavailable until the current conversation and execution state are observed.",
-                      )}
+                  : t(
+                      "Model selection is unavailable until the current conversation and execution state are observed.",
+                    )}
             </p>
           )}
           {history && (
@@ -327,7 +366,7 @@ export function ModelPicker({
               {t("Last used model; availability is checked when you send.")}
             </p>
           )}
-          {ready && (
+          {browsable && (
             <label className="model-search">
               <FiSearch aria-hidden="true" />
               <input
@@ -349,7 +388,7 @@ export function ModelPicker({
               />
             </label>
           )}
-          {ready && (
+          {browsable && (
             <div
               className="model-list"
               role="listbox"
@@ -394,7 +433,7 @@ export function ModelPicker({
                               : t("Not supported")}
                           </span>
                         )}
-                        {isCurrent && !selected && (
+                        {isCurrent && (!selected || !!draftModel) && (
                           <span className="model-option-note">
                             {t("Used when you send")}
                           </span>
@@ -415,13 +454,15 @@ export function ModelPicker({
                   {query.trim()
                     ? t("No matching models.")
                     : t(
-                        "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.",
+                        preview
+                          ? "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again."
+                          : "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.",
                       )}
                 </p>
               )}
             </div>
           )}
-          {ready && currentEntry && currentEntry.thinking.length > 1 && (
+          {browsable && currentEntry && currentEntry.thinking.length > 1 && (
             <div className="model-thinking">
               <span className="model-thinking-label">{t("Thinking")}</span>
               {currentEntry.thinking.map((level) => (
@@ -443,6 +484,16 @@ export function ModelPicker({
             </div>
           )}
           <div className="model-popover-notes">
+            {preview && !catalogError && (
+              <button
+                type="button"
+                className="link"
+                disabled={loading || pending}
+                onClick={reread}
+              >
+                {t("Refresh models")}
+              </button>
+            )}
             {locked && (
               <p>{t("Switch models after the current reply finishes.")}</p>
             )}
@@ -463,7 +514,7 @@ export function ModelPicker({
                 )}
               </p>
             )}
-            {ready && catalogError && (
+            {(ready || !!onPreviewChoice) && catalogError && (
               <p role="alert">
                 {t("The model list could not be read ({code}).", {
                   code: catalogError,
@@ -487,7 +538,9 @@ export function ModelPicker({
                 {pending
                   ? t("Switching model…")
                   : t(
-                      "This model is used for future messages in this conversation. Work already started keeps its original model.",
+                      scope === "next-conversation"
+                        ? "Used for your next new conversation after choosing a folder."
+                        : "This model is used for future messages in this conversation. Work already started keeps its original model.",
                     )}
               </p>
             )}

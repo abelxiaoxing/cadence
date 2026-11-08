@@ -110,10 +110,11 @@ function render(
   client: ReturnType<typeof fixture>["client"],
   availability: ModelAvailability,
   refresh = "0",
+  preview?: Parameters<typeof useModelCatalog>[3],
 ) {
   hooks.cursor = 0;
   // biome-ignore lint/correctness/useHookAtTopLevel: controlled hook fixture, not a React renderer.
-  return useModelCatalog(client, availability, refresh);
+  return useModelCatalog(client, availability, refresh, preview);
 }
 function commit() {
   const effects = [...hooks.effects];
@@ -334,4 +335,76 @@ it("a live transport rejection reports failure, while a late rejection cannot ov
   const current = render(client, ready());
   expect(current.error).toBeUndefined();
   expect(current.catalog?.entries[0].model).toBe("fresh");
+});
+
+it("cold discovery is independent of execution; a real owner replaces it without accepting a synthetic choice version", async () => {
+  const { client, requests } = fixture();
+  const { version: _version, selected: _selected, ...preview } = catalog();
+  const readPreview = vi.fn(async () => preview);
+  render(client, { status: "not-started" }, "0", readPreview);
+  commit();
+  await settle();
+  const cold = render(client, { status: "not-started" }, "0", readPreview);
+  expect(cold.preview?.entries[0].model).toBe("m");
+  expect(cold.catalog).toBeUndefined();
+  expect(cold.isCurrent()).toBe(true);
+  expect(cold.accept(catalog())).toBe(false);
+  expect(client.models).not.toHaveBeenCalled();
+  render(client, ready(), "0", readPreview);
+  commit();
+  expect(cold.isCurrent()).toBe(false);
+  requests[0].resolve({ kind: "ok", value: catalog() });
+  await settle();
+  const live = render(client, ready(), "0", readPreview);
+  expect(live.preview).toBeUndefined();
+  expect(live.catalog).toBeDefined();
+  expect(readPreview).toHaveBeenCalledTimes(1);
+});
+it("a late cold catalog from the previous directory cannot replace the new directory's models", async () => {
+  const { client } = fixture();
+  const { version: _version, selected: _selected, ...preview } = catalog();
+  let resolve!: (value: typeof preview) => void;
+  const first = vi.fn(
+    (_signal?: AbortSignal) =>
+      new Promise<typeof preview>((r) => {
+        resolve = r;
+      }),
+  );
+  const second = vi.fn(async () => ({
+    ...preview,
+    entries: [{ ...preview.entries[0], model: "new" }],
+  }));
+  render(client, { status: "stopped" }, "0", first);
+  commit();
+  render(client, { status: "stopped" }, "0", second);
+  resolve(preview);
+  await settle();
+  commit();
+  await settle();
+  expect(first.mock.calls[0][0]?.aborted).toBe(true);
+  expect(
+    render(client, { status: "stopped" }, "0", second).preview?.entries[0]
+      .model,
+  ).toBe("new");
+});
+it("cold read errors have a readonly retry without asking execution to start", async () => {
+  const { client } = fixture();
+  const { version: _version, selected: _selected, ...preview } = catalog();
+  const reader = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("corrupt-selected"))
+    .mockResolvedValue(preview);
+  render(client, { status: "stopped" }, "0", reader);
+  commit();
+  await settle();
+  const failed = render(client, { status: "stopped" }, "0", reader);
+  expect(failed.error).toBe("corrupt-selected");
+  failed.reread();
+  render(client, { status: "stopped" }, "0", reader);
+  commit();
+  await settle();
+  expect(render(client, { status: "stopped" }, "0", reader).preview).toEqual(
+    preview,
+  );
+  expect(client.models).not.toHaveBeenCalled();
 });

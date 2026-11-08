@@ -2,7 +2,17 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Models load when you send": "发送时加载模型",
+  "Refresh models": "刷新模型列表",
+  "The connection changed. Your model choice and draft are kept; send again when ready.":
+    "连接状态已变化，模型选择和草稿已保留，请就绪后重新发送。",
+  "Used for your next new conversation after choosing a folder.":
+    "选择工作目录后，用于下一个新会话。",
+  "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again.":
+    "尚未配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供商，然后重新读取列表。",
+  "Choose now; the model is verified when you send.":
+    "现在选择模型，发送时验证可用性。",
+  "Send with this model before approving a plan.":
+    "请先使用此模型发送消息，再批准计划。",
   "Preparing execution…": "正在准备执行环境…",
   "Model selection needs a compatible connection": "连接兼容后才能选择模型",
   "Checking execution state…": "正在确认执行状态…",
@@ -11,8 +21,6 @@ export const zh = {
   "Last used: {model}": "上次使用：{model}",
   "Last used model; availability is checked when you send.":
     "上次使用的模型，发送时会验证其可用性。",
-  "Execution is not running. Send prepares it and loads models; opening this panel does not start anything.":
-    "项目执行服务尚未启动。发送消息时会准备执行环境并加载模型；打开此面板不会启动服务。",
   "Execution is being prepared for your Send. Models will load when it is ready.":
     "正在为本次发送准备执行环境，就绪后会加载模型。",
   "Reload the page to observe a compatible execution connection before choosing a model.":

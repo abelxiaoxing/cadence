@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.44",
+  "version": "2.0.45",
   "description": "Conversation-driven Pi workspace: persistent native and WebUI workflows, explicit plan approval, checks and local delivery.",
   "license": "MIT",
   "type": "module",
@@ -33,6 +33,7 @@
     "src/service-client.ts",
     "src/service-contract.ts",
     "src/service-host.mjs",
+    "src/model-preview.mjs",
     "src/service-http-client.ts",
     "src/service-wire.ts",
     "src/service/contracts/active.ts",

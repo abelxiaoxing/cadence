@@ -140,31 +140,30 @@ it("a bare public error code keeps its untranslated code without claiming a comp
   expect(describeError(t as never, "constructor")).toBe("constructor");
 });
 it.each(["stopped", "not-started"] as const)(
-  "%s names deferred loading, not a model failure or an ineffective retry",
+  "%s shows selectable preview models, search and thinking without a service-start notice",
   (status) => {
     for (const locale of ["en", "zh"] as const) {
-      const observation = read(undefined, {
-        loading: false,
-        error: "unavailable",
-        isCurrent: () => false,
-      });
+      const { version: _version, selected: _selected, ...preview } = catalog();
+      const observation = read(undefined, { preview, loading: false });
       const client = { chooseModel: vi.fn() };
-      const html = picker({ status }, observation, { client }, locale);
+      const html = picker(
+        { status },
+        observation,
+        { client, onPreviewChoice: vi.fn() },
+        locale,
+      );
+      expect(html).toContain('role="option"');
+      expect(html).toContain("model-search");
+      expect(html).toContain("model-thinking");
       expect(html).toContain(
-        locale === "zh" ? "发送时加载模型" : "Models load when you send",
+        locale === "zh" ? "刷新模型列表" : "Refresh models",
       );
       expect(html).toContain(
         locale === "zh"
-          ? "打开此面板不会启动服务"
-          : "opening this panel does not start anything",
+          ? "现在选择模型，发送时验证可用性。"
+          : "Choose now; the model is verified when you send.",
       );
-      expect(html).not.toMatch(
-        /Model unavailable|Model list unavailable|模型不可用|模型目录读取失败|role="alert"/,
-      );
-      expect(html).not.toMatch(
-        />Read again<|>重新读取<|model-option|model-search/,
-      );
-      expect(html).not.toMatch(/class="model-trigger[^"]*"[^>]*disabled/);
+      expect(html).not.toMatch(/尚未启动|does not start|role="alert"/);
       expect(client.chooseModel).not.toHaveBeenCalled();
       expect(observation.reread).not.toHaveBeenCalled();
     }
@@ -331,7 +330,7 @@ it.each(["before-click", "during-choice", "current"])(
       expect(observation.accept).toHaveBeenCalledOnce();
       expect(onChosen).toHaveBeenCalledOnce();
       expect(onChanged).toHaveBeenCalledOnce();
-      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(onOpenChange).toHaveBeenCalledWith(false, "chosen");
     } else {
       expect(observation.accept).not.toHaveBeenCalled();
       expect(onChosen).not.toHaveBeenCalled();
@@ -340,3 +339,66 @@ it.each(["before-click", "during-choice", "current"])(
     }
   },
 );
+it.each([false, true])(
+  "preview clicks only change the draft and close the panel (obsolete=%s)",
+  (obsolete) => {
+    const { version: _version, selected: _selected, ...preview } = catalog();
+    let current = true;
+    const observation = read(undefined, {
+      preview,
+      loading: false,
+      isCurrent: () => current,
+    });
+    const client = { chooseModel: vi.fn() },
+      onPreviewChoice = vi.fn(),
+      onChosen = vi.fn(),
+      onChanged = vi.fn(),
+      onOpenChange = vi.fn();
+    let click: (() => void) | undefined;
+    function Probe() {
+      const tree = ModelPicker({
+        client,
+        availability: { status: "stopped" },
+        read: observation,
+        locked: false,
+        open: true,
+        onPreviewChoice,
+        onChosen,
+        onChanged,
+        onOpenChange,
+      });
+      click = optionCallback(tree);
+      return tree;
+    }
+    renderToStaticMarkup(<Probe />);
+    current = !obsolete;
+    click?.();
+    expect(client.chooseModel).not.toHaveBeenCalled();
+    expect(onChosen).not.toHaveBeenCalled();
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(observation.accept).not.toHaveBeenCalled();
+    if (obsolete) expect(onPreviewChoice).not.toHaveBeenCalled();
+    else {
+      expect(onPreviewChoice).toHaveBeenCalledWith(catalog().remembered);
+      expect(onOpenChange).toHaveBeenCalledWith(false, "chosen");
+    }
+  },
+);
+it("a conversation's retained choice precedes the account default in a cold preview", () => {
+  const { version: _version, selected: _selected, ...preview } = catalog();
+  preview.entries.push({ ...preview.entries[0], model: "conversation-model" });
+  const html = picker(
+    { status: "stopped" },
+    read(undefined, { preview, loading: false }),
+    {
+      lastModel: {
+        provider: "local",
+        model: "conversation-model",
+        api: "openai-completions",
+        thinking: "low",
+      },
+      onPreviewChoice: vi.fn(),
+    },
+  );
+  expect(html).toContain('aria-label="Model: conversation-model · Low"');
+});
