@@ -97,7 +97,7 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
     />,
   );
   for (const label of [
-    "Running conversations",
+    "Running work",
     "Conversation history",
     "Active roster unavailable",
   ])
@@ -201,4 +201,6 @@ it("the initial conversation shell renders without a selected snapshot or task",
   // Recorded views read a task/child scope; an ordinary conversation offers none.
   expect(html).not.toContain("Recorded views");
   expect(html).not.toContain("view-menu");
+  expect(html).not.toContain("search-toggle");
+  expect(html).not.toContain(">History details</button>");
 });

@@ -686,3 +686,41 @@ it("the minimal composer keeps the image action without a permanent image-help p
     expect(html).not.toContain("未发送图片");
   }
 });
+
+it.each([false, true])(
+  "unavailable context keeps draft editing, but an uncertain Send (%s) keeps its original input locked",
+  (pending) => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) =>
+        key.endsWith(":pending")
+          ? pending
+            ? "original-command"
+            : null
+          : key.endsWith(":mode")
+            ? "chat"
+            : "Kept draft",
+    });
+    const send = vi.fn();
+    const client = new ServiceClient(transport({ workbenchCommand: send }));
+    const html = renderToStaticMarkup(
+      <ChatWorkspace
+        client={client}
+        id="session"
+        workspaceId="checkout"
+        enabled={false}
+        onChanged={() => {}}
+        onModelChanged={() => {}}
+        onReferenceUsed={() => {}}
+      />,
+    );
+    expect(html).toContain("Kept draft");
+    const input = html.match(/<textarea[^>]*>/)?.[0];
+    expect(input).toBeDefined();
+    expect(input?.includes('disabled=""')).toBe(pending);
+    expect(html).toMatch(/type="submit" class="primary" disabled=""/);
+    expect(html).not.toContain("What would you like to work on?");
+    expect(html).not.toContain("New conversation");
+    if (pending) expect(html).toContain("original-command");
+    expect(send).not.toHaveBeenCalled();
+  },
+);

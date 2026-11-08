@@ -2,6 +2,53 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Recorded history could not be read.": "暂时无法读取历史证据。",
+  "Reading recorded history…": "正在读取历史证据…",
+  "The context changed ({code}). Read the current state before trying this action again.":
+    "上下文已变化（{code}）。请先读取当前状态，再决定是否重新操作。",
+  "Observation status": "状态读取",
+  "Latest state unavailable.": "当前无法获取最新状态。",
+  "Started work may still be running. No message is resent.":
+    "已开始的工作可能仍在运行，不会重发消息。",
+  "Diagnostic details": "诊断详情",
+  "Viewer observation: {code}.": "页面状态读取：{code}。",
+  "Context changed. Read the current state before confirming a plan.":
+    "上下文已变化，请先读取当前状态，再确认计划。",
+  "Toggle conversation navigation": "展开或收起会话导航",
+  "Toggle workspace panels": "展开或收起辅助面板",
+  "Conversation navigation": "会话导航",
+  "Conversation history could not be read. This is not an empty history.":
+    "暂时无法读取会话历史，这不代表没有历史记录。",
+  "Model selection is unavailable until the current conversation and execution state are observed.":
+    "读取当前会话和执行状态后才能选择模型。",
+  "Cadence state unavailable": "Cadence 状态未确认",
+  "Cadence on next Send": "下次发送开启 Cadence",
+  "Cadence off": "Cadence 已关闭",
+  "Read the current execution state before approving this plan.":
+    "请先读取当前执行状态，再批准此计划。",
+  "Wait for the current reply before approving this plan.":
+    "请等待当前回复结束，再批准此计划。",
+  "Observing plan approval…": "正在确认计划审批结果…",
+  "Read the current conversation context before approving this plan.":
+    "请先读取当前会话上下文，再批准此计划。",
+  "Conversation folder:": "会话目录：",
+  "Conversation content has not been read. You can keep a draft; nothing is sent until the context is available.":
+    "尚未读取到会话内容。可以先编辑草稿，上下文可用前不会发送。",
+  "The last Send is not yet confirmed. No message is resent.":
+    "上次发送的结果尚未确认，不会重发消息。",
+  "Sending…": "正在发送…",
+  "Sending is unavailable until the current context is observed. Your draft stays here.":
+    "读取当前上下文后才能发送，草稿会保留在这里。",
+  "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.":
+    "会话状态尚未更新。页面可能显示之前读取的内容，这不表示工作已停止。",
+  "Not observed": "未读取",
+  "Files are unavailable until the execution state is ready.":
+    "执行状态就绪后才能读取文件。",
+  "The conversation folder has not been observed.": "尚未读取到当前会话目录。",
+  "Reading files…": "正在读取文件…",
+  "Plan approval is currently unavailable.": "当前无法批准此计划。",
+  "Running work": "正在进行的工作",
+
   "History configuration differs. Activity remains observe-only.":
     "历史读取配置不同。此活动仅供观察。",
   "Discovered session": "发现的会话",
@@ -112,11 +159,7 @@ export const zh = {
   "Viewer disconnected": "当前页面已断开",
   "Execution service: {status}": "执行服务：{status}",
   "Last observed: {count} active runs": "上次观察：{count} 个活动运行",
-  "Observation is not current. Retained history is shown; this does not mean work has stopped.":
-    "观察不是最新状态。仍显示保留的历史；这不表示工作已停止。",
   "not-started": "尚未启动",
-  "Connection unavailable. Existing work may continue; no message is replayed automatically.":
-    "连接当前不可用。已接纳的工作可能仍在运行；不会自动重发任何消息。",
 
   "Execution compatibility not observed": "尚未读取执行服务兼容性",
   "Execution is stopped. Conversation history remains readable; open this folder to send a new message.":
@@ -131,7 +174,6 @@ export const zh = {
   "Files and history drawer": "文件与历史面板",
   History: "历史",
   "History details": "历史详情",
-  "Select retained history to inspect": "选择保留的历史记录查看",
   "History is readonly. Start new work in a conversation with /cadence.":
     "历史记录只读。请在对话中通过 /cadence 开始新工作。",
   Next: "下一页",
@@ -399,7 +441,6 @@ export const zh = {
   "Recent projects": "最近项目",
   "This service exposes one project. Opening it never starts work.":
     "当前服务连接一个项目，打开项目不会启动执行。",
-  "Running conversations": "运行的对话",
   "Conversation history": "历史对话",
   "Task conversations": "任务对话与子代理",
 
@@ -426,10 +467,6 @@ export const zh = {
   "Open active task": "打开活动任务",
   "Cancel run — request stop": "取消运行——请求停止",
   "{message}.": "{message}。",
-  "Context changed. Observe again and request a fresh confirmation.":
-    "上下文已变化。请重新观察并请求新的确认。",
-  "Explicit service guidance: {status} / {start}. No service is started by this page.":
-    "显式服务操作：{status} / {start}。本页面不会启动任何服务。",
   "Close drawer": "关闭抽屉",
   "Task navigation drawer": "任务导航抽屉",
   "Plan and review drawer": "计划与审阅抽屉",
@@ -893,8 +930,8 @@ export const zh = {
   "Read again": "重新读取",
   "The model was not changed ({code}).": "模型未切换（{code}）。",
   "Switching model…": "正在切换模型…",
-  "Every conversation in this project uses this model.":
-    "此项目中的所有对话都使用这个模型。",
+  "This model is used for future messages in this conversation. Work already started keeps its original model.":
+    "此模型用于当前会话后续发送的消息，已开始的工作仍使用原模型。",
   "Type a message below. Turn on Cadence mode to agree on a plan before implementation.":
     "在下方输入消息开始对话。打开 Cadence 模式可以先商定计划再实施。",
   "Cadence mode": "Cadence 模式",
@@ -909,8 +946,6 @@ export const zh = {
     "服务暂时不可用（{code}）。",
   "Another operation is still in progress ({code}). Try again when it finishes.":
     "另一项操作仍在进行（{code}），结束后再试。",
-  "This page was out of date ({code}) and has been read again. Try once more.":
-    "页面状态已过期（{code}），已重新读取，请再试一次。",
   "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.":
     "模型凭据不可用（{code}），请检查 auth.json 或提供方的 API key。",
   "A selected file was refused ({code}); nothing was changed. Run cadence doctor to see which file and field.":

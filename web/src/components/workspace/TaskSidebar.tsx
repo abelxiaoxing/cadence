@@ -444,14 +444,14 @@ export function TaskSidebar({
       <ConversationActions onConversation={onNewConversation} />
       {!executionStopped && (
         <SidebarSection
-          title={t("Running conversations")}
+          title={t("Running work")}
           count={
             activeRuns?.status === "complete" &&
             workflows &&
             !workflowError &&
             chatActivityKnown
               ? String(active.length + liveChats.length + workflows.length)
-              : "?"
+              : t("Not observed")
           }
           className="running-conversations"
         >
@@ -534,7 +534,7 @@ export function TaskSidebar({
             ? `${pastChats.length}${chatHistoryPartial ? "+" : ""}`
             : tasks.page && !("kind" in tasks.page)
               ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
-              : "?"
+              : t("Not observed")
         }
         className="grow"
       >

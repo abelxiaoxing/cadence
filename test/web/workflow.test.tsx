@@ -484,3 +484,16 @@ it("approval card displays the owner-bound target and branch/worktree delivery p
   expect(html).toContain("after approval");
   expect(html).toContain("Keep the task branch");
 });
+
+it("a plan is a decision card, not an error banner, and unavailable approval explains itself", () => {
+  const proposal = state().proposal;
+  if (!proposal) throw new Error("fixture proposal missing");
+  const html = renderToStaticMarkup(
+    <PlanCard proposal={proposal} canApprove={false} onApprove={() => {}} />,
+  );
+  expect(html).toContain('class="workflow-plan"');
+  expect(html).not.toContain("banner-notice");
+  expect(html).toContain("Plan approval is currently unavailable.");
+  expect(html).toContain("Complete delivery agreement");
+  expect(html).toContain("No push, publication or deployment.");
+});

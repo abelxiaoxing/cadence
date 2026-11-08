@@ -356,15 +356,6 @@ summary:focus-visible,
   height: 15px;
   color: inherit;
 }
-.chip-root {
-  max-width: 240px;
-  color: var(--text-dim);
-}
-.chip-root > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .tb-actions {
   display: flex;
   align-items: center;
@@ -845,6 +836,8 @@ summary:focus-visible,
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  --chat-pad: 24px;
+  --chat-inset: max(var(--chat-pad), (100% - var(--chat-max)) / 2);
 }
 .scope-bar {
   flex: none;
@@ -1729,11 +1722,6 @@ summary:focus-visible,
 /* ============================================================
    Responsive: drawers and two-row topbar (pi ≤768 density)
    ============================================================ */
-@media (max-width: 1180px) {
-  .chip-label {
-    display: none;
-  }
-}
 @media (max-width: 900px) {
   .topbar {
     padding: 6px 8px;
@@ -1747,14 +1735,8 @@ summary:focus-visible,
   .topbar-flow .tb-spacer {
     display: none;
   }
-  .brand,
-  .chip-root {
+  .brand {
     order: 1;
-  }
-  /* As specific as `.topbar-flow > :not(.tb-spacer)`, which it must override. */
-  .topbar-flow > .chip-root {
-    flex-shrink: 1;
-    min-width: 0;
   }
   .tb-actions {
     order: 2;
@@ -1904,9 +1886,6 @@ summary:focus-visible,
     width: 16px;
     height: 16px;
   }
-  .chip-root {
-    display: none;
-  }
   .msg-state {
     order: 5;
     flex-basis: 100%;
@@ -1990,6 +1969,7 @@ summary:focus-visible,
   color: var(--accent-text);
   background: var(--accent-soft);
 }
+.navigation-toggle,
 .inspector-toggle {
   display: inline-flex;
   align-items: center;
@@ -1999,8 +1979,31 @@ summary:focus-visible,
 }
 @media (min-width: 901px) {
   .inspector-hidden .drawer-right,
-  .inspector-hidden .main + .resize-handle {
+  .inspector-hidden .main + .resize-handle,
+  .navigation-hidden .drawer-left,
+  .navigation-hidden .drawer-left + .resize-handle,
+  .inspector-overlay .main + .resize-handle {
     display: none;
+  }
+  .inspector-overlay .drawer-right {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 20;
+    width: min(var(--right-w), 92vw);
+    background: var(--bg-elev);
+    box-shadow: 0 0 40px #0008;
+  }
+  .inspector-overlay .drawer-backdrop.on {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #0008;
+    z-index: 19;
   }
 }
 .lp-new {
@@ -2099,12 +2102,13 @@ summary:focus-visible,
 }
 .conversation-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 .conversation-heading h2 {
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   margin: 0;
   font-size: 14px;
@@ -2118,7 +2122,7 @@ summary:focus-visible,
 }
 .conversation-badge {
   color: var(--accent-text);
-  font-size: 10px;
+  font-size: 12px;
   background: var(--accent-soft);
   border-radius: 5px;
   padding: 1px 6px;
@@ -2350,7 +2354,7 @@ summary:focus-visible,
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 16px clamp(16px, 4vw, 56px) 28px;
+  padding: 16px var(--chat-inset) 28px;
 }
 .chat-messages > .empty-state {
   min-height: 40vh;
@@ -2508,7 +2512,7 @@ summary.chat-steps-head:hover {
 }
 .chat-composer {
   flex: none;
-  margin: 0 18px 14px;
+  margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-elev);
@@ -2533,6 +2537,7 @@ summary.chat-steps-head:hover {
 }
 .composer-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   min-width: 0;
   gap: 8px;
@@ -2548,7 +2553,7 @@ summary.chat-steps-head:hover {
   flex: 1;
   min-width: 0;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 12px;
 }
 .composer-toolbar > .primary,
 .composer-toolbar > .danger {
@@ -2800,9 +2805,6 @@ summary.chat-steps-head:hover {
   white-space: nowrap;
 }
 @media (max-width: 900px) {
-  .chat-composer {
-    margin: 0 10px 10px;
-  }
   .composer-hint {
     display: none;
   }
@@ -2810,14 +2812,14 @@ summary.chat-steps-head:hover {
     flex-wrap: wrap;
     gap: 4px;
   }
+  .main {
+    --chat-pad: 16px;
+  }
   .chat-messages {
-    padding: 12px 16px;
+    padding-block: 12px;
   }
   .chat-message.user {
     margin-left: 4%;
-  }
-  .statusbar-left > .status-item {
-    font-size: 10px;
   }
   .status-cwd {
     max-width: 80vw;
@@ -2949,6 +2951,12 @@ summary.chat-steps-head:hover {
 .workflow-plan {
   max-width: 920px;
   margin: 0 auto 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 .workflow-plan .primary {
@@ -3304,6 +3312,13 @@ button.link:hover:not(:disabled) {
   background: var(--text-dim);
   transition: transform 0.15s;
 }
+.mode-toggle.armed {
+  border: 1px dashed var(--accent-text);
+  color: var(--accent-text);
+}
+.mode-toggle.armed .mode-switch::after {
+  transform: translateX(5px);
+}
 .mode-toggle.on {
   color: var(--accent-text);
 }
@@ -3434,4 +3449,45 @@ button.link:hover:not(:disabled) {
   top: 0;
   min-width: 26px;
   min-height: 26px;
+}
+
+/* Observation uncertainty is not an operation failure or a plan decision. */
+.workspace-notice {
+  flex: none;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.workspace-notice-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.workspace-notice-summary p {
+  flex: 1 1 260px;
+  margin: 0;
+}
+.workspace-notice details {
+  margin: 4px 0 0;
+}
+.workspace-notice details p {
+  margin: 4px 0;
+}
+.conversation-cwd {
+  flex: none;
+  margin: 0;
+  padding: 4px var(--chat-inset);
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.composer-status {
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--text-dim);
+  font-size: 12px;
 }

@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProjectObservation } from "../../src/service/contracts/gateway.ts";
 import type { WorkspaceBootstrap } from "../../src/service-contract.ts";
-import { App, WorkspaceNotice } from "../../web/src/App";
+import { App } from "../../web/src/App";
+import { WorkspaceNotice } from "../../web/src/components/workspace/WorkspaceNotice";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { context, id } from "./fixtures";
 
@@ -103,11 +104,11 @@ it.each(["en", "zh"] as const)(
   (locale) => {
     viewer.error = "stale";
     const html = render(locale);
-    expect(html).toContain('role="alert"');
+    expect(html).toContain('role="status"');
     expect(html).toContain(
       locale === "zh"
-        ? "上下文已变化。请重新观察并请求新的确认。"
-        : "Context changed. Observe again and request a fresh confirmation.",
+        ? "上下文已变化，请先读取当前状态，再确认计划。"
+        : "Context changed. Read the current state before confirming a plan.",
     );
     expect(html).not.toMatch(
       /models\.json|systemctl|cadence-service|restart|重启/,
@@ -129,18 +130,18 @@ it.each(["en", "zh"] as const)(
       </LocaleProvider>,
     );
     expect(html).toContain("Link copy unavailable.");
-    expect(html).toContain(locale === "zh" ? "已过期" : "stale");
+    expect(html).toContain("stale");
     expect(html).toContain(
       locale === "zh"
-        ? "上下文已变化。请重新观察并请求新的确认。"
-        : "Context changed. Observe again and request a fresh confirmation.",
+        ? "上下文已变化，请先读取当前状态，再确认计划。"
+        : "Context changed. Read the current state before confirming a plan.",
     );
     expect(html).not.toMatch(
       /models\.json|systemctl|cadence-service|restart|重启/,
     );
   },
 );
-it("local failures alone are not service-start instructions, but service unavailability keeps its guidance", () => {
+it("local failures stay separate; readonly failure never suggests starting or restarting a service", () => {
   const renderNotice = (error?: string, observationError?: string) =>
     renderToStaticMarkup(
       <LocaleProvider initial="en">
@@ -151,15 +152,15 @@ it("local failures alone are not service-start instructions, but service unavail
   const local = renderNotice("Preflight refused: stale");
   expect(local).toContain("Preflight refused: stale");
   expect(local).not.toContain("cadence-service");
-  expect(renderNotice(undefined, "unavailable")).toContain(
-    "cadence-service status",
-  );
+  const unavailable = renderNotice(undefined, "unavailable");
+  expect(unavailable).toContain("Latest state unavailable.");
+  expect(unavailable).not.toMatch(/cadence-service|Retained history is shown/);
 });
 it("a real compatibility failure remains distinct from stale and is never declared compatible by the error banner", () => {
   viewer.compatible = false;
   viewer.error = "stale";
   const html = render("en");
-  expect(html).toContain("Context changed. Observe again");
+  expect(html).toContain("Context changed. Read the current state");
   expect(html).toContain(
     "unavailable / mismatch — reload built assets; normal actions disabled",
   );
@@ -202,7 +203,7 @@ it.each([
     const html = render("en", true);
     const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
     expect(html).toContain(
-      "Retained history is shown; this does not mean work has stopped.",
+      "Started work may still be running. No message is resent.",
     );
     expect(statusbar).not.toContain("Chat ready");
     expect(statusbar).not.toContain(">current<");
@@ -223,7 +224,7 @@ for (const locale of ["en", "zh"] as const) {
       };
       const html = render(locale, true);
       const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
-      expect(html).not.toContain('class="banner-notice"');
+      expect(html).not.toContain('class="workspace-notice"');
       expect(html).not.toContain("Execution will be prepared when you send.");
       expect(html).not.toContain("浏览不会启动服务");
       expect(statusbar).toContain(
@@ -260,7 +261,7 @@ for (const locale of ["en", "zh"] as const) {
         };
       const html = render(locale, phase !== "direct");
       const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
-      expect(html).not.toContain('class="banner-notice"');
+      expect(html).not.toContain('class="workspace-notice"');
       expect(statusbar).toContain(
         locale === "zh" ? "正在连接…" : "Connecting…",
       );
@@ -305,11 +306,11 @@ for (const locale of ["en", "zh"] as const) {
     if (failure === "incompatible") viewer.compatible = false;
     const html = render(locale, true);
     const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
-    expect(html).toContain('class="banner-notice"');
+    expect(html).toContain('class="workspace-notice"');
     expect(html).toContain(
       locale === "zh"
-        ? "不表示工作已停止"
-        : "this does not mean work has stopped",
+        ? "已开始的工作可能仍在运行"
+        : "Started work may still be running",
     );
     expect(statusbar).not.toContain(
       locale === "zh" ? "正在连接…" : "Connecting…",
@@ -346,7 +347,7 @@ it.each(["data", "failure"])(
     viewer.transportStatus = "closed";
     viewer.attachmentVersion = 0;
     const html = render("en", true);
-    expect(html).toContain("this does not mean work has stopped");
+    expect(html).toContain("Started work may still be running");
     expect(html).not.toContain("Connecting…");
   },
 );
@@ -356,11 +357,22 @@ it("local, project-read and viewer errors remain visible together", () => {
       error="Link copy unavailable."
       projectObservationError="unavailable"
       observationError="stale"
-      onDemand
     />,
   );
   expect(html).toContain("Link copy unavailable.");
   expect(html).toContain("Project observation: unavailable.");
-  expect(html).toContain("Context changed. Observe again");
+  expect(html).toContain("Context changed. Read the current state");
   expect(html).not.toContain("cadence-service");
+});
+
+it("one observation warning covers the same stale condition, keeps independent errors and offers a readonly action", () => {
+  viewer.error = "stale";
+  viewer.transportStatus = "stale";
+  const html = render("en");
+  expect(html.match(/class="workspace-notice"/g)).toHaveLength(1);
+  expect(html).toContain("Observe current state");
+  expect(html).toContain("Conversation history could not be read");
+  expect(html).not.toContain("Retained history is shown");
+  const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
+  expect(statusbar).not.toContain(" · stale");
 });

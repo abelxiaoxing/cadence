@@ -65,22 +65,20 @@ import {
 } from "./components/workspace/AgentDock";
 import { ChatWorkspace } from "./components/workspace/ChatWorkspace";
 import { FilesPanel } from "./components/workspace/FilesPanel";
-import {
-  InspectorPanel,
-  InspectorPlaceholder,
-} from "./components/workspace/InspectorPanel";
+import { InspectorPanel } from "./components/workspace/InspectorPanel";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
 import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
+import { WorkspaceNotice } from "./components/workspace/WorkspaceNotice";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { Template, useT } from "./i18n/locale";
 import { ResizeHandle } from "./layout/ResizeHandle";
-import type { DrawerSide } from "./layout/swipe-drawer";
 import { useDrawerFocus } from "./layout/use-drawer-focus";
+import { usePanelLayout } from "./layout/use-panel-layout";
 import { useSwipeDrawer } from "./layout/use-swipe-drawer";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
@@ -92,59 +90,6 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
   ["timeline", FiClock],
   ["runs", FiGitBranch],
 ];
-/** Local operation failures cannot diagnose the service or hide its observation. */
-export function WorkspaceNotice({
-  error,
-  observationError,
-  projectObservationError,
-  onDemand = false,
-}: {
-  error?: string;
-  observationError?: string;
-  projectObservationError?: string;
-  onDemand?: boolean;
-}) {
-  const { t, tx } = useT();
-  if (!error && !observationError && !projectObservationError) return null;
-  return (
-    <p className="banner-notice" role="alert">
-      {error && <>{error} </>}
-      {projectObservationError && (
-        <>
-          {t("Project observation: {code}.", {
-            code: tx(projectObservationError),
-          })}{" "}
-        </>
-      )}
-      {observationError && (
-        <>
-          {t("{message}.", { message: tx(observationError) })}{" "}
-          {observationError === "stale" ? (
-            t(
-              "Context changed. Observe again and request a fresh confirmation.",
-            )
-          ) : onDemand ? (
-            t(
-              "Connection unavailable. Existing work may continue; no message is replayed automatically.",
-            )
-          ) : (
-            <Template
-              text={t(
-                "Explicit service guidance: {status} / {start}. No service is started by this page.",
-              )}
-              slots={{
-                status: <code>cadence-service status</code>,
-                start: (
-                  <code>cadence-service start --workspace &lt;path&gt;</code>
-                ),
-              }}
-            />
-          )}
-        </>
-      )}
-    </p>
-  );
-}
 export function App({
   api: provided,
   onOpenProject,
@@ -349,32 +294,21 @@ export function App({
     observation.state.snapshot.scope.id === taskId
       ? observation.state.snapshot.context
       : undefined;
-  const [drawer, setDrawer] = useState<DrawerSide | null>(null),
-    [mobile, setMobile] = useState(false),
-    layout = useRef<HTMLDivElement>(null);
-  const [leftWidth, setLeftWidth] = useState(260),
-    [rightWidth, setRightWidth] = useState(360);
-  const closeDrawer = useCallback(() => setDrawer(null), []);
-  useEffect(() => {
-    const query = matchMedia("(max-width: 900px)");
-    const change = () => setMobile(query.matches);
-    change();
-    query.addEventListener("change", change);
-    return () => query.removeEventListener("change", change);
-  }, []);
+  const panels = usePanelLayout();
+  const { mobile, overlay: drawer, closeDrawer } = panels;
+  const layout = useRef<HTMLDivElement>(null);
   useSwipeDrawer({
     enabled: mobile && !detached,
     open: drawer,
-    onOpenChange: setDrawer,
+    onOpenChange: panels.setDrawer,
     container: layout,
   });
-  useDrawerFocus(layout, drawer, mobile && !detached, closeDrawer);
+  useDrawerFocus(layout, drawer, !detached && !!drawer, closeDrawer);
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | undefined>(
     initial?.snapshotSeq,
   );
   const [taskTitle, setTaskTitle] = useState("");
   const [scopeTitle, setScopeTitle] = useState("");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
   const viewMenu = useRef<HTMLDetailsElement>(null),
     moreMenu = useRef<HTMLDetailsElement>(null);
   const closeMore = () => {
@@ -672,13 +606,14 @@ export function App({
                 : (observation.state?.connection ??
                   (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   return (
-    <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
+    <div className={`app${panels.className}`}>
       <header className="topbar">
         <button
           type="button"
-          className="panel-toggle"
-          aria-label={t("Tasks")}
-          onClick={() => setDrawer((d) => (d === "left" ? null : "left"))}
+          className="panel-toggle navigation-toggle"
+          aria-label={t("Toggle conversation navigation")}
+          aria-expanded={mobile ? drawer === "left" : panels.navigation}
+          onClick={() => panels.toggle("left")}
         >
           <FiMenu aria-hidden="true" />
         </button>
@@ -802,10 +737,12 @@ export function App({
           )}
           <span className="tb-spacer" aria-hidden="true" />
           <div className="tb-actions">
-            <SearchBar
-              disabled={!searchSeed}
-              onOpen={() => setSearchOpen(true)}
-            />
+            {scope && (
+              <SearchBar
+                disabled={!searchSeed}
+                onOpen={() => setSearchOpen(true)}
+              />
+            )}
             {/* Named in the language it selects, so either reader can find it. */}
             <button
               type="button"
@@ -846,7 +783,7 @@ export function App({
                   onClick={() => {
                     closeMore();
                     workspace.refresh();
-                    observation.refresh();
+                    execution.refresh();
                   }}
                 >
                   <FiRefreshCw aria-hidden="true" />
@@ -873,7 +810,7 @@ export function App({
                   title={t("Return — accepted work continues")}
                   onClick={() => {
                     closeMore();
-                    setDrawer(null);
+                    closeDrawer();
                     setSearchOpen(false);
                     setExportOpen(false);
                     lifetime.current.depart();
@@ -920,16 +857,14 @@ export function App({
         <button
           type="button"
           className="panel-toggle has-label inspector-toggle"
-          aria-label={t("Files / history")}
-          aria-expanded={mobile ? drawer === "right" : inspectorOpen}
-          onClick={() =>
-            mobile
-              ? setDrawer((d) => (d === "right" ? null : "right"))
-              : setInspectorOpen((value) => !value)
-          }
+          aria-label={t("Toggle workspace panels")}
+          aria-expanded={mobile ? drawer === "right" : panels.inspector}
+          onClick={() => panels.toggle("right")}
         >
           <FiSidebar aria-hidden="true" />
-          <span>{chatId ? t("Files") : t("History")}</span>
+          <span>
+            {scope && rightTab === "task" ? t("History details") : t("Files")}
+          </span>
         </button>
       </header>
       {!workspace.workspace && activeRuns.length > 0 && (
@@ -961,25 +896,22 @@ export function App({
       )}
       {notices}
       <WorkspaceNotice
-        onDemand={!!prepareSend}
         error={error}
         projectObservationError={execution.error}
         observationError={workspace.error}
+        unavailable={!connecting && !executionStopped && !observationFresh}
+        onRefresh={() => {
+          workspace.refresh();
+          execution.refresh();
+        }}
       />
-      {!connecting && !executionStopped && !observationFresh && (
-        <p className="banner-notice" role="status">
-          {t(
-            "Observation is not current. Retained history is shown; this does not mean work has stopped.",
-          )}
-        </p>
-      )}
       <div
         ref={layout}
         className="layout"
         style={
           {
-            "--left-w": `${leftWidth}px`,
-            "--right-w": `${rightWidth}px`,
+            "--left-w": `${panels.left}px`,
+            "--right-w": `${panels.right}px`,
           } as CSSProperties
         }
       >
@@ -992,13 +924,24 @@ export function App({
         />
         <section
           className={`panel-drawer drawer-left${drawer === "left" ? " open" : ""}`}
-          aria-label={t("Task navigation drawer")}
+          aria-label={t("Conversation navigation")}
           tabIndex={-1}
-          inert={mobile && drawer !== "left"}
+          inert={
+            mobile
+              ? drawer !== "left"
+              : !panels.navigation || drawer === "right"
+          }
         >
-          {!conversationAvailable && discovery && (
+          {!conversationAvailable && (
             <aside className="panel panel-left lp-panel">
-              <ActivityList {...discovery} />
+              {discovery && <ActivityList {...discovery} />}
+              <p className="panel-empty" role="status">
+                {connecting
+                  ? t("Reading conversation history…")
+                  : t(
+                      "Conversation history could not be read. This is not an empty history.",
+                    )}
+              </p>
             </aside>
           )}
           {conversationAvailable && (
@@ -1114,8 +1057,18 @@ export function App({
             />
           )}
         </section>
-        <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
-        <main className="main" inert={mobile && drawer !== null}>
+        <ResizeHandle
+          side="left"
+          width={panels.left}
+          maximum={panels.leftMaximum}
+          onResize={(width) => panels.resize("left", width)}
+        />
+        <main className="main" inert={drawer !== null}>
+          {chatId && project && !projectObserved && (
+            <p className="panel-empty" role="status">
+              {t("Reading this conversation…")}
+            </p>
+          )}
           {agent && (
             <WorkflowAgentView
               key={`${agent.runId}:${agent.stepId ?? ""}`}
@@ -1237,7 +1190,11 @@ export function App({
                 <span className="empty-logo" aria-hidden="true">
                   C
                 </span>
-                <h2>{t("Select retained history to inspect")}</h2>
+                <h2>
+                  {workspace.error
+                    ? t("Recorded history could not be read.")
+                    : t("Reading recorded history…")}
+                </h2>
                 <p>
                   {t(
                     "History is readonly. Start new work in a conversation with /cadence.",
@@ -1344,38 +1301,41 @@ export function App({
         </main>
         <ResizeHandle
           side="right"
-          width={rightWidth}
-          onResize={setRightWidth}
+          width={panels.right}
+          maximum={panels.rightMaximum}
+          onResize={(width) => panels.resize("right", width)}
         />
         <section
           className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
           aria-label={t("Files and history drawer")}
           tabIndex={-1}
-          inert={mobile && drawer !== "right"}
+          inert={mobile ? drawer !== "right" : !panels.inspector}
         >
           <div className="workbench-right">
             <nav className="rp-tabs" aria-label={t("Workspace panels")}>
               <button
                 type="button"
                 className="rp-tab"
-                aria-pressed={rightTab === "files"}
+                aria-pressed={rightTab === "files" || !scope}
                 onClick={() => setRightTab("files")}
               >
                 <FiFolder />
                 {t("Files")}
               </button>
-              <button
-                type="button"
-                className="rp-tab"
-                aria-pressed={rightTab === "task"}
-                disabled={!seed}
-                onClick={() => setRightTab("task")}
-              >
-                <FiLayers />
-                {t("History details")}
-              </button>
+              {scope && (
+                <button
+                  type="button"
+                  className="rp-tab"
+                  aria-pressed={rightTab === "task"}
+                  disabled={!seed}
+                  onClick={() => setRightTab("task")}
+                >
+                  <FiLayers />
+                  {t("History details")}
+                </button>
+              )}
             </nav>
-            {rightTab === "files" ? (
+            {rightTab === "files" || !scope ? (
               <FilesPanel
                 key={fileLocation?.cwd ?? "owner"}
                 location={fileLocation}
@@ -1403,7 +1363,11 @@ export function App({
                 }}
               />
             ) : (
-              <InspectorPlaceholder />
+              <p className="panel-empty" role="status">
+                {workspace.error
+                  ? t("Recorded history could not be read.")
+                  : t("Reading recorded history…")}
+              </p>
             )}
           </div>
         </section>
@@ -1434,13 +1398,6 @@ export function App({
               aria-hidden="true"
             />
             {tx(connection)}
-            {!connecting &&
-              !executionStopped &&
-              observation.transportStatus !== "current" &&
-              t(" · transport {status}", {
-                status: tx(observation.transportStatus),
-              })}
-            {observation.error ? ` · ${tx(observation.error)}` : ""}
           </span>
           {project && (
             <span className="status-item faint">

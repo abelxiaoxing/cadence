@@ -226,7 +226,7 @@ export function PlanCard({
   const { t } = useT();
   return (
     <section
-      className="workflow-plan banner-notice"
+      className="workflow-plan"
       aria-label={t("Current implementation plan")}
     >
       <h3>{t("Current implementation plan")}</h3>
@@ -267,7 +267,11 @@ export function PlanCard({
       >
         {t("Implement this plan")}
       </button>
-      {approvalHint && <p className="inspector-note">{approvalHint}</p>}
+      {!canApprove && (
+        <p className="inspector-note" role="status">
+          {approvalHint ?? t("Plan approval is currently unavailable.")}
+        </p>
+      )}
       <p>
         {t(
           "To change the plan, continue the conversation. A changed plan requires fresh approval.",

@@ -1,15 +1,18 @@
-/* Adapted from pi-web-ui App/RightPanel sizing and panel-sash.ts weight model.
+/* Adapted from pi-web-ui App/RightPanel sash controls; Cadence owns the shared
+ * center-space budget and the pointer/keyboard width bounds.
  * MIT (c) 2026 xing-shuyin. Pointer and keyboard change display geometry only. */
 import { useEffect, useRef } from "react";
 import { useT } from "../i18n/locale";
-import { applySashDrag } from "./panel-sash";
+import { PANEL_MIN, panelWidth } from "./workspace-layout";
 export function ResizeHandle({
   side,
   width,
   onResize,
+  maximum,
 }: {
   side: "left" | "right";
   width: number;
+  maximum: number;
   onResize: (w: number) => void;
 }) {
   const { t } = useT();
@@ -18,34 +21,28 @@ export function ResizeHandle({
   return (
     <input
       type="range"
-      min={220}
-      max={600}
-      step={20}
+      min={PANEL_MIN}
+      max={maximum}
+      step={1}
       value={width}
-      onChange={(e) => onResize(Number(e.target.value))}
+      onChange={(e) => onResize(panelWidth(Number(e.target.value), maximum))}
       className="resize-handle"
       tabIndex={0}
-      aria-orientation="vertical"
+      aria-orientation="horizontal"
       aria-label={t(side === "left" ? "Resize left pane" : "Resize right pane")}
-      aria-valuemin={220}
-      aria-valuemax={600}
+      aria-valuemin={PANEL_MIN}
+      aria-valuemax={maximum}
       aria-valuenow={width}
-      onDoubleClick={() => onResize(side === "left" ? 260 : 360)}
+      onDoubleClick={() =>
+        onResize(panelWidth(side === "left" ? 260 : 360, maximum))
+      }
       onPointerDown={(e) => {
         e.preventDefault();
         dispose.current?.();
-        const start = e.clientX,
-          available = window.innerWidth;
+        const start = e.clientX;
         const move = (event: PointerEvent) => {
-          const pair = applySashDrag({
-            start: { above: width, below: Math.max(1, available - width) },
-            deltaPx: (event.clientX - start) * (side === "left" ? 1 : -1),
-            availablePx: available,
-            totalWeight: available,
-            minAbovePx: 220,
-            minBelowPx: 320,
-          });
-          onResize(Math.min(600, pair.above));
+          const delta = (event.clientX - start) * (side === "left" ? 1 : -1);
+          onResize(panelWidth(width + delta, maximum));
         };
         const stop = () => {
           window.removeEventListener("pointermove", move);
