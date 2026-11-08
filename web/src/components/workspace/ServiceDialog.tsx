@@ -384,7 +384,7 @@ export function ServiceDialog({
                     scope: service.unit.scope,
                   })
                 : t(
-                    "This workbench was not started by Cadence's systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.",
+                    "This Cadence instance was not started by its systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.",
                   )}
             </p>
             {service.job && (

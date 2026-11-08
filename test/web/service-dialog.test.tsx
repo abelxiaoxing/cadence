@@ -8,13 +8,13 @@ import {
   UPGRADE_ROUTES,
 } from "../../src/service/contracts/gateway.ts";
 import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
+import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import {
   describeJob,
   installationMessage,
   ServiceDialog,
   unchanged,
 } from "../../web/src/components/workspace/ServiceDialog";
-import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
 import {
   type Locale,
   LocaleProvider,
@@ -102,9 +102,10 @@ it("the entry offers the service dialog only when the workbench supplies it, and
   const home = (onOpenService?: () => void) =>
     renderToStaticMarkup(
       <LocaleProvider>
-        <WorkbenchHome
+        <FolderSetup
           ready
-          onOpenFolder={() => {}}
+          onChooseFolder={() => {}}
+          onRefresh={() => {}}
           onOpenService={onOpenService}
         />
       </LocaleProvider>,

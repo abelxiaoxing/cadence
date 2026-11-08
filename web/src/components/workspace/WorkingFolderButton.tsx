@@ -15,13 +15,13 @@ export function WorkingFolderButton({
     <button
       type="button"
       className="status-cwd"
-      title={path || t("Open working folder")}
+      title={path || t("Choose working folder")}
       aria-label={t("Switch working folder")}
       disabled={disabled}
       onClick={onClick}
     >
       <FiFolder aria-hidden="true" />
-      <span>{path || t("Open working folder")}</span>
+      <span>{path || t("Choose working folder")}</span>
       <FiChevronDown aria-hidden="true" />
     </button>
   );

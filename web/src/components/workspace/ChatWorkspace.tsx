@@ -50,6 +50,7 @@ import {
   waitingModelSend,
   withSendModel,
 } from "../../client/conversation-send";
+import type { FolderDraft } from "../../client/folder-draft";
 import { uploadImages } from "../../client/images";
 import type { PreviewModels } from "../../client/model-preview";
 import { useConversation } from "../../client/use-conversation";
@@ -85,11 +86,11 @@ import {
 
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
-function stored(key: string) {
+function stored(key: string, fallback = "") {
   try {
-    return sessionStorage.getItem(key) ?? "";
+    return sessionStorage.getItem(key) ?? fallback;
   } catch {
-    return "";
+    return fallback;
   }
 }
 export function ChatWorkspace({
@@ -109,7 +110,8 @@ export function ChatWorkspace({
   canInterrupt = enabled,
   modelAvailability,
   previewModels,
-  initialModel,
+  initialDraft,
+  onDraftApplied,
   onModelChanged,
   onChanged,
   reference,
@@ -140,7 +142,9 @@ export function ChatWorkspace({
   /** Observed execution availability, independent of the readable history. */
   modelAvailability: ModelAvailability;
   previewModels?: PreviewModels;
-  initialModel?: ModelSelector;
+  initialDraft?: FolderDraft;
+  /** Retire the one-time entry handoff only after the target mounts. */
+  onDraftApplied?(): void;
   /** An explicit model choice changed the owner configuration. */
   onModelChanged(): void;
   onChanged(): void;
@@ -151,7 +155,12 @@ export function ChatWorkspace({
   const [draftKey] = useState(() =>
     selectDraftKey(workspaceId, id, legacyWorkspaceId, ...directoryNamespaces),
   );
-  const [draft, setDraft] = useState(() => stored(draftKey));
+  const [draft, setDraft] = useState(() =>
+    stored(draftKey, initialDraft?.text),
+  );
+  useEffect(() => {
+    if (initialDraft) onDraftApplied?.();
+  }, [initialDraft, onDraftApplied]);
   const imageDraft = useImageDraft();
   const removeImages = imageDraft.remove;
   const sentImages = useRef<readonly File[]>([]);
@@ -182,7 +191,7 @@ export function ChatWorkspace({
     } catch {
       /* Optional browser draft. */
     }
-    return initialModel ?? null;
+    return initialDraft?.model ?? null;
   });
   useEffect(() => {
     try {

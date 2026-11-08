@@ -896,3 +896,23 @@ Observed npm latest was 2.0.45 and the v2.0.46 tag was absent before selection; 
 Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh external 0700 disk-backed temporary directory; logs are retained under `/home/mirako/cadence-release-2.0.46.djgOUi/`.
 No slow-suite follow-up, browser automation, paid provider, native Windows/macOS qualification, dependency installation or production-service restart was performed.
 This unshipped appendix records local qualification only; publication requires the explicitly pushed v2.0.46 tag, its OIDC workflow outcome and confirmation of the actual CI artifact against registry bytes.
+
+## Release 2.0.47 qualification: folder-first conversations (2026-11-08)
+
+The user explicitly authorized designing and implementing the simplified WebUI, committing, pushing to GitHub and publishing npm.
+The workbench/project-home button and standalone `WorkbenchHome` are removed; folder setup and selected conversations share one `AppShell` for the topbar, More menu, pane sizing, focus-contained drawers and lower-right folder status.
+Recent folders live in that picker, while first use or an unavailable selection offers inline guidance in the conversation rather than a separate project list.
+First-use text and model choices remain local drafts; only explicit folder selection hands them to a fresh conversation, without sending, installing a model, rewriting history or changing accepted work.
+Stored drafts precede the in-memory handoff, including an intentionally cleared text draft; unreadable model choice preserves readable text, and incomplete persistence retains the source draft.
+The target acknowledges the one-time handoff after mounting; reopening a conversation cannot reapply already-used initial text/model when storage is blocked.
+Deep links, readonly last-folder restoration, cross-folder activity observation, independent owners and exact Send/approval authority remain unchanged.
+
+The targeted Web run passed **136 tests in ten exact files**; the subsequent one-shot handoff regression passed **seven tests in its exact file**, with passed-assertion coverage checked against both JSON report paths.
+After canonical operator/service/Web builds and the final handoff refinement, `bun run verify` passed in **12.8s**: **1750 fast root tests passed, 283 skipped** (111 passing files, two skipped), **347 Web tests passed** (30 files), plus syntax, root/Web types, lint, Agent pins, deterministic bundles/Web output and real-pack audit.
+The separate real Bun pack passed the independent **169-member** source/body/notice audit.
+Final local archive (`pack-final/abelxiaoxing-cadence-2.0.47.tgz`) SHA-256: `ec66c65ccf5352c5115afbc124fbb9355615c982b1f0e8c5531ce422b833b382`; SHA-1: `132f095b0e114f48e51d4cf5117f7f72d504a7fb`; size: **2133211 bytes**.
+Observed npm latest remained 2.0.46 and the remote v2.0.47 tag was absent before publication preparation.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh external 0700 disk-backed temporary directory; logs and the audited archive are retained under `/home/mirako/cadence-verify.RFbt2UVV/`.
+No dependency installation, browser automation, slow-suite follow-up, paid-provider call, production-service operation or native Windows/macOS qualification was performed.
+Pure storage/SSR and deterministic build checks are not real-browser or physical-device validation.
+This unshipped appendix records local qualification only; publication requires the explicitly pushed v2.0.47 tag and confirmation of the OIDC job's actual immutable artifact against npm metadata, latest and downloaded bytes.

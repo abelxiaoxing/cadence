@@ -23,11 +23,13 @@ The real pack audit rejects missing/extra/duplicate/linked/special/unsafe member
 Extracted tests use tar-only package bodies and explicitly linked existing fixture peers; they never fill missing package files from source.
 No version bump, dependency install or publication is implied by this redesign.
 
-## Unified entry without a default workspace
+## Folder-first browser entry
 
-`web/src/Workbench.tsx` composes the project selector and existing project UI without importing the upstream session/execution service.
+The browser opens directly on conversations, with folder selection and recent folders in the lower-right statusbar, not a separate workbench/project home.
+First use asks for a folder in that same interface; later visits restore the last available selection, while complete conversation links keep their own destination.
+`web/src/Workbench.tsx` composes directory routing and the shared conversation shell without importing the upstream session/execution service.
 The Cadence-owned gateway uses the existing authentication, public codecs, private-files discipline and independently coordinated project owners.
-The no-project entry never initializes an SDK session, manufactures a checkout, creates `~/cadence`, or repairs a missing project directory.
+Initial folder setup never initializes an SDK session, manufactures a checkout, creates `~/cadence`, or repairs a missing project directory.
 A technical service-process cwd is not a model/tool workspace.
 The built same-origin routing covers both HTTP requests and WebSockets, while browser authority and project consent remain distinct from native management capability.
 New Linux manager tests exercise the no-workspace default; macOS/Windows generated-definition tests are not native-platform execution qualification.

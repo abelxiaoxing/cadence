@@ -2,7 +2,6 @@
  * responsive drawers and action-dialog families. MIT (c) 2026 xing-shuyin.
  * Cadence uses only its existing portable service client. No browser executor. */
 import {
-  type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
@@ -17,26 +16,18 @@ import {
   FiDownload,
   FiFolder,
   FiGitBranch,
-  FiGlobe,
   FiLayers,
   FiLink,
-  FiLogOut,
-  FiMenu,
   FiMessageSquare,
-  FiMoreHorizontal,
-  FiRefreshCw,
-  FiServer,
-  FiSidebar,
   FiSquare,
   FiTool,
 } from "react-icons/fi";
 import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
-import type { ModelSelector } from "../../src/service-contract.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
-import { localBuild } from "./client/build-identity";
 import type { PreparationProgress } from "./client/conversation-send";
+import type { FolderDraft } from "./client/folder-draft";
 import type { PreviewModels } from "./client/model-preview";
 import { activityRoute, chatFromLocation } from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
@@ -78,11 +69,9 @@ import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton"
 import { WorkspaceNotice } from "./components/workspace/WorkspaceNotice";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
-import { Template, useT } from "./i18n/locale";
-import { ResizeHandle } from "./layout/ResizeHandle";
-import { useDrawerFocus } from "./layout/use-drawer-focus";
+import { useT } from "./i18n/locale";
+import { AppShell } from "./layout/AppShell";
 import { usePanelLayout } from "./layout/use-panel-layout";
-import { useSwipeDrawer } from "./layout/use-swipe-drawer";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
@@ -96,8 +85,7 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 export function App({
   api: provided,
   onOpenProject,
-  onWorkbenchHome,
-  workbenchHome,
+  homeFolder,
   projectEntries,
   notices,
   discovery,
@@ -107,11 +95,13 @@ export function App({
   onPrepareSend,
   directoryNamespaces,
   previewModels,
-  initialModel,
+  initialDraft,
+  onDraftApplied,
 }: {
   api?: BrowserClient;
   previewModels?: PreviewModels;
-  initialModel?: { conversationId: string; model: ModelSelector };
+  initialDraft?: FolderDraft & { conversationId: string };
+  onDraftApplied?(conversationId: string): void;
   project?: ProjectEntry;
   directoryNamespaces?: string[];
   onChooseFolder?(cwd?: string): void;
@@ -121,8 +111,7 @@ export function App({
     progress?: PreparationProgress,
   ): Promise<string>;
   onOpenProject?(path: string): Promise<void>;
-  onWorkbenchHome?(): void;
-  workbenchHome?: string;
+  homeFolder?: string;
   projectEntries?: { path: string; current: boolean }[];
   /** Workbench-supplied banners (automatic recovery). */
   notices?: ReactNode;
@@ -130,7 +119,7 @@ export function App({
   /** The workbench's service restart and upgrade; absent on a direct owner. */
   onOpenService?(): void;
 }) {
-  const { t, tx, locale, setLocale } = useT();
+  const { t, tx } = useT();
   const [api] = useState(() => provided ?? browserClient());
   const [activityHash, setActivityHash] = useState(() =>
     typeof window === "undefined" ? "" : window.location.hash,
@@ -302,25 +291,13 @@ export function App({
       ? observation.state.snapshot.context
       : undefined;
   const panels = usePanelLayout();
-  const { mobile, overlay: drawer, closeDrawer } = panels;
-  const layout = useRef<HTMLDivElement>(null);
-  useSwipeDrawer({
-    enabled: mobile && !detached,
-    open: drawer,
-    onOpenChange: panels.setDrawer,
-    container: layout,
-  });
-  useDrawerFocus(layout, drawer, !detached && !!drawer, closeDrawer);
+  const { closeDrawer } = panels;
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | undefined>(
     initial?.snapshotSeq,
   );
   const [taskTitle, setTaskTitle] = useState("");
   const [scopeTitle, setScopeTitle] = useState("");
-  const viewMenu = useRef<HTMLDetailsElement>(null),
-    moreMenu = useRef<HTMLDetailsElement>(null);
-  const closeMore = () => {
-    if (moreMenu.current) moreMenu.current.open = false;
-  };
+  const viewMenu = useRef<HTMLDetailsElement>(null);
   const [tab, setTab] = useState("messages"),
     [searchOpen, setSearchOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false);
@@ -631,40 +608,26 @@ export function App({
                 : (observation.state?.connection ??
                   (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   return (
-    <div className={`app${panels.className}`}>
-      <header className="topbar">
-        <button
-          type="button"
-          className="panel-toggle navigation-toggle"
-          aria-label={t("Toggle conversation navigation")}
-          aria-expanded={mobile ? drawer === "left" : panels.navigation}
-          onClick={() => panels.toggle("left")}
-        >
-          <FiMenu aria-hidden="true" />
-        </button>
-        {/* Phone drawers open below the topbar, so its controls stay live. */}
-        <div className="topbar-flow">
-          {onWorkbenchHome && (
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label={t("Workbench projects")}
-              title={t("Workbench projects")}
-              onClick={onWorkbenchHome}
-            >
-              <FiFolder />
-            </button>
-          )}
-          <span className="brand">
-            <span className="brand-logo" aria-hidden="true">
-              C
-            </span>
-            <h1 className="brand-name">Cadence</h1>
-          </span>
-          <span className="tb-spacer" aria-hidden="true" />
-          {/* Recorded views read a task/child scope; an ordinary conversation
-              has none and folds its tools into the transcript. */}
-          {scope && (
+    <>
+      <AppShell
+        panels={panels}
+        compatible={workspace.compatible}
+        onOpenService={onOpenService}
+        onRefresh={() => {
+          workspace.refresh();
+          execution.refresh();
+        }}
+        onDisconnect={() => {
+          setSearchOpen(false);
+          setExportOpen(false);
+          lifetime.current.depart();
+          setDetached(true);
+        }}
+        inspectorLabel={
+          scope && rightTab === "task" ? t("History details") : t("Files")
+        }
+        toolbar={
+          scope && (
             <nav className="tb-tabs" aria-label={t("Recorded views")}>
               <button
                 type="button"
@@ -759,584 +722,440 @@ export function App({
                 </div>
               </details>
             </nav>
-          )}
-          <span className="tb-spacer" aria-hidden="true" />
-          <div className="tb-actions">
-            {scope && (
-              <SearchBar
-                disabled={!searchSeed}
-                onOpen={() => setSearchOpen(true)}
-              />
-            )}
-            {/* Named in the language it selects, so either reader can find it. */}
-            <button
-              type="button"
-              className="chip chip-lang"
-              lang={locale === "zh" ? "en" : "zh-CN"}
-              aria-label={locale === "zh" ? "Switch to English" : "切换到中文"}
-              data-tip={locale === "zh" ? "Switch to English" : "切换到中文"}
-              onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
-            >
-              <FiGlobe aria-hidden="true" />
-              <span>{locale === "zh" ? "EN" : "中文"}</span>
-            </button>
-            <details
-              className="more-menu"
-              ref={moreMenu}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && moreMenu.current) {
-                  moreMenu.current.open = false;
-                  moreMenu.current.querySelector("summary")?.focus();
-                }
-              }}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget))
-                  event.currentTarget.open = false;
-              }}
-            >
-              <summary
-                className="chip"
-                aria-label={t("More")}
-                title={t("More")}
-              >
-                <FiMoreHorizontal aria-hidden="true" />
-              </summary>
-              <div className="more-menu-items">
-                <button
-                  type="button"
-                  aria-label={t("Observe current state")}
-                  onClick={() => {
-                    closeMore();
-                    workspace.refresh();
-                    execution.refresh();
-                  }}
-                >
-                  <FiRefreshCw aria-hidden="true" />
-                  {t("Refresh status")}
-                </button>
-                {onOpenService && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeMore();
-                      onOpenService();
-                    }}
-                  >
-                    <FiServer aria-hidden="true" />
-                    <span className="more-menu-text">
-                      {t("Cadence service")}
-                      <small>{t("Version, restart and upgrade.")}</small>
-                    </span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label={t("Disconnect this page")}
-                  title={t("Return — accepted work continues")}
-                  onClick={() => {
-                    closeMore();
-                    closeDrawer();
-                    setSearchOpen(false);
-                    setExportOpen(false);
-                    lifetime.current.depart();
-                    setDetached(true);
-                  }}
-                >
-                  <FiLogOut aria-hidden="true" />
-                  <span className="more-menu-text">
-                    {t("Disconnect this page")}
-                    <small>{t("Started work keeps running.")}</small>
-                  </span>
-                </button>
-                <div
-                  className={`more-menu-build${workspace.compatible === false ? " warn" : ""}`}
-                  title={localBuild?.buildId ?? t("unbuilt source")}
-                >
-                  <span>
-                    {t("Shared compatibility: {state}.", {
-                      state:
-                        workspace.compatible === undefined
-                          ? t("Execution compatibility not observed")
-                          : workspace.compatible
-                            ? t("compatible")
-                            : t(
-                                "unavailable / mismatch — reload built assets; normal actions disabled",
-                              ),
-                    })}
-                  </span>
-                  <Template
-                    text={t("Local browser build: {build}.")}
-                    slots={{
-                      build: (
-                        <code>
-                          {localBuild?.buildId ?? t("unbuilt source")}
-                        </code>
-                      ),
-                    }}
-                  />
-                </div>
-              </div>
-            </details>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="panel-toggle has-label inspector-toggle"
-          aria-label={t("Toggle workspace panels")}
-          aria-expanded={mobile ? drawer === "right" : panels.inspector}
-          onClick={() => panels.toggle("right")}
-        >
-          <FiSidebar aria-hidden="true" />
-          <span>
-            {scope && rightTab === "task" ? t("History details") : t("Files")}
-          </span>
-        </button>
-      </header>
-      {!workspace.workspace && activeRuns.length > 0 && (
-        <section
-          className="run-strip"
-          aria-label={t("Execution and cancellation")}
-        >
-          {activeRuns.map((r) => (
-            <div className="run-strip-row" key={r.runId}>
-              <span className="status-dot busy" aria-hidden="true" />
-              <span className="run-strip-label">
-                {tx(r.kind)} {r.runId} · {tx(r.stage)}
-              </span>
-              <button type="button" onClick={() => selectTask(r.taskId)}>
-                {t("Open active task")}
-              </button>
-              <button
-                type="button"
-                className="danger"
-                disabled={!workspace.cancelCompatible || canceling.has(r.runId)}
-                onClick={() => cancel(r.runId)}
-              >
-                <FiSquare aria-hidden="true" />
-                {t("Cancel run — request stop")}
-              </button>
-            </div>
-          ))}
-        </section>
-      )}
-      {notices}
-      <WorkspaceNotice
-        error={error}
-        projectObservationError={execution.error}
-        observationError={workspace.error}
-        unavailable={!connecting && !executionStopped && !observationFresh}
-        onRefresh={() => {
-          workspace.refresh();
-          execution.refresh();
-        }}
-      />
-      <div
-        ref={layout}
-        className="layout"
-        style={
-          {
-            "--left-w": `${panels.left}px`,
-            "--right-w": `${panels.right}px`,
-          } as CSSProperties
+          )
         }
-      >
-        <button
-          type="button"
-          aria-label={t("Close drawer")}
-          tabIndex={-1}
-          className={`drawer-backdrop persistent${drawer ? " on" : ""}`}
-          onClick={closeDrawer}
-        />
-        <section
-          className={`panel-drawer drawer-left${drawer === "left" ? " open" : ""}`}
-          aria-label={t("Conversation navigation")}
-          tabIndex={-1}
-          inert={
-            mobile
-              ? drawer !== "left"
-              : !panels.navigation || drawer === "right"
-          }
-        >
-          {!conversationAvailable && (
-            <aside className="panel panel-left lp-panel">
-              {discovery && <ActivityList {...discovery} />}
-              <p className="panel-empty" role="status">
-                {connecting
-                  ? t("Reading conversation history…")
-                  : t(
-                      "Conversation history could not be read. This is not an empty history.",
-                    )}
-              </p>
-            </aside>
-          )}
-          {conversationAvailable && (
-            <TaskSidebar
-              discovery={discovery}
-              client={api.client}
-              workspace={workspace.workspace}
-              executionStopped={executionStopped}
-              taskId={taskId}
-              scope={scope}
-              runs={runs}
-              snapshot={observation.state?.snapshot.committedSeq}
-              activeRuns={workspace.activeRuns}
-              cancelCompatible={!!workspace.cancelCompatible}
-              canceling={canceling}
-              onCancel={cancel}
-              chats={chatEntries}
-              chatActivityKnown={
-                chatActivity.value?.kind === "conversation-active" &&
-                !chatActivity.error
-              }
-              chatHistoryPartial={
-                chats.loading || chats.canPrevious || !!chats.value?.next
-              }
-              chatHistoryControls={
-                <>
-                  {chats.error && <p role="alert">{chats.error}</p>}
-                  {chats.loading && (
-                    <p className="panel-hint">
-                      {t("Reading conversation history…")}
-                    </p>
-                  )}
-                  {chats.canPrevious && (
+        actions={
+          scope && (
+            <SearchBar
+              disabled={!searchSeed}
+              onOpen={() => setSearchOpen(true)}
+            />
+          )
+        }
+        notices={
+          <>
+            {!workspace.workspace && activeRuns.length > 0 && (
+              <section
+                className="run-strip"
+                aria-label={t("Execution and cancellation")}
+              >
+                {activeRuns.map((r) => (
+                  <div className="run-strip-row" key={r.runId}>
+                    <span className="status-dot busy" aria-hidden="true" />
+                    <span className="run-strip-label">
+                      {tx(r.kind)} {r.runId} · {tx(r.stage)}
+                    </span>
+                    <button type="button" onClick={() => selectTask(r.taskId)}>
+                      {t("Open active task")}
+                    </button>
                     <button
                       type="button"
-                      disabled={chats.loading}
-                      onClick={chats.previous}
+                      className="danger"
+                      disabled={
+                        !workspace.cancelCompatible || canceling.has(r.runId)
+                      }
+                      onClick={() => cancel(r.runId)}
                     >
-                      {t("Newer conversations")}
+                      <FiSquare aria-hidden="true" />
+                      {t("Cancel run — request stop")}
                     </button>
-                  )}
-                  {chats.value?.next && (
-                    <button
-                      type="button"
-                      disabled={chats.loading}
-                      onClick={chats.next}
-                    >
-                      {t("Older conversations")}
-                    </button>
-                  )}
-                  {chats.canPrevious && (
-                    <button type="button" onClick={chats.first}>
-                      {t("Latest conversations")}
-                    </button>
-                  )}
-                  {chats.error && (
-                    <button type="button" onClick={chats.refresh}>
-                      {t("Observe current state")}
-                    </button>
-                  )}
-                </>
-              }
-              conversationId={chatId}
-              onConversation={selectChat}
-              onNewConversation={() => selectChat()}
-              workflows={background?.runs}
-              workflowLinks={background?.links}
-              workflowError={!!workflowActivity.error}
-              selectedWorkflow={agent?.runId}
-              onWorkflow={(run, conversationId) => {
-                if (conversationId) selectChat(conversationId);
-                else {
-                  setAgent({ runId: run.id, stepId: null, label: run.goal });
-                  closeDrawer();
-                }
-              }}
-              onCancelWorkflow={async (run) => {
-                const code = await cancelWorkflow(api.client, run);
-                if (code) setError(code);
-                workflowActivity.refresh();
-              }}
-              onTask={selectTask}
-              onScope={selectScope}
-            />
-          )}
-          {workspace.workspace && (
-            <AgentDock
-              client={api.client}
-              active={workspace.activeRuns}
-              taskId={taskId}
-              runs={runs}
-              snapshot={snapshotSeq}
-              workflowRuns={workflowIds}
-              selected={agent}
-              onOpenWorkflow={(next) => {
-                setAgent(next);
-                closeDrawer();
-              }}
-              onOpen={(parent, child, snapshot, label) => {
-                selectTask(parent);
-                setScope({ kind: "child", id: child });
-                setScopeTitle(label);
-                setSelectedSnapshot(snapshot);
-                history.replaceState(
-                  null,
-                  "",
-                  historyUrl(parent, undefined, {
-                    scope: { kind: "child", id: child },
-                    snapshotSeq: snapshot,
-                  }),
-                );
-              }}
-            />
-          )}
-        </section>
-        <ResizeHandle
-          side="left"
-          width={panels.left}
-          maximum={panels.leftMaximum}
-          onResize={(width) => panels.resize("left", width)}
-        />
-        <main className="main" inert={drawer !== null}>
-          {chatId && project && !projectObserved && (
-            <p className="panel-empty" role="status">
-              {t("Reading this conversation…")}
-            </p>
-          )}
-          {agent && (
-            <WorkflowAgentView
-              key={`${agent.runId}:${agent.stepId ?? ""}`}
-              client={api.client}
-              agent={agent}
-              backLabel={
-                chatId
-                  ? t("Back to conversation")
-                  : taskId
-                    ? t("Back to task")
-                    : t("Back")
-              }
-              onBack={() => setAgent(null)}
-              onOpenAgent={setAgent}
-            />
-          )}
-          {chatId && (!project || projectObserved) && (
-            <ChatWorkspace
-              key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}:${activitySelection.leaf ?? ""}`}
-              client={api.client}
-              id={chatId}
-              activitySelected={activitySelection.selected}
-              initialLeaf={activitySelection.leaf}
-              initialCwd={initialCwd}
-              onLocation={setChatLocation}
-              hidden={!!agent}
-              onOpenAgent={setAgent}
-              onWorkflowRuns={setChatRuns}
-              workspaceId={
-                project
-                  ? `checkout:${project.path}`
-                  : (chatWorkspace.current ?? "connecting")
-              }
-              directoryNamespaces={directoryNamespaces}
-              legacyWorkspaceId={
-                project
-                  ? (execution.value?.workspaceId ?? undefined)
-                  : undefined
-              }
-              prepareForSend={prepareSend}
-              actionsReady={
-                executionReady &&
-                !!workspace.workspace &&
-                !!workspace.compatible &&
-                !workspace.error &&
-                viewerFresh
-              }
-              available={conversationAvailable}
-              canInterrupt={!!workspace.cancelCompatible}
-              enabled={
-                prepareSend
-                  ? conversationAvailable
-                  : !!workspace.workspace &&
-                    !!workspace.compatible &&
-                    !workspace.error
-              }
-              modelAvailability={modelAvailability}
-              previewModels={previewModels}
-              initialModel={
-                initialModel?.conversationId === chatId
-                  ? initialModel.model
-                  : undefined
-              }
-              onModelChanged={() => {
-                lifetime.current.depart();
-                workspace.refresh(true);
-                execution.refresh();
-              }}
-              onChanged={() => {
-                chats.refresh();
-                workspace.refresh();
-              }}
-              reference={reference}
-              onReferenceUsed={clearReference}
-            />
-          )}
-          {scope && !agent && (
-            <header className="conversation-header">
-              <div className="conversation-heading">
-                {scope.kind !== "task" && taskId && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => selectTask(taskId, taskTitle)}
-                  >
-                    {t("Back to task")}
-                  </button>
-                )}
-
-                <h2 title={taskTitle || scope.id}>
-                  {scope.kind === "task"
-                    ? taskTitle || t("Task {id}", { id: scope.id.slice(0, 8) })
-                    : scopeTitle ||
-                      t("{kind} {id}", {
-                        kind: tx(scope.kind),
-                        id: scope.id.slice(0, 8),
-                      })}
-                </h2>
-                {scope.kind === "child" && (
-                  <span className="conversation-badge">{t("Subagent")}</span>
-                )}
-              </div>
-              <details className="conversation-info">
-                <summary>
-                  {t("Recorded conversation")} ·{" "}
-                  {t("snapshot {seq}", { seq: snapshotSeq ?? "" })}
-                </summary>
-                <code>{scope.id}</code>
-                <p>
-                  {t(
-                    "Pages and old outcomes are historical observations, not renewed consent.",
-                  )}
-                </p>
-              </details>
-            </header>
-          )}
-          <div className="workspace-content" hidden={!!chatId || !!agent}>
-            {!seed && (
-              <section className="empty-state">
-                <span className="empty-logo" aria-hidden="true">
-                  C
-                </span>
-                <h2>
-                  {workspace.error
-                    ? t("Recorded history could not be read.")
-                    : t("Reading recorded history…")}
-                </h2>
-                <p>
-                  {t(
-                    "History is readonly. Start new work in a conversation with /cadence.",
-                  )}
-                </p>
+                  </div>
+                ))}
               </section>
             )}
-            {seed && detail ? (
-              <div className="tab-body">
-                {hit &&
-                  (hit.owner.entity.kind === "task" ||
-                    hit.owner.entity.kind === "message" ||
-                    hit.owner.entity.kind === "tool") && (
-                    <EntityPane
-                      key={`${hit.owner.entity.id}:${hit.owner.entity.version}`}
-                      client={api.client}
-                      seed={{
-                        storeId: detail.storeId,
-                        scope: detail.scope,
-                        snapshotSeq: detail.snapshotSeq,
-                        kind: hit.owner.entity.kind,
-                        id: hit.owner.entity.id,
-                        version: hit.owner.entity.version,
-                      }}
-                    />
-                  )}
-                <DetailPane
-                  key={`${detail.recordId}:${detail.recordVersion}`}
-                  client={api.client}
-                  cursor={detail}
-                  highlight={hit?.range}
-                />
-              </div>
-            ) : (
-              seed && (
-                <div
-                  key={`${scope?.kind}:${scope?.id}:${selectedSnapshot ?? "current"}`}
-                  className={
-                    tab === "messages" || tab === "tools"
-                      ? "tab-body transcript-body"
-                      : "tab-body"
+            {notices}
+            <WorkspaceNotice
+              error={error}
+              projectObservationError={execution.error}
+              observationError={workspace.error}
+              unavailable={
+                !connecting && !executionStopped && !observationFresh
+              }
+              onRefresh={() => {
+                workspace.refresh();
+                execution.refresh();
+              }}
+            />
+          </>
+        }
+        navigation={
+          <>
+            {!conversationAvailable && (
+              <aside className="panel panel-left lp-panel">
+                {discovery && <ActivityList {...discovery} />}
+                <p className="panel-empty" role="status">
+                  {connecting
+                    ? t("Reading conversation history…")
+                    : t(
+                        "Conversation history could not be read. This is not an empty history.",
+                      )}
+                </p>
+              </aside>
+            )}
+            {conversationAvailable && (
+              <TaskSidebar
+                discovery={discovery}
+                client={api.client}
+                workspace={workspace.workspace}
+                executionStopped={executionStopped}
+                taskId={taskId}
+                scope={scope}
+                runs={runs}
+                snapshot={observation.state?.snapshot.committedSeq}
+                activeRuns={workspace.activeRuns}
+                cancelCompatible={!!workspace.cancelCompatible}
+                canceling={canceling}
+                onCancel={cancel}
+                chats={chatEntries}
+                chatActivityKnown={
+                  chatActivity.value?.kind === "conversation-active" &&
+                  !chatActivity.error
+                }
+                chatHistoryPartial={
+                  chats.loading || chats.canPrevious || !!chats.value?.next
+                }
+                chatHistoryControls={
+                  <>
+                    {chats.error && <p role="alert">{chats.error}</p>}
+                    {chats.loading && (
+                      <p className="panel-hint">
+                        {t("Reading conversation history…")}
+                      </p>
+                    )}
+                    {chats.canPrevious && (
+                      <button
+                        type="button"
+                        disabled={chats.loading}
+                        onClick={chats.previous}
+                      >
+                        {t("Newer conversations")}
+                      </button>
+                    )}
+                    {chats.value?.next && (
+                      <button
+                        type="button"
+                        disabled={chats.loading}
+                        onClick={chats.next}
+                      >
+                        {t("Older conversations")}
+                      </button>
+                    )}
+                    {chats.canPrevious && (
+                      <button type="button" onClick={chats.first}>
+                        {t("Latest conversations")}
+                      </button>
+                    )}
+                    {chats.error && (
+                      <button type="button" onClick={chats.refresh}>
+                        {t("Observe current state")}
+                      </button>
+                    )}
+                  </>
+                }
+                conversationId={chatId}
+                onConversation={selectChat}
+                onNewConversation={() => selectChat()}
+                workflows={background?.runs}
+                workflowLinks={background?.links}
+                workflowError={!!workflowActivity.error}
+                selectedWorkflow={agent?.runId}
+                onWorkflow={(run, conversationId) => {
+                  if (conversationId) selectChat(conversationId);
+                  else {
+                    setAgent({ runId: run.id, stepId: null, label: run.goal });
+                    closeDrawer();
                   }
-                >
-                  {tab === "messages" && (
-                    <MessageList client={api.client} seed={seed} />
+                }}
+                onCancelWorkflow={async (run) => {
+                  const code = await cancelWorkflow(api.client, run);
+                  if (code) setError(code);
+                  workflowActivity.refresh();
+                }}
+                onTask={selectTask}
+                onScope={selectScope}
+              />
+            )}
+            {workspace.workspace && (
+              <AgentDock
+                client={api.client}
+                active={workspace.activeRuns}
+                taskId={taskId}
+                runs={runs}
+                snapshot={snapshotSeq}
+                workflowRuns={workflowIds}
+                selected={agent}
+                onOpenWorkflow={(next) => {
+                  setAgent(next);
+                  closeDrawer();
+                }}
+                onOpen={(parent, child, snapshot, label) => {
+                  selectTask(parent);
+                  setScope({ kind: "child", id: child });
+                  setScopeTitle(label);
+                  setSelectedSnapshot(snapshot);
+                  history.replaceState(
+                    null,
+                    "",
+                    historyUrl(parent, undefined, {
+                      scope: { kind: "child", id: child },
+                      snapshotSeq: snapshot,
+                    }),
+                  );
+                }}
+              />
+            )}
+          </>
+        }
+        content={
+          <>
+            {chatId && project && !projectObserved && (
+              <p className="panel-empty" role="status">
+                {t("Reading this conversation…")}
+              </p>
+            )}
+            {agent && (
+              <WorkflowAgentView
+                key={`${agent.runId}:${agent.stepId ?? ""}`}
+                client={api.client}
+                agent={agent}
+                backLabel={
+                  chatId
+                    ? t("Back to conversation")
+                    : taskId
+                      ? t("Back to task")
+                      : t("Back")
+                }
+                onBack={() => setAgent(null)}
+                onOpenAgent={setAgent}
+              />
+            )}
+            {chatId && (!project || projectObserved) && (
+              <ChatWorkspace
+                key={`${project?.id ?? chatWorkspace.current ?? "connecting"}:${chatId}:${activitySelection.leaf ?? ""}`}
+                client={api.client}
+                id={chatId}
+                activitySelected={activitySelection.selected}
+                initialLeaf={activitySelection.leaf}
+                initialCwd={initialCwd}
+                onLocation={setChatLocation}
+                hidden={!!agent}
+                onOpenAgent={setAgent}
+                onWorkflowRuns={setChatRuns}
+                workspaceId={
+                  project
+                    ? `checkout:${project.path}`
+                    : (chatWorkspace.current ?? "connecting")
+                }
+                directoryNamespaces={directoryNamespaces}
+                legacyWorkspaceId={
+                  project
+                    ? (execution.value?.workspaceId ?? undefined)
+                    : undefined
+                }
+                prepareForSend={prepareSend}
+                actionsReady={
+                  executionReady &&
+                  !!workspace.workspace &&
+                  !!workspace.compatible &&
+                  !workspace.error &&
+                  viewerFresh
+                }
+                available={conversationAvailable}
+                canInterrupt={!!workspace.cancelCompatible}
+                enabled={
+                  prepareSend
+                    ? conversationAvailable
+                    : !!workspace.workspace &&
+                      !!workspace.compatible &&
+                      !workspace.error
+                }
+                modelAvailability={modelAvailability}
+                previewModels={previewModels}
+                initialDraft={
+                  initialDraft?.conversationId === chatId
+                    ? initialDraft
+                    : undefined
+                }
+                onDraftApplied={() => onDraftApplied?.(chatId)}
+                onModelChanged={() => {
+                  lifetime.current.depart();
+                  workspace.refresh(true);
+                  execution.refresh();
+                }}
+                onChanged={() => {
+                  chats.refresh();
+                  workspace.refresh();
+                }}
+                reference={reference}
+                onReferenceUsed={clearReference}
+              />
+            )}
+            {scope && !agent && (
+              <header className="conversation-header">
+                <div className="conversation-heading">
+                  {scope.kind !== "task" && taskId && (
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => selectTask(taskId, taskTitle)}
+                    >
+                      {t("Back to task")}
+                    </button>
                   )}
-                  {tab === "tools" && <Tools client={api.client} seed={seed} />}
-                  {tab === "context" && (
-                    <ContentExplorer client={api.client} seed={seed} />
-                  )}
-                  {tab === "timeline" && (
-                    <TimelineView
-                      client={api.client}
-                      seed={seed}
-                      onSearch={() => setSearchOpen(true)}
-                    />
-                  )}
-                  {tab === "runs" && (
-                    <>
-                      <section className="run-current">
-                        <h3>{t("Runs in the current snapshot")}</h3>
-                        {runs.length > 0 ? (
-                          runs.map((r) => (
-                            <RunSummary key={r.childRunId ?? r.runId} run={r} />
-                          ))
-                        ) : (
-                          <p className="panel-empty">
-                            {current && observation.state
-                              ? t("No owner run projection in this snapshot.")
-                              : t(
-                                  "No snapshot observed yet; absence is not proof of settlement.",
-                                )}
-                          </p>
-                        )}
-                      </section>
-                      <h3>{t("Retained runs")}</h3>
-                      <RunBrowser
-                        key={taskId}
-                        client={api.client}
-                        seed={{
-                          ...seed,
-                          scope: { kind: "task", id: taskId ?? seed.scope.id },
-                        }}
-                        onScope={selectScope}
-                      />
-                    </>
+
+                  <h2 title={taskTitle || scope.id}>
+                    {scope.kind === "task"
+                      ? taskTitle ||
+                        t("Task {id}", { id: scope.id.slice(0, 8) })
+                      : scopeTitle ||
+                        t("{kind} {id}", {
+                          kind: tx(scope.kind),
+                          id: scope.id.slice(0, 8),
+                        })}
+                  </h2>
+                  {scope.kind === "child" && (
+                    <span className="conversation-badge">{t("Subagent")}</span>
                   )}
                 </div>
-              )
+                <details className="conversation-info">
+                  <summary>
+                    {t("Recorded conversation")} ·{" "}
+                    {t("snapshot {seq}", { seq: snapshotSeq ?? "" })}
+                  </summary>
+                  <code>{scope.id}</code>
+                  <p>
+                    {t(
+                      "Pages and old outcomes are historical observations, not renewed consent.",
+                    )}
+                  </p>
+                </details>
+              </header>
             )}
-          </div>
-          {workspace.workspace && receipts.length > 0 && (
-            <div className="receipt-dock">
-              {receipts.map((receipt) => (
-                <ReceiptPanel
-                  key={receipt.commandId}
-                  client={api.client}
-                  value={receipt}
-                  onChange={setReceipt}
-                />
-              ))}
+            <div className="workspace-content" hidden={!!chatId || !!agent}>
+              {!seed && (
+                <section className="empty-state">
+                  <span className="empty-logo" aria-hidden="true">
+                    C
+                  </span>
+                  <h2>
+                    {workspace.error
+                      ? t("Recorded history could not be read.")
+                      : t("Reading recorded history…")}
+                  </h2>
+                  <p>
+                    {t(
+                      "History is readonly. Start new work in a conversation with /cadence.",
+                    )}
+                  </p>
+                </section>
+              )}
+              {seed && detail ? (
+                <div className="tab-body">
+                  {hit &&
+                    (hit.owner.entity.kind === "task" ||
+                      hit.owner.entity.kind === "message" ||
+                      hit.owner.entity.kind === "tool") && (
+                      <EntityPane
+                        key={`${hit.owner.entity.id}:${hit.owner.entity.version}`}
+                        client={api.client}
+                        seed={{
+                          storeId: detail.storeId,
+                          scope: detail.scope,
+                          snapshotSeq: detail.snapshotSeq,
+                          kind: hit.owner.entity.kind,
+                          id: hit.owner.entity.id,
+                          version: hit.owner.entity.version,
+                        }}
+                      />
+                    )}
+                  <DetailPane
+                    key={`${detail.recordId}:${detail.recordVersion}`}
+                    client={api.client}
+                    cursor={detail}
+                    highlight={hit?.range}
+                  />
+                </div>
+              ) : (
+                seed && (
+                  <div
+                    key={`${scope?.kind}:${scope?.id}:${selectedSnapshot ?? "current"}`}
+                    className={
+                      tab === "messages" || tab === "tools"
+                        ? "tab-body transcript-body"
+                        : "tab-body"
+                    }
+                  >
+                    {tab === "messages" && (
+                      <MessageList client={api.client} seed={seed} />
+                    )}
+                    {tab === "tools" && (
+                      <Tools client={api.client} seed={seed} />
+                    )}
+                    {tab === "context" && (
+                      <ContentExplorer client={api.client} seed={seed} />
+                    )}
+                    {tab === "timeline" && (
+                      <TimelineView
+                        client={api.client}
+                        seed={seed}
+                        onSearch={() => setSearchOpen(true)}
+                      />
+                    )}
+                    {tab === "runs" && (
+                      <>
+                        <section className="run-current">
+                          <h3>{t("Runs in the current snapshot")}</h3>
+                          {runs.length > 0 ? (
+                            runs.map((r) => (
+                              <RunSummary
+                                key={r.childRunId ?? r.runId}
+                                run={r}
+                              />
+                            ))
+                          ) : (
+                            <p className="panel-empty">
+                              {current && observation.state
+                                ? t("No owner run projection in this snapshot.")
+                                : t(
+                                    "No snapshot observed yet; absence is not proof of settlement.",
+                                  )}
+                            </p>
+                          )}
+                        </section>
+                        <h3>{t("Retained runs")}</h3>
+                        <RunBrowser
+                          key={taskId}
+                          client={api.client}
+                          seed={{
+                            ...seed,
+                            scope: {
+                              kind: "task",
+                              id: taskId ?? seed.scope.id,
+                            },
+                          }}
+                          onScope={selectScope}
+                        />
+                      </>
+                    )}
+                  </div>
+                )
+              )}
             </div>
-          )}
-        </main>
-        <ResizeHandle
-          side="right"
-          width={panels.right}
-          maximum={panels.rightMaximum}
-          onResize={(width) => panels.resize("right", width)}
-        />
-        <section
-          className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
-          aria-label={t("Files and history drawer")}
-          tabIndex={-1}
-          inert={mobile ? drawer !== "right" : !panels.inspector}
-        >
+            {workspace.workspace && receipts.length > 0 && (
+              <div className="receipt-dock">
+                {receipts.map((receipt) => (
+                  <ReceiptPanel
+                    key={receipt.commandId}
+                    client={api.client}
+                    value={receipt}
+                    onChange={setReceipt}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        }
+        inspector={
           <div className="workbench-right">
             <nav className="rp-tabs" aria-label={t("Workspace panels")}>
               <button
@@ -1396,84 +1215,86 @@ export function App({
               </p>
             )}
           </div>
-        </section>
-      </div>
-      <footer className="statusbar">
-        <div className="statusbar-left">
-          <span
-            className="status-item"
-            role="status"
-            title={t("Connection freshness is not execution outcome.")}
-          >
+        }
+        status={
+          <>
             <span
-              className={`status-dot ${
-                connecting
-                  ? "busy"
-                  : executionStopped
-                    ? ""
-                    : !observationFresh || !workspace.workspace
-                      ? "error"
-                      : observation.transportStatus !== "current"
-                        ? "busy"
-                        : !observation.state
-                          ? ""
-                          : observation.state.connection === "current"
-                            ? "ok"
-                            : "busy"
-              }`}
-              aria-hidden="true"
-            />
-            {tx(connection)}
-          </span>
-          {project && (
-            <span className="status-item faint">
-              {t("Execution service: {status}", {
-                status: tx(execution.readiness),
-              })}
+              className="status-item"
+              role="status"
+              title={t("Connection freshness is not execution outcome.")}
+            >
+              <span
+                className={`status-dot ${
+                  connecting
+                    ? "busy"
+                    : executionStopped
+                      ? ""
+                      : !observationFresh || !workspace.workspace
+                        ? "error"
+                        : observation.transportStatus !== "current"
+                          ? "busy"
+                          : !observation.state
+                            ? ""
+                            : observation.state.connection === "current"
+                              ? "ok"
+                              : "busy"
+                }`}
+                aria-hidden="true"
+              />
+              {tx(connection)}
             </span>
-          )}
-          {roster?.status === "complete"
-            ? activeRuns.length > 0 && (
-                <span className="status-item warn">
-                  {t(
-                    !observationFresh
-                      ? "Last observed: {count} active runs"
-                      : activeRuns.length === 1
-                        ? "{count} active run"
-                        : "{count} active runs",
-                    { count: activeRuns.length },
-                  )}
-                </span>
-              )
-            : !connecting &&
-              !executionStopped && (
-                <span className="status-item faint">
-                  {t(
-                    "Active roster unavailable; absence is not proof of settlement.",
-                  )}
-                </span>
-              )}
-        </div>
-        <div className="statusbar-right">
-          {(workspace.workspace || project) && (
-            <WorkingFolderButton
-              path={workingFolder}
-              onClick={() =>
-                onChooseFolder
-                  ? onChooseFolder(workingFolder)
-                  : setProjectOpen("")
-              }
-            />
-          )}
-          {workspace.compatible === false && (
-            <span className="status-item warn">
-              {t(
-                "unavailable / mismatch — reload built assets; normal actions disabled",
-              )}
-            </span>
-          )}
-        </div>
-      </footer>
+            {project && (
+              <span className="status-item faint">
+                {t("Execution service: {status}", {
+                  status: tx(execution.readiness),
+                })}
+              </span>
+            )}
+            {roster?.status === "complete"
+              ? activeRuns.length > 0 && (
+                  <span className="status-item warn">
+                    {t(
+                      !observationFresh
+                        ? "Last observed: {count} active runs"
+                        : activeRuns.length === 1
+                          ? "{count} active run"
+                          : "{count} active runs",
+                      { count: activeRuns.length },
+                    )}
+                  </span>
+                )
+              : !connecting &&
+                !executionStopped && (
+                  <span className="status-item faint">
+                    {t(
+                      "Active roster unavailable; absence is not proof of settlement.",
+                    )}
+                  </span>
+                )}
+          </>
+        }
+        folder={
+          <>
+            {(workspace.workspace || project) && (
+              <WorkingFolderButton
+                path={workingFolder}
+                onClick={() =>
+                  onChooseFolder
+                    ? onChooseFolder(workingFolder)
+                    : setProjectOpen("")
+                }
+              />
+            )}
+            {workspace.compatible === false && (
+              <span className="status-item warn">
+                {t(
+                  "unavailable / mismatch — reload built assets; normal actions disabled",
+                )}
+              </span>
+            )}
+          </>
+        }
+      />
       {projectOpen !== null && workspace.workspace && (
         <ProjectPicker
           onOpen={onOpenProject}
@@ -1484,7 +1305,7 @@ export function App({
           client={api.client}
           current={workingFolder ?? workspace.workspace.rootLabel}
           initial={projectOpen || undefined}
-          home={workbenchHome}
+          home={homeFolder}
           epoch={workspace.workspace.epoch}
           onClose={() => setProjectOpen(null)}
         />
@@ -1521,7 +1342,7 @@ export function App({
           onClose={() => setExportOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 }
 function Tools({

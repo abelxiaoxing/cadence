@@ -43,7 +43,8 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
 
 1. Open the printed link once; the browser then remembers you.
    If you lose it, `cadence token-link --reveal` prints it again.
-2. Choose a project folder with the lower-right folder button.
+2. Choose a working folder with the lower-right button; recent folders are in the same picker.
+   First use offers this choice directly in the conversation; later visits restore your last available folder.
    Saved model preferences are reused on Send; choose once if none is available.
 3. Send `/cadence [goal]` once to enter Cadence in this conversation; continue with normal messages to investigate and clarify requirements.
 4. Review the complete inline plan and click **Implement this plan** (or send `按计划实施`).
@@ -81,8 +82,9 @@ cadence project open /absolute/project
 cadence project open /absolute/new-project --create
 ```
 
-Each project gets its own owner, port and history, and the command prints its private link; the WebUI folder picker opens projects the same way.
-Opening another project never stops work in the previous one.
+Each project gets its own owner, port and history, and the command prints its private link.
+In the WebUI, selecting a folder only changes the conversation context; Send starts or reuses its owner when needed.
+Switching folders never stops work in the previous one.
 
 ### Checks
 

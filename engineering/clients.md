@@ -99,8 +99,15 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
 Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
-The unified browser entry opens on the conversation shell, without an execution cwd, SDK session or default workspace.
-Choose a working folder from the lower-right button; before a folder is selected, New conversation offers the same picker and Send stays disabled.
+The browser has one folder-first conversation interface, not a workbench/project home or a return-to-home action.
+The lower-right folder button is the persistent directory switcher; its picker holds recent folders on the service host.
+A complete project/conversation link wins over browser preferences; otherwise entry restores the last associated readable folder, even when its execution owner is stopped.
+First use, a missing folder or failed restoration stays in that same shell with an inline Choose a folder action, not a project list or a fabricated default directory.
+Before selection, New conversation opens the same picker; text and model preselection are local draft input, and Send stays disabled.
+An unfinished first-use draft waits for an explicit directory choice rather than restoring another folder over it.
+Only that explicit choice hands the draft to a freshly identified conversation, persisting its exact directory namespace before history loads; activity links and restoration never inject it into existing sessions.
+No draft handoff is a Send intent, pending command, model installation or execution consent; blocked browser storage retains the in-memory handoff and a failed persistence attempt does not delete the stored source.
+The target retires that initialization handoff after mounting, so returning to a conversation cannot resurrect its already-used text or model when browser storage is unavailable.
 Directory selection only remembers its canonical reference; it starts no service, creates no project-private state and requires no Pi login.
 The current explicit Send prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh compatible attachment.
@@ -152,7 +159,7 @@ The child creates no owner, AgentSession, tools, project state, auth refresh or 
 Identical concurrent inputs share one original through actual native close; no SDK runtime, credential snapshot or result cache remains in the gateway afterward.
 Reopening a preview picker reuses its already-read, source-scoped browser view; Refresh models explicitly reads it again, while live installation retains fresh catalog/version checks.
 The preview and live owner share `model-catalog.ts` projection/validation, capability rules, credential redaction and limits; changed source files across discovery refuse the read.
-Preview choices are local draft intent, persisted with the conversation's text draft where browser storage works; the entry's choice belongs only to the next explicitly opened new conversation, not an existing/linked conversation.
+Preview choices are local draft intent, persisted with the conversation's text draft where browser storage works; folder setup uses the same explicit new-conversation handoff described above, not an existing/linked conversation.
 A stopped project's retained conversation model precedes the account default.
 Preview candidates are configuration observations, never a claim of provider availability or an installed choice.
 Send captures that exact preselection before startup, checks it against the live catalog and installs only that choice through the existing conversation-bound model command.
@@ -189,7 +196,10 @@ A token grants workspace access, not action consent.
 Ordinary Send binds its exact text, session entry it continues, conversation/cwd, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
-Its chrome is conversation-first: a compact topbar, collapsible conversation navigation, transcript/tool cards and a bottom statusbar; the inspector is closed by default, including before a project is selected.
+`web/src/layout/AppShell.tsx` owns the one shared topbar, More menu, navigation/files panes, resizing, focus-contained drawers and statusbar for both folder setup and selected conversations.
+Its chrome is conversation-first: a compact topbar, collapsible conversation navigation, transcript/tool cards and a bottom statusbar; the inspector is closed by default, including before a folder is selected.
+`FolderSetup.tsx` supplies only initial input and guidance; the superseded `WorkbenchHome` and its project-list navigation are removed.
+Cross-folder active work remains in the existing sidebar discovery, and service management remains in More, not a separate home.
 Desktop navigation/inspector visibility and widths are display-only browser preferences, written on explicit choices, never service state.
 `web/src/layout/workspace-layout.ts` owns the shared pane bounds and center-space budget: a narrow desktop overlays the inspector rather than squeezing the conversation, and both pointer and keyboard resizing account for the other docked pane.
 Effective widths shrink without overwriting wider-window preferences; phones use independent drawers, and overlays retain focus containment, Escape, a backdrop and inert covered content.

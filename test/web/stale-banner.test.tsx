@@ -113,6 +113,8 @@ it.each(["en", "zh"] as const)(
       /<section class="chat-workspace"[\s\S]*?<\/section>/,
     )?.[0];
     expect(conversation).toBeDefined();
+    expect(html).not.toMatch(/Workbench projects|工作台项目|workbench-entry/);
+    expect(html.match(/class="status-cwd"/g)).toHaveLength(1);
     expect(conversation).toContain('class="conversation-header"');
     expect(conversation).not.toContain("conversation-cwd");
     expect(conversation).not.toContain(

@@ -25,8 +25,8 @@ import {
   ChatTurnView,
   ChatWorkspace,
 } from "../../web/src/components/workspace/ChatWorkspace";
+import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker";
-import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
 import { WorkingFolderButton } from "../../web/src/components/workspace/WorkingFolderButton";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { transport } from "./fixtures";
@@ -253,17 +253,17 @@ it("each omitted content kind gets its own line and a title when no tool ran", (
   expect(other).not.toContain("Media is not retained.");
 });
 
-it("the project-less entry is a conversation shell with one central Open action and navigation at bottom right, not a project landing page", () => {
+it("folder setup uses the conversation shell, keeps input editable and cannot send or start work", () => {
   const open = vi.fn();
   const html = renderToStaticMarkup(
-    <WorkbenchHome ready onOpenFolder={open} />,
+    <FolderSetup ready onChooseFolder={open} onRefresh={open} />,
   );
   expect(html).toContain('class="panel panel-left lp-panel"');
-  // One central action opens the folder picker; no duplicate sidebar entry.
+  // First-use guidance and New conversation open the same folder picker.
   expect(html).toMatch(
     /class="primary welcome-action"[^>]*>.*Choose a folder…/,
   );
-  expect(html).not.toContain("New conversation");
+  expect(html).toContain("New conversation");
   expect(html).toContain("Conversation history");
   expect(html).toContain(
     "Choose a working folder to see its conversation history.",
@@ -271,13 +271,16 @@ it("the project-less entry is a conversation shell with one central Open action 
   expect(html).not.toContain("No conversations yet.");
   expect(html).toContain("What would you like to work on?");
   expect(html).toContain('class="panel files-panel"');
-  expect(html).toMatch(/<textarea disabled="" aria-label="Message"/);
+  expect(html).toMatch(/<textarea aria-label="Message"/);
+  expect(html).not.toMatch(/<textarea[^>]*disabled/);
+  expect(html).toMatch(/<button[^>]*class="primary"[^>]*disabled=""/);
   expect(html).toMatch(
     /class="statusbar-right".*aria-label="Switch working folder"/,
   );
   for (const label of [
+    "Workbench projects",
     "Your workbench, your projects",
-    "Recent projects",
+    "Recent folders",
     "Create task",
     "No active runs",
   ])
@@ -285,11 +288,12 @@ it("the project-less entry is a conversation shell with one central Open action 
   expect(open).not.toHaveBeenCalled();
   const chinese = renderToStaticMarkup(
     <LocaleProvider initial="zh">
-      <WorkbenchHome ready onOpenFolder={open} />
+      <FolderSetup ready onChooseFolder={open} onRefresh={open} />
     </LocaleProvider>,
   );
   expect(chinese).toContain("选择目录…");
-  expect(chinese).toContain("选择工作目录后即可开始对话");
+  expect(chinese).toContain("选择工作文件夹即可开始，也可以先在下方写草稿");
+  expect(chinese).toContain("发送前请选择文件夹");
   // The welcome and the composer no longer point in different directions.
   expect(chinese).not.toContain("右下角");
   expect(chinese).not.toContain("从左侧");
@@ -324,7 +328,7 @@ it("folder navigation keeps the full current path and recent choices in the pick
       onOpen={open}
     />,
   );
-  expect(picker).toContain('aria-label="Recent projects"');
+  expect(picker).toContain('aria-label="Recent folders"');
   expect(picker).toContain('aria-current="true"');
   expect(picker).toContain("/projects/b");
   expect(picker).toContain('title="Open /projects/b"');
@@ -350,61 +354,38 @@ it("folder navigation keeps the full current path and recent choices in the pick
   expect(chinese).not.toContain("浏览");
 });
 
-it("the entry sidebar explains per-project history and lists recent projects without opening one on render", () => {
+it("restoration and missing-folder guidance stay inside the conversation, without a project list or fallback directory", () => {
   const open = vi.fn();
-  const projects = ["/work/alpha", "/work/beta & co"];
-  const html = renderToStaticMarkup(
-    <WorkbenchHome ready projects={projects} onOpenFolder={open} />,
-  );
-  expect(html).toContain(
-    "Conversations stay with their folder. Select one to read its history; Send prepares execution.",
-  );
-  expect(html).toMatch(
-    /class="session-item project-item" title="\/work\/alpha".*>alpha<.*\/work\/alpha</,
-  );
-  expect(html).toContain("beta &amp; co");
-  expect(html).not.toContain("Recent projects");
-  expect(open).not.toHaveBeenCalled();
   const checking = renderToStaticMarkup(
-    <WorkbenchHome
+    <FolderSetup
       ready
-      projects={projects}
       restore={{ status: "checking", path: "/work/alpha" }}
-      onOpenFolder={open}
+      onChooseFolder={open}
+      onRefresh={open}
     />,
   );
-  expect(checking).toContain("Returning to your last project alpha…");
-  const stopped = renderToStaticMarkup(
+  expect(checking).toContain("Returning to your last folder /work/alpha…");
+  expect(checking).not.toContain("project-item");
+  expect(checking).not.toContain("Recent folders");
+  const unavailable = renderToStaticMarkup(
     <LocaleProvider initial="zh">
-      <WorkbenchHome
+      <FolderSetup
         ready
-        projects={projects}
         restore={{ status: "unavailable", path: "/work/alpha" }}
-        onOpenFolder={open}
+        onChooseFolder={open}
+        onRefresh={open}
       />
     </LocaleProvider>,
   );
-  expect(stopped).toContain("无法读取 alpha 的历史会话");
-  expect(stopped).toContain("历史会话");
+  expect(unavailable).toContain("无法恢复 /work/alpha");
+  expect(unavailable).toContain("没有启动任何服务");
+  expect(unavailable).toContain("历史会话");
+  expect(unavailable).not.toContain("工作台");
   const loading = renderToStaticMarkup(
-    <WorkbenchHome ready={false} projects={projects} onOpenFolder={open} />,
+    <FolderSetup ready={false} onChooseFolder={open} onRefresh={open} />,
   );
-  expect(loading).toMatch(
-    /<button type="button" class="session-item project-item"[^>]*disabled=""/,
-  );
-  // While one recent project opens, every entry waits and that one says so.
-  const opening = renderToStaticMarkup(
-    <WorkbenchHome
-      ready
-      projects={projects}
-      opening="/work/alpha"
-      onOpenFolder={open}
-      onOpenProject={open}
-    />,
-  );
-  expect(opening).toContain("Selecting folder…");
-  expect(opening).toMatch(/aria-busy="true"/);
-  expect(opening.match(/project-item"[^>]*disabled=""/g)?.length).toBe(2);
+  expect(loading).toMatch(/class="primary welcome-action"[^>]*disabled=""/);
+  expect(loading).toMatch(/class="status-cwd"[^>]*disabled=""/);
   expect(open).not.toHaveBeenCalled();
 });
 
@@ -727,26 +708,34 @@ it.each([false, true])(
   },
 );
 
-it("the project-less shell already exposes the model choice while Send still requires a folder", () => {
+it("folder setup keeps a text draft and model preselection, never a Send intent", () => {
   const previewModels = vi.fn(),
-    onOpenFolder = vi.fn();
+    onChooseFolder = vi.fn(),
+    onDraftChange = vi.fn();
   const html = renderToStaticMarkup(
-    <WorkbenchHome
+    <FolderSetup
       ready
       previewModels={previewModels}
-      onOpenFolder={onOpenFolder}
-      model={{
-        provider: "fixture",
-        model: "preselected",
-        api: "openai-completions",
-        thinking: "high",
+      onChooseFolder={onChooseFolder}
+      onRefresh={() => {}}
+      onDraftChange={onDraftChange}
+      draft={{
+        text: "An unsent first message",
+        model: {
+          provider: "fixture",
+          model: "preselected",
+          api: "openai-completions",
+          thinking: "high",
+        },
       }}
-      onModelChoice={vi.fn()}
     />,
   );
   expect(html).toContain('aria-label="Model: preselected · High"');
-  expect(html).toContain("Choose a working folder to start chatting.");
+  expect(html).toMatch(/<textarea[^>]*>An unsent first message<\/textarea>/);
+  expect(html).not.toContain("<form");
+  expect(html).toContain("Choose a folder before sending.");
   expect(html).toMatch(/<button[^>]*class="primary"[^>]*disabled=""/);
-  expect(previewModels).not.toHaveBeenCalled(); // SSR never activates a read or work.
-  expect(onOpenFolder).not.toHaveBeenCalled();
+  expect(previewModels).not.toHaveBeenCalled();
+  expect(onChooseFolder).not.toHaveBeenCalled();
+  expect(onDraftChange).not.toHaveBeenCalled();
 });
