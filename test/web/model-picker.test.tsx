@@ -84,6 +84,10 @@ it("a bare public error code reads as a sentence that keeps the untranslated cod
     "服务暂时不可用（unavailable）。",
   );
   expect(describeError(t as never, "stale")).toContain("（stale）");
+  // A project's refused Pi sources are not a workbench outage.
+  expect(describeError(t as never, "corrupt-selected")).toBe(
+    "所选文件被拒绝（corrupt-selected），未做任何修改。运行 cadence doctor 查看是哪个文件和字段。",
+  );
   expect(describeError(t as never, "Send refused: stale")).toBe(
     "Send refused: stale",
   );

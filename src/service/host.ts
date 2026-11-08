@@ -38,7 +38,7 @@ import { ServiceCoordination } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
 import { processStart, stopProcessGroup } from "./liveness.ts";
 import { OwnerModelChoice } from "./model-choice.ts";
-import { piSource, readPiAuth, readPiModels } from "./model-config.ts";
+import { PiSourceRefusal } from "./model-config.ts";
 import { OwnerModelContext } from "./model-context.ts";
 import { ServiceOwner } from "./owner.ts";
 import { encoded, hash } from "./private-files.ts";
@@ -48,6 +48,7 @@ import {
   decodeHostInput,
   type HostInput,
   hostEnvironment,
+  preflightPi,
   readHostConfig,
   reselectable,
   StartupRefusal,
@@ -284,11 +285,7 @@ export async function createServiceHost(
   // Selected Pi sources are refused before bind too: a configuration refusal
   // never registers an owner that would quarantine. load() rereads them later.
   const home = launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir;
-  const pi = refuseAt("pi-agent-directory", () =>
-    piSource(input.config.agentDir, home, c.store.root, launch),
-  );
-  refuseAt("pi-auth", () => readPiAuth(pi));
-  refuseAt("pi-models", () => readPiModels(pi));
+  preflightPi(input.config.agentDir, c.store.root, launch);
   const http = new ServiceHttpServer({
     policy: input.config.http,
     assets: web.assets,
@@ -682,6 +679,7 @@ export async function createServiceHost(
       error instanceof ContractError ? error.code : "unavailable",
       stage,
       !!owner,
+      error instanceof PiSourceRefusal ? error.problem : undefined,
     );
   }
 }

@@ -913,6 +913,8 @@ export const zh = {
     "页面状态已过期（{code}），已重新读取，请再试一次。",
   "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.":
     "模型凭据不可用（{code}），请检查 auth.json 或提供方的 API key。",
+  "A selected file was refused ({code}); nothing was changed. Run cadence doctor to see which file and field.":
+    "所选文件被拒绝（{code}），未做任何修改。运行 cadence doctor 查看是哪个文件和字段。",
   "This is not supported here ({code}).": "此处不支持该操作（{code}）。",
   "A limit was reached ({code}).": "已达到上限（{code}）。",
   More: "更多",

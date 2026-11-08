@@ -323,11 +323,14 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
 - A host that refuses during `start` reports `{"status":"refused","error":<code>,"stage":<stage>}` and exits without registering an owner.
   Stages are `package` (installed web assets or Agent profiles), `pi-agent-directory`, `pi-auth`, `pi-models` and `service`; stderr names the selected Pi source to fix.
   `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it exits, and the next start recovers its registration.
-  Reports carry fixed codes and stages only, never paths, configuration bytes or OS error text.
+  A refused Pi source adds `"problem":{"file","check","field","reason"}`: the file (`agent-directory`, `auth.json` or `models.json`), which check refused it (`file`: kind, links, size or owner; `json`: syntax; `schema`: Cadence's field check; `sdk`: the pinned SDK's model loading), the JSON key path such as `providers.zai.models[0].compat.reasoningEffortMap`, and fixed words for why.
+  On stderr it reads `Refused: <file> (<check>): <field> <reason>`.
+  Reports carry fixed codes, stages and these words only, never configuration values, credentials, paths or OS/SDK error text; a JSON syntax refusal names at most a line number.
 - The selected Pi agent directory must be a real directory (not a symlink) owned by you; `auth.json` and `models.json` must be your own single-link regular files.
   Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
-  `models.json` may use only fields the pinned SDK supports.
-  `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
+  `models.json` may use exactly the fields of the pinned SDK's published `models.schema.json`, with its value types; Cadence checks both before the owner registers, and refuses any other field rather than letting the SDK keep it silently.
+  `compat.reasoningEffortMap` was replaced in Pi 0.72 by each model's own `thinkingLevelMap` (strings, or `null` to hide a level); move those mappings there.
+  Fields such as `compat.zaiToolStream` that the pinned SDK declares are accepted.
   The conversation model picker offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
   A model whose provider or model ID contains a known credential value is withheld from the catalog, since showing the ID would reveal that value; the catalog says how many models are withheld, and the rest stay selectable.
   Credential values are `auth.json` keys, `models.json` `apiKey` and header values (and the variables they name) and service-environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or `COOKIE`.
@@ -406,10 +409,16 @@ cadence doctor                      # readonly: what is left over and what recov
 cadence doctor --fix                # also handle the cases below, after one confirmation
 cadence doctor --fix --yes          # the same without the prompt, for scripts
 cadence doctor --workspace /absolute/project --state-home /absolute/state-home
+cadence doctor --workspace /absolute/project --agent-dir /absolute/pi-agent-dir
 ```
 
 `cadence recover inspect|resolve` remain as aliases of `doctor` and `doctor --fix`.
 Use the same account and state home as the service.
+
+Doctor's process lines say whether Cadence is running; `Workbench: running` does not mean a project's models can load.
+Its **Pi model sources** section runs, for each agent directory a project would use (the one its owner was started with, else `--agent-dir`, else the workbench's, else Pi's default), exactly the checks the owner runs before it starts: the directory, `auth.json` and `models.json` with every field and value type of the pinned SDK.
+A refusal names the stage, file, field and reason as a start would, and doctor exits 1; it sends no model request, refreshes no credential and writes nothing.
+Doctor does not load the SDK (management commands never import it), so the SDK's own model loading (`pi-runtime`, for example a provider that defines models without `baseUrl`) and provider reachability or credential validity are checked only when an owner starts: `cadence project open PATH` or `cadence start --workspace PATH` then reports that refusal with its field the same way.
 
 Only these cases wait for you, each named with one sentence and the next step:
 

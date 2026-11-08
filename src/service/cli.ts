@@ -73,6 +73,7 @@ import { encoded } from "./private-files.ts";
 import {
   decodeHostInput,
   decodeStartupReport,
+  describePiProblem,
   type HostInput,
   hostEnvironment,
   portValue,
@@ -359,17 +360,22 @@ function startupGuidance(result: unknown, input: HostInput): string {
     return registryGuidance(input.workspace, input.stateHome);
   const agent = input.config.agentDir;
   const inspect = `Details: cadence doctor --workspace ${JSON.stringify(input.workspace)}\n`;
+  // Cadence's own field path and words only; the selected paths are the user's.
+  const problem = report.problem
+    ? `Refused: ${describePiProblem(report.problem)}.\n`
+    : "";
+  const fixed = `Cadence changed nothing; fix it and start again. Check without starting: cadence doctor --workspace ${JSON.stringify(input.workspace)} --agent-dir ${JSON.stringify(agent)}\n`;
   switch (report.stage) {
     case "package":
       return "Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.\n";
     case "pi-agent-directory":
-      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.\n`;
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.\n${problem}`;
     case "pi-auth":
-      return `${join(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.\n`;
+      return `${join(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.\n${problem}${fixed}`;
     case "pi-models":
-      return `${join(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
+      return `${join(agent, "models.json")} must be your own single-link regular file using only the fields and value types of Cadence's pinned Pi SDK.\n${problem}${fixed}`;
     case "pi-runtime":
-      return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.\n${inspect}`;
+      return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.\n${problem}${inspect}`;
     default:
       return report.error === "recording-exhausted"
         ? `The disk is too full for Cadence's history. Free some space and start again.\n`
@@ -1078,21 +1084,23 @@ export async function openProjectDirectory(
     typeof result !== "object" ||
     !("status" in result) ||
     result.status !== "alive"
-  )
+  ) {
+    let report: StartupReport | undefined;
+    try {
+      report = decodeStartupReport(result);
+    } catch {
+      report = undefined;
+    }
+    // A refused Pi source keeps its code: the caller (the workbench) is alive,
+    // but this project's model sources are not usable. Doctor names the field.
     throw new ProjectOpenRefusal(
-      !!result &&
-        typeof result === "object" &&
-        "status" in result &&
-        result.status === "refused" &&
-        (("error" in result && result.error === "registry-locked") ||
-          c.inspect().status === "absent"),
-      result &&
-        typeof result === "object" &&
-        "error" in result &&
-        result.error === "registry-locked"
-        ? "registry-locked"
+      report?.status === "refused" &&
+        (report.error === "registry-locked" || c.inspect().status === "absent"),
+      report?.error === "registry-locked" || report?.stage.startsWith("pi-")
+        ? report.error
         : "unavailable",
     );
+  }
   const link = await privateLink(c.store.root, stateHome);
   if (!link) throw new ContractError("unavailable");
   return { path: c.store.root, link };
@@ -1200,6 +1208,7 @@ export async function doctorMain(
     stateHome?: string;
     serverConfig?: string;
     workspace?: string;
+    agentDir?: string;
   } = {};
   const seen = new Set<string>();
   while (argv.length) {
@@ -1209,12 +1218,18 @@ export async function doctorMain(
     if (flag === "--fix") fix = true;
     else if (flag === "--yes") yes = true;
     else if (
-      ["--workspace", "--state-home", "--server-config"].includes(flag) &&
+      [
+        "--workspace",
+        "--state-home",
+        "--server-config",
+        "--agent-dir",
+      ].includes(flag) &&
       argv[0]
     ) {
       const value = resolve(argv.shift() as string);
       if (flag === "--workspace") options.workspace = value;
       else if (flag === "--state-home") options.stateHome = value;
+      else if (flag === "--agent-dir") options.agentDir = value;
       else options.serverConfig = value;
     } else throw new ContractError("invalid");
   }
@@ -1268,7 +1283,7 @@ export async function managementMain(
     }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall|upgrade [--to VERSION]\nUpgrade (Linux, identified Pi/npm/Bun installs) fetches the release while the service runs, then stops it, installs the release and restarts; a release that does not become ready is replaced by the previous version. Server commands that change the service refuse to run inside it; use the WebUI or a terminal.\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench, never cwd; no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence doctor [--fix] [--yes] [--workspace PATH] [--state-home PATH] [--server-config PATH] [--agent-dir PATH]\nStart recovers automatically from an unclean shutdown or crash. Doctor shows the state readonly and runs each project owner's pre-start Pi source checks, naming the file and field a refusal concerns, never a value; --fix also stops an unresponsive Cadence or takes over state it cannot observe, after one confirmation (--yes skips it). recover inspect|resolve are aliases of doctor and doctor --fix.\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall|upgrade [--to VERSION]\nUpgrade (Linux, identified Pi/npm/Bun installs) fetches the release while the service runs, then stops it, installs the release and restarts; a release that does not become ready is replaced by the previous version. Server commands that change the service refuse to run inside it; use the WebUI or a terminal.\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop.\n",
       );
       return;
     }

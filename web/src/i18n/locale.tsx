@@ -41,6 +41,9 @@ const ERROR_TEXT: Readonly<Record<string, MessageKey>> = {
     "This page was out of date ({code}) and has been read again. Try once more.",
   "auth-unavailable":
     "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.",
+  // A project owner refused its Pi sources (or damaged state) before starting.
+  "corrupt-selected":
+    "A selected file was refused ({code}); nothing was changed. Run cadence doctor to see which file and field.",
   "retired-conversation":
     "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).",
   "unsupported-context": "This is not supported here ({code}).",

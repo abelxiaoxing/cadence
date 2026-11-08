@@ -17,6 +17,13 @@ import { ownerDefaultInCheckout, resolveWorkspace } from "../workspace.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, integer, literal, oneOf, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
+import {
+  checkPiSources,
+  type LaunchEnvironment,
+  type PiSourceFile,
+  type PiSourceProblem,
+  PiSourceRefusal,
+} from "./model-config.ts";
 import { encoded, hash, json, PrivateFiles } from "./private-files.ts";
 import { readServerConfig } from "./server-config.ts";
 
@@ -141,6 +148,13 @@ export function hostEnvironment(ambient: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     throw new ContractError("stale");
   return result;
 }
+/** Pi's agent directory a new selection uses unless one is named. */
+export function defaultAgentDir(ambient: NodeJS.ProcessEnv): string {
+  return resolve(
+    ambient.PI_CODING_AGENT_DIR ??
+      join(ambient.HOME ?? ambient.USERPROFILE ?? homedir(), ".pi", "agent"),
+  );
+}
 export function selectStart(
   options: StartOptions,
   ambient: NodeJS.ProcessEnv,
@@ -171,15 +185,7 @@ export function selectStart(
         port: options.port ?? 17423,
         proxy: null,
       },
-      agentDir: resolve(
-        options.agentDir ??
-          ambient.PI_CODING_AGENT_DIR ??
-          join(
-            ambient.HOME ?? ambient.USERPROFILE ?? homedir(),
-            ".pi",
-            "agent",
-          ),
-      ),
+      agentDir: resolve(options.agentDir ?? defaultAgentDir(ambient)),
       tokenSource: options.tokenFile
         ? "file"
         : env
@@ -268,6 +274,8 @@ export class StartupRefusal extends ContractError {
     code: ErrorCode,
     readonly stage: StartupStage,
     readonly quarantined = false,
+    /** Which Pi source and field refused, in Cadence's own fixed words. */
+    readonly problem?: PiSourceProblem,
   ) {
     super(code);
   }
@@ -276,6 +284,7 @@ export interface StartupReport {
   status: "refused" | "quarantined";
   error: ErrorCode;
   stage: StartupStage;
+  problem?: PiSourceProblem;
 }
 export function startupReport(error: unknown): StartupReport {
   if (error instanceof StartupRefusal)
@@ -283,6 +292,7 @@ export function startupReport(error: unknown): StartupReport {
       status: error.quarantined ? "quarantined" : "refused",
       error: error.code,
       stage: error.stage,
+      ...(error.problem ? { problem: error.problem } : {}),
     };
   return {
     status: "refused",
@@ -290,11 +300,78 @@ export function startupReport(error: unknown): StartupReport {
     stage: "service",
   };
 }
+const PI_SOURCE_STAGES: Record<PiSourceFile, StartupStage> = {
+  "agent-directory": "pi-agent-directory",
+  "auth.json": "pi-auth",
+  "models.json": "pi-models",
+};
+/** The owner's pre-bind Pi source check, refused at the stage of the source
+ * it names. `cadence doctor` runs exactly this, before any owner exists. */
+export function preflightPi(
+  agentDir: string,
+  cwd: string,
+  launch: LaunchEnvironment,
+): void {
+  try {
+    checkPiSources(
+      agentDir,
+      launch.HOME ?? launch.USERPROFILE ?? agentDir,
+      cwd,
+      launch,
+    );
+  } catch (error) {
+    if (error instanceof PiSourceRefusal)
+      throw new StartupRefusal(
+        error.code,
+        PI_SOURCE_STAGES[error.problem.file],
+        false,
+        error.problem,
+      );
+    throw new StartupRefusal(
+      error instanceof ContractError ? error.code : "unavailable",
+      "pi-agent-directory",
+    );
+  }
+}
+/** One line naming the source, field and reason; never a value. */
+export function describePiProblem(problem: PiSourceProblem): string {
+  const check = {
+    file: "file check",
+    json: "JSON syntax",
+    schema: "field check",
+    sdk: "Pi SDK model loading",
+  }[problem.check];
+  const name =
+    problem.file === "agent-directory" ? "Pi's agent directory" : problem.file;
+  return `${name} (${check}): ${problem.field ? `${problem.field} ` : ""}${problem.reason}`;
+}
+function decodePiProblem(value: unknown): PiSourceProblem {
+  const o = closed(value, ["file", "check", "field", "reason"]);
+  const words = (v: unknown) => {
+    const s = text(v, 512, true);
+    if (/[\p{Cc}\p{Cf}]/u.test(s)) throw new ContractError("invalid");
+    return s;
+  };
+  return {
+    file: oneOf(o.file, Object.keys(PI_SOURCE_STAGES) as PiSourceFile[]),
+    check: oneOf(o.check, ["file", "json", "schema", "sdk"] as const),
+    field: o.field === null ? null : words(o.field),
+    reason: words(o.reason),
+  };
+}
 export function decodeStartupReport(value: unknown): StartupReport {
-  const o = closed(value, ["status", "error", "stage"]);
+  const problem =
+    !!value && typeof value === "object" && Object.hasOwn(value, "problem");
+  const o = closed(value, [
+    "status",
+    "error",
+    "stage",
+    ...(problem ? ["problem"] : []),
+  ]);
   return {
     status: oneOf(o.status, ["refused", "quarantined"]),
     error: oneOf(o.error, ERROR_CODES),
     stage: oneOf(o.stage, STARTUP_STAGES),
+    ...(problem ? { problem: decodePiProblem(o.problem) } : {}),
   };
 }

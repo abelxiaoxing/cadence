@@ -797,3 +797,21 @@ Local artifact: `/home/mirako/cadence-review-release.dU3Nmz/pack/abelxiaoxing-ca
 Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one external private disk-backed temporary directory.
 No slow suite, paid provider, native Windows/macOS qualification, local dependency installation or production service operation was performed.
 This unshipped appendix records local qualification, not publication; the tag-triggered OIDC run and exact CI artifact/registry bytes require independent confirmation.
+
+## Release 2.0.42 qualification (2026-11-07)
+
+The user explicitly requested commit, push to GitHub and npm publication of the Pi model-source diagnosis work.
+A project's `models.json` is now checked against the fields and value types of the pinned SDK's published `models.schema.json`, closed at every object level; the retired `compat.reasoningEffortMap` refuses with its migration to `thinkingLevelMap`, and declared fields such as `compat.zaiToolStream` are accepted.
+A refusal carries `{file, check, field, reason}`: the file, the check (`file`/`json`/`schema`/`sdk`), the JSON key path and fixed words, never a configuration value, credential, path or OS/SDK text.
+`preflightPi` is shared by `start`, `cadence project open` and `cadence doctor`; doctor gains `--agent-dir` and a **Pi model sources** section that runs each project owner's pre-bind checks readonly and exits 1 on a refusal, while the SDK's own model loading still runs only when an owner starts.
+The WebUI reads `corrupt-selected` as a refused selected file rather than a workbench outage, in English and Chinese.
+New `test/pi-sources.test.ts` compares Cadence's closed check field by field with the pinned SDK schema; its real-SDK `pi-runtime` case is tagged slow and was not part of the gate.
+
+Version 2.0.42 was unused and newer than observed npm latest 2.0.41; local and remote release tags were absent before preparation.
+Canonical operator/service/Web outputs were regenerated.
+Fresh `bun run verify` passed: **1723 fast root tests passed, 283 skipped** (107 passing files, two skipped), **260 Web tests passed** (24 files), plus types, syntax, lint, Agent pins, generated-byte checks and real-pack auditing.
+A separate real Bun tarball passed the reviewed member/body/notice audit: **168 unique regular members**.
+Local artifact: `/home/abel/tmp-cadence-release/pack/abelxiaoxing-cadence-2.0.42.tgz`; SHA-256 `8646002471d2e2f7e2c64ebface5be1004930693e10b670f3d8d27219711d3f5`; SHA-1 `5f58bf61c818cc454f0b6b16e1c43464ffe12c1b`.
+Qualification used Linux, Node 22.23.3 (the distro Node 22.22.1 is compiled without TypeScript support, which `build:web:check` needs), Bun 1.3.14 and one external private disk-backed temporary directory.
+No slow suite, paid provider, native Windows/macOS qualification, local dependency installation or production service operation was performed.
+This unshipped appendix records local qualification, not publication; the tag-triggered OIDC run and exact CI artifact/registry bytes require independent confirmation.

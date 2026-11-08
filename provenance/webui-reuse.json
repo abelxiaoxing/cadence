@@ -439,7 +439,7 @@
     "web/src/components/workspace/ProjectPicker.tsx": "a5fb6721f24831ee3767624e2d44e0e65aaaacf5962e2c8a8e29b861cc23050b",
     "src/service/gateway.ts": "255d23ce5028b3d9251291685373450b3330cf78775b356c4c160fe6c897b486",
     "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
-    "src/service/gateway-store.ts": "5d715fe1daea4893c0cdd9a2c21e4ed9481e25ba606f56f8f6101bf39c0da2c6",
+    "src/service/gateway-store.ts": "196e946a08a305cf3a7c77e76f20f38c572b10fb5ebe4ccf4b0195b430ea414f",
     "src/service/contracts/gateway.ts": "07688a0b7d187689d19de074ad98897c5bb77fb59ec586cc506423d4a0d8603e",
     "web/src/Workbench.tsx": "f39cff02b915fb2134f03dd7e992a4f816a0396e8db6e337978773b3c7a9f22c",
     "web/src/client/project-route.ts": "d445a6a3323dde5126a5f797307e12cf2ed2af04272ff6321a308d7ab0a63bfe",
