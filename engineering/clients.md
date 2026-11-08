@@ -146,6 +146,12 @@ The model catalog reports that preference read only as `remembered`, and only wh
 The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
 One click is one explicit choice; choosing another model keeps the current thinking level when it offers it, otherwise the nearest offered level, and the panel shows the result at once.
 The model panel remains inspectable when selection is unavailable, with a visible reason; model and thinking choices still require current compatible execution/conversation state and a successfully read catalog.
+The model control receives explicit execution availability: stopped/not-started defers models to Send, preparation/connection are neutral progress, incompatible/unknown state blocks selection, and only a failed live catalog read is a model-list error with a retry.
+Opening the stopped panel or refreshing its observation never loads a runtime, requests a live catalog, restores a model or starts an owner.
+A retained conversation preference may be labelled last-used with verification deferred to Send, never installed or guaranteed selectable without the live catalog.
+`web/src/client/use-model-catalog.ts` binds one readonly catalog to the scoped client, observed owner epoch, attachment generation and conversation context revision; readiness recovery, replacement and explicit refresh invalidate old data and read again, without polling model sources.
+Obsolete reads are aborted and their late results ignored even before effect cleanup; a choice finishing in an obsolete lifetime cannot update the picker or resume a waiting Send.
+The composer and picker share that catalog for the displayed/captured model rather than a separate retained model ref; the original Send still captures its own fixed intent before preparation or model-choice waits.
 It locks choices while this conversation's reply is live; another conversation's work does not prevent choosing its own model.
 Its scope note names future messages in this conversation, not every project conversation or already-admitted work.
 A Send with no installed model and no remembered preference opens that panel instead of failing; the message waits there and is sent once after one explicit choice, or not at all if the panel is dismissed or sending stays impossible for ten seconds.

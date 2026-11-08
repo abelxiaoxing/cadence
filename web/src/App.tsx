@@ -40,6 +40,7 @@ import { activityRoute, chatFromLocation } from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
+import type { ModelAvailability } from "./client/use-model-catalog";
 import { useProjectObservation } from "./client/use-project-observation";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
@@ -589,6 +590,24 @@ export function App({
     (!project ||
       (!execution.value && execution.readiness === "unknown") ||
       execution.readiness === "running");
+  const modelAvailability: ModelAvailability = executionStopped
+    ? {
+        status:
+          execution.readiness === "not-started" ? "not-started" : "stopped",
+      }
+    : workspace.compatible === false
+      ? { status: "incompatible" }
+      : executionReady &&
+          viewerFresh &&
+          workspace.compatible &&
+          workspace.epoch &&
+          (!project || execution.value?.epoch === workspace.epoch)
+        ? {
+            status: "ready",
+            epoch: workspace.epoch,
+            attachmentVersion: workspace.attachmentVersion,
+          }
+        : { status: connecting ? "connecting" : "unavailable" };
   const connection = detached
     ? "Viewer disconnected"
     : connecting
@@ -1125,12 +1144,7 @@ export function App({
                     !!workspace.compatible &&
                     !workspace.error
               }
-              modelEnabled={
-                executionReady &&
-                !!workspace.compatible &&
-                workspace.transportStatus === "current" &&
-                !workspace.error
-              }
+              modelAvailability={modelAvailability}
               onModelChanged={() => {
                 lifetime.current.depart();
                 workspace.refresh(true);

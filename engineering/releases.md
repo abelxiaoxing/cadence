@@ -844,3 +844,22 @@ Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh 0700 disk-backed
 No local dependency installation, browser automation, slow suite, paid-provider request or production service start/restart was performed; pure/SSR geometry and state tests are not real-browser or physical-device qualification.
 Version 2.0.43 and its release tag were unused when selected, newer than observed npm latest 2.0.42.
 This records local qualification only; the tag-triggered GitHub Actions/OIDC lane must independently audit its CI artifact and confirm npm metadata, latest and downloaded bytes before publication is claimed.
+
+## Release 2.0.44 qualification (2026-11-08)
+
+The user explicitly authorized committing, pushing to GitHub and publishing the model-catalog execution-readiness repair.
+A stopped or not-yet-started project now defers model loading to explicit Send instead of making a failing live catalog request; its inspectable panel explains that browsing starts nothing.
+A saved conversation preference is only last-used information until verified, while preparation, connection, incompatible execution and a failed live model read have distinct presentation.
+The composer and picker share one readonly catalog bound to the scoped client, owner epoch, attachment generation and conversation context revision.
+Readiness recovery and replacement reread it automatically, obsolete reads are aborted and ignored, and an obsolete choice callback cannot update the new view or resume a waiting Send.
+No owner-start, model-restoration, approval or mutation-replay authority was added.
+
+The latest development-targeted run passed **115 tests in seven exact files**, with passed-assertion coverage checked for every named path.
+After selecting the unused version 2.0.44, newer than observed npm latest 2.0.43, the canonical operator/service/Web builders regenerated its outputs.
+Fresh `bun run verify` passed: **1723 fast root tests passed, 283 skipped** (107 passing files, two skipped), **313 Web tests passed** (27 files), plus syntax, types, lint, Agent pins, generated-byte checks and real-pack auditing.
+A separate real Bun archive passed the exact **168-member** source/body/notice audit: `/home/mirako/cadence-release-models-qgzjtt2p/pack/abelxiaoxing-cadence-2.0.44.tgz`.
+Its SHA-256 is `a88b4ad30d3c98099ea85d0b3594ecb8d6bf6a8b5a54354027fa69b39c42e9c8`, and its SHA-1 is `15139807f9b9e0725d6dae523617099b0247d708`.
+Qualification used Linux, Node 26.7.0, Bun 1.3.14 and one fresh 0700 disk-backed temporary directory outside every Git working copy; logs are retained under `/home/mirako/cadence-release-models-qgzjtt2p/`.
+No local dependency installation, browser/slow-suite release gate, paid-provider request or production service operation was performed during qualification.
+Controlled hook/SSR callback regressions do not claim real-browser, provider or native-platform qualification.
+This records pre-publication evidence only; the existing tag-triggered GitHub Actions/OIDC lane must audit its own immutable artifact and confirm npm metadata, latest and downloaded bytes before publication is claimed.

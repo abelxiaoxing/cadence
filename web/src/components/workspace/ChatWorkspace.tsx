@@ -24,10 +24,7 @@ import type { ConversationLocation } from "../../../../src/service/contracts/mod
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
-import {
-  type ModelSelector,
-  publicError,
-} from "../../../../src/service-contract.ts";
+import { publicError } from "../../../../src/service-contract.ts";
 import {
   assertSendModel,
   captureSend,
@@ -45,6 +42,10 @@ import {
 } from "../../client/conversation-send";
 import { uploadImages } from "../../client/images";
 import { useConversation } from "../../client/use-conversation";
+import {
+  type ModelAvailability,
+  useModelCatalog,
+} from "../../client/use-model-catalog";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import {
   approveWorkflow,
@@ -95,7 +96,7 @@ export function ChatWorkspace({
   directoryNamespaces = [],
   available = enabled,
   canInterrupt = enabled,
-  modelEnabled = enabled,
+  modelAvailability,
   onModelChanged,
   onChanged,
   reference,
@@ -123,8 +124,8 @@ export function ChatWorkspace({
   onOpenAgent?(agent: WorkflowAgent): void;
   /** This conversation's recent workflow runs, for the subagent dock. */
   onWorkflowRuns?(ids: string[]): void;
-  /** The owner is compatible and current, so a model can be chosen. */
-  modelEnabled?: boolean;
+  /** Observed execution availability, independent of the readable history. */
+  modelAvailability: ModelAvailability;
   /** An explicit model choice changed the owner configuration. */
   onModelChanged(): void;
   onChanged(): void;
@@ -169,7 +170,6 @@ export function ChatWorkspace({
       : undefined;
   const contextKnown = !!context && !contextRead.error;
   const locationCwd = context?.cwd ?? initialCwd;
-  const observedModel = useRef<ModelSelector | null>(null);
   const modelClient = useMemo<Pick<ServiceClient, "models" | "chooseModel">>(
     () => ({
       models: (signal) =>
@@ -189,6 +189,21 @@ export function ChatWorkspace({
     }),
     [client, id, locationCwd],
   );
+  const availability: ModelAvailability = preparing
+    ? { status: "preparing" }
+    : modelAvailability.status === "ready" && (!available || !contextKnown)
+      ? { status: contextRead.error ? "unavailable" : "connecting" }
+      : modelAvailability;
+  const modelRead = useModelCatalog(
+    modelClient,
+    availability,
+    `${modelReads}:${context?.revision ?? "unobserved"}`,
+  );
+  const openModels = (open: boolean) => {
+    if (open) modelRead.reread();
+    else setAwaitingModel(false);
+    setModelOpen(open);
+  };
   const onLocationRef = useRef(onLocation);
   onLocationRef.current = onLocation;
   useEffect(() => {
@@ -631,7 +646,9 @@ export function ChatWorkspace({
           images,
           revision: state?.revision ?? 0,
           location: context ? { id, cwd: context.cwd } : undefined,
-          model: observedModel.current ?? context?.model ?? undefined,
+          model: modelRead.catalog?.selected
+            ? selector(modelRead.catalog.selected)
+            : (modelRead.catalog?.remembered ?? context?.model ?? undefined),
           intent: exiting
             ? "exit"
             : cadence
@@ -667,7 +684,7 @@ export function ChatWorkspace({
       const chooseFirst = () => {
         waitingSend.current = intent;
         setAwaitingModel(true);
-        setModelOpen(true);
+        openModels(true);
       };
       let catalog = await client.models(undefined, intent.location);
       if (!current()) return;
@@ -1240,19 +1257,12 @@ export function ChatWorkspace({
           />
           <ModelPicker
             client={modelClient}
-            onObserved={(catalog) => {
-              observedModel.current = catalog.selected
-                ? selector(catalog.selected)
-                : catalog.remembered;
-            }}
-            enabled={modelEnabled && available && contextKnown}
+            availability={availability}
+            read={modelRead}
+            lastModel={context?.model}
             locked={!!running}
-            refresh={String(modelReads)}
             open={modelOpen}
-            onOpenChange={(value) => {
-              setModelOpen(value);
-              if (!value) setAwaitingModel(false);
-            }}
+            onOpenChange={openModels}
             onChanged={() => {
               contextRead.refresh();
               onModelChanged();
