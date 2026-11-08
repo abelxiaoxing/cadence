@@ -815,3 +815,11 @@ Local artifact: `/home/abel/tmp-cadence-release/pack/abelxiaoxing-cadence-2.0.42
 Qualification used Linux, Node 22.23.3 (the distro Node 22.22.1 is compiled without TypeScript support, which `build:web:check` needs), Bun 1.3.14 and one external private disk-backed temporary directory.
 No slow suite, paid provider, native Windows/macOS qualification, local dependency installation or production service operation was performed.
 This unshipped appendix records local qualification, not publication; the tag-triggered OIDC run and exact CI artifact/registry bytes require independent confirmation.
+
+## Release 2.0.42 publication confirmation (2026-11-07)
+
+Tag `v2.0.42` was created on `main` at `940064d` and pushed; the tag-triggered [Publish npm run 42440328976](https://github.com/abelxiaoxing/cadence/actions/runs/42440328976) completed its prepare job (sole gate, candidate pack, member/body audit) and its publish job's `npm publish` step succeeded through OIDC.
+Its confirmation step then failed with `npm-release-confirmation-timeout` after the 5-minute observation deadline, so that run's outcome stays failed and unconfirmed; nothing was rerun, replayed, retagged or repaired.
+An independent readonly observation later confirmed publication: registry `version` and `latest` are `2.0.42`, the tarball's `dist.integrity` `sha512-jq8qnC0lvz36cvF2PB/gO9wbhR16Wb2osq1i8fA1vAbEPgrHfdDLlEdFLx8bA/9JENGnLMnt2o+mlcuucufkRg==` matches the downloaded bytes, and the downloaded archive is **168 members** with SHA-256 `900f8d67e18f7aab95e4f82bbbc44d5c05b649a278323297a47a9696280aec85`, exactly the audited CI artifact digest `RELEASE_SHA256`.
+The registry tarball URL answered 404 for roughly two minutes before serving those bytes; only readonly metadata and body requests were retried.
+This confirms publication of the exact audited artifact; it does not convert the failed confirmation step into a successful one and does not qualify paid providers, physical-human input, service managers or native Windows/macOS.
