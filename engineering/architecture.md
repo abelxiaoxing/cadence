@@ -27,6 +27,11 @@ Read this before moving a responsibility between modules, adding an import or ch
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution.
 `src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the upgrade with rollback; `src/service/installation.ts` identifies the exact Pi/npm/Bun installation and owns its package-manager commands.
 Both stay SDK-free like the rest of management.
+The gateway's model-discovery path is also SDK-free: `gateway-models.ts` resolves server-selected sources and `model-preview-process.ts` owns a bounded, short-lived readonly child through actual native close.
+The generated `src/model-preview.mjs` alone imports the SDK for preview; it uses `model-preview.ts` to construct an offline, nonpersistent model registry and `model-catalog.ts` to share projection/validation with the execution owner.
+Its fixed private pipe carries no tool/command authority; only the credential-free, versionless `ModelPreview` returns to the gateway.
+It creates no owner, session, tools or project state, calls no provider/auth operation and has no preference write path; native model installation/worker preparation remain owner-only.
+The canonical service builder separately bundles the gateway to reject any SDK import in its transitive closure; the installed preview child is an audited ordinary-JavaScript package member, never a source-tree fallback.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
 The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.

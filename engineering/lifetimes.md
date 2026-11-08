@@ -104,6 +104,13 @@ A Send preparation registers its original before launching, so departure cannot 
 Warm already-associated reuse writes no preparation receipt; a lost preparation response never submits a message.
 Service restart never resumes the old queue.
 
+Readonly model discovery has no execution authority, but its child processes have owned lifetimes: the gateway starts Stop on them immediately, then joins actual native close before releasing its registration.
+Concurrent identical requests share one child; an HTTP disconnect only abandons the viewer, not the bounded original or its process charge.
+Timeout/invalid output request TERM and then KILL under the original lease and process identity; unconfirmed closure quarantines discovery and keeps its charge/ledger, even if a later close arrives.
+A workbench that cannot close its discovery child stops its associated owners, preserves its registration/worker ledger and exits 75 for supervisor/startup recovery, without replaying project work.
+The child has a parent-owned IPC channel and exits on parent loss; its own process group is also recorded in the existing exact-identity ledger for recovery after a dead workbench.
+Startup refuses recovery while a ledger worker is live but unidentifiable or its identity is unknown, rather than treating an unreadable identity as proof of closure.
+
 ## Service restart and upgrade
 
 Stopping a systemd unit ends every process in its cgroup, including a management command that one of the service's own tools started, however it was detached (`nohup`, `setsid`, double fork).

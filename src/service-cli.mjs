@@ -5902,9 +5902,9 @@ async function stopWorkers(ledger, epoch, reboot, inspect) {
   let stopped = 0, running = 0;
   for (const worker of ledger.read(epoch)) {
     const holder = holderState({ ...worker, host: hostname5() });
-    if (holder.state !== "live")
+    if (holder.state === "dead")
       continue;
-    if (!worker.started) {
+    if (holder.state !== "live" || !worker.started) {
       running++;
       continue;
     }
@@ -6444,9 +6444,16 @@ async function healWorkbench(store, options = {}) {
     }
   }
   const cause = !activeNow || damaged ? "storage" : holder.reboot ? "reboot" : "crash";
+  const ledger = new ProcessLedger(store.files);
+  const epoch = value?.epoch ?? null;
+  const workers = takenOver ? { stopped: 0, running: 0 } : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
+  if (workers.running)
+    return { status: "blocked", reason: "workers-running", pid };
   if (options.inspect)
-    return { status: "reclaimable", cause, workers: 0 };
+    return { status: "reclaimable", cause, workers: workers.stopped };
   const actions = new Set;
+  if (workers.stopped)
+    actions.add("stopped-workers");
   const archive = log.archive();
   for (const path2 of temporaries) {
     archive.keep(path2);
@@ -6464,6 +6471,8 @@ async function healWorkbench(store, options = {}) {
       store.files.remove(lockPath, lock.snapshot);
     actions.add("released-locks");
   }
+  if (epoch)
+    ledger.remove(epoch);
   return {
     status: "healed",
     event: log.record({
@@ -6471,7 +6480,7 @@ async function healWorkbench(store, options = {}) {
       path: null,
       cause,
       actions: [...actions],
-      workers: 0,
+      workers: workers.stopped,
       archive: archive.used() ? archive.name : null
     })
   };
@@ -6489,6 +6498,8 @@ function decodeGatewayRegistration(value) {
   if (!o || typeof o !== "object" || !["alive", "stopping", "stopped", "quarantined"].includes(o.phase))
     throw new ContractError("corrupt-selected");
   integer(o.pid, 1, 2147483647);
+  if (o.epoch !== undefined)
+    decodeId(o.epoch);
   return o;
 }
 

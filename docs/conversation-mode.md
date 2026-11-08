@@ -52,7 +52,7 @@ Leaving, closing or disconnecting a viewer does not cancel accepted work; reconn
 A stale or unavailable observation keeps readable history but cannot establish that work stopped; distinguish connection freshness from the workflow's last observed status.
 
 Unsent text and images are not synchronized across devices.
-Text drafts are local to that browser session when storage is available; images remain local to the tab.
+Text drafts and pending model choices are local to that browser session when storage is available; images remain local to the tab.
 A preparation failure keeps the local draft and explains whether preparation was never dispatched, is unconfirmed, or was confirmed before a later wait failed.
 An uncertain final Send keeps its original command identity for observation only: do not send it again merely because its reply was lost.
 
@@ -81,9 +81,18 @@ Text redaction does not sanitize words or secrets inside pixels: inspect screens
 The first native use defaults to the current Pi provider/model/API/thinking selection.
 Each conversation keeps its own working directory and exact provider/model/API/thinking preference.
 Ask Cadence to change its model in Pi, or use the model button beside the browser composer; it changes future messages and plans in that conversation, not other conversations or admitted runs.
-An explicit model choice is also remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) as the default for new conversations across projects; restoring an existing conversation does not replace that default.
+A confirmed model choice is also remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) as the default for new conversations across projects; restoring an existing conversation does not replace that default.
+The WebUI can list and select models as soon as it opens, even before choosing a folder or starting the project's execution service.
+This is a readonly view of Pi's configured models, not a provider connectivity check; opening the list never starts execution, calls a model or refreshes credentials.
+Before execution is ready, a model/thinking choice stays with the local draft.
+A choice on the folder-less entry carries into the next new conversation you open.
+Send starts or reuses the project service, verifies that exact selection and only then submits the message; if it is unavailable, the draft stays and no other model is substituted.
+The picker reuses its already-read preview when reopened; **Refresh models** reads the configuration again without starting execution.
+A preview read failure has a **Read again** action, not a requirement to start a service.
 The browser restores an available saved preference on explicit Send and shows it dimmed until then; reads/login do not install a choice.
-With no choice and no saved preference, Send opens the model list and sends the message right after the choice.
+With no choice and no saved preference, Send opens the model list and continues the original message after your choice when the same service connection is ready.
+Closing the picker or stopping/replacing that service ends the unsent continuation; your draft stays, and choosing a model never restarts a stopped service.
+Exiting Cadence changes mode, not your pending model choice.
 If no usable preference exists, choose once; an unreadable preference file falls back to the current Pi model, and choosing a model rewrites it.
 An accepted message or workflow keeps its original directory and exact model, including while queued.
 Different subdirectories of one repository can have independent conversations while sharing one checkout owner and execution gate.

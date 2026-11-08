@@ -1,4 +1,4 @@
-// Two deterministic ordinary-Node outputs; management contains no SDK imports.
+// Deterministic ordinary-Node outputs; management contains no SDK imports.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,6 +16,7 @@ const source = digest(
         ![
           "src/service-cli.mjs",
           "src/service-host.mjs",
+          "src/model-preview.mjs",
           "src/operator-cli.mjs",
           "src/native-build.ts",
         ].includes(name),
@@ -34,7 +35,7 @@ if (checking) {
   if (readFileSync(nativeTarget, "utf8") !== nativeIdentity)
     throw new Error("native-build-stale");
 } else writeFileSync(nativeTarget, nativeIdentity);
-for (const name of ["service-cli", "service-host"]) {
+for (const name of ["service-cli", "service-host", "model-preview"]) {
   const result = await Bun.build({
     entrypoints: [join(root, `src/${name}-entry.mjs`)],
     root,
@@ -62,3 +63,19 @@ for (const name of ["service-cli", "service-host"]) {
       throw new Error("service-bundle-stale");
   } else writeFileSync(target, bytes, { mode: 0o755 });
 }
+
+// The workbench never imports the SDK, even lazily. Only its dedicated catalog
+// child and the independent project host may load it.
+const gateway = await Bun.build({
+  entrypoints: [join(root, "src/service/gateway.ts")],
+  root,
+  target: "node",
+  format: "esm",
+  packages: "external",
+});
+if (
+  !gateway.success ||
+  gateway.outputs.length !== 1 ||
+  /@earendil-works\//.test(await gateway.outputs[0].text())
+)
+  throw new Error("gateway-sdk-import");

@@ -24,11 +24,20 @@ import type { ConversationLocation } from "../../../../src/service/contracts/mod
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
-import { publicError } from "../../../../src/service-contract.ts";
+import {
+  canonicalJson,
+  decodeModelSelector,
+  type ModelSelector,
+  publicError,
+} from "../../../../src/service-contract.ts";
 import {
   assertSendModel,
   captureSend,
+  chooseWaitingModel,
   dispatchSend,
+  installSendModel,
+  modelDraftConsumed,
+  modelWaitDisposition,
   type PendingSend,
   type PreparationStage,
   type PrepareForSend,
@@ -38,9 +47,11 @@ import {
   sendFailureMessage,
   unsentMessage,
   waitForPreparation,
+  waitingModelSend,
   withSendModel,
 } from "../../client/conversation-send";
 import { uploadImages } from "../../client/images";
+import type { PreviewModels } from "../../client/model-preview";
 import { useConversation } from "../../client/use-conversation";
 import {
   type ModelAvailability,
@@ -97,6 +108,8 @@ export function ChatWorkspace({
   available = enabled,
   canInterrupt = enabled,
   modelAvailability,
+  previewModels,
+  initialModel,
   onModelChanged,
   onChanged,
   reference,
@@ -126,6 +139,8 @@ export function ChatWorkspace({
   onWorkflowRuns?(ids: string[]): void;
   /** Observed execution availability, independent of the readable history. */
   modelAvailability: ModelAvailability;
+  previewModels?: PreviewModels;
+  initialModel?: ModelSelector;
   /** An explicit model choice changed the owner configuration. */
   onModelChanged(): void;
   onChanged(): void;
@@ -147,6 +162,9 @@ export function ChatWorkspace({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [pending, setPending] = useState(() => stored(`${draftKey}:pending`));
+  const [modelCommand, setModelCommand] = useState(() =>
+    stored(`${draftKey}:model-command`),
+  );
   const [modelOpen, setModelOpen] = useState(false);
   // A Send found no model: it continues once one is explicitly chosen.
   const [awaitingModel, setAwaitingModel] = useState(false);
@@ -157,6 +175,25 @@ export function ChatWorkspace({
   const sendGeneration = useRef(0);
   const departure = useRef(new AbortController());
   const [preparing, setPreparing] = useState(false);
+  const [draftModel, setDraftModel] = useState<ModelSelector | null>(() => {
+    try {
+      const saved = sessionStorage.getItem(`${draftKey}:model`);
+      if (saved) return decodeModelSelector(JSON.parse(saved));
+    } catch {
+      /* Optional browser draft. */
+    }
+    return initialModel ?? null;
+  });
+  useEffect(() => {
+    try {
+      if (draftModel)
+        sessionStorage.setItem(`${draftKey}:model`, JSON.stringify(draftModel));
+      else sessionStorage.removeItem(`${draftKey}:model`);
+    } catch {
+      /* Selection remains in memory. */
+    }
+  }, [draftKey, draftModel]);
+
   const contextRead = useWorkbench(
     client,
     available && initialCwd
@@ -194,15 +231,43 @@ export function ChatWorkspace({
     : modelAvailability.status === "ready" && (!available || !contextKnown)
       ? { status: contextRead.error ? "unavailable" : "connecting" }
       : modelAvailability;
+  const latestAvailability = useRef(availability);
+  latestAvailability.current = availability;
   const modelRead = useModelCatalog(
     modelClient,
     availability,
     `${modelReads}:${context?.revision ?? "unobserved"}`,
+    previewModels,
   );
-  const openModels = (open: boolean) => {
-    if (open) modelRead.reread();
-    else setAwaitingModel(false);
+  const clearModelWait = () => {
+    waitingSend.current = null;
+    setAwaitingModel(false);
+    setResume(false);
+  };
+  const openModels = (open: boolean, reason?: "chosen") => {
+    if (open && !modelRead.preview && !modelRead.loading) modelRead.reread();
+    else if (!open && reason !== "chosen") clearModelWait();
     setModelOpen(open);
+  };
+  const chosenModel = (choice: ModelSelector, installed: boolean) => {
+    setDraftModel(installed ? null : choice);
+    const waiting = waitingSend.current;
+    if (!awaitingModel || !waiting) return;
+    if (
+      modelWaitDisposition(waiting, latestAvailability.current) === "cancel"
+    ) {
+      clearModelWait();
+      setError(
+        t(
+          "The connection changed. Your model choice and draft are kept; send again when ready.",
+        ),
+      );
+      return;
+    }
+    waitingSend.current = chooseWaitingModel(waiting, choice, installed);
+    setAwaitingModel(false);
+    setError("");
+    setResume(true);
   };
   const onLocationRef = useRef(onLocation);
   onLocationRef.current = onLocation;
@@ -279,10 +344,14 @@ export function ChatWorkspace({
     !running;
   // The plan card survives later messages; the owner refuses approval only
   // while this conversation's turn is live or its outcome is unknown.
+  const modelPending =
+    !!draftModel &&
+    canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
     !!state?.proposal && !!summary && !running && summary.status !== "unknown";
-  const approvalHint =
-    summary?.status === "unknown"
+  const approvalHint = modelPending
+    ? t("Send with this model before approving a plan.")
+    : summary?.status === "unknown"
       ? t(
           "The latest turn's outcome is unknown. Approval waits until it is observed.",
         )
@@ -345,6 +414,15 @@ export function ChatWorkspace({
     }
   }, [draftKey, pending]);
   useEffect(() => {
+    try {
+      if (pending && modelCommand === pending)
+        sessionStorage.setItem(`${draftKey}:model-command`, modelCommand);
+      else sessionStorage.removeItem(`${draftKey}:model-command`);
+    } catch {
+      /* Unknown receipt kind conservatively keeps a local choice. */
+    }
+  }, [draftKey, pending, modelCommand]);
+  useEffect(() => {
     if (reference) {
       setDraft((previous) => `${previous}${previous ? "\n" : ""}@${reference}`);
       onReferenceUsed();
@@ -370,13 +448,24 @@ export function ChatWorkspace({
         conversation.commands.includes(pending))
     ) {
       setPending("");
+      if (modelDraftConsumed(pending, modelCommand)) setDraftModel(null);
+      setModelCommand("");
       removeImages(sentImages.current);
       setDraft((value) => (value === sentDraft.current ? "" : value));
       onChanged();
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [summary, turns, pending, onChanged, state, conversation, removeImages]);
+  }, [
+    summary,
+    turns,
+    pending,
+    modelCommand,
+    onChanged,
+    state,
+    conversation,
+    removeImages,
+  ]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
     () =>
@@ -509,6 +598,7 @@ export function ChatWorkspace({
       return;
     }
     if (
+      modelPending ||
       !actionsReady ||
       !cadenceKnown ||
       !canSend ||
@@ -565,6 +655,12 @@ export function ChatWorkspace({
       (!message.trim() && !images.length)
     )
       return;
+    if (
+      retained &&
+      (!canSend ||
+        modelWaitDisposition(retained, latestAvailability.current) !== "ready")
+    )
+      return;
     if (exiting && images.length) {
       setError(t("Remove images before exiting Cadence."));
       return;
@@ -604,7 +700,10 @@ export function ChatWorkspace({
     let dispatched = false;
     let preparation: PreparationStage = "not-dispatched";
     const pendingCommand = (id: string) => {
-      if (current()) setPending(id);
+      if (current()) {
+        setPending(id);
+        setModelCommand(id && !exiting ? id : "");
+      }
     };
     const prepare = async (location?: ConversationLocation) => {
       if (!prepareForSend) return;
@@ -646,9 +745,15 @@ export function ChatWorkspace({
           images,
           revision: state?.revision ?? 0,
           location: context ? { id, cwd: context.cwd } : undefined,
-          model: modelRead.catalog?.selected
-            ? selector(modelRead.catalog.selected)
-            : (modelRead.catalog?.remembered ?? context?.model ?? undefined),
+          installModel: !!draftModel,
+          model:
+            draftModel ??
+            (modelRead.catalog?.selected
+              ? selector(modelRead.catalog.selected)
+              : (modelRead.catalog?.remembered ??
+                context?.model ??
+                modelRead.preview?.remembered ??
+                undefined)),
           intent: exiting
             ? "exit"
             : cadence
@@ -657,7 +762,12 @@ export function ChatWorkspace({
                 ? "enter"
                 : "ordinary",
         });
-      await prepare(intent.location);
+      if (retained) {
+        if (
+          modelWaitDisposition(retained, latestAvailability.current) !== "ready"
+        )
+          throw new Error("stale");
+      } else await prepare(intent.location);
       if (!current()) return;
       if (intent.command.kind === "cadence-exit") {
         const command = sendCommand(intent);
@@ -681,18 +791,48 @@ export function ChatWorkspace({
         onChanged();
         return;
       }
-      const chooseFirst = () => {
-        waitingSend.current = intent;
-        setAwaitingModel(true);
+      const chooseFirst = (epoch?: string) => {
+        const observed = latestAvailability.current;
+        const prepared =
+          epoch ?? (observed.status === "ready" ? observed.epoch : undefined);
+        if (
+          prepared &&
+          modelWaitDisposition(waitingModelSend(intent, prepared), observed) !==
+            "cancel"
+        ) {
+          waitingSend.current = waitingModelSend(intent, prepared);
+          setAwaitingModel(true);
+        } else {
+          clearModelWait();
+          setError(
+            t(
+              "The connection changed. Your model choice and draft are kept; send again when ready.",
+            ),
+          );
+        }
         openModels(true);
       };
       let catalog = await client.models(undefined, intent.location);
       if (!current()) return;
+      if (
+        intent.preparedEpoch &&
+        catalog.kind === "ok" &&
+        catalog.value.version.epoch !== intent.preparedEpoch
+      )
+        throw new Error("stale");
       const offered =
         catalog.kind === "ok"
           ? (catalog.value.selected ?? catalog.value.remembered)
           : null;
       if (!intent.model && offered) intent = withSendModel(intent, offered);
+      if (intent.installModel && catalog.kind === "ok") {
+        catalog = {
+          kind: "ok",
+          value: await installSendModel(client, intent, catalog.value, current),
+        };
+        if (!current()) return;
+        setModelReads((n) => n + 1);
+      }
       // Restore only this Send's exact displayed choice, never a newer global
       // default or another conversation's selection.
       const restoreChoice =
@@ -714,7 +854,7 @@ export function ChatWorkspace({
         if (!current()) return;
         if (restored.kind === "error") {
           setError(restored.error.code);
-          chooseFirst();
+          chooseFirst(catalog.value.version.epoch);
           return;
         }
         catalog = await client.models(undefined, intent.location);
@@ -722,7 +862,9 @@ export function ChatWorkspace({
         setModelReads((n) => n + 1);
       }
       if (catalog.kind !== "ok" || !catalog.value.selected) {
-        chooseFirst();
+        chooseFirst(
+          catalog.kind === "ok" ? catalog.value.version.epoch : undefined,
+        );
         return;
       }
       assertSendModel(intent, catalog.value.selected);
@@ -761,6 +903,7 @@ export function ChatWorkspace({
         // Even a lost reply can have accepted work. Observe this exact turn ID.
       } else {
         removeImages(sentImages.current);
+        setDraftModel(null);
         setDraft((value) => (value === sentDraft.current ? "" : value));
         setPending("");
         if (command.kind === "cadence-send") {
@@ -789,15 +932,27 @@ export function ChatWorkspace({
   };
   const sendLatest = useRef(send);
   sendLatest.current = send;
-  // The Send that waited for a model continues once sending is possible again.
+  // Preview and installed choices share the same original continuation. Stop
+  // or an epoch change retires it; a model click never starts another owner.
   useEffect(() => {
-    if (resume && canSend && !running) {
-      setResume(false);
-      const intent = waitingSend.current;
+    const waiting = waitingSend.current;
+    if (!waiting || (!resume && !awaitingModel)) return;
+    const disposition = modelWaitDisposition(waiting, availability);
+    if (disposition === "cancel") {
       waitingSend.current = null;
-      if (intent) void sendLatest.current(undefined, intent);
+      setAwaitingModel(false);
+      setResume(false);
+      setError(
+        t(
+          "The connection changed. Your model choice and draft are kept; send again when ready.",
+        ),
+      );
+    } else if (resume && disposition === "ready" && canSend && !running) {
+      setResume(false);
+      waitingSend.current = null;
+      void sendLatest.current(undefined, waiting);
     }
-  }, [resume, canSend, running]);
+  }, [resume, awaitingModel, canSend, running, availability, t]);
   // Never a late surprise: if sending stays impossible, the message waits.
   useEffect(() => {
     if (!resume) return;
@@ -1066,6 +1221,7 @@ export function ChatWorkspace({
           <PlanCard
             proposal={state.proposal}
             canApprove={
+              !modelPending &&
               actionsReady &&
               canSend &&
               cadenceKnown &&
@@ -1260,20 +1416,18 @@ export function ChatWorkspace({
             availability={availability}
             read={modelRead}
             lastModel={context?.model}
-            locked={!!running}
+            draftModel={draftModel}
+            onPreviewChoice={
+              previewModels ? (choice) => chosenModel(choice, false) : undefined
+            }
+            locked={!!running || busy || !!pending}
             open={modelOpen}
             onOpenChange={openModels}
             onChanged={() => {
               contextRead.refresh();
               onModelChanged();
             }}
-            onChosen={(choice) => {
-              if (!awaitingModel || !waitingSend.current) return;
-              waitingSend.current = withSendModel(waitingSend.current, choice);
-              setAwaitingModel(false);
-              setError("");
-              setResume(true);
-            }}
+            onChosen={(choice) => chosenModel(choice, true)}
             awaitingSend={awaitingModel}
           />
           <span className="composer-hint">

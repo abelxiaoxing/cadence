@@ -232,9 +232,7 @@ for (const locale of ["en", "zh"] as const) {
       );
       expect(statusbar).not.toContain("status-dot error");
       expect(statusbar).not.toContain("status-dot ok");
-      expect(html).toContain(
-        locale === "zh" ? "发送时加载模型" : "Models load when you send",
-      );
+      expect(html).toContain(locale === "zh" ? "选择模型" : "Choose a model");
       expect(html).not.toContain(
         locale === "zh" ? "模型目录读取失败" : "Model list unavailable",
       );

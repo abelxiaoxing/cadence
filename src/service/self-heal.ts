@@ -166,9 +166,10 @@ async function stopWorkers(
     running = 0;
   for (const worker of ledger.read(epoch)) {
     const holder = holderState({ ...worker, host: hostname() });
-    if (holder.state !== "live") continue;
-    // Only a PID whose start identity matches the ledger is ours to stop.
-    if (!worker.started) {
+    if (holder.state === "dead") continue;
+    // Unknown identity is not evidence of absence. Only a live PID whose start
+    // identity matches the ledger is ours to stop; everything else stays fenced.
+    if (holder.state !== "live" || !worker.started) {
       running++;
       continue;
     }
@@ -914,8 +915,17 @@ export async function healWorkbench(
   }
   const cause: RecoveryEvent["cause"] =
     !activeNow || damaged ? "storage" : holder.reboot ? "reboot" : "crash";
-  if (options.inspect) return { status: "reclaimable", cause, workers: 0 };
+  const ledger = new ProcessLedger(store.files);
+  const epoch = value?.epoch ?? null;
+  const workers = takenOver
+    ? { stopped: 0, running: 0 }
+    : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
+  if (workers.running)
+    return { status: "blocked", reason: "workers-running", pid };
+  if (options.inspect)
+    return { status: "reclaimable", cause, workers: workers.stopped };
   const actions = new Set<RecoveryEvent["actions"][number]>();
+  if (workers.stopped) actions.add("stopped-workers");
   const archive = log.archive();
   for (const path of temporaries) {
     archive.keep(path);
@@ -942,6 +952,7 @@ export async function healWorkbench(
     else if (lock) store.files.remove(lockPath, lock.snapshot);
     actions.add("released-locks");
   }
+  if (epoch) ledger.remove(epoch);
   return {
     status: "healed",
     event: log.record({
@@ -949,7 +960,7 @@ export async function healWorkbench(
       path: null,
       cause,
       actions: [...actions],
-      workers: 0,
+      workers: workers.stopped,
       archive: archive.used() ? archive.name : null,
     }),
   };
@@ -976,11 +987,17 @@ function decodeGatewayLock(value: unknown): GatewayLock {
   };
 }
 function decodeGatewayRegistration(value: unknown): {
+  epoch?: string;
   pid: number;
   host?: string;
   phase: string;
 } {
-  const o = value as { pid: number; host?: string; phase: string };
+  const o = value as {
+    epoch?: string;
+    pid: number;
+    host?: string;
+    phase: string;
+  };
   if (
     !o ||
     typeof o !== "object" ||
@@ -988,6 +1005,7 @@ function decodeGatewayRegistration(value: unknown): {
   )
     throw new ContractError("corrupt-selected");
   integer(o.pid, 1, 2147483647);
+  if (o.epoch !== undefined) decodeId(o.epoch);
   return o;
 }
 

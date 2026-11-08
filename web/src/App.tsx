@@ -32,10 +32,12 @@ import {
 } from "react-icons/fi";
 import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
+import type { ModelSelector } from "../../src/service-contract.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
 import type { PreparationProgress } from "./client/conversation-send";
+import type { PreviewModels } from "./client/model-preview";
 import { activityRoute, chatFromLocation } from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
@@ -104,8 +106,12 @@ export function App({
   onChooseFolder,
   onPrepareSend,
   directoryNamespaces,
+  previewModels,
+  initialModel,
 }: {
   api?: BrowserClient;
+  previewModels?: PreviewModels;
+  initialModel?: { conversationId: string; model: ModelSelector };
   project?: ProjectEntry;
   directoryNamespaces?: string[];
   onChooseFolder?(cwd?: string): void;
@@ -1145,6 +1151,12 @@ export function App({
                     !workspace.error
               }
               modelAvailability={modelAvailability}
+              previewModels={previewModels}
+              initialModel={
+                initialModel?.conversationId === chatId
+                  ? initialModel.model
+                  : undefined
+              }
               onModelChanged={() => {
                 lifetime.current.depart();
                 workspace.refresh(true);

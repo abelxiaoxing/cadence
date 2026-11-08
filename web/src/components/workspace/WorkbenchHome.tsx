@@ -1,7 +1,7 @@
 /** Project-less conversation shell. No project client, task or Send is created.
  * History belongs to each project; one click on a recent project is its
  * nonactivating selection, and the central action opens the folder picker. */
-import { type CSSProperties, type ReactNode, useRef } from "react";
+import { type CSSProperties, type ReactNode, useRef, useState } from "react";
 import {
   FiArrowUp,
   FiFolder,
@@ -10,16 +10,23 @@ import {
   FiServer,
   FiSidebar,
 } from "react-icons/fi";
+import type { ModelSelector } from "../../../../src/service-contract.ts";
+import type { PreviewModels } from "../../client/model-preview";
+import { useModelCatalog } from "../../client/use-model-catalog";
 import { useT } from "../../i18n/locale";
 import { useDrawerFocus } from "../../layout/use-drawer-focus";
 import { usePanelLayout } from "../../layout/use-panel-layout";
 import { useSwipeDrawer } from "../../layout/use-swipe-drawer";
+import { ModelPicker } from "../actions/ModelPicker";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkingFolderButton } from "./WorkingFolderButton";
 
 export function WorkbenchHome({
   ready,
+  previewModels,
+  model,
+  onModelChoice,
   projects = [],
   restore = null,
   opening = null,
@@ -30,6 +37,9 @@ export function WorkbenchHome({
   discovery,
 }: {
   ready: boolean;
+  previewModels?: PreviewModels;
+  model?: ModelSelector | null;
+  onModelChoice?(model: ModelSelector): void;
   projects?: readonly string[];
   restore?: { status: "checking" | "unavailable"; path: string } | null;
   /** The recent project being opened, if any. */
@@ -43,6 +53,13 @@ export function WorkbenchHome({
   discovery?: ActivityListProps;
 }) {
   const { t, locale, setLocale } = useT();
+  const [modelOpen, setModelOpen] = useState(false);
+  const modelRead = useModelCatalog(
+    null,
+    { status: "not-started" },
+    "home",
+    previewModels,
+  );
   const panels = usePanelLayout();
   const { mobile, overlay: drawer, closeDrawer } = panels;
   const layout = useRef<HTMLDivElement>(null);
@@ -229,6 +246,21 @@ export function WorkbenchHome({
                 placeholder={t("Choose a working folder to start chatting.")}
               />
               <div className="composer-toolbar">
+                <ModelPicker
+                  scope="next-conversation"
+                  availability={{ status: "not-started" }}
+                  read={modelRead}
+                  draftModel={model}
+                  onPreviewChoice={onModelChoice}
+                  locked={!ready}
+                  open={modelOpen}
+                  onOpenChange={(open) => {
+                    if (open && !modelRead.preview && !modelRead.loading)
+                      modelRead.reread();
+                    setModelOpen(open);
+                  }}
+                  onChanged={() => {}}
+                />
                 <span className="composer-hint">
                   {t("Ordinary conversation")}
                 </span>

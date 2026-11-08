@@ -9,9 +9,9 @@ import {
   createServer as createServer2,
   request as request2
 } from "node:http";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 import { dirname as dirname17 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
 
 // src/history/files.ts
@@ -3846,8 +3846,23 @@ function decodeModelCandidate(value) {
 function catalogOffers(entries, selector) {
   return entries.some((e) => e.provider === selector.provider && e.model === selector.model && e.api === selector.api && e.thinking.some((t) => t.selectable && t.level === selector.thinking));
 }
-function decodeModelCatalog(value) {
+function decodeModelPreview(value) {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
+  const o = closed(value, ["status", "entries", "withheld", "remembered"]);
+  const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
+  const remembered = nullable(o.remembered, decodeModelSelector);
+  const status = oneOf(o.status, ["complete", "capacity"]);
+  const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
+  if (status === "capacity" && (entries.length || withheld) || entries.length + withheld > LIMITS.maxPageEntries || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length || remembered && !catalogOffers(entries, remembered))
+    invalid();
+  return {
+    status,
+    entries,
+    withheld,
+    remembered
+  };
+}
+function decodeModelCatalog(value) {
   const o = closed(value, [
     "version",
     "selected",
@@ -3856,19 +3871,12 @@ function decodeModelCatalog(value) {
     "withheld",
     "remembered"
   ]);
-  const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
-  const remembered = nullable(o.remembered, decodeModelSelector);
-  const status = oneOf(o.status, ["complete", "capacity"]);
-  const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
-  if (status === "capacity" && (entries.length || withheld) || entries.length + withheld > LIMITS.maxPageEntries || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length || remembered && !catalogOffers(entries, remembered))
-    invalid();
+  const { version, selected, ...preview } = o;
+  canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
   return {
-    version: decodeChoiceVersion(o.version),
-    selected: nullable(o.selected, decodeModelSelection),
-    status,
-    entries,
-    withheld,
-    remembered
+    ...decodeModelPreview(preview),
+    version: decodeChoiceVersion(version),
+    selected: nullable(selected, decodeModelSelection)
   };
 }
 // src/history/admission.ts
@@ -12385,9 +12393,9 @@ async function stopWorkers(ledger, epoch, reboot, inspect) {
   let stopped = 0, running = 0;
   for (const worker of ledger.read(epoch)) {
     const holder = holderState({ ...worker, host: hostname7() });
-    if (holder.state !== "live")
+    if (holder.state === "dead")
       continue;
-    if (!worker.started) {
+    if (holder.state !== "live" || !worker.started) {
       running++;
       continue;
     }
@@ -12935,9 +12943,16 @@ async function healWorkbench(store, options = {}) {
     }
   }
   const cause = !activeNow || damaged ? "storage" : holder.reboot ? "reboot" : "crash";
+  const ledger = new ProcessLedger(store.files);
+  const epoch = value?.epoch ?? null;
+  const workers = takenOver ? { stopped: 0, running: 0 } : await stopWorkers(ledger, epoch, holder.reboot, !!options.inspect);
+  if (workers.running)
+    return { status: "blocked", reason: "workers-running", pid };
   if (options.inspect)
-    return { status: "reclaimable", cause, workers: 0 };
+    return { status: "reclaimable", cause, workers: workers.stopped };
   const actions = new Set;
+  if (workers.stopped)
+    actions.add("stopped-workers");
   const archive = log.archive();
   for (const path of temporaries) {
     archive.keep(path);
@@ -12955,6 +12970,8 @@ async function healWorkbench(store, options = {}) {
       store.files.remove(lockPath, lock.snapshot);
     actions.add("released-locks");
   }
+  if (epoch)
+    ledger.remove(epoch);
   return {
     status: "healed",
     event: log.record({
@@ -12962,7 +12979,7 @@ async function healWorkbench(store, options = {}) {
       path: null,
       cause,
       actions: [...actions],
-      workers: 0,
+      workers: workers.stopped,
       archive: archive.used() ? archive.name : null
     })
   };
@@ -12980,6 +12997,8 @@ function decodeGatewayRegistration(value) {
   if (!o || typeof o !== "object" || !["alive", "stopping", "stopped", "quarantined"].includes(o.phase))
     throw new ContractError("corrupt-selected");
   integer(o.pid, 1, 2147483647);
+  if (o.epoch !== undefined)
+    decodeId(o.epoch);
   return o;
 }
 
@@ -14792,6 +14811,40 @@ class GatewayConversations {
   }
 }
 
+// src/service/gateway-models.ts
+import { homedir as homedir7 } from "node:os";
+async function readGatewayModels(project, input, secrets, read) {
+  const c = project ? new ServiceCoordination(project.path, input.stateHome) : undefined;
+  if (c && c.store.root !== project?.path)
+    throw new ContractError("stale");
+  const file = c?.files.read(c.path("host-config.json"));
+  const config = c ? readHostConfig(c) : undefined;
+  if (file && !config)
+    throw new ContractError("corrupt-selected");
+  const agentDir = config?.agentDir ?? input.agentDir;
+  if (!agentDir)
+    throw new ContractError("unavailable");
+  const home = homedir7(), cwd = project?.path ?? home, environment2 = captureEnvironment(process.env);
+  const source = piSource(agentDir, home, cwd, environment2);
+  const before = readPiSnapshot(source);
+  const catalog = await read({
+    agentDir: source.directory,
+    home,
+    cwd,
+    environment: environment2,
+    secrets: [...secrets]
+  });
+  const after = readPiSnapshot(source);
+  if (!sameModels(before, after) || before.auth.identity !== after.auth.identity || before.auth.stamp !== after.auth.stamp)
+    throw new ContractError("stale");
+  if (c) {
+    c.files.assert(c.path("host-config.json"), file);
+    if (canonicalJson(readHostConfig(c) ?? null) !== canonicalJson(config ?? null))
+      throw new ContractError("stale");
+  }
+  return catalog;
+}
+
 // src/service/http.ts
 import { createHash as createHash11, randomUUID as randomUUID12 } from "node:crypto";
 import {
@@ -15676,6 +15729,187 @@ Content-Length: 0\r
   }
 }
 
+// src/service/model-preview-process.ts
+import { spawn as spawn4 } from "node:child_process";
+import { createHash as createHash12 } from "node:crypto";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// src/service/model-preview-protocol.ts
+import { isAbsolute as isAbsolute11 } from "node:path";
+var PREVIEW_INPUT_BYTES = 1024 * 1024;
+var PREVIEW_TIMEOUT_MS = 15000;
+var PREVIEW_PROCESSES = 2;
+function decodeModelPreviewInput(value) {
+  canonicalJson(value, PREVIEW_INPUT_BYTES);
+  const o = closed(value, ["kind", "agentDir", "home", "cwd", "secrets"]);
+  const path = (v) => {
+    const p = text(v, 4096, true);
+    if (!isAbsolute11(p))
+      throw new ContractError("invalid");
+    return p;
+  };
+  return {
+    kind: literal(o.kind, "cadence-model-preview/1"),
+    agentDir: path(o.agentDir),
+    home: path(o.home),
+    cwd: path(o.cwd),
+    secrets: list(o.secrets, 4096, (v) => text(v, PREVIEW_INPUT_BYTES, true))
+  };
+}
+
+// src/service/model-preview-process.ts
+class ModelPreviewProcesses {
+  options;
+  jobs = new Map;
+  stopping = false;
+  poisoned = false;
+  constructor(options) {
+    this.options = options;
+  }
+  get uncertain() {
+    return this.poisoned;
+  }
+  read(source) {
+    try {
+      this.options.assertCurrent();
+      if (this.stopping || this.poisoned)
+        throw new ContractError("quarantine");
+      const { environment: environment2, ...fields2 } = source;
+      const input = decodeModelPreviewInput({
+        kind: "cadence-model-preview/1",
+        ...fields2
+      });
+      const body = canonicalJson(input, PREVIEW_INPUT_BYTES);
+      const env = captureEnvironment(hostEnvironment(environment2));
+      const key = createHash12("sha256").update(body).update(JSON.stringify(env)).digest("hex");
+      const previous = this.jobs.get(key);
+      if (previous)
+        return previous.result;
+      if (this.jobs.size >= PREVIEW_PROCESSES)
+        throw new ContractError("capacity");
+      const job2 = this.launch(body, env, key, input.home);
+      this.jobs.set(key, job2);
+      return job2.result;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  invalidate() {
+    for (const job2 of this.jobs.values())
+      job2.stop();
+  }
+  async close() {
+    this.stopping = true;
+    this.invalidate();
+    await Promise.all([...this.jobs.values()].map((job2) => job2.settlement));
+    if (this.poisoned)
+      throw new ContractError("quarantine");
+  }
+  launch(body, env, key, cwd) {
+    let resolveResult, rejectResult;
+    let resolveSettlement, rejectSettlement;
+    const result = new Promise((resolve11, reject) => {
+      resolveResult = resolve11;
+      rejectResult = reject;
+    });
+    const settlement = new Promise((resolve11, reject) => {
+      resolveSettlement = resolve11;
+      rejectSettlement = reject;
+    });
+    result.catch(() => {});
+    settlement.catch(() => {});
+    const child2 = spawn4(process.execPath, [fileURLToPath3(this.options.worker)], {
+      cwd,
+      env,
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: ["pipe", "pipe", "ignore", "ipc"]
+    });
+    const pid = child2.pid, started = pid ? processStart(pid) : null;
+    let closed2 = false, stopping = false, failed;
+    let bytes = 0;
+    const chunks = [];
+    let killTimer;
+    let unknownTimer;
+    const signal = (value) => {
+      if (closed2 || child2.exitCode !== null || child2.signalCode !== null || !pid)
+        return;
+      try {
+        this.options.assertCurrent();
+      } catch {
+        return;
+      }
+      if (started && processStart(pid) !== started)
+        return;
+      try {
+        child2.kill(value);
+      } catch {}
+    };
+    const stop = (error = new ContractError("unavailable")) => {
+      failed ??= error;
+      if (closed2 || stopping)
+        return;
+      stopping = true;
+      signal("SIGTERM");
+      killTimer = setTimeout(() => signal("SIGKILL"), LIMITS.terminateGraceMs);
+      unknownTimer = setTimeout(() => {
+        if (closed2)
+          return;
+        this.poisoned = true;
+        const error2 = new ContractError("quarantine");
+        rejectResult(error2);
+        rejectSettlement(error2);
+        this.options.unconfirmed();
+      }, LIMITS.unconfirmedStopMs);
+    };
+    const deadline = setTimeout(() => stop(), PREVIEW_TIMEOUT_MS);
+    child2.once("error", () => stop());
+    child2.stdin?.on("error", () => stop());
+    child2.stdout?.on("error", () => stop());
+    child2.stdout?.on("data", (chunk) => {
+      if (failed)
+        return;
+      bytes += chunk.length;
+      if (bytes > LIMITS.pageBytes) {
+        chunks.length = 0;
+        stop(new ContractError("oversize"));
+      } else
+        chunks.push(chunk);
+    });
+    child2.once("close", (code2, nativeSignal) => {
+      closed2 = true;
+      clearTimeout(deadline);
+      clearTimeout(killTimer);
+      clearTimeout(unknownTimer);
+      this.jobs.delete(key);
+      if (pid)
+        this.options.closed(pid);
+      resolveSettlement();
+      if (failed || code2 !== 0 || nativeSignal) {
+        rejectResult(failed ?? new ContractError("unavailable"));
+        return;
+      }
+      try {
+        this.options.assertCurrent();
+        const reply = decodeReply(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), LIMITS.pageBytes), decodeModelPreview);
+        if (reply.kind === "error")
+          throw new ContractError(reply.error.code);
+        resolveResult(reply.value);
+      } catch (error) {
+        rejectResult(error instanceof ContractError ? error : new ContractError("unavailable"));
+      }
+    });
+    try {
+      if (pid)
+        this.options.launched(pid);
+    } catch {
+      stop();
+    }
+    child2.stdin?.end(body);
+    return { result, settlement, stop: () => stop() };
+  }
+}
+
 // src/service/workbench-files.ts
 import {
   closeSync as closeSync7,
@@ -15687,11 +15921,11 @@ import {
   readSync as readSync5,
   realpathSync as realpathSync9
 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { dirname as dirname16, isAbsolute as isAbsolute11, join as join27, relative as relative5, resolve as resolve11, sep as sep5 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { dirname as dirname16, isAbsolute as isAbsolute12, join as join27, relative as relative5, resolve as resolve11, sep as sep5 } from "node:path";
 function inside(root, path) {
   const r = relative5(root, path);
-  return r === "" || !isAbsolute11(r) && r !== ".." && !r.startsWith(`..${sep5}`);
+  return r === "" || !isAbsolute12(r) && r !== ".." && !r.startsWith(`..${sep5}`);
 }
 var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
 
@@ -15715,14 +15949,14 @@ class WorkbenchFiles {
       throw new ContractError("forbidden");
   }
   directory(path) {
-    if (!isAbsolute11(path) || !safeDirectory(path))
+    if (!isAbsolute12(path) || !safeDirectory(path))
       throw new ContractError("invalid");
     const canonical = realpathSync9(path);
     this.allowed(canonical);
     return canonical;
   }
   selected(path) {
-    if (isAbsolute11(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
+    if (isAbsolute12(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
       throw new ContractError("forbidden");
     const target = resolve11(this.root, path);
     if (!inside(this.root, target) || !safeDirectory(dirname16(target)))
@@ -15733,7 +15967,7 @@ class WorkbenchFiles {
     return target;
   }
   browsed(path) {
-    const full = /^~(?:[\\/]|$)/.test(path) ? join27(homedir7(), path.slice(1)) : path || this.root;
+    const full = /^~(?:[\\/]|$)/.test(path) ? join27(homedir8(), path.slice(1)) : path || this.root;
     try {
       return this.directory(full);
     } catch (error) {
@@ -15844,7 +16078,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "002b8e5b103844b2237ba13aa27a72344e5bd61b94f96bb41181f53b9dd5a225",
+    contractHash: "ee8ae17515fd8baf0aba38eb6a78a27e8c574cda265ddc17884c0741a6fb56b1",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -15964,13 +16198,25 @@ Content-Length: 0\r
     secrets: () => acquired.access.redactionLiterals()
   });
   acquired.access.onRevoke(() => activity2.invalidate());
-  const files = new WorkbenchFiles(homedir8(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
+  const files = new WorkbenchFiles(homedir9(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
   const assert = () => {
     store.assert();
     if (!accepting)
       throw new ContractError("quarantine");
   };
-  const root = dirname17(dirname17(fileURLToPath3(hostUrl))), version = installedVersion(root), record3 = new MaintenanceRecord(store);
+  let previewLedger;
+  const modelPreviews = new ModelPreviewProcesses({
+    worker: new URL("./model-preview.mjs", hostUrl),
+    assertCurrent: () => store.assert(),
+    launched: (pid) => {
+      previewLedger ??= new ProcessLedger(store.files).open(auth.epoch);
+      previewLedger.add(pid);
+    },
+    closed: (pid) => previewLedger?.remove(pid),
+    unconfirmed: () => stop()
+  });
+  acquired.access.onRevoke(() => modelPreviews.invalidate());
+  const root = dirname17(dirname17(fileURLToPath4(hostUrl))), version = installedVersion(root), record3 = new MaintenanceRecord(store);
   const managed = (() => {
     const s = supervisingUnit(process.env, (selection) => hostSystem(root, ownerControl, selection));
     return s && serviceConfigPath(s) === input.serverConfig ? s : undefined;
@@ -16216,6 +16462,8 @@ Content-Length: 0\r
       return;
     accepting = false;
     activity2.close();
+    const previewsClosed = modelPreviews.close();
+    previewsClosed.catch(() => {});
     store.phase("stopping");
     stopping = (async () => {
       await Promise.allSettled([...preparations.values()].map((o) => o.result));
@@ -16237,6 +16485,8 @@ Content-Length: 0\r
         if ((await stopService(c)).status !== "stopped")
           throw new ContractError("quarantine");
       });
+      await previewsClosed;
+      previewLedger?.close();
       conversations.close();
       store.release();
       for (const close of relays)
@@ -16252,6 +16502,8 @@ Content-Length: 0\r
       server.close();
       for (const socket of connections)
         socket.destroy();
+      if (modelPreviews.uncertain)
+        process.exit(75);
     });
   }
   async function body(req, maximum = 16384) {
@@ -16530,6 +16782,21 @@ Content-Length: 0\r
         });
         return;
       }
+      if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
+        browserBuild(boundary);
+        const keys2 = [...url.searchParams.keys()];
+        if (keys2.length && (keys2.length !== 1 || keys2[0] !== "project"))
+          throw new ContractError("invalid");
+        const id = url.searchParams.get("project");
+        const selected2 = id === null ? undefined : store.projects().find((p) => p.id === decodeHash(id));
+        if (id !== null && !selected2)
+          throw new ContractError("unavailable");
+        const catalog = await readGatewayModels(selected2, input, acquired.access.redactionLiterals(), (source2) => modelPreviews.read(source2));
+        auth.current(caller);
+        assert();
+        reply(res, 200, catalog, LIMITS.pageBytes);
+        return;
+      }
       if (raw === "/workbench/v1/activity" && req.method === "GET") {
         browserBuild(boundary);
         const value2 = await activity2.read();
@@ -16543,7 +16810,7 @@ Content-Length: 0\r
           kind: "workbench",
           epoch: auth.epoch,
           csrf: auth.csrf,
-          home: homedir8(),
+          home: homedir9(),
           projects: store.projects(),
           recoveries: new RecoveryLog(store.files).notices(),
           build: build2
@@ -16694,14 +16961,14 @@ Content-Length: 0\r
 }
 
 // src/service/host.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 import { lstatSync as lstatSync25, opendirSync as opendirSync16 } from "node:fs";
 import { join as join43 } from "node:path";
-import { fileURLToPath as fileURLToPath7 } from "node:url";
+import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
-import { createHash as createHash12 } from "node:crypto";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+import { createHash as createHash13 } from "node:crypto";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
 var AGENT_FILES = [
   "design-explorer.md",
   "implementation-worker.md",
@@ -16709,7 +16976,7 @@ var AGENT_FILES = [
 ];
 function loadAgentDefinitions() {
   return AGENT_FILES.map((fileName) => {
-    const path = fileURLToPath4(new URL(`../agents/${fileName}`, import.meta.url));
+    const path = fileURLToPath5(new URL(`../agents/${fileName}`, import.meta.url));
     const data2 = readBounded(path, 32768, true);
     if (!data2)
       throw new Error("Missing package Agent");
@@ -16717,7 +16984,7 @@ function loadAgentDefinitions() {
       role: fileName.replace(/\.md$/, ""),
       fileName,
       path,
-      sha256: createHash12("sha256").update(data2).digest("hex"),
+      sha256: createHash13("sha256").update(data2).digest("hex"),
       bytes: data2.length,
       content: data2.toString("utf8")
     };
@@ -16972,7 +17239,7 @@ class HistoryLive {
 }
 
 // src/history/navigation.ts
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 import { lstatSync as lstatSync18 } from "node:fs";
 import { dirname as dirname18, join as join29 } from "node:path";
 
@@ -18199,7 +18466,7 @@ class HistoryNavigation {
         continue;
       }
       let pending = Buffer.alloc(0), at = offset, bodyBytes = 0;
-      const checksum = createHash13("sha256"), rows = [];
+      const checksum = createHash14("sha256"), rows = [];
       while (at < size2) {
         const chunk = this.block(path, at, size2, budget);
         at += chunk.length;
@@ -18702,7 +18969,7 @@ function navigationKeys(row) {
 }
 
 // src/history/projection.ts
-import { createHash as createHash19 } from "node:crypto";
+import { createHash as createHash20 } from "node:crypto";
 
 // src/history/task-folds.ts
 var TASKS = 1024;
@@ -19045,17 +19312,17 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash17, randomUUID as randomUUID14 } from "node:crypto";
+import { createHash as createHash18, randomUUID as randomUUID14 } from "node:crypto";
 import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/history/search.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 
 // src/history/read-proof.ts
 import {
   createCipheriv,
   createDecipheriv,
-  createHash as createHash14,
+  createHash as createHash15,
   randomBytes as randomBytes5
 } from "node:crypto";
 var PREFIX = "rp1.";
@@ -19107,7 +19374,7 @@ class HistoryReadProof {
       root: this.files.format.rootIdentity,
       format: material.formatStamp,
       key: material.keyStamp,
-      request: createHash14("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
+      request: createHash15("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
     }));
   }
   seal(context, plaintext, budget) {
@@ -19879,11 +20146,11 @@ function decodeRetainedProgress(value) {
 }
 
 // src/history/retained-traversal.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 function bad5() {
   throw new ContractError("corrupt-selected");
 }
-var fingerprint = (v) => createHash15("sha256").update(canonicalJson(v)).digest("hex");
+var fingerprint = (v) => createHash16("sha256").update(canonicalJson(v)).digest("hex");
 var ready = (v) => {
   const s = v.state;
   if (s.phase !== "ready")
@@ -20239,11 +20506,11 @@ var digits = (id) => {
   return s.slice(0, 12) + s.slice(13, 16) + s.slice(17);
 };
 var publicTextRef = (id, label, text2, field, batch, row, slot) => ({
-  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash16("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
+  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash17("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
   version: batch.rows.indexOf(row) * EVENT_SLOTS + slot + 1,
   field,
   bytes: Buffer.byteLength(text2),
-  sha256: createHash16("sha256").update(text2).digest("hex")
+  sha256: createHash17("sha256").update(text2).digest("hex")
 });
 var initial = () => ({
   pos: { segment: 1, offset: 0 },
@@ -20259,7 +20526,7 @@ function scanCursor(base, p) {
   const snapshot = p.snapshot.toString(16).padStart(14, "0");
   if (snapshot.length !== 14)
     throw new ContractError("capacity");
-  const binding = createHash16("sha256").update(canonicalJson({
+  const binding = createHash17("sha256").update(canonicalJson({
     ...readIdentity(base),
     recordId: null,
     recordVersion: version,
@@ -20600,7 +20867,7 @@ class RetainedScan {
             graph: {
               recordId: v.intent.operationId,
               revision: graph.revision,
-              sha256: createHash16("sha256").update(canonicalJson(graph)).digest("hex")
+              sha256: createHash17("sha256").update(canonicalJson(graph)).digest("hex")
             }
           },
           graph
@@ -20899,7 +21166,7 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash17("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash18("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
@@ -20959,7 +21226,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID14(), digest = createHash17("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID14(), digest = createHash18("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -21028,7 +21295,7 @@ async function* exportHistory(projection, input, signal) {
       const { detail, owner } = item, original = open2.get(detail.content.recordId);
       if (detail.content.bytes ? !original || original.bytes !== detail.content.bytes || original.content !== canonicalJson(detail.content) : original !== undefined)
         throw new ContractError("corrupt-selected");
-      if ((original?.hash ?? createHash17("sha256")).digest("hex") !== detail.content.sha256)
+      if ((original?.hash ?? createHash18("sha256")).digest("hex") !== detail.content.sha256)
         throw new ContractError("corrupt-selected");
       open2.delete(detail.content.recordId);
       const events = [];
@@ -21059,7 +21326,7 @@ async function* exportHistory(projection, input, signal) {
     coverage = combineCoverage(coverage, item.coverage);
     const length = Buffer.byteLength(item.text);
     if (item.inline) {
-      if (item.start !== 0 || length !== item.content.bytes || createHash17("sha256").update(item.text).digest("hex") !== item.content.sha256)
+      if (item.start !== 0 || length !== item.content.bytes || createHash18("sha256").update(item.text).digest("hex") !== item.content.sha256)
         throw new ContractError("corrupt-selected");
     } else {
       let original = open2.get(item.content.recordId);
@@ -21069,7 +21336,7 @@ async function* exportHistory(projection, input, signal) {
         original = {
           bytes: 0,
           content: canonicalJson(item.content),
-          hash: createHash17("sha256")
+          hash: createHash18("sha256")
         };
         open2.set(item.content.recordId, original);
       }
@@ -21184,7 +21451,7 @@ async function* exportHistory(projection, input, signal) {
 }
 
 // src/history/list-progress.ts
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash19 } from "node:crypto";
 
 // src/history/detail-progress.ts
 function bad7() {
@@ -21658,7 +21925,7 @@ function fits(link, scope) {
   return scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
 }
 function nextAfter(request3, n) {
-  const h = createHash18("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
+  const h = createHash19("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
   return {
     recordId: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     version: 1,
@@ -22042,7 +22309,7 @@ async function read(p, request3, entity) {
       const tasks = [...p.environment.legacyTasks(budget)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
-      const sum = createHash18("sha256");
+      const sum = createHash19("sha256");
       for (const task2 of tasks) {
         budget.reserve(0);
         sum.update(JSON.stringify({
@@ -22055,7 +22322,7 @@ async function read(p, request3, entity) {
       if (s.legacy > tasks.length)
         bad9();
       if (!s.legacyIdentity && request3.after?.version === Number.MAX_SAFE_INTEGER) {
-        const h = createHash18("sha256").update(canonicalJson({
+        const h = createHash19("sha256").update(canonicalJson({
           ...readIdentity(request3),
           after: null,
           legacy: s.legacy === 0 ? "begin" : identity,
@@ -22335,7 +22602,7 @@ class HistoryProjection {
   };
   cursor(request3, pos, row, item) {
     const offset = pos.offset * (LIMITS.segmentRecords + 1) * ROW_SLOTS + row * ROW_SLOTS + item;
-    const digest = createHash19("sha256").update(canonicalJson({
+    const digest = createHash20("sha256").update(canonicalJson({
       ...readIdentity(request3),
       after: null,
       position: { ...pos, row, item }
@@ -22526,7 +22793,7 @@ class HistoryProjection {
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
     const cursor = (offset2, identity2) => {
-      const digest2 = createHash19("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
+      const digest2 = createHash20("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
       return {
         recordId: `${digest2.slice(0, 8)}-${digest2.slice(8, 12)}-4${digest2.slice(13, 16)}-8${digest2.slice(17, 20)}-${digest2.slice(20, 32)}`,
         version: legacyVersion,
@@ -22553,7 +22820,7 @@ class HistoryProjection {
     }
     if (legacy.length > 1000)
       throw new ContractError("capacity");
-    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash19("sha256");
+    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash20("sha256");
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
@@ -22743,7 +23010,7 @@ class HistoryProjection {
 }
 
 // src/history/reader.ts
-import { createHash as createHash20 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 import { existsSync as existsSync3 } from "node:fs";
 import { join as join30 } from "node:path";
 
@@ -23405,7 +23672,7 @@ class HistoryReader {
         }
       }
       const text2 = Buffer.concat(pieces);
-      if (end !== detail.content.bytes || createHash20("sha256").update(text2).digest("hex") !== detail.content.sha256)
+      if (end !== detail.content.bytes || createHash21("sha256").update(text2).digest("hex") !== detail.content.sha256)
         return;
       return { detail, bytes: text2 };
     } catch {
@@ -23440,7 +23707,7 @@ class HistoryReader {
       if (!current2 || current2.length < expected.bytes || hash(current2.subarray(0, expected.bytes)) !== expected.identity)
         throw new ContractError("corrupt-selected");
     }
-    const checksum = createHash20("sha256");
+    const checksum = createHash21("sha256");
     let bytes = 0;
     let cached;
     for (const e of locator.chunks) {
@@ -23714,16 +23981,16 @@ class HistoryReader {
 }
 
 // src/history/recovery.ts
-import { createHash as createHash24, randomUUID as randomUUID18 } from "node:crypto";
+import { createHash as createHash25, randomUUID as randomUUID18 } from "node:crypto";
 import { lstatSync as lstatSync19, opendirSync as opendirSync10 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
-import { createHash as createHash23, randomUUID as randomUUID17 } from "node:crypto";
+import { createHash as createHash24, randomUUID as randomUUID17 } from "node:crypto";
 import { join as join33 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash21, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash22, randomUUID as randomUUID15 } from "node:crypto";
 import {
   closeSync as closeSync8,
   fsyncSync as fsyncSync4,
@@ -23811,7 +24078,7 @@ function recordText(record3) {
 `;
 }
 function contentIdentity(text2) {
-  return createHash21("sha256").update(text2).digest("hex");
+  return createHash22("sha256").update(text2).digest("hex");
 }
 function savedRecordIdentity(record3) {
   return contentIdentity(recordText(record3));
@@ -23956,11 +24223,11 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash22, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash23, randomUUID as randomUUID16 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash22("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash23("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
@@ -24020,7 +24287,7 @@ import {
   openSync as openSync9,
   realpathSync as realpathSync10
 } from "node:fs";
-import { dirname as dirname19, isAbsolute as isAbsolute12, join as join32, relative as relative6, sep as sep6 } from "node:path";
+import { dirname as dirname19, isAbsolute as isAbsolute13, join as join32, relative as relative6, sep as sep6 } from "node:path";
 function summary(text2, maximum, runId) {
   const label = `[Cadence summary${runId ? `; run ${runId}` : ""}; retained history is separate]
 `;
@@ -24070,7 +24337,7 @@ function publicationRecord(store, reader, intent, link, run, request3, expected,
     if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
     const cwd = realpathSync10(request3.cwd), within = relative6(store.root, cwd);
-    if (isAbsolute12(within) || within === ".." || within.startsWith(`..${sep6}`))
+    if (isAbsolute13(within) || within === ".." || within.startsWith(`..${sep6}`))
       bad11();
     record3 = {
       schema: TASK_SCHEMA,
@@ -25625,7 +25892,7 @@ class HistoryWriter {
       recordId: randomUUID17(),
       version: 1,
       bytes: 0,
-      hash: createHash23("sha256"),
+      hash: createHash24("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -26003,7 +26270,7 @@ function readOperationStateForPublication(files, operationId) {
 // src/history/recovery.ts
 function digestHistory(files, exclude) {
   files.assertFormat();
-  const digest = createHash24("sha256");
+  const digest = createHash25("sha256");
   let count2 = 0;
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
@@ -26114,13 +26381,13 @@ async function healHistory(lease, log) {
 }
 
 // src/subagent-process.ts
-import { spawn as spawn4 } from "node:child_process";
-import { createHash as createHash26, randomUUID as randomUUID20 } from "node:crypto";
+import { spawn as spawn5 } from "node:child_process";
+import { createHash as createHash27, randomUUID as randomUUID20 } from "node:crypto";
 import { join as join35 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath as fileURLToPath5 } from "node:url";
+import { fileURLToPath as fileURLToPath6 } from "node:url";
 // src/worker-capture.mjs
-import { createHash as createHash25, randomUUID as randomUUID19 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID19 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -26206,7 +26473,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash25("sha256"),
+          finalHash: createHash26("sha256"),
           finalBytes: 0,
           finalIndex: -1
         });
@@ -26233,7 +26500,7 @@ class CaptureState {
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash25("sha256"),
+          hash: createHash26("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -26701,7 +26968,7 @@ class WorkerRecording {
 // src/subagent-process.ts
 function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
-  const taskkill = spawn4(root ? join35(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  const taskkill = spawn5(root ? join35(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
   taskkill.once("close", (code2) => {
     if (code2 !== 0)
@@ -26740,7 +27007,7 @@ function runProcess(spec) {
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
   return new Promise((resolve12) => {
-    const child2 = spawn4(spec.command, spec.args, {
+    const child2 = spawn5(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env ?? safeChildEnv(),
       detached: process.platform !== "win32",
@@ -27153,7 +27420,7 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
     throw new Error("network");
   return runProcess({
     command: process.execPath,
-    args: [fileURLToPath5(new URL("./sdk-worker.mjs", import.meta.url))],
+    args: [fileURLToPath6(new URL("./sdk-worker.mjs", import.meta.url))],
     cwd: encoded2.material.cwd,
     input: encoded2.input,
     env: encoded2.selected.env,
@@ -27171,7 +27438,7 @@ function launchConversation(prepared, conversation, signal, options) {
   const imageInput = options.images?.length ? JSON.stringify(options.images) : undefined;
   const imageDescriptor = imageInput === undefined ? undefined : {
     bytes: Buffer.byteLength(imageInput),
-    sha256: createHash26("sha256").update(imageInput).digest("hex")
+    sha256: createHash27("sha256").update(imageInput).digest("hex")
   };
   return prepared.consume((material) => {
     encoded2 = encodeEnvelope({ ...material, model: { ...material.model } }, options.timeoutMs);
@@ -27464,6 +27731,123 @@ class OwnerModelChoice {
 
 // src/service/model-context.ts
 import { randomUUID as randomUUID22 } from "node:crypto";
+
+// src/service/model-catalog.ts
+function publicModelIdentifier(value, literals) {
+  return !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && diagnosticText(value, 512, literals) === value && sanitizeText(value, literals) === value;
+}
+function exactEnvironment(launch, selected2, snapshot) {
+  const scoped = snapshot.credentials[selected2.selection.provider]?.env;
+  const local = scoped === undefined ? {} : environment(scoped);
+  for (const [name, value] of Object.entries(selected2.env)) {
+    if (local[name])
+      continue;
+    const d = Object.getOwnPropertyDescriptor(process.env, name);
+    if (!d || !("value" in d) || d.value !== value || launch[name] !== value)
+      throw new ContractError("stale");
+  }
+}
+function validateCatalogModel(runtime, thinking, input, current2, launch, literals) {
+  if (!runtime || !thinking)
+    throw new ContractError("unavailable");
+  if (runtime.getError() || runtime.getRegisteredNativeProvider(input.provider) || runtime.getRegisteredProviderConfig(input.provider))
+    throw new ContractError("unsupported-context");
+  const model2 = runtime.getModel(input.provider, input.model);
+  if (!model2 || model2.api !== input.api || model2.provider !== input.provider || model2.id !== input.model || !thinking(model2).includes(input.thinking))
+    throw new ContractError("unsupported-context");
+  if (!publicModelIdentifier(input.provider, literals) || !publicModelIdentifier(input.model, literals))
+    throw new ContractError("unsupported-context");
+  const credential2 = current2.credentials[input.provider];
+  const provider = runtime.getProvider(input.provider);
+  if (credential2?.type === "oauth" ? !provider?.auth.oauth : !provider?.auth.apiKey)
+    throw new ContractError("unsupported-context");
+  if (credential2?.type === "api_key" ? !credential2.key : !credential2 && !current2.providers[input.provider]?.apiKey)
+    throw new ContractError("auth-unavailable");
+  const selected2 = {
+    model: model2,
+    sourceIdentity: sourceIdentity(current2, input.provider),
+    credentialIdentity: stablePrivate(credential2 ?? null),
+    env: selectedEnvironment(current2, input.provider, input.model, launch)
+  };
+  exactEnvironment(launch, { ...selected2, selection: input }, current2);
+  return selected2;
+}
+function projectModelCatalog(runtime, supportedThinking, current2, literals, validate) {
+  const providers = [
+    ...new Set([
+      ...Object.keys(current2.credentials),
+      ...Object.keys(current2.providers)
+    ])
+  ].sort();
+  let count2 = 0;
+  for (const provider of providers) {
+    if (runtime.getRegisteredNativeProvider(provider) || runtime.getRegisteredProviderConfig(provider))
+      throw new ContractError("unsupported-context");
+    count2 += runtime.getModels(provider).length;
+    if (count2 > LIMITS.maxPageEntries)
+      return { status: "capacity", entries: [], withheld: 0 };
+  }
+  const entries2 = [];
+  let withheld = 0;
+  for (const provider of providers) {
+    const models2 = runtime.getModels(provider);
+    if (entries2.length + withheld + models2.length > LIMITS.maxPageEntries)
+      throw new ContractError("capacity");
+    for (const model2 of models2) {
+      if (model2.provider !== provider)
+        throw new ContractError("unsupported-context");
+      if (!publicModelIdentifier(provider, literals) || !publicModelIdentifier(model2.id, literals)) {
+        withheld++;
+        continue;
+      }
+      const api = modelApis.find((api2) => api2 === model2.api) ?? null;
+      const levels2 = supportedThinking(model2);
+      if (levels2.length > 7)
+        throw new ContractError("unsupported-context");
+      let eligibility = "candidate";
+      const thinking = levels2.map((level) => ({
+        level,
+        selectable: api !== null && thinkingLevels.some((t) => t === level)
+      }));
+      const supported = thinking.find((t) => t.selectable);
+      if (!api || !supported)
+        eligibility = "unsupported";
+      else {
+        try {
+          validate(decodeModelSelector({
+            provider,
+            model: model2.id,
+            api,
+            thinking: supported.level
+          }), current2);
+        } catch (error) {
+          if (!(error instanceof ContractError))
+            throw error;
+          if (error.code === "auth-unavailable")
+            eligibility = "auth-unavailable";
+          else if (error.code === "unsupported-context")
+            eligibility = "unsupported";
+          else
+            throw error;
+        }
+      }
+      entries2.push(decodeModelCandidate({
+        provider,
+        model: model2.id,
+        api,
+        thinking: thinking.map((t) => ({
+          ...t,
+          selectable: t.selectable && eligibility === "candidate"
+        })),
+        images: model2.input.includes("image"),
+        eligibility
+      }));
+    }
+  }
+  return { status: "complete", entries: entries2, withheld };
+}
+
+// src/service/model-context.ts
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -27479,17 +27863,6 @@ function directAuthRoute(launch, scoped) {
   for (const name of networkKeys) {
     if (Object.hasOwn(launch, name) || Object.hasOwn(scoped, name) || Object.getOwnPropertyDescriptor(process.env, name) !== undefined)
       throw new ContractError("unsupported-context");
-  }
-}
-function exactEnvironment(launch, selected2, snapshot) {
-  const scoped = snapshot.credentials[selected2.selection.provider]?.env;
-  const local = scoped === undefined ? {} : environment(scoped);
-  for (const [name, value] of Object.entries(selected2.env)) {
-    if (local[name])
-      continue;
-    const d = Object.getOwnPropertyDescriptor(process.env, name);
-    if (!d || !("value" in d) || d.value !== value || launch[name] !== value)
-      throw new ContractError("stale");
   }
 }
 function authProjection(value) {
@@ -27598,82 +27971,11 @@ class OwnerModelContext {
       const runtime = this.#runtime;
       if (!runtime || !this.#thinking)
         throw new ContractError("unavailable");
-      const providers = [
-        ...new Set([
-          ...Object.keys(current2.credentials),
-          ...Object.keys(current2.providers)
-        ])
-      ].sort();
-      let count2 = 0;
-      for (const provider of providers) {
-        if (runtime.getRegisteredNativeProvider(provider) || runtime.getRegisteredProviderConfig(provider))
-          throw new ContractError("unsupported-context");
-        count2 += runtime.getModels(provider).length;
-        if (count2 > LIMITS.maxPageEntries)
-          return { status: "capacity", entries: [], withheld: 0 };
-      }
-      const literals = this.catalogLiterals(current2);
-      const entries2 = [];
-      let withheld = 0;
-      for (const provider of providers) {
-        const models2 = runtime.getModels(provider);
-        if (entries2.length + withheld + models2.length > LIMITS.maxPageEntries)
-          throw new ContractError("capacity");
-        for (const model2 of models2) {
-          if (model2.provider !== provider)
-            throw new ContractError("unsupported-context");
-          if (!this.isPublicIdentifier(provider, literals) || !this.isPublicIdentifier(model2.id, literals)) {
-            withheld++;
-            continue;
-          }
-          const api = modelApis.find((api2) => api2 === model2.api) ?? null;
-          const levels2 = this.#thinking(model2);
-          if (levels2.length > 7)
-            throw new ContractError("unsupported-context");
-          let eligibility = "candidate";
-          const thinking = levels2.map((level) => ({
-            level,
-            selectable: api !== null && thinkingLevels.some((t) => t === level)
-          }));
-          const supported = thinking.find((t) => t.selectable);
-          if (!api || !supported)
-            eligibility = "unsupported";
-          else {
-            try {
-              this.validateModel(decodeModelSelector({
-                provider,
-                model: model2.id,
-                api,
-                thinking: supported.level
-              }), current2);
-            } catch (error) {
-              if (!(error instanceof ContractError))
-                throw error;
-              if (error.code === "auth-unavailable")
-                eligibility = "auth-unavailable";
-              else if (error.code === "unsupported-context")
-                eligibility = "unsupported";
-              else
-                throw error;
-            }
-          }
-          entries2.push(decodeModelCandidate({
-            provider,
-            model: model2.id,
-            api,
-            thinking: thinking.map((t) => ({
-              ...t,
-              selectable: t.selectable && eligibility === "candidate"
-            })),
-            images: model2.input.includes("image"),
-            eligibility
-          }));
-        }
-      }
+      const catalog = projectModelCatalog(runtime, this.#thinking, current2, this.catalogLiterals(current2), (input, snapshot) => this.validateModel(input, snapshot));
       const after = this.catalogSource();
       if (after.auth.identity !== current2.auth.identity || after.auth.stamp !== current2.auth.stamp)
         throw new ContractError("stale");
-      return { status: "complete", entries: entries2, withheld };
+      return catalog;
     } catch (error) {
       throw new ContractError(error instanceof ContractError ? error.code : "corrupt-selected");
     }
@@ -27691,13 +27993,6 @@ class OwnerModelContext {
   }
   catalogLiterals(snapshot) {
     return snapshotLiterals(snapshot, this.#launch, this.#options.network?.literals ?? []);
-  }
-  isPublicIdentifier(value, literals) {
-    return !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && diagnosticText(value, 512, literals) === value && sanitizeText(value, literals) === value;
-  }
-  publicIdentifier(value, literals) {
-    if (!this.isPublicIdentifier(value, literals))
-      throw new ContractError("unsupported-context");
   }
   replaceSelection(input, beforeInstall) {
     this.#options.owner.assertQuiescent();
@@ -27835,31 +28130,9 @@ class OwnerModelContext {
     return { ...selection };
   }
   validateModel(input, current2) {
-    const runtime = this.#runtime;
-    if (!runtime || !this.#thinking)
+    if (!this.#runtime || !this.#thinking)
       throw new ContractError("unavailable");
-    if (runtime.getError() || runtime.getRegisteredNativeProvider(input.provider) || runtime.getRegisteredProviderConfig(input.provider))
-      throw new ContractError("unsupported-context");
-    const model2 = runtime.getModel(input.provider, input.model);
-    if (!model2 || model2.api !== input.api || model2.provider !== input.provider || model2.id !== input.model || !this.#thinking(model2).includes(input.thinking))
-      throw new ContractError("unsupported-context");
-    const literals = this.catalogLiterals(current2);
-    this.publicIdentifier(input.provider, literals);
-    this.publicIdentifier(input.model, literals);
-    const credential2 = current2.credentials[input.provider];
-    const provider = runtime.getProvider(input.provider);
-    if (credential2?.type === "oauth" ? !provider?.auth.oauth : !provider?.auth.apiKey)
-      throw new ContractError("unsupported-context");
-    if (credential2?.type === "api_key" ? !credential2.key : !credential2 && !current2.providers[input.provider]?.apiKey)
-      throw new ContractError("auth-unavailable");
-    const selected2 = {
-      model: model2,
-      sourceIdentity: sourceIdentity(current2, input.provider),
-      credentialIdentity: stablePrivate(credential2 ?? null),
-      env: selectedEnvironment(current2, input.provider, input.model, this.#launch)
-    };
-    exactEnvironment(this.#launch, { ...selected2, selection: input }, current2);
-    return selected2;
+    return validateCatalogModel(this.#runtime, this.#thinking, input, current2, this.#launch, this.catalogLiterals(current2));
   }
   fresh(selected2, resolvingOAuth = false) {
     this.alive();
@@ -29450,18 +29723,18 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 import { randomUUID as randomUUID26 } from "node:crypto";
 import { opendirSync as opendirSync14, realpathSync as realpathSync12, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { basename as basename5, dirname as dirname24, join as join41, resolve as resolve14 } from "node:path";
-import { fileURLToPath as fileURLToPath6 } from "node:url";
+import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
-import { createHash as createHash27 } from "node:crypto";
+import { createHash as createHash28 } from "node:crypto";
 import { lstatSync as lstatSync20, readdirSync as readdirSync4, readlinkSync } from "node:fs";
 import { join as join38, relative as relative8 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash27("sha256");
+  const hash3 = createHash28("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -29519,7 +29792,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash27("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash28("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -29675,13 +29948,13 @@ ${data2.toString("utf8")}`);
 }
 
 // src/worker-workspace.mjs
-import { isAbsolute as isAbsolute13, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
+import { isAbsolute as isAbsolute14, relative as relative9, resolve as resolve12, sep as sep7 } from "node:path";
 function withinRoot(root, path) {
   const part = relative9(root, path);
-  return part === "" || !isAbsolute13(part) && part !== ".." && !part.startsWith(`..${sep7}`);
+  return part === "" || !isAbsolute14(part) && part !== ".." && !part.startsWith(`..${sep7}`);
 }
 var absolute2 = (value) => {
-  if (typeof value !== "string" || !isAbsolute13(value) || value.includes("\x00"))
+  if (typeof value !== "string" || !isAbsolute14(value) || value.includes("\x00"))
     throw new Error("Invalid execution directory");
   return resolve12(value);
 };
@@ -29696,7 +29969,7 @@ function executionDirectory(execution, tree) {
 
 // src/service/project-knowledge.ts
 import { isUtf8 } from "node:buffer";
-import { createHash as createHash29 } from "node:crypto";
+import { createHash as createHash30 } from "node:crypto";
 import {
   closeSync as closeSync11,
   constants as constants10,
@@ -29709,8 +29982,8 @@ import {
 import { dirname as dirname22, posix } from "node:path";
 
 // src/service/workflow-git.ts
-import { spawn as spawn5, spawnSync as spawnSync6 } from "node:child_process";
-import { createHash as createHash28 } from "node:crypto";
+import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
+import { createHash as createHash29 } from "node:crypto";
 import {
   closeSync as closeSync10,
   constants as constants9,
@@ -29724,7 +29997,7 @@ import {
   realpathSync as realpathSync11
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute14, join as join39, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute15, join as join39, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -29766,7 +30039,7 @@ function gitAnswer(cwd, args) {
 }
 function gitRun(cwd, args, timeoutMs = READ_MS) {
   return new Promise((done, fail3) => {
-    const child2 = spawn5("git", gitArguments(args), {
+    const child2 = spawn6("git", gitArguments(args), {
       cwd,
       env: gitEnvironment(),
       stdio: ["ignore", "pipe", "ignore"],
@@ -29809,7 +30082,7 @@ async function gitHead(cwd) {
 }
 function contains2(root, path) {
   const within = relative10(root, path);
-  return !within || !within.startsWith(`..${sep8}`) && within !== ".." && !isAbsolute14(within);
+  return !within || !within.startsWith(`..${sep8}`) && within !== ".." && !isAbsolute15(within);
 }
 function nested(a, b) {
   return contains2(a, b) || contains2(b, a);
@@ -29872,7 +30145,7 @@ function fileIdentity(p, st, hashBytes) {
   try {
     if (!fstatSync7(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash28("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash29("sha256"), buffer = Buffer.alloc(CHUNK);
     for (let n = readSync6(fd, buffer);n > 0; n = readSync6(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
@@ -29899,7 +30172,7 @@ async function fileIdentityAsync(p, st, hashBytes, signal) {
     const same2 = (a, b) => a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
     if (!same2(st, before))
       throw new ContractError("stale");
-    const digest = createHash28("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash29("sha256"), buffer = Buffer.alloc(CHUNK);
     let remaining = before.size;
     while (remaining > 0) {
       if (signal?.aborted)
@@ -30261,7 +30534,7 @@ var KNOWLEDGE_LIMITS = {
   depth: 3
 };
 var roots = ["engineering", "docs", ".trellis/spec", ".cadence/knowledge"];
-var digest = (s) => createHash29("sha256").update(s).digest("hex");
+var digest = (s) => createHash30("sha256").update(s).digest("hex");
 var markdown2 = (p) => /\.md$/iu.test(p) && !/^(?:\.cadence\/assistant|\.trellis\/(?:workspace|tasks))(?:\/|$)/u.test(p) && !p.split("/").some((part) => part === ".." || part === ".git" || part === "node_modules" || part.startsWith(".env") || part.startsWith(".") && part !== ".cadence" && part !== ".trellis");
 function read2(root, path) {
   if (!markdown2(path))
@@ -30446,7 +30719,7 @@ Read existing documentation first. Update the existing topic owner instead of du
 }
 
 // src/service/workflow-controller.ts
-import { createHash as createHash30 } from "node:crypto";
+import { createHash as createHash31 } from "node:crypto";
 var RECOVERY_BYTES = 32768;
 
 class AttemptFailure extends Error {
@@ -30529,7 +30802,7 @@ class DeliveryController {
         if (decision.action === "blocked")
           throw new Error(`Delivery blocked: ${decision.cause}
 ${decision.strategy}`);
-        const fingerprint2 = createHash30("sha256").update(canonicalJson({
+        const fingerprint2 = createHash31("sha256").update(canonicalJson({
           stage,
           observation,
           failure: error.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
@@ -31308,9 +31581,9 @@ function workflowResultDetail(value, secrets) {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.44",
-  build: "310e917d2b16ab7ab04dd1ca093672eb06c630ae897b2cde1f1541a4c57c0efe",
-  entry: fileURLToPath6(import.meta.url),
+  version: "2.0.45",
+  build: "3602a85c51a63f2061163b51d5d50e3dcbe9016c9e22d1353554356f0d9f7ddc",
+  entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
   platform: process.platform,
@@ -33408,9 +33681,9 @@ var processLifetime = {
     const restarts = process.uptime() > 600 ? 0 : previous;
     if (!Number.isSafeInteger(restarts) || restarts >= SELF_RESTARTS)
       return;
-    const child2 = spawn6(process.execPath, [
+    const child2 = spawn7(process.execPath, [
       ...process.execArgv,
-      fileURLToPath7(new URL("./service-host.mjs", import.meta.url))
+      fileURLToPath8(new URL("./service-host.mjs", import.meta.url))
     ], {
       detached: true,
       stdio: ["pipe", "ignore", "ignore"],
@@ -33429,7 +33702,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "002b8e5b103844b2237ba13aa27a72344e5bd61b94f96bb41181f53b9dd5a225";
+  const embedded = "ee8ae17515fd8baf0aba38eb6a78a27e8c574cda265ddc17884c0741a6fb56b1";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -8,7 +8,6 @@ import {
   canonicalJson,
   decodeCommittedBatch,
   decodeId,
-  decodeModelCandidate,
   decodeModelSelection,
   decodeModelSelector,
   decodeWorkerPublicRequest,
@@ -16,15 +15,16 @@ import {
   type ModelCandidate,
   type ModelSelection,
   type ModelSelector,
-  modelApis,
   type PublicError,
   publicError,
-  thinkingLevels,
   type WorkerPublicRequest,
 } from "../service-contract.ts";
-import { diagnosticText } from "../verification-diagnostics.ts";
-import { sanitizeText } from "../worker-redaction.mjs";
 import type { AuthNetwork } from "./auth-network.ts";
+import {
+  exactEnvironment,
+  projectModelCatalog,
+  validateCatalogModel,
+} from "./model-catalog.ts";
 import {
   captureEnvironment,
   clonePrivate,
@@ -38,7 +38,6 @@ import {
   readPiSnapshot,
   sameModels,
   sdkRefusal,
-  selectedEnvironment,
   snapshotLiterals,
   sourceIdentity,
   stablePrivate,
@@ -148,26 +147,6 @@ function directAuthRoute(
       Object.getOwnPropertyDescriptor(process.env, name) !== undefined
     )
       throw new ContractError("unsupported-context");
-  }
-}
-function exactEnvironment(
-  launch: LaunchEnvironment,
-  selected: {
-    selection: Pick<ModelSelection, "provider">;
-    env: Record<string, string>;
-  },
-  snapshot: PiSnapshot,
-): void {
-  const scoped = snapshot.credentials[selected.selection.provider]?.env;
-  const local = scoped === undefined ? {} : environment(scoped);
-  // Auth configuration may resolve templates through process.env. Bind the
-  // selected launch facts independently of getAuth overrides, without
-  // mutating process.env. Empty/missing values never fall through to ambient.
-  for (const [name, value] of Object.entries(selected.env)) {
-    if (local[name]) continue;
-    const d = Object.getOwnPropertyDescriptor(process.env, name);
-    if (!d || !("value" in d) || d.value !== value || launch[name] !== value)
-      throw new ContractError("stale");
   }
 }
 function authProjection(
@@ -324,88 +303,13 @@ export class OwnerModelContext {
       const current = this.catalogSource();
       const runtime = this.#runtime;
       if (!runtime || !this.#thinking) throw new ContractError("unavailable");
-      const providers = [
-        ...new Set([
-          ...Object.keys(current.credentials),
-          ...Object.keys(current.providers),
-        ]),
-      ].sort();
-      // Check counts before projecting/cloning any model list. No partial roster.
-      let count = 0;
-      for (const provider of providers) {
-        if (
-          runtime.getRegisteredNativeProvider(provider) ||
-          runtime.getRegisteredProviderConfig(provider)
-        )
-          throw new ContractError("unsupported-context");
-        count += runtime.getModels(provider).length;
-        if (count > LIMITS.maxPageEntries)
-          return { status: "capacity", entries: [], withheld: 0 };
-      }
-      const literals = this.catalogLiterals(current);
-      const entries: ModelCandidate[] = [];
-      let withheld = 0;
-      for (const provider of providers) {
-        const models = runtime.getModels(provider);
-        if (entries.length + withheld + models.length > LIMITS.maxPageEntries)
-          throw new ContractError("capacity");
-        for (const model of models) {
-          if (model.provider !== provider)
-            throw new ContractError("unsupported-context");
-          // An ID that would reveal a credential literal (an Ollama apiKey
-          // "ollama" equal to its provider ID) withholds only that entry.
-          if (
-            !this.isPublicIdentifier(provider, literals) ||
-            !this.isPublicIdentifier(model.id, literals)
-          ) {
-            withheld++;
-            continue;
-          }
-          const api = modelApis.find((api) => api === model.api) ?? null;
-          const levels = this.#thinking(model);
-          if (levels.length > 7) throw new ContractError("unsupported-context");
-          let eligibility: ModelCandidate["eligibility"] = "candidate";
-          const thinking = levels.map((level) => ({
-            level,
-            selectable: api !== null && thinkingLevels.some((t) => t === level),
-          }));
-          const supported = thinking.find((t) => t.selectable);
-          if (!api || !supported) eligibility = "unsupported";
-          else {
-            try {
-              this.validateModel(
-                decodeModelSelector({
-                  provider,
-                  model: model.id,
-                  api,
-                  thinking: supported.level,
-                }),
-                current,
-              );
-            } catch (error) {
-              if (!(error instanceof ContractError)) throw error;
-              if (error.code === "auth-unavailable")
-                eligibility = "auth-unavailable";
-              else if (error.code === "unsupported-context")
-                eligibility = "unsupported";
-              else throw error;
-            }
-          }
-          entries.push(
-            decodeModelCandidate({
-              provider,
-              model: model.id,
-              api,
-              thinking: thinking.map((t) => ({
-                ...t,
-                selectable: t.selectable && eligibility === "candidate",
-              })),
-              images: model.input.includes("image"),
-              eligibility,
-            }),
-          );
-        }
-      }
+      const catalog = projectModelCatalog(
+        runtime,
+        this.#thinking,
+        current,
+        this.catalogLiterals(current),
+        (input, snapshot) => this.validateModel(input, snapshot),
+      );
       // Re-read original selected sources before returning the projection.
       const after = this.catalogSource();
       if (
@@ -413,7 +317,7 @@ export class OwnerModelContext {
         after.auth.stamp !== current.auth.stamp
       )
         throw new ContractError("stale");
-      return { status: "complete", entries, withheld };
+      return catalog;
     } catch (error) {
       throw new ContractError(
         error instanceof ContractError ? error.code : "corrupt-selected",
@@ -441,20 +345,6 @@ export class OwnerModelContext {
       this.#launch,
       this.#options.network?.literals ?? [],
     );
-  }
-  private isPublicIdentifier(
-    value: string,
-    literals: readonly string[],
-  ): boolean {
-    return (
-      !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) &&
-      diagnosticText(value, 512, literals) === value &&
-      sanitizeText(value, literals) === value
-    );
-  }
-  private publicIdentifier(value: string, literals: readonly string[]): void {
-    if (!this.isPublicIdentifier(value, literals))
-      throw new ContractError("unsupported-context");
   }
   /** Explicit owner-wide replacement only, never called by catalog/read paths. */
   replaceSelection(
@@ -635,54 +525,16 @@ export class OwnerModelContext {
     input: ModelSelector,
     current: PiSnapshot,
   ): Omit<Selected, "selection"> {
-    const runtime = this.#runtime;
-    if (!runtime || !this.#thinking) throw new ContractError("unavailable");
-    if (
-      runtime.getError() ||
-      runtime.getRegisteredNativeProvider(input.provider) ||
-      runtime.getRegisteredProviderConfig(input.provider)
-    )
-      throw new ContractError("unsupported-context");
-    const model = runtime.getModel(input.provider, input.model);
-    if (
-      !model ||
-      model.api !== input.api ||
-      model.provider !== input.provider ||
-      model.id !== input.model ||
-      !this.#thinking(model).includes(input.thinking)
-    )
-      throw new ContractError("unsupported-context");
-    const literals = this.catalogLiterals(current);
-    this.publicIdentifier(input.provider, literals);
-    this.publicIdentifier(input.model, literals);
-    const credential = current.credentials[input.provider];
-    const provider = runtime.getProvider(input.provider);
-    if (
-      credential?.type === "oauth"
-        ? !provider?.auth.oauth
-        : !provider?.auth.apiKey
-    )
-      throw new ContractError("unsupported-context");
-    if (
-      credential?.type === "api_key"
-        ? !credential.key
-        : !credential && !current.providers[input.provider]?.apiKey
-    )
-      throw new ContractError("auth-unavailable");
-    const selected = {
-      model,
-      sourceIdentity: sourceIdentity(current, input.provider),
-      credentialIdentity: stablePrivate(credential ?? null),
-      env: selectedEnvironment(
-        current,
-        input.provider,
-        input.model,
-        this.#launch,
-      ),
-    };
-    // exactEnvironment only needs the provider, not an allocated source ID.
-    exactEnvironment(this.#launch, { ...selected, selection: input }, current);
-    return selected;
+    if (!this.#runtime || !this.#thinking)
+      throw new ContractError("unavailable");
+    return validateCatalogModel(
+      this.#runtime,
+      this.#thinking,
+      input,
+      current,
+      this.#launch,
+      this.catalogLiterals(current),
+    );
   }
   private fresh(selected: Selected, resolvingOAuth = false): PiSnapshot {
     this.alive();

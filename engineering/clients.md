@@ -145,16 +145,36 @@ A saved model preference is restored only on explicit Send, never readonly brows
 The model catalog reports that preference read only as `remembered`, and only when it names a selectable entry of the same catalog, so the browser can show it as "used when you send" without installing it; an unreadable or no longer offered preference is simply absent.
 The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
 One click is one explicit choice; choosing another model keeps the current thinking level when it offers it, otherwise the nearest offered level, and the panel shows the result at once.
-The model panel remains inspectable when selection is unavailable, with a visible reason; model and thinking choices still require current compatible execution/conversation state and a successfully read catalog.
-The model control receives explicit execution availability: stopped/not-started defers models to Send, preparation/connection are neutral progress, incompatible/unknown state blocks selection, and only a failed live catalog read is a model-list error with a retry.
-Opening the stopped panel or refreshing its observation never loads a runtime, requests a live catalog, restores a model or starts an owner.
-A retained conversation preference may be labelled last-used with verification deferred to Send, never installed or guaranteed selectable without the live catalog.
+The model panel is usable before execution starts, including on the project-less entry: the authenticated gateway exposes a separate credential-free `ModelPreview`, never a fabricated owner epoch, choice version or source selection.
+`gateway-models.ts` resolves the account's configured Pi sources (the saved project agent directory when one exists); unknown/half-written selected configuration refuses rather than falling back to another account or source.
+The SDK-free gateway delegates to the fixed-purpose `src/model-preview.mjs` child; `model-preview.ts` constructs only Pi's offline model registry there, with a readonly credential snapshot, an in-memory model store and both network/availability refresh disabled.
+The child creates no owner, AgentSession, tools, project state, auth refresh or preference write and exits on completion, parent IPC loss or its total deadline.
+Identical concurrent inputs share one original through actual native close; no SDK runtime, credential snapshot or result cache remains in the gateway afterward.
+Reopening a preview picker reuses its already-read, source-scoped browser view; Refresh models explicitly reads it again, while live installation retains fresh catalog/version checks.
+The preview and live owner share `model-catalog.ts` projection/validation, capability rules, credential redaction and limits; changed source files across discovery refuse the read.
+Preview choices are local draft intent, persisted with the conversation's text draft where browser storage works; the entry's choice belongs only to the next explicitly opened new conversation, not an existing/linked conversation.
+A stopped project's retained conversation model precedes the account default.
+Preview candidates are configuration observations, never a claim of provider availability or an installed choice.
+Send captures that exact preselection before startup, checks it against the live catalog and installs only that choice through the existing conversation-bound model command.
+An unavailable choice refuses without substitution and keeps the draft; a lost choice reply is never automatically retried or treated as a sent message.
+The post-choice read must match the confirmed version and source selection before continuing; departure, changed owner/choice and stale reads cannot rebind the Send.
+A locally pending different model blocks plan approval until an explicit Send installs it and the plan/context can be observed again.
+A live picker retains its existing explicit server choice behavior.
+Preparation/connection remain neutral progress, incompatible execution blocks installation, and preview or live read failures offer only a readonly retry.
+Opening/refreshing a panel never prepares execution, restores a preference or submits a message.
+A retained preference without a catalog remains last-used, not guaranteed usable.
 `web/src/client/use-model-catalog.ts` binds one readonly catalog to the scoped client, observed owner epoch, attachment generation and conversation context revision; readiness recovery, replacement and explicit refresh invalidate old data and read again, without polling model sources.
+When execution is not ready, the optional gateway preview reader has its own scoped lifetime; switching sources/clients, readiness recovery and explicit refresh invalidate obsolete preview results before effect cleanup.
 Obsolete reads are aborted and their late results ignored even before effect cleanup; a choice finishing in an obsolete lifetime cannot update the picker or resume a waiting Send.
 The composer and picker share that catalog for the displayed/captured model rather than a separate retained model ref; the original Send still captures its own fixed intent before preparation or model-choice waits.
 It locks choices while this conversation's reply is live; another conversation's work does not prevent choosing its own model.
 Its scope note names future messages in this conversation, not every project conversation or already-admitted work.
 A Send with no installed model and no remembered preference opens that panel instead of failing; the message waits there and is sent once after one explicit choice, or not at all if the panel is dismissed or sending stays impossible for ten seconds.
+Both preview and live choices can complete that waiting intent; a preview choice is marked for installation, never treated as an installed choice.
+Continuation keeps the original message/images/head/command ID and prepared owner epoch, waits for compatible readiness and never runs owner preparation again.
+A known Stop, replacement epoch, incompatible connection or dismissal retires the wait and keeps the local draft; choosing a model cannot restart a stopped owner.
+Cadence exit preserves an unconsumed model draft on direct success and on receipt observation alike; only an ordinary/coordinator Send's own persisted command marker permits receipt observation to consume that draft.
+Older or unknown receipt kinds conservatively keep the model choice, never infer consumption from text or a different command.
 Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
 Exit does not require a usable selected model.
 There is no Legacy task creation entry or task composer.
@@ -305,7 +325,7 @@ Known older history/directory draft namespaces remain usable in place; they are 
 Existing browser draft/pending namespaces are read and retained in place; new directories use that key before history exists, so startup cannot lose their drafts.
 A positively observed new epoch replaces only the serialized execution attachment, never a pending Send or approval.
 A stopped execution owner is labelled as such, not as an incompatible build.
-Message dispatch, model changes and approval still require a live compatible owner; only current Send may prepare one.
+Message dispatch, server-side model installation and approval still require a live compatible owner; local model preselection does not, and only current Send may prepare one.
 The gateway folder picker and draft remain available while stopped, and a failed first readiness observation does not hide independently readable conversations.
 An unreadable context does not lock local draft editing; an in-flight or uncertain Send and its captured images retain their original locks and identity.
 When conversation reads fail, the composer still accepts a new draft for preparation-only Send; it cannot infer a head or submit that message until a subsequent explicit Send observes the restored context.
