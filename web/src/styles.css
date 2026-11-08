@@ -3477,14 +3477,6 @@ button.link:hover:not(:disabled) {
 .workspace-notice details p {
   margin: 4px 0;
 }
-.conversation-cwd {
-  flex: none;
-  margin: 0;
-  padding: 4px var(--chat-inset);
-  color: var(--text-dim);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
 .composer-status {
   margin: 0;
   padding: 10px 16px 0;
