@@ -161,13 +161,17 @@ export const zh = {
   "Use this folder": "使用此目录",
   "Selecting folder…": "正在选择目录…",
   "Choose a folder…": "选择目录…",
-  "Choose a working folder to start chatting.": "选择工作目录后即可开始对话。",
-  "Choose a working folder. Execution is prepared only when you send.":
-    "选择工作目录；仅在发送消息时准备执行服务。",
-  "Conversations stay with their folder. Select one to read its history; Send prepares execution.":
-    "会话按目录保留。选择目录即可查看历史；发送时才准备执行服务。",
-  "Selecting a folder does not start execution. Send prepares it when needed.":
-    "选择目录不会启动执行服务；发送消息时才会按需准备。",
+  "Choose a working folder": "选择工作文件夹",
+  "Choose a working folder to start. You can write a draft below.":
+    "选择工作文件夹即可开始，也可以先在下方写草稿。",
+  "Write a message. Choose a folder before sending…":
+    "输入消息，发送前请选择文件夹…",
+  "Choose a folder before sending.": "发送前请选择文件夹。",
+  "Returning to your last folder {path}…": "正在返回上次的文件夹 {path}…",
+  "Could not restore {path}. Choose a folder to continue; nothing was started.":
+    "无法恢复 {path}，请选择文件夹以继续；没有启动任何服务。",
+  "Choose a folder on the service host. Conversations stay with their folder and running work continues. Nothing starts until you send.":
+    "选择服务所在主机上的文件夹。会话保留在原文件夹中，运行中的工作不受影响；仅在发送消息时按需启动执行服务。",
   "Connecting…": "正在连接…",
   "Ready to prepare on Send": "发送时按需准备",
   "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
@@ -287,25 +291,15 @@ export const zh = {
     "历史对话按项目保存。打开工作文件夹后，即可查看它的历史对话。",
   "Conversations are kept with each project. Choose a project below and open it to see its history.":
     "历史对话按项目保存。在下方选择项目并打开，即可查看它的历史对话。",
-  "Returning to your last project {name}…": "正在回到上次的项目 {name}…",
-  "Your last project {name} is not running. Choose it below and open it again to see its conversations.":
-    "上次的项目 {name} 当前未运行。在下方选择它并重新打开，即可查看它的对话。",
   "Choose a working folder at the bottom right to start chatting.":
     "在右下角选择工作文件夹，即可开始对话。",
   "Files appear here after you open a working folder.":
     "打开工作文件夹后，在这里浏览文件。",
-  "No working folder selected": "未选择工作文件夹",
   // Dual conversation workbench
   "Task created, but its conversation link was not confirmed.":
     "任务已创建，但与普通对话的关联尚未确认。",
-  "Workbench projects": "工作台项目",
-  "Your workbench, your projects": "你的工作台，你的项目",
-  "No default workspace is created. Open an existing folder to use ordinary conversations and Cadence tasks.":
-    "不会创建默认工作区。打开已有文件夹，即可使用普通对话和 Cadence 任务。",
-  "Opening a project never starts a task. Switching projects keeps admitted work running in its original directory.":
-    "打开项目不会启动任务。切换项目后，已接纳的工作仍在原目录中继续。",
-  "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.":
-    "所选项目不可用，请明确选择项目；未重建任何目录。",
+  "This folder is unavailable. Choose another folder; nothing was moved or recreated.":
+    "此文件夹不可用，请选择其他文件夹；没有移动或重建任何目录。",
   "No projects associated yet.": "尚未关联任何项目。",
   "The machine restarted while Cadence was running. Cadence recovered automatically.":
     "Cadence 运行期间机器重启过，已自动恢复。",
@@ -331,8 +325,7 @@ export const zh = {
   "Set aside interrupted temporary files.": "已移走中断时留下的临时文件。",
   "Archived files are kept for 30 days; cadence doctor shows where.":
     "归档文件保留 30 天，可用 cadence doctor 查看位置。",
-  "Project {name}": "项目 {name}",
-  Workbench: "工作台",
+  "Folder {name}": "文件夹 {name}",
   "Project registry": "项目注册表",
   "Hide details": "收起详情",
   Dismiss: "知道了",
@@ -466,7 +459,7 @@ export const zh = {
   "Field details": "原文与复制",
   "New activity — update conversation": "有新动态 · 更新对话",
   "No retained conversations on this page.": "本页没有已保留的对话。",
-  "Recent projects": "最近项目",
+  "Recent folders": "最近文件夹",
   "This service exposes one project. Opening it never starts work.":
     "当前服务连接一个项目，打开项目不会启动执行。",
   "Conversation history": "历史对话",
@@ -980,8 +973,6 @@ export const zh = {
   "Disconnect this page": "断开此页面",
   "Started work keeps running.": "已开始的工作会继续运行。",
   "No conversations yet.": "还没有对话。",
-  "The retained conversations for {name} could not be observed. Choose a folder explicitly; nothing was started.":
-    "无法读取 {name} 的历史会话。请明确选择目录；没有启动任何服务。",
   "Conversations are kept with each project. Click a project to open it.":
     "对话按项目保存，点击项目即可打开。",
   "Opening…": "正在打开…",
@@ -995,8 +986,8 @@ export const zh = {
   "Reading the service…": "正在读取服务状态…",
   "Runs as {unit} ({scope} systemd service).":
     "以 {unit} 运行（{scope} 级 systemd 服务）。",
-  "This workbench was not started by Cadence's systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.":
-    "此工作台不是由 Cadence 的 systemd 服务启动的，页面无法重启或升级它。请在终端中运行 cadence server restart。",
+  "This Cadence instance was not started by its systemd service, so the page cannot restart or upgrade it. Use cadence server restart in a terminal.":
+    "此 Cadence 实例不是由 systemd 服务启动的，页面无法重启或升级它。请在终端中运行 cadence server restart。",
   "Last request ({time}): {outcome}": "上次请求（{time}）：{outcome}",
   "Installation: npm global.": "安装方式：npm 全局安装。",
   "Installation: npm local.": "安装方式：npm 本地安装。",

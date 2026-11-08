@@ -24,7 +24,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
 `src/activity.ts` and `src/service/activity-files.ts` own activity-only native reports; `src/service/activity-discovery.ts` is the readonly registry/report aggregation boundary, with closed projections in `contracts/activity.ts`.
-`src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution.
+`src/service/{gateway,gateway-store,gateway-cli}.ts` owns authenticated entry, private gateway coordination, nonactivating directory selection, explicit-Send owner preparation and same-origin project routing, not task execution or a user-facing workbench home.
 `src/service/maintenance.ts` owns the in-service refusal, the WebUI's transient restart/upgrade job and its record, and the upgrade with rollback; `src/service/installation.ts` identifies the exact Pi/npm/Bun installation and owns its package-manager commands.
 Both stay SDK-free like the rest of management.
 The gateway's model-discovery path is also SDK-free: `gateway-models.ts` resolves server-selected sources and `model-preview-process.ts` owns a bounded, short-lived readonly child through actual native close.
@@ -34,7 +34,8 @@ It creates no owner, session, tools or project state, calls no provider/auth ope
 The canonical service builder separately bundles the gateway to reject any SDK import in its transitive closure; the installed preview child is an audited ordinary-JavaScript package member, never a source-tree fallback.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
-The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
+Ordinary Send/tools require a selected folder; `web/src/Workbench.tsx` routes the folder-first interface through one shared `AppShell`, with `FolderSetup` supplying its initial/missing-directory content and `App` its selected conversation content.
+Folder setup has local text/model drafts but no project client or unbound chat executor; only an explicit directory selection can bind that draft to a new conversation (see [Clients](clients.md#browser)).
 `src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission and live preview), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
 `src/service/conversation-images.ts` owns ephemeral upload staging; `src/image-content.mjs` owns portable format/header validation.
 The conversation launcher delivers admitted bytes on its private image pipe, not through the public control envelope.

@@ -8,7 +8,6 @@ import {
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../src/service-client.ts";
-import type { ModelSelector } from "../../src/service-contract.ts";
 import {
   ContractError,
   ERROR_CODES,
@@ -17,6 +16,13 @@ import {
 import { App } from "./App";
 import { browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
+import {
+  bindFolderDraft,
+  emptyFolderDraft,
+  type FolderDraft,
+  readFolderDraft,
+  rememberFolderDraft,
+} from "./client/folder-draft";
 import {
   projectReadable,
   rememberProject,
@@ -32,10 +38,10 @@ import { currentProject } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { useActivity } from "./client/use-activity";
 import type { ActivityListProps } from "./components/workspace/ActivityList";
+import { FolderSetup } from "./components/workspace/FolderSetup";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
 import { ServiceDialog } from "./components/workspace/ServiceDialog";
-import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
 import { useT } from "./i18n/locale";
 
 /** Entry discovery and directory selection never start execution. Only the
@@ -45,11 +51,15 @@ import { useT } from "./i18n/locale";
 export function Workbench() {
   const { t } = useT();
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
-  const [homeModel, setHomeModel] = useState<ModelSelector | null>(null);
-  const [initialModel, setInitialModel] = useState<{
-    conversationId: string;
-    model: ModelSelector;
-  }>();
+  const [folderDraft, setFolderDraft] = useState(readFolderDraft);
+  const [initialDraft, setInitialDraft] = useState<
+    FolderDraft & { conversationId: string }
+  >();
+  const draftApplied = useCallback((id: string) => {
+    setInitialDraft((draft) =>
+      draft?.conversationId === id ? undefined : draft,
+    );
+  }, []);
   const [selected, setSelected] = useState(currentProject);
   const previewModels = useCallback(
     (signal?: AbortSignal) => readModelPreview(selected ?? undefined, signal),
@@ -119,6 +129,8 @@ export function Workbench() {
   useEffect(() => {
     if (!entry || !firstEntry.current) return;
     firstEntry.current = false;
+    // An unfinished first-use draft needs an explicit destination, not the last folder.
+    if (folderDraft.text || folderDraft.model) return;
     const project = restorableProject(entry);
     if (!project) return;
     const abort = new AbortController();
@@ -136,9 +148,9 @@ export function Workbench() {
       setRestore(null);
       setSelected(project.id);
     });
-  }, [entry]);
+  }, [entry, folderDraft]);
   const navigate = useCallback(
-    (project: ProjectEntry | null, activity?: Activity) => {
+    (project: ProjectEntry, activity?: Activity) => {
       cancelRestore();
       setRestore(null);
       if (
@@ -148,25 +160,31 @@ export function Workbench() {
       )
         hashes.current.set(selected, window.location.hash);
       const newConversation = crypto.randomUUID();
-      if (!selected && project && !activity && homeModel) {
-        setInitialModel({ conversationId: newConversation, model: homeModel });
-        setHomeModel(null);
-      } else setInitialModel(undefined);
+      // Only an explicit folder choice from setup owns this draft. Activity
+      // links and automatic restoration must never inject it into a session.
+      const handoff =
+        !entry?.projects.some((p) => p.id === selected) &&
+        !activity &&
+        !!(folderDraft.text || folderDraft.model);
+      if (handoff) {
+        setInitialDraft(
+          bindFolderDraft(project.path, newConversation, folderDraft),
+        );
+        setFolderDraft(emptyFolderDraft());
+      } else setInitialDraft(undefined);
       history.pushState(
         {
-          cadenceCwd: activity?.cwd ?? project?.cwd,
+          cadenceCwd: activity?.cwd ?? project.cwd,
           cadenceConversationId: activity?.sessionId,
         },
         "",
-        project
-          ? `/app?project=${project.id}${activity?.sessionId ? `#chat=${encodeURIComponent(activity.sessionId)}&activity=1${activity.leaf ? `&leaf=${encodeURIComponent(activity.leaf)}` : ""}` : !selected && homeModel ? `#chat=${newConversation}` : (hashes.current.get(project.id) ?? `#chat=${newConversation}`)}`
-          : "/app",
+        `/app?project=${project.id}${activity?.sessionId ? `#chat=${encodeURIComponent(activity.sessionId)}&activity=1${activity.leaf ? `&leaf=${encodeURIComponent(activity.leaf)}` : ""}` : handoff ? `#chat=${newConversation}` : (hashes.current.get(project.id) ?? `#chat=${newConversation}`)}`,
       );
-      setSelected(project?.id ?? null);
+      setSelected(project.id);
       setPicker(null);
       window.dispatchEvent(new PopStateEvent("popstate"));
     },
-    [selected, cancelRestore, entry, homeModel],
+    [selected, cancelRestore, entry, folderDraft],
   );
   const open = useCallback(
     async (path: string) => {
@@ -279,10 +297,10 @@ export function Workbench() {
     <ProjectPicker
       selectOnly
       client={directories}
-      current=""
+      current={project?.cwd ?? ""}
       projects={entry.projects.map((p) => ({
         path: p.cwd,
-        current: false,
+        current: p.id === selected,
       }))}
       initial={picker}
       home={entry.home}
@@ -299,7 +317,8 @@ export function Workbench() {
           api={api}
           project={project}
           previewModels={previewModels}
-          initialModel={initialModel}
+          initialDraft={initialDraft}
+          onDraftApplied={draftApplied}
           directoryNamespaces={entry?.projects
             .filter((p) => p.path === project.path)
             .map((p) => p.id)
@@ -311,8 +330,7 @@ export function Workbench() {
             setPicker(cwd ?? project.cwd);
           }}
           onOpenProject={open}
-          onWorkbenchHome={() => navigate(null)}
-          workbenchHome={entry.home}
+          homeFolder={entry.home}
           projectEntries={entry.projects.map((p) => ({
             path: p.cwd,
             current: p.id === selected,
@@ -335,66 +353,51 @@ export function Workbench() {
     );
   return (
     <>
-      <WorkbenchHome
+      <FolderSetup
         discovery={discovery}
         ready={!!entry}
         previewModels={entry ? previewModels : undefined}
-        model={homeModel}
-        onModelChoice={(model) => {
+        draft={folderDraft}
+        onDraftChange={(draft) => {
           cancelRestore();
-          setHomeModel(model);
+          setFolderDraft(draft);
+          rememberFolderDraft(draft);
         }}
-        projects={entry?.projects.map((p) => p.cwd) ?? []}
         restore={restore}
-        opening={opening}
+        onRefresh={() => refresh((n) => n + 1)}
         onOpenService={entry ? openService : undefined}
-        onOpenFolder={(path) => {
+        onChooseFolder={() => {
           cancelRestore();
           setOpenError("");
           navigation.current?.abort();
-          setPicker(path ?? entry?.home ?? "");
+          setPicker(entry?.home ?? "");
         }}
-        onOpenProject={(path) => {
-          // One click selects a recent directory without starting execution; a failure
-          // names the folder and opens nothing else.
-          if (opening) return;
-          cancelRestore();
-          setOpenError("");
-          setOpening(path);
-          void open(path)
-            .catch((e: unknown) =>
-              setOpenError(
-                t("{path} could not be opened ({code}).", {
-                  path,
-                  code: e instanceof Error ? e.message : "unavailable",
-                }),
-              ),
-            )
-            .finally(() => setOpening(null));
-        }}
-      >
-        {openError && (
-          <p role="alert" className="banner-notice">
-            {openError}
-          </p>
-        )}
-        {entry && <RecoveryNotices notices={entry.recoveries} />}
-        {error && (
-          <p role="alert" className="banner-notice">
-            {error}{" "}
-            <button type="button" onClick={() => refresh((n) => n + 1)}>
-              {t("Reload observation")}
-            </button>
-          </p>
-        )}
-        {selected && !project && entry && (
-          <p role="alert" className="banner-notice">
-            {t(
-              "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.",
+        notices={
+          <>
+            {openError && (
+              <p role="alert" className="banner-notice">
+                {openError}
+              </p>
             )}
-          </p>
-        )}
-      </WorkbenchHome>
+            {entry && <RecoveryNotices notices={entry.recoveries} />}
+            {error && (
+              <p role="alert" className="banner-notice">
+                {error}{" "}
+                <button type="button" onClick={() => refresh((n) => n + 1)}>
+                  {t("Reload observation")}
+                </button>
+              </p>
+            )}
+            {selected && !project && entry && (
+              <p role="alert" className="banner-notice">
+                {t(
+                  "This folder is unavailable. Choose another folder; nothing was moved or recreated.",
+                )}
+              </p>
+            )}
+          </>
+        }
+      />
       {folderPicker}
       {service}
     </>

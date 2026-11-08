@@ -1,5 +1,5 @@
 /* Extracted from the pi-web-ui-adapted ChatWorkspace. MIT (c) 2026 xing-shuyin.
- * Presentation only, shared by the project-less shell and an empty conversation. */
+ * Presentation only, shared by folder setup and an empty conversation. */
 import type { ReactNode } from "react";
 import { useT } from "../../i18n/locale";
 

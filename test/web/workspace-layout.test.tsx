@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
-import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
+import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import { ResizeHandle } from "../../web/src/layout/ResizeHandle";
 import {
   CHAT_MIN,
@@ -19,9 +19,9 @@ it("defaults to conversation navigation without a permanent empty inspector", ()
   const write = vi.fn();
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: write });
   const html = renderToStaticMarkup(
-    <WorkbenchHome ready onOpenFolder={() => {}} />,
+    <FolderSetup ready onChooseFolder={() => {}} onRefresh={() => {}} />,
   );
-  expect(html).toContain("workbench-entry inspector-hidden");
+  expect(html).toContain("app inspector-hidden");
   expect(html).toContain(
     'aria-label="Toggle conversation navigation" aria-expanded="true"',
   );
@@ -50,7 +50,7 @@ it("validates display-only preferences, without repairing malformed storage", ()
   const read = vi.fn(() => '{"navigation":false,"inspector":true}');
   vi.stubGlobal("localStorage", { getItem: read });
   const html = renderToStaticMarkup(
-    <WorkbenchHome ready onOpenFolder={() => {}} />,
+    <FolderSetup ready onChooseFolder={() => {}} onRefresh={() => {}} />,
   );
   expect(read).toHaveBeenCalledWith(LAYOUT_STORAGE_KEY);
   expect(html).toContain("navigation-hidden");

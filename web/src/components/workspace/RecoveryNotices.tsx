@@ -67,9 +67,9 @@ export function RecoveryNotices({
   };
   const where = (n: RecoveryNotice) =>
     n.scope === "project" && n.path
-      ? t("Project {name}", { name: name(n.path) })
+      ? t("Folder {name}", { name: name(n.path) })
       : n.scope === "workbench"
-        ? t("Workbench")
+        ? t("Cadence service")
         : t("Project registry");
   return (
     <div className="banner-notice recovery-notice" role="status">

@@ -2826,15 +2826,6 @@ summary.chat-steps-head:hover {
   }
 }
 
-.workbench-entry {
-  min-width: 0;
-}
-.workbench-entry .drawer-left {
-  flex: 0 0 var(--left-w, 260px);
-}
-.workbench-entry .drawer-right {
-  flex: 0 0 var(--right-w, 360px);
-}
 .cwd-recent h3 {
   margin: 12px 0 6px;
   font-size: 12px;

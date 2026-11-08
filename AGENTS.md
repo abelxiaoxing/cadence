@@ -14,7 +14,8 @@ Startup self-heals what a provably dead Cadence process left behind (an earlier 
 This is not a sandbox, certified executor or transactional application system.
 Research/diagnosis are readonly; ordinary conversations are the project's Pi sessions, shared with the terminal (Pi writes them; Cadence reads, continues and branches them, never rewrites or imports them), and use direct host tools only on explicit Send, under the shared checkout gate.
 Human-readable legacy summaries live under `.cadence/assistant/tasks`; new workflow notes use `.cadence/assistant/workflows` and managed project context uses `.cadence/project.md`; private history and coordination use `cadence-assistant-v1` outside the working copy.
-The unified workbench has no project cwd and never creates a default workspace; private-state ancestors are refused as project roots, never redirected.
+The browser is folder-first: one conversation shell, lower-right directory switching and inline first-use setup, not a separate workbench/project home; directory selection never sends a draft or changes admitted work.
+Private-state ancestors are refused as project roots, never redirected.
 Directory selection is nonactivating; current user Send prepares and associates independent project owners behind one authenticated origin and follows an associated project's restarted owner; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.
 Consumer data must never be imported, reset or cleaned incidentally; damaged or half-written private state is archived (expiring after 30 days), never silently deleted, before a clean start.
 `cadence project open` explicitly starts or reuses a directory owner on its own selected port, never a task; named Linux services keep projects independent, and root operation never copies another account's credentials or adopts its state.

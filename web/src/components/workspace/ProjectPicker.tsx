@@ -232,13 +232,13 @@ export function ProjectPicker({
       <p>
         {t(
           selectOnly
-            ? "Selecting a folder does not start execution. Send prepares it when needed."
+            ? "Choose a folder on the service host. Conversations stay with their folder and running work continues. Nothing starts until you send."
             : "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.",
         )}
       </p>
       {projects.length > 0 && (
-        <section className="cwd-recent" aria-label={t("Recent projects")}>
-          <h3>{t("Recent projects")}</h3>
+        <section className="cwd-recent" aria-label={t("Recent folders")}>
+          <h3>{t("Recent folders")}</h3>
           <div className="cwd-recent-list">
             {projects.map((project) => (
               <button

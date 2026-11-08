@@ -7,7 +7,7 @@ import {
   workspaceLayout,
 } from "./workspace-layout";
 
-/** Shared by the no-project shell and project view. Only explicit desktop
+/** Shared by folder setup and selected conversations. Only explicit desktop
  * choices persist; resize and phone drawers never write preferences. */
 export function usePanelLayout() {
   const [preference, setPreference] = useState(() => {
