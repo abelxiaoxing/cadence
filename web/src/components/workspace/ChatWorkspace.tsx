@@ -57,6 +57,7 @@ import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
 import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
 import { BranchTree } from "./BranchTree";
+import { CadenceModeButton } from "./CadenceModeButton";
 import { DraftImage, useImageDraft } from "./ChatImages";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
@@ -266,11 +267,23 @@ export function ChatWorkspace({
   const planApprovable =
     !!state?.proposal && !!summary && !running && summary.status !== "unknown";
   const approvalHint =
-    state?.proposal && summary?.status === "unknown"
+    summary?.status === "unknown"
       ? t(
           "The latest turn's outcome is unknown. Approval waits until it is observed.",
         )
-      : undefined;
+      : !actionsReady
+        ? t("Read the current execution state before approving this plan.")
+        : !cadenceKnown
+          ? t("Cadence state unavailable")
+          : running
+            ? t("Wait for the current reply before approving this plan.")
+            : approving
+              ? t("Observing plan approval…")
+              : !canSend
+                ? t(
+                    "Read the current conversation context before approving this plan.",
+                  )
+                : undefined;
   const textarea = useRef<HTMLTextAreaElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     lastTop = useRef(0);
@@ -822,7 +835,11 @@ export function ChatWorkspace({
       className="chat-workspace"
       hidden={hidden}
       aria-label={
-        cadence ? t("Cadence conversation") : t("Ordinary conversation")
+        !cadenceKnown
+          ? t("Conversation")
+          : cadence
+            ? t("Cadence conversation")
+            : t("Ordinary conversation")
       }
     >
       <header className="conversation-header">
@@ -832,10 +849,16 @@ export function ChatWorkspace({
             {summary?.title ??
               (activitySelected
                 ? t("Discovered session")
-                : t("New conversation"))}
+                : conversation.summary === null
+                  ? t("New conversation")
+                  : t("Conversation"))}
           </h2>
           <span className="conversation-badge">
-            {cadence ? t("Cadence on") : t("Ordinary")}
+            {!cadenceKnown
+              ? t("Cadence state unavailable")
+              : cadence
+                ? t("Cadence on")
+                : t("Ordinary")}
           </span>
           {summary && (
             <span className="conversation-badge">
@@ -892,6 +915,11 @@ export function ChatWorkspace({
             )}
         </div>
       </header>
+      {locationCwd && (
+        <p className="conversation-cwd" title={locationCwd}>
+          {t("Conversation folder:")} <code>{locationCwd}</code>
+        </p>
+      )}
       {contextRead.error && !canPrepareOnly && (
         <p role="alert" className="inspector-note">
           {describeError(t, contextRead.error)}
@@ -939,13 +967,22 @@ export function ChatWorkspace({
             )}
           </p>
         )}
-        {conversation.summary === null && !activitySelected && (
-          <ChatWelcome
-            hint={t(
-              "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
+        {!available && (
+          <p role="status" className="panel-hint">
+            {t(
+              "Conversation content has not been read. You can keep a draft; nothing is sent until the context is available.",
             )}
-          />
+          </p>
         )}
+        {conversation.summary === null &&
+          !conversation.error &&
+          !activitySelected && (
+            <ChatWelcome
+              hint={t(
+                "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
+              )}
+            />
+          )}
         {available &&
           !conversation.error &&
           (!observed || (turns.length === 0 && conversation.count > 0)) && (
@@ -1052,7 +1089,7 @@ export function ChatWorkspace({
         {conversation.error && conversation.summary !== undefined && (
           <p role="status" className="inspector-note">
             {t(
-              "Observation is not current. Retained history is shown; this does not mean work has stopped.",
+              "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
             )}
           </p>
         )}
@@ -1127,15 +1164,22 @@ export function ChatWorkspace({
             ))}
           </div>
         )}
+        {!running && !canPrepareOnly && !canSend && !preparing && (
+          <p className="composer-status" role="status">
+            {pending
+              ? t("The last Send is not yet confirmed. No message is resent.")
+              : awaitingModel
+                ? t("Choose a model; your message is sent right after.")
+                : busy
+                  ? t("Sending…")
+                  : t(
+                      "Sending is unavailable until the current context is observed. Your draft stays here.",
+                    )}
+          </p>
+        )}
         <textarea
           ref={textarea}
-          disabled={
-            (!enabled && !(cadence && canInterrupt)) ||
-            (!canPrepareOnly &&
-              (!observed || !modeObserved || !!conversation.error)) ||
-            busy ||
-            !!pending
-          }
+          disabled={busy || !!pending || awaitingModel}
           aria-label={t("Message")}
           value={draft}
           placeholder={t(
@@ -1173,22 +1217,14 @@ export function ChatWorkspace({
           >
             <FiImage aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className={`mode-toggle${cadence || input.mode === "cadence" ? " on" : ""}`}
-            aria-label={t("Cadence mode")}
-            aria-pressed={cadence || input.mode === "cadence"}
-            disabled={cadence ? !canExit : running || busy}
-            title={
+          <CadenceModeButton
+            active={cadence}
+            armed={input.mode === "cadence"}
+            known={cadenceKnown}
+            disabled={
               cadence
-                ? t("Cadence mode is on. Click to exit it.")
-                : input.mode === "cadence"
-                  ? t(
-                      "Your next message turns on Cadence mode. Click to cancel.",
-                    )
-                  : t(
-                      "Turn on Cadence mode: agree on a plan before implementation.",
-                    )
+                ? !canExit
+                : !!running || busy || !!pending || awaitingModel
             }
             onClick={() => {
               if (cadence) {
@@ -1201,10 +1237,7 @@ export function ChatWorkspace({
                   setDraft(input.text);
               } else setMode("cadence");
             }}
-          >
-            <span className="mode-switch" aria-hidden="true" />
-            Cadence
-          </button>
+          />
           <ModelPicker
             client={modelClient}
             onObserved={(catalog) => {

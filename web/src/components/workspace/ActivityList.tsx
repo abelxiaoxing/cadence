@@ -34,7 +34,7 @@ export function ActivityList({
     ),
   );
   // The selected project's managed work already has its authorized controls in
-  // Running conversations. Discovery must not duplicate those rows or controls.
+  // Running work. Discovery must not duplicate those rows or controls.
   const visible = value?.projects
     .map((p) => ({
       ...p,

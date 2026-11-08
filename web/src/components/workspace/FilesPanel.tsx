@@ -14,7 +14,7 @@ import {
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
-import { useT } from "../../i18n/locale";
+import { describeError, useT } from "../../i18n/locale";
 import { copyTextToClipboard } from "../../rich/use-copy-feedback";
 export function FilesPanel({
   client,
@@ -57,13 +57,20 @@ export function FilesPanel({
         >
           <FiArrowUp />
         </button>
-        <span className="files-path" title={path}>
-          {path || "/"}
+        <span
+          className="files-path"
+          title={
+            location ? `${location.cwd}${path ? ` / ${path}` : ""}` : undefined
+          }
+        >
+          {t("Conversation folder:")}{" "}
+          {path || location?.cwd || t("Not observed")}
         </span>
         <button
           type="button"
           className="ghost"
           aria-label={t("Refresh files")}
+          disabled={!enabled}
           onClick={() => {
             files.refresh();
             preview.refresh();
@@ -74,10 +81,23 @@ export function FilesPanel({
       </header>
       {files.error && (
         <p className="inspector-note" role="alert">
-          {files.error}
+          {describeError(t, files.error)}
         </p>
       )}
       <section className="file-list" aria-label={t("File list")}>
+        {!enabled ? (
+          <p className="panel-empty" role="status">
+            {t(
+              location
+                ? "Files are unavailable until the execution state is ready."
+                : "The conversation folder has not been observed.",
+            )}
+          </p>
+        ) : !listing && !files.error ? (
+          <p className="panel-empty" role="status">
+            {t("Reading files…")}
+          </p>
+        ) : null}
         {listing?.entries.map((entry) => (
           <div className="file-row" key={entry.path}>
             <button
@@ -95,6 +115,7 @@ export function FilesPanel({
               type="button"
               className="file-action"
               aria-label={t("Reference {path}", { path: entry.name })}
+              disabled={!enabled || !!files.error}
               onClick={() => onReference(entry.path)}
             >
               <FiPlus />
@@ -113,7 +134,7 @@ export function FilesPanel({
             </button>
           </div>
         ))}
-        {listing?.entries.length === 0 && (
+        {enabled && !files.error && listing?.entries.length === 0 && (
           <p className="panel-empty">{t("No visible files")}</p>
         )}
         {listing?.limited && (
@@ -135,7 +156,9 @@ export function FilesPanel({
               <FiX />
             </button>
           </header>
-          {preview.error && <p role="alert">{preview.error}</p>}
+          {preview.error && (
+            <p role="alert">{describeError(t, preview.error)}</p>
+          )}
           {file && (
             <>
               <pre>{file.text}</pre>

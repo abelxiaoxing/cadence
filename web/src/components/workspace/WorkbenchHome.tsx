@@ -1,13 +1,7 @@
 /** Project-less conversation shell. No project client, task or Send is created.
  * History belongs to each project; one click on a recent project is its
  * nonactivating selection, and the central action opens the folder picker. */
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type ReactNode, useRef } from "react";
 import {
   FiArrowUp,
   FiFolder,
@@ -17,8 +11,8 @@ import {
   FiSidebar,
 } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
-import type { DrawerSide } from "../../layout/swipe-drawer";
 import { useDrawerFocus } from "../../layout/use-drawer-focus";
+import { usePanelLayout } from "../../layout/use-panel-layout";
 import { useSwipeDrawer } from "../../layout/use-swipe-drawer";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
 import { ChatWelcome } from "./ChatWelcome";
@@ -49,25 +43,16 @@ export function WorkbenchHome({
   discovery?: ActivityListProps;
 }) {
   const { t, locale, setLocale } = useT();
-  const [drawer, setDrawer] = useState<DrawerSide | null>(null);
-  const [mobile, setMobile] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(true);
+  const panels = usePanelLayout();
+  const { mobile, overlay: drawer, closeDrawer } = panels;
   const layout = useRef<HTMLDivElement>(null);
-  const closeDrawer = useCallback(() => setDrawer(null), []);
-  useEffect(() => {
-    const query = matchMedia("(max-width: 900px)");
-    const change = () => setMobile(query.matches);
-    change();
-    query.addEventListener("change", change);
-    return () => query.removeEventListener("change", change);
-  }, []);
   useSwipeDrawer({
     enabled: mobile,
     open: drawer,
-    onOpenChange: setDrawer,
+    onOpenChange: panels.setDrawer,
     container: layout,
   });
-  useDrawerFocus(layout, drawer, mobile, closeDrawer);
+  useDrawerFocus(layout, drawer, !!drawer, closeDrawer);
   const openFolder = (path?: string) => {
     closeDrawer();
     onOpenFolder(path);
@@ -80,17 +65,14 @@ export function WorkbenchHome({
   const name = (path: string) =>
     path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
   return (
-    <div
-      className={`app workbench-entry${filesOpen ? "" : " inspector-hidden"}`}
-    >
+    <div className={`app workbench-entry${panels.className}`}>
       <header className="topbar">
         <button
           type="button"
-          className="panel-toggle"
-          aria-label={t("Tasks")}
-          onClick={() =>
-            setDrawer((value) => (value === "left" ? null : "left"))
-          }
+          className="panel-toggle navigation-toggle"
+          aria-label={t("Toggle conversation navigation")}
+          aria-expanded={mobile ? drawer === "left" : panels.navigation}
+          onClick={() => panels.toggle("left")}
         >
           <FiMenu aria-hidden="true" />
         </button>
@@ -129,20 +111,25 @@ export function WorkbenchHome({
         <button
           type="button"
           className="panel-toggle has-label inspector-toggle"
-          aria-label={t("Files")}
-          aria-expanded={mobile ? drawer === "right" : filesOpen}
-          onClick={() =>
-            mobile
-              ? setDrawer((value) => (value === "right" ? null : "right"))
-              : setFilesOpen((value) => !value)
-          }
+          aria-label={t("Toggle workspace panels")}
+          aria-expanded={mobile ? drawer === "right" : panels.inspector}
+          onClick={() => panels.toggle("right")}
         >
           <FiSidebar aria-hidden="true" />
           <span>{t("Files")}</span>
         </button>
       </header>
       {children}
-      <div className="layout" ref={layout}>
+      <div
+        className="layout"
+        ref={layout}
+        style={
+          {
+            "--left-w": `${panels.left}px`,
+            "--right-w": `${panels.right}px`,
+          } as CSSProperties
+        }
+      >
         <button
           type="button"
           aria-label={t("Close drawer")}
@@ -152,9 +139,13 @@ export function WorkbenchHome({
         />
         <section
           className={`panel-drawer drawer-left${drawer === "left" ? " open" : ""}`}
-          aria-label={t("Task navigation drawer")}
+          aria-label={t("Conversation navigation")}
           tabIndex={-1}
-          inert={mobile && drawer !== "left"}
+          inert={
+            mobile
+              ? drawer !== "left"
+              : !panels.navigation || drawer === "right"
+          }
         >
           <aside className="panel panel-left lp-panel">
             {discovery && <ActivityList {...discovery} />}
@@ -208,7 +199,7 @@ export function WorkbenchHome({
             </section>
           </aside>
         </section>
-        <main className="main" inert={mobile && drawer !== null}>
+        <main className="main" inert={drawer !== null}>
           <section
             className="chat-workspace"
             aria-label={t("Ordinary conversation")}
@@ -253,7 +244,7 @@ export function WorkbenchHome({
           className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
           aria-label={t("Files")}
           tabIndex={-1}
-          inert={mobile && drawer !== "right"}
+          inert={mobile ? drawer !== "right" : !panels.inspector}
         >
           <aside className="panel files-panel">
             <header className="files-toolbar">

@@ -181,8 +181,10 @@ export function ModelPicker({
   const currentEntry = catalog?.entries.find((entry) =>
     sameModel(entry, current),
   );
+  const selectionEnabled = enabled && !catalogError;
   const choose = async (entry: ModelCandidate, level: Level) => {
-    if (!catalog || !entry.api || pending || locked) return;
+    if (!selectionEnabled || !catalog || !entry.api || pending || locked)
+      return;
     const choice = decodeModelSelector({
       provider: entry.provider,
       model: entry.model,
@@ -255,7 +257,6 @@ export function ModelPicker({
         aria-label={t("Model: {model}", { model: buttonText })}
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={!enabled}
         title={
           locked
             ? t("Switch models after the current reply finishes.")
@@ -331,7 +332,9 @@ export function ModelPicker({
                       role="option"
                       aria-selected={isCurrent}
                       className="model-option"
-                      disabled={!usable || pending || locked}
+                      disabled={
+                        !selectionEnabled || !usable || pending || locked
+                      }
                       title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
                       onClick={() =>
                         void choose(
@@ -385,7 +388,9 @@ export function ModelPicker({
                     level: t(LEVEL_LABELS[level.level]),
                   })}
                   aria-pressed={current?.thinking === level.level}
-                  disabled={!level.selectable || pending || locked}
+                  disabled={
+                    !selectionEnabled || !level.selectable || pending || locked
+                  }
                   onClick={() => void choose(currentEntry, level.level)}
                 >
                   {t(LEVEL_LABELS[level.level])}
@@ -394,6 +399,13 @@ export function ModelPicker({
             </div>
           )}
           <div className="model-popover-notes">
+            {!enabled && (
+              <p role="status">
+                {t(
+                  "Model selection is unavailable until the current conversation and execution state are observed.",
+                )}
+              </p>
+            )}
             {locked && (
               <p>{t("Switch models after the current reply finishes.")}</p>
             )}
@@ -437,7 +449,9 @@ export function ModelPicker({
               <p className="model-popover-scope">
                 {pending
                   ? t("Switching model…")
-                  : t("Every conversation in this project uses this model.")}
+                  : t(
+                      "This model is used for future messages in this conversation. Work already started keeps its original model.",
+                    )}
               </p>
             )}
           </div>

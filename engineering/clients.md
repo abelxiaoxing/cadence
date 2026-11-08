@@ -145,7 +145,9 @@ A saved model preference is restored only on explicit Send, never readonly brows
 The model catalog reports that preference read only as `remembered`, and only when it names a selectable entry of the same catalog, so the browser can show it as "used when you send" without installing it; an unreadable or no longer offered preference is simply absent.
 The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
 One click is one explicit choice; choosing another model keeps the current thinking level when it offers it, otherwise the nearest offered level, and the panel shows the result at once.
-The model panel locks choices while this conversation's reply is live; another conversation's work does not prevent choosing its own model.
+The model panel remains inspectable when selection is unavailable, with a visible reason; model and thinking choices still require current compatible execution/conversation state and a successfully read catalog.
+It locks choices while this conversation's reply is live; another conversation's work does not prevent choosing its own model.
+Its scope note names future messages in this conversation, not every project conversation or already-admitted work.
 A Send with no installed model and no remembered preference opens that panel instead of failing; the message waits there and is sent once after one explicit choice, or not at all if the panel is dismissed or sending stays impossible for ten seconds.
 Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
 Exit does not require a usable selected model.
@@ -161,11 +163,21 @@ A token grants workspace access, not action consent.
 Ordinary Send binds its exact text, session entry it continues, conversation/cwd, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
-Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
+Its chrome is conversation-first: a compact topbar, collapsible conversation navigation, transcript/tool cards and a bottom statusbar; the inspector is closed by default, including before a project is selected.
+Desktop navigation/inspector visibility and widths are display-only browser preferences, written on explicit choices, never service state.
+`web/src/layout/workspace-layout.ts` owns the shared pane bounds and center-space budget: a narrow desktop overlays the inspector rather than squeezing the conversation, and both pointer and keyboard resizing account for the other docked pane.
+Effective widths shrink without overwriting wider-window preferences; phones use independent drawers, and overlays retain focus containment, Escape, a backdrop and inert covered content.
+Headings and messages share the reading width; the composer frame allows inset padding and its toolbar wraps instead of pushing controls out of a narrow center.
 The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
-The composer's Cadence mode switch replaces the old mode select: off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
-The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running conversations holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
-There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running conversations.
+One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
+It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
+Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.
+The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
+Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
+Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
+The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
+There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
 A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
 The dock is only as tall as its rows, up to its default height, until a drag sets one; it stays folded while empty unless opened, and its heading count leads the total with the queued or running agents (`2 active · 5 total`).
 When a workflow ID list changes, observations of still-listed live runs survive failed re-reads and remain visibly stale; changing client identity retires the cache.
@@ -289,6 +301,7 @@ A positively observed new epoch replaces only the serialized execution attachmen
 A stopped execution owner is labelled as such, not as an incompatible build.
 Message dispatch, model changes and approval still require a live compatible owner; only current Send may prepare one.
 The gateway folder picker and draft remain available while stopped, and a failed first readiness observation does not hide independently readable conversations.
+An unreadable context does not lock local draft editing; an in-flight or uncertain Send and its captured images retain their original locks and identity.
 When conversation reads fail, the composer still accepts a new draft for preparation-only Send; it cannot infer a head or submit that message until a subsequent explicit Send observes the restored context.
 Legacy task/workflow detail and active rosters remain owner observations; a failed observation is never displayed as proof of no running work.
 Browsing or dismissing the picker never opens a project or sends a message.
@@ -307,13 +320,13 @@ Its steps, checks, delivery and diagnostics are not in the chat: the line opens 
 These views open in the center over the conversation, which stays mounted (draft, scroll and observations) behind them.
 The chat reads the newest workflows of the terminal's and the browser's lists at first (`RUN_WINDOW` each) and earlier ones while the loaded turns could hold them.
 A run that cannot be read again keeps its last observation with an unavailable note; an ID never read (a terminal attempt the owner refused leaves one) shows nothing and is retried every ten seconds, never taken as settled or absent.
-A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running conversations); a plan awaiting approval also stays beside it.
-Running conversations lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
+A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running work); a plan awaiting approval also stays beside it.
+Running work lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
 In Cadence mode a failed, interrupted or unknown turn keeps its actual status in the header and sidebar; approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
 An approval attempt guards only its own in-flight request: the owner consumes a plan once, so a lost reply is resolved by the next observation, not by a browser-side lock.
 Ordinary Send does not depend on the Cadence-mode read; when that read fails the owner still refuses an ordinary Send to a Cadence conversation.
 Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
-Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
+Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and folds its tool calls into the transcript.
 An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.

@@ -38,7 +38,7 @@ const ERROR_TEXT: Readonly<Record<string, MessageKey>> = {
   conflict:
     "Another operation is still in progress ({code}). Try again when it finishes.",
   stale:
-    "This page was out of date ({code}) and has been read again. Try once more.",
+    "The context changed ({code}). Read the current state before trying this action again.",
   "auth-unavailable":
     "Model credentials are unavailable ({code}). Check auth.json or the provider's API key.",
   // A project owner refused its Pi sources (or damaged state) before starting.

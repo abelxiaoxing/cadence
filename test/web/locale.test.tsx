@@ -164,7 +164,7 @@ it("pre-dispatch, unknown preparation, confirmed preparation and unknown Send ha
   expect(
     translate(
       "zh",
-      "Observation is not current. Retained history is shown; this does not mean work has stopped.",
+      "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
     ),
   ).toContain("不表示工作已停止");
 });

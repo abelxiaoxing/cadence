@@ -7,14 +7,6 @@ import { ContentExplorer } from "../history/ContentExplorer";
 import { ObservationPanel } from "../review/ObservationPanel";
 
 const TABS = ["contents", "checks", "changes", "reviews"] as const;
-export function InspectorPlaceholder() {
-  const { t } = useT();
-  return (
-    <aside className="panel panel-right">
-      <p className="panel-empty">{t("Select retained history to inspect")}</p>
-    </aside>
-  );
-}
 export function InspectorPanel({
   client,
   seed,

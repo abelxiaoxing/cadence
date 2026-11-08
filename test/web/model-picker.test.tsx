@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
-import type { ModelCandidate } from "../../src/service-contract.ts";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  ModelCandidate,
+  ModelCatalog,
+} from "../../src/service-contract.ts";
 import {
   ModelPicker,
   nearestLevel,
@@ -10,6 +13,26 @@ import {
   LocaleProvider,
   translate,
 } from "../../web/src/i18n/locale";
+
+// Controlled SSR state, not a DOM interaction or owner capability test.
+const modelState = vi.hoisted(() => ({
+  catalog: undefined as ModelCatalog | undefined,
+}));
+vi.mock("react", async (original) => {
+  const actual = await original<typeof import("react")>();
+  return {
+    ...actual,
+    useState: (initial: unknown) =>
+      actual.useState(
+        initial === undefined && modelState.catalog
+          ? modelState.catalog
+          : initial,
+      ),
+  };
+});
+afterEach(() => {
+  modelState.catalog = undefined;
+});
 
 const entry = (levels: ModelCandidate["thinking"][number]["level"][]) =>
   ({
@@ -93,3 +116,87 @@ it("a bare public error code reads as a sentence that keeps the untranslated cod
   );
   expect(describeError(t as never, "constructor")).toBe("constructor");
 });
+
+it("an unavailable model selector still exposes its explanation, without granting a model choice", () => {
+  const client = { models: vi.fn(), chooseModel: vi.fn() };
+  const html = renderToStaticMarkup(
+    <ModelPicker
+      client={client as never}
+      enabled={false}
+      locked={false}
+      refresh=""
+      open
+      onOpenChange={() => {}}
+      onChanged={() => {}}
+    />,
+  );
+  expect(html).toContain(
+    "Model selection is unavailable until the current conversation and execution state are observed.",
+  );
+  expect(html).not.toMatch(/class="model-trigger[^"]*"[^>]*disabled/);
+  expect(client.models).not.toHaveBeenCalled();
+  expect(client.chooseModel).not.toHaveBeenCalled();
+});
+it("model scope names future messages in this conversation, not every project conversation", () => {
+  const html = renderToStaticMarkup(
+    <ModelPicker
+      client={{ models: vi.fn(), chooseModel: vi.fn() }}
+      enabled
+      locked={false}
+      refresh=""
+      open
+      onOpenChange={() => {}}
+      onChanged={() => {}}
+    />,
+  );
+  expect(html).toContain(
+    "This model is used for future messages in this conversation.",
+  );
+  expect(html).toContain("Work already started keeps its original model.");
+  expect(html).not.toContain("Every conversation in this project");
+});
+
+it.each(["unavailable", "live-reply", "ready"])(
+  "%s: inspecting a retained catalog does not unlock model or thinking choices",
+  (status) => {
+    const candidate = entry(["off", "low", "high"]);
+    modelState.catalog = {
+      entries: [candidate],
+      status: "complete",
+      withheld: 0,
+      selected: null,
+      remembered: {
+        provider: "local",
+        model: "m",
+        api: "openai-completions",
+        thinking: "low",
+      },
+      version: {
+        epoch: "epoch",
+        accessGeneration: 1,
+        configRev: 1,
+        catalogId: "catalog",
+      },
+    };
+    const html = renderToStaticMarkup(
+      <ModelPicker
+        client={{ models: vi.fn(), chooseModel: vi.fn() }}
+        enabled={status !== "unavailable"}
+        locked={status === "live-reply"}
+        refresh=""
+        open
+        onOpenChange={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+    const buttons = [
+      ...html.matchAll(
+        /<button[^>]*(?:role="option"|aria-label="Thinking level:)[^>]*>/g,
+      ),
+    ].map((match) => match[0]);
+    expect(buttons).toHaveLength(4);
+    expect(buttons.every((button) => button.includes('disabled=""'))).toBe(
+      status !== "ready",
+    );
+  },
+);
