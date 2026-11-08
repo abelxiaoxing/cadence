@@ -15,13 +15,12 @@ import {
   decodeModelSelector,
   thinkingLevels,
 } from "../../../../src/service-contract.ts";
-import { type MessageKey, useT } from "../../i18n/locale";
 import type {
-  ModelCandidate,
-  ModelCatalog,
-  ModelSelector,
-  ServiceClient,
-} from "../../types";
+  ModelAvailability,
+  ModelCatalogRead,
+} from "../../client/use-model-catalog";
+import { type MessageKey, useT } from "../../i18n/locale";
+import type { ModelCandidate, ModelSelector, ServiceClient } from "../../types";
 
 type Level = ModelSelector["thinking"];
 const LEVEL_LABELS: Record<Level, MessageKey> = {
@@ -36,12 +35,12 @@ const LEVEL_LABELS: Record<Level, MessageKey> = {
 const MODEL_ERRORS: Record<string, MessageKey> = {
   conflict:
     "A reply or workflow is still running in this project. Switch models after it finishes.",
-  stale: "The model list changed and was read again. Choose once more.",
+  stale: "The model list changed. Read the current list before choosing again.",
   "auth-unavailable":
     "This model's credentials are unavailable. Check auth.json or the provider's API key.",
   "unsupported-context": "This model or thinking level is not supported.",
   uncertain:
-    "The choice was not confirmed. The list was read again; check the current model before choosing again.",
+    "The choice was not confirmed. Read the current model before choosing again.",
 };
 
 const same = (a: ModelSelector, b: ModelSelector) =>
@@ -79,90 +78,70 @@ export function useModelLabel() {
 
 export function ModelPicker({
   client,
-  enabled,
+  availability,
+  read,
+  lastModel,
   locked,
-  refresh,
   open,
   onOpenChange,
   onChanged,
   onChosen,
-  onObserved,
   awaitingSend = false,
 }: {
-  client: Pick<ServiceClient, "models" | "chooseModel">;
-  /** A compatible, current owner; otherwise nothing is chosen here. */
-  enabled: boolean;
+  client: Pick<ServiceClient, "chooseModel">;
+  availability: ModelAvailability;
+  read: ModelCatalogRead;
+  /** Retained conversation preference only; never a verified/installed choice. */
+  lastModel?: ModelSelector | null;
   /** This conversation's reply is live; the owner refuses a change now. */
   locked: boolean;
-  /** Any change re-reads the catalog (a choice restored by Send). Opening
-   * the panel always re-reads; nothing else polls the model sources. */
-  refresh: string;
   open: boolean;
   onOpenChange(open: boolean): void;
   /** An installed choice changed the owner configuration. */
   onChanged(): void;
   /** The panel closed on an installed choice. */
   onChosen?(choice: ModelSelector): void;
-  onObserved?(catalog: ModelCatalog): void;
   /** A Send is waiting for this choice and continues after it. */
   awaitingSend?: boolean;
 }) {
   const { t } = useT();
   const label = useModelLabel();
-  const observed = useRef(onObserved);
-  observed.current = onObserved;
-  const [catalog, setCatalog] = useState<ModelCatalog>();
-  const [catalogError, setCatalogError] = useState("");
+  const ready = availability.status === "ready";
+  const epoch = ready ? availability.epoch : null;
+  const attachment = ready ? availability.attachmentVersion : null;
+  const { error: catalogError, loading, reread } = read;
+  const catalog = ready ? read.catalog : undefined;
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [query, setQuery] = useState("");
-  const [reads, setReads] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const reread = useCallback(() => setReads((n) => n + 1), []);
+  const changeOpen = useRef(onOpenChange);
+  changeOpen.current = onOpenChange;
+  // A refusal from an earlier owner/context is not a failure of this one.
   useEffect(() => {
-    void refresh;
-    void reads;
-    const abort = new AbortController();
-    void client
-      .models(abort.signal)
-      .then((reply) => {
-        if (abort.signal.aborted) return;
-        if (reply.kind === "ok") {
-          setCatalog(reply.value);
-          observed.current?.(reply.value);
-          setCatalogError("");
-        } else setCatalogError(reply.error.code);
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) setCatalogError("unavailable");
-      });
-    return () => abort.abort();
-  }, [client, refresh, reads]);
-  // Opening always shows a fresh list (another client may have chosen).
-  useEffect(() => {
-    if (open) reread();
-  }, [open, reread]);
-  const close = useCallback(
-    (focus = true) => {
-      onOpenChange(false);
-      setQuery("");
-      if (focus) trigger.current?.focus({ preventScroll: true });
-    },
-    [onOpenChange],
-  );
+    void client;
+    void epoch;
+    void attachment;
+    setError("");
+  }, [client, epoch, attachment]);
+  const close = useCallback((focus = true) => {
+    changeOpen.current(false);
+    setQuery("");
+    setError("");
+    if (focus) trigger.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (!open) return;
-    setError("");
-    search.current?.focus({ preventScroll: true });
+    if (ready) search.current?.focus({ preventScroll: true });
     const outside = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) close(false);
     };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [open, close]);
+  }, [open, close, ready]);
   const selected = catalog?.selected ?? null;
   const current: ModelSelector | null = selected ?? catalog?.remembered ?? null;
   const groups = useMemo(() => {
@@ -181,9 +160,17 @@ export function ModelPicker({
   const currentEntry = catalog?.entries.find((entry) =>
     sameModel(entry, current),
   );
-  const selectionEnabled = enabled && !catalogError;
+  const selectionEnabled =
+    ready && !!catalog && !loading && !catalogError && read.isCurrent();
   const choose = async (entry: ModelCandidate, level: Level) => {
-    if (!selectionEnabled || !catalog || !entry.api || pending || locked)
+    if (
+      !selectionEnabled ||
+      !read.isCurrent() ||
+      !catalog ||
+      !entry.api ||
+      pending ||
+      locked
+    )
       return;
     const choice = decodeModelSelector({
       provider: entry.provider,
@@ -203,6 +190,7 @@ export function ModelPicker({
         expected: catalog.version,
         choice,
       });
+      if (!read.isCurrent()) return;
       if (reply.kind === "error") {
         setError(reply.error.code);
         reread();
@@ -213,14 +201,15 @@ export function ModelPicker({
         version: reply.value.version,
         selected: reply.value.selected,
       };
-      setCatalog(next);
-      observed.current?.(next);
+      if (!read.accept(next)) return;
       onChanged();
       close();
       onChosen?.(choice);
     } catch {
-      setError("uncertain");
-      reread();
+      if (read.isCurrent()) {
+        setError("uncertain");
+        reread();
+      }
     } finally {
       setPending(false);
     }
@@ -240,33 +229,56 @@ export function ModelPicker({
     if (next < 0) search.current?.focus();
     else all[Math.min(next, all.length - 1)]?.focus();
   };
-  const unavailable = !enabled || (!catalog && !!catalogError);
-  const buttonText = !catalog
-    ? catalogError
-      ? t("Model unavailable")
-      : t("Model")
-    : current
-      ? label(current)
-      : t("Choose a model");
+  const deferred =
+    availability.status === "stopped" || availability.status === "not-started";
+  const history = !catalog ? lastModel : null;
+  const statusText = deferred
+    ? t("Models load when you send")
+    : availability.status === "preparing"
+      ? t("Preparing execution…")
+      : availability.status === "incompatible"
+        ? t("Model selection needs a compatible connection")
+        : availability.status === "connecting"
+          ? t("Checking execution state…")
+          : availability.status === "unavailable"
+            ? t("Execution state unavailable")
+            : loading
+              ? t("Reading models…")
+              : catalogError
+                ? t("Model list unavailable")
+                : t("Choose a model");
+  const buttonText = current
+    ? label(current)
+    : deferred && history
+      ? t("Last used: {model}", { model: label(history) })
+      : statusText;
   return (
     <div className="model-picker" ref={root}>
       <button
         ref={trigger}
         type="button"
-        className={`model-trigger${current && !selected ? " remembered" : ""}${catalog && !current ? " empty" : ""}`}
+        className={`model-trigger${(current && !selected) || history ? " remembered" : ""}${catalog && !current ? " empty" : ""}`}
         aria-label={t("Model: {model}", { model: buttonText })}
         aria-haspopup="dialog"
         aria-expanded={open}
         title={
           locked
             ? t("Switch models after the current reply finishes.")
-            : current && !selected
-              ? t("Last used model; it is used again when you send.")
-              : current
-                ? `${current.provider}/${current.model} · ${current.api}`
-                : undefined
+            : history
+              ? t("Last used model; availability is checked when you send.")
+              : current && !selected
+                ? t("Last used model; it is used again when you send.")
+                : current
+                  ? `${current.provider}/${current.model} · ${current.api}`
+                  : statusText
         }
-        onClick={() => (open ? close() : onOpenChange(true))}
+        onClick={() => {
+          if (open) close();
+          else {
+            setError("");
+            onOpenChange(true);
+          }
+        }}
       >
         <FiCpu aria-hidden="true" />
         <span className="model-trigger-text">{buttonText}</span>
@@ -289,95 +301,127 @@ export function ModelPicker({
               {t("Choose a model; your message is sent right after.")}
             </p>
           )}
-          <label className="model-search">
-            <FiSearch aria-hidden="true" />
-            <input
-              ref={search}
-              type="search"
-              aria-label={t("Search models")}
-              placeholder={t("Search models…")}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown") {
-                  event.preventDefault();
-                  options()[0]?.focus();
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  options()[0]?.click();
-                }
-              }}
-            />
-          </label>
-          <div
-            className="model-list"
-            role="listbox"
-            aria-label={t("Models")}
-            ref={list}
-            onKeyDown={onListKey}
-          >
-            {!catalog && !catalogError && (
-              <p className="model-empty">{t("Reading models…")}</p>
-            )}
-            {groups.map(([provider, entries]) => (
-              <fieldset key={provider} className="model-group">
-                <legend className="model-group-label">{provider}</legend>
-                {entries.map((entry) => {
-                  const usable = entry.eligibility === "candidate";
-                  const isCurrent = sameModel(entry, current);
-                  return (
-                    <button
-                      key={`${entry.provider}/${entry.model}`}
-                      type="button"
-                      role="option"
-                      aria-selected={isCurrent}
-                      className="model-option"
-                      disabled={
-                        !selectionEnabled || !usable || pending || locked
-                      }
-                      title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
-                      onClick={() =>
-                        void choose(
-                          entry,
-                          nearestLevel(entry, current?.thinking ?? "medium"),
-                        )
-                      }
-                    >
-                      <span className="model-option-name">{entry.model}</span>
-                      {!usable && (
-                        <span className="model-option-note">
-                          {entry.eligibility === "auth-unavailable"
-                            ? t("Credentials unavailable")
-                            : t("Not supported")}
-                        </span>
+          {!ready && (
+            <p className="model-popover-lead" role="status">
+              {deferred
+                ? t(
+                    "Execution is not running. Send prepares it and loads models; opening this panel does not start anything.",
+                  )
+                : availability.status === "preparing"
+                  ? t(
+                      "Execution is being prepared for your Send. Models will load when it is ready.",
+                    )
+                  : availability.status === "incompatible"
+                    ? t(
+                        "Reload the page to observe a compatible execution connection before choosing a model.",
+                      )
+                    : t(
+                        "Model selection is unavailable until the current conversation and execution state are observed.",
                       )}
-                      {isCurrent && !selected && (
-                        <span className="model-option-note">
-                          {t("Used when you send")}
-                        </span>
+            </p>
+          )}
+          {history && (
+            <p className="model-popover-lead">
+              {t("Last used: {model}", { model: label(history) })}
+              <br />
+              {t("Last used model; availability is checked when you send.")}
+            </p>
+          )}
+          {ready && (
+            <label className="model-search">
+              <FiSearch aria-hidden="true" />
+              <input
+                ref={search}
+                type="search"
+                aria-label={t("Search models")}
+                placeholder={t("Search models…")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    options()[0]?.focus();
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    options()[0]?.click();
+                  }
+                }}
+              />
+            </label>
+          )}
+          {ready && (
+            <div
+              className="model-list"
+              role="listbox"
+              aria-label={t("Models")}
+              ref={list}
+              onKeyDown={onListKey}
+            >
+              {loading && (
+                <p className="model-empty" role="status">
+                  {t("Reading models…")}
+                </p>
+              )}
+              {groups.map(([provider, entries]) => (
+                <fieldset key={provider} className="model-group">
+                  <legend className="model-group-label">{provider}</legend>
+                  {entries.map((entry) => {
+                    const usable = entry.eligibility === "candidate";
+                    const isCurrent = sameModel(entry, current);
+                    return (
+                      <button
+                        key={`${entry.provider}/${entry.model}`}
+                        type="button"
+                        role="option"
+                        aria-selected={isCurrent}
+                        className="model-option"
+                        disabled={
+                          !selectionEnabled || !usable || pending || locked
+                        }
+                        title={`${entry.provider}/${entry.model}${entry.api ? ` · ${entry.api}` : ""}`}
+                        onClick={() =>
+                          void choose(
+                            entry,
+                            nearestLevel(entry, current?.thinking ?? "medium"),
+                          )
+                        }
+                      >
+                        <span className="model-option-name">{entry.model}</span>
+                        {!usable && (
+                          <span className="model-option-note">
+                            {entry.eligibility === "auth-unavailable"
+                              ? t("Credentials unavailable")
+                              : t("Not supported")}
+                          </span>
+                        )}
+                        {isCurrent && !selected && (
+                          <span className="model-option-note">
+                            {t("Used when you send")}
+                          </span>
+                        )}
+                        {isCurrent && (
+                          <FiCheck
+                            className="model-option-check"
+                            aria-hidden="true"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </fieldset>
+              ))}
+              {catalog?.status === "complete" && groups.length === 0 && (
+                <p className="model-empty">
+                  {query.trim()
+                    ? t("No matching models.")
+                    : t(
+                        "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.",
                       )}
-                      {isCurrent && (
-                        <FiCheck
-                          className="model-option-check"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </fieldset>
-            ))}
-            {catalog?.status === "complete" && groups.length === 0 && (
-              <p className="model-empty">
-                {query.trim()
-                  ? t("No matching models.")
-                  : t(
-                      "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.",
-                    )}
-              </p>
-            )}
-          </div>
-          {currentEntry && currentEntry.thinking.length > 1 && (
+                </p>
+              )}
+            </div>
+          )}
+          {ready && currentEntry && currentEntry.thinking.length > 1 && (
             <div className="model-thinking">
               <span className="model-thinking-label">{t("Thinking")}</span>
               {currentEntry.thinking.map((level) => (
@@ -399,13 +443,6 @@ export function ModelPicker({
             </div>
           )}
           <div className="model-popover-notes">
-            {!enabled && (
-              <p role="status">
-                {t(
-                  "Model selection is unavailable until the current conversation and execution state are observed.",
-                )}
-              </p>
-            )}
             {locked && (
               <p>{t("Switch models after the current reply finishes.")}</p>
             )}
@@ -426,7 +463,7 @@ export function ModelPicker({
                 )}
               </p>
             )}
-            {catalogError && (
+            {ready && catalogError && (
               <p role="alert">
                 {t("The model list could not be read ({code}).", {
                   code: catalogError,
@@ -445,7 +482,7 @@ export function ModelPicker({
                     })}
               </p>
             )}
-            {!unavailable && (
+            {selectionEnabled && (
               <p className="model-popover-scope">
                 {pending
                   ? t("Switching model…")

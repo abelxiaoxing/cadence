@@ -2,6 +2,26 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Models load when you send": "发送时加载模型",
+  "Preparing execution…": "正在准备执行环境…",
+  "Model selection needs a compatible connection": "连接兼容后才能选择模型",
+  "Checking execution state…": "正在确认执行状态…",
+  "Execution state unavailable": "执行状态暂时无法确认",
+  "Model list unavailable": "模型目录读取失败",
+  "Last used: {model}": "上次使用：{model}",
+  "Last used model; availability is checked when you send.":
+    "上次使用的模型，发送时会验证其可用性。",
+  "Execution is not running. Send prepares it and loads models; opening this panel does not start anything.":
+    "项目执行服务尚未启动。发送消息时会准备执行环境并加载模型；打开此面板不会启动服务。",
+  "Execution is being prepared for your Send. Models will load when it is ready.":
+    "正在为本次发送准备执行环境，就绪后会加载模型。",
+  "Reload the page to observe a compatible execution connection before choosing a model.":
+    "请重新加载页面，确认执行连接兼容后再选择模型。",
+  "The model list changed. Read the current list before choosing again.":
+    "模型列表已变化，请读取当前列表后再选择。",
+  "The choice was not confirmed. Read the current model before choosing again.":
+    "模型选择结果尚未确认，请读取当前模型后再决定是否重新选择。",
+
   "Recorded history could not be read.": "暂时无法读取历史证据。",
   "Reading recorded history…": "正在读取历史证据…",
   "The context changed ({code}). Read the current state before trying this action again.":
@@ -898,14 +918,9 @@ export const zh = {
   Max: "最大",
   "A reply or workflow is still running in this project. Switch models after it finishes.":
     "此项目中还有回复或工作流正在运行，结束后再切换模型。",
-  "The model list changed and was read again. Choose once more.":
-    "模型列表已变化并已重新读取，请再选一次。",
   "This model's credentials are unavailable. Check auth.json or the provider's API key.":
     "此模型的凭据不可用，请检查 auth.json 或提供方的 API key。",
   "This model or thinking level is not supported.": "不支持此模型或思考级别。",
-  "The choice was not confirmed. The list was read again; check the current model before choosing again.":
-    "未能确认这次选择，列表已重新读取；请先确认当前模型再重新选择。",
-  "Model unavailable": "模型不可用",
   "Choose a model": "选择模型",
   "Model: {model}": "模型：{model}",
   "Switch models after the current reply finishes.":

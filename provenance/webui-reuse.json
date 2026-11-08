@@ -345,7 +345,9 @@
     "test/web/stale-banner.test.tsx",
     "test/web/locale.test.tsx",
     "web/src/i18n/locale.tsx",
-    "web/src/i18n/zh.ts"
+    "web/src/i18n/zh.ts",
+    "web/src/client/use-model-catalog.ts",
+    "test/web/model-catalog.test.tsx"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -354,7 +356,7 @@
     "test/web/project-entry.test.tsx": "cb9c82be7454b045cd396cf48ec9ba78db97f5d0ba94a9b36caeccfe2069e2bd",
     "test/web/project-resume.test.tsx": "e1aa7ac1f16944c7eea6fd38bf5b7e2428ece4c3d57b069f872cad57c31a6141",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "a52258c5ab35ebfe2e7eeedd6dc888ef174d07fa23f60460fe94dd534f821c95",
+    "web/src/App.tsx": "a60acc57d7ef65b5e03001da87c0ecc4dff22644fd53e8275b51425e6d4765eb",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "0b944562e448a214d52483095a5ed05c163cb716024636aec35e4aaf6dfbb652",
@@ -440,8 +442,8 @@
     "src/service/workbench.ts": "c592c87cf4f9b51e6a04f7b3e180ade9d37cacc28d3371cb699b8733bcc363c9",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "0857f8eef878f58df84b9df9005e65cdb0e023135bdb5262bd1cce3d82dcd6ca",
-    "test/web/workbench.test.tsx": "6f7fb60476f88c8ae93ac70e12d013824cd57e4bc899f022488f15bb73fb5a7f",
-    "web/src/components/workspace/ChatWorkspace.tsx": "b8c1006ba98ae5ac98950d4674a15a6cdfd8f200c4b24674e8fdb3aa5010cfe8",
+    "test/web/workbench.test.tsx": "0eb22a8505ab3b38be3c0be2e4bb3ed1f56abe9cfa0ae5f75af98b4b9bf66101",
+    "web/src/components/workspace/ChatWorkspace.tsx": "e8e4d3d4751a1e79f1f260370512e26c372c8510e4cd66244c839eb5e77a09db",
     "web/src/components/workspace/ChatSteps.tsx": "06b0d8604cd56276b4b17672d1d0fc7cd59274667bb8c7d28b1d59920b60cd9f",
     "web/src/components/workspace/AgentDock.tsx": "c79805bf6bdbe34822f738f60966452c8b39c8c9107c3fd1ca7539e50e99e3a8",
     "web/src/components/workspace/FilesPanel.tsx": "e4c11327e9384a684785f627f3dccc96eb843485e5dc3d6327c5b1f53ca25213",
@@ -471,7 +473,7 @@
     "web/src/components/workspace/WorkflowAgentView.tsx": "886f213432348e9fc6396c55b661a4f5572781eb684caeb63fbe532d90503c71",
     "src/service/workflow-history.ts": "d135a518a989bb2a5e34facc5b4613f976b034d35f3651e93e5b330cf65d928c",
     "test/workflow-history.test.ts": "2eb5e4de0b46b7ea5d9c4bc671fe6954fdbf0402d5d36ffd73a1c79baa740a66",
-    "web/src/components/actions/ModelPicker.tsx": "09af5ac8d91bd65450879f00202f8b8c6968a197363c9f1db31c8919d0ce1985",
+    "web/src/components/actions/ModelPicker.tsx": "0fe062b29474d4d30357853f422dd67c2c8b0987ce8e28f50209e3bc8cad61b6",
     "test/service-conversation-pages.test.ts": "c4dbeb9ad394d8eef13514f500f54fdebedf83e86f068536ca9d882c328d5aac",
     "web/src/client/use-conversation-history.ts": "ac480336705fde7b8ef5a59af08f900aa2a87c7f00e8d8246533106f5acb06f7",
     "test/service-conversation-retention.test.ts": "1f7d8aa12aae657976ad0a2d1c7a8a53e8257971862943f960e1456ac216e27a",
@@ -518,7 +520,7 @@
     "web/src/client/activity.ts": "8aba471e36887f2895179aed67123aa4264bd7b155d2fcc68800ea4181e80913",
     "web/src/client/use-activity.ts": "832eab330c56be98476a6eb605c3c97e4e0e1c8a5e60d5e4427cb37dea8685a0",
     "web/src/components/workspace/ActivityList.tsx": "e447ae9bd021877d64c8b08deeb7d46bef554aff90f5ab44fbb0a7995af63147",
-    "test/web/stale-banner.test.tsx": "18d9b76a95bf511e386d0c392bbae07bf0ecab08f752eaca7186e1ceb3b8ccc7",
+    "test/web/stale-banner.test.tsx": "5f58fe7b906d466db6d3477f023979e796978c245e161fd8a64abf981f5fbd45",
     "web/src/components/workspace/CadenceModeButton.tsx": "9352a9f95f23412ee53991e13bede62d1f5a2a7ff55c2127f5e6ee8688549f7b",
     "web/src/i18n/locale.tsx": "a37645cc447df10f8b76c736d29a46aeb345a68b33937213fdc69bfe484ed88e",
     "web/src/components/workspace/WorkspaceNotice.tsx": "930083f053dfcaac7cac9720308fe20ba82a9ad98a3c1e1cb12f1bd0b525479a",
@@ -527,8 +529,10 @@
     "web/src/layout/use-panel-layout.ts": "afdd7dbb77fcbeeb59f4c32f8fdf12197cb58be5407b552cf675bf1a1da5478c",
     "test/web/workspace-layout.test.tsx": "89c1e63b0b4399aae4784d66c32f21f67bba9e8e5bfd2154b37d186c7a51030c",
     "test/web/workspace-states.test.tsx": "25d7c6e35f1d6a6d13a88eac38ede96d3092972fb8b7c6370284045927adc74c",
-    "web/src/i18n/zh.ts": "4c1801b5af3160000f1070ec934e74cf9f2906e2811620c0b0ca2ae7f7c32fc8",
-    "test/web/model-picker.test.tsx": "0f14cb9fdd100906104f90e442174e320ba77b015fb8cc393d875ae964bcafcd"
+    "web/src/i18n/zh.ts": "fdd04ae38ced9fbd4f4db34242a73dd23cfcfe15d00d2e403f464998561d12de",
+    "test/web/model-picker.test.tsx": "89ff931a2e535452856cc27469c769bfc96dd7f6d13e52b7efa9218903f0ea4c",
+    "web/src/client/use-model-catalog.ts": "878de0a289a26016b03f201b2f97971ca47740e847d6180918850b321394d5a4",
+    "test/web/model-catalog.test.tsx": "9440b9f9da2e38cd51d621839e19806379e2b3a24e3fb2dfaf18595af163a79d"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -826,6 +830,11 @@
       "id": "conversation-first-presentation-2.0.43",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned presentation refinement: default closed inspector, remembered desktop pane choices and a shared center-space budget with overlay/focus reuse; pointer and keyboard sizing constrain both docked panes. Extracted scoped observation warnings and distinct off/armed/confirmed/unknown mode controls. Model inspection remains available without selection authority; its scope is per conversation. Draft editing is independent of readonly failures, while pending Send/image locks and all command/approval gates remain. Files name the conversation directory, missing data is not empty, and plans are decision cards rather than errors. Destination pins include the changed modules and new pure/SSR regressions; upstream source/license pins and historical evidence are unchanged. Qualification belongs in engineering/releases.md, not a claim of browser/device execution. The superseded unused panel-sash weight helper is removed; its upstream source pin is retained as historical provenance."
+    },
+    {
+      "id": "model-catalog-execution-readiness",
+      "originalSourcePinPreserved": true,
+      "note": "Explicit execution availability replaces the model-enabled boolean. Known stopped/unprepared owners show deferred loading and an optional unverified last-used conversation preference, without live catalog requests or an ineffective retry. The shared readonly catalog binds client/conversation context, owner epoch and attachment generation, rereads on recovery, and fences obsolete reads and choice callbacks without startup, preference restoration or Send replay. The composer captures the same catalog the picker displays; explicit Send remains the only preparation route. Pure controlled-hook and SSR callback regressions cover deferred states, readiness/epoch/context changes, aborts, late responses and selection fencing; upstream source/license pins and historical evidence are unchanged."
     }
   ],
   "testAdaptations": [

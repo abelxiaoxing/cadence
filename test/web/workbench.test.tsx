@@ -667,6 +667,7 @@ it("the minimal composer keeps the image action without a permanent image-help p
     const html = renderToStaticMarkup(
       <LocaleProvider initial={locale}>
         <ChatWorkspace
+          modelAvailability={{ status: "unavailable" }}
           client={new ServiceClient(transport())}
           id="conversation"
           workspaceId="workspace"
@@ -704,6 +705,7 @@ it.each([false, true])(
     const client = new ServiceClient(transport({ workbenchCommand: send }));
     const html = renderToStaticMarkup(
       <ChatWorkspace
+        modelAvailability={{ status: "unavailable" }}
         client={client}
         id="session"
         workspaceId="checkout"
