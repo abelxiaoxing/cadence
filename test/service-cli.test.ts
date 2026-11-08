@@ -725,15 +725,20 @@ it("startup outbound proxy/preload requests refuse without spawning or direct fa
   }
 });
 // The agent directory's mode is not a premise; it must still be a directory.
-for (const [stage, select] of [
+for (const [stage, select, problem] of [
   [
     "pi-agent-directory",
     (agent: string) => {
       renameSync(agent, `${agent}-moved`);
       writeFileSync(agent, "", { mode: 0o600 });
     },
+    { file: "agent-directory", reason: "is not a directory" },
   ],
-  ["pi-auth", (agent: string) => unlinkSync(join(agent, "auth.json"))],
+  [
+    "pi-auth",
+    (agent: string) => unlinkSync(join(agent, "auth.json")),
+    { file: "auth.json", reason: expect.stringContaining("does not exist") },
+  ],
 ] as const)
   it(`unusable ${stage} refuses with its stage before registering an owner`, async () => {
     const f = fixture();
@@ -751,6 +756,7 @@ for (const [stage, select] of [
       status: "refused",
       error: "corrupt-selected",
       stage,
+      problem: { check: "file", field: null, ...problem },
     });
     expect(result.stderr).toContain(join(f.dir, "agent"));
     // A known refusal, not the 10s unconfirmed reporting bound.
@@ -779,7 +785,7 @@ it.skipIf(process.platform === "win32")(
   },
   30000,
 );
-it("a compat flag inert on the pinned SDK starts; an unknown one refuses at pi-models before registering", async () => {
+it("a compat flag the pinned SDK declares starts; an unknown one refuses at pi-models, by field, before registering", async () => {
   const f = fixture();
   pending.push(f);
   const agent = join(f.dir, "agent"),
@@ -806,12 +812,21 @@ it("a compat flag inert on the pinned SDK starts; an unknown one refuses at pi-m
     status: "refused",
     error: "corrupt-selected",
     stage: "pi-models",
+    problem: {
+      file: "models.json",
+      check: "schema",
+      field: "providers.fixture.models[0].compat.supportsFutureFlag",
+      reason: "is not a field Cadence's pinned Pi SDK supports",
+    },
   });
   expect(refused.stderr).toContain(join(agent, "models.json"));
+  expect(refused.stderr).toContain(
+    "Refused: models.json (field check): providers.fixture.models[0].compat.supportsFutureFlag",
+  );
   expect(tree(f.dir)).toEqual(before);
   expect(f.c.inspect().status).toBe("absent");
-  // Newer Pi writes this; the pinned SDK has no system-role message to collapse.
-  models({ supportsMidConvoSystemMessages: false });
+  // Both are compat flags the pinned Pi 1.5 SDK declares and uses.
+  models({ supportsMidConvoSystemMessages: false, zaiToolStream: true });
   const started = await run(f, "start", ["--port", "0", "--agent-dir", agent]);
   expect(started.code, started.stderr).toBe(0);
   expect(JSON.parse(started.stdout)).toMatchObject({ status: "alive" });
@@ -849,7 +864,7 @@ it("a package hard-linked into its package manager's store (Bun's default instal
   expect(result.code, result.stdout).toBe(0);
   expect(JSON.parse(result.stdout)).toMatchObject({ status: "alive" });
 }, 30000);
-it("startup refusal report carries only a fixed code and stage", () => {
+it("startup refusal report carries only a fixed code, stage and Cadence's own problem words", () => {
   expect(
     startupReport(new StartupRefusal("corrupt-selected", "pi-runtime", true)),
   ).toEqual({

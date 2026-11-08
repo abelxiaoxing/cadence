@@ -305,9 +305,13 @@ it("doctor reports readonly and --fix heals", async () => {
   const { root, state, c } = fixture();
   crash("owner", root, state);
   const before = readFileSync(join(c.directory, "registration.json"));
+  const agentDir = join(state, "..", "agent");
+  mkdirSync(agentDir);
+  writeFileSync(join(agentDir, "auth.json"), "{}");
   const options = {
     stateHome: state,
     serverConfig: join(state, "none.env"),
+    agentDir,
     probeProject: async () => false,
     probeWorkbench: async () => false,
     yes: false,
@@ -331,6 +335,14 @@ it("doctor reports readonly and --fix heals", async () => {
     };
     expect(fixed.status).toBe("ok");
     expect(fixed.checks.map((c) => c.status)).toEqual(["clean", "healed"]);
+    // The project's Pi sources pass the same checks its owner runs to start.
+    expect((fixed as { pi?: unknown }).pi).toEqual([
+      {
+        agentDir,
+        targets: [`project ${c.store.root}`, "new projects"],
+        status: "ok",
+      },
+    ]);
   } finally {
     process.stderr.write = write;
     process.exitCode = 0;

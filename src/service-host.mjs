@@ -10278,7 +10278,7 @@ function generatedUnit(s) {
 import { spawn as spawn3 } from "node:child_process";
 import { request } from "node:http";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname12, join as join21, resolve as resolve7 } from "node:path";
+import { dirname as dirname13, join as join22, resolve as resolve8 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/sdk-network.ts
@@ -10606,6 +10606,12 @@ class GatewayStore {
     decodeGatewayInput(json(selected2));
     return value;
   }
+  input() {
+    if (!this.read())
+      return;
+    const selected2 = this.files.read(this.path("input.json"));
+    return selected2 ? decodeGatewayInput(json(selected2)) : undefined;
+  }
   localAccess() {
     const value = this.read();
     if (!value || value.phase === "stopped")
@@ -10732,15 +10738,767 @@ class GatewayStore {
   }
 }
 
+// src/service/model-config.ts
+import { lstatSync as lstatSync10, realpathSync as realpathSync6 } from "node:fs";
+import { dirname as dirname10, isAbsolute as isAbsolute7, join as join14, resolve as resolve6 } from "node:path";
+var CONFIG_BYTES2 = 1024 * 1024;
+var ENTRY_LIMIT = 256;
+function refuse() {
+  throw new ContractError("corrupt-selected");
+}
+function data(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    refuse();
+  if (![null, Object.prototype].includes(Object.getPrototypeOf(value)))
+    refuse();
+  const out = Object.create(null);
+  const keys2 = Reflect.ownKeys(value);
+  if (keys2.length > ENTRY_LIMIT)
+    refuse();
+  for (const key of keys2) {
+    const d = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== "string" || !d || !("value" in d) || !d.enumerable)
+      refuse();
+    if (["__proto__", "constructor", "prototype"].includes(key))
+      refuse();
+    out[key] = d.value;
+  }
+  return out;
+}
+function string(value) {
+  if (typeof value !== "string" || !value || value.includes("\x00"))
+    refuse();
+  return value;
+}
+function environment(value) {
+  const out = Object.create(null);
+  for (const [name, entry] of Object.entries(data(value))) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      refuse();
+    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+      throw new ContractError("unsupported-context");
+    if (typeof entry !== "string" || entry.includes("\x00"))
+      refuse();
+    out[name] = entry;
+  }
+  return out;
+}
+function captureEnvironment(value) {
+  const out = Object.create(null);
+  const names2 = Reflect.ownKeys(value);
+  if (names2.length > 4096)
+    throw new ContractError("oversize");
+  let bytes = 0;
+  for (const name of names2) {
+    const d = Object.getOwnPropertyDescriptor(value, name);
+    if (typeof name !== "string" || !d || !("value" in d) || d.value !== undefined && typeof d.value !== "string")
+      refuse();
+    bytes += Buffer.byteLength(name) + Buffer.byteLength(d.value ?? "");
+    if (bytes > CONFIG_BYTES2)
+      throw new ContractError("oversize");
+    out[name] = d.value;
+  }
+  return Object.freeze(out);
+}
+function piSource(agentDir, home, cwd, env) {
+  if (!isAbsolute7(home) || !isAbsolute7(cwd))
+    refuse();
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join14(home, ".pi", "agent");
+  if (!selected2 || selected2.includes("\x00"))
+    refuse();
+  if (selected2 === "~" || selected2.startsWith("~/"))
+    selected2 = home + selected2.slice(1);
+  selected2 = resolve6(cwd, selected2);
+  try {
+    const directory = join14(realpathSync6(dirname10(selected2)), selected2.slice(dirname10(selected2).length + 1));
+    const st = lstatSync10(directory);
+    if (!st.isDirectory() || st.isSymbolicLink())
+      refuse();
+    const files = new PrivateFiles(directory, false);
+    if (!files.directory(directory))
+      refuse();
+    return {
+      directory,
+      files,
+      authPath: join14(directory, "auth.json"),
+      modelsPath: join14(directory, "models.json")
+    };
+  } catch (error) {
+    throw new PiSourceRefusal({
+      file: "agent-directory",
+      check: "file",
+      field: null,
+      reason: fileReason(selected2, true)
+    }, error instanceof ContractError ? error.code : "unavailable");
+  }
+}
+function templateNames(value) {
+  const text2 = string(value);
+  if (text2.startsWith("!"))
+    throw new ContractError("unsupported-context");
+  const names2 = new Set;
+  for (let i = 0;i < text2.length; ) {
+    const dollar = text2.indexOf("$", i);
+    if (dollar < 0)
+      break;
+    const next = text2[dollar + 1];
+    if (next === "$" || next === "!") {
+      i = dollar + 2;
+    } else if (next === "{") {
+      const end = text2.indexOf("}", dollar + 2);
+      if (end < 0) {
+        i = dollar + 1;
+        continue;
+      }
+      const name = text2.slice(dollar + 2, end);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+        names2.add(name);
+      i = end + 1;
+    } else {
+      const name = text2.slice(dollar + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+      if (name)
+        names2.add(name);
+      i = dollar + 1 + (name?.length ?? 0);
+    }
+  }
+  return [...names2];
+}
+
+class PiSourceRefusal extends ContractError {
+  problem;
+  constructor(problem, code2 = "corrupt-selected") {
+    super(code2);
+    this.problem = problem;
+  }
+}
+
+class FieldRefusal extends ContractError {
+  field;
+  reason;
+  constructor(field, reason, code2 = "corrupt-selected") {
+    super(code2);
+    this.field = field;
+    this.reason = reason;
+  }
+}
+function fail(field, reason, code2) {
+  throw new FieldRefusal(field, reason, code2);
+}
+function child(at, key) {
+  if (typeof key === "number")
+    return `${at}[${key}]`;
+  if (/^[A-Za-z_$][\w$]{0,63}$/.test(key))
+    return at ? `${at}.${key}` : key;
+  return /^[\x21-\x7e]{1,64}$/.test(key) && !/["\\]/.test(key) ? `${at}["${key}"]` : `${at}[…]`;
+}
+var UNSUPPORTED = "is not a field Cadence's pinned Pi SDK supports";
+function object2(value, at) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    fail(at, "must be an object");
+  if (Reflect.ownKeys(value).length > ENTRY_LIMIT)
+    fail(at, `has more than ${ENTRY_LIMIT} entries`);
+  try {
+    return data(value);
+  } catch {
+    return fail(at, "must be a plain object without reserved keys");
+  }
+}
+function shape(fields2, required = [], retired = {}) {
+  const check = (value, at) => {
+    const o = object2(value, at);
+    for (const key of Object.keys(o))
+      if (!Object.hasOwn(fields2, key))
+        fail(child(at, key), Object.hasOwn(retired, key) ? retired[key] : UNSUPPORTED);
+    for (const key of required)
+      if (o[key] === undefined)
+        fail(child(at, key), "is required");
+    for (const [key, field] of Object.entries(fields2))
+      if (o[key] !== undefined)
+        field(o[key], child(at, key));
+  };
+  check.fields = fields2;
+  return check;
+}
+function record2(entries) {
+  const check = (value, at) => {
+    for (const [key, entry] of Object.entries(object2(value, at)))
+      entries(entry, child(at, key));
+  };
+  check.entries = entries;
+  return check;
+}
+function list2(items, maximum = ENTRY_LIMIT) {
+  const check = (value, at) => {
+    if (!Array.isArray(value))
+      fail(at, "must be a list");
+    if (value.length > maximum)
+      fail(at, `has more than ${maximum} entries`);
+    for (const [i, item] of value.entries())
+      items(item, child(at, i));
+  };
+  check.items = items;
+  return check;
+}
+function scalarOr(scalar, objectShape, reason) {
+  const check = (value, at) => {
+    if (scalar(value))
+      return;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      fail(at, reason);
+    objectShape(value, at);
+  };
+  check.fields = objectShape.fields;
+  return check;
+}
+var scalar = (test, reason) => (value, at) => {
+  if (!test(value))
+    fail(at, reason);
+};
+var isNumber = (v) => typeof v === "number" && Number.isFinite(v);
+var isString = (v) => typeof v === "string";
+var boolean = scalar((v) => typeof v === "boolean", "must be true or false");
+var number = scalar(isNumber, "must be a number");
+var positive = scalar((v) => isNumber(v) && v > 0, "must be a number greater than 0");
+var whole = (maximum = Number.MAX_SAFE_INTEGER) => scalar((v) => Number.isSafeInteger(v) && v >= 1 && v <= maximum, maximum === Number.MAX_SAFE_INTEGER ? "must be a whole number of at least 1" : `must be a whole number from 1 to ${maximum}`);
+var nonEmpty = scalar((v) => typeof v === "string" && v !== "" && !v.includes("\x00"), "must be a non-empty string");
+var anyString = scalar(isString, "must be a string");
+var stringOrNull = scalar((v) => v === null || isString(v), "must be a string or null");
+var numberOrString = scalar((v) => isNumber(v) || isString(v), "must be a number or a string");
+var oneOf2 = (...values) => scalar((v) => values.includes(v), `must be ${values.length === 1 ? "" : "one of "}${values.map((v) => JSON.stringify(v)).join(", ")}`);
+var freeform = scalar((v) => !!v && typeof v === "object" && !Array.isArray(v), "must be an object");
+var template = (value, at) => {
+  nonEmpty(value, at);
+  if (value.startsWith("!"))
+    fail(at, 'runs a command ("!…"), which Cadence never runs; use a literal value or $VARIABLE', "unsupported-context");
+};
+var headerValue = (value, at) => {
+  if (typeof value !== "string" || /[\r\n\0]/.test(value))
+    fail(at, "must be a single-line string");
+  if (value)
+    template(value, at);
+};
+var headers = (value, at) => {
+  for (const [name, entry] of Object.entries(object2(value, at))) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
+      fail(child(at, name), "is not a valid HTTP header name");
+    headerValue(entry, child(at, name));
+  }
+};
+headers.entries = headerValue;
+var variableValue = (value, at) => {
+  if (typeof value !== "string" || value.includes("\x00"))
+    fail(at, "must be a string");
+};
+var variables = (value, at) => {
+  for (const [name, entry] of Object.entries(object2(value, at))) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      fail(child(at, name), "is not a valid environment variable name");
+    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+      fail(child(at, name), "names a file (*_FILE, *_PATH or *_CREDENTIALS), which Cadence does not pass on", "unsupported-context");
+    variableValue(entry, child(at, name));
+  }
+};
+variables.entries = variableValue;
+var LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+var levels = (each) => shape(Object.fromEntries(LEVELS.map((level) => [level, each])));
+var RATES = ["input", "output", "cacheRead", "cacheWrite"];
+var rates = Object.fromEntries(RATES.map((rate) => [rate, number]));
+var costTiers = list2(shape({ inputTokensAbove: number, ...rates }, ["inputTokensAbove", ...RATES]));
+var cost = shape({ ...rates, tiers: costTiers }, RATES);
+var strings = list2(anyString);
+var percentiles = shape(Object.fromEntries(["p50", "p75", "p90", "p99"].map((p) => [p, number])));
+var chatTemplate = record2(scalarOr((v) => v === null || ["string", "number", "boolean"].includes(typeof v), shape({
+  $var: oneOf2("thinking.enabled", "thinking.effort", "thinking.budget"),
+  omitWhenOff: boolean
+}, ["$var"]), 'must be a string, number, true/false, null or a {"$var": …} object'));
+var compat = shape({
+  ...Object.fromEntries([
+    "supportsStore",
+    "supportsDeveloperRole",
+    "supportsReasoningEffort",
+    "supportsUsageInStreaming",
+    "supportsFinishReason",
+    "requiresToolResultName",
+    "requiresAssistantAfterToolResult",
+    "requiresThinkingAsText",
+    "requiresReasoningContentOnAssistantMessages",
+    "zaiToolStream",
+    "supportsThinkingTokenBudget",
+    "supportsOpenAIGrammarTools",
+    "supportsMidConvoSystemMessages",
+    "supportsMidConvoToolAdditions",
+    "supportsStrictMode",
+    "sendSessionAffinityHeaders",
+    "supportsLongCacheRetention",
+    "supportsAdditionalTools",
+    "supportsToolSearch",
+    "supportsExplicitPromptCacheMode",
+    "supportsMidConvoEffort",
+    "supportsMaxOutputTokens",
+    "supportsEagerToolInputStreaming",
+    "supportsCacheControlOnTools",
+    "supportsTemperature",
+    "forceAdaptiveThinking",
+    "allowEmptySignature",
+    "supportsStrictTools",
+    "supportsMidConvoToolChanges",
+    "sendImageOptInHeader"
+  ].map((key) => [key, boolean])),
+  maxTokensField: oneOf2("max_completion_tokens", "max_tokens"),
+  thinkingFormat: oneOf2("openai", "openrouter", "deepseek", "together", "baseten", "zai", "qwen", "chat-template", "qwen-chat-template", "string-thinking", "ant-ling"),
+  thinkingTokenBudgetField: oneOf2("thinking_token_budget", "thinking_budget", "thinking_budget_tokens"),
+  cacheControlFormat: oneOf2("anthropic"),
+  sessionAffinityFormat: oneOf2("openai", "openai-nosession", "openrouter"),
+  imageInput: oneOf2("assets", "images", "state-image-urls"),
+  vllmPriority: number,
+  chatTemplateKwargs: chatTemplate,
+  chatTemplateArgs: chatTemplate,
+  openRouterRouting: shape({
+    allow_fallbacks: boolean,
+    require_parameters: boolean,
+    data_collection: oneOf2("deny", "allow"),
+    zdr: boolean,
+    enforce_distillable_text: boolean,
+    order: strings,
+    only: strings,
+    ignore: strings,
+    quantizations: strings,
+    sort: scalarOr(isString, shape({ by: anyString, partition: stringOrNull }), "must be a string or an object"),
+    max_price: shape(Object.fromEntries(["prompt", "completion", "image", "audio", "request"].map((k) => [
+      k,
+      numberOrString
+    ]))),
+    preferred_min_throughput: scalarOr(isNumber, percentiles, "must be a number or an object"),
+    preferred_max_latency: scalarOr(isNumber, percentiles, "must be a number or an object")
+  }),
+  vercelGatewayRouting: shape({ only: strings, order: strings }),
+  allowedFallbackModels: list2(shape({ provider: nonEmpty, model: nonEmpty, cost }, [
+    "provider",
+    "model",
+    "cost"
+  ]), 3)
+}, [], {
+  reasoningEffortMap: "was replaced in Pi 0.72 by each model's own thinkingLevelMap; move these mappings there (null hides a level the model does not support)"
+});
+var modelFields = {
+  id: nonEmpty,
+  name: nonEmpty,
+  api: nonEmpty,
+  baseUrl: nonEmpty,
+  reasoning: boolean,
+  thinkingLevelMap: levels(stringOrNull),
+  input: list2(oneOf2("text", "image")),
+  inputLimits: shape({
+    maxRequestBytes: whole(),
+    images: shape({
+      resize: shape({
+        maxWidth: whole(),
+        maxHeight: whole(),
+        maxBytes: whole(),
+        jpegQuality: whole(100)
+      }),
+      maxPerMessage: whole(),
+      maxPerRequest: whole()
+    })
+  }),
+  cost,
+  promptCache: shape({ short: positive, long: positive }),
+  contextWindow: positive,
+  maxTokens: positive,
+  samplingParams: freeform,
+  samplingParamsByThinkingLevel: levels(freeform),
+  headers,
+  compat
+};
+var {
+  id: _id,
+  api: _api,
+  baseUrl: _baseUrl,
+  ...overrideFields
+} = modelFields;
+var model = shape(modelFields, ["id"]);
+var models = list2(model);
+var uniqueModels = (value, at) => {
+  models(value, at);
+  const ids = new Set;
+  value.forEach((entry, i) => {
+    if (ids.has(entry.id))
+      fail(child(child(at, i), "id"), "repeats the id of an earlier model of this provider");
+    ids.add(entry.id);
+  });
+};
+uniqueModels.items = model;
+var MODELS_JSON = shape({
+  $schema: anyString,
+  providers: record2(shape({
+    name: nonEmpty,
+    baseUrl: nonEmpty,
+    apiKey: template,
+    api: nonEmpty,
+    oauth: oneOf2("radius"),
+    headers,
+    compat,
+    authHeader: boolean,
+    models: uniqueModels,
+    modelOverrides: record2(shape({
+      ...overrideFields,
+      cost: shape({ ...rates, tiers: costTiers })
+    }))
+  }))
+}, ["providers"]);
+var credential = (value, at) => {
+  const o = object2(value, at);
+  if (o.type === "api_key") {
+    for (const key of Object.keys(o))
+      if (!["type", "key", "env"].includes(key))
+        fail(child(at, key), "is not a field of an api_key credential");
+    if (o.key !== undefined)
+      template(o.key, child(at, "key"));
+    if (o.env !== undefined)
+      variables(o.env, child(at, "env"));
+  } else if (o.type === "oauth") {
+    nonEmpty(o.access, child(at, "access"));
+    nonEmpty(o.refresh, child(at, "refresh"));
+    number(o.expires, child(at, "expires"));
+    if (o.env !== undefined)
+      variables(o.env, child(at, "env"));
+  } else
+    fail(child(at, "type"), 'must be "api_key" or "oauth"');
+};
+var AUTH_JSON = record2(credential);
+function piJsonc(input) {
+  let stripped = "";
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0;i < input.length; i++) {
+    const char = input[i];
+    if (!quoted && char === "/" && input[i + 1] === "/") {
+      while (i < input.length && input[i] !== `
+`)
+        i++;
+      stripped += `
+`;
+      continue;
+    }
+    stripped += char;
+    if (quoted) {
+      if (escaped)
+        escaped = false;
+      else if (char === "\\")
+        escaped = true;
+      else if (char === '"')
+        quoted = false;
+    } else if (char === '"')
+      quoted = true;
+  }
+  let normalized = "";
+  quoted = false;
+  escaped = false;
+  for (let i = 0;i < stripped.length; i++) {
+    const char = stripped[i];
+    if (!quoted && char === ",") {
+      let next = i + 1;
+      while (/\s/.test(stripped[next] ?? "") && next < stripped.length)
+        next++;
+      if (stripped[next] === "}" || stripped[next] === "]")
+        continue;
+    }
+    normalized += char;
+    if (quoted) {
+      if (escaped)
+        escaped = false;
+      else if (char === "\\")
+        escaped = true;
+      else if (char === '"')
+        quoted = false;
+    } else if (char === '"')
+      quoted = true;
+  }
+  return normalized;
+}
+function fileReason(path, directory) {
+  let st;
+  try {
+    st = lstatSync10(path);
+  } catch {
+    return directory ? "does not exist; run pi once to create it, or select another --agent-dir" : "cannot be read";
+  }
+  if (st.isSymbolicLink())
+    return "is a symbolic link; Cadence reads only the real file or directory, not a link to it";
+  if (directory ? !st.isDirectory() : !st.isFile())
+    return directory ? "is not a directory" : "is not a regular file";
+  if (!directory && st.nlink !== 1)
+    return `has ${st.nlink} hard links; Cadence reads only a file with a single link`;
+  if (!directory && st.size > CONFIG_BYTES2)
+    return "is larger than 1 MiB";
+  if (process.platform !== "win32" && process.getuid && st.uid !== process.getuid())
+    return "is owned by another user";
+  return directory ? "has a parent directory Cadence cannot use (a symbolic link loop or another user's directory)" : "changed while Cadence was reading it; try again";
+}
+function readSource2(source, file) {
+  const path = file === "auth.json" ? source.authPath : source.modelsPath;
+  try {
+    return source.files.read(path, CONFIG_BYTES2);
+  } catch (error) {
+    throw new PiSourceRefusal({ file, check: "file", field: null, reason: fileReason(path, false) }, error instanceof ContractError ? error.code : "unavailable");
+  }
+}
+function parseSource(snapshot, file) {
+  const refuse2 = (reason) => {
+    throw new PiSourceRefusal({ file, check: "json", field: null, reason });
+  };
+  let text2 = "";
+  try {
+    text2 = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+  } catch {
+    refuse2("is not valid UTF-8 text");
+  }
+  if (file === "models.json")
+    text2 = piJsonc(text2);
+  try {
+    return parseWireJson(text2, CONFIG_BYTES2);
+  } catch {
+    const extra = file === "models.json" ? " (beyond JSON, models.json allows only // line comments and trailing commas)" : "";
+    try {
+      JSON.parse(text2);
+    } catch (error) {
+      const line = /\(line (\d+) column \d+\)$/.exec(error instanceof Error ? error.message : "")?.[1];
+      return refuse2(`is not valid JSON${line ? ` near line ${line}` : ""}${extra}`);
+    }
+    return refuse2("has a duplicate key, a NUL character, an unpaired surrogate or nesting deeper than 64 levels");
+  }
+}
+function schemaCheck(file, check, value) {
+  try {
+    check(value, "");
+  } catch (error) {
+    if (!(error instanceof FieldRefusal))
+      throw error;
+    throw new PiSourceRefusal({
+      file,
+      check: "schema",
+      field: error.field || null,
+      reason: error.reason
+    }, error.code);
+  }
+}
+function readPiSnapshot(source) {
+  const { auth, credentials } = readPiAuth(source);
+  const { models: models2, providers } = readPiModels(source);
+  return { auth, models: models2, credentials, providers };
+}
+function readPiAuth(source) {
+  const auth = readSource2(source, "auth.json");
+  if (!auth)
+    throw new PiSourceRefusal({
+      file: "auth.json",
+      check: "file",
+      field: null,
+      reason: "does not exist; sign in with Pi first (pi, then /login)"
+    });
+  const value = parseSource(auth, "auth.json");
+  schemaCheck("auth.json", AUTH_JSON, value);
+  const credentials = Object.create(null);
+  for (const [provider, credential2] of Object.entries(data(value)))
+    credentials[provider] = data(credential2);
+  return { auth, credentials };
+}
+function readPiModels(source) {
+  const models2 = readSource2(source, "models.json");
+  const providers = Object.create(null);
+  if (models2) {
+    const value = parseSource(models2, "models.json");
+    schemaCheck("models.json", MODELS_JSON, value);
+    for (const [id, provider] of Object.entries(data(data(value).providers)))
+      providers[id] = data(provider);
+  }
+  return { models: models2, providers };
+}
+function checkPiSources(agentDir, home, cwd, env) {
+  const source = piSource(agentDir, home, cwd, env);
+  readPiAuth(source);
+  readPiModels(source);
+  return source;
+}
+function sdkRefusal(message2) {
+  const problem = (field, reason) => new PiSourceRefusal({ file: "models.json", check: "sdk", field, reason });
+  const schema = /^Invalid models\.json schema:\n {2}- ([A-Za-z0-9_$.:@/+-]{1,200}): (must [A-Za-z0-9 ,'"_=<>.-]{1,120})$/m.exec(message2);
+  if (schema)
+    return problem(schema[1], schema[2]);
+  const provider = /^Provider "?([A-Za-z0-9_.:@/+-]{1,64})"?[:,]/m.exec(message2)?.[1];
+  const known = [
+    [
+      /no "api" specified/,
+      'has a model with no "api"; set it on the provider or on the model'
+    ],
+    [
+      /"baseUrl" is required when defining custom models/,
+      'defines models but has no "baseUrl"'
+    ],
+    [
+      /"baseUrl" is required when "oauth" is set/,
+      'sets "oauth" but has no "baseUrl"'
+    ],
+    [
+      /must specify "baseUrl"/,
+      "must set baseUrl, headers, compat, modelOverrides or models"
+    ],
+    [/invalid contextWindow/, "has a model with an invalid contextWindow"],
+    [/invalid maxTokens/, "has a model with an invalid maxTokens"]
+  ];
+  for (const [pattern, reason] of known)
+    if (pattern.test(message2))
+      return problem(provider ? child("providers", provider) : null, reason);
+  return problem(null, "was refused by the Pi SDK; run pi in a terminal to see its own message");
+}
+function sourceIdentity(snapshot, provider) {
+  const credential2 = snapshot.credentials[provider];
+  if (credential2?.type === "oauth") {
+    const { access: _a, refresh: _r, expires: _e, ...identity } = credential2;
+    return stablePrivate(identity);
+  }
+  return stablePrivate(credential2 ?? null);
+}
+function selectedEnvironment(snapshot, provider, model2, launch) {
+  const credential2 = snapshot.credentials[provider];
+  const scoped = credential2?.env === undefined ? {} : environment(credential2.env);
+  const config = snapshot.providers[provider];
+  const values = [];
+  if (credential2?.type === "api_key" && credential2.key !== undefined)
+    values.push(credential2.key);
+  if (config?.apiKey !== undefined)
+    values.push(config.apiKey);
+  if (config?.headers)
+    values.push(...Object.values(data(config.headers)));
+  const definition = Array.isArray(config?.models) ? config.models.find((m) => data(m).id === model2) : undefined;
+  const override = config?.modelOverrides ? data(config.modelOverrides)[model2] : undefined;
+  for (const entry of [definition, override])
+    if (entry && data(entry).headers)
+      values.push(...Object.values(data(data(entry).headers)));
+  const env = { ...scoped };
+  for (const value of values) {
+    if (value === "")
+      continue;
+    for (const name of templateNames(value)) {
+      if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+        throw new ContractError("unsupported-context");
+      const selected2 = scoped[name] || launch[name];
+      if (!selected2)
+        throw new ContractError("auth-unavailable");
+      env[name] = selected2;
+    }
+  }
+  return env;
+}
+function sameModels(a, b) {
+  return a.models?.identity === b.models?.identity && a.models?.stamp === b.models?.stamp;
+}
+function stablePrivate(value) {
+  const sorted = (v) => {
+    if (Array.isArray(v))
+      return v.map(sorted);
+    if (v && typeof v === "object")
+      return Object.fromEntries(Object.entries(data(v)).sort(([a], [b]) => a.localeCompare(b)).map(([k, entry]) => [k, sorted(entry)]));
+    return v;
+  };
+  return JSON.stringify(sorted(value));
+}
+function clonePrivate(value) {
+  let count = 0;
+  const visit = (v, depth) => {
+    if (++count > 16384 || depth > 32)
+      throw new ContractError("oversize");
+    if (v === undefined || v === null || typeof v === "boolean" || typeof v === "string")
+      return v;
+    if (typeof v === "number" && Number.isFinite(v))
+      return v;
+    if (Array.isArray(v)) {
+      if (v.length > 16384 || Reflect.ownKeys(v).length !== v.length + 1)
+        refuse();
+      const out2 = [];
+      for (let i = 0;i < v.length; i++) {
+        const d = Object.getOwnPropertyDescriptor(v, String(i));
+        if (!d || !("value" in d))
+          refuse();
+        out2.push(visit(d.value, depth + 1));
+      }
+      return out2;
+    }
+    const out = Object.create(null);
+    for (const [k, entry] of Object.entries(data(v)))
+      out[k] = visit(entry, depth + 1);
+    return out;
+  };
+  const encoded2 = JSON.stringify(visit(value, 0));
+  if (Buffer.byteLength(encoded2) > CONFIG_BYTES2)
+    throw new ContractError("oversize");
+  return parseWireJson(encoded2, CONFIG_BYTES2);
+}
+function snapshotLiterals(snapshot, launch, routes = []) {
+  const strings2 = (v, visit) => {
+    if (typeof v === "string") {
+      if (v)
+        visit(v);
+    } else if (v && typeof v === "object") {
+      for (const key of Object.keys(v))
+        strings2(v[key], visit);
+    }
+  };
+  const literals = new Set;
+  let literalBytes = 0;
+  const add = (value) => {
+    if (literals.has(value))
+      return;
+    const size = Buffer.byteLength(value);
+    if (literalBytes + size > LIMITS.workerRequestBytes * 2)
+      throw new ContractError("oversize");
+    literalBytes += size;
+    literals.add(value);
+  };
+  for (const route of routes)
+    add(route);
+  const templates = (value, provider) => {
+    const scoped = environment(snapshot.credentials[provider]?.env ?? {});
+    strings2(value, (literal2) => {
+      add(literal2);
+      for (const name of templateNames(literal2)) {
+        const resolved = scoped[name] || launch[name];
+        if (resolved)
+          add(resolved);
+      }
+    });
+  };
+  for (const [provider, credential2] of Object.entries(snapshot.credentials)) {
+    strings2(credential2.type === "api_key" ? credential2.key : credential2.access, add);
+    strings2(credential2.type === "oauth" ? credential2.refresh : null, add);
+    strings2(credential2.env, add);
+    if (credential2.type === "api_key")
+      templates(credential2.key, provider);
+  }
+  for (const [provider, config] of Object.entries(snapshot.providers)) {
+    templates(config.apiKey, provider);
+    templates(config.headers, provider);
+    for (const model2 of Array.isArray(config.models) ? config.models : [])
+      templates(data(model2).headers, provider);
+    if (config.modelOverrides)
+      for (const model2 of Object.values(data(config.modelOverrides)))
+        templates(data(model2).headers, provider);
+  }
+  for (const [key, value] of Object.entries(launch))
+    if (/(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key) && value)
+      add(value);
+  return [...literals];
+}
+
 // src/service/recovery-log.ts
 import { randomUUID as randomUUID8 } from "node:crypto";
 import {
-  lstatSync as lstatSync10,
+  lstatSync as lstatSync11,
   opendirSync as opendirSync5,
   renameSync as renameSync4,
   rmSync as rmSync2
 } from "node:fs";
-import { basename as basename2, join as join14, relative as relative4 } from "node:path";
+import { basename as basename2, join as join15, relative as relative4 } from "node:path";
 var RECOVERY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
 var RECOVERY_EVENTS = 50;
 var RECOVERY_ARCHIVE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -10793,7 +11551,7 @@ function entries(path, maximum = 4096) {
 function size(path, limit = { left: 1e5 }) {
   let st;
   try {
-    st = lstatSync10(path);
+    st = lstatSync11(path);
   } catch {
     return 0;
   }
@@ -10803,7 +11561,7 @@ function size(path, limit = { left: 1e5 }) {
     return st.size;
   let total = 0;
   for (const name of entries(path, 1e5))
-    total += size(join14(path, name), limit);
+    total += size(join15(path, name), limit);
   return total;
 }
 
@@ -10813,12 +11571,12 @@ class RecoveryLog {
   archiveDirectory;
   constructor(files) {
     this.files = files;
-    this.logDirectory = join14(files.namespace, "recovery-log-v1");
-    this.archiveDirectory = join14(files.namespace, "recovery-archive-v1");
+    this.logDirectory = join15(files.namespace, "recovery-log-v1");
+    this.archiveDirectory = join15(files.namespace, "recovery-archive-v1");
   }
   archive() {
     const name = `${Date.now()}-${randomUUID8()}`;
-    const directory = join14(this.archiveDirectory, name);
+    const directory = join15(this.archiveDirectory, name);
     let used = false;
     return {
       name,
@@ -10827,7 +11585,7 @@ class RecoveryLog {
         if (!rel || rel.startsWith(".."))
           throw new ContractError("forbidden");
         this.files.directory(directory, true);
-        const target = join14(directory, as ?? rel.split(/[\\/]/).join("--"));
+        const target = join15(directory, as ?? rel.split(/[\\/]/).join("--"));
         retryWindowsFileOperation(() => renameSync4(path, target));
         used = true;
       },
@@ -10856,7 +11614,7 @@ class RecoveryLog {
     };
     decodeRecoveryEvent(value);
     try {
-      this.files.create(join14(this.logDirectory, `${value.at}-${value.id}.json`), encoded(value), EVENT_BYTES);
+      this.files.create(join15(this.logDirectory, `${value.at}-${value.id}.json`), encoded(value), EVENT_BYTES);
       this.prune();
     } catch {}
     return value;
@@ -10865,7 +11623,7 @@ class RecoveryLog {
     for (const name of entries(this.logDirectory).reverse()) {
       if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
         continue;
-      const path = join14(this.logDirectory, name);
+      const path = join15(this.logDirectory, name);
       const snapshot = this.files.read(path, EVENT_BYTES);
       if (!snapshot)
         return;
@@ -10885,7 +11643,7 @@ class RecoveryLog {
       if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
         continue;
       try {
-        const file = this.files.read(join14(this.logDirectory, name), EVENT_BYTES);
+        const file = this.files.read(join15(this.logDirectory, name), EVENT_BYTES);
         if (file)
           out.push(decodeRecoveryEvent(json(file, EVENT_BYTES)));
       } catch {}
@@ -10895,11 +11653,11 @@ class RecoveryLog {
   prune(now = Date.now()) {
     const names2 = entries(this.logDirectory);
     for (const name of names2.slice(0, Math.max(0, names2.length - RECOVERY_EVENTS)))
-      rmSync2(join14(this.logDirectory, name), { force: true });
+      rmSync2(join15(this.logDirectory, name), { force: true });
     const archived = entries(this.archiveDirectory).filter((name) => /^[0-9]{13}-[0-9a-f-]{36}$/.test(name));
     const kept = [];
     for (const name of archived) {
-      const path = join14(this.archiveDirectory, name);
+      const path = join15(this.archiveDirectory, name);
       if (now - Number(name.slice(0, 13)) > RECOVERY_ARCHIVE_MS)
         rmSync2(path, { recursive: true, force: true });
       else
@@ -10909,7 +11667,7 @@ class RecoveryLog {
     for (const entry of kept) {
       if (total <= RECOVERY_ARCHIVE_BYTES)
         break;
-      rmSync2(join14(this.archiveDirectory, entry.name), {
+      rmSync2(join15(this.archiveDirectory, entry.name), {
         recursive: true,
         force: true
       });
@@ -10932,23 +11690,270 @@ class RecoveryLog {
     const names2 = entries(this.archiveDirectory);
     return {
       entries: names2.length,
-      bytes: names2.reduce((sum, name) => sum + size(join14(this.archiveDirectory, name)), 0)
+      bytes: names2.reduce((sum, name) => sum + size(join15(this.archiveDirectory, name)), 0)
     };
   }
 }
 function strayTemporaries(directory) {
-  return entries(directory).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join14(directory, name));
+  return entries(directory).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join15(directory, name));
+}
+
+// src/service/runtime.ts
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname11, isAbsolute as isAbsolute8, join as join16, resolve as resolve7 } from "node:path";
+var STARTUP_INPUT_BYTES = 16 * 1024;
+function absolute(value) {
+  const result = text(value, 4096, true);
+  if (!isAbsolute8(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function decodeHostConfig(value) {
+  const o = closed(value, [
+    "schema",
+    "http",
+    "cwd",
+    "agentDir",
+    "tokenSource",
+    "tokenFile"
+  ]);
+  const tokenSource = oneOf(o.tokenSource, [
+    "generated",
+    "environment",
+    "file",
+    "config"
+  ]);
+  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
+    throw new ContractError("invalid");
+  return {
+    schema: literal(o.schema, "cadence-service-host/1"),
+    http: decodeHttpPolicy(o.http),
+    cwd: absolute(o.cwd),
+    agentDir: absolute(o.agentDir),
+    tokenSource,
+    tokenFile
+  };
+}
+function reselectable(old, next) {
+  const kept = (c) => encoded({
+    ...c,
+    http: { ...c.http, port: 0 },
+    tokenSource: null,
+    tokenFile: null
+  });
+  return next.tokenSource === "config" && kept(old) === kept(next);
+}
+function readHostConfig(c) {
+  const owner = c.configuration();
+  if (!owner)
+    return;
+  const snapshot = c.files.read(c.path("host-config.json"));
+  if (!snapshot)
+    throw new ContractError("corrupt-selected");
+  const config = decodeHostConfig(json(snapshot));
+  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash(encoded(config)))
+    throw new ContractError("conflict");
+  return config;
+}
+function hostEnvironment(ambient) {
+  let route;
+  const facts = networkSnapshot(ambient);
+  try {
+    if (facts.NODE_OPTIONS.present)
+      throw new Error;
+    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
+  } catch {
+    throw new ContractError("unsupported-context");
+  }
+  const result = Object.create(null);
+  for (const key of Object.keys(ambient)) {
+    const d = Object.getOwnPropertyDescriptor(ambient, key);
+    if (!d || !("value" in d) || typeof d.value !== "string")
+      throw new ContractError("invalid");
+    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
+      continue;
+    result[key] = d.value;
+  }
+  if (route.redactionLiterals.length) {
+    result.HTTP_PROXY = route.env.HTTP_PROXY;
+    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
+    result.NODE_USE_ENV_PROXY = "1";
+  }
+  result.PI_OFFLINE = "1";
+  result.NO_COLOR = "1";
+  if (!sameNetwork(facts, networkSnapshot(ambient)))
+    throw new ContractError("stale");
+  return result;
+}
+function defaultAgentDir(ambient) {
+  return resolve7(ambient.PI_CODING_AGENT_DIR ?? join16(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent"));
+}
+function selectStart(options, ambient) {
+  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
+  const old = readHostConfig(c);
+  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
+  if (env && (!("value" in env) || typeof env.value !== "string"))
+    throw new ContractError("invalid");
+  let fromFile;
+  if (options.config) {
+    const path = resolve7(options.config), f = new PrivateFiles(dirname11(path));
+    const bytes = f.read(path);
+    if (!bytes)
+      throw new ContractError("corrupt-selected");
+    fromFile = decodeHostConfig(json(bytes));
+  }
+  const base = old ?? fromFile ?? decodeHostConfig({
+    schema: "cadence-service-host/1",
+    cwd: workspace.cwd,
+    http: {
+      schema: "cadence-service-http/1",
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 17423,
+      proxy: null
+    },
+    agentDir: resolve7(options.agentDir ?? defaultAgentDir(ambient)),
+    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
+    tokenFile: options.tokenFile ? resolve7(options.tokenFile) : null
+  });
+  const server = options.serverConfig !== undefined ? resolve7(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected2 = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected2 = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve7(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve7(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || !ownerDefaultInCheckout(workspace.root, selected2.cwd))
+    throw new ContractError("conflict");
+  return {
+    workspace: workspace.root,
+    stateHome: c.stateHome,
+    config: selected2,
+    environmentToken: env?.value ?? null
+  };
+}
+function decodeHostInput(value) {
+  const o = closed(value, [
+    "workspace",
+    "stateHome",
+    "config",
+    "environmentToken"
+  ]);
+  const config = decodeHostConfig(o.config);
+  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
+  if (config.tokenSource === "environment" !== (environmentToken !== null))
+    throw new ContractError("invalid");
+  return {
+    workspace: absolute(o.workspace),
+    stateHome: absolute(o.stateHome),
+    config,
+    environmentToken
+  };
+}
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+
+class StartupRefusal extends ContractError {
+  stage;
+  quarantined;
+  problem;
+  constructor(code2, stage, quarantined = false, problem) {
+    super(code2);
+    this.stage = stage;
+    this.quarantined = quarantined;
+    this.problem = problem;
+  }
+}
+function startupReport(error) {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage,
+      ...error.problem ? { problem: error.problem } : {}
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service"
+  };
+}
+var PI_SOURCE_STAGES = {
+  "agent-directory": "pi-agent-directory",
+  "auth.json": "pi-auth",
+  "models.json": "pi-models"
+};
+function preflightPi(agentDir, cwd, launch) {
+  try {
+    checkPiSources(agentDir, launch.HOME ?? launch.USERPROFILE ?? agentDir, cwd, launch);
+  } catch (error) {
+    if (error instanceof PiSourceRefusal)
+      throw new StartupRefusal(error.code, PI_SOURCE_STAGES[error.problem.file], false, error.problem);
+    throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", "pi-agent-directory");
+  }
+}
+function describePiProblem(problem) {
+  const check = {
+    file: "file check",
+    json: "JSON syntax",
+    schema: "field check",
+    sdk: "Pi SDK model loading"
+  }[problem.check];
+  const name = problem.file === "agent-directory" ? "Pi's agent directory" : problem.file;
+  return `${name} (${check}): ${problem.field ? `${problem.field} ` : ""}${problem.reason}`;
+}
+function decodePiProblem(value) {
+  const o = closed(value, ["file", "check", "field", "reason"]);
+  const words = (v) => {
+    const s = text(v, 512, true);
+    if (/[\p{Cc}\p{Cf}]/u.test(s))
+      throw new ContractError("invalid");
+    return s;
+  };
+  return {
+    file: oneOf(o.file, Object.keys(PI_SOURCE_STAGES)),
+    check: oneOf(o.check, ["file", "json", "schema", "sdk"]),
+    field: o.field === null ? null : words(o.field),
+    reason: words(o.reason)
+  };
+}
+function decodeStartupReport(value) {
+  const problem = !!value && typeof value === "object" && Object.hasOwn(value, "problem");
+  const o = closed(value, [
+    "status",
+    "error",
+    "stage",
+    ...problem ? ["problem"] : []
+  ]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES),
+    ...problem ? { problem: decodePiProblem(o.problem) } : {}
+  };
 }
 
 // src/service/self-heal.ts
 import { createHash as createHash9, randomUUID as randomUUID10 } from "node:crypto";
-import { lstatSync as lstatSync12, opendirSync as opendirSync7 } from "node:fs";
+import { lstatSync as lstatSync13, opendirSync as opendirSync7 } from "node:fs";
 import { hostname as hostname7 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/service/process-ledger.ts
 import { rmSync as rmSync3 } from "node:fs";
-import { join as join15 } from "node:path";
+import { join as join17 } from "node:path";
 var LEDGER_BYTES = 64 * 1024;
 var LEDGER_WORKERS = 512;
 function decode2(value) {
@@ -10973,10 +11978,10 @@ class ProcessLedger {
   directory;
   constructor(files) {
     this.files = files;
-    this.directory = join15(files.namespace, "process-ledger-v1");
+    this.directory = join17(files.namespace, "process-ledger-v1");
   }
   path(epoch) {
-    return join15(this.directory, `${decodeId(epoch)}.json`);
+    return join17(this.directory, `${decodeId(epoch)}.json`);
   }
   file(epoch) {
     try {
@@ -11066,8 +12071,8 @@ class LiveLedger {
 
 // src/service/repository-coordination.ts
 import { randomUUID as randomUUID9 } from "node:crypto";
-import { lstatSync as lstatSync11, opendirSync as opendirSync6 } from "node:fs";
-import { isAbsolute as isAbsolute7, join as join16 } from "node:path";
+import { lstatSync as lstatSync12, opendirSync as opendirSync6 } from "node:fs";
+import { isAbsolute as isAbsolute9, join as join18 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 var WAIT_MS = 30000;
 var POLL_MS = 50;
@@ -11087,7 +12092,7 @@ function decode3(value) {
   if (o.schema !== "cadence-delivery-resource/1" || !["mutation", "workspace"].includes(String(o.kind)))
     throw new ContractError("corrupt-selected");
   for (const path of [o.resource, o.root])
-    if (typeof path !== "string" || !isAbsolute7(path) || path.includes("\x00"))
+    if (typeof path !== "string" || !isAbsolute9(path) || path.includes("\x00"))
       throw new ContractError("corrupt-selected");
   const h = closed(o.holder, ["pid", "host", "boot", "started"]);
   if (!Number.isSafeInteger(h.pid) || Number(h.pid) < 1 || typeof h.host !== "string" || ![h.boot, h.started].every((x) => x === null || typeof x === "string"))
@@ -11104,16 +12109,16 @@ function decode3(value) {
     holder: h
   };
 }
-var directory = (files) => join16(files.namespace, "delivery-resources-v1");
-var resourcePath = (files, row) => join16(directory(files), row.kind, `${hash(row.resource)}.json`);
-var ownerDirectory = (files, root, epoch) => join16(directory(files), "owners", hash(root), decodeId(epoch));
-var indexPath = (files, row) => join16(ownerDirectory(files, row.root, row.epoch), `${row.kind}-${hash(row.resource)}.json`);
+var directory = (files) => join18(files.namespace, "delivery-resources-v1");
+var resourcePath = (files, row) => join18(directory(files), row.kind, `${hash(row.resource)}.json`);
+var ownerDirectory = (files, root, epoch) => join18(directory(files), "owners", hash(root), decodeId(epoch));
+var indexPath = (files, row) => join18(ownerDirectory(files, row.root, row.epoch), `${row.kind}-${hash(row.resource)}.json`);
 function worktreeIdentity(path) {
-  const root = lstatSync11(path), marker2 = lstatSync11(join16(path, ".git"));
+  const root = lstatSync12(path), marker2 = lstatSync12(join18(path, ".git"));
   if (!root.isDirectory() || root.isSymbolicLink() || !marker2.isFile() || marker2.nlink !== 1 || marker2.size > 8192)
     throw new ContractError("stale");
-  const body = readBounded(join16(path, ".git"), 8192);
-  const after = lstatSync11(join16(path, ".git")), afterRoot = lstatSync11(path);
+  const body = readBounded(join18(path, ".git"), 8192);
+  const after = lstatSync12(join18(path, ".git")), afterRoot = lstatSync12(path);
   if (!body || after.dev !== marker2.dev || after.ino !== marker2.ino || after.ctimeMs !== marker2.ctimeMs || after.size !== marker2.size || afterRoot.dev !== root.dev || afterRoot.ino !== root.ino)
     throw new ContractError("stale");
   return hash(encoded([
@@ -11211,7 +12216,7 @@ class RepositoryCoordination {
   confirmWorkspace(token) {
     const held = this.require(token);
     held.row = { ...held.row, identity: worktreeIdentity(held.row.resource) };
-    this.write(() => this.c.files.create(join16(this.c.directory, "workflows-v1", "runs", this.run, "ownership", `${token}.json`), encoded({ ...held.row, schema: "cadence-workspace-observation/1" })));
+    this.write(() => this.c.files.create(join18(this.c.directory, "workflows-v1", "runs", this.run, "ownership", `${token}.json`), encoded({ ...held.row, schema: "cadence-workspace-observation/1" })));
   }
   assertWorkspace(token) {
     this.assertOwner();
@@ -11272,7 +12277,7 @@ function recoverDeliveryResources(files, root, epoch, options = {}) {
       if (++count > ACTIVE_RESOURCES)
         throw new ContractError("capacity");
       const match = /^(mutation|workspace)-([a-f0-9]{64})\.json$/u.exec(entry.name);
-      const path = join16(home, entry.name);
+      const path = join18(home, entry.name);
       if (!match) {
         if (!options.takeOver)
           throw new ContractError("corrupt-selected");
@@ -11280,7 +12285,7 @@ function recoverDeliveryResources(files, root, epoch, options = {}) {
         continue;
       }
       const [, kind, key] = match;
-      const index = read(path), target = join16(directory(files), kind, `${key}.json`), shared = read(target);
+      const index = read(path), target = join18(directory(files), kind, `${key}.json`), shared = read(target);
       const matches = (row) => row.kind === kind && hash(row.resource) === key && row.root === root && row.epoch === epoch;
       const ownerMatches = (row) => !options.expectedOwner || Object.entries(options.expectedOwner).every(([key2, value]) => value == null || row.holder[key2] === value);
       const badIndex = index.broken || !index.row || !matches(index.row) || !ownerMatches(index.row);
@@ -11414,7 +12419,7 @@ async function stopOwnerProcess(pid) {
     return gone();
   }
   for (let n = 0;n < 50; n++) {
-    await new Promise((resolve6) => setTimeout(resolve6, 100));
+    await new Promise((resolve8) => setTimeout(resolve8, 100));
     if (gone())
       return true;
   }
@@ -11422,7 +12427,7 @@ async function stopOwnerProcess(pid) {
     process.kill(pid, "SIGKILL");
   } catch {}
   for (let n = 0;n < 20; n++) {
-    await new Promise((resolve6) => setTimeout(resolve6, 100));
+    await new Promise((resolve8) => setTimeout(resolve8, 100));
     if (gone())
       return true;
   }
@@ -11439,7 +12444,7 @@ class RegistryHealer {
     this.ledger = new ProcessLedger(c.files);
   }
   path(name) {
-    return join17(this.c.registryDirectory, name);
+    return join19(this.c.registryDirectory, name);
   }
   async heal(options = {}) {
     const lockPath = this.path("registry.lock");
@@ -11450,7 +12455,7 @@ class RegistryHealer {
       lock = undefined;
       const age = (() => {
         try {
-          return Date.now() - lstatSync12(lockPath).mtimeMs;
+          return Date.now() - lstatSync13(lockPath).mtimeMs;
         } catch {
           return 0;
         }
@@ -11494,7 +12499,7 @@ class RegistryHealer {
           pid: mark?.pid ?? null
         };
       if (holder.state === "live") {
-        await new Promise((resolve6) => setTimeout(resolve6, 250));
+        await new Promise((resolve8) => setTimeout(resolve8, 250));
         if (!this.c.files.read(lockPath))
           return { status: "clean" };
         return { status: "live" };
@@ -11604,14 +12609,14 @@ function liveReservations(c) {
     for (let e = dir.readSync();e; e = dir.readSync()) {
       if (!/^[a-f0-9]{64}$/.test(e.name))
         continue;
-      const service = join17(c.files.namespace, e.name, "service-v1");
-      const registration2 = readFile(c.files, join17(service, "registration.json"), decodeRegistrationLenient);
+      const service = join19(c.files.namespace, e.name, "service-v1");
+      const registration2 = readFile(c.files, join19(service, "registration.json"), decodeRegistrationLenient);
       if (!registration2 || registration2 === "unreadable")
         continue;
       const r = registration2.value;
       if (!r || r.phase === "stopped")
         continue;
-      const owner = readFile(c.files, join17(service, "owner.lock"), decodeOwnerLock);
+      const owner = readFile(c.files, join19(service, "owner.lock"), decodeOwnerLock);
       const mark = owner && owner !== "unreadable" && owner.value ? owner.value : r;
       if (holderState(mark, stampTime(registration2.snapshot.stamp)).state !== "live")
         continue;
@@ -11632,20 +12637,20 @@ function liveReservations(c) {
   return out;
 }
 function projectFiles(c, root) {
-  const privateRoot = join17(c.files.namespace, createHash9("sha256").update(root).digest("hex"));
+  const privateRoot = join19(c.files.namespace, createHash9("sha256").update(root).digest("hex"));
   return {
     root,
     privateRoot,
-    service: join17(privateRoot, "service-v1"),
-    checkoutPath: join17(privateRoot, "checkout.lock")
+    service: join19(privateRoot, "service-v1"),
+    checkoutPath: join19(privateRoot, "checkout.lock")
   };
 }
 function snapshotProject(c, p) {
   const s = { temporaries: [] };
-  s.registration = readFile(c.files, join17(p.service, "registration.json"), decodeRegistrationLenient);
-  s.owner = readFile(c.files, join17(p.service, "owner.lock"), decodeOwnerLock);
+  s.registration = readFile(c.files, join19(p.service, "registration.json"), decodeRegistrationLenient);
+  s.owner = readFile(c.files, join19(p.service, "owner.lock"), decodeOwnerLock);
   try {
-    s.capability = c.files.read(join17(p.service, "local-capability.json"));
+    s.capability = c.files.read(join19(p.service, "local-capability.json"));
   } catch {
     s.capability = "unreadable";
   }
@@ -11660,7 +12665,7 @@ function snapshotProject(c, p) {
   } catch {}
   s.temporaries = [
     ...strayTemporaries(p.service),
-    ...strayTemporaries(join17(p.service, "history-v2"))
+    ...strayTemporaries(join19(p.service, "history-v2"))
   ];
   return s;
 }
@@ -11801,8 +12806,8 @@ function metadataDamaged(c, p) {
     return false;
   }
   try {
-    const format = c.files.read(join17(p.service, "format.json"));
-    const config = c.files.read(join17(p.service, "config.json"));
+    const format = c.files.read(join19(p.service, "format.json"));
+    const config = c.files.read(join19(p.service, "config.json"));
     if (!format || !config)
       return true;
     const f = closed(json(format), [
@@ -11814,10 +12819,10 @@ function metadataDamaged(c, p) {
     if (f.schema !== "cadence-service-format/1" || f.root !== p.root || f.stateHome !== c.stateHome || f.configIdentity !== config.identity)
       return true;
     const selected2 = decodeOwnerConfig(json(config));
-    const host = c.files.read(join17(p.service, "host-config.json"));
+    const host = c.files.read(join19(p.service, "host-config.json"));
     if (host && host.identity !== selected2.policyIdentity)
       return true;
-    const registration2 = c.files.read(join17(p.service, "registration.json"));
+    const registration2 = c.files.read(join19(p.service, "registration.json"));
     if (registration2) {
       const r = decodeRegistration(json(registration2));
       if (r.root !== p.root || r.stateHome !== c.stateHome || r.configIdentity !== config.identity)
@@ -11840,7 +12845,7 @@ function reclaim(c, p, expected, archive) {
     mutate();
     const registration2 = s.registration;
     if (registration2 === "unreadable")
-      archive.keep(join17(p.service, "registration.json"));
+      archive.keep(join19(p.service, "registration.json"));
     else if (registration2) {
       if (!registration2.value)
         archive.keep(registration2.path);
@@ -11848,7 +12853,7 @@ function reclaim(c, p, expected, archive) {
         c.files.replace(registration2.path, registration2.snapshot, encoded({ ...registration2.value, phase: "stopped" }));
     }
     if (s.row)
-      c.files.replace(join17(c.registryDirectory, "roots.json"), view.snapshot, encoded({
+      c.files.replace(join19(c.registryDirectory, "roots.json"), view.snapshot, encoded({
         ...view.value,
         entries: view.value.entries.filter((row) => row.root !== p.root)
       }), 1024 * 1024);
@@ -11861,8 +12866,8 @@ function reclaim(c, p, expected, archive) {
       }
       c.files.remove(path, "snapshot" in value ? value.snapshot : value, maximum);
     };
-    drop(join17(p.service, "local-capability.json"), s.capability);
-    drop(join17(p.service, "owner.lock"), s.owner);
+    drop(join19(p.service, "local-capability.json"), s.capability);
+    drop(join19(p.service, "owner.lock"), s.owner);
     drop(p.checkoutPath, s.checkout, 8192);
   });
 }
@@ -12029,7 +13034,7 @@ async function confirm(question) {
     return false;
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = await new Promise((resolve6) => rl.question(`${question} [y/N] `, resolve6));
+    const answer = await new Promise((resolve8) => rl.question(`${question} [y/N] `, resolve8));
     return /^y(es)?$/i.test(answer.trim());
   } finally {
     rl.close();
@@ -12070,221 +13075,26 @@ async function healProjectForStart(c, responsive) {
   return own3.status === "blocked" ? describeBlock(own3, c.store.root) : null;
 }
 
-// src/service/runtime.ts
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname10, isAbsolute as isAbsolute8, join as join18, resolve as resolve6 } from "node:path";
-var STARTUP_INPUT_BYTES = 16 * 1024;
-function absolute(value) {
-  const result = text(value, 4096, true);
-  if (!isAbsolute8(result))
-    throw new ContractError("invalid");
-  return result;
-}
-function decodeHostConfig(value) {
-  const o = closed(value, [
-    "schema",
-    "http",
-    "cwd",
-    "agentDir",
-    "tokenSource",
-    "tokenFile"
-  ]);
-  const tokenSource = oneOf(o.tokenSource, [
-    "generated",
-    "environment",
-    "file",
-    "config"
-  ]);
-  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
-    throw new ContractError("invalid");
-  return {
-    schema: literal(o.schema, "cadence-service-host/1"),
-    http: decodeHttpPolicy(o.http),
-    cwd: absolute(o.cwd),
-    agentDir: absolute(o.agentDir),
-    tokenSource,
-    tokenFile
-  };
-}
-function reselectable(old, next) {
-  const kept = (c) => encoded({
-    ...c,
-    http: { ...c.http, port: 0 },
-    tokenSource: null,
-    tokenFile: null
-  });
-  return next.tokenSource === "config" && kept(old) === kept(next);
-}
-function readHostConfig(c) {
-  const owner = c.configuration();
-  if (!owner)
-    return;
-  const snapshot = c.files.read(c.path("host-config.json"));
-  if (!snapshot)
-    throw new ContractError("corrupt-selected");
-  const config = decodeHostConfig(json(snapshot));
-  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash(encoded(config)))
-    throw new ContractError("conflict");
-  return config;
-}
-function hostEnvironment(ambient) {
-  let route;
-  const facts = networkSnapshot(ambient);
-  try {
-    if (facts.NODE_OPTIONS.present)
-      throw new Error;
-    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
-  } catch {
-    throw new ContractError("unsupported-context");
-  }
-  const result = Object.create(null);
-  for (const key of Object.keys(ambient)) {
-    const d = Object.getOwnPropertyDescriptor(ambient, key);
-    if (!d || !("value" in d) || typeof d.value !== "string")
-      throw new ContractError("invalid");
-    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
-      continue;
-    result[key] = d.value;
-  }
-  if (route.redactionLiterals.length) {
-    result.HTTP_PROXY = route.env.HTTP_PROXY;
-    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
-    result.NODE_USE_ENV_PROXY = "1";
-  }
-  result.PI_OFFLINE = "1";
-  result.NO_COLOR = "1";
-  if (!sameNetwork(facts, networkSnapshot(ambient)))
-    throw new ContractError("stale");
-  return result;
-}
-function selectStart(options, ambient) {
-  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
-  const old = readHostConfig(c);
-  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
-  if (env && (!("value" in env) || typeof env.value !== "string"))
-    throw new ContractError("invalid");
-  let fromFile;
-  if (options.config) {
-    const path = resolve6(options.config), f = new PrivateFiles(dirname10(path));
-    const bytes = f.read(path);
-    if (!bytes)
-      throw new ContractError("corrupt-selected");
-    fromFile = decodeHostConfig(json(bytes));
-  }
-  const base = old ?? fromFile ?? decodeHostConfig({
-    schema: "cadence-service-host/1",
-    cwd: workspace.cwd,
-    http: {
-      schema: "cadence-service-http/1",
-      host: options.host ?? "127.0.0.1",
-      port: options.port ?? 17423,
-      proxy: null
-    },
-    agentDir: resolve6(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join18(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
-    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
-    tokenFile: options.tokenFile ? resolve6(options.tokenFile) : null
-  });
-  const server = options.serverConfig !== undefined ? resolve6(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
-  let selected2 = base;
-  if (server) {
-    if (options.tokenFile !== undefined)
-      throw new ContractError("conflict");
-    const { port } = readServerConfig(server).config;
-    selected2 = decodeHostConfig({
-      ...base,
-      http: { ...base.http, port },
-      tokenSource: "config",
-      tokenFile: server
-    });
-  }
-  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve6(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve6(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || !ownerDefaultInCheckout(workspace.root, selected2.cwd))
-    throw new ContractError("conflict");
-  return {
-    workspace: workspace.root,
-    stateHome: c.stateHome,
-    config: selected2,
-    environmentToken: env?.value ?? null
-  };
-}
-function decodeHostInput(value) {
-  const o = closed(value, [
-    "workspace",
-    "stateHome",
-    "config",
-    "environmentToken"
-  ]);
-  const config = decodeHostConfig(o.config);
-  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
-  if (config.tokenSource === "environment" !== (environmentToken !== null))
-    throw new ContractError("invalid");
-  return {
-    workspace: absolute(o.workspace),
-    stateHome: absolute(o.stateHome),
-    config,
-    environmentToken
-  };
-}
-var STARTUP_STAGES = [
-  "package",
-  "pi-agent-directory",
-  "pi-auth",
-  "pi-models",
-  "pi-runtime",
-  "service"
-];
-
-class StartupRefusal extends ContractError {
-  stage;
-  quarantined;
-  constructor(code2, stage, quarantined = false) {
-    super(code2);
-    this.stage = stage;
-    this.quarantined = quarantined;
-  }
-}
-function startupReport(error) {
-  if (error instanceof StartupRefusal)
-    return {
-      status: error.quarantined ? "quarantined" : "refused",
-      error: error.code,
-      stage: error.stage
-    };
-  return {
-    status: "refused",
-    error: error instanceof ContractError ? error.code : "unavailable",
-    stage: "service"
-  };
-}
-function decodeStartupReport(value) {
-  const o = closed(value, ["status", "error", "stage"]);
-  return {
-    status: oneOf(o.status, ["refused", "quarantined"]),
-    error: oneOf(o.error, ERROR_CODES),
-    stage: oneOf(o.stage, STARTUP_STAGES)
-  };
-}
-
 // src/service/installation.ts
 import { spawn } from "node:child_process";
 import {
   accessSync,
   constants as constants6,
   existsSync as existsSync2,
-  lstatSync as lstatSync13,
+  lstatSync as lstatSync14,
   mkdtempSync,
   readFileSync as readFileSync3,
-  realpathSync as realpathSync6,
+  realpathSync as realpathSync7,
   rmSync as rmSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { basename as basename3, dirname as dirname11, isAbsolute as isAbsolute9, join as join19 } from "node:path";
+import { basename as basename3, dirname as dirname12, isAbsolute as isAbsolute10, join as join20 } from "node:path";
 var PACKAGE = "@abelxiaoxing/cadence";
 var VIEW_MS = 30000;
 var INSTALL_MS = 15 * 60000;
 function packageCommands(s) {
-  const command = (name) => (args, show = false, options) => new Promise((resolve7) => {
-    const child = spawn(name, args, {
+  const command = (name) => (args, show = false, options) => new Promise((resolve8) => {
+    const child2 = spawn(name, args, {
       cwd: options?.cwd ?? s.home,
       env: { ...s.env, HOME: s.home, ...options?.env },
       stdio: ["ignore", show ? 2 : "pipe", show ? 2 : "ignore"],
@@ -12292,12 +13102,12 @@ function packageCommands(s) {
       windowsHide: true
     });
     let stdout = "";
-    child.stdout?.setEncoding("utf8").on("data", (chunk) => {
+    child2.stdout?.setEncoding("utf8").on("data", (chunk) => {
       if (stdout.length < 1 << 20)
         stdout += chunk;
     });
-    child.once("error", () => resolve7({ status: null, stdout: "" }));
-    child.once("close", (status) => resolve7({ status, stdout }));
+    child2.once("error", () => resolve8({ status: null, stdout: "" }));
+    child2.once("close", (status) => resolve8({ status, stdout }));
   });
   return { npm: command("npm"), bun: command("bun") };
 }
@@ -12306,22 +13116,22 @@ var unsupported = () => ({
 });
 function sameCopy(modules, root) {
   try {
-    const path = join19(modules, ...PACKAGE.split("/"));
-    return !lstatSync13(path).isSymbolicLink() && realpathSync6(path) === realpathSync6(root) && realpathSync6(path) === join19(realpathSync6(modules), ...PACKAGE.split("/"));
+    const path = join20(modules, ...PACKAGE.split("/"));
+    return !lstatSync14(path).isSymbolicLink() && realpathSync7(path) === realpathSync7(root) && realpathSync7(path) === join20(realpathSync7(modules), ...PACKAGE.split("/"));
   } catch {
     return false;
   }
 }
 function prefixManager(prefix) {
-  const npm = existsSync2(join19(prefix, "package-lock.json")) || existsSync2(join19(prefix, "npm-shrinkwrap.json"));
-  const bun = existsSync2(join19(prefix, "bun.lock")) || existsSync2(join19(prefix, "bun.lockb"));
+  const npm = existsSync2(join20(prefix, "package-lock.json")) || existsSync2(join20(prefix, "npm-shrinkwrap.json"));
+  const bun = existsSync2(join20(prefix, "bun.lock")) || existsSync2(join20(prefix, "bun.lockb"));
   return npm === bun ? undefined : bun ? "bun" : "npm";
 }
 function writable(installation, modules, root) {
-  if (installation.manager === "bun" && [".npmrc", "bunfig.toml", ".bunfig.toml"].some((name) => existsSync2(join19(installation.prefix, name))))
+  if (installation.manager === "bun" && [".npmrc", "bunfig.toml", ".bunfig.toml"].some((name) => existsSync2(join20(installation.prefix, name))))
     return unsupported();
   try {
-    for (const path of [installation.prefix, modules, dirname11(root), root])
+    for (const path of [installation.prefix, modules, dirname12(root), root])
       accessSync(path, constants6.W_OK);
     for (const name of [
       "package.json",
@@ -12330,18 +13140,18 @@ function writable(installation, modules, root) {
       "bun.lock",
       "bun.lockb"
     ])
-      if (existsSync2(join19(installation.prefix, name)))
-        accessSync(join19(installation.prefix, name), constants6.W_OK);
+      if (existsSync2(join20(installation.prefix, name)))
+        accessSync(join20(installation.prefix, name), constants6.W_OK);
     return installation;
   } catch {
     return { route: "not-writable" };
   }
 }
 async function installation(s, commands) {
-  const agent = agentDirectory(s), piPrefix = join19(agent, "npm");
-  if (sameCopy(join19(piPrefix, "node_modules"), s.root)) {
+  const agent = agentDirectory(s), piPrefix = join20(agent, "npm");
+  if (sameCopy(join20(piPrefix, "node_modules"), s.root)) {
     try {
-      const settings2 = JSON.parse(readFileSync3(join19(agent, "settings.json"), "utf8"));
+      const settings2 = JSON.parse(readFileSync3(join20(agent, "settings.json"), "utf8"));
       if (!settings2 || !Array.isArray(settings2.packages))
         return unsupported();
       const sources = settings2.packages.map((p) => typeof p === "string" ? p : p && typeof p === "object" && ("source" in p) ? p.source : undefined).filter((source) => typeof source === "string" && (source === `npm:${PACKAGE}` || source.startsWith(`npm:${PACKAGE}@`)));
@@ -12357,35 +13167,35 @@ async function installation(s, commands) {
         route: manager === "npm" ? "pi-npm" : "pi-bun",
         manager,
         prefix: piPrefix
-      }, join19(piPrefix, "node_modules"), s.root);
+      }, join20(piPrefix, "node_modules"), s.root);
     } catch {
       return unsupported();
     }
   }
-  const localModules = dirname11(dirname11(s.root)), local = dirname11(localModules);
+  const localModules = dirname12(dirname12(s.root)), local = dirname12(localModules);
   const manifest = (() => {
     try {
-      return JSON.parse(readFileSync3(join19(local, "package.json"), "utf8"));
+      return JSON.parse(readFileSync3(join20(local, "package.json"), "utf8"));
     } catch {
       return;
     }
   })();
-  if (manifest?.name === "pi-extensions" || basename3(dirname11(local)) === ".pi" || basename3(local) === "npm" && existsSync2(join19(dirname11(local), "settings.json")))
+  if (manifest?.name === "pi-extensions" || basename3(dirname12(local)) === ".pi" || basename3(local) === "npm" && existsSync2(join20(dirname12(local), "settings.json")))
     return unsupported();
   const bun = await commands.bun(["pm", "ls", "--global"]);
   const bunPrefix = bun.status === 0 ? /^(\/[^\r\n]+) node_modules(?: \(\d+(?: installed)?\))?\r?$/.exec(bun.stdout.split(`
 `)[0])?.[1] : undefined;
-  if (bunPrefix && sameCopy(join19(bunPrefix, "node_modules"), s.root)) {
+  if (bunPrefix && sameCopy(join20(bunPrefix, "node_modules"), s.root)) {
     const manager = prefixManager(bunPrefix);
     if (manager === "bun")
-      return writable({ route: "bun", manager: "bun", prefix: bunPrefix }, join19(bunPrefix, "node_modules"), s.root);
+      return writable({ route: "bun", manager: "bun", prefix: bunPrefix }, join20(bunPrefix, "node_modules"), s.root);
     if (!manager)
       return unsupported();
   }
   const npm = await commands.npm(["root", "--global"]);
   const modules = npm.status === 0 ? npm.stdout.trim() : "";
-  const prefix = dirname11(dirname11(modules));
-  if (isAbsolute9(modules) && modules === join19(prefix, "lib", "node_modules") && sameCopy(modules, s.root))
+  const prefix = dirname12(dirname12(modules));
+  if (isAbsolute10(modules) && modules === join20(prefix, "lib", "node_modules") && sameCopy(modules, s.root))
     return writable({ route: "npm", manager: "npm", prefix }, modules, s.root);
   if (basename3(localModules) !== "node_modules" || !sameCopy(localModules, s.root))
     return unsupported();
@@ -12427,7 +13237,7 @@ function registryCommand(i, commands) {
 // src/service/maintenance.ts
 import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 var JOB_SECONDS = 1800;
 var RESTART_MS = 5 * 60000;
 function cgroupPath(text2) {
@@ -12455,7 +13265,7 @@ function maintenanceUnit(s) {
   return s.unit.replace(/\.service$/, ".maintenance.service");
 }
 function installedVersion(root) {
-  const value = JSON.parse(readFileSync4(join20(root, "package.json"), "utf8"));
+  const value = JSON.parse(readFileSync4(join21(root, "package.json"), "utf8"));
   if (!value || typeof value !== "object" || !("name" in value))
     throw new ContractError("invalid");
   literal(value.name, PACKAGE);
@@ -12509,7 +13319,7 @@ function launchJob(s, job2) {
     ...[...new Map([["HOME", s.home], ...unitEnvironment(text2)])].map(([key, value]) => `--setenv=${key}=${value}`),
     "--",
     s.node,
-    join20(s.root, "src", "service-cli.mjs"),
+    join21(s.root, "src", "service-cli.mjs"),
     "server",
     job2.action,
     scope,
@@ -12568,10 +13378,10 @@ function nativeCall(c, operation, reveal = false, controlBody, signal) {
   const write2 = !["status", "diagnose", "activity"].includes(operation);
   const maximum = operation === "activity" ? 256 * 1024 : 16384;
   const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     let timer;
     let removeAbort = () => {};
-    const fail = () => {
+    const fail2 = () => {
       clearTimeout(timer);
       removeAbort();
       reject(new ContractError("unavailable"));
@@ -12590,12 +13400,12 @@ function nativeCall(c, operation, reveal = false, controlBody, signal) {
     }, (res) => {
       let bytes = 0;
       const chunks = [];
-      res.on("error", fail);
+      res.on("error", fail2);
       res.on("data", (chunk) => {
         bytes += chunk.length;
         if (bytes > maximum) {
           res.destroy();
-          fail();
+          fail2();
         } else
           chunks.push(chunk);
       });
@@ -12612,31 +13422,31 @@ function nativeCall(c, operation, reveal = false, controlBody, signal) {
           }
           clearTimeout(timer);
           removeAbort();
-          resolve8(reply.value);
+          resolve9(reply.value);
         } catch {
-          fail();
+          fail2();
         }
       });
     });
     timer = setTimeout(() => {
-      fail();
+      fail2();
       req.destroy();
     }, 2000);
     const cancel = () => {
-      fail();
+      fail2();
       req.destroy();
     };
     signal?.addEventListener("abort", cancel, { once: true });
     removeAbort = () => signal?.removeEventListener("abort", cancel);
-    req.on("error", fail);
-    req.on("close", fail);
+    req.on("error", fail2);
+    req.on("close", fail2);
     if (signal?.aborted)
       cancel();
     else
       req.end(body);
   });
 }
-var pause = (ms) => new Promise((resolve8) => setTimeout(resolve8, ms));
+var pause = (ms) => new Promise((resolve9) => setTimeout(resolve9, ms));
 async function serviceStatus(c, diagnose = false) {
   const registryLock = c.registryLockDiagnostic?.();
   if (registryLock)
@@ -12728,22 +13538,26 @@ function startupGuidance(result, input) {
   const agent = input.config.agentDir;
   const inspect = `Details: cadence doctor --workspace ${JSON.stringify(input.workspace)}
 `;
+  const problem = report2.problem ? `Refused: ${describePiProblem(report2.problem)}.
+` : "";
+  const fixed2 = `Cadence changed nothing; fix it and start again. Check without starting: cadence doctor --workspace ${JSON.stringify(input.workspace)} --agent-dir ${JSON.stringify(agent)}
+`;
   switch (report2.stage) {
     case "package":
       return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
 `;
     case "pi-agent-directory":
       return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
-`;
+${problem}`;
     case "pi-auth":
-      return `${join21(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
-`;
+      return `${join22(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+${problem}${fixed2}`;
     case "pi-models":
-      return `${join21(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
-`;
+      return `${join22(agent, "models.json")} must be your own single-link regular file using only the fields and value types of Cadence's pinned Pi SDK.
+${problem}${fixed2}`;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed (optional SDK packages missing, or sources the SDK refuses). Fix that and start again; the next start recovers the owner's registration automatically.
-${inspect}`;
+${problem}${inspect}`;
     default:
       return report2.error === "recording-exhausted" ? `The disk is too full for Cadence's history. Free some space and start again.
 ` : report2.status === "quarantined" ? `The owner registered, then refused to start. Start again; the next start recovers its registration automatically.
@@ -12799,7 +13613,7 @@ async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
     throw new ContractError("oversize");
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
-  const child = spawn3(process.execPath, [
+  const child2 = spawn3(process.execPath, [
     ...env.NODE_USE_ENV_PROXY === "1" ? ["--use-env-proxy"] : [],
     fileURLToPath2(hostUrl)
   ], {
@@ -12810,24 +13624,24 @@ async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
     stdio: ["pipe", "pipe", "ignore"]
   });
   let completed = false;
-  const closure = new Promise((resolve8) => child.once("close", (code2, signal) => {
+  const closure = new Promise((resolve9) => child2.once("close", (code2, signal) => {
     completed = true;
     if (foreground && (code2 !== 0 || signal !== null))
       process.exitCode = 1;
-    resolve8();
+    resolve9();
   }));
-  const startup = new Promise((resolve8) => {
+  const startup = new Promise((resolve9) => {
     let bytes = "", resolved = false;
     const finish = (value) => {
       if (!resolved) {
         resolved = true;
-        resolve8(value);
+        resolve9(value);
       }
     };
-    child.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdin.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdout.on("error", () => finish({ status: "unconfirmed" }));
-    child.stdout.on("data", (chunk) => {
+    child2.on("error", () => finish({ status: "unconfirmed" }));
+    child2.stdin.on("error", () => finish({ status: "unconfirmed" }));
+    child2.stdout.on("error", () => finish({ status: "unconfirmed" }));
+    child2.stdout.on("data", (chunk) => {
       if (Buffer.byteLength(bytes) + chunk.length > 4096) {
         finish({ status: "unconfirmed" });
         return;
@@ -12855,24 +13669,24 @@ async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
         finish({ status: "unconfirmed" });
       }
     });
-    child.once("close", () => finish({ status: "unconfirmed" }));
+    child2.once("close", () => finish({ status: "unconfirmed" }));
   });
-  child.stdin.end(serialized);
+  child2.stdin.end(serialized);
   let timer;
   const result = await Promise.race([
     startup,
-    new Promise((resolve8) => {
-      timer = setTimeout(() => resolve8({ status: "unconfirmed" }), LIMITS.startWaitMs);
+    new Promise((resolve9) => {
+      timer = setTimeout(() => resolve9({ status: "unconfirmed" }), LIMITS.startWaitMs);
     })
   ]);
   clearTimeout(timer);
   const guidance = "kind" in input ? "" : startupGuidance(result, input);
   if (guidance)
     process.stderr.write(guidance);
-  child.stdout.destroy();
-  child.stdin.destroy();
+  child2.stdout.destroy();
+  child2.stdin.destroy();
   if (!foreground)
-    child.unref();
+    child2.unref();
   else if (!completed) {
     if (failedStatus(result))
       process.exitCode = 1;
@@ -12937,8 +13751,15 @@ async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
     ...!kept ? { port: 0, agentDir } : {}
   };
   const result = await startService(options, false, hostUrl);
-  if (!result || typeof result !== "object" || !("status" in result) || result.status !== "alive")
-    throw new ProjectOpenRefusal(!!result && typeof result === "object" && "status" in result && result.status === "refused" && (("error" in result) && result.error === "registry-locked" || c.inspect().status === "absent"), result && typeof result === "object" && "error" in result && result.error === "registry-locked" ? "registry-locked" : "unavailable");
+  if (!result || typeof result !== "object" || !("status" in result) || result.status !== "alive") {
+    let report2;
+    try {
+      report2 = decodeStartupReport(result);
+    } catch {
+      report2 = undefined;
+    }
+    throw new ProjectOpenRefusal(report2?.status === "refused" && (report2.error === "registry-locked" || c.inspect().status === "absent"), report2?.error === "registry-locked" || report2?.stage.startsWith("pi-") ? report2.error : "unavailable");
+  }
   const link = await privateLink(c.store.root, stateHome);
   if (!link)
     throw new ContractError("unavailable");
@@ -12947,21 +13768,21 @@ async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
 
 // src/service/conversation-contexts.ts
 import { randomUUID as randomUUID11 } from "node:crypto";
-import { join as join24, resolve as resolve9 } from "node:path";
+import { join as join25, resolve as resolve10 } from "node:path";
 
 // src/cadence-preferences.ts
-import { realpathSync as realpathSync7 } from "node:fs";
-import { basename as basename4, dirname as dirname13, join as join22, resolve as resolve8 } from "node:path";
+import { realpathSync as realpathSync8 } from "node:fs";
+import { basename as basename4, dirname as dirname14, join as join23, resolve as resolve9 } from "node:path";
 function agentNamespace(agentDir) {
-  let at = resolve8(agentDir);
+  let at = resolve9(agentDir);
   const missing2 = [];
   for (;; ) {
     try {
-      return join22(realpathSync7(at), ...missing2.reverse());
+      return join23(realpathSync8(at), ...missing2.reverse());
     } catch {
-      const parent = dirname13(at);
+      const parent = dirname14(at);
       if (parent === at)
-        return resolve8(agentDir);
+        return resolve9(agentDir);
       missing2.push(basename4(at));
       at = parent;
     }
@@ -12973,7 +13794,7 @@ class CadencePreferences {
   files;
   constructor(agentDir) {
     const namespace = agentNamespace(agentDir);
-    this.path = join22(namespace, "cadence", "settings.json");
+    this.path = join23(namespace, "cadence", "settings.json");
     this.files = new PrivateFiles(namespace, false);
   }
   read() {
@@ -12988,14 +13809,14 @@ class CadencePreferences {
       throw new Error("Unsupported Cadence preferences");
     return decodeModelSelector(o.model);
   }
-  encode(model) {
+  encode(model2) {
     return canonicalJson({
       schema: "cadence-preferences/1",
-      model: decodeModelSelector(model)
+      model: decodeModelSelector(model2)
     });
   }
-  save(model) {
-    const selected2 = decodeModelSelector(model);
+  save(model2) {
+    const selected2 = decodeModelSelector(model2);
     const previous = this.files.read(this.path);
     if (previous && canonicalJson(this.read()) === canonicalJson(selected2))
       return;
@@ -13005,8 +13826,8 @@ class CadencePreferences {
     else
       this.files.create(this.path, bytes);
   }
-  choose(model) {
-    const bytes = this.encode(model);
+  choose(model2) {
+    const bytes = this.encode(model2);
     const previous = this.files.read(this.path);
     if (previous?.bytes.toString("utf8") === bytes)
       return;
@@ -13025,8 +13846,8 @@ function conversationIdentity(identity) {
 }
 
 // src/service/conversation-records.ts
-import { lstatSync as lstatSync14 } from "node:fs";
-import { join as join23 } from "node:path";
+import { lstatSync as lstatSync15 } from "node:fs";
+import { join as join24 } from "node:path";
 var META_BYTES = 64 * 1024;
 var PAGE = 50;
 var INDEXED_COMMANDS = 64;
@@ -13035,7 +13856,7 @@ var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Noth
 var LIVE = ["queued", "running"];
 function observedFile(path) {
   try {
-    const s = lstatSync14(path);
+    const s = lstatSync15(path);
     return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
   } catch (error) {
     if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
@@ -13046,8 +13867,8 @@ function observedFile(path) {
 function retiredConversation(c, id) {
   decodeSessionId(id);
   return ["identities", "sessions"].some((kind) => {
-    const directory2 = join23(c.directory, "conversations-v1", kind);
-    return c.files.directory(directory2) && observedFile(join23(directory2, `${id}.json`)) !== "absent";
+    const directory2 = join24(c.directory, "conversations-v1", kind);
+    return c.files.directory(directory2) && observedFile(join24(directory2, `${id}.json`)) !== "absent";
   });
 }
 function assertSupportedConversation(c, id) {
@@ -13113,8 +13934,8 @@ class ConversationRecords {
   states = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join23(o.coordination.directory, "conversation-commands-v1");
-    this.bindings = join23(o.coordination.directory, "conversations-v1");
+    this.root = join24(o.coordination.directory, "conversation-commands-v1");
+    this.bindings = join24(o.coordination.directory, "conversations-v1");
     this.active = o.active ?? new Map;
     this.sessions = checkoutSessions(o.coordination.store.root, o.cwd, o.agentDir, o.sessionDir);
   }
@@ -13131,14 +13952,14 @@ class ConversationRecords {
     return this.knownSecrets;
   }
   path(commandId, name) {
-    return join23(this.root, "commands", decodeId(commandId), name);
+    return join24(this.root, "commands", decodeId(commandId), name);
   }
   assertSupported(id) {
     assertSupportedConversation(this.o.coordination, id);
   }
   indexPath(id) {
     this.assertSupported(id);
-    return join23(this.root, "sessions", `${decodeSessionId(id)}.json`);
+    return join24(this.root, "sessions", `${decodeSessionId(id)}.json`);
   }
   read(path, max = META_BYTES) {
     const value = this.files.read(path, max);
@@ -13190,14 +14011,14 @@ class ConversationRecords {
     const value = this.read(this.controlPath(id));
     if (value === undefined)
       return false;
-    const record2 = closed(value, ["schema", "conversationId"]);
-    if (record2.schema !== "cadence-conversation-control/1" || record2.conversationId !== id)
+    const record3 = closed(value, ["schema", "conversationId"]);
+    if (record3.schema !== "cadence-conversation-control/1" || record3.conversationId !== id)
       throw new ContractError("corrupt-selected");
     return true;
   }
   controlPath(id) {
     this.assertSupported(id);
-    return join23(this.bindings, "control-links", `${decodeSessionId(id)}.json`);
+    return join24(this.bindings, "control-links", `${decodeSessionId(id)}.json`);
   }
   controlKey(id) {
     return observedFile(this.controlPath(id));
@@ -13534,7 +14355,7 @@ class ConversationContextRecords {
     this.sessions = sessions;
   }
   path(id) {
-    return join24(this.c.directory, "conversations-v1", "contexts", `${decodeSessionId(id)}.json`);
+    return join25(this.c.directory, "conversations-v1", "contexts", `${decodeSessionId(id)}.json`);
   }
   read(location) {
     const input = decodeConversationLocation(location);
@@ -13565,7 +14386,7 @@ class ConversationContextRecords {
         throw new ContractError("corrupt-selected");
       context.cwd = session.summary.cwd;
     }
-    if (resolve9(context.cwd) !== context.cwd || !withinWorkspace(this.c.store.root, context.cwd))
+    if (resolve10(context.cwd) !== context.cwd || !withinWorkspace(this.c.store.root, context.cwd))
       throw new ContractError("forbidden");
     this.c.files.assert(this.path(input.id), file, BYTES);
     return { context, file };
@@ -13640,17 +14461,17 @@ class ConversationContexts {
     const before = this.snapshot(input);
     if (context.cwd !== input.cwd || canonicalJson(expected) !== canonicalJson(before.version))
       throw new ContractError("stale");
-    const model = decodeModelSelector(value);
-    const changed = !file || canonicalJson(context.model) !== canonicalJson(model);
+    const model2 = decodeModelSelector(value);
+    const changed = !file || canonicalJson(context.model) !== canonicalJson(model2);
     if (changed && context.revision >= Number.MAX_SAFE_INTEGER - 1)
       throw new ContractError("capacity");
     const next = changed ? decodeConversationContext({
       ...context,
-      model,
+      model: model2,
       revision: context.revision + 1
     }) : null;
     const body = next ? canonicalJson({ schema: SCHEMA, context: next }, BYTES) : null;
-    this.o.models.retainSelection(model);
+    this.o.models.retainSelection(model2);
     this.o.coordination.files.assert(this.records.path(input.id), file, BYTES);
     if (body !== null) {
       try {
@@ -13665,7 +14486,7 @@ class ConversationContexts {
     }
     try {
       if (remember2 && this.o.agentDir)
-        new CadencePreferences(this.o.agentDir).save(model);
+        new CadencePreferences(this.o.agentDir).save(model2);
     } catch {}
     return this.snapshot(input);
   }
@@ -13704,7 +14525,7 @@ class ConversationContexts {
 import { homedir as homedir6 } from "node:os";
 
 // src/service/conversation-controls.ts
-import { dirname as dirname14, join as join25 } from "node:path";
+import { dirname as dirname15, join as join26 } from "node:path";
 var CONTROL_BYTES = 384 * 1024;
 var CONTROL_SCHEMA = "cadence-conversation-workflow/1";
 var CACHE = 512;
@@ -13741,11 +14562,11 @@ class ConversationControls {
   cache = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join25(o.directory, "conversation-workflows-v1");
+    this.root = join26(o.directory, "conversation-workflows-v1");
   }
   path(id) {
     this.o.conversations.assertSupported(id);
-    return join25(this.root, decodeSessionId(id), "state.json");
+    return join26(this.root, decodeSessionId(id), "state.json");
   }
   read(id) {
     this.o.assertCurrent();
@@ -13754,10 +14575,10 @@ class ConversationControls {
       const bound = this.o.conversations.controlBound(id);
       const file = this.o.files.read(path, CONTROL_BYTES);
       if (!file)
-        return bound || this.o.files.directory(dirname14(path)) ? unusable2(id) : { state: freshCadenceConversation(id) };
-      const record2 = closed(parseWireJson(file.bytes.toString("utf8"), CONTROL_BYTES), ["schema", "state"]);
-      const state = decodeCadenceConversation(record2.state);
-      if (record2.schema !== CONTROL_SCHEMA || !bound || state.id !== id || state.notice !== undefined)
+        return bound || this.o.files.directory(dirname15(path)) ? unusable2(id) : { state: freshCadenceConversation(id) };
+      const record3 = closed(parseWireJson(file.bytes.toString("utf8"), CONTROL_BYTES), ["schema", "state"]);
+      const state = decodeCadenceConversation(record3.state);
+      if (record3.schema !== CONTROL_SCHEMA || !bound || state.id !== id || state.notice !== undefined)
         return unusable2(id);
       if (state.head && !this.o.conversations.hasCommand(id, state.head))
         return {
@@ -13815,588 +14636,6 @@ class ConversationControls {
     this.cache.set(id, { key, state: loaded.state });
     return loaded.state;
   }
-}
-
-// src/service/model-config.ts
-import { lstatSync as lstatSync15, realpathSync as realpathSync8 } from "node:fs";
-import { dirname as dirname15, isAbsolute as isAbsolute10, join as join26, resolve as resolve10 } from "node:path";
-var CONFIG_BYTES2 = 1024 * 1024;
-var ENTRY_LIMIT = 256;
-function refuse() {
-  throw new ContractError("corrupt-selected");
-}
-function data(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    refuse();
-  if (![null, Object.prototype].includes(Object.getPrototypeOf(value)))
-    refuse();
-  const out = Object.create(null);
-  const keys2 = Reflect.ownKeys(value);
-  if (keys2.length > ENTRY_LIMIT)
-    refuse();
-  for (const key of keys2) {
-    const d = Object.getOwnPropertyDescriptor(value, key);
-    if (typeof key !== "string" || !d || !("value" in d) || !d.enumerable)
-      refuse();
-    if (["__proto__", "constructor", "prototype"].includes(key))
-      refuse();
-    out[key] = d.value;
-  }
-  return out;
-}
-function keys2(value, allowed) {
-  if (Object.keys(value).some((key) => !allowed.includes(key)))
-    refuse();
-}
-function string(value) {
-  if (typeof value !== "string" || !value || value.includes("\x00"))
-    refuse();
-  return value;
-}
-function environment(value) {
-  const out = Object.create(null);
-  for (const [name, entry] of Object.entries(data(value))) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-      refuse();
-    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
-      throw new ContractError("unsupported-context");
-    if (typeof entry !== "string" || entry.includes("\x00"))
-      refuse();
-    out[name] = entry;
-  }
-  return out;
-}
-function captureEnvironment(value) {
-  const out = Object.create(null);
-  const names2 = Reflect.ownKeys(value);
-  if (names2.length > 4096)
-    throw new ContractError("oversize");
-  let bytes = 0;
-  for (const name of names2) {
-    const d = Object.getOwnPropertyDescriptor(value, name);
-    if (typeof name !== "string" || !d || !("value" in d) || d.value !== undefined && typeof d.value !== "string")
-      refuse();
-    bytes += Buffer.byteLength(name) + Buffer.byteLength(d.value ?? "");
-    if (bytes > CONFIG_BYTES2)
-      throw new ContractError("oversize");
-    out[name] = d.value;
-  }
-  return Object.freeze(out);
-}
-function piSource(agentDir, home, cwd, env) {
-  if (!isAbsolute10(home) || !isAbsolute10(cwd))
-    refuse();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join26(home, ".pi", "agent");
-  if (!selected2 || selected2.includes("\x00"))
-    refuse();
-  if (selected2 === "~" || selected2.startsWith("~/"))
-    selected2 = home + selected2.slice(1);
-  selected2 = resolve10(cwd, selected2);
-  const directory2 = join26(realpathSync8(dirname15(selected2)), selected2.slice(dirname15(selected2).length + 1));
-  if (!lstatSync15(directory2).isDirectory() || lstatSync15(directory2).isSymbolicLink())
-    refuse();
-  const files = new PrivateFiles(directory2, false);
-  if (!files.directory(directory2))
-    refuse();
-  return {
-    directory: directory2,
-    files,
-    authPath: join26(directory2, "auth.json"),
-    modelsPath: join26(directory2, "models.json")
-  };
-}
-function templateNames(value) {
-  const text2 = string(value);
-  if (text2.startsWith("!"))
-    throw new ContractError("unsupported-context");
-  const names2 = new Set;
-  for (let i = 0;i < text2.length; ) {
-    const dollar = text2.indexOf("$", i);
-    if (dollar < 0)
-      break;
-    const next = text2[dollar + 1];
-    if (next === "$" || next === "!") {
-      i = dollar + 2;
-    } else if (next === "{") {
-      const end = text2.indexOf("}", dollar + 2);
-      if (end < 0) {
-        i = dollar + 1;
-        continue;
-      }
-      const name = text2.slice(dollar + 2, end);
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-        names2.add(name);
-      i = end + 1;
-    } else {
-      const name = text2.slice(dollar + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
-      if (name)
-        names2.add(name);
-      i = dollar + 1 + (name?.length ?? 0);
-    }
-  }
-  return [...names2];
-}
-function headers(value) {
-  for (const [name, entry] of Object.entries(data(value))) {
-    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
-      refuse();
-    if (typeof entry !== "string" || /[\r\n\0]/.test(entry))
-      refuse();
-    if (entry)
-      templateNames(entry);
-  }
-}
-var modelKeys = [
-  "id",
-  "name",
-  "api",
-  "baseUrl",
-  "reasoning",
-  "thinkingLevelMap",
-  "input",
-  "cost",
-  "contextWindow",
-  "maxTokens",
-  "samplingParams",
-  "headers",
-  "compat"
-];
-function compat(value) {
-  const config = data(value);
-  const booleans = [
-    "supportsStore",
-    "supportsDeveloperRole",
-    "supportsReasoningEffort",
-    "supportsUsageInStreaming",
-    "supportsFinishReason",
-    "requiresToolResultName",
-    "requiresAssistantAfterToolResult",
-    "requiresThinkingAsText",
-    "requiresReasoningContentOnAssistantMessages",
-    "supportsOpenAIGrammarTools",
-    "supportsStrictMode",
-    "sendSessionAffinityHeaders",
-    "supportsLongCacheRetention",
-    "supportsAdditionalTools",
-    "supportsToolSearch",
-    "supportsEagerToolInputStreaming",
-    "supportsCacheControlOnTools",
-    "supportsTemperature",
-    "forceAdaptiveThinking",
-    "allowEmptySignature",
-    "supportsStrictTools",
-    "supportsToolReferences",
-    "supportsMidConvoSystemMessages"
-  ];
-  const enums = {
-    maxTokensField: ["max_completion_tokens", "max_tokens"],
-    thinkingFormat: [
-      "openai",
-      "openrouter",
-      "together",
-      "baseten",
-      "deepseek",
-      "zai",
-      "qwen",
-      "chat-template",
-      "qwen-chat-template",
-      "string-thinking",
-      "ant-ling"
-    ],
-    cacheControlFormat: ["anthropic"],
-    deferredToolsMode: ["kimi"],
-    sessionAffinityFormat: ["openai", "openai-nosession", "openrouter"]
-  };
-  keys2(config, [
-    ...booleans,
-    ...Object.keys(enums),
-    "chatTemplateKwargs",
-    "chatTemplateArgs",
-    "openRouterRouting",
-    "vercelGatewayRouting"
-  ]);
-  for (const key of booleans)
-    if (config[key] !== undefined && typeof config[key] !== "boolean")
-      refuse();
-  for (const [key, values] of Object.entries(enums))
-    if (config[key] !== undefined && !values.includes(config[key]))
-      refuse();
-  for (const key of ["chatTemplateKwargs", "chatTemplateArgs"]) {
-    if (config[key] === undefined)
-      continue;
-    for (const entry of Object.values(data(config[key]))) {
-      if (entry === null || ["string", "boolean", "number"].includes(typeof entry))
-        continue;
-      const variable = data(entry);
-      keys2(variable, ["$var", "omitWhenOff"]);
-      if (!["thinking.enabled", "thinking.effort"].includes(variable.$var) || variable.omitWhenOff !== undefined && typeof variable.omitWhenOff !== "boolean")
-        refuse();
-    }
-  }
-  const stringArray = (value2) => {
-    if (value2 !== undefined && (!Array.isArray(value2) || value2.some((v) => typeof v !== "string")))
-      refuse();
-  };
-  if (config.vercelGatewayRouting !== undefined) {
-    const routing = data(config.vercelGatewayRouting);
-    keys2(routing, ["only", "order"]);
-    for (const value2 of Object.values(routing))
-      stringArray(value2);
-  }
-  if (config.openRouterRouting !== undefined) {
-    const routing = data(config.openRouterRouting);
-    keys2(routing, [
-      "allow_fallbacks",
-      "require_parameters",
-      "data_collection",
-      "zdr",
-      "enforce_distillable_text",
-      "order",
-      "only",
-      "ignore",
-      "quantizations",
-      "sort",
-      "max_price",
-      "preferred_min_throughput",
-      "preferred_max_latency"
-    ]);
-    for (const key of [
-      "allow_fallbacks",
-      "require_parameters",
-      "zdr",
-      "enforce_distillable_text"
-    ])
-      if (routing[key] !== undefined && typeof routing[key] !== "boolean")
-        refuse();
-    if (routing.data_collection !== undefined && !["deny", "allow"].includes(routing.data_collection))
-      refuse();
-    for (const key of ["order", "only", "ignore", "quantizations"])
-      stringArray(routing[key]);
-    if (routing.sort !== undefined && typeof routing.sort !== "string") {
-      const sort = data(routing.sort);
-      keys2(sort, ["by", "partition"]);
-      if (sort.by !== undefined && typeof sort.by !== "string" || sort.partition !== undefined && sort.partition !== null && typeof sort.partition !== "string")
-        refuse();
-    }
-    if (routing.max_price !== undefined) {
-      const price = data(routing.max_price);
-      keys2(price, ["prompt", "completion", "image", "audio", "request"]);
-      for (const value2 of Object.values(price))
-        if (typeof value2 !== "number" && typeof value2 !== "string")
-          refuse();
-    }
-    for (const key of ["preferred_min_throughput", "preferred_max_latency"]) {
-      if (routing[key] === undefined || typeof routing[key] === "number")
-        continue;
-      const cutoffs = data(routing[key]);
-      keys2(cutoffs, ["p50", "p75", "p90", "p99"]);
-      for (const value2 of Object.values(cutoffs))
-        if (typeof value2 !== "number")
-          refuse();
-    }
-  }
-}
-function modelDefinition(value, override = false) {
-  const model = data(value);
-  keys2(model, override ? modelKeys.filter((k) => !["id", "api", "baseUrl"].includes(k)) : modelKeys);
-  if (!override)
-    string(model.id);
-  if (model.headers !== undefined)
-    headers(model.headers);
-  if (model.thinkingLevelMap !== undefined)
-    keys2(data(model.thinkingLevelMap), [
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max"
-    ]);
-  if (model.cost !== undefined) {
-    const cost = data(model.cost);
-    keys2(cost, ["input", "output", "cacheRead", "cacheWrite", "tiers"]);
-    if (cost.tiers !== undefined) {
-      if (!Array.isArray(cost.tiers) || cost.tiers.length > ENTRY_LIMIT)
-        refuse();
-      for (const tier of cost.tiers)
-        keys2(data(tier), [
-          "inputTokensAbove",
-          "input",
-          "output",
-          "cacheRead",
-          "cacheWrite"
-        ]);
-    }
-  }
-  if (model.compat !== undefined)
-    compat(model.compat);
-}
-function modelJson(snapshot) {
-  const input = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
-  let stripped = "";
-  let quoted = false;
-  let escaped = false;
-  for (let i = 0;i < input.length; i++) {
-    const char = input[i];
-    if (!quoted && char === "/" && input[i + 1] === "/") {
-      while (i < input.length && input[i] !== `
-`)
-        i++;
-      stripped += `
-`;
-      continue;
-    }
-    stripped += char;
-    if (quoted) {
-      if (escaped)
-        escaped = false;
-      else if (char === "\\")
-        escaped = true;
-      else if (char === '"')
-        quoted = false;
-    } else if (char === '"')
-      quoted = true;
-  }
-  let normalized = "";
-  quoted = false;
-  escaped = false;
-  for (let i = 0;i < stripped.length; i++) {
-    const char = stripped[i];
-    if (!quoted && char === ",") {
-      let next = i + 1;
-      while (/\s/.test(stripped[next] ?? "") && next < stripped.length)
-        next++;
-      if (stripped[next] === "}" || stripped[next] === "]")
-        continue;
-    }
-    normalized += char;
-    if (quoted) {
-      if (escaped)
-        escaped = false;
-      else if (char === "\\")
-        escaped = true;
-      else if (char === '"')
-        quoted = false;
-    } else if (char === '"')
-      quoted = true;
-  }
-  return parseWireJson(normalized, CONFIG_BYTES2);
-}
-function readPiSnapshot(source) {
-  const { auth, credentials } = readPiAuth(source);
-  const { models, providers } = readPiModels(source);
-  return { auth, models, credentials, providers };
-}
-function readPiAuth(source) {
-  const auth = source.files.read(source.authPath, CONFIG_BYTES2);
-  if (!auth)
-    refuse();
-  const credentials = Object.create(null);
-  for (const [provider, input] of Object.entries(data(json(auth, CONFIG_BYTES2)))) {
-    const credential = data(input);
-    if (credential.type === "api_key") {
-      keys2(credential, ["type", "key", "env"]);
-      if (credential.key !== undefined)
-        templateNames(credential.key);
-      if (credential.env !== undefined)
-        environment(credential.env);
-    } else if (credential.type === "oauth") {
-      string(credential.access);
-      string(credential.refresh);
-      if (typeof credential.expires !== "number" || !Number.isFinite(credential.expires))
-        refuse();
-      if (credential.env !== undefined)
-        environment(credential.env);
-    } else
-      refuse();
-    credentials[provider] = credential;
-  }
-  return { auth, credentials };
-}
-function readPiModels(source) {
-  const models = source.files.read(source.modelsPath, CONFIG_BYTES2);
-  const providers = Object.create(null);
-  if (models) {
-    const root = data(modelJson(models));
-    keys2(root, ["providers", "$schema"]);
-    for (const [id, value] of Object.entries(data(root.providers))) {
-      const provider = data(value);
-      keys2(provider, [
-        "name",
-        "baseUrl",
-        "apiKey",
-        "api",
-        "oauth",
-        "headers",
-        "compat",
-        "authHeader",
-        "models",
-        "modelOverrides"
-      ]);
-      if (provider.apiKey !== undefined)
-        templateNames(provider.apiKey);
-      if (provider.headers !== undefined)
-        headers(provider.headers);
-      if (provider.compat !== undefined)
-        compat(provider.compat);
-      if (provider.models !== undefined) {
-        if (!Array.isArray(provider.models) || provider.models.length > ENTRY_LIMIT)
-          refuse();
-        const ids = new Set;
-        for (const model of provider.models) {
-          modelDefinition(model);
-          const id2 = data(model).id;
-          if (ids.has(id2))
-            refuse();
-          ids.add(id2);
-        }
-      }
-      if (provider.modelOverrides !== undefined)
-        for (const model of Object.values(data(provider.modelOverrides)))
-          modelDefinition(model, true);
-      providers[id] = provider;
-    }
-  }
-  return { models, providers };
-}
-function sourceIdentity(snapshot, provider) {
-  const credential = snapshot.credentials[provider];
-  if (credential?.type === "oauth") {
-    const { access: _a, refresh: _r, expires: _e, ...identity } = credential;
-    return stablePrivate(identity);
-  }
-  return stablePrivate(credential ?? null);
-}
-function selectedEnvironment(snapshot, provider, model, launch) {
-  const credential = snapshot.credentials[provider];
-  const scoped = credential?.env === undefined ? {} : environment(credential.env);
-  const config = snapshot.providers[provider];
-  const values = [];
-  if (credential?.type === "api_key" && credential.key !== undefined)
-    values.push(credential.key);
-  if (config?.apiKey !== undefined)
-    values.push(config.apiKey);
-  if (config?.headers)
-    values.push(...Object.values(data(config.headers)));
-  const definition = Array.isArray(config?.models) ? config.models.find((m) => data(m).id === model) : undefined;
-  const override = config?.modelOverrides ? data(config.modelOverrides)[model] : undefined;
-  for (const entry of [definition, override])
-    if (entry && data(entry).headers)
-      values.push(...Object.values(data(data(entry).headers)));
-  const env = { ...scoped };
-  for (const value of values) {
-    if (value === "")
-      continue;
-    for (const name of templateNames(value)) {
-      if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
-        throw new ContractError("unsupported-context");
-      const selected2 = scoped[name] || launch[name];
-      if (!selected2)
-        throw new ContractError("auth-unavailable");
-      env[name] = selected2;
-    }
-  }
-  return env;
-}
-function sameModels(a, b) {
-  return a.models?.identity === b.models?.identity && a.models?.stamp === b.models?.stamp;
-}
-function stablePrivate(value) {
-  const sorted = (v) => {
-    if (Array.isArray(v))
-      return v.map(sorted);
-    if (v && typeof v === "object")
-      return Object.fromEntries(Object.entries(data(v)).sort(([a], [b]) => a.localeCompare(b)).map(([k, entry]) => [k, sorted(entry)]));
-    return v;
-  };
-  return JSON.stringify(sorted(value));
-}
-function clonePrivate(value) {
-  let count = 0;
-  const visit = (v, depth) => {
-    if (++count > 16384 || depth > 32)
-      throw new ContractError("oversize");
-    if (v === undefined || v === null || typeof v === "boolean" || typeof v === "string")
-      return v;
-    if (typeof v === "number" && Number.isFinite(v))
-      return v;
-    if (Array.isArray(v)) {
-      if (v.length > 16384 || Reflect.ownKeys(v).length !== v.length + 1)
-        refuse();
-      const out2 = [];
-      for (let i = 0;i < v.length; i++) {
-        const d = Object.getOwnPropertyDescriptor(v, String(i));
-        if (!d || !("value" in d))
-          refuse();
-        out2.push(visit(d.value, depth + 1));
-      }
-      return out2;
-    }
-    const out = Object.create(null);
-    for (const [k, entry] of Object.entries(data(v)))
-      out[k] = visit(entry, depth + 1);
-    return out;
-  };
-  const encoded2 = JSON.stringify(visit(value, 0));
-  if (Buffer.byteLength(encoded2) > CONFIG_BYTES2)
-    throw new ContractError("oversize");
-  return parseWireJson(encoded2, CONFIG_BYTES2);
-}
-function snapshotLiterals(snapshot, launch, routes = []) {
-  const strings = (v, visit) => {
-    if (typeof v === "string") {
-      if (v)
-        visit(v);
-    } else if (v && typeof v === "object") {
-      for (const key of Object.keys(v))
-        strings(v[key], visit);
-    }
-  };
-  const literals = new Set;
-  let literalBytes = 0;
-  const add = (value) => {
-    if (literals.has(value))
-      return;
-    const size2 = Buffer.byteLength(value);
-    if (literalBytes + size2 > LIMITS.workerRequestBytes * 2)
-      throw new ContractError("oversize");
-    literalBytes += size2;
-    literals.add(value);
-  };
-  for (const route of routes)
-    add(route);
-  const templates = (value, provider) => {
-    const scoped = environment(snapshot.credentials[provider]?.env ?? {});
-    strings(value, (literal2) => {
-      add(literal2);
-      for (const name of templateNames(literal2)) {
-        const resolved = scoped[name] || launch[name];
-        if (resolved)
-          add(resolved);
-      }
-    });
-  };
-  for (const [provider, credential] of Object.entries(snapshot.credentials)) {
-    strings(credential.type === "api_key" ? credential.key : credential.access, add);
-    strings(credential.type === "oauth" ? credential.refresh : null, add);
-    strings(credential.env, add);
-    if (credential.type === "api_key")
-      templates(credential.key, provider);
-  }
-  for (const [provider, config] of Object.entries(snapshot.providers)) {
-    templates(config.apiKey, provider);
-    templates(config.headers, provider);
-    for (const model of Array.isArray(config.models) ? config.models : [])
-      templates(data(model).headers, provider);
-    if (config.modelOverrides)
-      for (const model of Object.values(data(config.modelOverrides)))
-        templates(data(model).headers, provider);
-  }
-  for (const [key, value] of Object.entries(launch))
-    if (/(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key) && value)
-      add(value);
-  return [...literals];
 }
 
 // src/service/gateway-conversations.ts
@@ -15731,7 +15970,7 @@ Content-Length: 0\r
     if (!accepting)
       throw new ContractError("quarantine");
   };
-  const root = dirname17(dirname17(fileURLToPath3(hostUrl))), version = installedVersion(root), record2 = new MaintenanceRecord(store);
+  const root = dirname17(dirname17(fileURLToPath3(hostUrl))), version = installedVersion(root), record3 = new MaintenanceRecord(store);
   const managed = (() => {
     const s = supervisingUnit(process.env, (selection) => hostSystem(root, ownerControl, selection));
     return s && serviceConfigPath(s) === input.serverConfig ? s : undefined;
@@ -15753,7 +15992,7 @@ Content-Length: 0\r
     return counts.reduce((sum, count) => sum + count, 0);
   }
   function latestJob() {
-    const job2 = record2.read();
+    const job2 = record3.read();
     return job2?.state === "running" && managed && !jobRunning(managed) ? { ...job2, state: "failed", reason: "interrupted" } : job2;
   }
   async function serviceEntry() {
@@ -15798,9 +16037,9 @@ Content-Length: 0\r
         at: Date.now(),
         endedAt: null
       };
-      record2.write(job2);
+      record3.write(job2);
       if (!launchJob(managed, job2)) {
-        record2.finish(job2.id, "failed", "refused", version);
+        record3.finish(job2.id, "failed", "refused", version);
         throw new ContractError("unavailable");
       }
       return job2;
@@ -17214,10 +17453,10 @@ class RunState {
         if (v.link.runId !== this.runId)
           return;
         this.worker(v.link);
-        const child = this.children.get(v.link.childRunId);
-        requireFact(child && !child.completion && equal(child.link, v.link) && !this.settlement);
-        child.completion = v.completion;
-        child.settlementSeq = committedSeq;
+        const child2 = this.children.get(v.link.childRunId);
+        requireFact(child2 && !child2.completion && equal(child2.link, v.link) && !this.settlement);
+        child2.completion = v.completion;
+        child2.settlementSeq = committedSeq;
         this.coverage = combineCoverage(this.coverage, v.completion.native.capture);
         return;
       }
@@ -17225,12 +17464,12 @@ class RunState {
         if (v.link.runId !== this.runId)
           return;
         this.worker(v.link);
-        const child = this.children.get(v.link.childRunId);
-        requireFact(child && !child.completion && equal(child.link, v.link));
+        const child2 = this.children.get(v.link.childRunId);
+        requireFact(child2 && !child2.completion && equal(child2.link, v.link));
         for (const e of v.events) {
           const coverage = e.kind === "end" ? e.detail.coverage : e.kind === "capture" ? captureCoverage(e.value.event) : null;
           if (coverage) {
-            child.coverage = combineCoverage(child.coverage, coverage);
+            child2.coverage = combineCoverage(child2.coverage, coverage);
             this.coverage = combineCoverage(this.coverage, coverage);
           }
         }
@@ -17281,9 +17520,9 @@ class RunState {
           childRunId
         })), i.assignments));
         for (const required of fact.settlement.required) {
-          const child = this.children.get(required.childRunId);
-          if (child)
-            requireFact(child.completion && equal(required.native, child.completion.native) && equal(required.recording, child.completion.recording) && required.settlementSeq === child.settlementSeq);
+          const child2 = this.children.get(required.childRunId);
+          if (child2)
+            requireFact(child2.completion && equal(required.native, child2.completion.native) && equal(required.recording, child2.completion.recording) && required.settlementSeq === child2.settlementSeq);
           else
             requireFact(required.native === null && required.settlementSeq === null && required.recording.status !== "committed" && required.recording.selected === null);
         }
@@ -17347,8 +17586,8 @@ class RunState {
         if (fact.state === "released")
           requireFact(previous?.state === "held" && previous.lane === fact.lane);
         if (fact.reservationId && fact.state === "released" && i.kind !== "check") {
-          const child = this.children.get(fact.reservationId);
-          requireFact([...this.auth.values()].every((a) => a.intent.childRunId !== fact.reservationId || a.result !== null) && (!child || child.completion !== null && !uncertainSettlement(child.completion)));
+          const child2 = this.children.get(fact.reservationId);
+          requireFact([...this.auth.values()].every((a) => a.intent.childRunId !== fact.reservationId || a.result !== null) && (!child2 || child2.completion !== null && !uncertainSettlement(child2.completion)));
         }
         if (fact.reservationId && fact.state === "released" && i.kind === "check")
           requireFact(this.settlement?.kind === "check" && this.settlement.native.closure !== "unconfirmed");
@@ -17400,15 +17639,15 @@ class RunState {
     return [
       projectRunObservation(this.runId, epoch, observation, null),
       ...this.admission.assignments.map((a) => {
-        const child = this.children.get(a.childRunId);
+        const child2 = this.children.get(a.childRunId);
         return projectRunObservation(this.runId, epoch, observation, {
           ...a,
           state: this.assignments.get(a.childRunId) ?? null,
           prepared: [...this.auth.values()].some((x) => x.intent.childRunId === a.childRunId),
-          launched: !!child,
-          completion: child?.completion ?? null,
-          settlementSeq: child?.settlementSeq ?? null,
-          coverage: child?.coverage ?? COMPLETE
+          launched: !!child2,
+          completion: child2?.completion ?? null,
+          settlementSeq: child2?.settlementSeq ?? null,
+          coverage: child2?.coverage ?? COMPLETE
         });
       })
     ];
@@ -17428,31 +17667,31 @@ class RunState {
     };
   }
 }
-function projectRunObservation(runId, epoch, o, child) {
+function projectRunObservation(runId, epoch, o, child2) {
   const admission = o.admission, task = admission.context.task;
   requireFact(task);
   const old = admission.context.epoch !== epoch || o.recovered;
-  if (child) {
-    const settlement = child.completion && child.settlementSeq ? {
+  if (child2) {
+    const settlement = child2.completion && child2.settlementSeq ? {
       kind: "sdk",
-      native: child.completion.native,
-      recording: child.completion.recording,
-      settlementSeq: child.settlementSeq
+      native: child2.completion.native,
+      recording: child2.completion.recording,
+      settlementSeq: child2.settlementSeq
     } : null;
     const outcome2 = settlement ? settlementOutcome(settlement) : o.settlement ? "blocked" : old ? "unknown" : null;
     return {
       runId,
       taskId: task.id,
-      childRunId: child.childRunId,
-      assignmentId: child.assignmentId,
+      childRunId: child2.childRunId,
+      assignmentId: child2.assignmentId,
       admission,
-      lifecycle: outcome2 !== null ? "settled" : child.state?.state === "closing" ? "closing" : child.launched ? "running" : child.prepared ? "preparing" : "queued",
+      lifecycle: outcome2 !== null ? "settled" : child2.state?.state === "closing" ? "closing" : child2.launched ? "running" : child2.prepared ? "preparing" : "queued",
       outcome: outcome2,
       settlement,
-      reason: old && !settlement && !o.settlement || child.completion && uncertainSettlement(child.completion) ? "quarantine" : child.state?.reason ?? (o.settlement && !child.launched ? "parent-stopped" : null),
+      reason: old && !settlement && !o.settlement || child2.completion && uncertainSettlement(child2.completion) ? "quarantine" : child2.state?.reason ?? (o.settlement && !child2.launched ? "parent-stopped" : null),
       publication: o.publication,
-      coverage: combineCoverage(child.coverage, child.completion?.native.capture ?? COMPLETE),
-      result: child.completion?.recording.status === "committed" ? child.completion.recording.detail.content : null
+      coverage: combineCoverage(child2.coverage, child2.completion?.native.capture ?? COMPLETE),
+      result: child2.completion?.recording.status === "committed" ? child2.completion.recording.detail.content : null
     };
   }
   const uncertain = o.unknownGate || o.gate?.state === "unknown" || o.uncertain || o.settlement?.kind === "check" && o.settlement.native.closure === "unconfirmed" || ["conflict", "uncertain"].includes(o.publication);
@@ -17624,26 +17863,26 @@ class HistoryNavigation {
     const root = state.navigationRoot ?? null, heads = new Map, updates = new Map, auth = new Map(this.authRuns), seq = rows.at(-1)?.seq;
     if (!seq)
       throw new ContractError("invalid");
-    const keys3 = new Set;
+    const keys2 = new Set;
     for (const row of rows) {
       for (const key of navigationKeys(row))
-        keys3.add(key);
+        keys2.add(key);
       if (row.value.kind === "owner") {
         for (const e of row.value.events)
           if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
-            keys3.add(`roster:${row.value.link.taskId}`);
+            keys2.add(`roster:${row.value.link.taskId}`);
       }
       if (row.value.kind === "auth-preparation")
         auth.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run = auth.get(row.value.result.operationId);
         if (run)
-          keys3.add(run);
+          keys2.add(run);
         auth.delete(row.value.result.operationId);
       }
     }
-    const previousHeads = this.tree.heads(root, [...keys3, ACTIVE_KEY]);
-    for (const id of keys3) {
+    const previousHeads = this.tree.heads(root, [...keys2, ACTIVE_KEY]);
+    for (const id of keys2) {
       const previous = previousHeads.get(id);
       const head = {
         seq,
@@ -17791,7 +18030,7 @@ class HistoryNavigation {
     }
     for (const [id, count] of partHeads)
       this.write(lease, "part-heads", id, { count }, charge, true);
-    const keys3 = new Set, runKeys = new Set, rosters = new Set;
+    const keys2 = new Set, runKeys = new Set, rosters = new Set;
     for (const row of rows) {
       const v = row.value;
       if (v.kind === "admission" && v.intent.runId)
@@ -17810,19 +18049,19 @@ class HistoryNavigation {
             rosters.add(v.link.taskId);
       }
       for (const key of navigationKeys(row))
-        keys3.add(key);
+        keys2.add(key);
       if (row.value.kind === "auth-preparation")
         this.authRuns.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run = this.authRuns.get(row.value.result.operationId);
         if (run) {
-          keys3.add(run);
+          keys2.add(run);
           runKeys.add(run);
         }
         this.authRuns.delete(row.value.result.operationId);
       }
     }
-    for (const key of keys3) {
+    for (const key of keys2) {
       const head = prepared?.heads.get(key);
       const old = head ? undefined : this.files.files.read(this.indexPath("entities", key));
       const previous = head?.previous ?? (old ? decodeSequence(closed(parseWireJson(old.bytes.toString("utf8")), ["seq"]).seq) : null);
@@ -18385,81 +18624,81 @@ class HistoryNavigation {
   }
 }
 function navigationKeys(row) {
-  const v = row.value, keys3 = new Set;
+  const v = row.value, keys2 = new Set;
   if (v.kind === "admission") {
-    keys3.add(v.intent.commandId);
-    keys3.add(v.intent.operationId);
+    keys2.add(v.intent.commandId);
+    keys2.add(v.intent.operationId);
     if (v.intent.runId)
-      keys3.add(v.intent.runId);
+      keys2.add(v.intent.runId);
     if (v.intent.identity.kind === "action") {
       const t = v.intent.createdTaskId ?? v.intent.identity.expected.task?.id;
       if (t)
-        keys3.add(t);
+        keys2.add(t);
       if (v.intent.identity.action.kind === "create")
-        keys3.add(v.intent.identity.expected.workspaceId);
+        keys2.add(v.intent.identity.expected.workspaceId);
     }
   }
   if (v.kind === "auth-preparation") {
-    keys3.add(v.intent.runId);
-    keys3.add(v.intent.operationId);
+    keys2.add(v.intent.runId);
+    keys2.add(v.intent.operationId);
   }
   if (v.kind === "auth-settlement")
-    keys3.add(v.result.operationId);
+    keys2.add(v.result.operationId);
   if (v.kind === "launch" || v.kind === "settlement") {
-    keys3.add(v.link.runId);
-    keys3.add(v.link.childRunId);
+    keys2.add(v.link.runId);
+    keys2.add(v.link.childRunId);
   }
   if (v.kind === "owner") {
-    keys3.add(v.link.operationId);
+    keys2.add(v.link.operationId);
     if (v.events.some((e) => e.kind === "owner" && e.value.kind === "fact")) {
-      keys3.add(v.link.taskId);
+      keys2.add(v.link.taskId);
       if (v.link.runId)
-        keys3.add(v.link.runId);
+        keys2.add(v.link.runId);
     }
   }
   if (v.kind === "owner" || v.kind === "capture")
     for (const e of v.events) {
       if (e.kind === "end") {
         if (v.kind === "capture")
-          keys3.add(v.link.runId);
-        keys3.add(e.detail.owner.entity.id);
-        keys3.add(e.detail.content.recordId);
+          keys2.add(v.link.runId);
+        keys2.add(e.detail.owner.entity.id);
+        keys2.add(e.detail.content.recordId);
       }
       if (e.kind === "capture") {
         const event = e.value.event;
         if ("messageId" in event)
-          keys3.add(event.messageId);
+          keys2.add(event.messageId);
         if ("callId" in event)
-          keys3.add(event.callId);
+          keys2.add(event.callId);
         if (event.kind === "detail-begin" || event.kind === "omitted-block") {
           const o = event.kind === "detail-begin" ? event.descriptor.owner : event.block.owner;
           if ("messageId" in o)
-            keys3.add(o.messageId);
+            keys2.add(o.messageId);
           if ("callId" in o)
-            keys3.add(o.callId);
+            keys2.add(o.callId);
         }
         if (["ready", "final", "worker-failure", "capture-status"].includes(event.kind) && v.kind === "capture") {
-          keys3.add(v.link.runId);
-          keys3.add(v.link.childRunId);
+          keys2.add(v.link.runId);
+          keys2.add(v.link.childRunId);
         }
       }
       if (e.kind === "owner" && e.value.kind === "fact") {
         const f = e.value.fact;
         if (f.kind === "parent-admitted") {
           if (f.identity.graph)
-            keys3.add(f.identity.graph.recordId);
+            keys2.add(f.identity.graph.recordId);
           for (const a of f.identity.assignments)
-            keys3.add(a.childRunId);
+            keys2.add(a.childRunId);
         }
         if ("checkId" in f)
-          keys3.add(f.checkId);
+          keys2.add(f.checkId);
         if ("observationId" in f)
-          keys3.add(f.observationId);
+          keys2.add(f.observationId);
         if ("reviewId" in f)
-          keys3.add(f.reviewId);
+          keys2.add(f.reviewId);
       }
     }
-  return [...keys3];
+  return [...keys2];
 }
 
 // src/history/projection.ts
@@ -18730,7 +18969,7 @@ function materializeEntity(s, sources) {
   if (!s.first || !s.last)
     return;
   const first = sources.read(s.first).value, last = sources.read(s.last).value;
-  let record2;
+  let record3;
   if (s.kind === "task") {
     if (first.kind !== "admission" || first.intent.identity.kind !== "action" || first.intent.identity.action.kind !== "create")
       bad3();
@@ -18739,7 +18978,7 @@ function materializeEntity(s, sources) {
       if (last.kind !== "admission" || last.intent.identity.kind !== "action" || last.intent.identity.action.kind !== "save-plan" || plan?.kind !== "end" || canonicalJson(plan.detail.content) !== canonicalJson(last.intent.identity.action.graph.plan) || plan.detail.owner.entity.kind !== "task" || plan.detail.owner.entity.version !== last.intent.identity.action.graph.planRevision)
         bad3();
     }
-    record2 = {
+    record3 = {
       kind: "task",
       owner: {
         taskId: s.id,
@@ -18769,7 +19008,7 @@ function materializeEntity(s, sources) {
       const end = b.value.event, detail = s.detail ? sources.event(s.detail).event : null;
       if (s.detailId && detail?.kind !== "end")
         bad3();
-      record2 = {
+      record3 = {
         kind: "message",
         owner,
         version: s.version,
@@ -18786,7 +19025,7 @@ function materializeEntity(s, sources) {
         bad3();
       if (result && (result.kind !== "capture" || result.value.event.kind !== "tool-end"))
         bad3();
-      record2 = {
+      record3 = {
         kind: "tool",
         owner,
         version: s.version,
@@ -18799,7 +19038,7 @@ function materializeEntity(s, sources) {
       };
     }
   }
-  const decoded2 = decodeHistoryRecord(record2);
+  const decoded2 = decodeHistoryRecord(record3);
   if (decoded2.kind !== "task" && decoded2.kind !== "message" && decoded2.kind !== "tool")
     bad3();
   return decoded2;
@@ -20190,8 +20429,8 @@ class RetainedScan {
       };
   }
   assertDetail(detail, value) {
-    const child = value.kind === "capture" ? value.link.childRunId : null;
-    if (detail.origin.kind !== (value.kind === "capture" ? "worker" : "owner") || detail.origin.id !== (value.kind === "capture" ? value.link.childRunId : value.link.operationId) || detail.owner.taskId !== value.link.taskId || detail.owner.runId !== value.link.runId || detail.owner.childRunId !== child)
+    const child2 = value.kind === "capture" ? value.link.childRunId : null;
+    if (detail.origin.kind !== (value.kind === "capture" ? "worker" : "owner") || detail.origin.id !== (value.kind === "capture" ? value.link.childRunId : value.link.operationId) || detail.owner.taskId !== value.link.taskId || detail.owner.runId !== value.link.runId || detail.owner.childRunId !== child2)
       bad6();
     if (detail.descriptor)
       decodeHistoryRecord({
@@ -20678,18 +20917,18 @@ function* textChunks(text2) {
     at = end;
   }
 }
-function recordTitle(record2) {
-  switch (record2.kind) {
+function recordTitle(record3) {
+  switch (record3.kind) {
     case "task":
-      return `Task ${record2.owner.taskId}`;
+      return `Task ${record3.owner.taskId}`;
     case "run":
-      return `Recorded ${record2.projection.childRunId ? "child" : "run"} ${record2.projection.childRunId ?? record2.projection.runId}`;
+      return `Recorded ${record3.projection.childRunId ? "child" : "run"} ${record3.projection.childRunId ?? record3.projection.runId}`;
     case "owner-fact":
-      return `Owner observation: ${record2.fact.kind}`;
+      return `Owner observation: ${record3.fact.kind}`;
     case "capture-fact":
-      return `Captured observation: ${record2.capture.event.kind}`;
+      return `Captured observation: ${record3.capture.event.kind}`;
     default:
-      return `Retained ${record2.kind}`;
+      return `Retained ${record3.kind}`;
   }
 }
 function* markdown(event) {
@@ -21516,10 +21755,10 @@ function advanceTarget(p, t, snapshot, budget, sources) {
       return materializeRun(t.run, sources, p.readEpoch());
     if (!t.entity)
       bad9();
-    const record2 = materializeEntity(t.entity, sources);
-    if (t.entity.wanted !== null && record2?.version !== t.entity.wanted)
+    const record3 = materializeEntity(t.entity, sources);
+    if (t.entity.wanted !== null && record3?.version !== t.entity.wanted)
       return;
-    return record2;
+    return record3;
   } finally {
     if (!reset)
       t.proof = v.checkpoint();
@@ -21622,8 +21861,8 @@ async function read(p, request3, entity) {
       if (!("kind" in request3))
         bad9();
       s.target ??= target(freshEntity(request3.kind, request3.id, request3.version), null);
-      const record2 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
-      let selected2 = record2;
+      const record3 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
+      let selected2 = record3;
       if (!selected2 && request3.kind === "task")
         selected2 = legacyEntity(p, request3.id, request3.version, budget);
       if (!selected2 || !("owner" in selected2) || !ownerInScope(selected2.owner, request3.scope))
@@ -21685,13 +21924,13 @@ async function read(p, request3, entity) {
         for (;s.point.event < count(row) * SLOTS; s.point.event++) {
           budget.reserve(0);
           const index = Math.floor(s.point.event / SLOTS), ordinal = s.point.event % SLOTS, event = value.kind === "owner" || value.kind === "capture" ? value.events[index] : null;
-          let record2;
+          let record3;
           if (s.target) {
-            record2 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
+            record3 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
             if (request3.reader === "tools" && s.target.entity?.first && canonicalJson(s.target.entity.first) !== canonicalJson(sourceAt(b, s.point.row, index)))
-              record2 = undefined;
+              record3 = undefined;
             if (request3.reader === "contents" && event?.kind === "capture" && event.value.event.kind === "omitted-block" && value.kind === "capture")
-              record2 = omitted(value.link, event.value.event.block, record2 && "version" in record2 ? record2.version : 1);
+              record3 = omitted(value.link, event.value.event.block, record3 && "version" in record3 ? record3.version : 1);
             s.target = null;
           } else if (request3.reader === "tasks" && ordinal === 0 && value.kind === "admission" && value.intent.createdTaskId && value.intent.identity.kind === "action" && value.intent.identity.action.kind === "create") {
             s.target = target(freshEntity("task", value.intent.createdTaskId, null), null);
@@ -21703,7 +21942,7 @@ async function read(p, request3, entity) {
             childRunId: value.kind === "capture" ? value.link.childRunId : null
           }, request3.scope)) {
             if (ordinal === 0 && request3.reader === "contents" && event?.kind === "end" && event.detail.descriptor)
-              record2 = {
+              record3 = {
                 kind: "content",
                 owner: event.detail.owner,
                 version: event.detail.content.version,
@@ -21715,7 +21954,7 @@ async function read(p, request3, entity) {
             if (ordinal === 0 && event?.kind === "capture" && value.kind === "capture") {
               const e = event.value.event;
               if (request3.reader === "events")
-                record2 = {
+                record3 = {
                   kind: "capture-fact",
                   recordId: event.id,
                   committedSeq: row.seq,
@@ -21737,13 +21976,13 @@ async function read(p, request3, entity) {
                 else if ("callId" in o)
                   s.target = target(freshEntity("tool", o.callId, null), null, event.id);
                 else
-                  record2 = omitted(value.link, e.block, 1);
+                  record3 = omitted(value.link, e.block, 1);
               }
             }
             if (ordinal === 0 && event?.kind === "owner" && event.value.kind === "fact" && value.kind === "owner") {
               const fact = event.value.fact;
               if (request3.reader === "events" || request3.reader === "checks" && ["check-start", "check-settled"].includes(fact.kind) || request3.reader === "changes" && fact.kind === "changes" || request3.reader === "reviews" && fact.kind === "review")
-                record2 = {
+                record3 = {
                   kind: "owner-fact",
                   recordId: event.id,
                   committedSeq: row.seq,
@@ -21753,17 +21992,17 @@ async function read(p, request3, entity) {
                 };
             }
           }
-          if (!s.target && !record2 && request3.reader === "runs" && value.kind === "owner" && event?.kind === "owner" && event.value.kind === "fact" && event.value.fact.kind === "parent-admitted") {
-            const f = event.value.fact, child = ordinal ? f.identity.assignments[ordinal - 1]?.childRunId : null;
-            if ((ordinal === 0 || child) && fits({ ...value.link, childRunId: child }, request3.scope))
-              s.target = target(null, freshRun(f.runId, child ?? null, ordinal));
+          if (!s.target && !record3 && request3.reader === "runs" && value.kind === "owner" && event?.kind === "owner" && event.value.kind === "fact" && event.value.fact.kind === "parent-admitted") {
+            const f = event.value.fact, child2 = ordinal ? f.identity.assignments[ordinal - 1]?.childRunId : null;
+            if ((ordinal === 0 || child2) && fits({ ...value.link, childRunId: child2 }, request3.scope))
+              s.target = target(null, freshRun(f.runId, child2 ?? null, ordinal));
           }
           if (s.target) {
             s.point.event--;
             continue;
           }
-          if (record2) {
-            const decoded2 = decodeHistoryRecord(record2);
+          if (record3) {
+            const decoded2 = decodeHistoryRecord(record3);
             const value2 = {
               request: request3,
               records: [...collected, decoded2],
@@ -21781,8 +22020,8 @@ async function read(p, request3, entity) {
               return finish();
             }
             collected.push(decoded2);
-            if (record2.kind === "content")
-              traversal.state.coverage = combineCoverage(traversal.state.coverage, record2.coverage);
+            if (record3.kind === "content")
+              traversal.state.coverage = combineCoverage(traversal.state.coverage, record3.coverage);
             if (collected.length === request3.limit) {
               s.point.event++;
               return finish();
@@ -21893,7 +22132,7 @@ function omitted(link, block, version) {
 // src/history/projection.ts
 var RECORD_SLOTS = LIMITS.assignments + 1;
 var ROW_SLOTS = LIMITS.ownerQueueFrames * RECORD_SLOTS + 1;
-function fail() {
+function fail2() {
   throw new ContractError("corrupt-selected");
 }
 var fits2 = (link, scope) => scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
@@ -21925,7 +22164,7 @@ class HistoryProjection {
   session = async () => {
     const s = decodeSessionBootstrap(this.environment.session());
     if (s.storeId !== this.reader.storeId)
-      fail();
+      fail2();
     return s;
   };
   workspace = async () => {
@@ -21941,7 +22180,7 @@ class HistoryProjection {
   readEpoch() {
     const session = decodeSessionBootstrap(this.environment.session());
     if (session.storeId !== this.reader.storeId)
-      fail();
+      fail2();
     return session.epoch;
   }
   batches(id, snapshot, budget) {
@@ -21954,12 +22193,12 @@ class HistoryProjection {
       const b = this.navigation.next(pos, budget);
       if (!b) {
         if (snapshot !== "0")
-          fail();
+          fail2();
         break;
       }
       if (BigInt(b.pointer.seq) > BigInt(snapshot)) {
         if (snapshot !== "0")
-          fail();
+          fail2();
         break;
       }
       out.push(b);
@@ -21985,28 +22224,28 @@ class HistoryProjection {
     const state = freshEntity(kind, id, version ?? null);
     const selected2 = new Map;
     const remember2 = (batch, row) => {
-      const keys3 = [
+      const keys2 = [
         state.first,
         state.last,
         state.result,
         state.detail
       ].flatMap((source2) => source2 ? [`${source2.segment}/${source2.offset}`] : []);
       for (const key3 of selected2.keys())
-        if (!keys3.includes(key3))
+        if (!keys2.includes(key3))
           selected2.delete(key3);
       const source = sourceAt(batch, row);
       const key2 = `${source.segment}/${source.offset}`;
-      if (keys3.includes(key2))
+      if (keys2.includes(key2))
         selected2.set(key2, { batch, row });
     };
     const sources = new SourceRows(this.reader.files, budget, (source) => {
       const selectedRow = selected2.get(`${source.segment}/${source.offset}`);
       if (!selectedRow)
-        fail();
+        fail2();
       const batch = this.navigation.batch(selectedRow.batch.pointer, budget);
       const { event: _event, ...original } = sourceAt(batch, selectedRow.row);
       if (original.segment !== source.segment || original.offset !== source.offset || original.bytes !== source.bytes || original.sha256 !== source.sha256 || original.seq !== source.seq)
-        fail();
+        fail2();
       return batch.rows[selectedRow.row];
     });
     const batches = this.batches(id, snapshot, budget).map((batch) => batch.sourceRow ? batch : this.navigation.batch(batch.pointer, budget));
@@ -22044,15 +22283,15 @@ class HistoryProjection {
       if (!state.detail)
         throw new ContractError("receipt-inconclusive");
     }
-    let record2 = materializeEntity(state, sources);
+    let record3 = materializeEntity(state, sources);
     sources.assertCurrent();
-    if (!record2 && kind === "task") {
+    if (!record3 && kind === "task") {
       const tasks = this.environment.legacyTasks(budget);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
       const legacy = tasks.find((t) => t.id === id);
       if (legacy)
-        record2 = {
+        record3 = {
           kind,
           owner: {
             taskId: id,
@@ -22065,18 +22304,18 @@ class HistoryProjection {
           plan: null
         };
     }
-    const result = version === undefined || version === record2?.version ? record2 : undefined;
+    const result = version === undefined || version === record3?.version ? record3 : undefined;
     return result ? decodeHistoryRecord(result) : undefined;
   }
   acceleratedEntity = async (value, budget) => {
     const request3 = decodeEntityReadRequest(value);
     if (request3.storeId !== this.reader.storeId)
-      fail();
+      fail2();
     this.navigation.snapshot(request3.snapshotSeq, budget);
-    const record2 = this.entityAt(request3.id, request3.kind, request3.snapshotSeq, budget, request3.version);
-    if (!record2 || !ownerInScope(record2.owner, request3.scope))
-      fail();
-    return decodeEntityPage({ request: request3, record: record2 });
+    const record3 = this.entityAt(request3.id, request3.kind, request3.snapshotSeq, budget, request3.version);
+    if (!record3 || !ownerInScope(record3.owner, request3.scope))
+      fail2();
+    return decodeEntityPage({ request: request3, record: record3 });
   };
   entity = async (value) => {
     const request3 = decodeEntityReadRequest(value);
@@ -22113,17 +22352,17 @@ class HistoryProjection {
       return { pos: { segment: 1, offset: 0 }, row: 0, item: 0 };
     const unit = (LIMITS.segmentRecords + 1) * ROW_SLOTS, pos = { segment: a.version, offset: Math.floor(a.offset / unit) }, row = Math.floor(a.offset % unit / ROW_SLOTS), item = a.offset % ROW_SLOTS;
     if (!equal3(a, this.cursor(request3, pos, row, item)))
-      fail();
+      fail2();
     return { pos, row, item };
   }
   *records(row, request3, budget, from) {
     const v = row.value, snapshot = request3.snapshotSeq;
     if (snapshot === null)
-      fail();
+      fail2();
     if (request3.reader === "tasks" && v.kind === "admission" && v.intent.identity.kind === "action" && v.intent.identity.action.kind === "create" && v.intent.createdTaskId) {
-      const record2 = this.entityAt(v.intent.createdTaskId, "task", snapshot, budget);
-      if (record2 && from === 0)
-        yield { item: 0, record: record2 };
+      const record3 = this.entityAt(v.intent.createdTaskId, "task", snapshot, budget);
+      if (record3 && from === 0)
+        yield { item: 0, record: record3 };
       return;
     }
     if (v.kind !== "capture" && v.kind !== "owner")
@@ -22134,7 +22373,7 @@ class HistoryProjection {
     }, request3.scope))
       return;
     if (from > v.events.length * RECORD_SLOTS)
-      fail();
+      fail2();
     for (let index = Math.floor(from / RECORD_SLOTS);index < v.events.length; index++) {
       budget.reserve(0);
       const e = v.events[index], out = [];
@@ -22202,19 +22441,19 @@ class HistoryProjection {
             fact
           });
       }
-      for (const [ordinal, record2] of out.entries()) {
+      for (const [ordinal, record3] of out.entries()) {
         const item = index * RECORD_SLOTS + ordinal;
         if (item >= from)
-          yield { item, record: record2 };
+          yield { item, record: record3 };
       }
     }
   }
   async acceleratedPage(value, kind, budget = new HistoryReadBudget) {
     let request3 = decodeListRequest(value);
     if (request3.navigation !== undefined)
-      fail();
+      fail2();
     if (request3.reader !== kind || request3.storeId !== this.reader.storeId || request3.scope.kind === "workspace" && request3.scope.id !== this.reader.files.format.workspaceId)
-      fail();
+      fail2();
     const snapshot = request3.snapshotSeq ?? this.navigation.latest(budget);
     this.navigation.snapshot(snapshot, budget);
     request3 = { ...request3, snapshotSeq: snapshot };
@@ -22227,13 +22466,13 @@ class HistoryProjection {
       for (;; ) {
         const b = this.navigation.next(pos, budget);
         if (!b || BigInt(b.pointer.seq) > BigInt(snapshot))
-          fail();
+          fail2();
         if (rowIndex > b.rows.length)
-          fail();
+          fail2();
         for (;rowIndex < b.rows.length; rowIndex++, itemIndex = 0) {
           for (const item of this.records(b.rows[rowIndex], request3, budget, itemIndex)) {
             itemIndex = item.item;
-            const record2 = item.record, size2 = Buffer.byteLength(canonicalJson(record2));
+            const record3 = item.record, size2 = Buffer.byteLength(canonicalJson(record3));
             if (records.length >= request3.limit || bytes + size2 > LIMITS.pageBytes) {
               next = {
                 ...request3,
@@ -22242,10 +22481,10 @@ class HistoryProjection {
               return decodeHistoryPage({ request: request3, records, next, coverage });
             }
             bytes += size2;
-            records.push(record2);
+            records.push(record3);
             itemIndex++;
-            if (record2.kind === "content")
-              coverage = combineCoverage(coverage, record2.coverage);
+            if (record3.kind === "content")
+              coverage = combineCoverage(coverage, record3.coverage);
           }
         }
         if (b.pointer.seq === snapshot)
@@ -22272,17 +22511,17 @@ class HistoryProjection {
   acceleratedTasks = async (value, budget) => {
     const initial3 = decodeListRequest(value);
     if (initial3.navigation !== undefined)
-      fail();
+      fail2();
     const legacyVersion = Number.MAX_SAFE_INTEGER;
     if (initial3.reader !== "tasks" || initial3.storeId !== this.reader.storeId || initial3.scope.id !== this.reader.files.format.workspaceId)
-      fail();
+      fail2();
     const legacyPhase = initial3.after?.version === legacyVersion;
     const privatePage = legacyPhase ? null : await this.acceleratedPage(initial3, "tasks", budget);
     if (privatePage?.next)
       return privatePage;
     const snapshot = privatePage?.request.snapshotSeq ?? initial3.snapshotSeq;
     if (snapshot === null)
-      fail();
+      fail2();
     const request3 = { ...initial3, snapshotSeq: snapshot };
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
@@ -22318,7 +22557,7 @@ class HistoryProjection {
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
-        fail();
+        fail2();
       digest.update(JSON.stringify({
         id: item.id,
         revision: item.revision,
@@ -22328,13 +22567,13 @@ class HistoryProjection {
     const identity = digest.digest("hex");
     let offset = legacyPhase ? initial3.after?.offset ?? 0 : 0;
     if (offset > items.length || legacyPhase && !equal3(initial3.after, cursor(offset, offset === 0 ? "begin" : identity)))
-      fail();
+      fail2();
     let bytes = 2048 + records.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r)), 0);
     try {
       while (offset < items.length && records.length < request3.limit) {
         budget.reserve(0);
         const task = items[offset];
-        const record2 = decodeHistoryRecord({
+        const record3 = decodeHistoryRecord({
           kind: "task",
           owner: {
             taskId: task.id,
@@ -22346,11 +22585,11 @@ class HistoryProjection {
           goal: task.goal,
           plan: null
         });
-        const size2 = Buffer.byteLength(JSON.stringify(record2));
+        const size2 = Buffer.byteLength(JSON.stringify(record3));
         if (bytes + size2 > LIMITS.pageBytes)
           break;
         bytes += size2;
-        records.push(record2);
+        records.push(record3);
         offset++;
       }
     } catch (error) {
@@ -22370,7 +22609,7 @@ class HistoryProjection {
   async page(value, kind) {
     const request3 = decodeListRequest(value);
     if (request3.reader !== kind || request3.storeId !== this.reader.storeId)
-      fail();
+      fail2();
     if (request3.navigation)
       return readRetainedList(this, request3);
     const budget = new HistoryReadBudget, completion = this.reader.files.format.schema === FORMAT ? new HistoryReadProof(this.reader.files).prepareCompletion(budget) : null;
@@ -22401,7 +22640,7 @@ class HistoryProjection {
   validateCursor = async (cursor) => {
     try {
       if (cursor.storeId !== this.reader.storeId)
-        fail();
+        fail2();
       decodeCursor(cursor);
       return { status: "progress-needed" };
     } catch (error) {
@@ -22449,7 +22688,7 @@ class HistoryProjection {
       }
     }
     if (!taskId2)
-      fail();
+      fail2();
     const runs = groups.flat();
     const base = {
       protocol: 1,
@@ -22488,7 +22727,7 @@ class HistoryProjection {
           }
     const context = decodeControlContext(this.environment.context(taskId2));
     if (controlWorkspace(context) !== this.reader.files.format.workspaceId || controlTask(context) !== taskId2)
-      fail();
+      fail2();
     const snapshot = decodeSnapshot({ ...base, context, runs });
     for (const observer of this.snapshotObservers) {
       try {
@@ -23567,15 +23806,15 @@ function diagnosticText(value, maximum = 4096, secrets = []) {
   return bytes.toString("utf8").replace(/\ufffd$/, "") + marker2;
 }
 // src/task-store.ts
-function recordText(record2) {
-  return `${JSON.stringify(record2, null, 2)}
+function recordText(record3) {
+  return `${JSON.stringify(record3, null, 2)}
 `;
 }
 function contentIdentity(text2) {
   return createHash21("sha256").update(text2).digest("hex");
 }
-function savedRecordIdentity(record2) {
-  return contentIdentity(recordText(record2));
+function savedRecordIdentity(record3) {
+  return contentIdentity(recordText(record3));
 }
 
 class TaskStore extends CheckoutStore {
@@ -23611,10 +23850,10 @@ class TaskStore extends CheckoutStore {
     const data2 = readBounded(join31(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
     if (!data2)
       return;
-    const record2 = decodeTask(parseRecord(data2));
-    if (record2.id !== id)
+    const record3 = decodeTask(parseRecord(data2));
+    if (record3.id !== id)
       throw new Error("Task identity mismatch");
-    return { record: record2, identity: contentIdentity(data2) };
+    return { record: record3, identity: contentIdentity(data2) };
   }
   list() {
     if (!safeDirectory(this.tasks))
@@ -23629,8 +23868,8 @@ class TaskStore extends CheckoutStore {
       return task;
     });
   }
-  save(record2, expectedRevision, held, expectedIdentity) {
-    const next = decodeTask(record2);
+  save(record3, expectedRevision, held, expectedIdentity) {
+    const next = decodeTask(record3);
     if (next.revision !== expectedRevision + 1)
       throw new Error("Revision conflict");
     const text2 = recordText(next);
@@ -23824,16 +24063,16 @@ function publicationRecord(store, reader, intent, link, run, request3, expected,
   const action = identity.action;
   if (action.kind === "create" !== !current2)
     bad11();
-  let record2;
+  let record3;
   if (current2)
-    record2 = structuredClone(current2.record);
+    record3 = structuredClone(current2.record);
   else {
     if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
     const cwd = realpathSync10(request3.cwd), within = relative6(store.root, cwd);
     if (isAbsolute12(within) || within === ".." || within.startsWith(`..${sep6}`))
       bad11();
-    record2 = {
+    record3 = {
       schema: TASK_SCHEMA,
       id: link.taskId,
       revision: 0,
@@ -23893,20 +24132,20 @@ function publicationRecord(store, reader, intent, link, run, request3, expected,
     const bytes = Buffer.concat([...reader.parts(detail, snapshotSeq)].map((p) => p.bytes));
     if (bytes.toString("utf8") !== action.plan)
       bad11();
-    record2.plan = action.plan;
-    record2.phase = "planning";
-    delete record2.review;
+    record3.plan = action.plan;
+    record3.phase = "planning";
+    delete record3.review;
   }
   if (run) {
-    record2.phase = publicationPhase(run);
-    delete record2.review;
+    record3.phase = publicationPhase(run);
+    delete record3.review;
     let result = request3.result ? retained(request3.result, "result") : "";
     if (!request3.result)
-      for (const child of run.children.values()) {
-        if (child.completion?.recording.status === "committed") {
-          const text2 = retained(child.completion.recording.detail.content, "result");
+      for (const child2 of run.children.values()) {
+        if (child2.completion?.recording.status === "committed") {
+          const text2 = retained(child2.completion.recording.detail.content, "result");
           if (Buffer.byteLength(result) < 32768)
-            result += `Child ${child.link.childRunId}
+            result += `Child ${child2.link.childRunId}
 ${text2}
 `;
         }
@@ -23917,19 +24156,19 @@ ${result}`;
     if (run.admission?.kind === "generate-plan")
       result = `Advisory plan proposal only; not saved or authorized for Start. Explicitly edit/accept and Save a plan before a separate Start.
 ${result}`;
-    record2.result = summary(result, 16384, link.runId);
+    record3.result = summary(result, 16384, link.runId);
     if (action.kind === "check" && run.check && run.settlement?.kind === "check") {
-      if (record2.checks.length >= 32)
+      if (record3.checks.length >= 32)
         bad11();
       const s = run.settlement;
       const fact = facts.findLast(({ link: l, fact: f }) => l.runId === link.runId && f.kind === "check-settled")?.fact;
       if (fact?.kind !== "check-settled")
         bad11();
-      record2.checks.push({
+      record3.checks.push({
         name: run.check.selection.name,
         command: run.check.selection.command,
         timeoutMs: run.check.selection.timeoutMs,
-        cwd: record2.cwd,
+        cwd: record3.cwd,
         exitCode: s.native.exitCode,
         durationMs: s.native.durationMs,
         status: fact.status,
@@ -23938,30 +24177,30 @@ ${result}`;
     }
   }
   if (request3.baseline)
-    record2.baseline = summary(retained(request3.baseline, "baseline"), 16384, link.runId);
+    record3.baseline = summary(retained(request3.baseline, "baseline"), 16384, link.runId);
   if (action.kind === "review") {
     const reviewed = facts.findLast(({ link: l, fact: f }) => l.operationId === intent.operationId && f.kind === "review");
     if (reviewed?.fact.kind !== "review")
       bad11();
-    record2.phase = "done";
-    record2.review = {
+    record3.phase = "done";
+    record3.review = {
       fingerprint: reviewed.fact.changesIdentity,
       outcome: reviewed.fact.outcome
     };
   }
-  record2.revision = expected.revision + 1;
-  record2.activity = [
-    ...record2.activity.slice(-63),
+  record3.revision = expected.revision + 1;
+  record3.activity = [
+    ...record3.activity.slice(-63),
     {
       at: new Date().toISOString(),
-      text: `Cadence ${action.kind}${link.runId ? `; run ${link.runId}` : ""}; phase ${record2.phase}. History/check/review facts remain separate.`
+      text: `Cadence ${action.kind}${link.runId ? `; run ${link.runId}` : ""}; phase ${record3.phase}. History/check/review facts remain separate.`
     }
   ];
-  record2 = decodeTask(record2);
-  if (Buffer.byteLength(`${JSON.stringify(record2, null, 2)}
+  record3 = decodeTask(record3);
+  if (Buffer.byteLength(`${JSON.stringify(record3, null, 2)}
 `) > MAX_RECORD_BYTES)
     throw new ContractError("capacity");
-  return record2;
+  return record3;
 }
 function syncTaskPublication(store, taskId2) {
   if (process.platform === "win32")
@@ -24798,7 +25037,7 @@ class HistoryWriter {
   }
   async commit(input) {
     const intent = decodeAdmissionIntent(input);
-    let record2, existing = false, refused2;
+    let record3, existing = false, refused2;
     const outcome = await this.enqueue(async (seq2) => {
       this.assertOrdinary();
       const lookup = await this.lookupCommitted(intent.commandId);
@@ -24806,7 +25045,7 @@ class HistoryWriter {
         if (canonicalJson(lookup.record.identity) !== canonicalJson(intent.identity))
           refused2 = { status: "refused", error: publicError("conflict") };
         else {
-          record2 = lookup.record;
+          record3 = lookup.record;
           existing = true;
         }
         return;
@@ -24844,7 +25083,7 @@ class HistoryWriter {
         }
       }
       this.used = Math.max(this.used, this.files.usage());
-      record2 = decodeStoredCommand({
+      record3 = decodeStoredCommand({
         identity: intent.identity,
         receipt: {
           commandId: intent.commandId,
@@ -24869,13 +25108,13 @@ class HistoryWriter {
       this.files.syncParents(join33(this.files.directory, "commands", intent.commandId, "intent.json"));
       await this.options.observeWrite?.("intent");
       const policy = this.resourcePolicy(intent.identity.kind === "action" ? intent.identity.expected.configRev : 1);
-      return { kind: "admission", intent, record: record2, policy };
+      return { kind: "admission", intent, record: record3, policy };
     }, Buffer.byteLength(canonicalJson(intent)), true);
     if (outcome.status !== "committed")
       return refused2 ?? { status: "uncertain" };
-    return refused2 ?? (record2 ? {
+    return refused2 ?? (record3 ? {
       status: existing ? "existing" : "committed",
-      record: decodeStoredCommand(record2)
+      record: decodeStoredCommand(record3)
     } : { status: "uncertain" });
   }
   retainAcceptedPlan(operationId, secrets) {
@@ -25033,7 +25272,7 @@ class HistoryWriter {
     this.publishing.add(request3.operationId);
     const publicationId = randomUUID17();
     let link;
-    let record2;
+    let record3;
     let expected;
     let observed = null;
     let status = "uncertain";
@@ -25077,8 +25316,8 @@ class HistoryWriter {
         const reader = HistoryReader.open(this.lease.coordination);
         if (!reader)
           throw new ContractError("unavailable");
-        record2 = publicationRecord(legacyTaskStore(this.lease.coordination), reader, intent, link, run, request3, expected, operation.facts, this.state.committedSeq);
-        this.charge(2 * Buffer.byteLength(`${JSON.stringify(record2, null, 2)}
+        record3 = publicationRecord(legacyTaskStore(this.lease.coordination), reader, intent, link, run, request3, expected, operation.facts, this.state.committedSeq);
+        this.charge(2 * Buffer.byteLength(`${JSON.stringify(record3, null, 2)}
 `), intent.runId, true);
         return this.ownerValue({
           link,
@@ -25091,14 +25330,14 @@ class HistoryWriter {
                 publicationId,
                 expectedRevision: expected.revision,
                 expectedIdentity: expected.identity,
-                nextRevision: record2.revision,
-                nextIdentity: savedRecordIdentity(record2)
+                nextRevision: record3.revision,
+                nextIdentity: savedRecordIdentity(record3)
               }
             }
           ]
         });
       }, 16384, true, undefined, false, true);
-      if (prepared.status !== "committed" || !record2 || !expected || !link) {
+      if (prepared.status !== "committed" || !record3 || !expected || !link) {
         if (!link)
           return {
             status: "refused",
@@ -25129,7 +25368,7 @@ class HistoryWriter {
           observed: null
         };
       }
-      const selected2 = record2, before = expected, owner = link;
+      const selected2 = record3, before = expected, owner = link;
       const outcome = await this.enqueue(async () => {
         await this.options.observeWrite?.("publication-before-save");
         this.assertWritable(false, true);
@@ -25224,8 +25463,8 @@ class HistoryWriter {
     let slots = 0;
     for (const run of this.runs.values())
       for (const auth of run.auth.values()) {
-        const child = run.children.get(auth.intent.childRunId);
-        if (child ? child.completion === null : auth.result === null || auth.result.outcome === "resolved" && !auth.result.admissionClosed)
+        const child2 = run.children.get(auth.intent.childRunId);
+        if (child2 ? child2.completion === null : auth.result === null || auth.result.outcome === "resolved" && !auth.result.admissionClosed)
           slots++;
       }
     return slots;
@@ -25260,13 +25499,13 @@ class HistoryWriter {
   processSettlement(input, value) {
     const link = decodeRecordingLink(input), completion = decodeWorkerCompletion(value);
     return this.enqueue(() => {
-      const child = this.child(link);
-      if (completion.native.outcome === "completed" && [...child.details.values()].some((d) => !d.ended))
+      const child2 = this.child(link);
+      if (completion.native.outcome === "completed" && [...child2.details.values()].some((d) => !d.ended))
         throw new ContractError("corrupt-selected");
-      if (child.settled || completion.childRunId !== link.childRunId)
+      if (child2.settled || completion.childRunId !== link.childRunId)
         throw new ContractError("conflict");
       if (completion.recording.status === "committed") {
-        const final = child.final, retained = child.details.get(completion.recording.detail.detailId), d = retained?.ended;
+        const final = child2.final, retained = child2.details.get(completion.recording.detail.detailId), d = retained?.ended;
         if (!d || completion.native.outcome === "completed" && d.coverage.observed !== "complete" || !final || canonicalJson(final) !== canonicalJson(completion.selected) || canonicalJson(d.content) !== canonicalJson(completion.recording.detail.content) || completion.recording.detail.committedSeq !== retained?.committedSeq)
           throw new ContractError("corrupt-selected");
         const reader = HistoryReader.open(this.lease.coordination);
@@ -25274,18 +25513,18 @@ class HistoryWriter {
           throw new ContractError("corrupt-selected");
         for (const _ of reader.parts(d, completion.recording.detail.committedSeq)) {}
       }
-      for (const d of child.details.values())
-        if (d.descriptor?.owner.kind === "tool" && !child.tools.has(d.descriptor.owner.callId))
+      for (const d of child2.details.values())
+        if (d.descriptor?.owner.kind === "tool" && !child2.tools.has(d.descriptor.owner.callId))
           throw new ContractError("invalid");
-      child.settled = true;
+      child2.settled = true;
       return { kind: "settlement", link, completion };
     }, 8192, true, undefined, true);
   }
   child(link) {
-    const child = this.children.get(link.childRunId);
-    if (!child || canonicalJson(child.link) !== canonicalJson(link) || child.settled)
+    const child2 = this.children.get(link.childRunId);
+    if (!child2 || canonicalJson(child2.link) !== canonicalJson(link) || child2.settled)
       throw new ContractError("conflict");
-    return child;
+    return child2;
   }
   capture(input) {
     const link = decodeRecordingLink(input);
@@ -25447,40 +25686,40 @@ class HistoryWriter {
     return { kind: "end", detail: detail.ended, source };
   }
   captureValue(input) {
-    const child = this.child(input.link), events = [];
+    const child2 = this.child(input.link), events = [];
     for (const item of input.events) {
       const { event, source } = item;
-      if (child.final)
+      if (child2.final)
         throw new ContractError("conflict");
       if (event.kind === "ready") {
-        if (child.ready)
+        if (child2.ready)
           throw new ContractError("conflict");
-        child.ready = true;
-      } else if (!child.ready)
+        child2.ready = true;
+      } else if (!child2.ready)
         throw new ContractError("invalid");
       if (event.kind === "message-start") {
-        if (child.messages.has(event.messageId))
+        if (child2.messages.has(event.messageId))
           throw new ContractError("conflict");
-        child.messages.set(event.messageId, 1);
+        child2.messages.set(event.messageId, 1);
       }
       if (event.kind === "call-declaration" || event.kind === "tool-start" || event.kind === "tool-end")
-        child.tools.set(event.callId, (child.tools.get(event.callId) ?? 0) + 1);
+        child2.tools.set(event.callId, (child2.tools.get(event.callId) ?? 0) + 1);
       if (event.kind === "detail-begin") {
-        if (child.details.has(event.detailId))
+        if (child2.details.has(event.detailId))
           throw new ContractError("conflict");
         const o = event.descriptor.owner;
         const entity = o.kind === "message" || o.kind === "message-final" ? {
           kind: "message",
           id: o.messageId,
-          version: child.messages.get(o.messageId) ?? 0
+          version: child2.messages.get(o.messageId) ?? 0
         } : o.kind === "tool" ? {
           kind: "tool",
           id: o.callId,
-          version: child.tools.get(o.callId) ?? 1
+          version: child2.tools.get(o.callId) ?? 1
         } : { kind: "child", id: input.link.childRunId, version: 1 };
         if (!entity.version)
           throw new ContractError("invalid");
-        child.details.set(event.detailId, this.openDetail(event.detailId, { kind: "worker", id: input.link.childRunId }, {
+        child2.details.set(event.detailId, this.openDetail(event.detailId, { kind: "worker", id: input.link.childRunId }, {
           taskId: input.link.taskId,
           runId: input.link.runId,
           childRunId: input.link.childRunId,
@@ -25488,7 +25727,7 @@ class HistoryWriter {
         }, event.descriptor, event.descriptor.field));
       }
       if (event.kind === "stored-chunk" || event.kind === "stored-end") {
-        const d = child.details.get(event.detailId);
+        const d = child2.details.get(event.detailId);
         if (!d)
           throw new ContractError("invalid");
         if (event.kind === "stored-chunk") {
@@ -25499,12 +25738,12 @@ class HistoryWriter {
         continue;
       }
       if (event.kind === "message-end")
-        child.messages.set(event.messageId, (child.messages.get(event.messageId) ?? 0) + 1);
+        child2.messages.set(event.messageId, (child2.messages.get(event.messageId) ?? 0) + 1);
       if (event.kind === "final") {
-        const d = child.details.get(event.detailId)?.ended;
+        const d = child2.details.get(event.detailId)?.ended;
         if (d?.content.field !== "final-text" || d.descriptor?.owner.kind !== "message-final" || d.descriptor.owner.messageId !== event.messageId)
           throw new ContractError("invalid");
-        child.final = { messageId: event.messageId, detailId: event.detailId };
+        child2.final = { messageId: event.messageId, detailId: event.detailId };
       }
       events.push({ kind: "capture", id: randomUUID17(), value: item });
     }
@@ -25548,8 +25787,8 @@ class HistoryWriter {
       const sourceChild = dependency2.source.kind === "current" ? state.admission.assignments.find((a) => a.assignmentId === (dependency2.source.kind === "current" ? dependency2.source.assignmentId : ""))?.childRunId : dependency2.source.childRunId;
       if (!sourceChild || supplied.dependencyIndex !== i || supplied.assignmentId !== assignment.id || supplied.runId !== sourceRun || supplied.childRunId !== sourceChild || canonicalJson(supplied.range) !== canonicalJson(dependency2.range))
         throw new ContractError("conflict");
-      const source = this.runs.get(sourceRun) ?? this.retainedRun(sourceRun), child = source.children.get(sourceChild), recording = child?.completion?.recording;
-      if (!child?.settlementSeq || child.completion?.native.outcome !== "completed" || child.completion.native.closure !== "direct-child-closed" || recording?.status !== "committed" || canonicalJson(recording.detail.content) !== canonicalJson(supplied.result) || dependency2.source.kind === "historical" && canonicalJson(dependency2.source.result) !== canonicalJson(supplied.result) || dependency2.requireCompleteObservation && !fact.observation.complete)
+      const source = this.runs.get(sourceRun) ?? this.retainedRun(sourceRun), child2 = source.children.get(sourceChild), recording = child2?.completion?.recording;
+      if (!child2?.settlementSeq || child2.completion?.native.outcome !== "completed" || child2.completion.native.closure !== "direct-child-closed" || recording?.status !== "committed" || canonicalJson(recording.detail.content) !== canonicalJson(supplied.result) || dependency2.source.kind === "historical" && canonicalJson(dependency2.source.result) !== canonicalJson(supplied.result) || dependency2.requireCompleteObservation && !fact.observation.complete)
         throw new ContractError("conflict");
       const detail = reader.selected({
         storeId: reader.storeId,
@@ -26501,7 +26740,7 @@ function runProcess(spec) {
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
   return new Promise((resolve12) => {
-    const child = spawn4(spec.command, spec.args, {
+    const child2 = spawn4(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env ?? safeChildEnv(),
       detached: process.platform !== "win32",
@@ -26529,11 +26768,11 @@ function runProcess(spec) {
         stop("failed");
       }
     };
-    child.once("spawn", () => {
+    child2.once("spawn", () => {
       launched = true;
-      if (child.pid)
+      if (child2.pid)
         try {
-          processObserver?.launched(child.pid);
+          processObserver?.launched(child2.pid);
         } catch {}
       observeLifecycle({ kind: "spawned", at: Date.now() });
     });
@@ -26605,24 +26844,24 @@ function runProcess(spec) {
         truncated: truncated || Buffer.byteLength(safeText) > 16384 || Buffer.byteLength(safeOutput) > outputBytes
       });
       if (!closed2) {
-        child.unref();
-        child.stdout.destroy();
-        child.stderr.destroy();
-        child.stdin?.destroy();
-        if (child.connected)
-          child.disconnect();
+        child2.unref();
+        child2.stdout.destroy();
+        child2.stderr.destroy();
+        child2.stdin?.destroy();
+        if (child2.connected)
+          child2.disconnect();
       }
     };
     const signalChild = (signal) => {
       try {
         if (spec.maySignal && !spec.maySignal())
           return;
-        if (process.platform !== "win32" && child.pid)
-          process.kill(-child.pid, signal);
-        else if (child.pid && child.exitCode === null && child.signalCode === null)
-          terminateWindowsTree(child.pid, () => child.kill(signal));
+        if (process.platform !== "win32" && child2.pid)
+          process.kill(-child2.pid, signal);
+        else if (child2.pid && child2.exitCode === null && child2.signalCode === null)
+          terminateWindowsTree(child2.pid, () => child2.kill(signal));
         else
-          child.kill(signal);
+          child2.kill(signal);
       } catch {}
     };
     const stop = (outcome) => {
@@ -26644,7 +26883,7 @@ function runProcess(spec) {
     };
     let bridgeBusy = false;
     if (spec.onCoordinator)
-      child.on("message", (message2) => {
+      child2.on("message", (message2) => {
         if (settled || stopping)
           return;
         (async () => {
@@ -26659,8 +26898,8 @@ function runProcess(spec) {
           }
           const id = row.id;
           const refuse3 = () => {
-            if (child.connected && !settled && !stopping)
-              child.send({ id, ok: false }, () => {});
+            if (child2.connected && !settled && !stopping)
+              child2.send({ id, ok: false }, () => {});
           };
           if (bridgeBusy || Buffer.byteLength(JSON.stringify(message2)) > 65536) {
             refuse3();
@@ -26678,8 +26917,8 @@ function runProcess(spec) {
             const reply = { id, ok: true, text: text2 };
             if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
               throw new Error("Coordinator result exceeds bound");
-            if (!settled && !stopping && child.connected)
-              child.send(reply, () => {});
+            if (!settled && !stopping && child2.connected)
+              child2.send(reply, () => {});
           } catch {
             refuse3();
           } finally {
@@ -26784,47 +27023,47 @@ function runProcess(spec) {
     let stderrWork = Promise.resolve();
     let stdoutEnded = false, stderrEnded = false;
     if (spec.checkRecording) {
-      child.stdout.once("end", () => {
+      child2.stdout.once("end", () => {
         stdoutEnded = true;
       });
-      child.stderr.once("end", () => {
+      child2.stderr.once("end", () => {
         stderrEnded = true;
       });
-      child.stdout.on("error", () => stop("failed"));
-      child.stderr.on("error", () => stop("failed"));
+      child2.stdout.on("error", () => stop("failed"));
+      child2.stderr.on("error", () => stop("failed"));
     }
-    child.stdout.on("data", (chunk) => {
+    child2.stdout.on("data", (chunk) => {
       if (!spec.recording && !spec.checkRecording) {
         receive(chunk, true).catch(() => stop("failed"));
         return;
       }
-      child.stdout.pause();
+      child2.stdout.pause();
       const original = receive(chunk, true).catch(() => stop("failed")).finally(() => {
         if (!settled && stdoutWork === original)
-          child.stdout.resume();
+          child2.stdout.resume();
       });
       stdoutWork = original;
     });
-    child.stderr.on("data", (chunk) => {
+    child2.stderr.on("data", (chunk) => {
       if (!spec.checkRecording) {
         receive(chunk, false).catch(() => stop("failed"));
         return;
       }
-      child.stderr.pause();
+      child2.stderr.pause();
       const original = receive(chunk, false).catch(() => stop("failed")).finally(() => {
         if (!settled && stderrWork === original)
-          child.stderr.resume();
+          child2.stderr.resume();
       });
       stderrWork = original;
     });
-    child.on("error", () => {
+    child2.on("error", () => {
       stopping = "failed";
     });
-    child.on("close", (code2, signal) => {
+    child2.on("close", (code2, signal) => {
       nativeClosed = true;
-      if (launched && child.pid)
+      if (launched && child2.pid)
         try {
-          processObserver?.closed(child.pid);
+          processObserver?.closed(child2.pid);
         } catch {}
       if (launched)
         observeLifecycle({ kind: "closed", at: Date.now() });
@@ -26857,7 +27096,7 @@ function runProcess(spec) {
         close();
     });
     if (spec.imageInput !== undefined) {
-      const pipe = child.stdio[3];
+      const pipe = child2.stdio[3];
       pipe.on("error", () => {
         stdin = "failed";
         stop("failed");
@@ -26869,18 +27108,18 @@ function runProcess(spec) {
       });
       pipe.end(spec.imageInput);
     }
-    if (child.stdin) {
-      child.stdin.on("error", () => {
+    if (child2.stdin) {
+      child2.stdin.on("error", () => {
         stdin = "failed";
         stop("failed");
       });
-      child.stdin.once("finish", () => {
+      child2.stdin.once("finish", () => {
         inputDelivered = true;
         if (imagesDelivered)
           stdin = "delivered";
       });
       try {
-        child.stdin.end(spec.input);
+        child2.stdin.end(spec.input);
       } catch {
         stdin = "failed";
         stop("failed");
@@ -27193,15 +27432,15 @@ class OwnerModelChoice {
     if (this.installing)
       throw new ContractError("conflict");
     const assertCurrent = () => {
-      const { owner, models } = this.options;
+      const { owner, models: models2 } = this.options;
       owner.assertQuiescent();
-      if (models.pending || models.loading)
+      if (models2.pending || models2.loading)
         throw new ContractError("conflict");
       if (canonicalJson(request3.expected) !== canonicalJson(this.snapshot().version))
         throw new ContractError("stale");
     };
     assertCurrent();
-    const { sourceSelectionId: _id, ...previous } = this.selection ?? {};
+    const { sourceSelectionId: _id2, ...previous } = this.selection ?? {};
     if (canonicalJson(previous) !== canonicalJson(request3.choice) && !Number.isSafeInteger(this.revision + 1))
       throw new ContractError("capacity");
     this.installing = true;
@@ -27322,24 +27561,24 @@ class OwnerModelContext {
     if (!selected2 || canonicalSelection(selected2.selection) !== canonicalSelection(selection))
       throw new ContractError("stale");
     const snapshot = this.fresh(selected2);
-    const credential = snapshot.credentials[selection.provider];
-    const strings = (value) => {
+    const credential2 = snapshot.credentials[selection.provider];
+    const strings2 = (value) => {
       if (typeof value === "string")
         return [value];
       if (!value || typeof value !== "object")
         return [];
-      return Object.values(data(value)).flatMap(strings);
+      return Object.values(data(value)).flatMap(strings2);
     };
     const config = snapshot.providers[selection.provider];
     const literals = [
       ...this.#options.network?.literals ?? [],
-      ...strings(credential && "key" in credential ? credential.key : null),
-      ...strings(credential?.type === "oauth" ? credential.access : null),
-      ...strings(credential?.type === "oauth" ? credential.refresh : null),
-      ...strings(credential?.env),
-      ...strings(config?.apiKey),
-      ...strings(config?.headers),
-      ...strings(selected2.model.headers),
+      ...strings2(credential2 && "key" in credential2 ? credential2.key : null),
+      ...strings2(credential2?.type === "oauth" ? credential2.access : null),
+      ...strings2(credential2?.type === "oauth" ? credential2.refresh : null),
+      ...strings2(credential2?.env),
+      ...strings2(config?.apiKey),
+      ...strings2(config?.headers),
+      ...strings2(selected2.model.headers),
       ...Object.values(selected2.env),
       ...Object.entries(this.#launch).flatMap(([key2, value]) => /(?:KEY|TOKEN|SECRET|PASS|AUTH|COOKIE)/i.test(key2) && value ? [value] : [])
     ].filter(Boolean);
@@ -27377,22 +27616,22 @@ class OwnerModelContext {
       const entries2 = [];
       let withheld = 0;
       for (const provider of providers) {
-        const models = runtime.getModels(provider);
-        if (entries2.length + withheld + models.length > LIMITS.maxPageEntries)
+        const models2 = runtime.getModels(provider);
+        if (entries2.length + withheld + models2.length > LIMITS.maxPageEntries)
           throw new ContractError("capacity");
-        for (const model of models) {
-          if (model.provider !== provider)
+        for (const model2 of models2) {
+          if (model2.provider !== provider)
             throw new ContractError("unsupported-context");
-          if (!this.isPublicIdentifier(provider, literals) || !this.isPublicIdentifier(model.id, literals)) {
+          if (!this.isPublicIdentifier(provider, literals) || !this.isPublicIdentifier(model2.id, literals)) {
             withheld++;
             continue;
           }
-          const api = modelApis.find((api2) => api2 === model.api) ?? null;
-          const levels = this.#thinking(model);
-          if (levels.length > 7)
+          const api = modelApis.find((api2) => api2 === model2.api) ?? null;
+          const levels2 = this.#thinking(model2);
+          if (levels2.length > 7)
             throw new ContractError("unsupported-context");
           let eligibility = "candidate";
-          const thinking = levels.map((level) => ({
+          const thinking = levels2.map((level) => ({
             level,
             selectable: api !== null && thinkingLevels.some((t) => t === level)
           }));
@@ -27403,7 +27642,7 @@ class OwnerModelContext {
             try {
               this.validateModel(decodeModelSelector({
                 provider,
-                model: model.id,
+                model: model2.id,
                 api,
                 thinking: supported.level
               }), current2);
@@ -27420,13 +27659,13 @@ class OwnerModelContext {
           }
           entries2.push(decodeModelCandidate({
             provider,
-            model: model.id,
+            model: model2.id,
             api,
             thinking: thinking.map((t) => ({
               ...t,
               selectable: t.selectable && eligibility === "candidate"
             })),
-            images: model.input.includes("image"),
+            images: model2.input.includes("image"),
             eligibility
           }));
         }
@@ -27467,7 +27706,7 @@ class OwnerModelContext {
     const selector = decodeModelSelector(input);
     for (const old of this.#selected.values()) {
       this.assertCurrent(old.selection);
-      const { sourceSelectionId: _id, ...previous } = old.selection;
+      const { sourceSelectionId: _id2, ...previous } = old.selection;
       if (JSON.stringify(previous) === JSON.stringify(selector)) {
         beforeInstall();
         for (const id of this.#selected.keys())
@@ -27536,8 +27775,9 @@ class OwnerModelContext {
       });
       this.alive();
       const after = readPiSnapshot(source);
-      if (runtime.getError())
-        throw new ContractError("corrupt-selected");
+      const refused2 = runtime.getError();
+      if (refused2)
+        throw sdkRefusal(refused2);
       if (after.auth.identity !== ready2.auth.identity || !sameModels(ready2, after))
         throw new ContractError("stale");
       this.#source = source;
@@ -27546,6 +27786,8 @@ class OwnerModelContext {
       this.#thinking = getSupportedThinkingLevels;
     } catch (error) {
       runtimeOwners.delete(this.#options.owner);
+      if (error instanceof PiSourceRefusal)
+        throw error;
       throw new ContractError(error instanceof ContractError ? error.code : "corrupt-selected");
     } finally {
       this.#loading = false;
@@ -27554,7 +27796,7 @@ class OwnerModelContext {
   retainedSelection(input, onlyRetained = true) {
     const key2 = canonicalJson(decodeModelSelector(input));
     for (const entry of this.#selected.values()) {
-      const { sourceSelectionId: _id, ...selector } = entry.selection;
+      const { sourceSelectionId: _id2, ...selector } = entry.selection;
       if (canonicalJson(selector) === key2 && (!onlyRetained || this.#retained.has(entry.selection.sourceSelectionId)))
         return { ...entry.selection };
     }
@@ -27598,22 +27840,22 @@ class OwnerModelContext {
       throw new ContractError("unavailable");
     if (runtime.getError() || runtime.getRegisteredNativeProvider(input.provider) || runtime.getRegisteredProviderConfig(input.provider))
       throw new ContractError("unsupported-context");
-    const model = runtime.getModel(input.provider, input.model);
-    if (!model || model.api !== input.api || model.provider !== input.provider || model.id !== input.model || !this.#thinking(model).includes(input.thinking))
+    const model2 = runtime.getModel(input.provider, input.model);
+    if (!model2 || model2.api !== input.api || model2.provider !== input.provider || model2.id !== input.model || !this.#thinking(model2).includes(input.thinking))
       throw new ContractError("unsupported-context");
     const literals = this.catalogLiterals(current2);
     this.publicIdentifier(input.provider, literals);
     this.publicIdentifier(input.model, literals);
-    const credential = current2.credentials[input.provider];
+    const credential2 = current2.credentials[input.provider];
     const provider = runtime.getProvider(input.provider);
-    if (credential?.type === "oauth" ? !provider?.auth.oauth : !provider?.auth.apiKey)
+    if (credential2?.type === "oauth" ? !provider?.auth.oauth : !provider?.auth.apiKey)
       throw new ContractError("unsupported-context");
-    if (credential?.type === "api_key" ? !credential.key : !credential && !current2.providers[input.provider]?.apiKey)
+    if (credential2?.type === "api_key" ? !credential2.key : !credential2 && !current2.providers[input.provider]?.apiKey)
       throw new ContractError("auth-unavailable");
     const selected2 = {
-      model,
+      model: model2,
       sourceIdentity: sourceIdentity(current2, input.provider),
-      credentialIdentity: stablePrivate(credential ?? null),
+      credentialIdentity: stablePrivate(credential2 ?? null),
       env: selectedEnvironment(current2, input.provider, input.model, this.#launch)
     };
     exactEnvironment(this.#launch, { ...selected2, selection: input }, current2);
@@ -27626,8 +27868,8 @@ class OwnerModelContext {
     const snapshot = readPiSnapshot(this.#source);
     if (this.#runtime.getError() || this.#runtime.getRegisteredNativeProvider(selected2.selection.provider) || this.#runtime.getRegisteredProviderConfig(selected2.selection.provider))
       throw new ContractError("stale");
-    const model = this.#runtime.getModel(selected2.selection.provider, selected2.selection.model);
-    if (!sameModels(snapshot, this.#snapshot) || sourceIdentity(snapshot, selected2.selection.provider) !== selected2.sourceIdentity || !resolvingOAuth && stablePrivate(snapshot.credentials[selected2.selection.provider] ?? null) !== selected2.credentialIdentity || JSON.stringify(clonePrivate(model)) !== JSON.stringify(selected2.model) || this.#runtime.getError() || this.#runtime.getRegisteredNativeProvider(selected2.selection.provider) || this.#runtime.getRegisteredProviderConfig(selected2.selection.provider))
+    const model2 = this.#runtime.getModel(selected2.selection.provider, selected2.selection.model);
+    if (!sameModels(snapshot, this.#snapshot) || sourceIdentity(snapshot, selected2.selection.provider) !== selected2.sourceIdentity || !resolvingOAuth && stablePrivate(snapshot.credentials[selected2.selection.provider] ?? null) !== selected2.credentialIdentity || JSON.stringify(clonePrivate(model2)) !== JSON.stringify(selected2.model) || this.#runtime.getError() || this.#runtime.getRegisteredNativeProvider(selected2.selection.provider) || this.#runtime.getRegisteredProviderConfig(selected2.selection.provider))
       throw new ContractError("stale");
     exactEnvironment(this.#launch, selected2, snapshot);
     this.authRoute(selected2.env);
@@ -27781,8 +28023,8 @@ class OwnerModelContext {
           let outcome = "resolved";
           try {
             const latest = this.fresh(selected2, true);
-            const credential = latest.credentials[selected2.selection.provider];
-            if (credential?.type === "oauth" && credential.expires < Date.now() + validityMs)
+            const credential2 = latest.credentials[selected2.selection.provider];
+            if (credential2?.type === "oauth" && credential2.expires < Date.now() + validityMs)
               throw new ContractError("auth-unavailable");
             if (sourceIdentity(initial4, selected2.selection.provider) !== sourceIdentity(latest, selected2.selection.provider))
               throw new ContractError("stale");
@@ -27801,7 +28043,7 @@ class OwnerModelContext {
             assertWorkerEnvelopeSize(JSON.stringify(material));
             for (const entry of this.#selected.values()) {
               if (entry.selection.provider === selected2.selection.provider && entry.sourceIdentity === selected2.sourceIdentity && entry.credentialIdentity === stablePrivate(initial4.credentials[selected2.selection.provider] ?? null))
-                entry.credentialIdentity = stablePrivate(credential ?? null);
+                entry.credentialIdentity = stablePrivate(credential2 ?? null);
             }
           } catch (error) {
             failure2 = error;
@@ -27827,9 +28069,9 @@ class OwnerModelContext {
         } catch {
           trackingFailed = true;
         }
-        const record2 = await recorded;
+        const record3 = await recorded;
         if (!input.journal)
-          committed(taskResult(record2));
+          committed(taskResult(record3));
         if (trackingFailed)
           throw new ContractError("quarantine");
         check();
@@ -27849,15 +28091,15 @@ class OwnerModelContext {
                 const snapshot = check();
                 if (preparedIdentity !== selected2.credentialIdentity)
                   throw new ContractError("stale");
-                const credential = snapshot.credentials[selected2.selection.provider];
-                if (credential?.type === "oauth" && credential.expires < Date.now() + validityMs)
+                const credential2 = snapshot.credentials[selected2.selection.provider];
+                if (credential2?.type === "oauth" && credential2.expires < Date.now() + validityMs)
                   throw new ContractError("auth-unavailable");
                 const serialized = encode(clonePrivate(preparedMaterial));
                 if (typeof serialized !== "string")
                   throw new ContractError("invalid");
                 assertWorkerEnvelopeSize(serialized);
                 check();
-                if (credential?.type === "oauth" && credential.expires < Date.now() + validityMs)
+                if (credential2?.type === "oauth" && credential2.expires < Date.now() + validityMs)
                   throw new ContractError("auth-unavailable");
                 return use(serialized);
               } catch (error) {
@@ -28457,14 +28699,14 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
             };
           }
           const epoch = this.o.owner.lease.registration.epoch;
-          const model = c.model.conversation && this.o.contexts ? this.o.contexts.snapshot(c.model.conversation).version : this.o.choice.snapshot().version;
-          if (model.epoch !== c.model.epoch || model.configRev !== c.model.configRev || model.catalogId !== c.model.catalogId)
+          const model2 = c.model.conversation && this.o.contexts ? this.o.contexts.snapshot(c.model.conversation).version : this.o.choice.snapshot().version;
+          if (model2.epoch !== c.model.epoch || model2.configRev !== c.model.configRev || model2.catalogId !== c.model.catalogId)
             return refusal3("stale", "The model selection changed after this message was sent. Nothing was started; ask the user to send again.");
           if (name === "cadence_plan")
-            return this.plan(current2, args, epoch, model);
+            return this.plan(current2, args, epoch, model2);
           if (name !== "cadence_research")
             throw new ContractError("invalid");
-          return this.research(current2, args, epoch, model, signal);
+          return this.research(current2, args, epoch, model2, signal);
         })();
         const tracked = original.finally(() => originals.delete(tracked));
         originals.add(tracked);
@@ -28481,7 +28723,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     };
     return this.o.conversations.send(input, control, beforeAccept, claimImages);
   }
-  plan(current2, args, epoch, model) {
+  plan(current2, args, epoch, model2) {
     let plan;
     try {
       plan = decodeWorkflowPlan(args);
@@ -28493,7 +28735,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       published = this.o.workflows.command(randomUUID23(), epoch, {
         action: "propose",
         plan,
-        model
+        model: model2
       });
     } catch (error) {
       if (this.o.owner.state !== "idle")
@@ -28515,7 +28757,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       notice: "Complete plan displayed for human approval. No execution has been authorized."
     };
   }
-  async research(current2, args, epoch, model, signal) {
+  async research(current2, args, epoch, model2, signal) {
     let goal, questions, roots;
     try {
       const a = closed(args, [
@@ -28541,7 +28783,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         goal,
         questions,
         ...roots ? { roots } : {},
-        model
+        model: model2
       });
     } catch (error) {
       if (this.o.owner.state === "idle" && !this.exists(id)) {
@@ -29523,8 +29765,8 @@ function gitAnswer(cwd, args) {
   return r.status === 0 ? r.stdout : null;
 }
 function gitRun(cwd, args, timeoutMs = READ_MS) {
-  return new Promise((done, fail2) => {
-    const child = spawn5("git", gitArguments(args), {
+  return new Promise((done, fail3) => {
+    const child2 = spawn5("git", gitArguments(args), {
       cwd,
       env: gitEnvironment(),
       stdio: ["ignore", "pipe", "ignore"],
@@ -29534,23 +29776,23 @@ function gitRun(cwd, args, timeoutMs = READ_MS) {
     let bytes = 0, broken = false;
     const timer = setTimeout(() => {
       broken = true;
-      child.kill("SIGKILL");
+      child2.kill("SIGKILL");
     }, timeoutMs);
-    child.stdout.on("data", (chunk) => {
+    child2.stdout.on("data", (chunk) => {
       bytes += chunk.length;
       if (bytes > NAMES_BYTES) {
         broken = true;
-        child.kill("SIGKILL");
+        child2.kill("SIGKILL");
       } else
         chunks2.push(chunk);
     });
-    child.once("error", () => {
+    child2.once("error", () => {
       broken = true;
     });
-    child.once("close", (code2) => {
+    child2.once("close", (code2) => {
       clearTimeout(timer);
       if (broken)
-        fail2(new ContractError("unavailable"));
+        fail3(new ContractError("unavailable"));
       else
         done({ code: code2, stdout: Buffer.concat(chunks2).toString("utf8") });
     });
@@ -29806,21 +30048,21 @@ async function changedPaths(cwd) {
 function overlapping(scope, changed) {
   return changed.filter((p) => workflowCovers(scope, p) || scope.some((q) => q.startsWith(`${p}/`))).sort();
 }
-var list2 = (paths) => `${paths.slice(0, 32).join(", ")}${paths.length > 32 ? ` and ${paths.length - 32} more` : ""}`;
+var list3 = (paths) => `${paths.slice(0, 32).join(", ")}${paths.length > 32 ? ` and ${paths.length - 32} more` : ""}`;
 var INDEX_FLAGS = ["ls-files", "-v", "-z"];
 function indexHidden(output) {
   return names2(output).filter((row) => row.startsWith("S ") || /^[a-z] /u.test(row)).map((row) => row.slice(2));
 }
 function assertVisibleIndex(paths) {
   if (paths.length)
-    throw new WorkflowRefusal("conflict", `Git index flags hide these paths: ${list2(paths)}. Correct them explicitly; Cadence never clears flags or assumes hidden contents are clean.`);
+    throw new WorkflowRefusal("conflict", `Git index flags hide these paths: ${list3(paths)}. Correct them explicitly; Cadence never clears flags or assumes hidden contents are clean.`);
 }
 async function assertWorkflowScope(cwd, allowed) {
   assertVisibleIndex(indexHidden(await gitText(cwd, INDEX_FLAGS)));
   const changes = await changedPaths(cwd);
   const outside = changes.filter((name) => !workflowCovers(allowed, name));
   if (outside.length)
-    throw new WorkflowRefusal("forbidden", `Changes outside the approved write scope were preserved, not committed: ${list2(outside.sort())}`);
+    throw new WorkflowRefusal("forbidden", `Changes outside the approved write scope were preserved, not committed: ${list3(outside.sort())}`);
   for (const name of changes)
     safeWorkflowFile(cwd, name);
   return changes;
@@ -29831,7 +30073,7 @@ async function assertWorkflowCommit(cwd, before, commit, allowed) {
   const changed = await committedPaths(cwd, before, commit);
   const outside = changed.filter((name) => !workflowCovers(allowed, name));
   if (outside.length)
-    throw new WorkflowRefusal("forbidden", `Commit contains files outside the approved scope: ${list2(outside)}`);
+    throw new WorkflowRefusal("forbidden", `Commit contains files outside the approved scope: ${list3(outside)}`);
   for (const name of changed)
     safeWorkflowFile(cwd, name);
   return changed;
@@ -29905,7 +30147,7 @@ async function assertCommittedScope(cwd, base, candidate, scope) {
     throw new ContractError("stale");
   const outside = (await committedPaths(cwd, base, candidate)).filter((path) => !workflowCovers(scope, path));
   if (outside.length)
-    throw new WorkflowRefusal("forbidden", `Candidate contains committed files outside the approved scope: ${list2(outside)}`);
+    throw new WorkflowRefusal("forbidden", `Candidate contains committed files outside the approved scope: ${list3(outside)}`);
 }
 async function assertCandidate(cwd, candidate) {
   if (await gitHead(cwd) !== candidate)
@@ -29936,10 +30178,10 @@ function workflowObservation(cwd, plan) {
     assertVisibleIndex(overlapping(declared, indexHidden(gitRead(cwd, INDEX_FLAGS))));
     const dirty = overlapping(declared, workflowChanged(cwd));
     if (dirty.length)
-      throw new WorkflowRefusal("conflict", `Declared write targets have uncommitted changes: ${list2(dirty)}. Commit, stash or leave them out of the plan; Cadence never adopts dirty inputs.`);
+      throw new WorkflowRefusal("conflict", `Declared write targets have uncommitted changes: ${list3(dirty)}. Commit, stash or leave them out of the plan; Cadence never adopts dirty inputs.`);
     const ignored = gitAnswer(cwd, ["check-ignore", "--", ...declared]);
     if (ignored !== null)
-      throw new WorkflowRefusal("invalid", `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list2(((names3) => names3.length ? names3 : ignored.split(`
+      throw new WorkflowRefusal("invalid", `Declared write targets are ignored by Git and cannot be delivered by local merge: ${list3(((names3) => names3.length ? names3 : ignored.split(`
 `).filter(Boolean))(declared.filter((p) => ignored.split(`
 `).includes(p))).sort())}. Use working-copy delivery or change the ignore rules.`);
     gitRead(cwd, ["var", "GIT_AUTHOR_IDENT"]);
@@ -29959,7 +30201,7 @@ async function assertTarget(cwd, expected, scope) {
   assertVisibleIndex(overlapping(scope, indexHidden(await gitText(cwd, INDEX_FLAGS))));
   const dirty = overlapping(scope, await changedPaths(cwd));
   if (dirty.length)
-    throw new WorkflowRefusal("conflict", `Declared targets changed in the checkout during the run: ${list2(dirty)}. Nothing was integrated; the candidate is retained.`);
+    throw new WorkflowRefusal("conflict", `Declared targets changed in the checkout during the run: ${list3(dirty)}. Nothing was integrated; the candidate is retained.`);
 }
 async function tracked(cwd, name) {
   return (await gitRun(cwd, ["ls-files", "--error-unmatch", "--", name])).code === 0;
@@ -30275,15 +30517,15 @@ class DeliveryController {
         const observation = await this.ports.observe();
         const decision = await this.ports.diagnose(error, this.previous);
         this.ports.assertRunning();
-        const record2 = {
+        const record3 = {
           revision: ++this.revision,
           stage,
           observation,
           failure: error.message,
           decision
         };
-        this.ports.record(record2);
-        this.previous = record2;
+        this.ports.record(record3);
+        this.previous = record3;
         if (decision.action === "blocked")
           throw new Error(`Delivery blocked: ${decision.cause}
 ${decision.strategy}`);
@@ -31053,21 +31295,21 @@ function workflowResult(original, secrets) {
   }, ["text", "output", "truncated"]);
 }
 function workflowResultDetail(value, secrets) {
-  const record2 = JSON.parse(sanitizeData(value, secrets));
+  const record3 = JSON.parse(sanitizeData(value, secrets));
   const resultKey = sanitizeText("result", secrets);
-  const keys3 = ["text", "output", "truncated"].map((key2) => sanitizeText(key2, secrets));
-  const result = boundedResult(record2[resultKey], keys3);
-  record2[resultKey] = result;
+  const keys2 = ["text", "output", "truncated"].map((key2) => sanitizeText(key2, secrets));
+  const result = boundedResult(record3[resultKey], keys2);
+  record3[resultKey] = result;
   return {
-    text: canonicalJson(record2, 256 * 1024),
-    limited: result[keys3[2]] === true
+    text: canonicalJson(record3, 256 * 1024),
+    limited: result[keys2[2]] === true
   };
 }
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.41",
-  build: "4da1375d7184585ffb2ed6499f1b81ec3b0f8498dc04dfb182f8104e0596e6dc",
+  version: "2.0.42",
+  build: "310e917d2b16ab7ab04dd1ca093672eb06c630ae897b2cde1f1541a4c57c0efe",
   entry: fileURLToPath6(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -31814,10 +32056,10 @@ class Workflows {
   }
   async worker(live2, cwd, id, prompt, readonly, version, roots2, kind) {
     this.assertRunning(live2);
-    const model = live2.execution.model;
-    if (!model || canonicalJson(version) !== canonicalJson(live2.execution.version))
+    const model2 = live2.execution.model;
+    if (!model2 || canonicalJson(version) !== canonicalJson(live2.execution.version))
       throw new ContractError("stale");
-    this.o.models.assertCurrent(model);
+    this.o.models.assertCurrent(model2);
     if (cwd !== this.cwd)
       await live2.delivery?.assertTip();
     const runCwd = this.executionCwd(live2, cwd);
@@ -31848,7 +32090,7 @@ Write paths are relative to the checkout root.` : "Read applicable project docum
           candidate: live2.run.delivery.candidate
         }
       } : {},
-      model,
+      model: model2,
       role: { role: role3.role, sha256: role3.sha256 },
       context: `${baseContext}
 
@@ -32211,10 +32453,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const file = this.files.read(this.path(live2.run.id, `results/${hash(step.id)}.json`), RECORD_BYTES3);
       if (!file)
         throw new ContractError("unavailable");
-      const record2 = closed(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3), ["stepId", "result"]);
-      if (record2.stepId !== step.id)
+      const record3 = closed(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3), ["stepId", "result"]);
+      if (record3.stepId !== step.id)
         throw new ContractError("corrupt-selected");
-      const result = this.sanitizeResult(record2.result);
+      const result = this.sanitizeResult(record3.result);
       return {
         header: canonicalJson({
           stepId: sanitizeText(step.id, this.o.secrets()),
@@ -32368,14 +32610,14 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
           }
         }
       },
-      record: (record2) => {
+      record: (record3) => {
         const revision = (live2.run.revision ?? 0) + 1;
         this.write(this.path(live2.run.id, `revisions/${revision}.json`), {
-          ...record2,
+          ...record3,
           revision
         });
         live2.run.revision = revision;
-        live2.run.notice = this.notice(`Plan revision ${revision}: ${record2.decision.strategy}`);
+        live2.run.notice = this.notice(`Plan revision ${revision}: ${record3.decision.strategy}`);
         this.save(live2);
       },
       execute: async (work) => {
@@ -33138,10 +33380,10 @@ function legacy(store, budget, reader) {
       if (size2 > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size2);
-      const record2 = store.load(entry.name);
-      if (!record2)
+      const record3 = store.load(entry.name);
+      if (!record3)
         throw new ContractError("corrupt-selected");
-      records.push(record2);
+      records.push(record3);
     }
   } finally {
     dir.closeSync();
@@ -33166,7 +33408,7 @@ var processLifetime = {
     const restarts = process.uptime() > 600 ? 0 : previous;
     if (!Number.isSafeInteger(restarts) || restarts >= SELF_RESTARTS)
       return;
-    const child = spawn6(process.execPath, [
+    const child2 = spawn6(process.execPath, [
       ...process.execArgv,
       fileURLToPath7(new URL("./service-host.mjs", import.meta.url))
     ], {
@@ -33179,11 +33421,11 @@ var processLifetime = {
         CADENCE_RESTARTS: String(restarts + 1)
       }
     });
-    child.on("error", () => {});
-    child.stdin.on("error", () => {});
-    child.stdin.end(`${JSON.stringify(input)}
+    child2.on("error", () => {});
+    child2.stdin.on("error", () => {});
+    child2.stdin.end(`${JSON.stringify(input)}
 `);
-    child.unref();
+    child2.unref();
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
@@ -33227,9 +33469,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       new AccessMaterial(c.files, c.directory, source);
   }
   const home = launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir;
-  const pi = refuseAt("pi-agent-directory", () => piSource(input.config.agentDir, home, c.store.root, launch));
-  refuseAt("pi-auth", () => readPiAuth(pi));
-  refuseAt("pi-models", () => readPiModels(pi));
+  preflightPi(input.config.agentDir, c.store.root, launch);
   const http = new ServiceHttpServer({
     policy: input.config.http,
     assets: web.assets
@@ -33331,7 +33571,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
     const access = new AccessMaterial(c.files, c.directory, source, () => lease.assert());
     const native = c.localAccess();
     const auth = new HttpAuthentication(access, native.epoch, reader.files.format.workspaceId, native.capability);
-    const models = new OwnerModelContext({
+    const models2 = new OwnerModelContext({
       owner,
       accounting: writer.auth,
       network,
@@ -33343,7 +33583,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
     const preferences = new CadencePreferences(input.config.agentDir);
     const choice = new OwnerModelChoice({
       owner,
-      models,
+      models: models2,
       access,
       remember: (value2) => preferences.save(value2),
       recall: () => preferences.read()
@@ -33359,12 +33599,12 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       ...access.redactionLiterals(),
       native.capability,
       ...network.literals,
-      ...models.viewRedactionLiterals()
+      ...models2.viewRedactionLiterals()
     ];
     workbench = !sourceBuild?.deferRuntime ? new Workbench({
       coordination: c,
       owner,
-      models,
+      models: models2,
       choice,
       gate,
       cwd: input.config.cwd,
@@ -33402,7 +33642,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         const before = ownerLiterals();
         const view = {
           rootLabel: diagnosticText(sanitizeText(c.store.root, before), 4096),
-          models: models.observe(),
+          models: models2.observe(),
           context: unavailable2(null)
         };
         if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
@@ -33413,9 +33653,9 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       checks: () => ({ revision: 1, selections: [] }),
       legacyTasks: (budget) => {
         const before = ownerLiterals();
-        const records = legacy(legacyTaskStore(c), budget, reader).map((record2) => ({
-          ...record2,
-          goal: sanitizeText(record2.goal, before)
+        const records = legacy(legacyTaskStore(c), budget, reader).map((record3) => ({
+          ...record3,
+          goal: sanitizeText(record3.goal, before)
         }));
         if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
           throw new ContractError("stale");
@@ -33481,7 +33721,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
               ...operation === "diagnose" ? {
                 recording: heldWriter.quarantined ? "quarantined" : "available",
                 pendingWrites: heldWriter.pendingWrites,
-                pendingPreparations: models.pending,
+                pendingPreparations: models2.pending,
                 proxyAuth: network.mode,
                 recovery: "automatic"
               } : {}
@@ -33519,7 +33759,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       throw new ContractError("quarantine");
     }
     stage = "pi-runtime";
-    const loading = models.load();
+    const loading = models2.load();
     owner.trackAuth(loading);
     await loading;
     stage = "service";
@@ -33537,7 +33777,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       reader,
       projection,
       live: live2,
-      models,
+      models: models2,
       choice,
       access,
       http,
@@ -33556,7 +33796,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       } catch {}
     } else
       await http.close();
-    throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", stage, !!owner);
+    throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", stage, !!owner, error instanceof PiSourceRefusal ? error.problem : undefined);
   }
 }
 

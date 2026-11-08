@@ -33,9 +33,11 @@ import {
   type LaunchEnvironment,
   type PiSnapshot,
   type PiSource,
+  PiSourceRefusal,
   piSource,
   readPiSnapshot,
   sameModels,
+  sdkRefusal,
   selectedEnvironment,
   snapshotLiterals,
   sourceIdentity,
@@ -549,7 +551,8 @@ export class OwnerModelContext {
       });
       this.alive();
       const after = readPiSnapshot(source);
-      if (runtime.getError()) throw new ContractError("corrupt-selected");
+      const refused = runtime.getError();
+      if (refused) throw sdkRefusal(refused);
       if (
         after.auth.identity !== ready.auth.identity ||
         !sameModels(ready, after)
@@ -561,7 +564,9 @@ export class OwnerModelContext {
       this.#thinking = getSupportedThinkingLevels;
     } catch (error) {
       runtimeOwners.delete(this.#options.owner);
-      // Never inspect provider/OS exception properties or expose config bytes.
+      // Never inspect provider/OS exception properties or expose config bytes;
+      // a Pi source refusal carries only Cadence's own field path and words.
+      if (error instanceof PiSourceRefusal) throw error;
       throw new ContractError(
         error instanceof ContractError ? error.code : "corrupt-selected",
       );

@@ -83,6 +83,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `test/web/{project-resume,conversation-reader,workbench,stale-banner,locale}.test.tsx`: complete-link selection without storage, readonly server-held history/mode/context/work restoration, image pagination/parallel detail cancellation, retained stale observations and independent localized status/errors.
   Pure/controlled-fetch/SSR coverage is not physical Edge/Chrome/Android or production validation.
 - `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
+- `pi-sources`: Cadence's closed `models.json` check compared field by field, at every object level, with the pinned SDK's published `schemas/models.schema.json` (a value of each field's type accepted, another type refused at its path, nothing else accepted); the retired `compat.reasoningEffortMap`; file/JSON/schema/SDK refusals that name the field and never a value; the win32 branch (simulated on this host, not a Windows run); and doctor reporting exactly the owner's pre-bind report.
+  Its real-SDK `pi-runtime` case is slow.
 - `checkout-gate`, `service-owner`, `self-heal`: original operations, overlap, Stop, and startup self-healing from real crashed owners, registry locks, partial reservations, orphan workers, torn/unreadable history, half-written metadata, removed project directories and dead workbenches (live owners never reclaimed).
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
   `worker-capture` checks Pi's actual `AgentSession` system-message path (a low-level `Agent` alone does not reproduce it), explicit context omissions, strict message pairing, and split key/delimiter/whitespace redaction across repeated projections.
@@ -133,7 +135,9 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start                           |
 | Missing optional SDK or Pi `auth.json`                         | Project-less workbench may start without loading either; explicit project startup retains its refusal |
 | Package files hard-linked into a package manager's store (Bun) | Packaged reads ignore link count, bind exact bodies; other files stay single-link                     |
-| Host refuses during startup                                    | Fixed code/stage only; a registered host exits too and the next start recovers its registration       |
+| Host refuses during startup                                    | Fixed code/stage and Pi problem words; a registered host exits and the next start recovers            |
+| Pi SDK upgrade adds or retires models.json fields              | Mirror its published schema, closed and typed; a retired field refuses with its migration             |
+| Workbench alive while a project's Pi sources refuse            | Doctor runs the owner's pre-bind and SDK checks; the browser shows `corrupt-selected`                 |
 | Workspace containing the private state home                    | Refuse the project selection; no redirection, default directory or state relocation                   |
 | Restart changes the definition's workspace or Node path        | Stop with the loaded definition before rewriting, not only a signal                                   |
 | npm 12 or Bun skips untrusted install scripts by default       | Ship none; `cadence server install` registers the service and creates the template                    |

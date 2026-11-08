@@ -170,6 +170,12 @@ export class GatewayStore {
     decodeGatewayInput(json(selected));
     return value;
   }
+  /** The selection the workbench last started with, if it ever did. */
+  input(): GatewayInput | undefined {
+    if (!this.read()) return undefined;
+    const selected = this.files.read(this.path("input.json"));
+    return selected ? decodeGatewayInput(json(selected)) : undefined;
+  }
   localAccess(): { endpoint: string; epoch: string; capability: string } {
     const value = this.read();
     if (!value || value.phase === "stopped")

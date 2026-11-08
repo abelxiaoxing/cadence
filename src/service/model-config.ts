@@ -1,9 +1,14 @@
 // Owner-private selected Pi configuration. Never exported through a client DTO.
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
-import { ContractError, LIMITS, parseWireJson } from "../service-contract.ts";
-import { type FileSnapshot, json, PrivateFiles } from "./private-files.ts";
+import {
+  ContractError,
+  type ErrorCode,
+  LIMITS,
+  parseWireJson,
+} from "../service-contract.ts";
+import { type FileSnapshot, PrivateFiles } from "./private-files.ts";
 
 const CONFIG_BYTES = 1024 * 1024;
 const ENTRY_LIMIT = 256;
@@ -39,9 +44,6 @@ export function data(value: unknown): Data {
     out[key] = d.value;
   }
   return out;
-}
-function keys(value: Data, allowed: readonly string[]): void {
-  if (Object.keys(value).some((key) => !allowed.includes(key))) refuse();
 }
 function string(value: unknown): string {
   if (typeof value !== "string" || !value || value.includes("\0")) refuse();
@@ -95,26 +97,35 @@ export function piSource(
   if (selected === "~" || selected.startsWith("~/"))
     selected = home + selected.slice(1);
   selected = resolve(cwd, selected);
-  // Ambient ancestors may be canonical aliases; the selected directory itself may not.
-  const directory = join(
-    realpathSync(dirname(selected)),
-    selected.slice(dirname(selected).length + 1),
-  );
-  if (
-    !lstatSync(directory).isDirectory() ||
-    lstatSync(directory).isSymbolicLink()
-  )
-    refuse();
-  // Pi creates its agent directory with the user's umask (0755, or 0775 under
-  // umask 002), so its mode is not a Cadence premise; ownership still is.
-  const files = new PrivateFiles(directory, false);
-  if (!files.directory(directory)) refuse();
-  return {
-    directory,
-    files,
-    authPath: join(directory, "auth.json"),
-    modelsPath: join(directory, "models.json"),
-  };
+  try {
+    // Ambient ancestors may be canonical aliases; the selected directory itself may not.
+    const directory = join(
+      realpathSync(dirname(selected)),
+      selected.slice(dirname(selected).length + 1),
+    );
+    const st = lstatSync(directory);
+    if (!st.isDirectory() || st.isSymbolicLink()) refuse();
+    // Pi creates its agent directory with the user's umask (0755, or 0775 under
+    // umask 002), so its mode is not a Cadence premise; ownership still is.
+    const files = new PrivateFiles(directory, false);
+    if (!files.directory(directory)) refuse();
+    return {
+      directory,
+      files,
+      authPath: join(directory, "auth.json"),
+      modelsPath: join(directory, "models.json"),
+    };
+  } catch (error) {
+    throw new PiSourceRefusal(
+      {
+        file: "agent-directory",
+        check: "file",
+        field: null,
+        reason: fileReason(selected, true),
+      },
+      error instanceof ContractError ? error.code : "unavailable",
+    );
+  }
 }
 /** Validate only inert templates. SDK remains the interpolation owner. */
 export function templateNames(value: unknown): string[] {
@@ -146,233 +157,452 @@ export function templateNames(value: unknown): string[] {
   }
   return [...names];
 }
-function headers(value: unknown): void {
-  for (const [name, entry] of Object.entries(data(value))) {
-    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) refuse();
-    // Selected models.json accepts string headers only. AuthResult null
-    // suppression is separately preserved; never coerce null config to a string.
-    if (typeof entry !== "string" || /[\r\n\0]/.test(entry)) refuse();
-    if (entry) templateNames(entry);
+/** Which check refused a selected Pi source: the file itself (kind, links,
+ * size, owner), its JSON syntax, Cadence's closed schema of the pinned SDK's
+ * fields, or the pinned SDK's own model loading. */
+export type PiSourceCheck = "file" | "json" | "schema" | "sdk";
+export type PiSourceFile = "agent-directory" | "auth.json" | "models.json";
+export interface PiSourceProblem {
+  file: PiSourceFile;
+  check: PiSourceCheck;
+  /** A path of JSON keys such as `providers.zai.models[0].compat`, never a value. */
+  field: string | null;
+  /** Fixed words; never configuration bytes, credentials or OS/SDK text. */
+  reason: string;
+}
+/** A refused Pi source and why, in words that carry none of its values. */
+export class PiSourceRefusal extends ContractError {
+  constructor(
+    readonly problem: PiSourceProblem,
+    code: ErrorCode = "corrupt-selected",
+  ) {
+    super(code);
   }
 }
-const modelKeys = [
-  "id",
-  "name",
-  "api",
-  "baseUrl",
-  "reasoning",
-  "thinkingLevelMap",
-  "input",
-  "cost",
-  "contextWindow",
-  "maxTokens",
-  "samplingParams",
-  "headers",
-  "compat",
-];
-function compat(value: unknown): void {
-  const config = data(value);
-  // The installed SDK's permissive object union can validate a malformed field
-  // through another member that does not declare it. Close AND type-check these
-  // fields here; never trust that union to validate known compatibility values.
-  const booleans = [
-    "supportsStore",
-    "supportsDeveloperRole",
-    "supportsReasoningEffort",
-    "supportsUsageInStreaming",
-    "supportsFinishReason",
-    "requiresToolResultName",
-    "requiresAssistantAfterToolResult",
-    "requiresThinkingAsText",
-    "requiresReasoningContentOnAssistantMessages",
-    "supportsOpenAIGrammarTools",
-    "supportsStrictMode",
-    "sendSessionAffinityHeaders",
-    "supportsLongCacheRetention",
-    "supportsAdditionalTools",
-    "supportsToolSearch",
-    "supportsEagerToolInputStreaming",
-    "supportsCacheControlOnTools",
-    "supportsTemperature",
-    "forceAdaptiveThinking",
-    "allowEmptySignature",
-    "supportsStrictTools",
-    "supportsToolReferences",
-    // Pi 1.5 keeps or collapses mid-conversation system messages according to
-    // this public provider capability. Unknown request/thinking keys stay refused.
-    "supportsMidConvoSystemMessages",
-  ];
-  const enums: Record<string, readonly string[]> = {
-    maxTokensField: ["max_completion_tokens", "max_tokens"],
-    thinkingFormat: [
+/** A schema refusal at a field, before its file is attached. */
+class FieldRefusal extends ContractError {
+  constructor(
+    readonly field: string,
+    readonly reason: string,
+    code: ErrorCode = "corrupt-selected",
+  ) {
+    super(code);
+  }
+}
+function fail(field: string, reason: string, code?: ErrorCode): never {
+  throw new FieldRefusal(field, reason, code);
+}
+/** One key of a refusal's field path. Keys are names (provider and model IDs,
+ * header names), not values; a key that is not short printable ASCII is elided. */
+function child(at: string, key: string | number): string {
+  if (typeof key === "number") return `${at}[${key}]`;
+  if (/^[A-Za-z_$][\w$]{0,63}$/.test(key)) return at ? `${at}.${key}` : key;
+  return /^[\x21-\x7e]{1,64}$/.test(key) && !/["\\]/.test(key)
+    ? `${at}["${key}"]`
+    : `${at}[…]`;
+}
+/** A field check. Shapes stay inspectable so a test can compare them with the
+ * pinned SDK's published models.json schema. */
+export interface FieldCheck {
+  (value: unknown, at: string): void;
+  fields?: Readonly<Record<string, FieldCheck>>;
+  entries?: FieldCheck;
+  items?: FieldCheck;
+}
+const UNSUPPORTED = "is not a field Cadence's pinned Pi SDK supports";
+function object(value: unknown, at: string): Data {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    fail(at, "must be an object");
+  if (Reflect.ownKeys(value).length > ENTRY_LIMIT)
+    fail(at, `has more than ${ENTRY_LIMIT} entries`);
+  try {
+    return data(value);
+  } catch {
+    return fail(at, "must be a plain object without reserved keys");
+  }
+}
+/** A closed object: only the pinned SDK's fields, each with its own check. */
+function shape(
+  fields: Record<string, FieldCheck>,
+  required: readonly string[] = [],
+  retired: Readonly<Record<string, string>> = {},
+): FieldCheck {
+  const check: FieldCheck = (value, at) => {
+    const o = object(value, at);
+    for (const key of Object.keys(o))
+      if (!Object.hasOwn(fields, key))
+        fail(
+          child(at, key),
+          Object.hasOwn(retired, key) ? retired[key] : UNSUPPORTED,
+        );
+    for (const key of required)
+      if (o[key] === undefined) fail(child(at, key), "is required");
+    for (const [key, field] of Object.entries(fields))
+      if (o[key] !== undefined) field(o[key], child(at, key));
+  };
+  check.fields = fields;
+  return check;
+}
+function record(entries: FieldCheck): FieldCheck {
+  const check: FieldCheck = (value, at) => {
+    for (const [key, entry] of Object.entries(object(value, at)))
+      entries(entry, child(at, key));
+  };
+  check.entries = entries;
+  return check;
+}
+function list(items: FieldCheck, maximum = ENTRY_LIMIT): FieldCheck {
+  const check: FieldCheck = (value, at) => {
+    if (!Array.isArray(value)) fail(at, "must be a list");
+    if (value.length > maximum) fail(at, `has more than ${maximum} entries`);
+    for (const [i, item] of value.entries()) items(item, child(at, i));
+  };
+  check.items = items;
+  return check;
+}
+/** A scalar the predicate accepts, or else the object shape. */
+function scalarOr(
+  scalar: (value: unknown) => boolean,
+  objectShape: FieldCheck,
+  reason: string,
+): FieldCheck {
+  const check: FieldCheck = (value, at) => {
+    if (scalar(value)) return;
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      fail(at, reason);
+    objectShape(value, at);
+  };
+  check.fields = objectShape.fields;
+  return check;
+}
+const scalar =
+  (test: (value: unknown) => boolean, reason: string): FieldCheck =>
+  (value, at) => {
+    if (!test(value)) fail(at, reason);
+  };
+const isNumber = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+const isString = (v: unknown) => typeof v === "string";
+const boolean = scalar((v) => typeof v === "boolean", "must be true or false");
+const number = scalar(isNumber, "must be a number");
+const positive = scalar(
+  (v) => isNumber(v) && (v as number) > 0,
+  "must be a number greater than 0",
+);
+const whole = (maximum = Number.MAX_SAFE_INTEGER) =>
+  scalar(
+    (v) =>
+      Number.isSafeInteger(v) && (v as number) >= 1 && (v as number) <= maximum,
+    maximum === Number.MAX_SAFE_INTEGER
+      ? "must be a whole number of at least 1"
+      : `must be a whole number from 1 to ${maximum}`,
+  );
+const nonEmpty = scalar(
+  (v) => typeof v === "string" && v !== "" && !v.includes("\0"),
+  "must be a non-empty string",
+);
+const anyString = scalar(isString, "must be a string");
+const stringOrNull = scalar(
+  (v) => v === null || isString(v),
+  "must be a string or null",
+);
+const numberOrString = scalar(
+  (v) => isNumber(v) || isString(v),
+  "must be a number or a string",
+);
+const oneOf = (...values: string[]) =>
+  scalar(
+    (v) => values.includes(v as string),
+    `must be ${values.length === 1 ? "" : "one of "}${values.map((v) => JSON.stringify(v)).join(", ")}`,
+  );
+/** Free-form provider request JSON, merged by the SDK as given. */
+const freeform = scalar(
+  (v) => !!v && typeof v === "object" && !Array.isArray(v),
+  "must be an object",
+);
+/** Inert templates only; the SDK remains the interpolation owner. */
+const template: FieldCheck = (value, at) => {
+  nonEmpty(value, at);
+  if ((value as string).startsWith("!"))
+    fail(
+      at,
+      'runs a command ("!…"), which Cadence never runs; use a literal value or $VARIABLE',
+      "unsupported-context",
+    );
+};
+const headerValue: FieldCheck = (value, at) => {
+  // Selected models.json accepts string headers only. AuthResult null
+  // suppression is separately preserved; never coerce null config to a string.
+  if (typeof value !== "string" || /[\r\n\0]/.test(value))
+    fail(at, "must be a single-line string");
+  if (value) template(value, at);
+};
+const headers: FieldCheck = (value, at) => {
+  for (const [name, entry] of Object.entries(object(value, at))) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name))
+      fail(child(at, name), "is not a valid HTTP header name");
+    headerValue(entry, child(at, name));
+  }
+};
+headers.entries = headerValue;
+const variableValue: FieldCheck = (value, at) => {
+  if (typeof value !== "string" || value.includes("\0"))
+    fail(at, "must be a string");
+};
+/** Literal values for named variables; never a file or credentials path. */
+const variables: FieldCheck = (value, at) => {
+  for (const [name, entry] of Object.entries(object(value, at))) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      fail(child(at, name), "is not a valid environment variable name");
+    if (/(?:_FILE|_PATH|_CREDENTIALS)$/.test(name))
+      fail(
+        child(at, name),
+        "names a file (*_FILE, *_PATH or *_CREDENTIALS), which Cadence does not pass on",
+        "unsupported-context",
+      );
+    variableValue(entry, child(at, name));
+  }
+};
+variables.entries = variableValue;
+const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const levels = (each: FieldCheck) =>
+  shape(Object.fromEntries(LEVELS.map((level) => [level, each])));
+const RATES = ["input", "output", "cacheRead", "cacheWrite"];
+const rates = Object.fromEntries(RATES.map((rate) => [rate, number]));
+const costTiers = list(
+  shape({ inputTokensAbove: number, ...rates }, ["inputTokensAbove", ...RATES]),
+);
+const cost = shape({ ...rates, tiers: costTiers }, RATES);
+const strings = list(anyString);
+const percentiles = shape(
+  Object.fromEntries(["p50", "p75", "p90", "p99"].map((p) => [p, number])),
+);
+const chatTemplate = record(
+  scalarOr(
+    (v) => v === null || ["string", "number", "boolean"].includes(typeof v),
+    shape(
+      {
+        $var: oneOf("thinking.enabled", "thinking.effort", "thinking.budget"),
+        omitWhenOff: boolean,
+      },
+      ["$var"],
+    ),
+    'must be a string, number, true/false, null or a {"$var": …} object',
+  ),
+);
+// The installed SDK's open objects keep any unknown key silently. Close AND
+// type-check every field here, exactly the pinned SDK's ProviderCompat set.
+const compat = shape(
+  {
+    ...Object.fromEntries(
+      [
+        "supportsStore",
+        "supportsDeveloperRole",
+        "supportsReasoningEffort",
+        "supportsUsageInStreaming",
+        "supportsFinishReason",
+        "requiresToolResultName",
+        "requiresAssistantAfterToolResult",
+        "requiresThinkingAsText",
+        "requiresReasoningContentOnAssistantMessages",
+        "zaiToolStream",
+        "supportsThinkingTokenBudget",
+        "supportsOpenAIGrammarTools",
+        "supportsMidConvoSystemMessages",
+        "supportsMidConvoToolAdditions",
+        "supportsStrictMode",
+        "sendSessionAffinityHeaders",
+        "supportsLongCacheRetention",
+        "supportsAdditionalTools",
+        "supportsToolSearch",
+        "supportsExplicitPromptCacheMode",
+        "supportsMidConvoEffort",
+        "supportsMaxOutputTokens",
+        "supportsEagerToolInputStreaming",
+        "supportsCacheControlOnTools",
+        "supportsTemperature",
+        "forceAdaptiveThinking",
+        "allowEmptySignature",
+        "supportsStrictTools",
+        "supportsMidConvoToolChanges",
+        "sendImageOptInHeader",
+      ].map((key) => [key, boolean]),
+    ),
+    maxTokensField: oneOf("max_completion_tokens", "max_tokens"),
+    thinkingFormat: oneOf(
       "openai",
       "openrouter",
+      "deepseek",
       "together",
       "baseten",
-      "deepseek",
       "zai",
       "qwen",
       "chat-template",
       "qwen-chat-template",
       "string-thinking",
       "ant-ling",
-    ],
-    cacheControlFormat: ["anthropic"],
-    deferredToolsMode: ["kimi"],
-    sessionAffinityFormat: ["openai", "openai-nosession", "openrouter"],
-  };
-  keys(config, [
-    ...booleans,
-    ...Object.keys(enums),
-    "chatTemplateKwargs",
-    "chatTemplateArgs",
-    "openRouterRouting",
-    "vercelGatewayRouting",
-  ]);
-  for (const key of booleans)
-    if (config[key] !== undefined && typeof config[key] !== "boolean") refuse();
-  for (const [key, values] of Object.entries(enums))
-    if (config[key] !== undefined && !values.includes(config[key] as string))
-      refuse();
-  for (const key of ["chatTemplateKwargs", "chatTemplateArgs"]) {
-    if (config[key] === undefined) continue;
-    for (const entry of Object.values(data(config[key]))) {
-      if (
-        entry === null ||
-        ["string", "boolean", "number"].includes(typeof entry)
-      )
-        continue;
-      const variable = data(entry);
-      keys(variable, ["$var", "omitWhenOff"]);
-      if (
-        !["thinking.enabled", "thinking.effort"].includes(
-          variable.$var as string,
-        ) ||
-        (variable.omitWhenOff !== undefined &&
-          typeof variable.omitWhenOff !== "boolean")
-      )
-        refuse();
-    }
-  }
-  const stringArray = (value: unknown) => {
-    if (
-      value !== undefined &&
-      (!Array.isArray(value) || value.some((v) => typeof v !== "string"))
-    )
-      refuse();
-  };
-  if (config.vercelGatewayRouting !== undefined) {
-    const routing = data(config.vercelGatewayRouting);
-    keys(routing, ["only", "order"]);
-    for (const value of Object.values(routing)) stringArray(value);
-  }
-  if (config.openRouterRouting !== undefined) {
-    const routing = data(config.openRouterRouting);
-    keys(routing, [
-      "allow_fallbacks",
-      "require_parameters",
-      "data_collection",
-      "zdr",
-      "enforce_distillable_text",
-      "order",
-      "only",
-      "ignore",
-      "quantizations",
-      "sort",
-      "max_price",
-      "preferred_min_throughput",
-      "preferred_max_latency",
-    ]);
-    for (const key of [
-      "allow_fallbacks",
-      "require_parameters",
-      "zdr",
-      "enforce_distillable_text",
-    ])
-      if (routing[key] !== undefined && typeof routing[key] !== "boolean")
-        refuse();
-    if (
-      routing.data_collection !== undefined &&
-      !["deny", "allow"].includes(routing.data_collection as string)
-    )
-      refuse();
-    for (const key of ["order", "only", "ignore", "quantizations"])
-      stringArray(routing[key]);
-    if (routing.sort !== undefined && typeof routing.sort !== "string") {
-      const sort = data(routing.sort);
-      keys(sort, ["by", "partition"]);
-      if (
-        (sort.by !== undefined && typeof sort.by !== "string") ||
-        (sort.partition !== undefined &&
-          sort.partition !== null &&
-          typeof sort.partition !== "string")
-      )
-        refuse();
-    }
-    if (routing.max_price !== undefined) {
-      const price = data(routing.max_price);
-      keys(price, ["prompt", "completion", "image", "audio", "request"]);
-      for (const value of Object.values(price))
-        if (typeof value !== "number" && typeof value !== "string") refuse();
-    }
-    for (const key of ["preferred_min_throughput", "preferred_max_latency"]) {
-      if (routing[key] === undefined || typeof routing[key] === "number")
-        continue;
-      const cutoffs = data(routing[key]);
-      keys(cutoffs, ["p50", "p75", "p90", "p99"]);
-      for (const value of Object.values(cutoffs))
-        if (typeof value !== "number") refuse();
-    }
-  }
-}
-function modelDefinition(value: unknown, override = false): void {
-  const model = data(value);
-  keys(
-    model,
-    override
-      ? modelKeys.filter((k) => !["id", "api", "baseUrl"].includes(k))
-      : modelKeys,
-  );
-  if (!override) string(model.id);
-  if (model.headers !== undefined) headers(model.headers);
-  if (model.thinkingLevelMap !== undefined)
-    keys(data(model.thinkingLevelMap), [
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-  if (model.cost !== undefined) {
-    const cost = data(model.cost);
-    keys(cost, ["input", "output", "cacheRead", "cacheWrite", "tiers"]);
-    if (cost.tiers !== undefined) {
-      if (!Array.isArray(cost.tiers) || cost.tiers.length > ENTRY_LIMIT)
-        refuse();
-      for (const tier of cost.tiers)
-        keys(data(tier), [
-          "inputTokensAbove",
-          "input",
-          "output",
-          "cacheRead",
-          "cacheWrite",
-        ]);
-    }
-  }
-  if (model.compat !== undefined) compat(model.compat);
-  // Public SDK validates value types. Above we close unknown metadata keys too:
-  // this peer's TypeBox objects otherwise permit silent additional properties.
-  // samplingParams is intentionally a provider-owned free-form JSON record.
-}
+    ),
+    thinkingTokenBudgetField: oneOf(
+      "thinking_token_budget",
+      "thinking_budget",
+      "thinking_budget_tokens",
+    ),
+    cacheControlFormat: oneOf("anthropic"),
+    sessionAffinityFormat: oneOf("openai", "openai-nosession", "openrouter"),
+    imageInput: oneOf("assets", "images", "state-image-urls"),
+    vllmPriority: number,
+    chatTemplateKwargs: chatTemplate,
+    chatTemplateArgs: chatTemplate,
+    openRouterRouting: shape({
+      allow_fallbacks: boolean,
+      require_parameters: boolean,
+      data_collection: oneOf("deny", "allow"),
+      zdr: boolean,
+      enforce_distillable_text: boolean,
+      order: strings,
+      only: strings,
+      ignore: strings,
+      quantizations: strings,
+      sort: scalarOr(
+        isString,
+        shape({ by: anyString, partition: stringOrNull }),
+        "must be a string or an object",
+      ),
+      max_price: shape(
+        Object.fromEntries(
+          ["prompt", "completion", "image", "audio", "request"].map((k) => [
+            k,
+            numberOrString,
+          ]),
+        ),
+      ),
+      preferred_min_throughput: scalarOr(
+        isNumber,
+        percentiles,
+        "must be a number or an object",
+      ),
+      preferred_max_latency: scalarOr(
+        isNumber,
+        percentiles,
+        "must be a number or an object",
+      ),
+    }),
+    vercelGatewayRouting: shape({ only: strings, order: strings }),
+    allowedFallbackModels: list(
+      shape({ provider: nonEmpty, model: nonEmpty, cost }, [
+        "provider",
+        "model",
+        "cost",
+      ]),
+      3,
+    ),
+  },
+  [],
+  {
+    // Pi 0.72 replaced this with model-level thinkingLevelMap; the pinned SDK
+    // would keep it as an inert key, so the user would lose the mapping silently.
+    reasoningEffortMap:
+      "was replaced in Pi 0.72 by each model's own thinkingLevelMap; move these mappings there (null hides a level the model does not support)",
+  },
+);
+const modelFields = {
+  id: nonEmpty,
+  name: nonEmpty,
+  api: nonEmpty,
+  baseUrl: nonEmpty,
+  reasoning: boolean,
+  thinkingLevelMap: levels(stringOrNull),
+  input: list(oneOf("text", "image")),
+  inputLimits: shape({
+    maxRequestBytes: whole(),
+    images: shape({
+      resize: shape({
+        maxWidth: whole(),
+        maxHeight: whole(),
+        maxBytes: whole(),
+        jpegQuality: whole(100),
+      }),
+      maxPerMessage: whole(),
+      maxPerRequest: whole(),
+    }),
+  }),
+  cost,
+  promptCache: shape({ short: positive, long: positive }),
+  contextWindow: positive,
+  maxTokens: positive,
+  samplingParams: freeform,
+  samplingParamsByThinkingLevel: levels(freeform),
+  headers,
+  compat,
+};
+const {
+  id: _id,
+  api: _api,
+  baseUrl: _baseUrl,
+  ...overrideFields
+} = modelFields;
+const model = shape(modelFields, ["id"]);
+const models = list(model);
+const uniqueModels: FieldCheck = (value, at) => {
+  models(value, at);
+  const ids = new Set<unknown>();
+  (value as Data[]).forEach((entry, i) => {
+    if (ids.has(entry.id))
+      fail(
+        child(child(at, i), "id"),
+        "repeats the id of an earlier model of this provider",
+      );
+    ids.add(entry.id);
+  });
+};
+uniqueModels.items = model;
+/** The pinned SDK's models.json schema, closed. Exported for its conformance test. */
+export const MODELS_JSON: FieldCheck = shape(
+  {
+    $schema: anyString,
+    providers: record(
+      shape({
+        name: nonEmpty,
+        baseUrl: nonEmpty,
+        apiKey: template,
+        api: nonEmpty,
+        oauth: oneOf("radius"),
+        headers,
+        compat,
+        authHeader: boolean,
+        models: uniqueModels,
+        modelOverrides: record(
+          shape({
+            ...overrideFields,
+            cost: shape({ ...rates, tiers: costTiers }),
+          }),
+        ),
+      }),
+    ),
+  },
+  ["providers"],
+);
+const credential: FieldCheck = (value, at) => {
+  const o = object(value, at);
+  if (o.type === "api_key") {
+    for (const key of Object.keys(o))
+      if (!["type", "key", "env"].includes(key))
+        fail(child(at, key), "is not a field of an api_key credential");
+    if (o.key !== undefined) template(o.key, child(at, "key"));
+    if (o.env !== undefined) variables(o.env, child(at, "env"));
+  } else if (o.type === "oauth") {
+    nonEmpty(o.access, child(at, "access"));
+    nonEmpty(o.refresh, child(at, "refresh"));
+    number(o.expires, child(at, "expires"));
+    if (o.env !== undefined) variables(o.env, child(at, "env"));
+    // OAuth providers own additional account/scope fields. Keep all of them
+    // private and compare them across refresh, rather than discarding identity.
+  } else fail(child(at, "type"), 'must be "api_key" or "oauth"');
+};
+const AUTH_JSON = record(credential);
 /** Match the selected peer's documented models syntax (line comments and
  * trailing commas only), without importing its private parser. Retain raw bytes
  * for freshness. Auth remains strict JSON; neither path repairs the file. */
-function modelJson(snapshot: FileSnapshot): unknown {
-  const input = new TextDecoder("utf-8", { fatal: true }).decode(
-    snapshot.bytes,
-  );
+function piJsonc(input: string): string {
   let stripped = "";
   let quoted = false;
   let escaped = false;
@@ -407,7 +637,106 @@ function modelJson(snapshot: FileSnapshot): unknown {
       else if (char === '"') quoted = false;
     } else if (char === '"') quoted = true;
   }
-  return parseWireJson(normalized, CONFIG_BYTES);
+  return normalized;
+}
+/** Why a selected file or directory was refused, from its metadata alone. */
+function fileReason(path: string, directory: boolean): string {
+  let st: Stats;
+  try {
+    st = lstatSync(path);
+  } catch {
+    return directory
+      ? "does not exist; run pi once to create it, or select another --agent-dir"
+      : "cannot be read";
+  }
+  if (st.isSymbolicLink())
+    return "is a symbolic link; Cadence reads only the real file or directory, not a link to it";
+  if (directory ? !st.isDirectory() : !st.isFile())
+    return directory ? "is not a directory" : "is not a regular file";
+  if (!directory && st.nlink !== 1)
+    return `has ${st.nlink} hard links; Cadence reads only a file with a single link`;
+  if (!directory && st.size > CONFIG_BYTES) return "is larger than 1 MiB";
+  if (
+    process.platform !== "win32" &&
+    process.getuid &&
+    st.uid !== process.getuid()
+  )
+    return "is owned by another user";
+  return directory
+    ? "has a parent directory Cadence cannot use (a symbolic link loop or another user's directory)"
+    : "changed while Cadence was reading it; try again";
+}
+function readSource(
+  source: PiSource,
+  file: "auth.json" | "models.json",
+): FileSnapshot | undefined {
+  const path = file === "auth.json" ? source.authPath : source.modelsPath;
+  try {
+    return source.files.read(path, CONFIG_BYTES);
+  } catch (error) {
+    throw new PiSourceRefusal(
+      { file, check: "file", field: null, reason: fileReason(path, false) },
+      error instanceof ContractError ? error.code : "unavailable",
+    );
+  }
+}
+/** Strict JSON (models.json: Pi's comments and trailing commas), refused with
+ * at most a line number: a parser message would quote the file's bytes. */
+function parseSource(
+  snapshot: FileSnapshot,
+  file: "auth.json" | "models.json",
+): unknown {
+  const refuse = (reason: string): never => {
+    throw new PiSourceRefusal({ file, check: "json", field: null, reason });
+  };
+  let text = "";
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+  } catch {
+    refuse("is not valid UTF-8 text");
+  }
+  if (file === "models.json") text = piJsonc(text);
+  try {
+    return parseWireJson(text, CONFIG_BYTES);
+  } catch {
+    const extra =
+      file === "models.json"
+        ? " (beyond JSON, models.json allows only // line comments and trailing commas)"
+        : "";
+    try {
+      JSON.parse(text);
+    } catch (error) {
+      const line = /\(line (\d+) column \d+\)$/.exec(
+        error instanceof Error ? error.message : "",
+      )?.[1];
+      return refuse(
+        `is not valid JSON${line ? ` near line ${line}` : ""}${extra}`,
+      );
+    }
+    return refuse(
+      "has a duplicate key, a NUL character, an unpaired surrogate or nesting deeper than 64 levels",
+    );
+  }
+}
+function schemaCheck(
+  file: "auth.json" | "models.json",
+  check: FieldCheck,
+  value: unknown,
+): void {
+  try {
+    check(value, "");
+  } catch (error) {
+    if (!(error instanceof FieldRefusal)) throw error;
+    throw new PiSourceRefusal(
+      {
+        file,
+        check: "schema",
+        field: error.field || null,
+        reason: error.reason,
+      },
+      error.code,
+    );
+  }
 }
 export function readPiSnapshot(source: PiSource): PiSnapshot {
   const { auth, credentials } = readPiAuth(source);
@@ -417,79 +746,87 @@ export function readPiSnapshot(source: PiSource): PiSnapshot {
 export function readPiAuth(
   source: PiSource,
 ): Pick<PiSnapshot, "auth" | "credentials"> {
-  const auth = source.files.read(source.authPath, CONFIG_BYTES);
-  if (!auth) refuse();
+  const auth = readSource(source, "auth.json");
+  if (!auth)
+    throw new PiSourceRefusal({
+      file: "auth.json",
+      check: "file",
+      field: null,
+      reason: "does not exist; sign in with Pi first (pi, then /login)",
+    });
+  const value = parseSource(auth, "auth.json");
+  schemaCheck("auth.json", AUTH_JSON, value);
   const credentials: Record<string, Credential> = Object.create(null);
-  for (const [provider, input] of Object.entries(
-    data(json(auth, CONFIG_BYTES)),
-  )) {
-    const credential = data(input);
-    if (credential.type === "api_key") {
-      keys(credential, ["type", "key", "env"]);
-      if (credential.key !== undefined) templateNames(credential.key);
-      if (credential.env !== undefined) environment(credential.env);
-    } else if (credential.type === "oauth") {
-      string(credential.access);
-      string(credential.refresh);
-      if (
-        typeof credential.expires !== "number" ||
-        !Number.isFinite(credential.expires)
-      )
-        refuse();
-      if (credential.env !== undefined) environment(credential.env);
-      // OAuth providers own additional account/scope fields. Keep all of them
-      // private and compare them across refresh, rather than discarding identity.
-    } else refuse();
-    credentials[provider] = credential as unknown as Credential;
-  }
+  for (const [provider, credential] of Object.entries(data(value)))
+    credentials[provider] = data(credential) as unknown as Credential;
   return { auth, credentials };
 }
 export function readPiModels(
   source: PiSource,
 ): Pick<PiSnapshot, "models" | "providers"> {
-  const models = source.files.read(source.modelsPath, CONFIG_BYTES);
+  const models = readSource(source, "models.json");
   const providers: Record<string, Data> = Object.create(null);
   if (models) {
-    const root = data(modelJson(models));
-    keys(root, ["providers", "$schema"]);
-    for (const [id, value] of Object.entries(data(root.providers))) {
-      const provider = data(value);
-      keys(provider, [
-        "name",
-        "baseUrl",
-        "apiKey",
-        "api",
-        "oauth",
-        "headers",
-        "compat",
-        "authHeader",
-        "models",
-        "modelOverrides",
-      ]);
-      if (provider.apiKey !== undefined) templateNames(provider.apiKey);
-      if (provider.headers !== undefined) headers(provider.headers);
-      if (provider.compat !== undefined) compat(provider.compat);
-      if (provider.models !== undefined) {
-        if (
-          !Array.isArray(provider.models) ||
-          provider.models.length > ENTRY_LIMIT
-        )
-          refuse();
-        const ids = new Set<unknown>();
-        for (const model of provider.models) {
-          modelDefinition(model);
-          const id = data(model).id;
-          if (ids.has(id)) refuse();
-          ids.add(id);
-        }
-      }
-      if (provider.modelOverrides !== undefined)
-        for (const model of Object.values(data(provider.modelOverrides)))
-          modelDefinition(model, true);
-      providers[id] = provider;
-    }
+    const value = parseSource(models, "models.json");
+    schemaCheck("models.json", MODELS_JSON, value);
+    for (const [id, provider] of Object.entries(data(data(value).providers)))
+      providers[id] = data(provider);
   }
   return { models, providers };
+}
+/** The owner's pre-bind check of its selected Pi sources, which doctor runs
+ * too: the agent directory, then auth.json, then models.json. */
+export function checkPiSources(
+  agentDir: string | undefined,
+  home: string,
+  cwd: string,
+  env: LaunchEnvironment,
+): PiSource {
+  const source = piSource(agentDir, home, cwd, env);
+  readPiAuth(source);
+  readPiModels(source);
+  return source;
+}
+/** The pinned SDK's own refusal (ModelRuntime.getError), reduced to a field
+ * path and fixed words. Its text is never passed on: it can quote file bytes. */
+export function sdkRefusal(message: string): PiSourceRefusal {
+  const problem = (field: string | null, reason: string) =>
+    new PiSourceRefusal({ file: "models.json", check: "sdk", field, reason });
+  const schema =
+    /^Invalid models\.json schema:\n {2}- ([A-Za-z0-9_$.:@/+-]{1,200}): (must [A-Za-z0-9 ,'"_=<>.-]{1,120})$/m.exec(
+      message,
+    );
+  if (schema) return problem(schema[1], schema[2]);
+  const provider = /^Provider "?([A-Za-z0-9_.:@/+-]{1,64})"?[:,]/m.exec(
+    message,
+  )?.[1];
+  const known: [RegExp, string][] = [
+    [
+      /no "api" specified/,
+      'has a model with no "api"; set it on the provider or on the model',
+    ],
+    [
+      /"baseUrl" is required when defining custom models/,
+      'defines models but has no "baseUrl"',
+    ],
+    [
+      /"baseUrl" is required when "oauth" is set/,
+      'sets "oauth" but has no "baseUrl"',
+    ],
+    [
+      /must specify "baseUrl"/,
+      "must set baseUrl, headers, compat, modelOverrides or models",
+    ],
+    [/invalid contextWindow/, "has a model with an invalid contextWindow"],
+    [/invalid maxTokens/, "has a model with an invalid maxTokens"],
+  ];
+  for (const [pattern, reason] of known)
+    if (pattern.test(message))
+      return problem(provider ? child("providers", provider) : null, reason);
+  return problem(
+    null,
+    "was refused by the Pi SDK; run pi in a terminal to see its own message",
+  );
 }
 /** Private equality only, not a public hash/selection ID. */
 export function sourceIdentity(snapshot: PiSnapshot, provider: string): string {

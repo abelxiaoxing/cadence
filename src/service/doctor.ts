@@ -1,15 +1,27 @@
 /** Self-healing for management commands, and `cadence doctor`. SDK-free.
  * Startup heals automatically; doctor shows the same picture readonly and,
- * with --fix, also handles what needs one confirmation. */
+ * with --fix, also handles what needs one confirmation. It also runs each
+ * project owner's pre-bind Pi source checks, since a live process says nothing
+ * about whether a project's model sources are usable. */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { isatty } from "node:tty";
 import { defaultStateHome } from "../workspace.ts";
 import { ContractError } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { GatewayStore } from "./gateway-store.ts";
+import { captureEnvironment } from "./model-config.ts";
 import { type RecoveryEvent, RecoveryLog } from "./recovery-log.ts";
+import {
+  defaultAgentDir,
+  describePiProblem,
+  preflightPi,
+  readHostConfig,
+  type StartupReport,
+  startupReport,
+} from "./runtime.ts";
 import {
   type HealOptions,
   type HealOutcome,
@@ -164,8 +176,43 @@ export interface DoctorOptions {
   stateHome?: string;
   serverConfig?: string;
   workspace?: string;
+  /** Pi's agent directory for a project that has none selected yet. */
+  agentDir?: string;
   probeProject(root: string, stateHome: string): Promise<boolean>;
   probeWorkbench(store: GatewayStore): Promise<boolean>;
+}
+/** One selected agent directory and the owners that would load it. */
+interface PiCheck {
+  agentDir: string;
+  cwd: string;
+  targets: string[];
+  report: StartupReport | null;
+}
+/** Exactly what an owner checks before it binds: the agent directory, then
+ * auth.json, then models.json. SDK model loading (`pi-runtime`) is not run
+ * here; management commands never import the SDK. */
+function checkPi(agentDir: string, cwd: string): StartupReport | null {
+  try {
+    preflightPi(agentDir, cwd, captureEnvironment(process.env));
+    return null;
+  } catch (error) {
+    return startupReport(error);
+  }
+}
+function piSummary(check: PiCheck): string {
+  const head = `  ${check.agentDir} (${check.targets.join(", ")}): `;
+  const report = check.report;
+  if (!report) return `${head}OK`;
+  const file = report.problem?.file;
+  const path =
+    file && file !== "agent-directory" ? join(check.agentDir, file) : null;
+  return `${head}refused at ${report.stage} (${report.error})${
+    report.problem ? `\n    ${describePiProblem(report.problem)}` : ""
+  }${
+    path
+      ? `\n    File: ${path}. Cadence changed nothing; fix the file, then start the project again.`
+      : ""
+  }`;
 }
 type Line = { target: string; outcome: HealOutcome };
 function summary(line: Line): string {
@@ -250,6 +297,38 @@ export async function doctor(o: DoctorOptions): Promise<unknown> {
   }
   const config = o.serverConfig ?? serverConfigPath(homedir());
   const store = new GatewayStore(config, stateHome);
+  // A project without its own selection gets the workbench's agent directory
+  // when the workbench prepares it, else the one `cadence project open` uses.
+  let fallback = o.agentDir ?? defaultAgentDir(process.env);
+  if (!o.agentDir)
+    try {
+      fallback = store.input()?.agentDir ?? fallback;
+    } catch {
+      /* reported through the workbench line */
+    }
+  const pi = new Map<string, PiCheck>();
+  const selectPi = (agentDir: string, cwd: string, target: string) => {
+    const check = pi.get(agentDir) ?? {
+      agentDir,
+      cwd,
+      targets: [],
+      report: null,
+    };
+    check.targets.push(target);
+    pi.set(agentDir, check);
+  };
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    let agentDir = fallback;
+    try {
+      agentDir =
+        readHostConfig(new ServiceCoordination(root, stateHome))?.agentDir ??
+        fallback;
+    } catch {
+      /* the project line reports its damaged state */
+    }
+    selectPi(agentDir, root, `project ${root}`);
+  }
   if (store.files.directory(store.directory)) {
     const responsive = () => o.probeWorkbench(store);
     let outcome = await healWorkbench(store, { ...options, responsive });
@@ -269,11 +348,14 @@ export async function doctor(o: DoctorOptions): Promise<unknown> {
         });
     }
     lines.push({ target: "Workbench", outcome });
-  }
+    selectPi(fallback, homedir(), "the workbench");
+  } else selectPi(fallback, homedir(), "new projects");
+  for (const check of pi.values())
+    check.report = checkPi(check.agentDir, check.cwd);
   const recent = log.events(5);
   const usage = log.usage();
   process.stderr.write(
-    `Cadence doctor${o.fix ? " --fix" : ""}\n${lines.map((l) => `  ${summary(l)}`).join("\n")}\n${
+    `Cadence doctor${o.fix ? " --fix" : ""}\n${lines.map((l) => `  ${summary(l)}`).join("\n")}\nPi model sources (each project owner's checks before it starts; the SDK's model loading runs only when an owner starts, whose refusal names the field the same way):\n${[...pi.values()].map(piSummary).join("\n")}\n${
       recent.length
         ? `Recent automatic recoveries:\n${recent
             .map(
@@ -284,7 +366,9 @@ export async function doctor(o: DoctorOptions): Promise<unknown> {
         : ""
     }${usage.entries ? `Archived damaged state: ${usage.entries} entr${usage.entries === 1 ? "y" : "ies"}, ${Math.ceil(usage.bytes / 1024)} KiB in ${log.archiveDirectory} (expires after 30 days).\n` : ""}`,
   );
-  const needs = lines.some((l) => l.outcome.status === "blocked");
+  const needs =
+    lines.some((l) => l.outcome.status === "blocked") ||
+    [...pi.values()].some((check) => check.report);
   if (needs) process.exitCode = 1;
   return {
     status: needs ? "attention" : "ok",
@@ -297,6 +381,11 @@ export async function doctor(o: DoctorOptions): Promise<unknown> {
       ...(l.outcome.status === "reclaimable"
         ? { cause: l.outcome.cause, workers: l.outcome.workers }
         : {}),
+    })),
+    pi: [...pi.values()].map((check) => ({
+      agentDir: check.agentDir,
+      targets: check.targets,
+      ...(check.report ?? { status: "ok" }),
     })),
     recent: recent.map((e) => ({
       at: e.at,
