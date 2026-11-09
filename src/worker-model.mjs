@@ -4,7 +4,6 @@ import {
   closed,
   decodeModelRetry,
   integer,
-  LIMITS,
   list,
   oneOf,
   text,
@@ -274,11 +273,13 @@ export class WorkerModelState {
 
 /** One private, sequential request at a time. Replies contain credentials only
  * on the owner/child IPC pipe, never in capture or a tool result. No retry here.
+ * SDK availability checks and prompt/request auth can overlap in ONE worker;
+ * worker-reservation limits are not an admission limit for these callers.
+ * Await their originals in order, keeping at most one owner request in flight.
  * Abort is owned by the session; disconnect is a real loss of its auth owner. */
 export function ownerAuth(channel, retain, fail = () => {}) {
   let sequence = 0;
   let pending;
-  let queued = 0;
   let tail = Promise.resolve();
   let closed = false;
   const disconnect = () => {
@@ -303,9 +304,8 @@ export function ownerAuth(channel, retain, fail = () => {}) {
   channel.on("disconnect", disconnect);
   return {
     resolve() {
-      if (closed || !channel.connected || queued >= LIMITS.childReservations)
+      if (closed || !channel.connected)
         return Promise.reject(new Error("Owner authentication unavailable"));
-      queued++;
       const original = tail.then(
         () =>
           new Promise((resolve, reject) => {
@@ -324,14 +324,10 @@ export function ownerAuth(channel, retain, fail = () => {}) {
             }
           }),
       );
-      tail = original
-        .then(
-          () => {},
-          () => {},
-        )
-        .finally(() => {
-          queued--;
-        });
+      tail = original.then(
+        () => {},
+        () => {},
+      );
       return original;
     },
     close() {

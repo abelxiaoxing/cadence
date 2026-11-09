@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,11 @@ import { Type } from "typebox";
 import { afterEach, expect, it, vi } from "vitest";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
-import { WORKER_POLICY, WorkerModelState } from "../src/worker-model.mjs";
+import {
+  ownerAuth,
+  WORKER_POLICY,
+  WorkerModelState,
+} from "../src/worker-model.mjs";
 
 const model = {
   id: "fixture",
@@ -109,7 +114,9 @@ async function fixture(reply, options = {}) {
           name: "Fixture",
           resolve: async () => {
             authRequests++;
-            return { auth: { apiKey: "fixture-only" } };
+            return options.auth
+              ? await options.auth()
+              : { auth: { apiKey: "fixture-only" } };
           },
         },
       },
@@ -559,5 +566,60 @@ it("inherited retry settings beyond six remain one SDK request loop with complet
     ).toHaveLength(1);
   } finally {
     await f.close();
+  }
+});
+
+it("real SDK provider discovery and prompt preflight can queue more than two auth resolutions before the first reply", async () => {
+  let release, observedThird;
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const third = new Promise((resolve) => {
+    observedThird = resolve;
+  });
+  let callers = 0;
+  const channel = Object.assign(new EventEmitter(), {
+    connected: true,
+    send: vi.fn((message, callback) => {
+      callback();
+      void blocked.then(() =>
+        channel.emit("message", {
+          kind: "auth",
+          id: message.id,
+          ok: true,
+          auth: { ok: true, apiKey: "fixture-only" },
+        }),
+      );
+    }),
+  });
+  const failed = vi.fn(),
+    retained = vi.fn();
+  const auth = ownerAuth(channel, retained, failed);
+  const f = await fixture(() => response(item), {
+    auth: async () => {
+      if (++callers === 3) observedThird();
+      const value = await auth.resolve();
+      return { auth: { apiKey: value.apiKey } };
+    },
+  });
+  const running = f.start("Reply once");
+  void running.catch(() => {});
+  try {
+    await third;
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(f.requests).toHaveLength(0);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    await running;
+    await f.capture.final();
+    expect(f.requests).toHaveLength(1);
+    expect(f.failures).toEqual([]);
+    expect(f.session.getLastAssistantText()).toBe("Done");
+    expect(retained.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(failed).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await f.close();
+    auth.close();
   }
 });

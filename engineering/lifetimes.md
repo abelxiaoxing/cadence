@@ -47,6 +47,10 @@ An interrupted run's notice says it was interrupted and that starting it again c
 A native workflow command refused before any write, grant or admission for a never-attempted ID, by a healthy owner, reports no effect; anything else stays uncertain.
 Access rotation does not revoke an accepted worker's pinned model choice; source/epoch changes still refuse.
 
+SDK provider registration/availability checks and prompt preflight can overlap several authentication resolutions inside one worker, before its first model request.
+The private auth bridge queues those SDK callers and joins each original in order, with one owner IPC request in flight; worker-reservation counts must not reject this queue.
+A reply resolves only its own caller, while disconnect rejects queued observers without dispatching/replaying their requests; the owner still joins an already-started auth/writeback operation.
+
 ## Retired task execution
 
 The old task action/admission/graph scheduler and foreground controller are deleted.

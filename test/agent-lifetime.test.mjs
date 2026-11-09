@@ -392,3 +392,24 @@ it("the unresolved protocol window is finite even though cumulative traffic is n
   );
   expect(emitter.queue.bytes).toBe(0);
 });
+
+it("disconnect rejects all queued auth observers without sending or replaying their requests", async () => {
+  const channel = Object.assign(new EventEmitter(), {
+    connected: true,
+    send: vi.fn((_message, done) => done()),
+  });
+  const failed = vi.fn();
+  const auth = ownerAuth(channel, vi.fn(), failed);
+  const observers = Array.from({ length: 5 }, () => auth.resolve());
+  const settled = Promise.allSettled(observers);
+  await Promise.resolve();
+  expect(channel.send).toHaveBeenCalledTimes(1);
+  auth.close();
+  expect((await settled).every((result) => result.status === "rejected")).toBe(
+    true,
+  );
+  expect(channel.send).toHaveBeenCalledTimes(1);
+  expect(failed).toHaveBeenCalledOnce();
+  expect(channel.listenerCount("message")).toBe(0);
+  expect(channel.listenerCount("disconnect")).toBe(0);
+});
