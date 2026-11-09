@@ -120,3 +120,24 @@ it.each(["disconnect", "malformed reply"])(
     expect(f.send).toHaveBeenCalledTimes(1);
   },
 );
+
+it("private auth replies can never satisfy or leak into a coordinator tool with the same ID", async () => {
+  const f = fixture();
+  const pending = f.call();
+  let settled = false;
+  void pending.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  f.reply({
+    kind: "auth",
+    id: f.send.mock.calls[0][0].id,
+    ok: true,
+    auth: { ok: true, apiKey: "private-canary" },
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  f.reply();
+  expect((await pending).content[0].text).toBe("observed");
+  await f.close();
+});

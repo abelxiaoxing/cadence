@@ -218,7 +218,6 @@ export async function createServiceHost(
   sourceBuild?: {
     contractHash: string;
     deferRuntime?: true;
-    workerTimeoutMs?: number;
     webDirectory?: string;
   },
   lifetime?: HostLifetime,
@@ -461,7 +460,6 @@ export async function createServiceHost(
             import.meta.url,
           ),
           secrets: ownerLiterals,
-          timeoutMs: sourceBuild?.workerTimeoutMs,
         })
       : null;
     const unavailable = (taskId: string | null): ControlContext => ({

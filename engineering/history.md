@@ -17,7 +17,7 @@ Storage exhaustion refuses new work rather than silently evicting history.
 
 ## Capture, retained history and privacy
 
-Task workers use public SDK APIs, explicit empty resources, in-memory session/settings and disabled compaction/cache warming.
+Task workers use public SDK APIs, explicit empty resources, in-memory session/settings, SDK-native automatic compaction and disabled cache warming.
 Model-request recovery is SDK-owned (see [lifetimes](lifetimes.md)); the separate synchronous session listener projects only bounded `model-retry` phase/count/delay frames into the existing capture queue, never provider error text or headers.
 These progress frames use the data budget, not the reserved final/failure lane, and every asynchronous emission failure aborts through the existing capture-failure path.
 Retry end clears progress but never establishes success; a final capture cannot select a response while recovery remains active.
@@ -76,7 +76,10 @@ A cold reader's empty original-turn map must never turn live work into an inferr
 Workbench access rotation and Stop close retained view handles; an owner restart or view eviction invalidates their continuations without restarting a scan.
 
 Conversation content lives in the project's Pi session files, which Pi writes as the terminal does (see [clients](clients.md#ordinary-conversations)); the owner reads them and keeps no copy.
-`src/service/pi-sessions.ts` folds each file line by line into a listing summary and, for an opened session, an entry tree, reading only what was appended since and ignoring malformed or torn lines as Pi does; a replaced or shortened file is read from its start.
+`src/service/pi-sessions.ts` folds files in fixed read chunks into summaries and an entry/offset tree, reading only appended complete lines and ignoring malformed or torn lines as Pi does.
+Opened entry bodies are loaded on demand through a bounded LRU, not retained with every index entry.
+Replaced or shortened files reset the index and built-turn incarnation; no total file-size refusal remains.
+Metadata and the installed Pi SessionManager still scale with entry count; compaction does not shrink historical files.
 A branch is the path from the root to one entry; it splits into turns at user messages, and each turn becomes chat items: text, tool calls paired with their results, terminal `!` commands, compaction and branch summaries and displayed extension messages.
 Built turns are cached by content and secret set; redaction applies to every returned field, and large fields split into parts by their exact encoded size.
 A live browser turn adds, by count, only the streamed messages and tool output its worker has not yet written to the session.

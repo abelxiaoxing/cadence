@@ -149,7 +149,6 @@ const prepare = (selection, ctx = context, extra = {}) =>
     request: request(selection),
     operationId: randomUUID(),
     epoch: lease.registration.epoch,
-    timeoutMs: scenario === "oauth-budget" ? 1_200_000 : 1000,
     signal: new AbortController().signal,
     current: () => allow,
     ...extra,
@@ -426,7 +425,7 @@ try {
       await oauthSetup({
         blocked: [
           "oauth-cancel",
-          "oauth-timeout",
+          "oauth-backpressure",
           "oauth-queue",
           "oauth-stop",
           "oauth-competing",
@@ -538,17 +537,15 @@ try {
       assert.equal(authCalls, 0);
     } else {
       const active =
-        scenario === "oauth-timeout"
-          ? make({ waitMs: 100 })
-          : scenario === "explicit-dir"
-            ? make({
-                agentDir,
-                environment: {
-                  ...process.env,
-                  PI_CODING_AGENT_DIR: join(root, "missing"),
-                },
-              })
-            : context;
+        scenario === "explicit-dir"
+          ? make({
+              agentDir,
+              environment: {
+                ...process.env,
+                PI_CODING_AGENT_DIR: join(root, "missing"),
+              },
+            })
+          : context;
       await active.load();
       assert.equal(optionsSeen.allowModelNetwork, false);
       assert.equal(optionsSeen.refreshOnCreate, false);
@@ -727,7 +724,7 @@ try {
         } else if (
           [
             "oauth-cancel",
-            "oauth-timeout",
+            "oauth-backpressure",
             "oauth-queue",
             "oauth-stop",
             "oauth-competing",
@@ -780,6 +777,14 @@ try {
             exit = once(competing, "close");
             await waitFor(() => competitorRequested);
             assert.equal(contacts, 1);
+          } else if (scenario === "oauth-backpressure") {
+            let finished = false;
+            void pending.then(() => {
+              finished = true;
+            });
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.equal(finished, false);
+            assert.equal(active.pending, 1);
           } else {
             if (scenario === "oauth-cancel") controller.abort();
             const result = await pending;
@@ -789,6 +794,7 @@ try {
           }
           assert.equal(originalSignal.aborted, false);
           releaseResponse();
+          if (scenario === "oauth-backpressure") use(await pending);
           if (scenario === "oauth-competing") {
             use(await pending);
             assert.deepEqual(await exit, [0, null]);
@@ -801,7 +807,7 @@ try {
             records.filter((r) => r.type === "settlement").length,
             second ? 2 : 1,
           );
-          if (scenario !== "oauth-competing")
+          if (!["oauth-competing", "oauth-backpressure"].includes(scenario))
             assert.equal(records[1].admissionClosed, true);
           assert.equal(
             JSON.parse(readFileSync(authPath)).fixture.refresh,

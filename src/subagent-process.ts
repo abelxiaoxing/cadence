@@ -27,15 +27,21 @@ import {
   closed,
   decodeCaptureFrame,
   decodeRecordingLink,
+  decodeStopCause,
   decodeWorkerPublicRequest,
   LIMITS,
   type NativeSettlement,
   type RecordingLink,
+  type StopCause,
   type WorkerCompletion,
   type WorkerPublicRequest,
 } from "./worker-public.mjs";
 import { WorkerRecording } from "./worker-recording.ts";
-import { sanitizeData, sanitizeText } from "./worker-redaction.mjs";
+import {
+  sanitizeData,
+  sanitizeText,
+  TextSanitizer,
+} from "./worker-redaction.mjs";
 
 export interface RequestAuth {
   ok: true;
@@ -57,15 +63,17 @@ export type ProcessObservation = {
   kind: "spawned" | "stop-requested" | "closed";
   at: number;
   reason?: string;
+  stop?: StopCause;
 };
 export interface ProcessSpec {
   /** Synchronous in-memory observation only. Persistence belongs to the caller's
    * original settlement, never the signal/stop critical path. */
   onLifecycle?: (event: ProcessObservation) => void;
+  stopTarget?: string;
   command: string;
   args: string[];
   cwd: string;
-  timeoutMs: number;
+  timeoutMs?: number;
   signal: AbortSignal;
   input?: string;
   /** Private fd 3 payload, never part of the bounded public stdin envelope. */
@@ -92,6 +100,7 @@ export interface ProcessSpec {
   onProgress?: (text: string) => void;
   /** Ordinary-chat capture, a live preview only; never a task recording receipt. */
   onFrame?: (frame: CaptureFrame) => void;
+  onAuth?: () => Promise<RequestAuth>;
   onCoordinator?: (
     name: string,
     args: unknown,
@@ -176,14 +185,14 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         "pipe",
         "pipe",
         // Image bytes use fd 3; coordinator IPC retains fd 4.
-        ...(spec.imageInput !== undefined || spec.onCoordinator
+        ...(spec.imageInput !== undefined || spec.onCoordinator || spec.onAuth
           ? [
               spec.imageInput !== undefined
                 ? ("pipe" as const)
                 : ("ignore" as const),
             ]
           : []),
-        ...(spec.onCoordinator ? ["ipc" as const] : []),
+        ...(spec.onCoordinator || spec.onAuth ? ["ipc" as const] : []),
       ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     let settled = false;
@@ -209,7 +218,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     });
     const ingressStop = new AbortController();
     let stopping: RunResult["outcome"] | undefined;
-    let byteCount = 0;
+    let stopCause: StopCause | undefined;
     let truncated = false;
     let output = "";
     let pending = "";
@@ -223,6 +232,20 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     const stdoutDecoder = new StringDecoder("utf8");
     const protocolDecoder = new TextDecoder("utf-8", { fatal: true });
     const stderrDecoder = new StringDecoder("utf8");
+    const stdoutSanitizer = new TextSanitizer(spec.secrets ?? []);
+    const stderrSanitizer = new TextSanitizer(spec.secrets ?? []);
+    let outputBytes = 0;
+    const appendOutput = (text: string) => {
+      const left = 256 * 1024 - outputBytes;
+      const size = Buffer.byteLength(text);
+      if (size > left) {
+        truncated = true;
+        text = Buffer.from(text).subarray(0, left).toString("utf8");
+        if (text.endsWith("\uFFFD")) text = text.slice(0, -1);
+      }
+      output += text;
+      outputBytes += Buffer.byteLength(text);
+    };
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let unknownTimer: ReturnType<typeof setTimeout> | undefined;
     const clean = (text: string, max = 65536) =>
@@ -252,7 +275,20 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         outcome === "completed"
       )
         outcome = "failed";
+      if (outcome !== "completed")
+        stopCause ??= {
+          source: closed
+            ? spec.onCoordinator
+              ? "coordinator"
+              : "worker"
+            : "unknown",
+          reason: closed
+            ? "native-or-protocol-failure"
+            : "unconfirmed-settlement",
+          target: spec.stopTarget ?? spec.childRunId ?? "process",
+        };
       spec.onCheckNative?.({
+        ...(stopCause ? { stop: stopCause } : {}),
         outcome,
         closure: closed
           ? launched
@@ -266,6 +302,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       });
       spec.onNative?.(
         {
+          ...(stopCause ? { stop: stopCause } : {}),
           outcome,
           closure: closed ? "direct-child-closed" : "unconfirmed",
           exitCode,
@@ -291,12 +328,13 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       const safeText = clean(
         outcome === "completed" && spec.protocol
           ? (final ?? "")
-          : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`,
+          : `${outcome === "timeout" ? `timeout: explicit command deadline ${spec.timeoutMs}ms reached` : outcome}${closed ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`,
         Number.MAX_SAFE_INTEGER,
       );
       const safeOutput = clean(output, Number.MAX_SAFE_INTEGER);
       const outputBytes = spec.retainOutput ? 256 * 1024 : 65536;
       resolve({
+        ...(stopCause ? { stop: stopCause } : {}),
         outcome,
         closed,
         exitCode,
@@ -337,6 +375,30 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       // An uninterruptible child is observed to its own close, never signalled.
       if (settled || stopping || spec.uninterruptible) return;
       stopping = outcome;
+      if (outcome === "canceled") {
+        try {
+          stopCause = decodeStopCause(spec.signal.reason);
+        } catch {
+          /* no inferred user intent */
+        }
+      }
+      stopCause ??= {
+        source:
+          outcome === "timeout"
+            ? "command"
+            : outcome === "canceled"
+              ? "unknown"
+              : spec.onCoordinator
+                ? "coordinator"
+                : "worker",
+        reason:
+          outcome === "timeout"
+            ? "explicit-timeout"
+            : outcome === "canceled"
+              ? "unattributed-abort"
+              : "capture-or-process-failure",
+        target: spec.stopTarget ?? spec.childRunId ?? "process",
+      };
       const requestedAt = Date.now();
       // Signal first, including before coordinator interruption/observation.
       // Decoder/recorder waiting after native close is not a live PID.
@@ -348,13 +410,76 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       observeLifecycle({
         kind: "stop-requested",
         at: requestedAt,
-        reason: outcome,
+        reason: `${stopCause.source}: ${stopCause.reason} (${stopCause.target})`,
+        stop: stopCause,
       });
       ingressStop.abort();
     };
+    const authOriginals = new Set<Promise<void>>();
+    if (spec.onAuth)
+      child.on("message", (message) => {
+        if (
+          !message ||
+          typeof message !== "object" ||
+          (message as { kind?: string }).kind !== "auth"
+        )
+          return;
+        if (settled || stopping) return;
+        let row: { id: number };
+        try {
+          row = closed(message, ["kind", "id"]) as { id: number };
+        } catch {
+          stop("failed");
+          return;
+        }
+        if (!Number.isSafeInteger(row.id) || row.id < 1 || authOriginals.size) {
+          stop("failed");
+          return;
+        }
+        const original = (async () => {
+          try {
+            const auth = await spec.onAuth?.();
+            if (
+              !auth ||
+              Buffer.byteLength(JSON.stringify(auth)) >
+                LIMITS.workerRequestBytes
+            )
+              throw new Error("Invalid auth reply");
+            for (const value of [
+              auth.apiKey,
+              ...Object.values(auth.headers ?? {}),
+              ...Object.values(auth.env ?? {}),
+            ])
+              if (
+                typeof value === "string" &&
+                value &&
+                !spec.secrets?.includes(value)
+              )
+                spec.secrets?.push(value);
+            if (!settled && !stopping && child.connected)
+              child.send(
+                { kind: "auth", id: row.id, ok: true, auth },
+                () => {},
+              );
+          } catch {
+            if (!settled && !stopping && child.connected)
+              child.send({ kind: "auth", id: row.id, ok: false }, () => {});
+          }
+        })().catch(() => {
+          stop("failed");
+        });
+        authOriginals.add(original);
+        void original.then(() => authOriginals.delete(original));
+      });
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child.on("message", (message) => {
+        if (
+          message &&
+          typeof message === "object" &&
+          (message as { kind?: string }).kind === "auth"
+        )
+          return;
         if (settled || stopping) return;
         void (async () => {
           // Only a frame without a usable call ID is a broken channel. Any
@@ -415,9 +540,10 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         })();
       });
     const abort = () => stop("canceled");
-    const timeout = spec.uninterruptible
-      ? undefined
-      : setTimeout(() => stop("timeout"), spec.timeoutMs);
+    const timeout =
+      spec.uninterruptible || spec.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => stop("timeout"), spec.timeoutMs);
     if (!spec.uninterruptible) {
       spec.signal.addEventListener("abort", abort, { once: true });
       if (spec.signal.aborted) abort();
@@ -456,14 +582,6 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         await spec.checkRecording.receive(chunk, stdout ? "stdout" : "stderr");
         return;
       }
-      byteCount += chunk.length;
-      if (
-        byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)
-      ) {
-        truncated = true;
-        if (!spec.uninterruptible) stop("failed");
-        return;
-      }
       let text: string;
       try {
         text =
@@ -474,15 +592,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         stop("failed");
         return;
       }
-      // Buffer the bounded complete stream before redacting: split secrets/UTF-8 cannot leak through progress.
       if (!spec.protocol || !stdout) {
-        if (spec.uninterruptible && truncated) return;
-        output += text;
-        if (Buffer.byteLength(output) > 256 * 1024) {
-          truncated = true;
-          if (spec.uninterruptible) output = clean(output, 256 * 1024);
-          else stop("failed");
-        }
+        appendOutput((stdout ? stdoutSanitizer : stderrSanitizer).write(text));
       } else {
         pending += text;
         let end = pending.indexOf("\n");
@@ -566,15 +677,18 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       // Native close can race the final paused read's continuation. Never use
       // exit/EOF or a still-pending decoder as a substitute for either fact.
       const close = () => {
-        if (!spec.protocol) output += stdoutDecoder.end();
-        else {
+        if (!spec.protocol) {
+          appendOutput(stdoutSanitizer.write(stdoutDecoder.end()));
+          appendOutput(stdoutSanitizer.end());
+        } else {
           try {
             pending += protocolDecoder.decode();
           } catch {
             stopping ??= "failed";
           }
         }
-        output += stderrDecoder.end();
+        appendOutput(stderrSanitizer.write(stderrDecoder.end()));
+        appendOutput(stderrSanitizer.end());
         finish(true, code, signal);
       };
       if (spec.checkRecording) {
@@ -590,7 +704,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
           }
           close();
         });
-      } else if (spec.recording) void stdoutWork.then(close);
+      } else if (spec.recording || authOriginals.size)
+        void Promise.all([stdoutWork, ...authOriginals]).then(close);
       else close();
     });
     if (spec.imageInput !== undefined) {
@@ -668,8 +783,7 @@ export function legacyWorkerEnvelope(request: WorkerRequest) {
 type Envelope = ReturnType<typeof legacyWorkerEnvelope>;
 class AmbientFileAuth extends Error {}
 function encodeEnvelope(
-  material: Envelope,
-  timeoutMs: number,
+  material: Envelope & { ownerAuth?: true },
   captured?: {
     ambient: ReturnType<typeof networkSnapshot>;
     scoped: ReturnType<typeof scopedNetwork>;
@@ -698,7 +812,7 @@ function encodeEnvelope(
     ...literals(material.auth.env ?? {}),
     ...selected.redactionLiterals,
   ];
-  const investigation = { roots, timeoutMs };
+  const investigation = { roots };
   const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");
@@ -707,7 +821,6 @@ function encodeEnvelope(
 function launchEncoded(
   encoded: ReturnType<typeof encodeEnvelope>,
   signal: AbortSignal,
-  timeoutMs: number,
   extra: Pick<
     ProcessSpec,
     | "onLifecycle"
@@ -717,6 +830,7 @@ function launchEncoded(
     | "maySignal"
     | "onFrame"
     | "onCoordinator"
+    | "onAuth"
     | "imageInput"
     | "secrets"
   > = {},
@@ -737,7 +851,6 @@ function launchEncoded(
     childRunId: encoded.material.request.childRunId,
     expectedRequest: encoded.material.request,
     signal,
-    timeoutMs,
     secrets: encoded.secrets,
     ...extra,
   });
@@ -746,7 +859,6 @@ export function runWorker(
   request: WorkerRequest,
   signal: AbortSignal,
   onProgress?: (text: string) => void,
-  timeoutMs: number = LIMITS.workerMs,
 ): Promise<RunResult> {
   const noSpawn = (outcome: RunResult["outcome"], text: string) =>
     Promise.resolve<RunResult>({
@@ -763,13 +875,13 @@ export function runWorker(
   try {
     const ambient = networkSnapshot(process.env);
     const scoped = scopedNetwork(request);
-    const encoded = encodeEnvelope(legacyWorkerEnvelope(request), timeoutMs, {
+    const encoded = encodeEnvelope(legacyWorkerEnvelope(request), {
       ambient,
       scoped,
     });
     if (!sameNetwork(scoped, scopedNetwork(request)))
       throw new Error("network");
-    return launchEncoded(encoded, signal, timeoutMs, { onProgress });
+    return launchEncoded(encoded, signal, { onProgress });
   } catch (error) {
     return noSpawn(
       "failed",
@@ -787,7 +899,6 @@ export function preparedWorker(
   request: WorkerPublicRequest,
   link: RecordingLink,
   ownerSecrets: readonly string[],
-  timeoutMs: number = LIMITS.workerMs,
   maySignal?: () => boolean,
 ) {
   const expected = decodeWorkerPublicRequest(request);
@@ -805,7 +916,7 @@ export function preparedWorker(
       sink: CaptureSink,
     ): Promise<WorkerCompletion> {
       const controller = new AbortController();
-      const abort = () => controller.abort();
+      const abort = () => controller.abort(signal.reason);
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
       let native: NativeSettlement = {
@@ -835,13 +946,11 @@ export function preparedWorker(
             (material) => {
               if (JSON.stringify(material.request) !== JSON.stringify(expected))
                 throw new Error("Prepared request changed");
-              encoded = encodeEnvelope(
-                {
-                  ...material,
-                  model: { ...material.model },
-                },
-                timeoutMs,
-              );
+              encoded = encodeEnvelope({
+                ...material,
+                ownerAuth: true,
+                model: { ...material.model },
+              });
               // All sink callbacks/reservations precede W1's final source,
               // size and cancellation recheck. The use callback only launches.
               recorder = new WorkerRecording(
@@ -859,8 +968,9 @@ export function preparedWorker(
                 controller.signal.aborted
               )
                 throw new Error("Prepared request unavailable");
-              return launchEncoded(encoded, controller.signal, timeoutMs, {
+              return launchEncoded(encoded, controller.signal, {
                 recording: recorder,
+                onAuth: () => prepared.refreshAuth(),
                 maySignal,
                 onNative: (facts, observed) => {
                   native = facts;
@@ -913,7 +1023,6 @@ export function launchConversation(
   },
   signal: AbortSignal,
   options: {
-    timeoutMs: number;
     maySignal(): boolean;
     onNative(native: NativeSettlement): void;
     onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
@@ -935,10 +1044,11 @@ export function launchConversation(
         };
   return prepared.consume(
     (material) => {
-      encoded = encodeEnvelope(
-        { ...material, model: { ...material.model } },
-        options.timeoutMs,
-      );
+      encoded = encodeEnvelope({
+        ...material,
+        ownerAuth: true,
+        model: { ...material.model },
+      });
       encoded.input = JSON.stringify({
         ...encoded.material,
         investigation: encoded.investigation,
@@ -953,7 +1063,8 @@ export function launchConversation(
       if (!encoded || encoded.input !== input)
         throw new Error("Invalid chat launch");
       const secrets = encoded.secrets;
-      return launchEncoded(encoded, signal, options.timeoutMs, {
+      return launchEncoded(encoded, signal, {
+        onAuth: () => prepared.refreshAuth(),
         maySignal: options.maySignal,
         onNative: options.onNative,
         onCoordinator: options.onCoordinator,
@@ -971,7 +1082,6 @@ export function launchWorkflowWorker(
   cwd: string,
   signal: AbortSignal,
   options: {
-    timeoutMs: number;
     roots?: string[];
     onLifecycle?: ProcessSpec["onLifecycle"];
     ownerSecrets: readonly string[];
@@ -986,10 +1096,10 @@ export function launchWorkflowWorker(
       encoded = encodeEnvelope(
         {
           ...material,
+          ownerAuth: true,
           cwd,
           model: { ...material.model },
         },
-        options.timeoutMs,
         undefined,
         options.roots ?? [cwd],
       );
@@ -999,8 +1109,9 @@ export function launchWorkflowWorker(
       if (!encoded || encoded.input !== input)
         throw new Error("Invalid workflow launch");
       const secrets = [...encoded.secrets, ...options.ownerSecrets];
-      return launchEncoded(encoded, signal, options.timeoutMs, {
+      return launchEncoded(encoded, signal, {
         secrets,
+        onAuth: () => prepared.refreshAuth(),
         maySignal: options.maySignal,
         onLifecycle: options.onLifecycle,
         onNative: (native, capture) =>
@@ -1051,32 +1162,5 @@ export function runCheck(
         }
       : {}),
     signal,
-  });
-}
-/** Auth resolution is not cancellable on every host. Late resolution is discarded, never spawned. */
-export function awaitWithAbort<T>(
-  work: Promise<T>,
-  signal: AbortSignal,
-  timeoutMs = 30000,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const finish = (error?: Error, value?: T) => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve(value as T);
-    };
-    const abort = () =>
-      finish(new Error("Canceled while resolving request authentication"));
-    const timer = setTimeout(
-      () => finish(new Error("Authentication resolution timed out")),
-      timeoutMs,
-    );
-    signal.addEventListener("abort", abort, { once: true });
-    work.then(
-      (value) => finish(undefined, value),
-      () => finish(new Error("Request authentication unavailable")),
-    );
-    if (signal.aborted) abort();
   });
 }

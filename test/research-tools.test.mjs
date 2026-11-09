@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 const owned = [];
 afterEach(async () => {
@@ -14,6 +15,7 @@ afterEach(async () => {
 async function fixture(roots) {
   const root = await mkdtemp(join(tmpdir(), "pi-observe-"));
   const kit = createWorkerToolkit({
+    runtime: fixtureRuntime(),
     purpose: "research",
     workspace: bindWorkerWorkspace(root, roots),
   });

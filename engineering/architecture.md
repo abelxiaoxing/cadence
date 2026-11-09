@@ -42,7 +42,8 @@ The conversation launcher delivers admitted bytes on its private image pipe, not
 `src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, and `src/session-entries.mjs` names the custom entries Cadence adds.
 Pre-Pi Cadence conversations are unsupported: no migration endpoint, old checkpoint codec or transcript reader remains.
 A readonly identity-presence guard refuses reuse and preserves the old files; current context/binding/link metadata retains its existing paths.
-`src/worker-model.mjs` owns the service worker's bounded SDK request-recovery settings and credential-free attempt/progress observations, not a second retry loop or a profile loader.
+`src/service/worker-settings.ts` observes owner-bound Pi execution settings/trust through public SDK parsing.
+`src/worker-model.mjs` owns the inert runtime snapshot, small service policy exceptions and credential-free request-progress observations, not another config merger, retry loop or profile loader.
 `src/service/turn-capture.ts` retains workflow subagent turns from capture frames; `src/session-sharing.ts` is the extension's readonly notice when the browser continued the session a terminal holds.
 
 `src/service/{conversation-records,conversation-controls}.ts` owns readonly conversation, transcript and mode/plan decoding; it has no execution owner, SDK or write path.
@@ -60,7 +61,7 @@ Their original Stop lifetime and exclusive checkout barrier belong to the existi
 The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
-`src/worker-toolkit.mjs` owns trusted capability composition and tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
+`src/worker-toolkit.mjs` composes the inherited Pi standard-tool selection and owns tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
 `src/research-tools.mjs` binds the installed public Pi readonly file tools to investigation roots; ordinary file schemas, output and search semantics remain Pi-owned.
 `src/change-tools.mjs` adds fixed-revision readonly review evidence; `src/git-environment.mjs` shares the physical-checkout Git policy without replacement objects.
 See [worktree delivery](worktree-delivery.md) for the approved-plan-to-local-delivery contract.

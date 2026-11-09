@@ -59,7 +59,6 @@ export class Workbench implements WorkbenchPort {
       projectsEnabled: boolean;
       hostUrl: URL;
       secrets(): readonly string[];
-      timeoutMs?: number;
       checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
       /** Where the project's Pi sessions live; defaults to Pi's own resolution. */
       sessionDir?: string;

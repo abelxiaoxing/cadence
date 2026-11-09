@@ -174,10 +174,6 @@ export class HistoryWriter implements AdmissionPersistence {
   private queue: Job[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private originals = new Set<Promise<PersistenceResult>>();
-  private readonly originalReports = new WeakMap<
-    Promise<PersistenceResult>,
-    Promise<PersistenceResult>
-  >();
   private fenced = false;
   private used: number;
   private policyGeneration = 0;
@@ -402,7 +398,6 @@ export class HistoryWriter implements AdmissionPersistence {
       this.fenced = true;
     this.auth = {
       lifetimeTracked: !!options.onOriginal,
-      original: (report) => this.originalReports.get(report) ?? report,
       preparation: (input) => this.authPreparation(input),
       settlement: (input) => this.authSettlement(input),
     };
@@ -701,23 +696,11 @@ export class HistoryWriter implements AdmissionPersistence {
       this.schedule();
     else
       this.timer ??= setTimeout(() => this.schedule(), LIMITS.progressBatchMs);
-    // Deadline reports/fences; it does NOT settle/refund the original promise.
-    let timer: ReturnType<typeof setTimeout>;
-    const report = Promise.race([
-      original.then((result) => {
-        clearTimeout(timer);
-        return result;
-      }),
-      new Promise<PersistenceResult>((yes) => {
-        timer = setTimeout(() => {
-          this.fence();
-          yes(failure(true));
-        }, LIMITS.recordingStallMs);
-      }),
-    ]);
-    this.originalReports.set(report, original);
-    return report;
+    // A slow original is backpressure, not failed persistence. Real write
+    // errors still fence in schedule(); charges live until original settlement.
+    return original;
   }
+
   private rowRunId(v: JournalValue): string | null {
     return v.kind === "admission"
       ? v.intent.identity.kind === "action"

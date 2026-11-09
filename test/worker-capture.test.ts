@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { expect, it, vi } from "vitest";
 import {
@@ -28,7 +29,7 @@ import {
   sanitizeData,
   TextSanitizer,
 } from "../src/worker-redaction.mjs";
-import { captureBash, ToolIngress } from "../src/worker-tools.mjs";
+import { captureShell, ToolIngress } from "../src/worker-tools.mjs";
 import { v2Frames } from "./helpers/worker-v2.ts";
 
 it("incremental text redacts split literals, heuristic values and terminal sequences", () => {
@@ -137,7 +138,7 @@ it("original-wire state refuses wrong hashes, wrong final references and orphan 
     });
   event({ kind: "ready", requestProtocol: 2 });
   const saturated = new CaptureState(randomUUID());
-  saturated.bytes = LIMITS.childProtocolBytes; // Labelled arithmetic injection, not native 128MiB emission.
+  saturated.bytes = 128 * 1024 * 1024; // Former cumulative cutoff; not a memory charge.
   expect(() =>
     saturated.accept({
       protocol: 2,
@@ -146,7 +147,7 @@ it("original-wire state refuses wrong hashes, wrong final references and orphan 
       observedMs: 0,
       event: { kind: "ready", requestProtocol: 2 },
     }),
-  ).toThrow();
+  ).not.toThrow();
   expect(() =>
     event({
       kind: "detail-chunk",
@@ -704,14 +705,14 @@ for (const callback of ["pending", "throws", "rejects"] as const)
     expect(ingress.frames).toBe(0);
     expect(queue.bytes).toBe(0);
   });
-it("custom bash accumulator participates in the shared bound before append; no spill/retry", {
+it("long shell logs retain bounded previews without spill, retry or command cancellation", {
   tags: ["slow"],
 }, async () => {
   const queue = new CaptureQueue();
   let failed = 0,
     runs = 0,
     aborted = false;
-  const tool = captureBash(
+  const tool = captureShell(
     "fixture",
     [],
     () => {
@@ -727,17 +728,17 @@ it("custom bash accumulator participates in the shared bound before append; no s
       },
     }),
     queue,
+    createBashToolDefinition("/fixture"),
   );
-  await expect(
-    Reflect.apply(tool.execute, tool, [
-      "id",
-      { command: "injected output" },
-      new AbortController().signal,
-    ]),
-  ).rejects.toThrow();
+  const result = await Reflect.apply(tool.execute, tool, [
+    "id",
+    { command: "injected output" },
+    new AbortController().signal,
+  ]);
+  expect(result.content[0].text).toContain("Output truncated");
   expect(runs).toBe(1);
-  expect(aborted).toBe(true);
-  expect(failed).toBeGreaterThan(0);
+  expect(aborted).toBe(false);
+  expect(failed).toBe(0);
   expect(queue.bytes).toBe(0);
 });
 for (const suffix of ["\\u00", "\\q", '"oops":'])

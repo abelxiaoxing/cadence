@@ -1,21 +1,217 @@
-import { decodeModelRetry } from "./worker-public.mjs";
+import {
+  bool,
+  canonicalJson,
+  closed,
+  decodeModelRetry,
+  integer,
+  LIMITS,
+  list,
+  oneOf,
+  text,
+} from "./worker-public.mjs";
 import { own } from "./worker-redaction.mjs";
 
-/** One request-recovery policy for every service-owned SDK session. These waits
- * count against the original worker deadline; neither tools nor workers replay.
- * Native Pi owns its own settings. No user profile is loaded or copied here. */
-export const WORKER_MODEL_SETTINGS = Object.freeze({
-  compaction: { enabled: false },
-  retry: {
-    enabled: true,
-    maxRetries: 6,
-    baseDelayMs: 5000,
-    maxAgentDelayMs: 120000,
-    provider: { maxRetries: 0 },
-  },
-  httpIdleTimeoutMs: 300000,
+/** Service exceptions only. Pi owns defaults and user/project setting merges.
+ * No cache-warming requests or second provider retry layer in owned workers. */
+export const WORKER_POLICY = Object.freeze({
+  retry: { provider: { maxRetries: 0 } },
   cacheWarming: "off",
+  httpIdleTimeoutMs: 0,
 });
+export const WORKER_SETTINGS_BYTES = 32768;
+
+/** Public SDK factories are the source of built-in/default tool identities. */
+export function defaultWorkerTools(pi, cwd) {
+  const edit = pi.createCodingTools(cwd).map((tool) => tool.name);
+  const readonly = pi.createReadOnlyTools(cwd).map((tool) => tool.name);
+  return {
+    edit,
+    readonly,
+    available: [
+      ...new Set([...edit, ...readonly, pi.createPowerShellTool(cwd).name]),
+    ],
+  };
+}
+
+/** Resolve a selected model through Pi's public getters, not a second merge or
+ * settings-default implementation. Only execution preferences cross the pipe;
+ * package/extension/auth/model discovery settings never do. */
+export function resolveWorkerRuntime(manager, model, defaults) {
+  if (manager.drainErrors().length)
+    throw new Error("Pi settings could not be read");
+  const effective = manager.getSettings();
+  const selected = manager.getDefaultTools();
+  const tools = selected ?? defaults.edit;
+  if (
+    !Array.isArray(tools) ||
+    tools.some((name) => !defaults.available.includes(name))
+  )
+    throw new Error("Configured Pi tools are unavailable in service workers");
+  const provider = manager.getProviderRetrySettings();
+  return decodeWorkerRuntime({
+    projectTrusted: manager.isProjectTrusted(),
+    tools: {
+      edit: tools,
+      readonly:
+        selected === undefined
+          ? defaults.readonly
+          : tools.filter((name) => defaults.readonly.includes(name)),
+    },
+    settings: {
+      compaction: manager.getCompactionSettings(model),
+      retry: {
+        ...manager.getRetrySettings(),
+        provider: {
+          ...WORKER_POLICY.retry.provider,
+          maxRetryDelayMs: provider.maxRetryDelayMs,
+          ...(provider.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: provider.timeoutMs }),
+        },
+      },
+      // A product default, not a replacement for an explicit Pi request policy.
+      httpIdleTimeoutMs:
+        effective.httpIdleTimeoutMs === undefined
+          ? WORKER_POLICY.httpIdleTimeoutMs
+          : manager.getHttpIdleTimeoutMs(),
+      ...(manager.getWebSocketConnectTimeoutMs() === undefined
+        ? {}
+        : {
+            websocketConnectTimeoutMs: manager.getWebSocketConnectTimeoutMs(),
+          }),
+      transport: manager.getTransport(),
+      ...(manager.getThinkingBudgets() === undefined
+        ? {}
+        : { thinkingBudgets: manager.getThinkingBudgets() }),
+      images: {
+        autoResize: manager.getImageAutoResize(),
+        blockImages: manager.getBlockImages(),
+      },
+      ...(manager.getShellPath() === undefined
+        ? {}
+        : { shellPath: manager.getShellPath() }),
+      ...(manager.getShellCommandPrefix() === undefined
+        ? {}
+        : { shellCommandPrefix: manager.getShellCommandPrefix() }),
+      cacheWarming: WORKER_POLICY.cacheWarming,
+    },
+  });
+}
+
+/** Closed, bounded private runtime snapshot; it grants no tool authority. */
+export function decodeWorkerRuntime(value) {
+  // JSON also removes omitted SDK getter fields. The wire owns plain data only.
+  const v = JSON.parse(canonicalJson(value, WORKER_SETTINGS_BYTES));
+  const o = closed(v, ["projectTrusted", "tools", "settings"]);
+  const t = closed(o.tools, ["edit", "readonly"]);
+  const r = o.settings;
+  const s = closed(r, [
+    "compaction",
+    "retry",
+    "httpIdleTimeoutMs",
+    "transport",
+    "images",
+    "cacheWarming",
+    ...[
+      "websocketConnectTimeoutMs",
+      "thinkingBudgets",
+      "shellPath",
+      "shellCommandPrefix",
+    ].filter((key) => Object.hasOwn(r ?? {}, key)),
+  ]);
+  const c = closed(s.compaction, [
+    "enabled",
+    "reserveTokens",
+    "keepRecentTokens",
+  ]);
+  const retry = closed(s.retry, [
+    "enabled",
+    "maxRetries",
+    "baseDelayMs",
+    "maxAgentDelayMs",
+    "provider",
+  ]);
+  const provider = closed(retry.provider, [
+    "maxRetries",
+    "maxRetryDelayMs",
+    ...(Object.hasOwn(retry.provider ?? {}, "timeoutMs") ? ["timeoutMs"] : []),
+  ]);
+  const images = closed(s.images, ["autoResize", "blockImages"]);
+  const milliseconds = (v) => integer(v, 0, 2147483647);
+  const names = (v) => {
+    const result = list(v, 64, (name) => text(name, 128, true));
+    if (new Set(result).size !== result.length)
+      throw new Error("Duplicate Pi tool selection");
+    return result;
+  };
+  const budgets = s.thinkingBudgets;
+  if (budgets !== undefined) {
+    closed(
+      budgets,
+      ["minimal", "low", "medium", "high"].filter((key) =>
+        Object.hasOwn(budgets, key),
+      ),
+    );
+    for (const value of Object.values(budgets)) integer(value, 0);
+  }
+  if (s.cacheWarming !== "off" || provider.maxRetries !== 0)
+    throw new Error("Invalid service policy");
+  return {
+    projectTrusted: bool(o.projectTrusted),
+    tools: { edit: names(t.edit), readonly: names(t.readonly) },
+    settings: {
+      compaction: {
+        enabled: bool(c.enabled),
+        reserveTokens: integer(c.reserveTokens, 0),
+        keepRecentTokens: integer(c.keepRecentTokens, 0),
+      },
+      retry: {
+        enabled: bool(retry.enabled),
+        maxRetries: integer(retry.maxRetries, 0),
+        baseDelayMs: milliseconds(retry.baseDelayMs),
+        maxAgentDelayMs: milliseconds(retry.maxAgentDelayMs),
+        provider: {
+          maxRetries: 0,
+          maxRetryDelayMs: milliseconds(provider.maxRetryDelayMs),
+          ...(provider.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: milliseconds(provider.timeoutMs) }),
+        },
+      },
+      httpIdleTimeoutMs: milliseconds(s.httpIdleTimeoutMs),
+      ...(s.websocketConnectTimeoutMs === undefined
+        ? {}
+        : {
+            websocketConnectTimeoutMs: milliseconds(
+              s.websocketConnectTimeoutMs,
+            ),
+          }),
+      transport: oneOf(s.transport, [
+        "auto",
+        "sse",
+        "websocket",
+        "websocket-cached",
+      ]),
+      ...(budgets === undefined ? {} : { thinkingBudgets: budgets }),
+      images: {
+        autoResize: bool(images.autoResize),
+        blockImages: bool(images.blockImages),
+      },
+      ...(s.shellPath === undefined
+        ? {}
+        : { shellPath: text(s.shellPath, 4096) }),
+      ...(s.shellCommandPrefix === undefined
+        ? {}
+        : { shellCommandPrefix: text(s.shellCommandPrefix, 8192) }),
+      cacheWarming: "off",
+    },
+  };
+}
+
+export function describeWorkerRuntime(runtime) {
+  const { settings: s, tools } = runtime;
+  return `Pi runtime: project settings ${runtime.projectTrusted ? "trusted" : "not loaded"}; tools ${tools.edit.join(", ") || "none"}; readonly ${tools.readonly.join(", ") || "none"}; auto-compaction ${s.compaction.enabled ? "on" : "off"} (reserve ${s.compaction.reserveTokens}, keep ${s.compaction.keepRecentTokens}); request retries ${s.retry.enabled ? s.retry.maxRetries : "off"}; HTTP idle ${s.httpIdleTimeoutMs === 0 ? "disabled" : `${s.httpIdleTimeoutMs}ms`}; shell ${s.shellPath || s.shellCommandPrefix ? "configured" : "default"}. Provider retries and cache warming are off.`;
+}
 
 /** Observation only: AgentSession owns classification, backoff and continuation.
  * Session listeners are synchronous. CaptureEmitter reserves/enqueues before
@@ -74,4 +270,74 @@ export class WorkerModelState {
       throw error;
     }
   }
+}
+
+/** One private, sequential request at a time. Replies contain credentials only
+ * on the owner/child IPC pipe, never in capture or a tool result. No retry here.
+ * Abort is owned by the session; disconnect is a real loss of its auth owner. */
+export function ownerAuth(channel, retain, fail = () => {}) {
+  let sequence = 0;
+  let pending;
+  let queued = 0;
+  let tail = Promise.resolve();
+  let closed = false;
+  const disconnect = () => {
+    closed = true;
+    if (pending) fail("owner-auth-lost");
+    pending?.reject(new Error("Owner authentication channel disconnected"));
+    pending = undefined;
+  };
+  const message = (value) => {
+    if (value?.kind !== "auth" || !pending || value.id !== pending.id) return;
+    const waiting = pending;
+    pending = undefined;
+    if (!value.ok || !value.auth?.ok) {
+      fail("owner-auth-refused");
+      waiting.reject(new Error("Owner authentication refused"));
+      return;
+    }
+    retain(value.auth);
+    waiting.resolve(value.auth);
+  };
+  channel.on("message", message);
+  channel.on("disconnect", disconnect);
+  return {
+    resolve() {
+      if (closed || !channel.connected || queued >= LIMITS.childReservations)
+        return Promise.reject(new Error("Owner authentication unavailable"));
+      queued++;
+      const original = tail.then(
+        () =>
+          new Promise((resolve, reject) => {
+            if (closed || !channel.connected) {
+              reject(new Error("Owner authentication unavailable"));
+              return;
+            }
+            const id = ++sequence;
+            pending = { id, resolve, reject };
+            try {
+              channel.send({ kind: "auth", id }, (error) => {
+                if (error) disconnect();
+              });
+            } catch {
+              disconnect();
+            }
+          }),
+      );
+      tail = original
+        .then(
+          () => {},
+          () => {},
+        )
+        .finally(() => {
+          queued--;
+        });
+      return original;
+    },
+    close() {
+      disconnect();
+      channel.removeListener("message", message);
+      channel.removeListener("disconnect", disconnect);
+    },
+  };
 }

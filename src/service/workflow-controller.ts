@@ -174,9 +174,11 @@ export function modelRequestFailed(output: string): boolean {
         value?.outcome === "failed" &&
         value.cleanupSettled === true &&
         value.cleanupFailures === 0 &&
-        value.stage === "assistant-final" &&
-        value.class === "model-request-failed" &&
-        value.terminalStopReason === "error"
+        ((value.stage === "assistant-final" &&
+          value.class === "model-request-failed" &&
+          value.terminalStopReason === "error") ||
+          (value.stage === "auth-model" &&
+            ["owner-auth-refused", "owner-auth-lost"].includes(value.class)))
       )
         return true;
     } catch {

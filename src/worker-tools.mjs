@@ -1,4 +1,3 @@
-import { Type } from "typebox";
 import { ContractError, LIMITS } from "./worker-public.mjs";
 import {
   measureData,
@@ -11,23 +10,20 @@ import {
 /** Matches the stock bash renderer's update throttle. */
 const UPDATE_INTERVAL_MS = 100;
 
-/** No stock bash definition/OutputAccumulator: raw output is never spilled. */
-export function captureBash(
+/** Pi shell definitions/backends with a bounded redacted accumulator instead
+ * of the stock raw-spill accumulator. No command allowlist or lifetime quota. */
+export function captureShell(
   cwd,
   secrets,
   fail,
-  createLocalBashOperations,
+  operations,
   queue,
+  definition,
+  commandPrefix,
 ) {
   return {
-    name: "bash",
-    label: "bash",
-    description:
-      "Execute a shell command in the working directory. Output is bounded and redacted; no raw spill file.",
-    parameters: Type.Object({
-      command: Type.String(),
-      timeout: Type.Optional(Type.Number()),
-    }),
+    ...definition,
+    description: `Execute ${definition.name} in the fixed working directory, with an optional per-command timeout in seconds. Output is redacted and retained as a labelled bounded tail; no raw spill file.`,
     async execute(_id, args, signal, onUpdate) {
       const command = own(args, "command"),
         timeout = own(args, "timeout");
@@ -40,7 +36,7 @@ export function captureBash(
       const abort = () => local.abort();
       const prefix = queue.reserve(
         secrets.reduce((n, value) => n + Buffer.byteLength(value), 0) * 4 +
-          65536,
+          256 * 1024,
       );
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
@@ -48,31 +44,29 @@ export function captureBash(
       const sanitizer = new TextSanitizer(secrets);
       let output = "",
         sourceBytes = 0,
-        failed = false;
+        failed = false,
+        truncated = false;
       const append = (text) => {
-        if (
-          Buffer.byteLength(output) + Buffer.byteLength(text) >
-          LIMITS.detailBytes
-        )
-          throw new ContractError("oversize");
-        // The redacted accumulator is Cadence-owned retention too, not an
-        // uncharged escape from the shared queue. No raw spill on exhaustion.
-        prefix.grow(Buffer.byteLength(text));
         output += text;
+        if (Buffer.byteLength(output) > 65536) {
+          truncated = true;
+          output = Buffer.from(output).subarray(-65536).toString("utf8");
+          if (output.startsWith("\uFFFD")) output = output.slice(1);
+        }
       };
       const refuse = () => {
         failed = true;
         local.abort();
         fail();
       };
-      // Previews only: the final result carries every byte. Windows pipes
+      // Bounded previews and a labelled redacted tail; no raw spill or log quota. Windows pipes
       // deliver chatty output as thousands of small chunks, and each update is
       // a durable capture detail, so throttle like the stock bash renderer.
       let lastUpdate = Number.NEGATIVE_INFINITY;
       let pending;
       const publish = () => {
         pending = undefined;
-        if (failed) return;
+        if (failed || queue.bytes > LIMITS.workerQueueBytes / 2) return;
         lastUpdate = performance.now();
         try {
           let tail = output.slice(-4096);
@@ -94,32 +88,44 @@ export function captureBash(
         }
       };
       try {
-        const result = await createLocalBashOperations().exec(command, cwd, {
-          signal: local.signal,
-          timeout,
-          onData(data) {
-            if (failed) return;
-            let raw;
-            try {
-              raw = queue.reserve(data.length * 12);
-              // Charge original bytes synchronously BEFORE decoding/copying.
-              sourceBytes += data.length;
-              if (
-                data.length > LIMITS.workerQueueBytes ||
-                sourceBytes > LIMITS.detailBytes
-              )
-                throw new ContractError("oversize");
-              append(sanitizer.write(decoder.decode(data, { stream: true })));
-              const since = performance.now() - lastUpdate;
-              if (since >= UPDATE_INTERVAL_MS) publish();
-              else pending ??= setTimeout(publish, UPDATE_INTERVAL_MS - since);
-            } catch {
-              refuse();
-            } finally {
-              raw?.release();
-            }
+        const started = performance.now();
+        const result = await operations().exec(
+          commandPrefix ? `${commandPrefix}\n${command}` : command,
+          cwd,
+          {
+            signal: local.signal,
+            timeout,
+            onData(data) {
+              if (failed) return;
+              let raw;
+              try {
+                sourceBytes += data.length;
+                // A pipe chunk is processed in bounded slices; cumulative log
+                // volume does not have authority to stop the command.
+                for (let at = 0; at < data.length; at += 8192) {
+                  raw = queue.reserve(8192 * 12);
+                  append(
+                    sanitizer.write(
+                      decoder.decode(data.subarray(at, at + 8192), {
+                        stream: true,
+                      }),
+                    ),
+                  );
+                  raw.release();
+                  raw = undefined;
+                }
+                const since = performance.now() - lastUpdate;
+                if (since >= UPDATE_INTERVAL_MS) publish();
+                else
+                  pending ??= setTimeout(publish, UPDATE_INTERVAL_MS - since);
+              } catch {
+                refuse();
+              } finally {
+                raw?.release();
+              }
+            },
           },
-        });
+        );
         try {
           append(sanitizer.write(decoder.decode()));
           append(sanitizer.end());
@@ -127,17 +133,31 @@ export function captureBash(
           fail();
           throw new ContractError();
         }
+        if (truncated)
+          output = `[Output truncated; retained redacted tail of ${sourceBytes} observed bytes.]\n${output}`;
         if (failed) throw new ContractError("capacity");
         if (result.exitCode === null) throw new ContractError("unavailable");
-        // Match the public stock tool's nonzero result/error semantics. The SDK
-        // turns a throw into isError; this is never a parent check receipt.
-        if (result.exitCode !== 0)
-          throw new Error(
-            `${output}\nCommand exited with code ${result.exitCode}`,
-          );
         return {
-          content: [{ type: "text", text: output || "(no output)" }],
-          details: {},
+          content: [
+            {
+              type: "text",
+              text:
+                result.exitCode === 0
+                  ? output || "(no output)"
+                  : `${output}\nCommand exited with code ${result.exitCode}`,
+            },
+          ],
+          ...(result.exitCode === 0 ? {} : { isError: true }),
+          structuredContent: {
+            output,
+            truncated,
+            exit_code: result.exitCode,
+            wall_time_seconds:
+              Math.round((performance.now() - started) / 100) / 10,
+          },
+          details: truncated
+            ? { truncation: { observedBytes: sourceBytes } }
+            : {},
         };
       } finally {
         // No preview may follow the result.

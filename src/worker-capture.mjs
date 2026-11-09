@@ -69,13 +69,17 @@ export class CaptureState {
     const e = frame.event;
     const control = controlEvent(e.kind);
     this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
+    // Counters are diagnostics, not a lifetime quota. Only unresolved state
+    // consumes the live protocol window; settled details are reclaimed below.
+    this[control ? "controlFrames" : "dataFrames"]++;
     if (
-      ++this[control ? "controlFrames" : "dataFrames"] >
-        (control ? LIMITS.controlFrames : LIMITS.dataFrames) ||
-      this.bytes >
-        LIMITS.childProtocolBytes - (control ? 0 : LIMITS.ownerControlBytes)
+      this.details.size +
+        this.messages.size +
+        this.calls.size +
+        this.blocks.size >
+      LIMITS.captureEntries
     )
-      throw new ContractError("oversize");
+      throw new ContractError("capacity");
     const message = (id) => {
       const m = this.messages.get(id);
       requireFact(m);
@@ -107,8 +111,24 @@ export class CaptureState {
         break;
       case "message-start":
         requireFact(!this.messages.has(e.messageId));
-        if (e.resultCallId !== null)
+        if (e.resultCallId !== null) {
           requireFact(this.calls.get(e.resultCallId)?.ended);
+          this.calls.delete(e.resultCallId);
+        }
+        // The previous response is no longer a final-result candidate. Keep
+        // unresolved calls, not all past messages or partial failed declarations.
+        if (e.role === "assistant") {
+          for (const [id, m] of this.messages)
+            if (m.ended) {
+              if (m.final) this.details.delete(m.final);
+              this.messages.delete(id);
+            }
+          for (const [id, c] of this.calls)
+            if (!c.started || c.ended) {
+              this.releaseCallDetails(id);
+              this.calls.delete(id);
+            }
+        }
         this.messages.set(e.messageId, {
           role: e.role,
           ended: false,
@@ -195,6 +215,8 @@ export class CaptureState {
         d.hash = null;
         d.ended = true;
         this.mergeCoverage(e.coverage);
+        if (["context", "handoff"].includes(d.descriptor.owner.kind))
+          this.details.delete(e.detailId);
         break;
       }
       case "message-text": {
@@ -230,6 +252,7 @@ export class CaptureState {
           requireFact(!m.finalIndices.has(e.index));
           m.finalIndices.add(e.index);
         }
+        if (e.argsDetailId) this.releaseDetail(e.argsDetailId);
         this.calls.set(e.callId, { ...e, started: false, ended: false });
         break;
       }
@@ -249,6 +272,8 @@ export class CaptureState {
             detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner
               .stage === "execution-arguments",
           );
+        if (e.argsDetailId) this.releaseDetail(e.argsDetailId);
+        this.releaseCallDetails(e.callId);
         this.calls.set(e.callId, { ...old, ...e, started: true, ended: false });
         break;
       }
@@ -260,6 +285,7 @@ export class CaptureState {
           detail(e.detailId, "tool-update", e.callId).descriptor.owner.stage ===
             "update-snapshot",
         );
+        this.releaseDetail(e.detailId);
         break;
       case "tool-end": {
         const c = this.calls.get(e.callId);
@@ -277,6 +303,8 @@ export class CaptureState {
           detail(e.resultDetailId, "tool-result", e.callId).descriptor.owner
             .stage === "result",
         );
+        this.releaseDetail(e.resultDetailId);
+        this.releaseCallDetails(e.callId);
         this.calls.set(e.callId, {
           ...c,
           ...e,
@@ -308,6 +336,18 @@ export class CaptureState {
         m.ended = true;
         m.final = e.finalDetailId;
         m.stopReason = e.stopReason;
+        for (const [id, d] of this.details)
+          if (
+            d.descriptor.owner.messageId === e.messageId &&
+            id !== e.finalDetailId
+          )
+            this.releaseDetail(id);
+        // Omitted blocks have no detail record.
+        for (const [id, key] of this.blocks)
+          if (JSON.parse(key).messageId === e.messageId) this.blocks.delete(id);
+        m.finalIndices.clear();
+        m.finalHash = null;
+        if (m.role !== "assistant") this.messages.delete(e.messageId);
         break;
       }
       case "omitted-block":
@@ -370,6 +410,19 @@ export class CaptureState {
     }
     this.position = position;
     return frame;
+  }
+  releaseCallDetails(callId) {
+    for (const [id, d] of this.details)
+      if (d.descriptor.owner.callId === callId && d.ended)
+        this.releaseDetail(id);
+    for (const [id, key] of this.blocks)
+      if (JSON.parse(key).callId === callId) this.blocks.delete(id);
+  }
+  releaseDetail(id) {
+    const d = this.details.get(id);
+    if (d?.descriptor.owner.blockId)
+      this.blocks.delete(d.descriptor.owner.blockId);
+    this.details.delete(id);
   }
   mergeCoverage(c) {
     this.coverage.observed =
@@ -497,7 +550,6 @@ export class CaptureEmitter {
       lease.release();
       throw error;
     }
-    let timer;
     const original = new Promise((resolve, reject) => {
       this.output.write(line, (error) =>
         error ? reject(new ContractError("unavailable")) : resolve(),
@@ -506,13 +558,11 @@ export class CaptureEmitter {
     this.pending.add(original);
     const settled = original.then(
       () => {
-        clearTimeout(timer);
         this.queuedBytes -= bytes;
         lease.release();
         this.pending.delete(original);
       },
       () => {
-        clearTimeout(timer);
         this.queuedBytes -= bytes;
         lease.release();
         this.pending.delete(original);
@@ -520,19 +570,11 @@ export class CaptureEmitter {
         this.onFailure();
       },
     );
-    // Reporting timeout never refunds an outstanding original write.
-    const wait = Promise.race([
-      original,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          this.onFailure();
-          reject(new ContractError("recording-exhausted"));
-        }, LIMITS.recordingStallMs);
-      }),
-    ]);
-    wait.catch(() => {});
+    // Slow output is backpressure, not failure. The original callback alone
+    // releases its charge; a real stream error still fails capture.
+    original.catch(() => {});
     settled.catch(() => {});
-    return wait;
+    return original;
   }
   async drain() {
     await Promise.allSettled([...this.pending]);
@@ -797,6 +839,8 @@ export class SdkCapture {
       ended: false,
       resultLinked: false,
     };
+    if (this.calls.length >= LIMITS.captureEntries)
+      throw new ContractError("capacity");
     this.calls.push(call);
     return call;
   }
@@ -943,13 +987,15 @@ export class SdkCapture {
     return detailId;
   }
   async event(event) {
-    if (++this.events > LIMITS.sdkEvents) throw new ContractError("oversize");
+    this.events++;
     const type = own(event, "type");
     if (typeof type !== "string") throw new ContractError();
     switch (type) {
       case "message_start": {
         requireFact(this.current === null);
         const message = own(event, "message");
+        if (own(message, "role") === "assistant")
+          this.calls = this.calls.filter((c) => c.started && !c.ended);
         const rawRole = own(message, "role");
         const role = rawRole === "toolResult" ? "tool-result" : rawRole;
         requireFact(
@@ -964,7 +1010,10 @@ export class SdkCapture {
               )
             : [];
         const call = matches.length === 1 ? matches[0] : null;
-        if (call) call.resultLinked = true;
+        if (call) {
+          call.resultLinked = true;
+          this.calls = this.calls.filter((c) => c !== call);
+        }
         this.current = {
           id: randomUUID(),
           role,

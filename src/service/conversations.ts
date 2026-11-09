@@ -7,6 +7,7 @@ import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { InputImage } from "../image-content.mjs";
 import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
+import { describeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import {
   type CaptureFrame,
   type DetailDescriptor,
@@ -67,7 +68,6 @@ interface Options {
   agentDir: string;
   cwd: string;
   secrets(): readonly string[];
-  timeoutMs?: number;
   /** Where the sessions live; defaults to Pi's own resolution. */
   sessionDir?: string;
 }
@@ -100,6 +100,7 @@ export interface CommandState {
   user: string | null;
 }
 export interface LiveTurn {
+  runtime?: WorkerRuntime;
   images?: InputImage[];
   execution: ExecutionContext;
   accepted: Accepted;
@@ -470,6 +471,10 @@ export class Conversations {
       parent: input.head,
       offset: session?.read?.size ?? 0,
     };
+    const runtime =
+      control?.reply || !execution.model
+        ? undefined
+        : this.o.models.workerSettings(execution.cwd, execution.model);
     const abort = new AbortController();
     // Register original work before the first durable acceptance or asynchronous effect.
     let begin!: () => void;
@@ -477,6 +482,7 @@ export class Conversations {
       begin = resolve;
     });
     const live: LiveTurn = {
+      runtime,
       images: claimImages?.() ?? [],
       execution,
       accepted,
@@ -499,7 +505,13 @@ export class Conversations {
     // Beyond this point even a failed registration/control write is uncertain.
     beforeAccept?.();
     this.active.set(input.commandId, live);
-    this.o.owner.trackConversation(live.original, () => abort.abort());
+    this.o.owner.trackConversation(live.original, () =>
+      abort.abort({
+        source: "service",
+        reason: "stop",
+        target: input.commandId,
+      }),
+    );
     try {
       this.write(this.records.path(input.commandId, "accepted.json"), accepted);
       live.stateFile = this.write(
@@ -535,7 +547,7 @@ export class Conversations {
     if (live) {
       if (live.accepted.session !== id || live.epoch !== epoch)
         throw new ContractError("stale");
-      live.abort.abort();
+      live.abort.abort({ source: "user", reason: "cancel", target: turnId });
       return;
     }
     if (!this.records.hasCommand(id, turnId))
@@ -617,19 +629,29 @@ export class Conversations {
         handoff: { graphRevision: 1, inputs: [] },
       });
       const auth = this.o.models.prepareTracked({
+        runtime: live.runtime,
         request,
         cwd: live.execution.cwd,
         operationId: randomUUID(),
         epoch: live.epoch,
-        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+
         signal: abort.signal,
         current,
         journal: {
           preparation: (value) =>
-            this.write(this.records.path(commandId, "auth-intent.json"), value),
+            this.write(
+              this.records.path(
+                commandId,
+                `auth/${value.operationId}-intent.json`,
+              ),
+              value,
+            ),
           settlement: (value) =>
             this.write(
-              this.records.path(commandId, "auth-settled.json"),
+              this.records.path(
+                commandId,
+                `auth/${value.operationId}-settled.json`,
+              ),
               value,
             ),
         },
@@ -643,6 +665,7 @@ export class Conversations {
       this.write(this.records.path(commandId, "launch.json"), {
         epoch: live.epoch,
         childRunId: request.childRunId,
+        runtime: live.runtime ? describeWorkerRuntime(live.runtime) : null,
       });
       let credentials: readonly string[] = [];
       const capture = new LiveCapture(
@@ -668,7 +691,6 @@ export class Conversations {
           },
           abort.signal,
           {
-            timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
             images: live.images,
             ownerSecrets: this.o.secrets,
             onCoordinator: control?.onTool,
@@ -691,11 +713,15 @@ export class Conversations {
         ),
       );
       const tracked = running.then(() => native);
-      this.o.owner.trackConversationProcess(tracked, () => abort.abort());
+      this.o.owner.trackConversationProcess(tracked, () =>
+        abort.abort({ source: "service", reason: "stop", target: commandId }),
+      );
       const result = await running;
       capture.retry = undefined;
       uncertain = !result.closed;
       state.status = result.outcome;
+      if (result.stop)
+        state.notice = `${result.stop.source}: ${result.stop.reason} (${result.stop.target})`;
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
       state.status = uncertain
@@ -710,6 +736,8 @@ export class Conversations {
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
       if (uncertain) state.status = "unknown";
+      if (abort.signal.aborted && abort.signal.reason?.source)
+        state.notice = `${abort.signal.reason.source}: ${abort.signal.reason.reason} (${commandId})${state.notice ? `; ${state.notice}` : ""}`;
       try {
         // Preserve actual process closure even if the final state write fails.
         this.write(this.records.path(commandId, "native.json"), native);

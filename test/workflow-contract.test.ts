@@ -202,3 +202,25 @@ it("retained fixed-pipeline agreements remain readable but cannot authorize adap
     decodeWorkflowPlan({ ...current, knowledge: [".env"] }, { strict: true }),
   ).toThrow();
 });
+
+it("new setup/check commands default to no timeout without rewriting approved explicit values", () => {
+  const p = plan();
+  p.setup = [{ name: "setup", command: "prepare" }];
+  p.baselineChecks = [{ name: "baseline", command: "inspect" }];
+  p.checks = [{ name: "verify", command: "verify" }];
+  const decoded = decodeWorkflowPlan(p, { strict: true });
+  for (const commands of [
+    decoded.setup,
+    decoded.baselineChecks,
+    decoded.checks,
+  ])
+    expect(commands[0]).not.toHaveProperty("timeoutMs");
+  for (const timeoutMs of [120_000, 1_200_000, 3_600_000]) {
+    p.checks[0].timeoutMs = timeoutMs;
+    expect(decodeWorkflowPlan(p).checks[0].timeoutMs).toBe(timeoutMs);
+  }
+  for (const timeoutMs of [0, -1, Number.POSITIVE_INFINITY, 2_147_483_648]) {
+    p.checks[0].timeoutMs = timeoutMs;
+    expect(() => decodeWorkflowPlan(p)).toThrow();
+  }
+});

@@ -35,7 +35,6 @@ import {
   listTurn,
   type ParsedSession,
   type PiSessions,
-  SESSION_BYTES,
   type SessionEntry,
   sessionImage,
   summaryTitle,
@@ -308,17 +307,10 @@ export class ConversationRecords {
     const s = listed.summary;
     const secrets = this.readSecrets();
     let status: ChatStatus =
-      live?.state.status ??
-      (listed.size > SESSION_BYTES
-        ? "unknown"
-        : (s.stop?.status ?? "completed"));
+      live?.state.status ?? s.stop?.status ?? "completed";
     // Pi's stop reason is model evidence, not the owner's native/auth/storage
     // settlement. Match only the displayed branch's user, never another branch.
-    if (
-      !live &&
-      listed.size <= SESSION_BYTES &&
-      this.index(id).commands.length
-    ) {
+    if (!live && this.index(id).commands.length) {
       const session = this.sessions.session(id);
       const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
       const recorded = user ? this.overlay(id, session).get(user) : undefined;

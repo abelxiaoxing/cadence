@@ -130,7 +130,16 @@ for (const overlap of [false, true]) {
           .map((f) => f.event.text)
           .join("");
         assert.deepEqual(JSON.parse(text), updateValue);
-        assert.equal(emitter.state.details.get(event.detailId).ended, true);
+        assert.ok(
+          frames.some(
+            (f) =>
+              f.event.kind === "detail-end" &&
+              f.event.detailId === event.detailId,
+          ),
+        );
+        // The stream retains the completed evidence; live protocol state does
+        // not retain every prior tool snapshot for the lifetime of the Agent.
+        assert.equal(emitter.state.details.has(event.detailId), false);
       }
       await capture.event({
         type: "message_start",

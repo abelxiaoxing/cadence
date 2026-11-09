@@ -8,6 +8,7 @@ import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
 import { captureChanges } from "../task-diff.ts";
 import type { RunResult } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
+import { describeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import {
   type CheckNativeSettlement,
   decodeWorkerPublicRequest,
@@ -144,7 +145,6 @@ const MAX_STEPS = 256;
 const STEP_UNITS = 80;
 const MAX_ACTIVE = 4;
 /** Private-worktree Git operations: realistic for large repositories. */
-const GIT_MS = 10 * 60 * 1000;
 const RESTARTED =
   "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 const FINAL_UNAVAILABLE =
@@ -160,9 +160,9 @@ interface Options {
   cwd: string;
   checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
   secrets(): readonly string[];
-  timeoutMs?: number;
 }
 interface Live {
+  runtime: WorkerRuntime;
   execution: ExecutionContext;
   run: WorkflowRun;
   abort: AbortController;
@@ -427,7 +427,7 @@ export class Workflows {
     if (realpathSync(cwd) !== cwd) throw new ContractError("stale");
     return cwd;
   }
-  private observation(plan: WorkflowPlan) {
+  private observation(plan: WorkflowPlan, runtime: WorkerRuntime) {
     const source = workflowObservation(this.cwd, plan);
     const delivery =
       plan.delivery === "local-merge"
@@ -441,6 +441,7 @@ export class Workflows {
       delivery,
       digest: hash(
         canonicalJson({
+          runtime,
           source,
           delivery: delivery ?? null,
           working:
@@ -473,8 +474,12 @@ export class Workflows {
         "This retained proposal does not authorize adaptive delivery. Publish a current delivery agreement; nothing was started.",
       );
     }
-    this.model(p.model);
-    const observed = this.observation(p.plan);
+    const selected = this.model(p.model);
+    const runtime = this.o.models.workerSettings(
+      this.contexts.capture(p.model).cwd,
+      selected,
+    );
+    const observed = this.observation(p.plan, runtime);
     if (p.plan.delivery === "local-merge" && !p.delivery)
       throw new WorkflowRefusal(
         "invalid",
@@ -486,6 +491,7 @@ export class Workflows {
       p.cwd !== this.contexts.capture(p.model).cwd ||
       (p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd) ||
       observed.digest !== p.observation ||
+      p.display?.runtime !== describeWorkerRuntime(runtime) ||
       canonicalJson(observed.delivery ?? null) !==
         canonicalJson(p.delivery ?? null) ||
       p.digest !==
@@ -496,7 +502,7 @@ export class Workflows {
         )
     )
       throw new ContractError("stale");
-    return observed.source;
+    return { source: observed.source, runtime };
   }
   private projectDelivery(run: WorkflowRun): WorkflowRun {
     return run.delivery
@@ -748,7 +754,9 @@ export class Workflows {
     this.o.owner.lease.assert();
     if (epoch !== this.o.owner.lease.registration.epoch)
       throw new ContractError("stale");
-    this.active.get(runId)?.abort.abort();
+    this.active
+      .get(runId)
+      ?.abort.abort({ source: "user", reason: "cancel", target: runId });
     return { ...this.view(runId), commandId } as WorkbenchResult;
   }
   /** `definite` is for callers whose own command identity is this one (the
@@ -820,8 +828,12 @@ export class Workflows {
         JSON.parse(sanitizeData(r.plan, secrets)),
         { strict: true },
       );
-      const { source, digest, delivery } = this.observation(plan);
       const selected = this.model(r.model);
+      const runtime = this.o.models.workerSettings(
+        this.contexts.capture(r.model).cwd,
+        selected,
+      );
+      const { source, digest, delivery } = this.observation(plan, runtime);
       const p: WorkflowProposal = {
         ...(delivery ? { delivery } : {}),
         id: commandId,
@@ -832,6 +844,7 @@ export class Workflows {
         checkoutRoot: this.cwd,
         observation: digest,
         display: {
+          runtime: describeWorkerRuntime(runtime),
           model: `${selected.provider}/${selected.model} · ${selected.thinking}`,
           branch: source.branch,
           baseCommit: source.head,
@@ -906,9 +919,12 @@ export class Workflows {
     let delivery: WorkflowRun["delivery"];
     let target: Live["target"];
     let declared: string | undefined;
+    let runtime: WorkerRuntime;
     if (request.action === "execute") {
       proposal = this.proposal(request.proposalId);
-      const source = this.assertProposal(proposal, request.digest);
+      const observed = this.assertProposal(proposal, request.digest);
+      const source = observed.source;
+      runtime = observed.runtime;
       // A second plan would be checked against a checkout the first one changes;
       // queued behind it, it could only end stale. Refused before the grant is used.
       if ([...this.active.values()].some((live) => live.proposal))
@@ -946,7 +962,11 @@ export class Workflows {
         target = { head: source.head, branch: source.branch };
       else declared = contentsIdentity(this.cwd, writes);
     } else if (request.action === "research") {
-      this.model(request.model);
+      const selected = this.model(request.model);
+      runtime = this.o.models.workerSettings(
+        this.contexts.capture(request.model).cwd,
+        selected,
+      );
       this.capacity();
     } else throw new ContractError("invalid");
     const execution = this.contexts.capture(
@@ -989,6 +1009,7 @@ export class Workflows {
       begin = resolve;
     });
     const live: Live = {
+      runtime,
       execution,
       run,
       abort,
@@ -1001,9 +1022,15 @@ export class Workflows {
     };
     effect();
     this.active.set(commandId, live);
-    this.o.owner.trackConversation(live.original, () => abort.abort());
+    this.o.owner.trackConversation(live.original, () =>
+      abort.abort({ source: "service", reason: "stop", target: commandId }),
+    );
     try {
       this.write(acceptedPath, { epoch, request });
+      this.write(this.path(commandId, "runtime.json"), {
+        identity: hash(canonicalJson(runtime)),
+        summary: describeWorkerRuntime(runtime),
+      });
       live.file = this.write(this.path(commandId, "state.json"), run);
     } catch (e) {
       abort.abort();
@@ -1032,6 +1059,12 @@ export class Workflows {
   }
   /** The terminal snapshot must persist: clip previews rather than lose it. */
   private saveFinal(live: Live) {
+    const cause = live.abort.signal.reason;
+    if (live.abort.signal.aborted && cause?.source)
+      live.run.notice = this.notice(
+        live.run.notice,
+        `${cause.source}: ${cause.reason} (${live.run.id})`,
+      );
     try {
       canonicalJson(live.run, RECORD_BYTES);
     } catch {
@@ -1104,7 +1137,7 @@ export class Workflows {
               stopRequestedAt: null,
               closedAt: null,
               settledAt: null,
-              timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+
               stopReason: null,
             },
           }
@@ -1294,7 +1327,7 @@ Write paths are relative to the checkout root.`
       context: `${baseContext}
 
 ${knowledge.text}`,
-      instructions: `${role.content}\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. This attempt has a total native deadline of ${this.o.timeoutMs ?? LIMITS.workerMs}ms. Work incrementally; when the assignment is too large, submit a blocked report with concrete completed outputs and remaining work before the deadline, so the owner can split and continue it. Do not duplicate the entire acceptance pipeline inside one worker.`,
+      instructions: `${role.content}\nRead applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] },
     });
@@ -1320,19 +1353,26 @@ ${knowledge.text}`,
     let native: NativeSettlement | undefined;
     let selectedMessageId: string | undefined;
     const auth = this.o.models.prepareTracked({
+      runtime: live.runtime,
       request,
       cwd: runCwd,
       operationId: op,
       epoch: live.run.epoch,
-      timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+
       signal: live.abort.signal,
       current,
       journal: {
         preparation: (v) => {
-          this.write(this.path(live.run.id, `auth/${op}-intent.json`), v);
+          this.write(
+            this.path(live.run.id, `auth/${v.operationId}-intent.json`),
+            v,
+          );
         },
         settlement: (v) => {
-          this.write(this.path(live.run.id, `auth/${op}-settled.json`), v);
+          this.write(
+            this.path(live.run.id, `auth/${v.operationId}-settled.json`),
+            v,
+          );
         },
       },
     });
@@ -1346,6 +1386,7 @@ ${knowledge.text}`,
       }
       this.write(this.path(live.run.id, `launches/${childRunId}.json`), {
         cwd: runCwd,
+        runtime: live.runtime ? describeWorkerRuntime(live.runtime) : null,
         knowledge: {
           sources: knowledge.sources.map(
             ({ excerpt: _excerpt, ...source }) => source,
@@ -1377,7 +1418,6 @@ ${knowledge.text}`,
       ]);
       const running = Promise.resolve().then(() =>
         launchWorkflowWorker(prepared.prepared, runCwd, live.abort.signal, {
-          timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
           ownerSecrets: this.o.secrets(),
           roots: roots?.length
             ? roots.map((p) => resolve(runCwd, p))
@@ -1427,7 +1467,12 @@ ${knowledge.text}`,
           if (!native) throw new ContractError("quarantine");
           return native;
         }),
-        () => live.abort.abort(),
+        () =>
+          live.abort.abort({
+            source: "service",
+            reason: "stop",
+            target: live.run.id,
+          }),
       );
       const completed = this.sanitizeResult(await running);
       if (native)
@@ -1585,12 +1630,13 @@ ${knowledge.text}`,
         cwd: runCwd,
         env: shell ? environment : gitEnvironment(),
         retainOutput: true,
+        stopTarget: id,
         // An uninterruptible operation is never tied to the run's cancellation.
         signal: options.uninterruptible
           ? new AbortController().signal
           : live.abort.signal,
         uninterruptible: options.uninterruptible,
-        timeoutMs: shell ? operation.check.timeoutMs : GIT_MS,
+        timeoutMs: shell ? operation.check.timeoutMs : undefined,
         secrets: [...this.o.secrets()],
         maySignal: () => {
           try {
@@ -1610,7 +1656,12 @@ ${knowledge.text}`,
         if (!native) throw new ContractError("quarantine");
         return native;
       }),
-      () => live.abort.abort(),
+      () =>
+        live.abort.abort({
+          source: "service",
+          reason: "stop",
+          target: live.run.id,
+        }),
     );
     const result = this.sanitizeResult(await running);
     this.write(this.path(live.run.id, `operations/${id}-settled.json`), {

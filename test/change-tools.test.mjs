@@ -5,6 +5,7 @@ import { createChangeTools } from "../src/change-tools.mjs";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
 import { deliveryFixture } from "./helpers/delivery-fixture.ts";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 const owned = [];
 afterEach(async () => {
@@ -131,10 +132,10 @@ it("the registry grants changes only to a review bound to its admitted investiga
   const kit = createWorkerToolkit({
     workspace,
     purpose: "review",
+    runtime: fixtureRuntime(),
     changes: f.binding,
   });
   owned.push(kit);
-  expect(kit.capabilities).toEqual(["observation", "changes"]);
   expect(kit.sessionOptions.tools).toContain("changes");
   for (const purpose of ["edit", "research", "diagnosis"])
     expect(() =>

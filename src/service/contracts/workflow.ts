@@ -32,7 +32,7 @@ export const WORKFLOW_LIMITS = {
 export interface WorkflowCheck {
   name: string;
   command: string;
-  timeoutMs: number;
+  timeoutMs?: number;
 }
 export interface WorkflowTask {
   id: string;
@@ -109,7 +109,12 @@ export interface WorkflowProposal {
   plan: WorkflowPlan;
   cwd: string;
   checkoutRoot?: string;
-  display?: { model: string; branch: string; baseCommit: string };
+  display?: {
+    model: string;
+    branch: string;
+    baseCommit: string;
+    runtime?: string;
+  };
 }
 export interface WorkflowTiming {
   createdAt: number;
@@ -118,7 +123,7 @@ export interface WorkflowTiming {
   stopRequestedAt: number | null;
   closedAt: number | null;
   settledAt: number | null;
-  timeoutMs: number;
+  timeoutMs?: number;
   stopReason: string | null;
 }
 export interface WorkflowDiagnostics {
@@ -260,11 +265,17 @@ const taskId = (v: unknown, strict = false) => {
   return s;
 };
 export function decodeWorkflowCheck(v: unknown): WorkflowCheck {
-  const o = closed(v, ["name", "command", "timeoutMs"]);
+  const o = closed(v, [
+    "name",
+    "command",
+    ...(Object.hasOwn(v ?? {}, "timeoutMs") ? ["timeoutMs"] : []),
+  ]);
   return {
     name: text(o.name, 128, true),
     command: text(o.command, 4096, true),
-    timeoutMs: integer(o.timeoutMs, 100, 1_200_000),
+    ...(o.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: integer(o.timeoutMs, 100, 2_147_483_647) }),
   };
 }
 export function workflowOrder(tasks: WorkflowTask[]): WorkflowTask[] {
@@ -616,8 +627,16 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
     ...(modern
       ? {
           display: (() => {
-            const d = closed(o.display, ["model", "branch", "baseCommit"]);
+            const d = closed(o.display, [
+              "model",
+              "branch",
+              "baseCommit",
+              ...(Object.hasOwn(o.display ?? {}, "runtime") ? ["runtime"] : []),
+            ]);
             return {
+              ...(d.runtime === undefined
+                ? {}
+                : { runtime: text(d.runtime, 4096, true) }),
               model: text(d.model, 1024, true),
               branch: text(d.branch, 1024),
               baseCommit: text(d.baseCommit, 64),
@@ -834,7 +853,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\n${p.version === 2 ? "Authorize diagnosis, partial-work continuation, task splitting and alternative implementations within these goals, decisions, write paths and exact setup/check commands. No fixed repair-round or delivery-duration quota. Only actual verification and independent Agent review permit delivery." : `Historical fixed pipeline: at most ${p.repairAttempts} repair rounds.`} ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project knowledge\n${p.version === 2 ? p.knowledge?.join("\n") || "No documentation edits authorized; existing knowledge is still read." : p.projectContext}\n`;
+    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n")}\n\n## Automation boundary\n${p.version === 2 ? "Authorize diagnosis, partial-work continuation, task splitting and alternative implementations within these goals, decisions, write paths and exact setup/check commands. No fixed repair-round or delivery-duration quota. Only actual verification and independent Agent review permit delivery." : `Historical fixed pipeline: at most ${p.repairAttempts} repair rounds.`} ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project knowledge\n${p.version === 2 ? p.knowledge?.join("\n") || "No documentation edits authorized; existing knowledge is still read." : p.projectContext}\n`;
 }
 
 const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);
@@ -846,7 +865,7 @@ function decodeWorkflowTiming(v: unknown): WorkflowTiming {
     "stopRequestedAt",
     "closedAt",
     "settledAt",
-    "timeoutMs",
+    ...(Object.hasOwn(v ?? {}, "timeoutMs") ? ["timeoutMs"] : []),
     "stopReason",
   ]);
   return {
@@ -856,8 +875,12 @@ function decodeWorkflowTiming(v: unknown): WorkflowTiming {
     stopRequestedAt: nullable(o.stopRequestedAt, timestamp),
     closedAt: nullable(o.closedAt, timestamp),
     settledAt: nullable(o.settledAt, timestamp),
-    timeoutMs: integer(o.timeoutMs, 100, 1200000),
-    stopReason: nullable(o.stopReason, (v) => text(v, 32, true)),
+    ...(o.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: integer(o.timeoutMs, 100, 2_147_483_647) }),
+    // Current summaries include source and target; old short outcome labels
+    // remain readable without inventing provenance for them.
+    stopReason: nullable(o.stopReason, (v) => text(v, 320, true)),
   };
 }
 function decodeWorkflowDiagnostics(v: unknown): WorkflowDiagnostics {
@@ -900,7 +923,7 @@ export function workflowDiagnostics(run: WorkflowRun): string {
     ...run.steps.flatMap((s) =>
       s.timing
         ? [
-            `${s.id}: preparing ${at(s.timing.createdAt)} · prepared ${at(s.timing.preparedAt)} · spawned ${at(s.timing.startedAt)} · stop ${at(s.timing.stopRequestedAt)} (${s.timing.stopReason ?? "none"}) · direct child closed ${at(s.timing.closedAt)} · settled ${at(s.timing.settledAt)} · total process budget ${s.timing.timeoutMs}ms${s.runtime ? ` · worker SDK ${s.runtime.sdkVersion} · worker hash ${s.runtime.workerHash}` : ""}`,
+            `${s.id}: preparing ${at(s.timing.createdAt)} · prepared ${at(s.timing.preparedAt)} · spawned ${at(s.timing.startedAt)} · stop ${at(s.timing.stopRequestedAt)} (${s.timing.stopReason ?? "none"}) · direct child closed ${at(s.timing.closedAt)} · settled ${at(s.timing.settledAt)} · ${s.timing.timeoutMs === undefined ? "no total runtime deadline" : `historical process budget ${s.timing.timeoutMs}ms`}${s.runtime ? ` · worker SDK ${s.runtime.sdkVersion} · worker hash ${s.runtime.workerHash}` : ""}`,
           ]
         : [],
     ),

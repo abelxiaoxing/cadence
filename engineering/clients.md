@@ -262,7 +262,7 @@ Read redaction uses the owner's current literals, or the last ones observed whil
 The owner never rewrites, repairs or deletes a session file; its own private `service-v1/conversation-commands-v1` records each browser message's admission (command, the entry it continues, the file size then, status, auth journal and native closure), never content.
 Their tools operate on the host, not in a sandbox.
 Each turn holds the checkout's exclusive gate, so ordinary turns, Cadence children and parent checks cannot edit/read across one another's active write window; leaving a tab only detaches.
-An active turn retains independent interruption authority; Stop or a timeout signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
+An active turn retains independent interruption authority; explicit Cancel or Stop signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
 Access-token rotation revokes viewers, not admitted queued turns.
 Each admitted turn/workflow records its original execution context; queue release and later workers never consult a mutable conversation/owner picker to replace it.
 File views follow the retained conversation cwd, and directory navigation does not rewrite that cwd; choosing a different folder opens a separate conversation context.
@@ -274,7 +274,8 @@ A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence
 A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns; a turn whose closure is unknown keeps fences.
-There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic compaction; a terminal `/compact` is honoured when the session is continued.
+There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader or prompt composer.
+SDK-native automatic compaction is enabled, and terminal `/compact` entries are honoured when continued; original history is retained.
 The service-owned SDK session retries transient model-request errors with the bounded policy in `src/worker-model.mjs`; native Pi's main dialogue retains its own settings, which Cadence neither changes nor copies.
 The owner projects credential-free waiting/requesting progress separately from error notices; refresh observes the same admitted turn and never resends it.
 Pi keeps failed attempts in raw history and appends context edits to omit them from later model requests; completed tool results remain in context.
@@ -417,3 +418,8 @@ A session whose first JSONL has not been flushed stays visibly history-unavailab
 Custom session-directory overrides that differ from the gateway's existing reader remain visible but cannot navigate history: the report's directory-scope hash must match the configured reader, and discovery never follows a reported session-file path.
 Ordinary CLI work has no remote Stop or control endpoint.
 History outcomes and the existing owner's authorized exact-run controls remain independent of discovery.
+
+Service Agents inherit persisted Pi execution preferences and standard tool selection at Send/admission, not the terminal's live extension registry or transient overrides.
+A delivery plan displays its runtime summary and requires fresh confirmation if preferences change before admission.
+Already admitted work keeps its snapshot across worktree placement, review and auth renewal.
+Configuration/trust resolution and the explicit service exceptions are owned by `worker-tools.md`; this does not change the separate ordinary context/skill resource seam.

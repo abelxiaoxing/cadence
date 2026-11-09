@@ -7,7 +7,7 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
-Model-request recovery stays inside the original SDK session and worker deadline; its checkout gate remains held during abortable backoff.
+Model-request recovery stays inside the original SDK session, without a total runtime deadline; its checkout gate remains held during abortable backoff.
 The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
 A terminal model-request failure (recovery exhausted or nonretryable) ends delivery after actual cleanup, rather than starting a second network retry or provider-dependent diagnosis loop.
 Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
@@ -24,7 +24,8 @@ The terminal is never an embedded executor.
 One fresh 120s grant binds the exact displayed version-2 delivery agreement, model source, project observation and owner epoch.
 The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations inside its immutable goal, decisions, acceptance, write paths and exact commands; a model cannot change those permissions.
 There is no total delivery deadline or fixed repair-round quota.
-Each worker/check still has its native deadline and original closure requirements.
+Agents have no total runtime deadline; setup/check commands are unlimited unless their exact approved definition specifies a timeout.
+Original closure requirements are unchanged.
 Settled failures enter readonly diagnosis; authority, scope, storage, cancellation and unknown-closure failures never authorize another attempt.
 Identical strategy and unchanged failure/source evidence stop a nonprogressing route.
 A concrete external blocker is retained as an unsuccessful delivery, never success or a fabricated user request.
@@ -35,8 +36,9 @@ Browser access authentication is not execution consent.
 A fresh conversation Send can report no effect only from a healthy owner, after excluding prior/partial attempts and before registering original work or writing control/acceptance state.
 A server-only refusal type carries this proof to HTTP; error names alone never establish it.
 Prior attempts, partial writes and lost replies remain uncertain and observe-only.
-Coordinator turns are owner-accounted originals but hold no checkout barrier; only their finite delegated investigations acquire that gate.
-Coordinator interruption joins its own investigations, not a previously approved implementation.
+Coordinator turns are owner-accounted originals but hold no checkout barrier; only their delegated investigations acquire that gate.
+Coordinator bridge loss or abnormal termination joins its accepted investigations without canceling them; their owner retains the results.
+Explicit workflow Cancel and owner Stop independently stop those originals.
 No restart replays an unfinished workflow.
 At startup a run left queued/running (or accepted without a snapshot) is recorded as `unknown` with a notice that the owner restarted, nothing was inferred or replayed, and worktrees and partial edits are retained (an integrating run may have fast-forwarded); unreadable records stay untouched and do not fence startup.
 Stop joins the shared owner accounting.
@@ -153,13 +155,17 @@ Stopping an unresponsive owner requires its recorded start identity; taking over
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
 Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
-Queue time is outside the process deadlines; ongoing tool/model activity never renews a worker's total deadline.
+Queueing, repeated investigations and model/tool work have no total Agent deadline and need no renewal mechanism.
 Readonly investigations use Pi's standard file tools with explicit paths and default search roots (conversation cwd by default), never an arbitrary shell.
 Pi owns matching, ignore behavior and truncation; partial output is not exhaustive evidence or an atomic source snapshot.
 Workers remain offline for tool discovery: searches use already available binaries, without implicit downloads or installation.
 No file-tool call grants editing or execution consent.
-Tool calls have no cumulative quota or early final-report cutoff; the parent process deadline and explicit cancellation remain authoritative.
+Tool calls have no cumulative quota or early final-report cutoff; explicit cancellation, real failures and original settlement remain authoritative.
 The toolkit joins admitted standard file-tool originals rather than letting the SDK's early abort rejection stand for I/O closure; a canceled edit may have completed and is never replayed or described as rolled back.
 Pi's grep, shell, fixed-Git evidence and the coordinator bridge retain their native stop-and-join lifetimes.
 The tool and coverage semantics are defined in [worker tools](worker-tools.md).
 These scope checks are not a filesystem sandbox.
+
+Pi preference freshness is separate from model/auth source freshness: a preference change invalidates a pending approval, but cannot stop, reconfigure or replay accepted work.
+Request-auth renewal uses the admitted snapshot without rereading settings/worktree profiles.
+See `worker-tools.md` for this source and tool-selection boundary.

@@ -9,6 +9,7 @@ import {
   readFileSync,
   readSync,
   statSync,
+  writeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -16,7 +17,7 @@ import type {
   ChatCursor,
   WorkbenchRead,
 } from "../src/service/contracts/workbench.ts";
-import { SESSION_BYTES, sessionDirectory } from "../src/service/pi-sessions.ts";
+import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
@@ -114,7 +115,7 @@ it("the browser lists 205 terminal sessions, continues a 1000-turn one in its ow
   }
 }, 60000);
 
-it("an oversized existing Pi session refuses Send without creating a second file or contacting a provider", async () => {
+it("a retained Pi session past 64MiB continues in place without replacing its original prefix", async () => {
   const f = await acceptingFixture("generated");
   try {
     await f.client.session();
@@ -126,7 +127,8 @@ it("an oversized existing Pi session refuses Send without creating a second file
       prefix = readFileSync(path);
     const fd = openSync(path, "r+");
     try {
-      ftruncateSync(fd, SESSION_BYTES + 1);
+      ftruncateSync(fd, 64 * 1024 * 1024 + 1);
+      writeSync(fd, "\n", 64 * 1024 * 1024);
     } finally {
       closeSync(fd);
     }
@@ -146,7 +148,7 @@ it("an oversized existing Pi session refuses Send without creating a second file
       await f.client.workbenchRead({ kind: "conversations" }),
     ).toMatchObject({
       kind: "ok",
-      value: { entries: [{ id: seed.ids[0], status: "unknown" }] },
+      value: { entries: [{ id: seed.ids[0], status: "completed" }] },
     });
     expect(
       await f.client.workbenchRead({
@@ -155,8 +157,9 @@ it("an oversized existing Pi session refuses Send without creating a second file
         leaf: null,
         known: null,
       }),
-    ).toMatchObject({ kind: "error", error: { code: "capacity" } });
+    ).toMatchObject({ kind: "ok" });
     const commandId = randomUUID();
+    f.reply("Continued large history.");
     expect(
       await f.client.workbenchCommand({
         kind: "send",
@@ -167,12 +170,29 @@ it("an oversized existing Pi session refuses Send without creating a second file
         model: selected.value.version,
       }),
     ).toMatchObject({
-      kind: "error",
-      error: { code: "capacity", effect: "none" },
+      kind: "ok",
+      value: { kind: "accepted", commandId },
     });
-    expect(f.contacts()).toBe(0);
+    for (let n = 0; n < 750; n++) {
+      const view = await f.client.workbenchRead({
+        kind: "conversation",
+        id: seed.ids[0],
+        leaf: null,
+        known: null,
+      });
+      if (
+        view.kind === "ok" &&
+        view.value.kind === "conversation" &&
+        !view.value.summary?.live
+      ) {
+        expect(view.value.summary?.status).toBe("completed");
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(f.contacts()).toBeGreaterThan(0);
     expect(readdirSync(directory)).toEqual(names);
-    expect(statSync(path).size).toBe(SESSION_BYTES + 1);
+    expect(statSync(path).size).toBeGreaterThan(64 * 1024 * 1024 + 1);
     const after = openSync(path, "r");
     try {
       const bytes = Buffer.alloc(prefix.length);
@@ -185,7 +205,7 @@ it("an oversized existing Pi session refuses Send without creating a second file
       existsSync(
         join(f.c.directory, "conversation-commands-v1", "commands", commandId),
       ),
-    ).toBe(false);
+    ).toBe(true);
   } finally {
     await f.close();
   }

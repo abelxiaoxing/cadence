@@ -76,7 +76,7 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `task-worktree`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: approved-only named stable candidates, adaptive recovery/knowledge, exact acceptance and repeated owned fast-forwards, changed-target retention, original-operation leases, readonly evidence and recovery.
   The full real admission case remains slow; controlled runtime/recovery tests are not paid-provider or real-owner qualification.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
-- `pi-sessions`, `service-conversation-pages`, `service-conversation-retention`, `conversation-retirement`, `conversation-records`, `test/web/conversation-reader.test.tsx`: conversations as the project's Pi sessions (directory precedence, incremental and torn-line reads, turns, read redaction, lossless parts), a browser turn's file and branches, the branch tree, live-preview counting, noncreating oversized-session refusal, command/entry correlation, current redaction, durable status and unsupported old identities without storage changes.
+- `pi-sessions`, `service-conversation-pages`, `service-conversation-retention`, `conversation-retirement`, `conversation-records`, `test/web/conversation-reader.test.tsx`: conversations as the project's Pi sessions (directory precedence, incremental and torn-line reads, turns, read redaction, lossless parts), a browser turn's file and branches, the branch tree, live-preview counting, incremental large-session identity/continuation, command/entry correlation, current redaction, durable status and unsupported old identities without storage changes.
 - `conversation-images`, `service-conversation-images`, `test/web/images.test.tsx` plus `pi-sessions`/`gateway-conversations`: chunked image uploads without count/size quotas, exact Send/caller binding, SDK images through the private pipe, model capability refusal, readonly history/branch/media projection, image-only Send, upload failure and retained preview projection.
 - `abort-scope`, `service-http-client-abort`: missing static cancellation APIs individually/together, pre-cancel/first reason, full-body deadline, normal/error cleanup and no command replay or service cancellation; finite transport fixtures do not start a real owner.
 - `test/web/{project-entry,conversation-send,send-observation}.test.tsx`: pre-dispatch versus unconfirmed/confirmed preparation, attachment timeout after confirmation, pinned Send fields and original uncertain command IDs, scoped wait cleanup and same-epoch reattachment without replay.
@@ -92,7 +92,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
   `worker-capture` checks Pi's actual `AgentSession` system-message path (a low-level `Agent` alone does not reproduce it), explicit context omissions, strict message pairing, and split key/delimiter/whitespace redaction across repeated projections.
   Real-owner provider fixtures decode both string and typed text-part message bodies; recovery evidence and observation cursors must survive the current SDK serialization.
-  `worker-toolkit` covers complete editing capabilities, readonly boundaries, immutable placement and original-operation joins; `research-tools` covers actual Pi read/list semantics and `research-tools-settlement` delays actual SDK I/O to test cancellation; `coordinator-tools` owns bridge admission and disposal.
+  `worker-settings` covers Pi merge/model-override/trust semantics, malformed-source refusal and inert snapshots without source writes.
+  `worker-toolkit` covers inherited editing selections, PowerShell and native shell schemas/backends, readonly boundaries, immutable placement and original-operation joins; `research-tools` covers actual Pi read/list semantics and `research-tools-settlement` delays actual SDK I/O to test cancellation; `coordinator-tools` owns bridge admission and disposal.
   `research-tools-schema` compares ordinary tool schemas with the installed public SDK and checks pre-send Responses serialization without the retired batch/query/cursor protocol; specialized `changes` alone retains nullable cursor fields.
   `research-tools-process` uses installed SDK search adapters with controlled subprocess events to verify grep's actual abort/close path, find's original settlement and error propagation.
   These are not paid-provider requests or qualification of externally installed search binaries.
@@ -114,6 +115,8 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   Same-epoch re-entry waits for the new observation generation, never the previous attachment.
 - `activity`, `activity-discovery`, `activity-auth`, `test/web/activity.test.tsx`: real-turn-only native metadata, final settlement, exact admission attribution, nonactivating registry discovery, partial/stale observations, private-file preservation, cancellable browser polling and branch navigation.
   Controlled observations do not qualify real browsers, providers or production services.
+- `agent-lifetime`, `worker-auth`, `worker-model`, `lightweight-process-diff`: virtual time past the old deadline for each worker route, multi-round SDK investigation, bridge detach versus explicit cancel, automatic compaction/final selection, request-bound owner OAuth renewal and original-write joins, bounded settled capture state and redacted log truncation.
+  These use controlled native/auth/provider ports, not live services or paid providers.
 
 ## Builds and packaging
 
@@ -168,3 +171,6 @@ Wrong: release a reservation when `Promise.race` reports a timeout, or retry a m
 Correct: retain the original operation/fences and observe the exact receipt; a separately explicit safety request does not renew task consent.
 Wrong: show only preview/ring text as full history, or sum overlapping test runs into a larger suite total.
 Correct: expose bounded continuations/full exports and report the exact executed domain and final original exit.
+
+Pi inheritance regression owners: `workflow-admission` binds preference changes to fresh approval and pins queued snapshots; `worker-auth` proves request renewal cannot reload preferences; `lightweight-sdk` rejects substituted active tool sets before a model request.
+Public-boundary fixtures do not qualify live extensions/MCP, real PowerShell/provider behavior on every platform, or a deployed service update.

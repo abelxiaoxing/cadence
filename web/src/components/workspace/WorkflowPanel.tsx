@@ -238,6 +238,7 @@ export function PlanCard({
         {t("Declared write paths use the checkout root:")}{" "}
         <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
       </p>
+      {proposal.display?.runtime && <p>{proposal.display.runtime}</p>}
       {proposal.display?.branch && (
         <p>
           <code>{proposal.display.branch}</code> ·{" "}

@@ -7,6 +7,7 @@ import { canonicalJson } from "../src/service/contracts/core.ts";
 import { decodeWorkflowProposal } from "../src/service/contracts/workflow.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { deliveryFixture } from "./helpers/delivery-fixture.ts";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 afterEach(() => vi.restoreAllMocks());
@@ -51,7 +52,10 @@ function fixture() {
       },
     },
     contexts: { capture: () => execution },
-    models: { assertCurrent() {} },
+    models: {
+      workerSettings: () => fixtureRuntime(),
+      assertCurrent() {},
+    },
     secrets: () => [],
   } as unknown as ConstructorParameters<typeof Workflows>[0];
   const workflows = new Workflows(options);

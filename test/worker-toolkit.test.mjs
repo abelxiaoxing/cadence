@@ -1,12 +1,17 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  createBashToolDefinition,
+  createPowerShellToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, expect, it, vi } from "vitest";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import {
   bindWorkerWorkspace,
   executionDirectory,
 } from "../src/worker-workspace.mjs";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 const resources = [];
 afterEach(async () => {
@@ -17,6 +22,7 @@ afterEach(async () => {
 function toolkit(purpose, cwd, extra = {}) {
   const kit = createWorkerToolkit({
     purpose,
+    runtime: fixtureRuntime(),
     workspace: bindWorkerWorkspace(cwd),
     secrets: [],
     fail: vi.fn(),
@@ -34,7 +40,6 @@ it.each(["research", "diagnosis", "review"])(
     const root = await mkdtemp(join(tmpdir(), "toolkit-observe-"));
     await writeFile(join(root, "a"), "evidence");
     const kit = toolkit(purpose, root, { tools: ["bash", "write"] });
-    expect(kit.capabilities).toEqual(["observation"]);
     expect(kit.instructions).toContain("Explicit absolute paths");
     expect(kit.instructions).toContain("no bash, write or edit");
     expect(kit.sessionOptions.tools).toEqual(["read", "grep", "find", "ls"]);
@@ -65,7 +70,6 @@ it("coding capabilities preserve the standard SDK file tools and the no-spill ba
     createLocalBashOperations: () => ({ exec }),
     queue: { reserve: () => lease },
   });
-  expect(kit.capabilities).toEqual(["files", "shell"]);
   expect(kit.instructions).toBe("");
   expect(kit.sessionOptions.tools).toEqual([
     "read",
@@ -98,7 +102,6 @@ it("coordinators expose only their owner bridge and close listeners without gain
     });
   vi.stubGlobal("process", { ...process, send: vi.fn() });
   const kit = toolkit("research", resolve("."), { coordinator: true });
-  expect(kit.capabilities).toEqual(["coordination"]);
   expect(kit.sessionOptions.tools).toEqual([
     "cadence_research",
     "cadence_plan",
@@ -267,4 +270,73 @@ it("a research worker can inspect an installed-package fixture outside its cwd w
   expect(kit.sessionOptions.cwd).toBe(cwd);
   for (const name of ["bash", "edit", "write", "cadence_report"])
     expect(kit.sessionOptions.tools).not.toContain(name);
+});
+
+it("editing inherits the configured Pi tool selection rather than a Cadence role list", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-tool-selection-"));
+  const runtime = fixtureRuntime({ defaultTools: ["read", "edit", "find"] });
+  const kit = toolkit("edit", root, { runtime });
+  expect(kit.sessionOptions.tools).toEqual(runtime.tools.edit);
+  expect(kit.sessionOptions.customTools).toEqual([]);
+  expect(() => kit.wrap([{ name: "bash" }])).toThrow("Unexpected");
+});
+it.each(["bash", "powershell"])(
+  "%s inherits Pi's definition and backend; settings remain pinned to its workspace",
+  async (name) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-shell-selection-"));
+    const runtime = fixtureRuntime({
+      defaultTools: [name],
+      shellPath: "/configured/bash",
+      shellCommandPrefix: "export FIXTURE=1",
+    });
+    const exec = vi.fn(async () => ({ exitCode: 7 }));
+    const bash = vi.fn(() => ({ exec })),
+      powershell = vi.fn(() => ({ exec }));
+    const kit = toolkit("edit", root, {
+      runtime,
+      createLocalBashOperations: bash,
+      createLocalPowerShellOperations: powershell,
+      queue: { reserve: () => ({ release() {} }) },
+    });
+    expect(kit.sessionOptions.tools).toEqual([name]);
+    const definition = (
+      name === "bash"
+        ? createBashToolDefinition
+        : createPowerShellToolDefinition
+    )(root);
+    const tool = kit.sessionOptions.customTools[0];
+    expect(tool.parameters).toEqual(definition.parameters);
+    expect(tool.constrainedSampling).toEqual(definition.constrainedSampling);
+    expect(tool.promptSnippet).toBe(definition.promptSnippet);
+    const result = await kit
+      .wrap([tool])[0]
+      .execute(
+        "id",
+        { command: "inspect", timeout: 12 },
+        new AbortController().signal,
+        undefined,
+        { cwd: "/wrong-place" },
+      );
+    expect(exec).toHaveBeenCalledWith(
+      name === "bash" ? "export FIXTURE=1\ninspect" : "inspect",
+      root,
+      expect.objectContaining({ timeout: 12 }),
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.exit_code).toBe(7);
+    if (name === "bash")
+      expect(bash).toHaveBeenCalledWith({ shellPath: "/configured/bash" });
+    else expect(bash).not.toHaveBeenCalled();
+  },
+);
+it("configured implementation tools never grant writes to independent readonly work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-readonly-selection-"));
+  const runtime = fixtureRuntime({ defaultTools: ["read", "bash", "write"] });
+  const kit = toolkit("review", root, { runtime });
+  expect(kit.sessionOptions.tools).toEqual(["read"]);
+  expect(() =>
+    toolkit("research", root, {
+      runtime: { ...runtime, tools: { ...runtime.tools, readonly: ["bash"] } },
+    }),
+  ).toThrow("Readonly");
 });

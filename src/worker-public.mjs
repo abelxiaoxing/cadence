@@ -17,7 +17,6 @@ export const LIMITS = Object.freeze({
   wsClientFrameBytes: 16 * 1024,
   startWaitMs: 10_000,
   stopWaitMs: 60_000,
-  authWaitMs: 30_000,
   authValidityMarginMs: 120_000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
@@ -34,10 +33,10 @@ export const LIMITS = Object.freeze({
   frameBytes: 64 * 1024,
   chunkBytes: 8 * 1024,
   detailBytes: 32 * 1024 * 1024,
-  childProtocolBytes: 128 * 1024 * 1024,
   dataFrames: 100_000,
   controlFrames: 256,
-  sdkEvents: 1_000_000,
+  // Live unresolved protocol state only; settled history does not consume it.
+  captureEntries: 4096,
   workerQueueBytes: 4 * 1024 * 1024,
   workerQueueFrames: 1024,
   ownerQueueBytes: 8 * 1024 * 1024,
@@ -45,13 +44,8 @@ export const LIMITS = Object.freeze({
   // Transform queue headroom, not the separate per-episode disk reservation.
   ownerControlBytes: 1024 * 1024,
   ownerControlFrames: 256,
-  recordingStallMs: 5000,
   episodes: 8,
-  queuedAssignments: 128,
   childReservations: 2,
-  episodeMs: 6 * 60 * 60 * 1000,
-  readyWaitMs: 10 * 60 * 1000,
-  workerMs: 1_200_000,
   artifactPartBytes: 256 * 1024,
   progressBatchMs: 100,
   progressBatchBytes: 256 * 1024,
@@ -659,7 +653,7 @@ export function checkSelection(v) {
     kind: oneOf(o.kind, ["configured", "manual"]),
     name: text(o.name, 128, true),
     command: text(o.command, 4096, true),
-    timeoutMs: integer(o.timeoutMs, 100, LIMITS.workerMs),
+    timeoutMs: integer(o.timeoutMs, 100, 1_200_000),
   };
   // Same visible-command policy as task-types; that legacy decoder uses Node Buffer and permits extra keys.
   // biome-ignore lint/suspicious/noControlCharactersInRegex: executable confirmations must be visibly representable
@@ -990,8 +984,25 @@ export function assertWorkerEnvelopeSize(serialized) {
   if (utf8Bytes(serialized) > LIMITS.workerRequestBytes)
     throw new ContractError("oversize");
 }
+export function decodeStopCause(v) {
+  const o = closed(v, ["source", "reason", "target"]);
+  return {
+    source: oneOf(o.source, [
+      "user",
+      "service",
+      "owner",
+      "command",
+      "worker",
+      "coordinator",
+      "unknown",
+    ]),
+    reason: text(o.reason, 128, true),
+    target: text(o.target, 128, true),
+  };
+}
 export function decodeNativeSettlement(v) {
   const o = closed(v, [
+    ...(Object.hasOwn(v ?? {}, "stop") ? ["stop"] : []),
     "outcome",
     "closure",
     "exitCode",
@@ -1003,6 +1014,7 @@ export function decodeNativeSettlement(v) {
     "capture",
   ]);
   const r = {
+    ...(o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) }),
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -1477,11 +1489,7 @@ export function decodeCaptureFrame(v) {
   return {
     protocol: literal(o.protocol, WORKER_PROTOCOL),
     childRunId: decodeId(o.childRunId),
-    workerSeq: integer(
-      o.workerSeq,
-      1,
-      LIMITS.dataFrames + LIMITS.controlFrames,
-    ),
+    workerSeq: integer(o.workerSeq, 1, Number.MAX_SAFE_INTEGER),
     observedMs: integer(o.observedMs),
     event: decodeCaptureEvent(o.event),
   };
@@ -1510,6 +1518,7 @@ export function advanceCapture(position, input) {
 }
 export function decodeCheckNativeSettlement(v) {
   const o = closed(v, [
+    ...(Object.hasOwn(v ?? {}, "stop") ? ["stop"] : []),
     "outcome",
     "closure",
     "exitCode",
@@ -1518,6 +1527,7 @@ export function decodeCheckNativeSettlement(v) {
     "stdin",
   ]);
   const r = {
+    ...(o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) }),
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -1693,8 +1703,8 @@ export function decodeWorkerCompletion(v) {
 }
 export function decodeSourceRange(v) {
   const o = closed(v, ["first", "last", "firstObservedMs", "lastObservedMs"]);
-  const first = integer(o.first, 1, LIMITS.dataFrames + LIMITS.controlFrames);
-  const last = integer(o.last, first, LIMITS.dataFrames + LIMITS.controlFrames);
+  const first = integer(o.first, 1, Number.MAX_SAFE_INTEGER);
+  const last = integer(o.last, first, Number.MAX_SAFE_INTEGER);
   const firstObservedMs = integer(o.firstObservedMs);
   const lastObservedMs = integer(o.lastObservedMs, firstObservedMs);
   if (first === last && firstObservedMs !== lastObservedMs) invalid();

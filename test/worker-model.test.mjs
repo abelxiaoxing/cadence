@@ -20,10 +20,7 @@ import { Type } from "typebox";
 import { afterEach, expect, it, vi } from "vitest";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
-import {
-  WORKER_MODEL_SETTINGS,
-  WorkerModelState,
-} from "../src/worker-model.mjs";
+import { WORKER_POLICY, WorkerModelState } from "../src/worker-model.mjs";
 
 const model = {
   id: "fixture",
@@ -92,7 +89,7 @@ function response(output, complete = true) {
     { headers: { "content-type": "text/event-stream" } },
   );
 }
-async function fixture(reply) {
+async function fixture(reply, options = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "worker-model-"));
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -101,6 +98,7 @@ async function fixture(reply) {
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
+  let authRequests = 0;
   runtime.registerNativeProvider(
     createProvider({
       id: model.provider,
@@ -109,7 +107,10 @@ async function fixture(reply) {
       auth: {
         apiKey: {
           name: "Fixture",
-          resolve: async () => ({ auth: { apiKey: "fixture-only" } }),
+          resolve: async () => {
+            authRequests++;
+            return { auth: { apiKey: "fixture-only" } };
+          },
         },
       },
     }),
@@ -131,11 +132,24 @@ async function fixture(reply) {
         parameters: Type.Object({ value: Type.Number() }),
         execute: async (_id, args) => {
           effects.push(args.value);
+          await options.effect?.(args.value);
           return { content: [{ type: "text", text: "effect completed" }] };
         },
       },
     ],
-    settingsManager: SettingsManager.inMemory(WORKER_MODEL_SETTINGS),
+    settingsManager: SettingsManager.inMemory({
+      ...WORKER_POLICY,
+      httpIdleTimeoutMs: 0,
+      // This fixture explicitly configures six retries; production inherits Pi.
+      retry: {
+        enabled: true,
+        maxRetries: 6,
+        baseDelayMs: 5000,
+        maxAgentDelayMs: 120000,
+        provider: { maxRetries: 0 },
+      },
+      ...options.settings,
+    }),
     sessionManager: manager,
     resourceLoader: {
       getExtensions: () => ({
@@ -229,6 +243,7 @@ async function fixture(reply) {
   return {
     session,
     manager,
+    authRequests: () => authRequests,
     state,
     frames,
     requests,
@@ -423,3 +438,126 @@ it.each(["throw", "reject"])(
     expect(fail).toHaveBeenCalledTimes(1);
   },
 );
+
+it("multiple investigation rounds can exceed 20 minutes in one SDK session and still summarize", async () => {
+  const releases = [];
+  const f = await fixture(
+    (n) =>
+      n <= 2
+        ? response({
+            ...call,
+            id: `fc_${n}`,
+            call_id: `call_${n}`,
+            arguments: JSON.stringify({ value: n }),
+          })
+        : response(item),
+    { effect: () => new Promise((resolve) => releases.push(resolve)) },
+  );
+  try {
+    const running = f.start("Investigate two rounds then summarize");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.effects).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(900_000);
+    releases.shift()();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.effects).toEqual([1, 2]);
+    await vi.advanceTimersByTimeAsync(900_000);
+    expect(f.requests).toHaveLength(2);
+    releases.shift()();
+    await vi.advanceTimersByTimeAsync(0);
+    await running;
+    await f.capture.final();
+    expect(f.failures).toEqual([]);
+    expect(f.requests).toHaveLength(3);
+    expect(f.session.getLastAssistantText()).toBe("Done");
+    expect(f.authRequests()).toBeGreaterThanOrEqual(f.requests.length);
+    expect(
+      f.manager
+        .getEntries()
+        .filter((e) => e.type === "message" && e.message.role === "user"),
+    ).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});
+it("SDK automatic compaction preserves history and capture selects the actual final response", async () => {
+  const f = await fixture((n) => (n === 1 ? response(call) : response(item)), {
+    settings: {
+      compaction: { enabled: true, reserveTokens: 31000, keepRecentTokens: 0 },
+    },
+  });
+  try {
+    const running = f.start("context ".repeat(1200));
+    await vi.advanceTimersByTimeAsync(0);
+    await running;
+    await f.capture.final();
+    expect(f.failures).toEqual([]);
+    expect(f.manager.getEntries().some((e) => e.type === "compaction")).toBe(
+      true,
+    );
+    expect(
+      f.manager
+        .getEntries()
+        .filter((e) => e.type === "message" && e.message.role === "user"),
+    ).toHaveLength(1);
+    expect(f.effects).toEqual([1]);
+    expect(f.frames.at(-1).event.kind).toBe("final");
+    expect(f.session.getLastAssistantText()).toBe("Done");
+    expect(f.authRequests()).toBeGreaterThanOrEqual(f.requests.length);
+  } finally {
+    await f.close();
+  }
+});
+it("the installed SDK accepts disabled HTTP idle timing and native compaction defaults", () => {
+  const settings = SettingsManager.inMemory({
+    ...WORKER_POLICY,
+    httpIdleTimeoutMs: 0,
+  });
+  expect(settings.getHttpIdleTimeoutMs()).toBe(0);
+  expect(settings.getCompactionEnabled()).toBe(true);
+  expect(settings.getProviderRetrySettings().maxRetries).toBe(0);
+});
+
+it("inherited retry settings beyond six remain one SDK request loop with completed tools retained", async () => {
+  const f = await fixture(
+    (n) =>
+      n === 1 ? response(call) : n < 9 ? response(item, false) : response(item),
+    {
+      settings: {
+        retry: {
+          enabled: true,
+          maxRetries: 8,
+          baseDelayMs: 1,
+          maxAgentDelayMs: 1,
+          provider: { maxRetries: 0 },
+        },
+      },
+    },
+  );
+  try {
+    const running = f.start("One effect, then finish the response");
+    await vi.advanceTimersByTimeAsync(50);
+    await running;
+    await f.capture.final();
+    expect(f.requests).toHaveLength(9);
+    expect(f.effects).toEqual([1]);
+    expect(f.failures).toEqual([]);
+    expect(
+      f.frames.some(
+        (frame) =>
+          frame.event.kind === "model-retry" &&
+          frame.event.progress?.attempt === 7 &&
+          frame.event.progress.maxAttempts === 8,
+      ),
+    ).toBe(true);
+    expect(
+      f.manager
+        .getEntries()
+        .filter(
+          (entry) => entry.type === "message" && entry.message.role === "user",
+        ),
+    ).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});

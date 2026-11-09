@@ -60,7 +60,7 @@ export type AdmissionCommit =
  * The action commit CASes the exact expected context and advances that task's (or
  * create workspace's) controlRev by one, visible to observe before resolution.
  * W3 tracks original outstanding promises even after the caller stops waiting;
- * admission's recording-stall deadline is not rollback/settlement of a late write.
+ * observer departure is not rollback/settlement of a late write.
  * All supported control writers share this serialization; arbitrary file races
  * are still optimistic, not OS-atomic CAS. Cancel does not consume controlRev.
  */
@@ -146,11 +146,11 @@ export interface OwnerReservation {
   release(): void;
 }
 /** W2/owner sanitizes before commit, W3 hashes stored bytes and maps detail IDs.
- * Cumulative per-child limits: ownerQueueBytes/ownerQueueFrames (all leases,
+ * Instantaneous per-child limits: ownerQueueBytes/ownerQueueFrames (all leases,
  * in-flight writes, prefixes and expansion). Reserve ownerControlBytes and
- * ownerControlFrames INSIDE those ceilings for control, unavailable to data. Source
- * childProtocolBytes/dataFrames remain separate from stored totals. Pending
- * commit beyond recordingStallMs stops/fences, not a release or retry.
+ * ownerControlFrames INSIDE those ceilings for control, unavailable to data.
+ * Backpressure waits for original commit; only real recording failures fence,
+ * never elapsed write time or cumulative protocol traffic.
  * Both ports feed the ONE W3 journal; there is no worker-only second writer.
  */
 export interface CaptureSink {

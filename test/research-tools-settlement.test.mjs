@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 const seam = vi.hoisted(() => ({ read: undefined }));
 vi.mock("node:fs/promises", async (original) => {
@@ -37,6 +38,7 @@ it.each(["cancel", "close"])(
       return read();
     };
     const kit = createWorkerToolkit({
+      runtime: fixtureRuntime(),
       purpose: "research",
       workspace: bindWorkerWorkspace(root),
     });
@@ -83,6 +85,7 @@ it("pre-cancel starts no SDK I/O; original failures stay errors, not successful 
   });
   seam.read = readFile;
   const kit = createWorkerToolkit({
+    runtime: fixtureRuntime(),
     purpose: "research",
     workspace: bindWorkerWorkspace(root),
   });

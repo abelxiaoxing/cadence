@@ -233,3 +233,21 @@ it("recovery records sanitize decoded field values without reviving escaped secr
   expect(JSON.stringify(decoded)).not.toContain(secret);
   expect(decoded.cause).toBe("[redacted]");
 });
+
+it("settled owner-auth refusal/loss ends delivery rather than starting a second recovery layer", () => {
+  for (const category of ["owner-auth-refused", "owner-auth-lost"]) {
+    const diagnostic = {
+      outcome: "failed",
+      stage: "auth-model",
+      class: category,
+      cleanupSettled: true,
+      cleanupFailures: 0,
+    };
+    expect(modelRequestFailed(JSON.stringify(diagnostic))).toBe(true);
+    expect(
+      modelRequestFailed(
+        JSON.stringify({ ...diagnostic, cleanupSettled: false }),
+      ),
+    ).toBe(false);
+  }
+});

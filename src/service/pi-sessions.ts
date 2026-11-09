@@ -2,7 +2,7 @@
  * the browser share. Pi writes them (in the terminal, or in a browser turn's
  * SDK worker); this module only reads them, incrementally, and never repairs,
  * rewrites or deletes one. Credentials are redacted from what it returns. */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -42,8 +42,9 @@ import {
   TREE_NODES,
 } from "./contracts/workbench.ts";
 
-/** A session larger than this is listed by name but not opened. */
-export const SESSION_BYTES = 64 * 1024 * 1024;
+/** Body cache only, never a session-file or continuation limit. */
+const BODY_CACHE_BYTES = 8 * 1024 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
 /** Session files one listing considers, newest names first. */
 const LISTED_FILES = 10_000;
 /** Parsed sessions and built turns kept in memory: read caches only. */
@@ -53,7 +54,6 @@ const BUILT_TURNS = 64;
 const SESSION_DIRECTORIES = 256;
 const KNOWN_DIRECTORIES = 128;
 /** Only the identity header is needed to list an oversized session. */
-const HEADER_BYTES = 16 * 1024;
 const SETTINGS_BYTES = 1024 * 1024;
 const TITLE_CHARS = 100;
 const NOTICE_BYTES = 1024;
@@ -214,58 +214,47 @@ function readLines(
   path: string,
   from: { ino: number; end: number } | undefined,
   onLine: (text: string, pos: number) => void,
+  restart?: () => void,
 ): Read & { restarted: boolean } {
   const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const st = fstatSync(fd);
     assertSessionFile(st);
-    if (st.size > SESSION_BYTES) throw new ContractError("capacity");
     const restarted = !from || from.ino !== st.ino || st.size < from.end;
     const start = restarted ? 0 : from.end;
-    const length = st.size - start;
+    if (restarted) restart?.();
     let end = start;
-    if (length > 0) {
-      const buffer = Buffer.allocUnsafe(length);
-      let read = 0;
-      while (read < length) {
-        const n = readSync(fd, buffer, read, length - read, start + read);
-        if (n === 0) break;
-        read += n;
+    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+    let at = start;
+    let parts: Buffer[] = [];
+    while (at < st.size) {
+      const n = readSync(
+        fd,
+        buffer,
+        0,
+        Math.min(buffer.length, st.size - at),
+        at,
+      );
+      if (!n) break;
+      let begin = 0;
+      for (
+        let i = buffer.indexOf(10);
+        i >= 0 && i < n;
+        i = buffer.indexOf(10, begin)
+      ) {
+        const piece = buffer.subarray(begin, i);
+        const text = parts.length
+          ? Buffer.concat([...parts, piece]).toString("utf8")
+          : piece.toString("utf8");
+        if (text.trim()) onLine(text, end);
+        parts = [];
+        begin = i + 1;
+        end = at + begin;
       }
-      let line = 0;
-      for (let i = buffer.indexOf(10); i >= 0 && i < read; ) {
-        const text = buffer.toString("utf8", line, i);
-        if (text.trim()) onLine(text, start + line);
-        line = i + 1;
-        i = buffer.indexOf(10, line);
-      }
-      end = start + line;
+      if (begin < n) parts.push(Buffer.from(buffer.subarray(begin, n)));
+      at += n;
     }
     return { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, end, restarted };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Bounded identity read, independent of the transcript open ceiling. */
-function sessionHeader(path: string): Header {
-  const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  try {
-    const st = fstatSync(fd);
-    assertSessionFile(st);
-    const buffer = Buffer.alloc(Math.min(st.size, HEADER_BYTES));
-    let read = 0;
-    while (read < buffer.length) {
-      const size = readSync(fd, buffer, read, buffer.length - read, read);
-      if (!size) break;
-      read += size;
-      if (buffer.subarray(0, read).includes(10)) break;
-    }
-    const end = buffer.subarray(0, read).indexOf(10);
-    if (end < 0 && st.size >= HEADER_BYTES) throw new ContractError("capacity");
-    const line = parseLine(buffer.toString("utf8", 0, end < 0 ? read : end), 0);
-    if (line?.kind !== "header") throw new ContractError("corrupt-selected");
-    return line.header;
   } finally {
     closeSync(fd);
   }
@@ -454,41 +443,103 @@ function fold(summary: SessionSummary, line: Line): void {
   }
 }
 
-/** A whole session in memory, extended as Pi appends to it. */
+/** Incremental entry/branch index; bodies are read on demand in a bounded LRU.
+ * Metadata still scales with entry count (as does the installed SDK manager). */
 export class ParsedSession {
+  incarnation = randomUUID();
   readonly entries: SessionEntry[] = [];
   readonly byId = new Map<string, SessionEntry>();
   readonly children = new Map<string, SessionEntry[]>();
   header: Header | null = null;
   read: Read | undefined;
+  private bodies = new Map<
+    number,
+    { value: Record<string, unknown>; bytes: number }
+  >();
+  private bodyBytes = 0;
   constructor(readonly path: string) {}
-  refresh(): this {
-    const lines: Line[] = [];
-    const next = readLines(this.path, this.read, (text, pos) => {
-      const line = parseLine(text, pos);
-      if (line) lines.push(line);
-    });
-    if (next.restarted) {
-      this.entries.length = 0;
-      this.byId.clear();
-      this.children.clear();
-      this.header = null;
+  private body(
+    pos: number,
+    bytes: number,
+    ino: number,
+  ): Record<string, unknown> {
+    const hit = this.bodies.get(pos);
+    if (hit) {
+      this.bodies.delete(pos);
+      this.bodies.set(pos, hit);
+      return hit.value;
     }
-    for (const line of lines) {
-      if (line.kind === "header") {
-        this.header ??= line.header;
-        continue;
+    const fd = openSync(
+      this.path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
+    let value: Record<string, unknown>;
+    try {
+      const st = fstatSync(fd);
+      assertSessionFile(st);
+      if (st.ino !== ino || st.size < pos + bytes)
+        throw new ContractError("stale");
+      const buffer = Buffer.allocUnsafe(bytes);
+      let at = 0;
+      while (at < bytes) {
+        const n = readSync(fd, buffer, at, bytes - at, pos + at);
+        if (!n) throw new ContractError("unavailable");
+        at += n;
       }
-      const entry = line.entry;
-      // Pi never reuses an id; a duplicate line is ignored rather than trusted.
-      if (this.byId.has(entry.id)) continue;
-      this.entries.push(entry);
-      this.byId.set(entry.id, entry);
-      const key = entry.parentId ?? "";
-      const siblings = this.children.get(key);
-      if (siblings) siblings.push(entry);
-      else this.children.set(key, [entry]);
+      value = JSON.parse(buffer.toString("utf8"));
+    } finally {
+      closeSync(fd);
     }
+    if (bytes <= BODY_CACHE_BYTES) {
+      while (this.bodyBytes + bytes > BODY_CACHE_BYTES) {
+        const oldest = this.bodies.entries().next().value;
+        if (!oldest) throw new ContractError("corrupt-selected");
+        this.bodyBytes -= oldest[1].bytes;
+        this.bodies.delete(oldest[0]);
+      }
+      this.bodies.set(pos, { value, bytes });
+      this.bodyBytes += bytes;
+    }
+    return value;
+  }
+  refresh(): this {
+    const ino = lstatSync(this.path).ino;
+    const next = readLines(
+      this.path,
+      this.read,
+      (text, pos) => {
+        const line = parseLine(text, pos);
+        if (!line) return;
+        if (line.kind === "header") {
+          this.header ??= line.header;
+          return;
+        }
+        const entry = line.entry;
+        if (this.byId.has(entry.id)) return;
+        const bytes = Buffer.byteLength(text);
+        // The descriptor retains only its offset/length, not the parsed body or
+        // the callback's source text. No original history is rewritten or copied.
+        Object.defineProperty(entry, "raw", {
+          enumerable: true,
+          get: this.body.bind(this, pos, bytes, ino),
+        });
+        this.entries.push(entry);
+        this.byId.set(entry.id, entry);
+        const key = entry.parentId ?? "";
+        const siblings = this.children.get(key);
+        if (siblings) siblings.push(entry);
+        else this.children.set(key, [entry]);
+      },
+      () => {
+        this.incarnation = randomUUID();
+        this.entries.length = 0;
+        this.byId.clear();
+        this.children.clear();
+        this.bodies.clear();
+        this.bodyBytes = 0;
+        this.header = null;
+      },
+    );
     this.read = next;
     return this;
   }
@@ -1025,44 +1076,29 @@ export class PiSessions {
     const st = lstatSync(path);
     assertSessionFile(st);
     const cached = this.listed.get(path);
-    if (st.size > SESSION_BYTES) {
-      // A later readable replacement must not revive an old parsed/body cache.
-      this.open.delete(path);
-      for (const key of this.built.keys())
-        if (key.startsWith(`${path}|`)) this.built.delete(key);
-      const summary = emptySummary();
-      fold(summary, { kind: "header", header: sessionHeader(path) });
-      const listed = {
-        path,
-        ino: st.ino,
-        size: st.size,
-        mtimeMs: st.mtimeMs,
-        end: 0,
-        summary,
-      };
-      this.listed.set(path, listed);
-      return listed;
-    }
     if (cached && cached.ino === st.ino && cached.size === st.size) {
       cached.mtimeMs = st.mtimeMs;
       return cached;
     }
-    const prior = cached && cached.size <= SESSION_BYTES ? cached : undefined;
+    const prior = cached;
     let summary =
       prior && prior.ino === st.ino && st.size >= prior.end
         ? { ...prior.summary, runs: [...prior.summary.runs] }
         : emptySummary();
-    const lines: Line[] = [];
-    const read = readLines(path, prior, (text, pos) => {
-      const line = parseLine(text, pos);
-      if (line) lines.push(line);
-    });
-    if (read.restarted) summary = emptySummary();
-    for (const line of lines) {
-      if (line.kind === "header" && summary.id)
-        throw new ContractError("corrupt-selected");
-      fold(summary, line);
-    }
+    const read = readLines(
+      path,
+      prior,
+      (text, pos) => {
+        const line = parseLine(text, pos);
+        if (!line) return;
+        if (line.kind === "header" && summary.id)
+          throw new ContractError("corrupt-selected");
+        fold(summary, line);
+      },
+      () => {
+        summary = emptySummary();
+      },
+    );
     if (!summary.id) throw new ContractError("corrupt-selected");
     const listed = { path, ...read, summary };
     this.listed.set(path, listed);
@@ -1121,6 +1157,7 @@ export class PiSessions {
   ): BuiltTurn {
     const key = [
       session.path,
+      session.incarnation,
       entries[0]?.id,
       entries.at(-1)?.id,
       entries.length,
