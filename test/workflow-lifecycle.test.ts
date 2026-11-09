@@ -10,6 +10,7 @@ import {
   WorkflowTranscript,
 } from "../src/service/workflow-report.ts";
 import { Workflows } from "../src/service/workflows.ts";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 const worker = vi.hoisted(() => vi.fn());
@@ -60,6 +61,7 @@ it.each([
       cwd,
       secrets: () => [],
       models: {
+        workerSettings: () => fixtureRuntime(),
         assertCurrent() {},
         prepareTracked: () => ({
           result: Promise.resolve({ status: "prepared", prepared: {} }),
@@ -260,6 +262,7 @@ it.each(["implementation", "diagnosis", "review"])(
           },
         },
         models: {
+          workerSettings: () => fixtureRuntime(),
           assertCurrent() {},
           prepareTracked: () => ({
             result: Promise.resolve({ status: "prepared", prepared: {} }),

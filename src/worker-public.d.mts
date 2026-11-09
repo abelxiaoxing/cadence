@@ -14,7 +14,6 @@ export declare const LIMITS: Readonly<{
   wsClientFrameBytes: number;
   startWaitMs: 10000;
   stopWaitMs: 60000;
-  authWaitMs: 30000;
   authValidityMarginMs: 120000;
   browserLifetimeMs: number;
   terminateGraceMs: 1000;
@@ -31,23 +30,17 @@ export declare const LIMITS: Readonly<{
   frameBytes: number;
   chunkBytes: number;
   detailBytes: number;
-  childProtocolBytes: number;
   dataFrames: 100000;
   controlFrames: 256;
-  sdkEvents: 1000000;
+  captureEntries: 4096;
   workerQueueBytes: number;
   workerQueueFrames: 1024;
   ownerQueueBytes: number;
   ownerQueueFrames: 2048;
   ownerControlBytes: number;
   ownerControlFrames: 256;
-  recordingStallMs: 5000;
   episodes: 8;
-  queuedAssignments: 128;
   childReservations: 2;
-  episodeMs: number;
-  readyWaitMs: number;
-  workerMs: 1200000;
   artifactPartBytes: number;
   progressBatchMs: 100;
   progressBatchBytes: number;
@@ -457,7 +450,21 @@ export declare function decodeWorkerPublicRequest(
 ): WorkerPublicRequest;
 /** Enforce on the actual serialized anonymous-stdin envelope AFTER owner-only auth insertion. Never log/return it. */
 export declare function assertWorkerEnvelopeSize(serialized: string): void;
+export interface StopCause {
+  source:
+    | "user"
+    | "service"
+    | "owner"
+    | "command"
+    | "worker"
+    | "coordinator"
+    | "unknown";
+  reason: string;
+  target: string;
+}
+export declare function decodeStopCause(v: unknown): StopCause;
 export interface NativeSettlement {
+  stop?: StopCause;
   outcome: Exclude<ExecutionOutcome, "blocked">;
   closure: Closure;
   exitCode: number | null;
@@ -715,6 +722,7 @@ export declare function advanceCapture(
 };
 /** Native shell checks have no SDK assistant-final, and absent stdin is real EOF. */
 export interface CheckNativeSettlement {
+  stop?: StopCause;
   outcome: Exclude<ExecutionOutcome, "blocked">;
   closure: Closure;
   exitCode: number | null;

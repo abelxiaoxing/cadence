@@ -260,6 +260,7 @@ for (const mode of ["instant", "disk-error"] as const)
       let consumed = false;
       const prepared = preparedWorker(
         {
+          refreshAuth: async () => ({ ok: true as const, apiKey: "fixture" }),
           consume(encode, use) {
             expect(consumed).toBe(false);
             consumed = true;
@@ -271,7 +272,6 @@ for (const mode of ["instant", "disk-error"] as const)
         envelope.request,
         link,
         [ownerToken],
-        15000,
       );
       const result = await prepared.launch(
         new AbortController().signal,
@@ -560,7 +560,6 @@ for (const scenario of [
         request,
         operationId: randomUUID(),
         epoch: lease.registration.epoch,
-        timeoutMs: 15000,
         signal: new AbortController().signal,
         current: () => true,
       });
@@ -583,7 +582,6 @@ for (const scenario of [
           childRunId: request.childRunId,
         },
         [],
-        15000,
       );
       if (scenario === "changed-reserve") {
         const reserve = fixture.sink.reserve;

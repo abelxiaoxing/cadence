@@ -28,6 +28,7 @@ import type { ConversationControl } from "../src/service/conversations.ts";
 import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 // Unit seam for control-record ordering/projection only. Real SDK turns,
@@ -537,6 +538,7 @@ it("an unremembered model preference never turns an installed choice into a fail
       },
     },
     models: {
+      workerSettings: () => fixtureRuntime(),
       pending: 0,
       loading: false,
       replaceSelection: (selector: object, current: () => void) => {
@@ -580,6 +582,7 @@ it("the catalog shows a remembered preference read only, only when it is still o
       configurationInstalled() {},
     },
     models: {
+      workerSettings: () => fixtureRuntime(),
       pending: 0,
       loading: false,
       assertCurrent() {},

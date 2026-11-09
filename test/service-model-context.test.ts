@@ -74,7 +74,7 @@ const cases = [
   "settlement-pending",
   "oauth-refresh",
   "oauth-cancel",
-  "oauth-timeout",
+  "oauth-backpressure",
   "oauth-queue",
   "oauth-stop",
   "oauth-competing",

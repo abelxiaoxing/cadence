@@ -18,8 +18,12 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
+  createCodingTools,
   createExtensionRuntime,
   createLocalBashOperations,
+  createLocalPowerShellOperations,
+  createPowerShellTool,
+  createReadOnlyTools,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -32,7 +36,13 @@ import {
   WEBUI_SESSION_ENTRY,
 } from "./session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
-import { WORKER_MODEL_SETTINGS, WorkerModelState } from "./worker-model.mjs";
+import {
+  decodeWorkerRuntime,
+  defaultWorkerTools,
+  ownerAuth,
+  resolveWorkerRuntime,
+  WorkerModelState,
+} from "./worker-model.mjs";
 import {
   closed,
   decodeWorkerPublicRequest,
@@ -62,7 +72,8 @@ const adapters = {
 };
 let session;
 let toolkit;
-let ownsCoordinatorChannel = false;
+let authChannel;
+let ownsChannel = false;
 let ownedAgent;
 let unsubscribe;
 let unsubscribeRetry;
@@ -103,7 +114,12 @@ const fail = (where, category) => {
                 ? "cleanup"
                 : where === "network"
                   ? "network"
-                  : ["prompt", "preflight", "assistant-final"].includes(where)
+                  : [
+                        "prompt",
+                        "preflight",
+                        "assistant-final",
+                        "auth-model",
+                      ].includes(where)
                     ? "prompt"
                     : "capture",
           })
@@ -191,13 +207,10 @@ const emitFailure = () => {
   const line = `${JSON.stringify({
     ...failure,
     outcome: "failed",
-    sdkEvents: Math.min(sdkEvents, LIMITS.sdkEvents + 1),
+    sdkEvents: sdkEvents,
     inputBytes: Math.min(inputBytes, 128 * 1024 + 1),
-    modelOutputBytes: Math.min(modelOutputBytes, LIMITS.childProtocolBytes + 1),
-    protocolBytes: Math.min(
-      bytes + (emitter?.state.bytes ?? 0),
-      LIMITS.childProtocolBytes + 1,
-    ),
+    modelOutputBytes: modelOutputBytes,
+    protocolBytes: bytes + (emitter?.state.bytes ?? 0),
     terminalStopReason,
     preflight,
     requestPrepared: modelState?.requestPrepared ?? false,
@@ -206,16 +219,10 @@ const emitFailure = () => {
     cleanupFailures,
     cleanupSettled,
   })}\n`;
-  // Diagnostic output shares the existing aggregate cap, not a new allowance.
+  // Fixed-size diagnostics, independent of cumulative protocol traffic.
   const write = (text) => {
-    const size = Buffer.byteLength(text);
-    if (
-      bytes + (emitter?.state.bytes ?? 0) + size <=
-      LIMITS.childProtocolBytes
-    ) {
-      bytes += size;
-      process.stderr.write(text);
-    }
+    bytes += Buffer.byteLength(text);
+    process.stderr.write(text);
   };
   if (Buffer.byteLength(line) <= 512) write(line);
   if (cleanupSettled)
@@ -267,6 +274,8 @@ try {
     "cwd",
     "model",
     "auth",
+    ...(Object.hasOwn(parsed ?? {}, "runtime") ? ["runtime"] : []),
+    ...(Object.hasOwn(parsed ?? {}, "ownerAuth") ? ["ownerAuth"] : []),
     ...(Object.hasOwn(parsed ?? {}, "conversation") ? ["conversation"] : []),
     ...(Object.hasOwn(parsed ?? {}, "investigation") ? ["investigation"] : []),
   ]);
@@ -305,7 +314,7 @@ try {
   const investigation =
     envelope.investigation === undefined
       ? null
-      : closed(envelope.investigation, ["roots", "timeoutMs"]);
+      : closed(envelope.investigation, ["roots"]);
   if (
     investigation &&
     (!Array.isArray(investigation.roots) ||
@@ -313,10 +322,7 @@ try {
       investigation.roots.length > 8 ||
       investigation.roots.some(
         (p) => typeof p !== "string" || !p || p.length > 4096,
-      ) ||
-      !Number.isSafeInteger(investigation.timeoutMs) ||
-      investigation.timeoutMs < 100 ||
-      investigation.timeoutMs > LIMITS.workerMs)
+      ))
   )
     refuse("parse", "invalid-investigation");
   const publicRequest = decodeWorkerPublicRequest(envelope.request);
@@ -368,6 +374,18 @@ try {
     model.api !== publicRequest.model.api
   )
     refuse("auth-model", "unsupported-model");
+  stage = "settings";
+  const workerRuntime =
+    envelope.runtime === undefined
+      ? resolveWorkerRuntime(
+          SettingsManager.inMemory(),
+          model,
+          defaultWorkerTools(
+            { createCodingTools, createReadOnlyTools, createPowerShellTool },
+            cwd,
+          ),
+        )
+      : decodeWorkerRuntime(envelope.runtime);
   stage = "setup";
   const api = await adapters[model.api]();
   stage = "network";
@@ -387,8 +405,8 @@ try {
     )
       refuse("network", "unsupported-network");
     const timeouts = {
-      headersTimeout: WORKER_MODEL_SETTINGS.httpIdleTimeoutMs,
-      bodyTimeout: WORKER_MODEL_SETTINGS.httpIdleTimeoutMs,
+      headersTimeout: workerRuntime.settings.httpIdleTimeoutMs,
+      bodyTimeout: workerRuntime.settings.httpIdleTimeoutMs,
     };
     ownedAgent = proxy
       ? new EnvHttpProxyAgent({ ...proxy, ...timeouts })
@@ -401,6 +419,36 @@ try {
     refuse("network", "unsupported-network");
   }
   stage = "setup";
+  const secrets = [
+    auth.apiKey ?? "",
+    ...Object.values(auth.headers ?? {}).filter((v) => typeof v === "string"),
+    ...Object.values(auth.env ?? {}),
+    ...(proxy ? [proxy.httpProxy] : []),
+  ];
+  if (
+    envelope.ownerAuth !== undefined &&
+    (envelope.ownerAuth !== true || !process.send)
+  )
+    refuse("parse", "invalid-auth-channel");
+  ownsChannel = coordinator || envelope.ownerAuth === true;
+  if (envelope.ownerAuth === true) {
+    authChannel = ownerAuth(
+      process,
+      (next) => {
+        for (const value of [
+          next.apiKey,
+          ...Object.values(next.headers ?? {}),
+          ...Object.values(next.env ?? {}),
+        ])
+          if (typeof value === "string" && value && !secrets.includes(value))
+            secrets.push(value);
+      },
+      (category) => fail("auth-model", category),
+    );
+    process.once("disconnect", () => {
+      if (session && !cleanupSettled) abortForFailure();
+    });
+  }
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsStore: new InMemoryModelsStore(),
@@ -416,14 +464,17 @@ try {
       auth: {
         apiKey: {
           name: "Resolved parent request",
-          resolve: async () => ({
-            auth: {
-              apiKey: auth.apiKey,
-              headers: auth.headers,
-              baseUrl: auth.baseUrl,
-            },
-            env: auth.env,
-          }),
+          resolve: async () => {
+            const current = authChannel ? await authChannel.resolve() : auth;
+            return {
+              auth: {
+                apiKey: current.apiKey,
+                headers: current.headers,
+                baseUrl: current.baseUrl,
+              },
+              env: current.env,
+            };
+          },
         },
       },
     }),
@@ -451,12 +502,6 @@ try {
       throw new Error("Discovery disabled");
     },
   };
-  const secrets = [
-    auth.apiKey ?? "",
-    ...Object.values(auth.headers ?? {}).filter((v) => typeof v === "string"),
-    ...Object.values(auth.env ?? {}),
-    ...(proxy ? [proxy.httpProxy] : []),
-  ];
   const captureFailure = () => {
     fail("events", "event-projection-failed");
     abortForFailure();
@@ -478,6 +523,7 @@ try {
     ? openConversation(target, workspace.cwd, model, requestedThinkingLevel)
     : SessionManager.inMemory(workspace.cwd);
   toolkit = createWorkerToolkit({
+    runtime: workerRuntime,
     workspace,
     purpose: publicRequest.purpose,
     changes: publicRequest.changes,
@@ -486,9 +532,9 @@ try {
     secrets,
     fail: captureFailure,
     createLocalBashOperations,
+    createLocalPowerShellOperations,
     queue: emitter.queue,
   });
-  ownsCoordinatorChannel = coordinator;
   const created = await createAgentSession({
     ...toolkit.sessionOptions,
     agentDir: workspace.cwd,
@@ -504,7 +550,7 @@ try {
           )
         : resourceLoader,
     sessionManager: manager,
-    settingsManager: SettingsManager.inMemory(WORKER_MODEL_SETTINGS),
+    settingsManager: SettingsManager.inMemory(workerRuntime.settings),
   });
   session = created.session;
   let effectiveThinkingLevel;
@@ -521,6 +567,14 @@ try {
     effectiveThinkingLevel !== requestedThinkingLevel
   )
     refuse("session", "model-substitution");
+  // A selected tool must really be active. SDK/extension defaults cannot
+  // silently substitute, add, or discard the owner's inherited tool set.
+  const activeTools = session.getActiveToolNames();
+  if (
+    activeTools.length !== toolkit.sessionOptions.tools.length ||
+    toolkit.sessionOptions.tools.some((name) => !activeTools.includes(name))
+  )
+    refuse("session", "tool-substitution");
   modelState = new WorkerModelState(
     (event) => emitter.emit(event),
     captureFailure,
@@ -582,7 +636,6 @@ try {
   unsubscribe = session.agent.subscribe(async (event) => {
     try {
       sdkEvents++;
-      if (sdkEvents > LIMITS.sdkEvents) refuse("outputbounds", "event-bound");
       if (own(event, "type") === "message_update") {
         const update = own(event, "assistantMessageEvent");
         const type = own(update, "type");
@@ -590,8 +643,6 @@ try {
           const delta = own(update, "delta");
           if (typeof delta !== "string") throw new Error("Malformed SDK event");
           modelOutputBytes += Buffer.byteLength(delta);
-          if (modelOutputBytes > LIMITS.childProtocolBytes)
-            refuse("outputbounds", "model-output-bound");
         }
       }
       if (own(event, "type") === "message_end") {
@@ -709,7 +760,7 @@ try {
     publicRequest.context,
     ...(!conversation && kind !== "code"
       ? [
-          `Investigation roots: ${JSON.stringify(workspace.roots)}. Relative file-tool paths use the first root; select other roots explicitly. Start with these paths rather than broad parent trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. Report observed evidence, truncation and unresolved questions honestly.`,
+          `Investigation roots: ${JSON.stringify(workspace.roots)}. Relative file-tool paths use the first root; select other roots explicitly. Start with these paths rather than broad parent trees. There is no total runtime deadline. Report observed evidence, truncation and unresolved questions honestly.`,
         ]
       : []),
     ...publicRequest.handoff.inputs.map(
@@ -811,5 +862,6 @@ try {
     // A failed diagnostic write cannot print an arbitrary exception or repair failure.
     process.exitCode = 1;
   }
-  if (ownsCoordinatorChannel && process.connected) process.disconnect();
+  authChannel?.close();
+  if (ownsChannel && process.connected) process.disconnect();
 }

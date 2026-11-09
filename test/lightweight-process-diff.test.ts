@@ -13,6 +13,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  launchConversation,
+  launchWorkflowWorker,
+  legacyWorkerEnvelope,
   runCheck,
   runProcess,
   runWorker,
@@ -1031,11 +1034,10 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
   it("the SDK launch envelope carries scope and process policy, not a tool cutoff", async () => {
     const child = lifecycleChild("");
     const wire = request();
-    const run = runWorker(wire, new AbortController().signal, undefined, 1000);
+    const run = runWorker(wire, new AbortController().signal);
     const envelope = JSON.parse(child.stdin!.end.mock.calls[0][0]);
     expect(envelope.investigation).toEqual({
       roots: [wire.cwd],
-      timeoutMs: 1000,
     });
     child.emit("close", 1, null);
     expect((await run).closed).toBe(true);
@@ -1296,9 +1298,9 @@ describe("bounded real process owner", () => {
     ])
       expect((await node(code, { protocol: true })).outcome).toBe("failed");
   }, 15000);
-  it("output floods and nonzero checks never become completed", async () => {
+  it("output truncation does not stop commands; nonzero checks still fail", async () => {
     const flood = await node("process.stdout.write('x'.repeat(300000));");
-    expect(flood.outcome).toBe("failed");
+    expect(flood.outcome).toBe("completed");
     expect(flood.truncated).toBe(true);
     const fail = await runCheck(
       { name: "fail", command: "exit 7", timeoutMs: 1000 },
@@ -1644,6 +1646,110 @@ it("service signal guard rechecks TERM and KILL separately and unknown is not cl
       closed: false,
       exitCode: null,
       signal: null,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// Controlled native handles + virtual time, not a paid provider or real process.
+it.each([
+  "conversation",
+  "coordinator",
+  "research",
+  "implementation",
+  "diagnosis",
+  "knowledge",
+  "review",
+])("%s has no 20-minute (or replacement) worker deadline", async (kind) => {
+  vi.useFakeTimers();
+  try {
+    const child = lifecycleChild("");
+    const material = legacyWorkerEnvelope({
+      cwd: "/fixture",
+      model: { id: "fixed", provider: "fixture", api: "openai-completions" },
+      auth: { ok: true, apiKey: "fixture" },
+      kind: "code",
+      prompt: "Work",
+      instructions: "Fixture",
+    });
+    const prepared = {
+      refreshAuth: async () => material.auth,
+      consume<T>(encode: (value: any) => string, use: (wire: string) => T): T {
+        return use(encode(material));
+      },
+    };
+    const signal = new AbortController().signal;
+    const options = {
+      maySignal: () => true,
+      ownerSecrets: [],
+      onNative: vi.fn(),
+      onFrame: vi.fn(),
+    };
+    const running = ["conversation", "coordinator"].includes(kind)
+      ? launchConversation(
+          prepared,
+          {
+            session: {
+              id: material.request.runId,
+              dir: material.cwd,
+              file: null,
+              head: null,
+            },
+            agentDir: material.cwd,
+            ...(kind === "coordinator" ? { coordinator: true as const } : {}),
+          },
+          signal,
+          { ...options, ownerSecrets: () => [] },
+        )
+      : launchWorkflowWorker(prepared, material.cwd, signal, options);
+    let settled = false;
+    void running.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(settled).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(JSON.parse(child.stdin!.end.mock.calls[0][0]).investigation).toEqual(
+      { roots: [material.cwd] },
+    );
+    child.stdout.emit("data", workerFrames(child));
+    child.emit("close", 0, null);
+    expect(await running).toMatchObject({ outcome: "completed", closed: true });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("explicit cancellation keeps its source and waits for actual close", async () => {
+  vi.useFakeTimers();
+  try {
+    const child = lifecycleChild();
+    const controller = new AbortController();
+    const running = runProcess({
+      command: "fixture",
+      args: [],
+      cwd: "/fixture",
+      signal: controller.signal,
+    });
+    const cause = {
+      source: "user",
+      reason: "cancel",
+      target: "original-command",
+    };
+    controller.abort(cause);
+    let settled = false;
+    void running.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled).toBe(false);
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    child.emit("close", null, "SIGTERM");
+    expect(await running).toMatchObject({
+      outcome: "canceled",
+      closed: true,
+      signal: "SIGTERM",
+      stop: cause,
     });
   } finally {
     vi.useRealTimers();

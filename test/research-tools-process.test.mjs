@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 // Exercise the installed SDK's actual search adapters without requiring an
 // external binary, spawning a process or allowing any automatic download.
@@ -42,6 +43,7 @@ async function fixture(name) {
   const root = await mkdtemp(join(tmpdir(), "pi-search-process-"));
   const selected = await mkdtemp(join(tmpdir(), "pi-search-selected-"));
   const kit = createWorkerToolkit({
+    runtime: fixtureRuntime(),
     purpose: "research",
     workspace: bindWorkerWorkspace(root, [selected]),
   });

@@ -109,3 +109,8 @@ Automatic outcomes retain `humanReviewed: false` and cannot satisfy legacy human
 Full sanitized process results are separate from labelled status previews; lookup verifies that the selected step belongs to the run.
 Knowledge assignments preserve human text and update existing topic owners; ignored generated documents remain ignored and are published with expected-byte checks.
 Workflow notes have a separate directory/version and never add unknown siblings to legacy task v1.
+
+Delivery source observations bind the effective Pi settings/tool snapshot and display its runtime summary.
+A changed preference needs a fresh proposal/confirmation before admission; accepted delivery retains one snapshot across implementation and independent fixed-candidate Review.
+Inheritance neither grants editing to Review nor turns tool success into passing check evidence.
+Source details live in `worker-tools.md`.

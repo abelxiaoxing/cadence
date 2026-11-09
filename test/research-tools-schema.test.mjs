@@ -10,6 +10,7 @@ import {
 import { expect, it, vi } from "vitest";
 import { createWorkerToolkit } from "../src/worker-toolkit.mjs";
 import { bindWorkerWorkspace } from "../src/worker-workspace.mjs";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 
 const queries = {
   read: { path: "example.ts" },
@@ -27,6 +28,7 @@ const validate = (tool, args) =>
 function toolkit() {
   const workspace = bindWorkerWorkspace(resolve("/unused-schema-fixture"));
   return createWorkerToolkit({
+    runtime: fixtureRuntime(),
     purpose: "review",
     workspace,
     changes: {

@@ -30,7 +30,8 @@ export class WorkerRecording {
       source: SourceRange | null;
     }
   >();
-  private commits = new Map<string, DetailCommit>();
+  private finalDetailId?: string;
+  private committedFinal?: DetailCommit;
   private pending = new Set<Promise<void>>();
   private failure: "pending" | "uncertain" | "refused" | null = null;
   private pendingBytes = 0;
@@ -118,6 +119,10 @@ export class WorkerRecording {
       let events: SanitizedCaptureEvent[];
       let range = source;
       if (e.kind === "detail-begin") {
+        if (e.descriptor.field === "final-text") {
+          this.finalDetailId = e.detailId;
+          this.committedFinal = undefined;
+        }
         const prefixBytes =
           this.secrets.reduce((n, s) => Math.max(n, utf8Bytes(s)), 0) * 4 +
           65536 +
@@ -274,7 +279,10 @@ export class WorkerRecording {
         for (const detail of batch.details) {
           if (detail.childRunId !== this.link.childRunId)
             throw new ContractError();
-          this.commits.set(detail.detailId, detail);
+          // A slow acknowledgment of an earlier message cannot replace the
+          // newest candidate. Retain one selection, not every past detail.
+          if (detail.detailId === this.finalDetailId)
+            this.committedFinal = detail;
         }
       })();
       const handled = original.catch(() => {
@@ -282,12 +290,7 @@ export class WorkerRecording {
         this.stop();
       });
       this.pending.add(handled);
-      const timer = setTimeout(() => {
-        this.failure = "uncertain";
-        this.stop();
-      }, LIMITS.recordingStallMs);
       void handled.then(() => {
-        clearTimeout(timer);
         this.pending.delete(handled);
         this.pendingBytes -= charge;
         this.pendingSlots -= slots;
@@ -344,19 +347,9 @@ export class WorkerRecording {
   }
   async drain(): Promise<void> {
     if (!this.pending.size) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      Promise.all([...this.pending]),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(() => {
-          this.failure = "uncertain";
-          this.stop();
-          resolve();
-        }, LIMITS.recordingStallMs);
-      }),
-    ]);
-    clearTimeout(timer);
+    await Promise.all([...this.pending]);
   }
+
   result(selected: FinalSelection | null): FinalRecording {
     if (this.failure === "refused")
       return {
@@ -366,7 +359,10 @@ export class WorkerRecording {
       };
     if (this.failure || this.pending.size)
       return { status: "uncertain", selected };
-    const detail = selected && this.commits.get(selected.detailId);
+    const detail =
+      selected && this.committedFinal?.detailId === selected.detailId
+        ? this.committedFinal
+        : undefined;
     if (!selected || !detail) return { status: "pending", selected };
     if (detail.content.field !== "final-text")
       return { status: "uncertain", selected };

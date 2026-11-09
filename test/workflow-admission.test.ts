@@ -13,6 +13,7 @@ import {
 } from "../src/service/workflows.ts";
 import { canonicalJson } from "../src/worker-public.mjs";
 import * as workspace from "../src/workspace.ts";
+import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 /** Admission only: the checkout gate never opens, so nothing runs. */
@@ -38,10 +39,15 @@ function owner() {
     },
     trackConversation() {},
   };
+  let runtime = fixtureRuntime();
+  const models = {
+    workerSettings: vi.fn(() => structuredClone(runtime)),
+    assertCurrent() {},
+  };
   const workflows = new Workflows({
     coordination,
     owner: host,
-    models: { assertCurrent() {} },
+    models,
     choice: {
       snapshot: () => ({
         version,
@@ -74,7 +80,18 @@ function owner() {
     questions: ["Read files"],
     model: version,
   });
-  return { workflows, host, epoch, version, research, coordination };
+  return {
+    workflows,
+    host,
+    epoch,
+    version,
+    research,
+    coordination,
+    models,
+    setRuntime: (next: typeof runtime) => {
+      runtime = next;
+    },
+  };
 }
 it("execution checks resolve a shared checkout/cwd once but still validate an independent conversation directory", () => {
   const { workflows, coordination } = owner();
@@ -166,7 +183,9 @@ it("native workflow refusals are definite only without any prior record, admissi
   ).toMatchObject({ kind: "workflow" });
 });
 
-it("a refused native execute leaves its grant usable; retained non-conforming proposals refuse cleanly", async () => {
+it("a refused native execute leaves its grant usable; retained non-conforming proposals refuse cleanly", {
+  tags: ["slow"],
+}, async () => {
   const { workflows, epoch, version, research, coordination } = owner();
   const definite = { definite: true };
   const direct = plan();
@@ -232,4 +251,65 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
   expect((outdated as UnacceptedWorkflowCommand).detail).toContain(
     "does not authorize adaptive delivery",
   );
+});
+
+it("approval binds Pi preferences; a changed tool/settings snapshot needs fresh confirmation", () => {
+  const f = owner();
+  const p = f.workflows.command(randomUUID(), f.epoch, {
+    action: "propose",
+    plan: { ...plan(), delivery: "working-copy" },
+    model: f.version,
+  });
+  if (p.kind !== "workflow" || p.response.type !== "proposal")
+    throw Error("proposal");
+  const proposal = p.response.proposal;
+  expect(proposal.display?.runtime).toContain("Pi runtime:");
+  const prepared = f.workflows.command(randomUUID(), f.epoch, {
+    action: "prepare",
+    proposalId: proposal.id,
+    digest: proposal.digest,
+  });
+  if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
+    throw Error("grant");
+  const grant = prepared.response.grant;
+  f.setRuntime(fixtureRuntime({ retry: { maxRetries: 11 } }));
+  const id = randomUUID();
+  expect(() =>
+    f.workflows.command(
+      id,
+      f.epoch,
+      {
+        action: "execute",
+        proposalId: proposal.id,
+        digest: proposal.digest,
+        grant,
+      },
+      { definite: true },
+    ),
+  ).toThrow("stale");
+  expect(f.workflows.activeRuns().runs).toEqual([]);
+  expect(
+    f.coordination.files.directory(
+      join(f.coordination.directory, "workflows-v1", "runs", id),
+    ),
+  ).toBe(false);
+  expect(f.workflows.proposal(proposal.id)).toEqual(proposal);
+});
+it("queued admission retains its Pi snapshot rather than consulting later preferences", async () => {
+  const f = owner();
+  const id = randomUUID();
+  f.workflows.command(id, f.epoch, f.research());
+  const live = (
+    f.workflows as unknown as {
+      active: Map<string, { runtime: ReturnType<typeof fixtureRuntime> }>;
+    }
+  ).active.get(id);
+  const original = canonicalJson(live?.runtime);
+  f.setRuntime(
+    fixtureRuntime({ defaultTools: ["read"], compaction: { enabled: false } }),
+  );
+  expect(canonicalJson(live?.runtime)).toBe(original);
+  expect(f.models.workerSettings).toHaveBeenCalledOnce();
+  f.workflows.command(randomUUID(), f.epoch, { action: "cancel", runId: id });
+  await f.workflows.join(id);
 });

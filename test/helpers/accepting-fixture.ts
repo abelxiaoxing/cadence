@@ -457,7 +457,6 @@ export async function acceptingFixture(
     environment(env);
     host = await createServiceHost(input, {
       contractHash: sourceContract,
-      workerTimeoutMs: 15000,
     });
   } else await launchGenerated();
   const local = c.localAccess();

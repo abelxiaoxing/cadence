@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
-  ftruncateSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -12,6 +11,7 @@ import {
   symlinkSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +29,6 @@ import {
   itemParts,
   listTurn,
   PiSessions,
-  SESSION_BYTES,
   sessionDirectory,
   turnItems,
   turnSpans,
@@ -621,7 +620,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("oversized sessions keep their identity in listings and refuse opening, never become absent", () => {
+it("sessions past the former 64MiB ceiling remain readable without changing their bytes", () => {
   const cwd = project(),
     dir = mkdtempSync(join(tmpdir(), "pi-too-large-"));
   const saved = write(dir, cwd, [user(null, "Existing history")]);
@@ -633,14 +632,25 @@ it("oversized sessions keep their identity in listings and refuse opening, never
   sessions.turn(parsed, parsed.branch(parsed.current()), []);
   const fd = openSync(saved.path, "r+");
   try {
-    ftruncateSync(fd, SESSION_BYTES + 1);
+    // Many small lines, not one artificial 64MiB JSON value. Original history
+    // remains at the same offsets; padding models retained historical volume.
+    const page = Buffer.alloc(64 * 1024, 32);
+    page[page.length - 1] = 10;
+    for (let i = 0; i < 1025; i++)
+      writeSync(
+        fd,
+        page,
+        0,
+        page.length,
+        Buffer.byteLength(original) + i * page.length,
+      );
   } finally {
     closeSync(fd);
   }
   for (const reader of [sessions, new PiSessions(dir, cwd)]) {
     expect(reader.list().map((row) => row.summary.id)).toEqual([saved.id]);
     expect(reader.find(saved.id)?.path).toBe(saved.path);
-    expect(() => reader.session(saved.id)).toThrow("capacity");
+    expect(reader.session(saved.id)?.current()).toBe(parsed.current());
   }
   // An explicit external replacement is readable again, including when its
   // entry IDs and byte length match the old cached transcript.

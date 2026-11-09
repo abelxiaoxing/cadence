@@ -21,10 +21,7 @@ import {
   safeChildEnv,
   type WorkerRequest,
 } from "../src/subagent-process.ts";
-import {
-  WORKER_MODEL_SETTINGS,
-  WorkerModelState,
-} from "../src/worker-model.mjs";
+import { WORKER_POLICY, WorkerModelState } from "../src/worker-model.mjs";
 import { LIMITS } from "../src/worker-public.mjs";
 import { captureSummary } from "./helpers/worker-v2.ts";
 
@@ -764,7 +761,7 @@ const nativeWorker = async (
   }, 15000);
   const collect = (chunk: Buffer, out: boolean) => {
     bytes += chunk.length;
-    if (bytes > LIMITS.childProtocolBytes) {
+    if (bytes > 128 * 1024 * 1024) {
       forced = true;
       child.kill("SIGKILL");
     } else if (out) stdout += chunk.toString("utf8");
@@ -1266,11 +1263,14 @@ const mockedWorker = async (scenario: string) => {
     }),
   };
   let sessionThinkingLevel: unknown;
+  let sessionTools: string[] = [];
   const session: any = {
     get thinkingLevel() {
       return sessionThinkingLevel;
     },
     model: request.model,
+    getActiveToolNames: () =>
+      scenario === "tool-substitution" ? ["unrequested-tool"] : sessionTools,
     systemPrompt: request.instructions,
     messages:
       scenario === "missing-assistant"
@@ -1350,17 +1350,6 @@ const mockedWorker = async (scenario: string) => {
         throw error;
       }
       expect(payload).toEqual({ private: "fabricated-payload-secret" });
-      if (["event-bound", "bound-cleanup"].includes(scenario))
-        for (let n = 0; n < LIMITS.sdkEvents + 1; n++)
-          await listener({ type: "agent_start" });
-      if (scenario === "model-bound")
-        await listener({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: "thinking_delta",
-            delta: "x".repeat(LIMITS.childProtocolBytes + 1),
-          },
-        });
       if (scenario === "line-bound")
         await listener({
           type: "tool_execution_start",
@@ -1427,57 +1416,60 @@ const mockedWorker = async (scenario: string) => {
     },
   }));
   vi.doMock("@earendil-works/pi-ai/api/openai-completions", () => ({}));
-  vi.doMock("@earendil-works/pi-coding-agent", () => ({
-    VERSION: "fixture-sdk",
-    createLocalBashOperations: () => {
-      throw new Error("Fixture must not execute bash");
-    },
-    ModelRuntime: {
-      create: async (options: any) => {
-        expect(options).toMatchObject({
-          modelsPath: null,
-          allowModelNetwork: false,
-          refreshOnCreate: false,
-        });
-        if (scenario === "setup") throw secretFault;
-        return { registerNativeProvider: () => {} };
+  vi.doMock("@earendil-works/pi-coding-agent", async (original) => {
+    const actual =
+      await original<typeof import("@earendil-works/pi-coding-agent")>();
+    return {
+      ...actual,
+      VERSION: "fixture-sdk",
+      createLocalBashOperations: () => {
+        throw new Error("Fixture must not execute bash");
       },
-    },
-    createExtensionRuntime: () => ({}),
-    SessionManager: {
-      inMemory: (cwd: string) => {
-        expect(cwd).toBe(request.cwd);
-        return {};
+      ModelRuntime: {
+        create: async (options: any) => {
+          expect(options).toMatchObject({
+            modelsPath: null,
+            allowModelNetwork: false,
+            refreshOnCreate: false,
+          });
+          if (scenario === "setup") throw secretFault;
+          return { registerNativeProvider: () => {} };
+        },
       },
-    },
-    SettingsManager: {
-      inMemory: (settings: any) => {
-        expect(settings).toEqual(WORKER_MODEL_SETTINGS);
-        return {};
+      createExtensionRuntime: () => ({}),
+      SessionManager: {
+        inMemory: (cwd: string) => {
+          expect(cwd).toBe(request.cwd);
+          return {};
+        },
       },
-    },
-    createAgentSession: async (options: any) => {
-      sessionThinkingLevel = options.thinkingLevel;
-      expect(options.tools).toEqual([
-        "read",
-        "grep",
-        "find",
-        "ls",
-        "write",
-        "edit",
-        "bash",
-        "cadence_report",
-      ]);
-      if (scenario === "session") throw secretFault;
-      return {
-        session,
-        modelFallbackMessage:
-          scenario === "model-substitution"
-            ? "fabricated-secret-fallback"
-            : undefined,
-      };
-    },
-  }));
+      SettingsManager: {
+        inMemory: (settings: any) => {
+          if (settings) expect(settings).toMatchObject(WORKER_POLICY);
+          return actual.SettingsManager.inMemory(settings);
+        },
+      },
+      createAgentSession: async (options: any) => {
+        sessionThinkingLevel = options.thinkingLevel;
+        sessionTools = options.tools;
+        expect(options.tools).toEqual([
+          "read",
+          "bash",
+          "edit",
+          "write",
+          "cadence_report",
+        ]);
+        if (scenario === "session") throw secretFault;
+        return {
+          session,
+          modelFallbackMessage:
+            scenario === "model-substitution"
+              ? "fabricated-secret-fallback"
+              : undefined,
+        };
+      },
+    };
+  });
   vi.stubEnv("CADENCE_SUBAGENT_CHILD", "1");
   vi.stubEnv("PI_OFFLINE", "1");
   vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(
@@ -1591,7 +1583,7 @@ for (const scenario of [
       );
       const output = new Function(
         "LIMITS",
-        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+        `let bytes=(128 * 1024 * 1024)-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
       )(LIMITS);
       expect(output).toBe("");
       return;
@@ -1633,8 +1625,6 @@ for (const scenario of [
   "validation-mismatch",
   "invalid-status",
   "error-after-stop",
-  "event-bound",
-  "model-bound",
   "final-bound",
   "line-bound",
   "frame-bound",
@@ -1644,7 +1634,6 @@ for (const scenario of [
   "dispose-throw",
   "dispose-reject",
   "unsubscribe-throw",
-  "bound-cleanup",
   "prompt-cleanup",
   "no-diagnostic-room",
   "diagnostic-write-throw",
@@ -1666,7 +1655,7 @@ for (const scenario of [
       );
       const output = new Function(
         "LIMITS",
-        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+        `let bytes=(128 * 1024 * 1024)-51; const emitter=undefined,modelState=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
       )(LIMITS);
       expect(output).toBe("");
       return;
@@ -2160,8 +2149,9 @@ const eventFaults = [
   "tool-getter",
 ] as const;
 const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
-const captureFixtureImports = `    import { WorkerModelState, WORKER_MODEL_SETTINGS } from ${JSON.stringify(new URL("../src/worker-model.mjs", import.meta.url).href)};
+const captureFixtureImports = `    import { WorkerModelState, WORKER_POLICY, defaultWorkerTools, resolveWorkerRuntime, decodeWorkerRuntime, ownerAuth } from ${JSON.stringify(new URL("../src/worker-model.mjs", import.meta.url).href)};
     import { createHash } from "node:crypto";
+    import { SettingsManager as PublicSettingsManager, createCodingTools, createReadOnlyTools, createPowerShellTool, createLocalPowerShellOperations } from ${JSON.stringify(import.meta.resolve("@earendil-works/pi-coding-agent"))};
     const VERSION = "fixture-sdk";
     const readFileSync = () => Buffer.from("explicit public-boundary fixture worker source");
     import { createWorkerToolkit } from ${JSON.stringify(new URL("../src/worker-toolkit.mjs", import.meta.url).href)};
@@ -2235,6 +2225,7 @@ const mockBootstrap = (
     let thinkingReads = 0;
     let modelReads = 0;
     let selectedModel;
+    let selectedTools;
     const counts = {subscribes:0,prompts:0,streamReads:0,requests:0};
     const thinkingLane = lane.startsWith("thinking-");
     const message = {role:"assistant",stopReason:"stop",content:[{type:"text",text:"WIRE_OK"}]};
@@ -2250,6 +2241,7 @@ const mockBootstrap = (
         return sessionThinkingLevel;
       },
       get model() { modelReads++; return selectedModel; },
+      getActiveToolNames() { return selectedTools; },
       messages:[message], systemPrompt:"fixture", getLastAssistantText:()=>"WIRE_OK",
       agent:{state:{tools:[]},toolExecution:"parallel", subscribe(callback) { return fixtureSession.subscribe(callback); }, get streamFunction() { counts.streamReads++; return ()=>{ counts.requests++; }; },
         set streamFunction(value) { this.wrapped = value; }},
@@ -2314,12 +2306,13 @@ const mockBootstrap = (
     const createExtensionRuntime = () => ({});
     const SessionManager = {inMemory:()=>({})};
     const SettingsManager = {inMemory:settings=>{
-      assert.deepEqual(settings,WORKER_MODEL_SETTINGS);
-      return {};
+      if (settings) assert.equal(settings.retry.provider.maxRetries, 0);
+      return PublicSettingsManager.inMemory(settings);
     }};
     const createAgentSession = async options => {
       assert.equal(options.thinkingLevel,${JSON.stringify(requestedThinkingLevel ?? "off")});
       selectedModel = options.model;
+      selectedTools = options.tools;
       sessionThinkingLevel = options.thinkingLevel;
       if (lane === "thinking-absent") delete fixtureSession.thinkingLevel;
       return {session:fixtureSession};
@@ -2785,7 +2778,6 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         request,
         new AbortController().signal,
         undefined,
-        15000,
       );
       const startup =
         mode === "VALIDATED_PROXY" && feature
@@ -3412,9 +3404,8 @@ for (const encoding of ["identity", "gzip"] as const) {
         });
       const result = await runWorker(
         request as any,
-        new AbortController().signal,
+        AbortSignal.timeout(15000), // Test watchdog, not a worker lifetime policy.
         undefined,
-        15000,
       );
       const startup = feature
         ? proxyStartupStderr(stderr, childPID!)
@@ -3525,3 +3516,14 @@ for (const encoding of ["identity", "gzip"] as const) {
     }
   });
 }
+
+it("worker refuses a substituted/missing inherited tool set before any model request", async () => {
+  const result = await mockedWorker("tool-substitution");
+  expect(result.exitCode).toBe(1);
+  expect(result.requests).toBe(0);
+  expect(diagnostic(result.stderr)).toMatchObject({
+    stage: "session",
+    class: "tool-substitution",
+    cleanupSettled: true,
+  });
+});

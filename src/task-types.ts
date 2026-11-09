@@ -47,6 +47,7 @@ export interface ChangeView {
   git: boolean;
 }
 export interface RunResult {
+  stop?: import("./worker-public.mjs").StopCause;
   outcome: "completed" | "failed" | "canceled" | "timeout" | "unknown";
   closed: boolean;
   exitCode: number | null;

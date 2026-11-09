@@ -19,6 +19,7 @@ import {
   publicError,
   type WorkerPublicRequest,
 } from "../service-contract.ts";
+import { decodeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import type { AuthNetwork } from "./auth-network.ts";
 import {
   exactEnvironment,
@@ -49,6 +50,7 @@ import type {
   AuthPreparationSettlement,
   PersistenceResult,
 } from "./ports.ts";
+import { readWorkerRuntime } from "./worker-settings.ts";
 
 export interface ModelContextOptions {
   /** Explicit service-launch inputs, never browser or per-request overrides. */
@@ -60,8 +62,6 @@ export interface ModelContextOptions {
   accounting: AuthAccountingPort;
   /** Real host-owned process route; absent adapters retain DIRECT-only refusal. */
   network?: AuthNetwork;
-  /** May shorten reporting only, never the lifetime of a started SDK operation. */
-  waitMs?: number;
 }
 interface Selected {
   selection: ModelSelection;
@@ -72,6 +72,7 @@ interface Selected {
 }
 /** Server-only material. It must never be passed to a history/client/logging port. */
 export interface ServerModelEnvelope {
+  runtime?: WorkerRuntime;
   request: WorkerPublicRequest;
   cwd: string;
   model: Model<Api>;
@@ -87,16 +88,19 @@ export interface ServerModelEnvelope {
  * and native spawn in one synchronous consumption, checking the ACTUAL string.
  * No accepting worker/fallback is wired by this module. JSON emits no secrets. */
 export interface PreparedModelContext {
+  /** Re-resolve the same pinned source at an SDK request boundary, including compaction. */
+  refreshAuth(): Promise<ServerModelEnvelope["auth"]>;
   consume<T>(
     encode: (material: ServerModelEnvelope) => string,
     use: (serialized: string) => T,
   ): T;
 }
 export interface ModelPreparationInput {
+  /** Admission-owned preferences; later workers/refreshes never reload them. */
+  runtime?: WorkerRuntime;
   request: WorkerPublicRequest;
   operationId: string;
   epoch: string;
-  timeoutMs: number;
   signal: AbortSignal;
   /** Validated by the admitting conversation/workflow; never inferred from the owner default. */
   cwd?: string;
@@ -212,6 +216,10 @@ export class OwnerModelContext {
   #source?: PiSource;
   #snapshot?: PiSnapshot;
   #runtime?: ModelRuntime;
+  #readSettings?: (
+    cwd: string,
+    model: { provider: string; id: string },
+  ) => WorkerRuntime;
   #thinking?: (model: Model<Api>) => readonly string[];
   #selected = new Map<string, Selected>();
   #retained = new Set<string>();
@@ -220,15 +228,16 @@ export class OwnerModelContext {
   #tail: Promise<void> = Promise.resolve();
   #generation = 0;
   constructor(options: ModelContextOptions) {
-    const waitMs = options.waitMs ?? LIMITS.authWaitMs;
-    if (
-      !Number.isSafeInteger(waitMs) ||
-      waitMs < 1 ||
-      waitMs > LIMITS.authWaitMs
-    )
-      throw new ContractError("invalid");
-    this.#options = { ...options, waitMs };
+    this.#options = options;
     this.#launch = captureEnvironment(options.environment);
+  }
+  workerSettings(cwd: string, selection: ModelSelection): WorkerRuntime {
+    this.assertCurrent(selection);
+    if (!this.#readSettings) throw new ContractError("unavailable");
+    return this.#readSettings(cwd, {
+      provider: selection.provider,
+      id: selection.model,
+    });
   }
   observe(): ModelSelection[] {
     return [...this.#selected.values()].map((entry) => ({
@@ -409,6 +418,7 @@ export class OwnerModelContext {
     this.#selected.clear();
     this.#retained.clear();
     this.#runtime = undefined;
+    this.#readSettings = undefined;
     ++this.#generation;
     try {
       const source = piSource(
@@ -418,7 +428,8 @@ export class OwnerModelContext {
         this.#launch,
       );
       const before = readPiSnapshot(source);
-      const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+      const pi = await import("@earendil-works/pi-coding-agent");
+      const { ModelRuntime } = pi;
       const { InMemoryModelsStore, getSupportedThinkingLevels } = await import(
         "@earendil-works/pi-ai"
       );
@@ -452,6 +463,8 @@ export class OwnerModelContext {
       this.#snapshot = after;
       this.#runtime = runtime;
       this.#thinking = getSupportedThinkingLevels;
+      this.#readSettings = (cwd, model) =>
+        readWorkerRuntime(cwd, source.directory, model, pi);
     } catch (error) {
       runtimeOwners.delete(this.#options.owner);
       // Never inspect provider/OS exception properties or expose config bytes;
@@ -647,7 +660,6 @@ export class OwnerModelContext {
         return false;
       }
     };
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const close = () => {
       closed = true;
     };
@@ -664,7 +676,6 @@ export class OwnerModelContext {
       };
     });
     input.signal.addEventListener("abort", reportClosed, { once: true });
-    timer = setTimeout(reportClosed, this.#options.waitMs);
     if (closed) reportClosed();
     const previous = this.#tail;
     const operation = (async (): Promise<ModelPreparation> => {
@@ -674,13 +685,7 @@ export class OwnerModelContext {
         const epoch = decodeId(input.epoch);
         if (epoch !== this.#options.owner.lease.registration.epoch)
           throw new ContractError("stale");
-        if (
-          !Number.isSafeInteger(input.timeoutMs) ||
-          input.timeoutMs < 100 ||
-          input.timeoutMs > LIMITS.workerMs
-        )
-          throw new ContractError("invalid");
-        const validityMs = input.timeoutMs + LIMITS.authValidityMarginMs;
+        const validityMs = LIMITS.authValidityMarginMs;
         const generation = this.#generation;
         const selected = this.#selected.get(request.model.sourceSelectionId);
         if (
@@ -703,6 +708,13 @@ export class OwnerModelContext {
           return this.fresh(selected);
         };
         await previous;
+        check();
+        const workerRuntime = input.runtime
+          ? decodeWorkerRuntime(input.runtime)
+          : this.workerSettings(
+              input.cwd ?? this.#options.cwd,
+              selected.selection,
+            );
         check();
         effectStarted = true;
         await recordPreparation({
@@ -769,6 +781,7 @@ export class OwnerModelContext {
               const projected = authProjection(auth);
               this.authRoute(projected.env ?? {});
               material = {
+                runtime: workerRuntime,
                 request,
                 cwd: input.cwd ?? this.#options.cwd,
                 model: {
@@ -847,6 +860,30 @@ export class OwnerModelContext {
         return {
           status: "prepared",
           prepared: Object.freeze({
+            refreshAuth: async () => {
+              const next = this.prepareTracked({
+                ...input,
+                runtime: workerRuntime,
+                operationId: randomUUID(),
+              });
+              // A reporting refusal/abort does not settle original OAuth or its
+              // writeback. Keep the request and all owner fences until it does.
+              const result = await next.result;
+              await next.settled;
+              if (result.status !== "prepared")
+                throw new ContractError(result.error.code);
+              let auth: ServerModelEnvelope["auth"] | undefined;
+              return result.prepared.consume(
+                (material) => {
+                  auth = material.auth;
+                  return JSON.stringify(material);
+                },
+                () => {
+                  if (!auth) throw new ContractError("auth-unavailable");
+                  return auth;
+                },
+              );
+            },
             consume: <T>(
               encode: (value: ServerModelEnvelope) => string,
               use: (serialized: string) => T,
@@ -900,7 +937,6 @@ export class OwnerModelContext {
     return {
       settled,
       result: Promise.race([operation, closedWait]).finally(() => {
-        clearTimeout(timer);
         input.signal.removeEventListener("abort", reportClosed);
         // Keep checking input.signal after return; reporting cannot refund originals.
       }),

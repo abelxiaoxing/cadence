@@ -224,7 +224,7 @@ export class ServiceOwner {
       requestStop,
     );
   }
-  /** Auth adapter registers getAuth itself, not awaitWithAbort(getAuth). Normal
+  /** Auth adapter registers getAuth itself, not an early-rejecting observer. Normal
    * rejection is conservatively credential-uncertain here until local recovery.
    * Track its separate original journal-settlement promise via trackPersistence. */
   trackAuth(

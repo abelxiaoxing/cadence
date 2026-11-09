@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/gateway.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 import { opendirSync as opendirSync9 } from "node:fs";
 import {
   createServer as createServer2,
@@ -323,7 +323,6 @@ var LIMITS = Object.freeze({
   wsClientFrameBytes: 16 * 1024,
   startWaitMs: 1e4,
   stopWaitMs: 60000,
-  authWaitMs: 30000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
@@ -340,23 +339,17 @@ var LIMITS = Object.freeze({
   frameBytes: 64 * 1024,
   chunkBytes: 8 * 1024,
   detailBytes: 32 * 1024 * 1024,
-  childProtocolBytes: 128 * 1024 * 1024,
   dataFrames: 1e5,
   controlFrames: 256,
-  sdkEvents: 1e6,
+  captureEntries: 4096,
   workerQueueBytes: 4 * 1024 * 1024,
   workerQueueFrames: 1024,
   ownerQueueBytes: 8 * 1024 * 1024,
   ownerQueueFrames: 2048,
   ownerControlBytes: 1024 * 1024,
   ownerControlFrames: 256,
-  recordingStallMs: 5000,
   episodes: 8,
-  queuedAssignments: 128,
   childReservations: 2,
-  episodeMs: 6 * 60 * 60 * 1000,
-  readyWaitMs: 10 * 60 * 1000,
-  workerMs: 1200000,
   artifactPartBytes: 256 * 1024,
   progressBatchMs: 100,
   progressBatchBytes: 256 * 1024,
@@ -950,7 +943,7 @@ function checkSelection(v) {
     kind: oneOf(o.kind, ["configured", "manual"]),
     name: text(o.name, 128, true),
     command: text(o.command, 4096, true),
-    timeoutMs: integer(o.timeoutMs, 100, LIMITS.workerMs)
+    timeoutMs: integer(o.timeoutMs, 100, 1200000)
   };
   const controls = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u;
   if (controls.test(result.name) || controls.test(result.command) || /[\n\t]/.test(result.name) || result.name === "Manual command")
@@ -1233,8 +1226,25 @@ function assertWorkerEnvelopeSize(serialized) {
   if (utf8Bytes(serialized) > LIMITS.workerRequestBytes)
     throw new ContractError("oversize");
 }
+function decodeStopCause(v) {
+  const o = closed(v, ["source", "reason", "target"]);
+  return {
+    source: oneOf(o.source, [
+      "user",
+      "service",
+      "owner",
+      "command",
+      "worker",
+      "coordinator",
+      "unknown"
+    ]),
+    reason: text(o.reason, 128, true),
+    target: text(o.target, 128, true)
+  };
+}
 function decodeNativeSettlement(v) {
   const o = closed(v, [
+    ...Object.hasOwn(v ?? {}, "stop") ? ["stop"] : [],
     "outcome",
     "closure",
     "exitCode",
@@ -1246,6 +1256,7 @@ function decodeNativeSettlement(v) {
     "capture"
   ]);
   const r = {
+    ...o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) },
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -1670,7 +1681,7 @@ function decodeCaptureFrame(v) {
   return {
     protocol: literal(o.protocol, WORKER_PROTOCOL),
     childRunId: decodeId(o.childRunId),
-    workerSeq: integer(o.workerSeq, 1, LIMITS.dataFrames + LIMITS.controlFrames),
+    workerSeq: integer(o.workerSeq, 1, Number.MAX_SAFE_INTEGER),
     observedMs: integer(o.observedMs),
     event: decodeCaptureEvent(o.event)
   };
@@ -1691,6 +1702,7 @@ function advanceCapture(position, input) {
 }
 function decodeCheckNativeSettlement(v) {
   const o = closed(v, [
+    ...Object.hasOwn(v ?? {}, "stop") ? ["stop"] : [],
     "outcome",
     "closure",
     "exitCode",
@@ -1699,6 +1711,7 @@ function decodeCheckNativeSettlement(v) {
     "stdin"
   ]);
   const r = {
+    ...o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) },
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -1835,8 +1848,8 @@ function decodeWorkerCompletion(v) {
 }
 function decodeSourceRange(v) {
   const o = closed(v, ["first", "last", "firstObservedMs", "lastObservedMs"]);
-  const first = integer(o.first, 1, LIMITS.dataFrames + LIMITS.controlFrames);
-  const last = integer(o.last, first, LIMITS.dataFrames + LIMITS.controlFrames);
+  const first = integer(o.first, 1, Number.MAX_SAFE_INTEGER);
+  const last = integer(o.last, first, Number.MAX_SAFE_INTEGER);
   const firstObservedMs = integer(o.firstObservedMs);
   const lastObservedMs = integer(o.lastObservedMs, firstObservedMs);
   if (first === last && firstObservedMs !== lastObservedMs)
@@ -5340,11 +5353,15 @@ var taskId = (v, strict = false) => {
   return s;
 };
 function decodeWorkflowCheck(v) {
-  const o = closed(v, ["name", "command", "timeoutMs"]);
+  const o = closed(v, [
+    "name",
+    "command",
+    ...Object.hasOwn(v ?? {}, "timeoutMs") ? ["timeoutMs"] : []
+  ]);
   return {
     name: text(o.name, 128, true),
     command: text(o.command, 4096, true),
-    timeoutMs: integer(o.timeoutMs, 100, 1200000)
+    ...o.timeoutMs === undefined ? {} : { timeoutMs: integer(o.timeoutMs, 100, 2147483647) }
   };
 }
 function workflowOrder(tasks) {
@@ -5616,8 +5633,14 @@ function decodeWorkflowProposal(v) {
     ...o.checkoutRoot === undefined ? {} : { checkoutRoot: text(o.checkoutRoot, 4096, true) },
     ...modern ? {
       display: (() => {
-        const d = closed(o.display, ["model", "branch", "baseCommit"]);
+        const d = closed(o.display, [
+          "model",
+          "branch",
+          "baseCommit",
+          ...Object.hasOwn(o.display ?? {}, "runtime") ? ["runtime"] : []
+        ]);
         return {
+          ...d.runtime === undefined ? {} : { runtime: text(d.runtime, 4096, true) },
           model: text(d.model, 1024, true),
           branch: text(d.branch, 1024),
           baseCommit: text(d.baseCommit, 64)
@@ -5812,15 +5835,15 @@ ${t.instructions}`).join(`
 `)}
 
 ## Setup (explicitly authorized commands)
-${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join(`
+${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join(`
 `) || "None; no dependency installation or copying."}
 
 ## Baseline verification
-${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join(`
+${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join(`
 `) || "No separate baseline checks declared."}
 
 ## Verification
-${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join(`
+${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join(`
 `)}
 
 ## Automation boundary
@@ -5840,7 +5863,7 @@ function decodeWorkflowTiming(v) {
     "stopRequestedAt",
     "closedAt",
     "settledAt",
-    "timeoutMs",
+    ...Object.hasOwn(v ?? {}, "timeoutMs") ? ["timeoutMs"] : [],
     "stopReason"
   ]);
   return {
@@ -5850,8 +5873,8 @@ function decodeWorkflowTiming(v) {
     stopRequestedAt: nullable(o.stopRequestedAt, timestamp),
     closedAt: nullable(o.closedAt, timestamp),
     settledAt: nullable(o.settledAt, timestamp),
-    timeoutMs: integer(o.timeoutMs, 100, 1200000),
-    stopReason: nullable(o.stopReason, (v2) => text(v2, 32, true))
+    ...o.timeoutMs === undefined ? {} : { timeoutMs: integer(o.timeoutMs, 100, 2147483647) },
+    stopReason: nullable(o.stopReason, (v2) => text(v2, 320, true))
   };
 }
 function decodeWorkflowDiagnostics(v) {
@@ -8461,7 +8484,7 @@ class OwnerLease {
 }
 
 // src/service/pi-sessions.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID6 } from "node:crypto";
 import {
   closeSync as closeSync6,
   constants as constants5,
@@ -8481,13 +8504,13 @@ var WEBUI_SESSION_ENTRY = "cadence-webui/1";
 var BROWSER_COMMAND_ENTRY = "cadence-browser-command/1";
 
 // src/service/pi-sessions.ts
-var SESSION_BYTES = 64 * 1024 * 1024;
+var BODY_CACHE_BYTES = 8 * 1024 * 1024;
+var READ_CHUNK_BYTES = 64 * 1024;
 var LISTED_FILES = 1e4;
 var OPEN_SESSIONS = 8;
 var BUILT_TURNS = 64;
 var SESSION_DIRECTORIES = 256;
 var KNOWN_DIRECTORIES = 128;
-var HEADER_BYTES = 16 * 1024;
 var SETTINGS_BYTES = 1024 * 1024;
 var TITLE_CHARS = 100;
 var NOTICE_BYTES = 1024;
@@ -8579,63 +8602,38 @@ function assertSessionFile(st) {
   if (!st.isFile() || typeof process.getuid === "function" && st.uid !== process.getuid())
     throw new ContractError("forbidden");
 }
-function readLines(path, from, onLine) {
+function readLines(path, from, onLine, restart) {
   const fd = openSync6(path, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
   try {
     const st = fstatSync5(fd);
     assertSessionFile(st);
-    if (st.size > SESSION_BYTES)
-      throw new ContractError("capacity");
     const restarted = !from || from.ino !== st.ino || st.size < from.end;
     const start = restarted ? 0 : from.end;
-    const length = st.size - start;
+    if (restarted)
+      restart?.();
     let end = start;
-    if (length > 0) {
-      const buffer = Buffer.allocUnsafe(length);
-      let read = 0;
-      while (read < length) {
-        const n = readSync4(fd, buffer, read, length - read, start + read);
-        if (n === 0)
-          break;
-        read += n;
-      }
-      let line = 0;
-      for (let i = buffer.indexOf(10);i >= 0 && i < read; ) {
-        const text2 = buffer.toString("utf8", line, i);
+    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+    let at = start;
+    let parts = [];
+    while (at < st.size) {
+      const n = readSync4(fd, buffer, 0, Math.min(buffer.length, st.size - at), at);
+      if (!n)
+        break;
+      let begin = 0;
+      for (let i = buffer.indexOf(10);i >= 0 && i < n; i = buffer.indexOf(10, begin)) {
+        const piece = buffer.subarray(begin, i);
+        const text2 = parts.length ? Buffer.concat([...parts, piece]).toString("utf8") : piece.toString("utf8");
         if (text2.trim())
-          onLine(text2, start + line);
-        line = i + 1;
-        i = buffer.indexOf(10, line);
+          onLine(text2, end);
+        parts = [];
+        begin = i + 1;
+        end = at + begin;
       }
-      end = start + line;
+      if (begin < n)
+        parts.push(Buffer.from(buffer.subarray(begin, n)));
+      at += n;
     }
     return { ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, end, restarted };
-  } finally {
-    closeSync6(fd);
-  }
-}
-function sessionHeader(path) {
-  const fd = openSync6(path, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
-  try {
-    const st = fstatSync5(fd);
-    assertSessionFile(st);
-    const buffer = Buffer.alloc(Math.min(st.size, HEADER_BYTES));
-    let read = 0;
-    while (read < buffer.length) {
-      const size = readSync4(fd, buffer, read, buffer.length - read, read);
-      if (!size)
-        break;
-      read += size;
-      if (buffer.subarray(0, read).includes(10))
-        break;
-    }
-    const end = buffer.subarray(0, read).indexOf(10);
-    if (end < 0 && st.size >= HEADER_BYTES)
-      throw new ContractError("capacity");
-    const line = parseLine(buffer.toString("utf8", 0, end < 0 ? read : end), 0);
-    if (line?.kind !== "header")
-      throw new ContractError("corrupt-selected");
-    return line.header;
   } finally {
     closeSync6(fd);
   }
@@ -8779,35 +8777,74 @@ function fold(summary, line) {
 
 class ParsedSession {
   path;
+  incarnation = randomUUID6();
   entries = [];
   byId = new Map;
   children = new Map;
   header = null;
   read;
+  bodies = new Map;
+  bodyBytes = 0;
   constructor(path) {
     this.path = path;
   }
+  body(pos, bytes, ino) {
+    const hit = this.bodies.get(pos);
+    if (hit) {
+      this.bodies.delete(pos);
+      this.bodies.set(pos, hit);
+      return hit.value;
+    }
+    const fd = openSync6(this.path, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
+    let value;
+    try {
+      const st = fstatSync5(fd);
+      assertSessionFile(st);
+      if (st.ino !== ino || st.size < pos + bytes)
+        throw new ContractError("stale");
+      const buffer = Buffer.allocUnsafe(bytes);
+      let at = 0;
+      while (at < bytes) {
+        const n = readSync4(fd, buffer, at, bytes - at, pos + at);
+        if (!n)
+          throw new ContractError("unavailable");
+        at += n;
+      }
+      value = JSON.parse(buffer.toString("utf8"));
+    } finally {
+      closeSync6(fd);
+    }
+    if (bytes <= BODY_CACHE_BYTES) {
+      while (this.bodyBytes + bytes > BODY_CACHE_BYTES) {
+        const oldest = this.bodies.entries().next().value;
+        if (!oldest)
+          throw new ContractError("corrupt-selected");
+        this.bodyBytes -= oldest[1].bytes;
+        this.bodies.delete(oldest[0]);
+      }
+      this.bodies.set(pos, { value, bytes });
+      this.bodyBytes += bytes;
+    }
+    return value;
+  }
   refresh() {
-    const lines = [];
+    const ino = lstatSync7(this.path).ino;
     const next = readLines(this.path, this.read, (text2, pos) => {
       const line = parseLine(text2, pos);
-      if (line)
-        lines.push(line);
-    });
-    if (next.restarted) {
-      this.entries.length = 0;
-      this.byId.clear();
-      this.children.clear();
-      this.header = null;
-    }
-    for (const line of lines) {
+      if (!line)
+        return;
       if (line.kind === "header") {
         this.header ??= line.header;
-        continue;
+        return;
       }
       const entry = line.entry;
       if (this.byId.has(entry.id))
-        continue;
+        return;
+      const bytes = Buffer.byteLength(text2);
+      Object.defineProperty(entry, "raw", {
+        enumerable: true,
+        get: this.body.bind(this, pos, bytes, ino)
+      });
       this.entries.push(entry);
       this.byId.set(entry.id, entry);
       const key = entry.parentId ?? "";
@@ -8816,7 +8853,15 @@ class ParsedSession {
         siblings.push(entry);
       else
         this.children.set(key, [entry]);
-    }
+    }, () => {
+      this.incarnation = randomUUID6();
+      this.entries.length = 0;
+      this.byId.clear();
+      this.children.clear();
+      this.bodies.clear();
+      this.bodyBytes = 0;
+      this.header = null;
+    });
     this.read = next;
     return this;
   }
@@ -9182,43 +9227,22 @@ class PiSessions {
     const st = lstatSync7(path);
     assertSessionFile(st);
     const cached = this.listed.get(path);
-    if (st.size > SESSION_BYTES) {
-      this.open.delete(path);
-      for (const key of this.built.keys())
-        if (key.startsWith(`${path}|`))
-          this.built.delete(key);
-      const summary2 = emptySummary();
-      fold(summary2, { kind: "header", header: sessionHeader(path) });
-      const listed2 = {
-        path,
-        ino: st.ino,
-        size: st.size,
-        mtimeMs: st.mtimeMs,
-        end: 0,
-        summary: summary2
-      };
-      this.listed.set(path, listed2);
-      return listed2;
-    }
     if (cached && cached.ino === st.ino && cached.size === st.size) {
       cached.mtimeMs = st.mtimeMs;
       return cached;
     }
-    const prior = cached && cached.size <= SESSION_BYTES ? cached : undefined;
+    const prior = cached;
     let summary = prior && prior.ino === st.ino && st.size >= prior.end ? { ...prior.summary, runs: [...prior.summary.runs] } : emptySummary();
-    const lines = [];
     const read = readLines(path, prior, (text2, pos) => {
       const line = parseLine(text2, pos);
-      if (line)
-        lines.push(line);
-    });
-    if (read.restarted)
-      summary = emptySummary();
-    for (const line of lines) {
+      if (!line)
+        return;
       if (line.kind === "header" && summary.id)
         throw new ContractError("corrupt-selected");
       fold(summary, line);
-    }
+    }, () => {
+      summary = emptySummary();
+    });
     if (!summary.id)
       throw new ContractError("corrupt-selected");
     const listed = { path, ...read, summary };
@@ -9267,6 +9291,7 @@ class PiSessions {
   turn(session, entries, secrets) {
     const key = [
       session.path,
+      session.incarnation,
       entries[0]?.id,
       entries.at(-1)?.id,
       entries.length,
@@ -9516,7 +9541,7 @@ class ActivityDiscoveryReader {
 import {
   createHash as createHash8,
   randomBytes as randomBytes3,
-  randomUUID as randomUUID6,
+  randomUUID as randomUUID7,
   timingSafeEqual
 } from "node:crypto";
 import { dirname as dirname8, isAbsolute as isAbsolute5, join as join11 } from "node:path";
@@ -10082,7 +10107,7 @@ class HttpAuthentication {
   material;
   epoch;
   localCapability;
-  csrf = randomUUID6();
+  csrf = randomUUID7();
   cookieName;
   constructor(material, epoch, workspaceId, localCapability) {
     this.material = material;
@@ -10527,7 +10552,7 @@ import { createInterface } from "node:readline";
 import { isatty } from "node:tty";
 
 // src/service/gateway-store.ts
-import { randomBytes as randomBytes4, randomUUID as randomUUID7 } from "node:crypto";
+import { randomBytes as randomBytes4, randomUUID as randomUUID8 } from "node:crypto";
 import { opendirSync as opendirSync4 } from "node:fs";
 import { hostname as hostname6 } from "node:os";
 import { join as join13, resolve as resolve5 } from "node:path";
@@ -10668,7 +10693,7 @@ class GatewayStore {
       this.associatedProjects();
     const mark = selfMark();
     this.lock = this.files.create(this.path("gateway.lock"), encoded({
-      epoch: randomUUID7(),
+      epoch: randomUUID8(),
       pid: process.pid,
       host: hostname6(),
       boot: mark.boot,
@@ -10686,8 +10711,8 @@ class GatewayStore {
     this.inputFile = beforeInput ? this.files.replace(this.path("input.json"), beforeInput, inputBytes) : this.files.create(this.path("input.json"), inputBytes);
     this.value = {
       schema: "cadence-workbench-registration/1",
-      epoch: randomUUID7(),
-      id: previous?.id ?? randomUUID7(),
+      epoch: randomUUID8(),
+      id: previous?.id ?? randomUUID8(),
       endpoint: endpoint2,
       capability: randomBytes4(32).toString("base64url"),
       selection: hash(inputBytes),
@@ -11520,7 +11545,7 @@ function snapshotLiterals(snapshot, launch, routes = []) {
 }
 
 // src/service/recovery-log.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 import {
   lstatSync as lstatSync11,
   opendirSync as opendirSync5,
@@ -11604,7 +11629,7 @@ class RecoveryLog {
     this.archiveDirectory = join15(files.namespace, "recovery-archive-v1");
   }
   archive() {
-    const name = `${Date.now()}-${randomUUID8()}`;
+    const name = `${Date.now()}-${randomUUID9()}`;
     const directory = join15(this.archiveDirectory, name);
     let used = false;
     return {
@@ -11637,7 +11662,7 @@ class RecoveryLog {
     } catch {}
     const value = {
       schema: "cadence-recovery-event/1",
-      id: randomUUID8(),
+      id: randomUUID9(),
       at: Date.now(),
       ...event
     };
@@ -11975,7 +12000,7 @@ function decodeStartupReport(value) {
 }
 
 // src/service/self-heal.ts
-import { createHash as createHash9, randomUUID as randomUUID10 } from "node:crypto";
+import { createHash as createHash9, randomUUID as randomUUID11 } from "node:crypto";
 import { lstatSync as lstatSync13, opendirSync as opendirSync7 } from "node:fs";
 import { hostname as hostname7 } from "node:os";
 import { join as join19 } from "node:path";
@@ -12099,7 +12124,7 @@ class LiveLedger {
 }
 
 // src/service/repository-coordination.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 import { lstatSync as lstatSync12, opendirSync as opendirSync6 } from "node:fs";
 import { isAbsolute as isAbsolute9, join as join18 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12192,7 +12217,7 @@ class RepositoryCoordination {
       root: this.root,
       epoch: this.epoch,
       run: this.run,
-      token: randomUUID9(),
+      token: randomUUID10(),
       identity: null,
       holder: selfMark()
     };
@@ -12590,7 +12615,7 @@ class RegistryHealer {
     const lockPath = this.path("registry.lock");
     const lock = this.c.files.create(lockPath, encoded({
       schema: "cadence-service-registry-lock/1",
-      token: randomUUID10(),
+      token: randomUUID11(),
       pid: process.pid,
       host: hostname7()
     }));
@@ -13807,7 +13832,7 @@ async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
 }
 
 // src/service/conversation-contexts.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 import { join as join25, resolve as resolve10 } from "node:path";
 
 // src/cadence-preferences.ts
@@ -14101,8 +14126,8 @@ class ConversationRecords {
     }
     const s = listed.summary;
     const secrets = this.readSecrets();
-    let status = live2?.state.status ?? (listed.size > SESSION_BYTES ? "unknown" : s.stop?.status ?? "completed");
-    if (!live2 && listed.size <= SESSION_BYTES && this.index(id).commands.length) {
+    let status = live2?.state.status ?? s.stop?.status ?? "completed";
+    if (!live2 && this.index(id).commands.length) {
       const session = this.sessions.session(id);
       const user = session && turnSpans(session.branch(s.leaf)).at(-1)?.[0]?.id;
       const recorded = user ? this.overlay(id, session).get(user) : undefined;
@@ -14438,7 +14463,7 @@ class ConversationContextRecords {
 class ConversationContexts {
   o;
   records;
-  seed = randomUUID11();
+  seed = randomUUID12();
   constructor(o) {
     this.o = o;
     this.records = new ConversationContextRecords(o.coordination, o.sessions);
@@ -14869,7 +14894,7 @@ async function readGatewayModels(project, input, secrets, read) {
 }
 
 // src/service/http.ts
-import { createHash as createHash11, randomUUID as randomUUID12 } from "node:crypto";
+import { createHash as createHash11, randomUUID as randomUUID13 } from "node:crypto";
 import {
   createServer
 } from "node:http";
@@ -15218,7 +15243,7 @@ Content-Length: 0\r
       if (!this.accepting)
         unavailable();
       const route = readRoute(target, req.method ?? "");
-      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID12();
+      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID13();
       const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32)
@@ -15334,7 +15359,7 @@ Content-Length: 0\r
     ].includes(operation ?? ""))
       throw new ContractError("invalid");
     const write2 = !["status", "diagnose", "activity"].includes(operation ?? "");
-    const caller = this.options.auth.authenticate(boundary, randomUUID12(), write2);
+    const caller = this.options.auth.authenticate(boundary, randomUUID13(), write2);
     if (caller.authority !== "local")
       throw new ContractError("forbidden");
     if (req.method !== (write2 ? "POST" : "GET"))
@@ -16101,7 +16126,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "d24aed1c4f2f90474300d4cf87e669de6a660de4cdc6e52b3f27d44a71c45d9a",
+    contractHash: "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -16296,7 +16321,7 @@ Content-Length: 0\r
       current();
       assert();
       const job2 = {
-        id: randomUUID13(),
+        id: randomUUID14(),
         action,
         from: version,
         to,
@@ -16586,7 +16611,7 @@ Content-Length: 0\r
         return;
       }
       if (raw.startsWith("/local/v1/admin/")) {
-        const caller2 = auth.authenticate(boundary, randomUUID13(), req.method === "POST");
+        const caller2 = auth.authenticate(boundary, randomUUID14(), req.method === "POST");
         if (caller2.authority !== "local")
           throw new ContractError("forbidden");
         const operation = raw.slice("/local/v1/admin/".length);
@@ -16639,7 +16664,7 @@ Content-Length: 0\r
       if (boundary.headers.has("x-cadence-local"))
         throw new ContractError("forbidden");
       const project = target(raw);
-      const caller = auth.authenticate(boundary, randomUUID13(), !project && req.method === "POST");
+      const caller = auth.authenticate(boundary, randomUUID14(), !project && req.method === "POST");
       if (project) {
         const route2 = readRoute(project.tail, req.method ?? "");
         if (!route2)
@@ -16919,7 +16944,7 @@ Content-Length: 0\r
         assertRequestTarget(raw);
         if (boundary.headers.has("x-cadence-local"))
           throw new ContractError("forbidden");
-        const caller = auth.authenticate(boundary, randomUUID13(), false, true), t = target(raw);
+        const caller = auth.authenticate(boundary, randomUUID14(), false, true), t = target(raw);
         if (req.method !== "GET" || !t)
           throw new ContractError("invalid");
         const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
@@ -16985,8 +17010,8 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { lstatSync as lstatSync25, opendirSync as opendirSync16 } from "node:fs";
-import { join as join43 } from "node:path";
+import { lstatSync as lstatSync26, opendirSync as opendirSync16 } from "node:fs";
+import { join as join44 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
@@ -19335,7 +19360,7 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash18, randomUUID as randomUUID14 } from "node:crypto";
+import { createHash as createHash18, randomUUID as randomUUID15 } from "node:crypto";
 import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/history/search.ts
@@ -21249,7 +21274,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID14(), digest = createHash18("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID15(), digest = createHash18("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -24004,16 +24029,16 @@ class HistoryReader {
 }
 
 // src/history/recovery.ts
-import { createHash as createHash25, randomUUID as randomUUID18 } from "node:crypto";
+import { createHash as createHash25, randomUUID as randomUUID19 } from "node:crypto";
 import { lstatSync as lstatSync19, opendirSync as opendirSync10 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
-import { createHash as createHash24, randomUUID as randomUUID17 } from "node:crypto";
+import { createHash as createHash24, randomUUID as randomUUID18 } from "node:crypto";
 import { join as join33 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash22, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash22, randomUUID as randomUUID16 } from "node:crypto";
 import {
   closeSync as closeSync8,
   fsyncSync as fsyncSync4,
@@ -24179,7 +24204,7 @@ class TaskStore extends CheckoutStore {
       safeDirectory(dir, true);
       if (!current2 && readdirSync3(dir).length)
         throw new Error("Unknown task directory");
-      const temporary = join31(dir, `task.${randomUUID15()}.tmp`);
+      const temporary = join31(dir, `task.${randomUUID16()}.tmp`);
       const fd = openSync8(temporary, "wx", 384);
       try {
         writeFileSync5(fd, text2);
@@ -24226,7 +24251,7 @@ class TaskStore extends CheckoutStore {
     if (lock.pid !== process.pid || lock.host !== hostname8())
       throw new Error("Not the lock owner");
     this.assertOwner(lock);
-    const name = `${randomUUID15()}.log`;
+    const name = `${randomUUID16()}.log`;
     writeFileSync5(join31(this.privateRoot, name), diagnosticText(output, 65536), {
       flag: "wx",
       mode: 384
@@ -24246,7 +24271,7 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash23, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash23, randomUUID as randomUUID17 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
@@ -24254,7 +24279,7 @@ function assertPlanContent(plan, reference, secrets) {
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
-  const detailId = randomUUID16();
+  const detailId = randomUUID17();
   const input = {
     link: { epoch, taskId: graph.taskId, runId: null, operationId },
     observedMs: 0,
@@ -24557,7 +24582,6 @@ class HistoryWriter {
   queue = [];
   timer;
   originals = new Set;
-  originalReports = new WeakMap;
   fenced = false;
   used;
   policyGeneration = 0;
@@ -24726,7 +24750,6 @@ class HistoryWriter {
       this.fenced = true;
     this.auth = {
       lifetimeTracked: !!options.onOriginal,
-      original: (report2) => this.originalReports.get(report2) ?? report2,
       preparation: (input) => this.authPreparation(input),
       settlement: (input) => this.authSettlement(input)
     };
@@ -24844,7 +24867,7 @@ class HistoryWriter {
             kind: "fact",
             fact: {
               kind: "publication-settled",
-              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID17(),
+              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID18(),
               status: "uncertain",
               observed: null
             }
@@ -24931,21 +24954,7 @@ class HistoryWriter {
       this.schedule();
     else
       this.timer ??= setTimeout(() => this.schedule(), LIMITS.progressBatchMs);
-    let timer;
-    const report2 = Promise.race([
-      original.then((result) => {
-        clearTimeout(timer);
-        return result;
-      }),
-      new Promise((yes) => {
-        timer = setTimeout(() => {
-          this.fence();
-          yes(failure(true));
-        }, LIMITS.recordingStallMs);
-      })
-    ]);
-    this.originalReports.set(report2, original);
-    return report2;
+    return original;
   }
   rowRunId(v) {
     return v.kind === "admission" ? v.intent.identity.kind === "action" ? v.intent.runId : null : v.kind === "auth-preparation" ? v.intent.runId : v.kind === "auth-settlement" ? this.authOpen.get(v.result.operationId)?.runId ?? null : v.kind === "launch" || v.kind === "settlement" || v.kind === "owner" || v.kind === "capture" ? v.link.runId : null;
@@ -24974,7 +24983,7 @@ class HistoryWriter {
             const row = {
               kind: "record",
               seq: seq2,
-              id: randomUUID17(),
+              id: randomUUID18(),
               value
             };
             rows.push(row);
@@ -25560,7 +25569,7 @@ class HistoryWriter {
       };
     }
     this.publishing.add(request3.operationId);
-    const publicationId = randomUUID17();
+    const publicationId = randomUUID18();
     let link;
     let record3;
     let expected;
@@ -25912,7 +25921,7 @@ class HistoryWriter {
       owner,
       descriptor,
       field,
-      recordId: randomUUID17(),
+      recordId: randomUUID18(),
       version: 1,
       bytes: 0,
       hash: createHash24("sha256"),
@@ -26035,7 +26044,7 @@ class HistoryWriter {
           throw new ContractError("invalid");
         child2.final = { messageId: event.messageId, detailId: event.detailId };
       }
-      events.push({ kind: "capture", id: randomUUID17(), value: item });
+      events.push({ kind: "capture", id: randomUUID18(), value: item });
     }
     return { kind: "capture", link: input.link, source: input.source, events };
   }
@@ -26161,12 +26170,12 @@ class HistoryWriter {
         candidate.apply({
           kind: "record",
           seq: "1",
-          id: randomUUID17(),
+          id: randomUUID18(),
           value: {
             kind: "owner",
             link: value.link,
             observedMs: value.observedMs,
-            events: [{ kind: "owner", id: randomUUID17(), value: event }]
+            events: [{ kind: "owner", id: randomUUID18(), value: event }]
           }
         }, this.state.committedSeq);
         const children = new Set(identity.assignments.map((a) => a.childRunId));
@@ -26248,7 +26257,7 @@ class HistoryWriter {
           events.push(ended);
         }
       } else
-        events.push({ kind: "owner", id: randomUUID17(), value: event });
+        events.push({ kind: "owner", id: randomUUID18(), value: event });
     }
     return {
       kind: "owner",
@@ -26338,7 +26347,7 @@ async function appendRecoveryBridge(lease, files, observeWrite) {
   const state = files.inspect();
   const bridge = {
     kind: "recovery",
-    recoveryId: randomUUID18(),
+    recoveryId: randomUUID19(),
     epoch: lease.registration.epoch,
     coordinationDigest: hash(encoded({ automatic: true, epoch: lease.registration.epoch })),
     historyDigest: digestHistory(files),
@@ -26354,7 +26363,7 @@ async function appendRecoveryBridge(lease, files, observeWrite) {
   };
   const row = {
     kind: "record",
-    id: randomUUID18(),
+    id: randomUUID19(),
     seq: String(BigInt(bridge.previous.highSeq) + 1n),
     value: bridge
   };
@@ -26405,12 +26414,12 @@ async function healHistory(lease, log) {
 
 // src/subagent-process.ts
 import { spawn as spawn5 } from "node:child_process";
-import { createHash as createHash27, randomUUID as randomUUID20 } from "node:crypto";
+import { createHash as createHash27, randomUUID as randomUUID21 } from "node:crypto";
 import { join as join35 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 // src/worker-capture.mjs
-import { createHash as createHash26, randomUUID as randomUUID19 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID20 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -26460,8 +26469,9 @@ class CaptureState {
     const e = frame.event;
     const control = controlEvent(e.kind);
     this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
-    if (++this[control ? "controlFrames" : "dataFrames"] > (control ? LIMITS.controlFrames : LIMITS.dataFrames) || this.bytes > LIMITS.childProtocolBytes - (control ? 0 : LIMITS.ownerControlBytes))
-      throw new ContractError("oversize");
+    this[control ? "controlFrames" : "dataFrames"]++;
+    if (this.details.size + this.messages.size + this.calls.size + this.blocks.size > LIMITS.captureEntries)
+      throw new ContractError("capacity");
     const message2 = (id) => {
       const m = this.messages.get(id);
       requireFact2(m);
@@ -26489,8 +26499,23 @@ class CaptureState {
         break;
       case "message-start":
         requireFact2(!this.messages.has(e.messageId));
-        if (e.resultCallId !== null)
+        if (e.resultCallId !== null) {
           requireFact2(this.calls.get(e.resultCallId)?.ended);
+          this.calls.delete(e.resultCallId);
+        }
+        if (e.role === "assistant") {
+          for (const [id, m] of this.messages)
+            if (m.ended) {
+              if (m.final)
+                this.details.delete(m.final);
+              this.messages.delete(id);
+            }
+          for (const [id, c] of this.calls)
+            if (!c.started || c.ended) {
+              this.releaseCallDetails(id);
+              this.calls.delete(id);
+            }
+        }
         this.messages.set(e.messageId, {
           role: e.role,
           ended: false,
@@ -26554,6 +26579,8 @@ class CaptureState {
         d.hash = null;
         d.ended = true;
         this.mergeCoverage(e.coverage);
+        if (["context", "handoff"].includes(d.descriptor.owner.kind))
+          this.details.delete(e.detailId);
         break;
       }
       case "message-text": {
@@ -26573,6 +26600,8 @@ class CaptureState {
           requireFact2(!m.finalIndices.has(e.index));
           m.finalIndices.add(e.index);
         }
+        if (e.argsDetailId)
+          this.releaseDetail(e.argsDetailId);
         this.calls.set(e.callId, { ...e, started: false, ended: false });
         break;
       }
@@ -26582,12 +26611,16 @@ class CaptureState {
         requireFact2(old || e.declaration === null);
         if (e.argsDetailId)
           requireFact2(detail(e.argsDetailId, "tool-args", e.callId).descriptor.owner.stage === "execution-arguments");
+        if (e.argsDetailId)
+          this.releaseDetail(e.argsDetailId);
+        this.releaseCallDetails(e.callId);
         this.calls.set(e.callId, { ...old, ...e, started: true, ended: false });
         break;
       }
       case "tool-update":
         requireFact2(this.calls.get(e.callId)?.started && !this.calls.get(e.callId)?.ended);
         requireFact2(detail(e.detailId, "tool-update", e.callId).descriptor.owner.stage === "update-snapshot");
+        this.releaseDetail(e.detailId);
         break;
       case "tool-end": {
         const c = this.calls.get(e.callId);
@@ -26597,6 +26630,8 @@ class CaptureState {
         if (c)
           requireFact2(c.name === e.name && canonicalJson(c.source) === canonicalJson(e.source));
         requireFact2(detail(e.resultDetailId, "tool-result", e.callId).descriptor.owner.stage === "result");
+        this.releaseDetail(e.resultDetailId);
+        this.releaseCallDetails(e.callId);
         this.calls.set(e.callId, {
           ...c,
           ...e,
@@ -26622,6 +26657,16 @@ class CaptureState {
         m.ended = true;
         m.final = e.finalDetailId;
         m.stopReason = e.stopReason;
+        for (const [id, d] of this.details)
+          if (d.descriptor.owner.messageId === e.messageId && id !== e.finalDetailId)
+            this.releaseDetail(id);
+        for (const [id, key2] of this.blocks)
+          if (JSON.parse(key2).messageId === e.messageId)
+            this.blocks.delete(id);
+        m.finalIndices.clear();
+        m.finalHash = null;
+        if (m.role !== "assistant")
+          this.messages.delete(e.messageId);
         break;
       }
       case "omitted-block":
@@ -26667,6 +26712,20 @@ class CaptureState {
     this.position = position2;
     return frame;
   }
+  releaseCallDetails(callId) {
+    for (const [id, d] of this.details)
+      if (d.descriptor.owner.callId === callId && d.ended)
+        this.releaseDetail(id);
+    for (const [id, key2] of this.blocks)
+      if (JSON.parse(key2).callId === callId)
+        this.blocks.delete(id);
+  }
+  releaseDetail(id) {
+    const d = this.details.get(id);
+    if (d?.descriptor.owner.blockId)
+      this.blocks.delete(d.descriptor.owner.blockId);
+    this.details.delete(id);
+  }
   mergeCoverage(c) {
     this.coverage.observed = c.observed === "incomplete" ? "incomplete" : this.coverage.observed;
     if (c.source !== "complete")
@@ -26691,7 +26750,8 @@ class WorkerRecording {
   secrets;
   stop;
   details = new Map;
-  commits = new Map;
+  finalDetailId;
+  committedFinal;
   pending = new Set;
   failure = null;
   pendingBytes = 0;
@@ -26770,6 +26830,10 @@ class WorkerRecording {
       let events;
       let range2 = source;
       if (e.kind === "detail-begin") {
+        if (e.descriptor.field === "final-text") {
+          this.finalDetailId = e.detailId;
+          this.committedFinal = undefined;
+        }
         const prefixBytes = this.secrets.reduce((n, s) => Math.max(n, utf8Bytes(s)), 0) * 4 + 65536 + (e.descriptor.encoding === "canonical-json" ? 1024 * 1024 : 0);
         const reserved = this.sink.reserve({
           sourceFrames: 0,
@@ -26894,7 +26958,8 @@ class WorkerRecording {
         for (const detail of batch.details) {
           if (detail.childRunId !== this.link.childRunId)
             throw new ContractError;
-          this.commits.set(detail.detailId, detail);
+          if (detail.detailId === this.finalDetailId)
+            this.committedFinal = detail;
         }
       })();
       const handled = original.catch(() => {
@@ -26902,12 +26967,7 @@ class WorkerRecording {
         this.stop();
       });
       this.pending.add(handled);
-      const timer = setTimeout(() => {
-        this.failure = "uncertain";
-        this.stop();
-      }, LIMITS.recordingStallMs);
       handled.then(() => {
-        clearTimeout(timer);
         this.pending.delete(handled);
         this.pendingBytes -= charge;
         this.pendingSlots -= slots;
@@ -26958,18 +27018,7 @@ class WorkerRecording {
   async drain() {
     if (!this.pending.size)
       return;
-    let timer;
-    await Promise.race([
-      Promise.all([...this.pending]),
-      new Promise((resolve12) => {
-        timer = setTimeout(() => {
-          this.failure = "uncertain";
-          this.stop();
-          resolve12();
-        }, LIMITS.recordingStallMs);
-      })
-    ]);
-    clearTimeout(timer);
+    await Promise.all([...this.pending]);
   }
   result(selected2) {
     if (this.failure === "refused")
@@ -26980,7 +27029,7 @@ class WorkerRecording {
       };
     if (this.failure || this.pending.size)
       return { status: "uncertain", selected: selected2 };
-    const detail = selected2 && this.commits.get(selected2.detailId);
+    const detail = selected2 && this.committedFinal?.detailId === selected2.detailId ? this.committedFinal : undefined;
     if (!selected2 || !detail)
       return { status: "pending", selected: selected2 };
     if (detail.content.field !== "final-text")
@@ -27044,10 +27093,10 @@ function runProcess(spec) {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...spec.imageInput !== undefined || spec.onCoordinator ? [
+        ...spec.imageInput !== undefined || spec.onCoordinator || spec.onAuth ? [
           spec.imageInput !== undefined ? "pipe" : "ignore"
         ] : [],
-        ...spec.onCoordinator ? ["ipc"] : []
+        ...spec.onCoordinator || spec.onAuth ? ["ipc"] : []
       ]
     });
     let settled = false;
@@ -27072,7 +27121,7 @@ function runProcess(spec) {
     });
     const ingressStop = new AbortController;
     let stopping;
-    let byteCount = 0;
+    let stopCause;
     let truncated = false;
     let output = "";
     let pending = "";
@@ -27085,6 +27134,21 @@ function runProcess(spec) {
     const stdoutDecoder = new StringDecoder("utf8");
     const protocolDecoder = new TextDecoder("utf-8", { fatal: true });
     const stderrDecoder = new StringDecoder("utf8");
+    const stdoutSanitizer = new TextSanitizer(spec.secrets ?? []);
+    const stderrSanitizer = new TextSanitizer(spec.secrets ?? []);
+    let outputBytes = 0;
+    const appendOutput = (text2) => {
+      const left = 256 * 1024 - outputBytes;
+      const size2 = Buffer.byteLength(text2);
+      if (size2 > left) {
+        truncated = true;
+        text2 = Buffer.from(text2).subarray(0, left).toString("utf8");
+        if (text2.endsWith("�"))
+          text2 = text2.slice(0, -1);
+      }
+      output += text2;
+      outputBytes += Buffer.byteLength(text2);
+    };
     let killTimer;
     let unknownTimer;
     const clean = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
@@ -27100,7 +27164,14 @@ function runProcess(spec) {
       let outcome = closed2 ? stopping ?? (exitCode === 0 ? "completed" : "failed") : "unknown";
       if (spec.protocol && (!ready2 || final === undefined || pending.length || spec.input !== undefined && stdin !== "delivered" || !imagesDelivered) && outcome === "completed")
         outcome = "failed";
+      if (outcome !== "completed")
+        stopCause ??= {
+          source: closed2 ? spec.onCoordinator ? "coordinator" : "worker" : "unknown",
+          reason: closed2 ? "native-or-protocol-failure" : "unconfirmed-settlement",
+          target: spec.stopTarget ?? spec.childRunId ?? "process"
+        };
       spec.onCheckNative?.({
+        ...stopCause ? { stop: stopCause } : {},
         outcome,
         closure: closed2 ? launched ? "direct-child-closed" : "not-launched" : "unconfirmed",
         exitCode: launched ? exitCode : null,
@@ -27109,6 +27180,7 @@ function runProcess(spec) {
         stdin: "not-required"
       });
       spec.onNative?.({
+        ...stopCause ? { stop: stopCause } : {},
         outcome,
         closure: closed2 ? "direct-child-closed" : "unconfirmed",
         exitCode,
@@ -27124,18 +27196,19 @@ function runProcess(spec) {
           omissions: ["gap"]
         }
       }, capture);
-      const safeText = clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, Number.MAX_SAFE_INTEGER);
+      const safeText = clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: explicit command deadline ${spec.timeoutMs}ms reached` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, Number.MAX_SAFE_INTEGER);
       const safeOutput = clean(output, Number.MAX_SAFE_INTEGER);
-      const outputBytes = spec.retainOutput ? 256 * 1024 : 65536;
+      const outputBytes2 = spec.retainOutput ? 256 * 1024 : 65536;
       resolve12({
+        ...stopCause ? { stop: stopCause } : {},
         outcome,
         closed: closed2,
         exitCode,
         signal,
         durationMs: Date.now() - started,
         text: diagnosticText(safeText, 16384),
-        output: diagnosticText(safeOutput, outputBytes),
-        truncated: truncated || Buffer.byteLength(safeText) > 16384 || Buffer.byteLength(safeOutput) > outputBytes
+        output: diagnosticText(safeOutput, outputBytes2),
+        truncated: truncated || Buffer.byteLength(safeText) > 16384 || Buffer.byteLength(safeOutput) > outputBytes2
       });
       if (!closed2) {
         child2.unref();
@@ -27162,6 +27235,16 @@ function runProcess(spec) {
       if (settled || stopping || spec.uninterruptible)
         return;
       stopping = outcome;
+      if (outcome === "canceled") {
+        try {
+          stopCause = decodeStopCause(spec.signal.reason);
+        } catch {}
+      }
+      stopCause ??= {
+        source: outcome === "timeout" ? "command" : outcome === "canceled" ? "unknown" : spec.onCoordinator ? "coordinator" : "worker",
+        reason: outcome === "timeout" ? "explicit-timeout" : outcome === "canceled" ? "unattributed-abort" : "capture-or-process-failure",
+        target: spec.stopTarget ?? spec.childRunId ?? "process"
+      };
       const requestedAt = Date.now();
       if (!nativeClosed) {
         signalChild("SIGTERM");
@@ -27171,13 +27254,58 @@ function runProcess(spec) {
       observeLifecycle({
         kind: "stop-requested",
         at: requestedAt,
-        reason: outcome
+        reason: `${stopCause.source}: ${stopCause.reason} (${stopCause.target})`,
+        stop: stopCause
       });
       ingressStop.abort();
     };
+    const authOriginals = new Set;
+    if (spec.onAuth)
+      child2.on("message", (message2) => {
+        if (!message2 || typeof message2 !== "object" || message2.kind !== "auth")
+          return;
+        if (settled || stopping)
+          return;
+        let row;
+        try {
+          row = closed(message2, ["kind", "id"]);
+        } catch {
+          stop("failed");
+          return;
+        }
+        if (!Number.isSafeInteger(row.id) || row.id < 1 || authOriginals.size) {
+          stop("failed");
+          return;
+        }
+        const original = (async () => {
+          try {
+            const auth = await spec.onAuth?.();
+            if (!auth || Buffer.byteLength(JSON.stringify(auth)) > LIMITS.workerRequestBytes)
+              throw new Error("Invalid auth reply");
+            for (const value of [
+              auth.apiKey,
+              ...Object.values(auth.headers ?? {}),
+              ...Object.values(auth.env ?? {})
+            ])
+              if (typeof value === "string" && value && !spec.secrets?.includes(value))
+                spec.secrets?.push(value);
+            if (!settled && !stopping && child2.connected)
+              child2.send({ kind: "auth", id: row.id, ok: true, auth }, () => {});
+          } catch {
+            if (!settled && !stopping && child2.connected)
+              child2.send({ kind: "auth", id: row.id, ok: false }, () => {});
+          }
+        })().catch(() => {
+          stop("failed");
+        });
+        authOriginals.add(original);
+        original.then(() => authOriginals.delete(original));
+      });
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child2.on("message", (message2) => {
+        if (message2 && typeof message2 === "object" && message2.kind === "auth")
+          return;
         if (settled || stopping)
           return;
         (async () => {
@@ -27221,7 +27349,7 @@ function runProcess(spec) {
         })();
       });
     const abort = () => stop("canceled");
-    const timeout = spec.uninterruptible ? undefined : setTimeout(() => stop("timeout"), spec.timeoutMs);
+    const timeout = spec.uninterruptible || spec.timeoutMs === undefined ? undefined : setTimeout(() => stop("timeout"), spec.timeoutMs);
     if (!spec.uninterruptible) {
       spec.signal.addEventListener("abort", abort, { once: true });
       if (spec.signal.aborted)
@@ -27260,13 +27388,6 @@ function runProcess(spec) {
         await spec.checkRecording.receive(chunk, stdout ? "stdout" : "stderr");
         return;
       }
-      byteCount += chunk.length;
-      if (byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)) {
-        truncated = true;
-        if (!spec.uninterruptible)
-          stop("failed");
-        return;
-      }
       let text2;
       try {
         text2 = stdout && spec.protocol ? protocolDecoder.decode(chunk, { stream: true }) : (stdout ? stdoutDecoder : stderrDecoder).write(chunk);
@@ -27275,16 +27396,7 @@ function runProcess(spec) {
         return;
       }
       if (!spec.protocol || !stdout) {
-        if (spec.uninterruptible && truncated)
-          return;
-        output += text2;
-        if (Buffer.byteLength(output) > 256 * 1024) {
-          truncated = true;
-          if (spec.uninterruptible)
-            output = clean(output, 256 * 1024);
-          else
-            stop("failed");
-        }
+        appendOutput((stdout ? stdoutSanitizer : stderrSanitizer).write(text2));
       } else {
         pending += text2;
         let end = pending.indexOf(`
@@ -27365,16 +27477,18 @@ function runProcess(spec) {
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
       const close = () => {
-        if (!spec.protocol)
-          output += stdoutDecoder.end();
-        else {
+        if (!spec.protocol) {
+          appendOutput(stdoutSanitizer.write(stdoutDecoder.end()));
+          appendOutput(stdoutSanitizer.end());
+        } else {
           try {
             pending += protocolDecoder.decode();
           } catch {
             stopping ??= "failed";
           }
         }
-        output += stderrDecoder.end();
+        appendOutput(stderrSanitizer.write(stderrDecoder.end()));
+        appendOutput(stderrSanitizer.end());
         finish(true, code2, signal);
       };
       if (spec.checkRecording) {
@@ -27384,8 +27498,8 @@ function runProcess(spec) {
           } catch {}
           close();
         });
-      } else if (spec.recording)
-        stdoutWork.then(close);
+      } else if (spec.recording || authOriginals.size)
+        Promise.all([stdoutWork, ...authOriginals]).then(close);
       else
         close();
     });
@@ -27423,7 +27537,7 @@ function runProcess(spec) {
 }
 class AmbientFileAuth extends Error {
 }
-function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
+function encodeEnvelope(material, captured, roots = [material.cwd]) {
   const ambient = captured?.ambient ?? networkSnapshot(process.env);
   const scoped = captured?.scoped ?? scopedNetwork(material);
   if (Object.keys(material.auth.env ?? {}).some((name) => /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name)))
@@ -27436,13 +27550,13 @@ function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
     ...literals(material.auth.env ?? {}),
     ...selected2.redactionLiterals
   ];
-  const investigation = { roots, timeoutMs };
+  const investigation = { roots };
   const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");
   return { material, investigation, ambient, scoped, selected: selected2, secrets, input };
 }
-function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
+function launchEncoded(encoded2, signal, extra = {}) {
   if (!sameNetwork(encoded2.ambient, networkSnapshot(process.env)) || !sameNetwork(encoded2.scoped, scopedNetwork(encoded2.material)))
     throw new Error("network");
   return runProcess({
@@ -27455,7 +27569,6 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
     childRunId: encoded2.material.request.childRunId,
     expectedRequest: encoded2.material.request,
     signal,
-    timeoutMs,
     secrets: encoded2.secrets,
     ...extra
   });
@@ -27468,7 +27581,11 @@ function launchConversation(prepared, conversation, signal, options) {
     sha256: createHash27("sha256").update(imageInput).digest("hex")
   };
   return prepared.consume((material) => {
-    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } }, options.timeoutMs);
+    encoded2 = encodeEnvelope({
+      ...material,
+      ownerAuth: true,
+      model: { ...material.model }
+    });
     encoded2.input = JSON.stringify({
       ...encoded2.material,
       investigation: encoded2.investigation,
@@ -27482,7 +27599,8 @@ function launchConversation(prepared, conversation, signal, options) {
     if (!encoded2 || encoded2.input !== input)
       throw new Error("Invalid chat launch");
     const secrets = encoded2.secrets;
-    return launchEncoded(encoded2, signal, options.timeoutMs, {
+    return launchEncoded(encoded2, signal, {
+      onAuth: () => prepared.refreshAuth(),
       maySignal: options.maySignal,
       onNative: options.onNative,
       onCoordinator: options.onCoordinator,
@@ -27496,16 +27614,18 @@ function launchWorkflowWorker(prepared, cwd, signal, options) {
   return prepared.consume((material) => {
     encoded2 = encodeEnvelope({
       ...material,
+      ownerAuth: true,
       cwd,
       model: { ...material.model }
-    }, options.timeoutMs, undefined, options.roots ?? [cwd]);
+    }, undefined, options.roots ?? [cwd]);
     return encoded2.input;
   }, (input) => {
     if (!encoded2 || encoded2.input !== input)
       throw new Error("Invalid workflow launch");
     const secrets = [...encoded2.secrets, ...options.ownerSecrets];
-    return launchEncoded(encoded2, signal, options.timeoutMs, {
+    return launchEncoded(encoded2, signal, {
       secrets,
+      onAuth: () => prepared.refreshAuth(),
       maySignal: options.maySignal,
       onLifecycle: options.onLifecycle,
       onNative: (native, capture) => options.onNative(native, capture?.selected?.messageId),
@@ -27673,14 +27793,14 @@ class CheckoutGate {
 }
 
 // src/service/model-choice.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID21();
+  catalogId = randomUUID22();
   installing = false;
   constructor(options) {
     this.options = options;
@@ -27743,7 +27863,7 @@ class OwnerModelChoice {
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID21();
+        this.catalogId = randomUUID22();
         this.options.owner.configurationInstalled();
       }
       try {
@@ -27757,7 +27877,164 @@ class OwnerModelChoice {
 }
 
 // src/service/model-context.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
+
+// src/worker-model.mjs
+var WORKER_POLICY = Object.freeze({
+  retry: { provider: { maxRetries: 0 } },
+  cacheWarming: "off",
+  httpIdleTimeoutMs: 0
+});
+var WORKER_SETTINGS_BYTES = 32768;
+function defaultWorkerTools(pi, cwd) {
+  const edit = pi.createCodingTools(cwd).map((tool) => tool.name);
+  const readonly = pi.createReadOnlyTools(cwd).map((tool) => tool.name);
+  return {
+    edit,
+    readonly,
+    available: [
+      ...new Set([...edit, ...readonly, pi.createPowerShellTool(cwd).name])
+    ]
+  };
+}
+function resolveWorkerRuntime(manager, model2, defaults) {
+  if (manager.drainErrors().length)
+    throw new Error("Pi settings could not be read");
+  const effective = manager.getSettings();
+  const selected2 = manager.getDefaultTools();
+  const tools = selected2 ?? defaults.edit;
+  if (!Array.isArray(tools) || tools.some((name) => !defaults.available.includes(name)))
+    throw new Error("Configured Pi tools are unavailable in service workers");
+  const provider = manager.getProviderRetrySettings();
+  return decodeWorkerRuntime({
+    projectTrusted: manager.isProjectTrusted(),
+    tools: {
+      edit: tools,
+      readonly: selected2 === undefined ? defaults.readonly : tools.filter((name) => defaults.readonly.includes(name))
+    },
+    settings: {
+      compaction: manager.getCompactionSettings(model2),
+      retry: {
+        ...manager.getRetrySettings(),
+        provider: {
+          ...WORKER_POLICY.retry.provider,
+          maxRetryDelayMs: provider.maxRetryDelayMs,
+          ...provider.timeoutMs === undefined ? {} : { timeoutMs: provider.timeoutMs }
+        }
+      },
+      httpIdleTimeoutMs: effective.httpIdleTimeoutMs === undefined ? WORKER_POLICY.httpIdleTimeoutMs : manager.getHttpIdleTimeoutMs(),
+      ...manager.getWebSocketConnectTimeoutMs() === undefined ? {} : {
+        websocketConnectTimeoutMs: manager.getWebSocketConnectTimeoutMs()
+      },
+      transport: manager.getTransport(),
+      ...manager.getThinkingBudgets() === undefined ? {} : { thinkingBudgets: manager.getThinkingBudgets() },
+      images: {
+        autoResize: manager.getImageAutoResize(),
+        blockImages: manager.getBlockImages()
+      },
+      ...manager.getShellPath() === undefined ? {} : { shellPath: manager.getShellPath() },
+      ...manager.getShellCommandPrefix() === undefined ? {} : { shellCommandPrefix: manager.getShellCommandPrefix() },
+      cacheWarming: WORKER_POLICY.cacheWarming
+    }
+  });
+}
+function decodeWorkerRuntime(value) {
+  const v = JSON.parse(canonicalJson(value, WORKER_SETTINGS_BYTES));
+  const o = closed(v, ["projectTrusted", "tools", "settings"]);
+  const t = closed(o.tools, ["edit", "readonly"]);
+  const r = o.settings;
+  const s = closed(r, [
+    "compaction",
+    "retry",
+    "httpIdleTimeoutMs",
+    "transport",
+    "images",
+    "cacheWarming",
+    ...[
+      "websocketConnectTimeoutMs",
+      "thinkingBudgets",
+      "shellPath",
+      "shellCommandPrefix"
+    ].filter((key2) => Object.hasOwn(r ?? {}, key2))
+  ]);
+  const c = closed(s.compaction, [
+    "enabled",
+    "reserveTokens",
+    "keepRecentTokens"
+  ]);
+  const retry = closed(s.retry, [
+    "enabled",
+    "maxRetries",
+    "baseDelayMs",
+    "maxAgentDelayMs",
+    "provider"
+  ]);
+  const provider = closed(retry.provider, [
+    "maxRetries",
+    "maxRetryDelayMs",
+    ...Object.hasOwn(retry.provider ?? {}, "timeoutMs") ? ["timeoutMs"] : []
+  ]);
+  const images = closed(s.images, ["autoResize", "blockImages"]);
+  const milliseconds = (v2) => integer(v2, 0, 2147483647);
+  const names2 = (v2) => {
+    const result = list(v2, 64, (name) => text(name, 128, true));
+    if (new Set(result).size !== result.length)
+      throw new Error("Duplicate Pi tool selection");
+    return result;
+  };
+  const budgets = s.thinkingBudgets;
+  if (budgets !== undefined) {
+    closed(budgets, ["minimal", "low", "medium", "high"].filter((key2) => Object.hasOwn(budgets, key2)));
+    for (const value2 of Object.values(budgets))
+      integer(value2, 0);
+  }
+  if (s.cacheWarming !== "off" || provider.maxRetries !== 0)
+    throw new Error("Invalid service policy");
+  return {
+    projectTrusted: bool(o.projectTrusted),
+    tools: { edit: names2(t.edit), readonly: names2(t.readonly) },
+    settings: {
+      compaction: {
+        enabled: bool(c.enabled),
+        reserveTokens: integer(c.reserveTokens, 0),
+        keepRecentTokens: integer(c.keepRecentTokens, 0)
+      },
+      retry: {
+        enabled: bool(retry.enabled),
+        maxRetries: integer(retry.maxRetries, 0),
+        baseDelayMs: milliseconds(retry.baseDelayMs),
+        maxAgentDelayMs: milliseconds(retry.maxAgentDelayMs),
+        provider: {
+          maxRetries: 0,
+          maxRetryDelayMs: milliseconds(provider.maxRetryDelayMs),
+          ...provider.timeoutMs === undefined ? {} : { timeoutMs: milliseconds(provider.timeoutMs) }
+        }
+      },
+      httpIdleTimeoutMs: milliseconds(s.httpIdleTimeoutMs),
+      ...s.websocketConnectTimeoutMs === undefined ? {} : {
+        websocketConnectTimeoutMs: milliseconds(s.websocketConnectTimeoutMs)
+      },
+      transport: oneOf(s.transport, [
+        "auto",
+        "sse",
+        "websocket",
+        "websocket-cached"
+      ]),
+      ...budgets === undefined ? {} : { thinkingBudgets: budgets },
+      images: {
+        autoResize: bool(images.autoResize),
+        blockImages: bool(images.blockImages)
+      },
+      ...s.shellPath === undefined ? {} : { shellPath: text(s.shellPath, 4096) },
+      ...s.shellCommandPrefix === undefined ? {} : { shellCommandPrefix: text(s.shellCommandPrefix, 8192) },
+      cacheWarming: "off"
+    }
+  };
+}
+function describeWorkerRuntime(runtime) {
+  const { settings: s, tools } = runtime;
+  return `Pi runtime: project settings ${runtime.projectTrusted ? "trusted" : "not loaded"}; tools ${tools.edit.join(", ") || "none"}; readonly ${tools.readonly.join(", ") || "none"}; auto-compaction ${s.compaction.enabled ? "on" : "off"} (reserve ${s.compaction.reserveTokens}, keep ${s.compaction.keepRecentTokens}); request retries ${s.retry.enabled ? s.retry.maxRetries : "off"}; HTTP idle ${s.httpIdleTimeoutMs === 0 ? "disabled" : `${s.httpIdleTimeoutMs}ms`}; shell ${s.shellPath || s.shellCommandPrefix ? "configured" : "default"}. Provider retries and cache warming are off.`;
+}
 
 // src/service/model-catalog.ts
 function publicModelIdentifier(value, literals) {
@@ -27874,6 +28151,75 @@ function projectModelCatalog(runtime, supportedThinking, current2, literals, val
   return { status: "complete", entries: entries2, withheld };
 }
 
+// src/service/worker-settings.ts
+import { lstatSync as lstatSync20, realpathSync as realpathSync11 } from "node:fs";
+import { dirname as dirname20, join as join36 } from "node:path";
+var SETTINGS_FILE_BYTES = 1024 * 1024;
+function observe(path) {
+  let target2;
+  try {
+    target2 = realpathSync11(path);
+  } catch (error) {
+    if (error.code !== "ENOENT")
+      throw error;
+    try {
+      lstatSync20(path);
+    } catch (missing2) {
+      if (missing2.code === "ENOENT")
+        return;
+      throw missing2;
+    }
+    throw new ContractError("corrupt-selected");
+  }
+  const file = new PrivateFiles(dirname20(target2), false).read(target2, SETTINGS_FILE_BYTES);
+  if (!file)
+    throw new ContractError("stale");
+  return { target: target2, ...file };
+}
+function readWorkerRuntime(cwd, agentDir, model2, pi) {
+  try {
+    const observed = new Map;
+    const source = (path) => {
+      const file = observe(path);
+      observed.set(path, file);
+      if (!file)
+        return;
+      const body = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+      if (!body.trimStart().startsWith("{"))
+        throw new ContractError("corrupt-selected");
+      return body;
+    };
+    const global = source(join36(agentDir, "settings.json"));
+    const storage = (project2) => ({
+      withLock(scope, use) {
+        if (use(scope === "global" ? global : project2) !== undefined)
+          throw new Error("Settings snapshot is readonly");
+      }
+    });
+    const user = pi.SettingsManager.fromStorage(storage(), {
+      projectTrusted: false
+    });
+    if (user.drainErrors().length)
+      throw new ContractError("corrupt-selected");
+    const trust = source(join36(agentDir, "trust.json"));
+    const decision = trust === undefined ? null : new pi.ProjectTrustStore(agentDir).get(cwd);
+    const projectTrusted = decision ?? user.getDefaultProjectTrust() === "always";
+    const project = projectTrusted ? source(join36(cwd, ".pi", "settings.json")) : undefined;
+    const manager = pi.SettingsManager.fromStorage(storage(project), {
+      projectTrusted
+    });
+    const runtime = resolveWorkerRuntime(manager, model2, defaultWorkerTools(pi, cwd));
+    for (const [path, before] of observed) {
+      const after = observe(path);
+      if (before?.target !== after?.target || before?.identity !== after?.identity || before?.stamp !== after?.stamp)
+        throw new ContractError("stale");
+    }
+    return runtime;
+  } catch (error) {
+    throw new ContractError(error instanceof ContractError ? error.code : "unsupported-context");
+  }
+}
+
 // src/service/model-context.ts
 function committed(result) {
   if (result.status !== "committed")
@@ -27931,6 +28277,7 @@ class OwnerModelContext {
   #source;
   #snapshot;
   #runtime;
+  #readSettings;
   #thinking;
   #selected = new Map;
   #retained = new Set;
@@ -27939,11 +28286,17 @@ class OwnerModelContext {
   #tail = Promise.resolve();
   #generation = 0;
   constructor(options) {
-    const waitMs = options.waitMs ?? LIMITS.authWaitMs;
-    if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > LIMITS.authWaitMs)
-      throw new ContractError("invalid");
-    this.#options = { ...options, waitMs };
+    this.#options = options;
     this.#launch = captureEnvironment(options.environment);
+  }
+  workerSettings(cwd, selection) {
+    this.assertCurrent(selection);
+    if (!this.#readSettings)
+      throw new ContractError("unavailable");
+    return this.#readSettings(cwd, {
+      provider: selection.provider,
+      id: selection.model
+    });
   }
   observe() {
     return [...this.#selected.values()].map((entry) => ({
@@ -28040,7 +28393,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID22(), ...selector };
+    const selection = { sourceSelectionId: randomUUID23(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -28076,11 +28429,13 @@ class OwnerModelContext {
     this.#selected.clear();
     this.#retained.clear();
     this.#runtime = undefined;
+    this.#readSettings = undefined;
     ++this.#generation;
     try {
       const source = piSource(this.#options.agentDir, this.#options.home, this.#options.cwd, this.#launch);
       const before = readPiSnapshot(source);
-      const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+      const pi = await import("@earendil-works/pi-coding-agent");
+      const { ModelRuntime } = pi;
       const { InMemoryModelsStore, getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
       if (this.#options.network)
         await this.#options.network.initialize();
@@ -28106,6 +28461,7 @@ class OwnerModelContext {
       this.#snapshot = after;
       this.#runtime = runtime;
       this.#thinking = getSupportedThinkingLevels;
+      this.#readSettings = (cwd, model2) => readWorkerRuntime(cwd, source.directory, model2, pi);
     } catch (error) {
       runtimeOwners.delete(this.#options.owner);
       if (error instanceof PiSourceRefusal)
@@ -28148,7 +28504,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID22(), ...selector };
+    const selection = { sourceSelectionId: randomUUID23(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -28239,7 +28595,6 @@ class OwnerModelContext {
         return false;
       }
     };
-    let timer;
     const close = () => {
       closed2 = true;
     };
@@ -28251,7 +28606,6 @@ class OwnerModelContext {
       };
     });
     input.signal.addEventListener("abort", reportClosed, { once: true });
-    timer = setTimeout(reportClosed, this.#options.waitMs);
     if (closed2)
       reportClosed();
     const previous = this.#tail;
@@ -28262,9 +28616,7 @@ class OwnerModelContext {
         const epoch = decodeId(input.epoch);
         if (epoch !== this.#options.owner.lease.registration.epoch)
           throw new ContractError("stale");
-        if (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 100 || input.timeoutMs > LIMITS.workerMs)
-          throw new ContractError("invalid");
-        const validityMs = input.timeoutMs + LIMITS.authValidityMarginMs;
+        const validityMs = LIMITS.authValidityMarginMs;
         const generation = this.#generation;
         const selected2 = this.#selected.get(request3.model.sourceSelectionId);
         if (!selected2 || JSON.stringify(selected2.selection) !== JSON.stringify(request3.model))
@@ -28278,6 +28630,8 @@ class OwnerModelContext {
           return this.fresh(selected2);
         };
         await previous;
+        check();
+        const workerRuntime = input.runtime ? decodeWorkerRuntime(input.runtime) : this.workerSettings(input.cwd ?? this.#options.cwd, selected2.selection);
         check();
         effectStarted = true;
         await recordPreparation({
@@ -28331,6 +28685,7 @@ class OwnerModelContext {
             const projected = authProjection(auth);
             this.authRoute(projected.env ?? {});
             material = {
+              runtime: workerRuntime,
               request: request3,
               cwd: input.cwd ?? this.#options.cwd,
               model: {
@@ -28383,6 +28738,26 @@ class OwnerModelContext {
         return {
           status: "prepared",
           prepared: Object.freeze({
+            refreshAuth: async () => {
+              const next = this.prepareTracked({
+                ...input,
+                runtime: workerRuntime,
+                operationId: randomUUID23()
+              });
+              const result = await next.result;
+              await next.settled;
+              if (result.status !== "prepared")
+                throw new ContractError(result.error.code);
+              let auth;
+              return result.prepared.consume((material2) => {
+                auth = material2.auth;
+                return JSON.stringify(material2);
+              }, () => {
+                if (!auth)
+                  throw new ContractError("auth-unavailable");
+                return auth;
+              });
+            },
             consume: (encode, use) => {
               if (used)
                 throw new ContractError("consumed-grant");
@@ -28420,7 +28795,6 @@ class OwnerModelContext {
     return {
       settled,
       result: Promise.race([operation, closedWait]).finally(() => {
-        clearTimeout(timer);
         input.signal.removeEventListener("abort", reportClosed);
       })
     };
@@ -28735,7 +29109,7 @@ class ServiceOwner {
 
 // src/service/workbench.ts
 import { opendirSync as opendirSync15 } from "node:fs";
-import { join as join42 } from "node:path";
+import { join as join43 } from "node:path";
 
 // src/service/conversation-images.ts
 var binding = (send2) => {
@@ -28821,8 +29195,8 @@ class ConversationImages {
 }
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
-import { join as join36 } from "node:path";
+import { randomUUID as randomUUID24 } from "node:crypto";
+import { join as join37 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
@@ -28831,7 +29205,7 @@ For a new goal, use focused cadence_research to inspect relevant code and projec
 Once the result is clear, use cadence_plan with version:2. Describe the expected delivery, explicit decisions/non-goals, immutable acceptance, an initial technical route and assignments, approved write paths, exact setup/baseline/acceptance commands and delivery policy. The initial route is automatically adjustable; the owner may diagnose, preserve partial work, split remaining work and select equivalent implementations without routine reconfirmation. Do not ask users to classify every adjustable detail. Never weaken core requirements or checks. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. All implementation, recovery and verified knowledge updates reuse that candidate; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 Include knowledge as exact Markdown write paths for relevant existing documentation, or .cadence/project.md and a focused .cadence/knowledge/<topic>.md only where no existing document owns the fact. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems. Include necessary tests and documentation in the approved scope so routine delivery does not need scope expansion.
 Present a concise delivery expectation with the complete returned agreement available, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers adaptive execution, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, unplanned installations or changing core requirements. You cannot approve yourself. Vague acknowledgement is not consent.
-During accepted work the service owns progress and recovery. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. The owner proceeds while there is an evidence-based in-scope route, without a fixed repair quota or total delivery deadline. Native worker deadlines and actual closure still apply. If work is genuinely blocked, explain the concrete missing condition and preserved outcomes, not a generic request to continue.
+During accepted work the service owns progress and recovery. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. The owner proceeds while there is an evidence-based in-scope route, without a fixed repair quota or total delivery deadline. Agents have no total runtime deadline; explicit command timeouts and actual closure still apply. If work is genuinely blocked, explain the concrete missing condition and preserved outcomes, not a generic request to continue.
 For follow-up to a settled or interrupted run, inspect retained outcomes first. Partial outputs are not unexplained user edits. Unknown results must be observed and reconciled, never blindly replayed; a new delivery requires fresh approval. No automatic replay after owner restart. cadence_cancel is explicit cancellation, not navigation or exit. Worker prose is not passing checks; automatic review is never human review. Completion leaves Cadence ON and ready. Tools operate on the host; this is not a sandbox.`;
 
 // src/service/conversation-workflow.ts
@@ -29006,7 +29380,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
             return this.plan(current2, args, epoch, model2);
           if (name !== "cadence_research")
             throw new ContractError("invalid");
-          return this.research(current2, args, epoch, model2, signal);
+          return this.research(current2, args, epoch, model2);
         })();
         const tracked = original.finally(() => originals.delete(tracked));
         originals.add(tracked);
@@ -29032,7 +29406,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }
     let published;
     try {
-      published = this.o.workflows.command(randomUUID23(), epoch, {
+      published = this.o.workflows.command(randomUUID24(), epoch, {
         action: "propose",
         plan,
         model: model2
@@ -29057,7 +29431,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       notice: "Complete plan displayed for human approval. No execution has been authorized."
     };
   }
-  async research(current2, args, epoch, model2, signal) {
+  async research(current2, args, epoch, model2) {
     let goal, questions, roots;
     try {
       const a = closed(args, [
@@ -29076,7 +29450,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID23(), conversationId = current2.state.id;
+    const id = randomUUID24(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -29098,28 +29472,13 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       revision: current2.state.revision + 1,
       runs: [...current2.state.runs, id]
     }, current2.file);
-    const cancel = () => {
-      try {
-        this.o.workflows.command(randomUUID23(), epoch, {
-          action: "cancel",
-          runId: id
-        });
-      } catch {}
-    };
-    signal.addEventListener("abort", cancel, { once: true });
-    if (signal.aborted)
-      cancel();
-    try {
-      await this.o.workflows.join(id);
-    } finally {
-      signal.removeEventListener("abort", cancel);
-    }
+    await this.o.workflows.join(id);
     return this.preview(this.run(id), 4096, 2);
   }
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join36(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join37(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -29179,7 +29538,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID23();
+      const g = prepared.response, grant2 = randomUUID24();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -29245,9 +29604,9 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { randomUUID as randomUUID25 } from "node:crypto";
 import { opendirSync as opendirSync11, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname20, join as join37 } from "node:path";
+import { dirname as dirname21, join as join38 } from "node:path";
 var META_BYTES2 = 64 * 1024;
 var PREVIEW_BYTES = 64 * 1024;
 var RECENT_PREVIEWS = 8;
@@ -29448,7 +29807,7 @@ class Conversations {
   }
   assertSettled() {
     this.o.owner.lease.assert();
-    const sessions = join37(this.records.root, "sessions");
+    const sessions = join38(this.records.root, "sessions");
     if (!this.files.directory(sessions))
       return;
     const dir = opendirSync11(sessions);
@@ -29466,7 +29825,7 @@ class Conversations {
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
-    return this.active.has(commandId) || this.files.directory(dirname20(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
+    return this.active.has(commandId) || this.files.directory(dirname21(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
   }
   command(input, reply) {
     return {
@@ -29489,7 +29848,7 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname20(this.records.path(input.commandId, "state.json"))))
+    if (this.files.directory(dirname21(this.records.path(input.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -29531,12 +29890,14 @@ class Conversations {
       parent: input.head,
       offset: session?.read?.size ?? 0
     };
+    const runtime = control?.reply || !execution.model ? undefined : this.o.models.workerSettings(execution.cwd, execution.model);
     const abort = new AbortController;
     let begin;
     const ready2 = new Promise((resolve12) => {
       begin = resolve12;
     });
     const live2 = {
+      runtime,
       images: claimImages?.() ?? [],
       execution,
       accepted: accepted2,
@@ -29556,7 +29917,11 @@ class Conversations {
     };
     beforeAccept?.();
     this.active.set(input.commandId, live2);
-    this.o.owner.trackConversation(live2.original, () => abort.abort());
+    this.o.owner.trackConversation(live2.original, () => abort.abort({
+      source: "service",
+      reason: "stop",
+      target: input.commandId
+    }));
     try {
       this.write(this.records.path(input.commandId, "accepted.json"), accepted2);
       live2.stateFile = this.write(this.records.path(input.commandId, "state.json"), live2.state);
@@ -29580,7 +29945,7 @@ class Conversations {
     if (live2) {
       if (live2.accepted.session !== id || live2.epoch !== epoch)
         throw new ContractError("stale");
-      live2.abort.abort();
+      live2.abort.abort({ source: "user", reason: "cancel", target: turnId });
       return;
     }
     if (!this.records.hasCommand(id, turnId))
@@ -29636,10 +30001,10 @@ class Conversations {
 CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.` : "Ordinary conversation.";
       const request3 = decodeWorkerPublicRequest({
         protocol: 2,
-        taskId: randomUUID24(),
+        taskId: randomUUID25(),
         taskKind: control ? "research" : "code",
         runId: commandId,
-        childRunId: randomUUID24(),
+        childRunId: randomUUID25(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -29654,16 +30019,16 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         handoff: { graphRevision: 1, inputs: [] }
       });
       const auth = this.o.models.prepareTracked({
+        runtime: live2.runtime,
         request: request3,
         cwd: live2.execution.cwd,
-        operationId: randomUUID24(),
+        operationId: randomUUID25(),
         epoch: live2.epoch,
-        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
         current: current2,
         journal: {
-          preparation: (value) => this.write(this.records.path(commandId, "auth-intent.json"), value),
-          settlement: (value) => this.write(this.records.path(commandId, "auth-settled.json"), value)
+          preparation: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-intent.json`), value),
+          settlement: (value) => this.write(this.records.path(commandId, `auth/${value.operationId}-settled.json`), value)
         }
       });
       authSettled = auth.settled;
@@ -29674,7 +30039,8 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       save();
       this.write(this.records.path(commandId, "launch.json"), {
         epoch: live2.epoch,
-        childRunId: request3.childRunId
+        childRunId: request3.childRunId,
+        runtime: live2.runtime ? describeWorkerRuntime(live2.runtime) : null
       });
       let credentials = [];
       const capture = new LiveCapture(() => [...this.records.readSecrets(), ...credentials], !!live2.images?.length);
@@ -29692,7 +30058,6 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         agentDir: this.o.agentDir,
         ...control ? { coordinator: true } : {}
       }, abort.signal, {
-        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         images: live2.images,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
@@ -29713,11 +30078,13 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         }
       }));
       const tracked = running.then(() => native);
-      this.o.owner.trackConversationProcess(tracked, () => abort.abort());
+      this.o.owner.trackConversationProcess(tracked, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
       const result = await running;
       capture.retry = undefined;
       uncertain = !result.closed;
       state.status = result.outcome;
+      if (result.stop)
+        state.notice = `${result.stop.source}: ${result.stop.reason} (${result.stop.target})`;
     } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
       state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
@@ -29728,6 +30095,8 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       uncertain ||= this.o.owner.state === "quarantined";
       if (uncertain)
         state.status = "unknown";
+      if (abort.signal.aborted && abort.signal.reason?.source)
+        state.notice = `${abort.signal.reason.source}: ${abort.signal.reason.reason} (${commandId})${state.notice ? `; ${state.notice}` : ""}`;
       try {
         this.write(this.records.path(commandId, "native.json"), native);
         if (live2.capture) {
@@ -29756,16 +30125,16 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID26 } from "node:crypto";
-import { opendirSync as opendirSync14, realpathSync as realpathSync12, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
-import { basename as basename5, dirname as dirname24, join as join41, resolve as resolve14 } from "node:path";
+import { randomUUID as randomUUID27 } from "node:crypto";
+import { opendirSync as opendirSync14, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { basename as basename5, dirname as dirname25, join as join42, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync5 } from "node:child_process";
 import { createHash as createHash28 } from "node:crypto";
-import { lstatSync as lstatSync20, readdirSync as readdirSync4, readlinkSync } from "node:fs";
-import { join as join38, relative as relative8 } from "node:path";
+import { lstatSync as lstatSync21, readdirSync as readdirSync4, readlinkSync } from "node:fs";
+import { join as join39, relative as relative8 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
@@ -29808,8 +30177,8 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       return;
     }
     try {
-      const path = join38(root, name);
-      const st = lstatSync20(path);
+      const path = join39(root, name);
+      const st = lstatSync21(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync(path));
@@ -29949,7 +30318,7 @@ ${data2.toString("utf8")}`);
         return;
       }
       for (const name of names2) {
-        const path = join38(dir, name);
+        const path = join39(dir, name);
         const rel = relative8(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
@@ -29958,7 +30327,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync20(path);
+          const st = lstatSync21(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -30010,12 +30379,12 @@ import {
   closeSync as closeSync11,
   constants as constants10,
   fstatSync as fstatSync8,
-  lstatSync as lstatSync22,
+  lstatSync as lstatSync23,
   opendirSync as opendirSync12,
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
-import { dirname as dirname22, posix } from "node:path";
+import { dirname as dirname23, posix } from "node:path";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
@@ -30025,15 +30394,15 @@ import {
   constants as constants9,
   existsSync as existsSync4,
   fstatSync as fstatSync7,
-  lstatSync as lstatSync21,
+  lstatSync as lstatSync22,
   openSync as openSync10,
   readdirSync as readdirSync5,
   readlinkSync as readlinkSync2,
   readSync as readSync6,
-  realpathSync as realpathSync11
+  realpathSync as realpathSync12
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute15, join as join39, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
+import { dirname as dirname22, isAbsolute as isAbsolute15, join as join40, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -30128,9 +30497,9 @@ function safeWorkflowFile(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync21(p);
+    const st = lstatSync22(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -30144,9 +30513,9 @@ function declaredTarget(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative10(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync21(p);
+    const st = lstatSync22(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -30236,8 +30605,8 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join39(directory2, entry), relative11 = `${prefix}${entry}`;
-      const st = lstatSync21(full);
+      const full = join40(directory2, entry), relative11 = `${prefix}${entry}`;
+      const st = lstatSync22(full);
       if (st.isDirectory()) {
         rows.push(`${relative11}/`);
         visit(full, `${relative11}/`);
@@ -30260,7 +30629,7 @@ async function directoryIdentityAsync(root, name, contentOnly = false, signal) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join39(directory2, entry), relative11 = `${prefix}${entry}`;
+      const full = join40(directory2, entry), relative11 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
         rows.push(`${relative11}/`);
@@ -30279,7 +30648,7 @@ function pathIdentity(cwd, name, walk = true) {
     throw new ContractError("forbidden");
   let st;
   try {
-    st = lstatSync21(p);
+    st = lstatSync22(p);
   } catch (e) {
     if (absent2(e))
       return null;
@@ -30401,8 +30770,8 @@ async function committedPaths(cwd, from, to) {
   ])).sort();
 }
 function repositoryIdentity(cwd) {
-  const repository = realpathSync11(resolve13(cwd, gitRead(cwd, ["rev-parse", "--git-common-dir"]).replace(/\r?\n$/u, "")));
-  const st = lstatSync21(repository);
+  const repository = realpathSync12(resolve13(cwd, gitRead(cwd, ["rev-parse", "--git-common-dir"]).replace(/\r?\n$/u, "")));
+  const st = lstatSync22(repository);
   if (!st.isDirectory())
     throw new ContractError("stale");
   return {
@@ -30423,12 +30792,12 @@ function deliveryTarget(cwd, source) {
     "index.lock",
     "HEAD.lock"
   ]) {
-    if (existsSync4(join39(gitDir, name)))
+    if (existsSync4(join40(gitDir, name)))
       throw new WorkflowRefusal("conflict", "Finish the existing Git operation before planning isolated delivery.");
   }
   return {
     ...repositoryIdentity(cwd),
-    checkoutRoot: realpathSync11(cwd),
+    checkoutRoot: realpathSync12(cwd),
     head: source.head,
     branch: source.branch
   };
@@ -30549,14 +30918,14 @@ function snapshotChanges(before, after) {
 async function assertWorktree(root, cwd) {
   if (!safeDirectory(cwd))
     throw new ContractError("stale");
-  const real = (p) => realpathSync11(resolve13(p));
+  const real = (p) => realpathSync12(resolve13(p));
   if (real((await gitText(cwd, ["rev-parse", "--show-toplevel"])).trim()) !== real(cwd))
     throw new ContractError("stale");
   const common = async (p) => real(resolve13(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
   const marker2 = resolve13(cwd, ".git");
-  if (!lstatSync21(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
+  if (!lstatSync22(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
 }
 
@@ -30578,7 +30947,7 @@ function read2(root, path) {
   let fd;
   try {
     const file = safeWorkflowFile(root, path);
-    const selected2 = lstatSync22(file);
+    const selected2 = lstatSync23(file);
     fd = openSync11(file, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0) | (constants10.O_NONBLOCK ?? 0));
     const before = fstatSync8(fd);
     if (selected2.dev !== before.dev || selected2.ino !== before.ino)
@@ -30594,7 +30963,7 @@ function read2(root, path) {
       bytes += n;
     }
     const after = fstatSync8(fd);
-    const located = lstatSync22(file);
+    const located = lstatSync23(file);
     if (located.dev !== before.dev || located.ino !== before.ino)
       return null;
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
@@ -30644,7 +31013,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync12(dirname22(probe2));
+        directory2 = opendirSync12(dirname23(probe2));
         while (entries2 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -30855,7 +31224,7 @@ function modelRequestFailed(output) {
 `)) {
     try {
       const value = JSON.parse(line);
-      if (value?.outcome === "failed" && value.cleanupSettled === true && value.cleanupFailures === 0 && value.stage === "assistant-final" && value.class === "model-request-failed" && value.terminalStopReason === "error")
+      if (value?.outcome === "failed" && value.cleanupSettled === true && value.cleanupFailures === 0 && (value.stage === "assistant-final" && value.class === "model-request-failed" && value.terminalStopReason === "error" || value.stage === "auth-model" && ["owner-auth-refused", "owner-auth-lost"].includes(value.class)))
         return true;
     } catch {}
   }
@@ -30874,8 +31243,8 @@ function settledWorkerCleanup(output) {
 }
 
 // src/service/workflow-delivery.ts
-import { lstatSync as lstatSync23, rmdirSync } from "node:fs";
-import { dirname as dirname23, join as join40 } from "node:path";
+import { lstatSync as lstatSync24, rmdirSync } from "node:fs";
+import { dirname as dirname24, join as join41 } from "node:path";
 function taskBranch(goal, id) {
   const slug = goal.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 48).replace(/-$/u, "") || "task";
   return `refs/heads/cadence/${slug}-${decodeId(id)}`;
@@ -30884,7 +31253,7 @@ function deliveryObservation(binding2, root, id, goal) {
   return {
     binding: binding2,
     taskBranch: taskBranch(goal, id),
-    worktreeRoot: join40(root, decodeId(id), "integration"),
+    worktreeRoot: join41(root, decodeId(id), "integration"),
     preparation: "pending",
     workspace: null,
     candidate: null,
@@ -30922,16 +31291,16 @@ class WorkflowDelivery {
     this.view = view;
     this.resources = resources;
     this.save = save;
-    this.home = dirname23(view.worktreeRoot);
+    this.home = dirname24(view.worktreeRoot);
   }
   prepareHome() {
     assertRepository(this.view.binding.target);
     if (nested(this.view.binding.target.checkoutRoot, this.home))
       throw new ContractError("unsupported-context");
-    for (const path of [dirname23(dirname23(this.home)), dirname23(this.home)]) {
+    for (const path of [dirname24(dirname24(this.home)), dirname24(this.home)]) {
       if (!safeDirectory(path, true))
         throw new ContractError("forbidden");
-      const stat = lstatSync23(path);
+      const stat = lstatSync24(path);
       if (process.platform !== "win32" && ((stat.mode & 63) !== 0 || process.getuid && stat.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
@@ -31082,8 +31451,8 @@ class WorkflowDelivery {
 }
 
 // src/service/workflow-history.ts
-import { randomUUID as randomUUID25 } from "node:crypto";
-import { lstatSync as lstatSync24, opendirSync as opendirSync13 } from "node:fs";
+import { randomUUID as randomUUID26 } from "node:crypto";
+import { lstatSync as lstatSync25, opendirSync as opendirSync13 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -31094,7 +31463,7 @@ class WorkflowHistoryScanner {
     this.directory = directory2;
   }
   incarnation() {
-    const st = lstatSync24(this.path, { bigint: true });
+    const st = lstatSync25(this.path, { bigint: true });
     if (!st.isDirectory() || st.isSymbolicLink())
       throw new ContractError("corrupt-selected");
     return `${st.dev}:${st.ino}`;
@@ -31146,7 +31515,7 @@ class WorkflowHistoryScanner {
         if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
           state.ids.pop();
       }
-      const scan = randomUUID25();
+      const scan = randomUUID26();
       state.timer = setTimeout(() => {
         this.scans.delete(scan);
         try {
@@ -31633,8 +32002,8 @@ function workflowResultDetail(value, secrets) {
 
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.0.47",
-  build: "587a7b9cc31654fe01b46d12daf99e67f6032bd795f22d9abf0f8cf4bc11b57d",
+  version: "2.0.48",
+  build: "535e50b784b8c2c881f9f479382c17e0e3cd7e1b74314916dd6a8b708f0a71f8",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -31646,7 +32015,6 @@ var EVIDENCE_BYTES2 = 8192;
 var MAX_STEPS = 256;
 var STEP_UNITS = 80;
 var MAX_ACTIVE = 4;
-var GIT_MS = 10 * 60 * 1000;
 var RESTARTED = "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 var FINAL_UNAVAILABLE = "The final message exceeded the retained transcript bound and was not retained.";
 
@@ -31684,12 +32052,12 @@ class Workflows {
   constructor(o) {
     this.o = o;
     this.contexts = o.contexts ?? new ConversationContexts(o);
-    this.root = join41(o.coordination.directory, "workflows-v1");
-    this.cwd = realpathSync12(o.coordination.store.root);
-    this.worktreeRoot = join41(o.coordination.stateHome, "cadence-worktrees-v1", basename5(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join41(this.root, "runs"), () => {
+    this.root = join42(o.coordination.directory, "workflows-v1");
+    this.cwd = realpathSync13(o.coordination.store.root);
+    this.worktreeRoot = join42(o.coordination.stateHome, "cadence-worktrees-v1", basename5(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join42(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join41(this.root, "runs"));
+      return this.files.directory(join42(this.root, "runs"));
     });
     this.recover();
   }
@@ -31697,7 +32065,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join41(this.root, "runs", decodeId(id), name);
+    return join42(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES3) {
     this.o.owner.lease.assert();
@@ -31714,7 +32082,7 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join41(this.root, "runs");
+    const runs = join42(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
@@ -31843,11 +32211,11 @@ class Workflows {
         throw new ContractError("stale");
       safeDirectory(cwd, true);
     }
-    if (realpathSync12(cwd) !== cwd)
+    if (realpathSync13(cwd) !== cwd)
       throw new ContractError("stale");
     return cwd;
   }
-  observation(plan) {
+  observation(plan, runtime) {
     const source = workflowObservation(this.cwd, plan);
     const delivery = plan.delivery === "local-merge" ? {
       policy: "task-branch-v1",
@@ -31857,6 +32225,7 @@ class Workflows {
       source,
       delivery,
       digest: hash(canonicalJson({
+        runtime,
         source,
         delivery: delivery ?? null,
         working: plan.delivery === "working-copy" ? captureChanges(this.cwd).fingerprint : null
@@ -31864,7 +32233,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join41(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
+    const file = this.files.read(join42(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3));
@@ -31876,13 +32245,14 @@ class Workflows {
     } catch {
       throw new WorkflowRefusal("invalid", "This retained proposal does not authorize adaptive delivery. Publish a current delivery agreement; nothing was started.");
     }
-    this.model(p.model);
-    const observed = this.observation(p.plan);
+    const selected2 = this.model(p.model);
+    const runtime = this.o.models.workerSettings(this.contexts.capture(p.model).cwd, selected2);
+    const observed = this.observation(p.plan, runtime);
     if (p.plan.delivery === "local-merge" && !p.delivery)
       throw new WorkflowRefusal("invalid", "Publish a new delivery agreement with explicit named-branch placement before execution.");
-    if (p.epoch !== this.o.owner.lease.registration.epoch || p.digest !== digest2 || p.cwd !== this.contexts.capture(p.model).cwd || p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd || observed.digest !== p.observation || canonicalJson(observed.delivery ?? null) !== canonicalJson(p.delivery ?? null) || p.digest !== hash(canonicalJson(p.delivery ? { plan: p.plan, delivery: p.delivery } : p.plan)))
+    if (p.epoch !== this.o.owner.lease.registration.epoch || p.digest !== digest2 || p.cwd !== this.contexts.capture(p.model).cwd || p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd || observed.digest !== p.observation || p.display?.runtime !== describeWorkerRuntime(runtime) || canonicalJson(observed.delivery ?? null) !== canonicalJson(p.delivery ?? null) || p.digest !== hash(canonicalJson(p.delivery ? { plan: p.plan, delivery: p.delivery } : p.plan)))
       throw new ContractError("stale");
-    return observed.source;
+    return { source: observed.source, runtime };
   }
   projectDelivery(run) {
     return run.delivery ? {
@@ -32062,7 +32432,7 @@ class Workflows {
     this.o.owner.lease.assert();
     if (epoch !== this.o.owner.lease.registration.epoch)
       throw new ContractError("stale");
-    this.active.get(runId)?.abort.abort();
+    this.active.get(runId)?.abort.abort({ source: "user", reason: "cancel", target: runId });
     return { ...this.view(runId), commandId };
   }
   command(commandId, epoch, r, options = {}) {
@@ -32089,8 +32459,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join41(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
-    return this.files.directory(join41(this.root, "runs", id));
+      return !!this.files.read(join42(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
+    return this.files.directory(join42(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -32101,8 +32471,9 @@ class Workflows {
       this.model(r.model);
       this.floor();
       const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(r.plan, secrets)), { strict: true });
-      const { source, digest: digest2, delivery: delivery2 } = this.observation(plan);
       const selected2 = this.model(r.model);
+      const runtime2 = this.o.models.workerSettings(this.contexts.capture(r.model).cwd, selected2);
+      const { source, digest: digest2, delivery: delivery2 } = this.observation(plan, runtime2);
       const p = {
         ...delivery2 ? { delivery: delivery2 } : {},
         id: commandId,
@@ -32113,6 +32484,7 @@ class Workflows {
         checkoutRoot: this.cwd,
         observation: digest2,
         display: {
+          runtime: describeWorkerRuntime(runtime2),
           model: `${selected2.provider}/${selected2.model} · ${selected2.thinking}`,
           branch: source.branch,
           baseCommit: source.head
@@ -32121,7 +32493,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join41(this.root, "proposals", `${commandId}.json`);
+      const target3 = join42(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES3);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -32144,7 +32516,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID26(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID27(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -32172,15 +32544,18 @@ class Workflows {
         throw new ContractError("conflict");
       return { ...this.view(commandId), commandId };
     }
-    if (this.files.directory(dirname24(acceptedPath)))
+    if (this.files.directory(dirname25(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal;
     let delivery;
     let target2;
     let declared;
+    let runtime;
     if (request3.action === "execute") {
       proposal = this.proposal(request3.proposalId);
-      const source = this.assertProposal(proposal, request3.digest);
+      const observed = this.assertProposal(proposal, request3.digest);
+      const source = observed.source;
+      runtime = observed.runtime;
       if ([...this.active.values()].some((live3) => live3.proposal))
         throw new WorkflowRefusal("conflict", "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.");
       this.capacity();
@@ -32202,7 +32577,8 @@ class Workflows {
       else
         declared = contentsIdentity(this.cwd, writes);
     } else if (request3.action === "research") {
-      this.model(request3.model);
+      const selected2 = this.model(request3.model);
+      runtime = this.o.models.workerSettings(this.contexts.capture(request3.model).cwd, selected2);
       this.capacity();
     } else
       throw new ContractError("invalid");
@@ -32239,6 +32615,7 @@ class Workflows {
       begin = resolve15;
     });
     const live2 = {
+      runtime,
       execution,
       run,
       abort,
@@ -32251,9 +32628,13 @@ class Workflows {
     };
     effect();
     this.active.set(commandId, live2);
-    this.o.owner.trackConversation(live2.original, () => abort.abort());
+    this.o.owner.trackConversation(live2.original, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
     try {
       this.write(acceptedPath, { epoch, request: request3 });
+      this.write(this.path(commandId, "runtime.json"), {
+        identity: hash(canonicalJson(runtime)),
+        summary: describeWorkerRuntime(runtime)
+      });
       live2.file = this.write(this.path(commandId, "state.json"), run);
     } catch (e) {
       abort.abort();
@@ -32278,6 +32659,9 @@ class Workflows {
     live2.file = this.write(this.path(live2.run.id, "state.json"), live2.run, live2.file);
   }
   saveFinal(live2) {
+    const cause = live2.abort.signal.reason;
+    if (live2.abort.signal.aborted && cause?.source)
+      live2.run.notice = this.notice(live2.run.notice, `${cause.source}: ${cause.reason} (${live2.run.id})`);
     try {
       canonicalJson(live2.run, RECORD_BYTES3);
     } catch {
@@ -32293,7 +32677,7 @@ class Workflows {
   assertRunning(live2) {
     this.current();
     this.floor();
-    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync12(live2.execution.cwd) !== live2.execution.cwd))
+    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync13(live2.execution.cwd) !== live2.execution.cwd))
       throw new ContractError("stale");
   }
   step(live2, id, kind, childRunId) {
@@ -32316,7 +32700,7 @@ class Workflows {
       live2.run.stepsBefore = offset + prefix.length;
     }
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID26()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID27()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       ...childRunId ? {
@@ -32327,7 +32711,6 @@ class Workflows {
           stopRequestedAt: null,
           closedAt: null,
           settledAt: null,
-          timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
           stopReason: null
         }
       } : {},
@@ -32395,7 +32778,7 @@ class Workflows {
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID26(), op = randomUUID26();
+    const childRunId = randomUUID27(), op = randomUUID27();
     const plan = live2.proposal?.plan;
     const baseContext = plan ? `${workflowContext(plan)}
 Execution cwd: ${runCwd}
@@ -32423,7 +32806,7 @@ Write paths are relative to the checkout root.` : "Read applicable project docum
 
 ${knowledge.text}`,
       instructions: `${role3.content}
-Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. This attempt has a total native deadline of ${this.o.timeoutMs ?? LIMITS.workerMs}ms. Work incrementally; when the assignment is too large, submit a blocked report with concrete completed outputs and remaining work before the deadline, so the owner can split and continue it. Do not duplicate the entire acceptance pipeline inside one worker.`,
+Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
     });
@@ -32439,19 +32822,19 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     let native;
     let selectedMessageId;
     const auth = this.o.models.prepareTracked({
+      runtime: live2.runtime,
       request: request3,
       cwd: runCwd,
       operationId: op,
       epoch: live2.run.epoch,
-      timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
       signal: live2.abort.signal,
       current: current2,
       journal: {
         preparation: (v) => {
-          this.write(this.path(live2.run.id, `auth/${op}-intent.json`), v);
+          this.write(this.path(live2.run.id, `auth/${v.operationId}-intent.json`), v);
         },
         settlement: (v) => {
-          this.write(this.path(live2.run.id, `auth/${op}-settled.json`), v);
+          this.write(this.path(live2.run.id, `auth/${v.operationId}-settled.json`), v);
         }
       }
     });
@@ -32465,6 +32848,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       }
       this.write(this.path(live2.run.id, `launches/${childRunId}.json`), {
         cwd: runCwd,
+        runtime: live2.runtime ? describeWorkerRuntime(live2.runtime) : null,
         knowledge: {
           sources: knowledge.sources.map(({ excerpt: _excerpt, ...source }) => source),
           omitted: knowledge.omitted
@@ -32489,7 +32873,6 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         ...credentials
       ]);
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, runCwd, live2.abort.signal, {
-        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets(),
         roots: roots2?.length ? roots2.map((p) => resolve14(runCwd, p)) : [live2.run.phase === "research" ? runCwd : cwd],
         onLifecycle: (event) => {
@@ -32536,7 +32919,11 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         if (!native)
           throw new ContractError("quarantine");
         return native;
-      }), () => live2.abort.abort());
+      }), () => live2.abort.abort({
+        source: "service",
+        reason: "stop",
+        target: live2.run.id
+      }));
       const completed = this.sanitizeResult(await running);
       if (native)
         this.write(this.path(live2.run.id, `native/${childRunId}.json`), native);
@@ -32603,7 +32990,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
     const runCwd = shell ? this.executionCwd(live2, cwd) : cwd;
-    const id = randomUUID26();
+    const id = randomUUID27();
     this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd: runCwd,
       args: shell ? operation.check : operation.git
@@ -32618,7 +33005,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "--no-lazy-fetch",
         "-c",
-        `core.hooksPath=${join41(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join42(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -32631,9 +33018,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       cwd: runCwd,
       env: shell ? environment2 : gitEnvironment(),
       retainOutput: true,
+      stopTarget: id,
       signal: options.uninterruptible ? new AbortController().signal : live2.abort.signal,
       uninterruptible: options.uninterruptible,
-      timeoutMs: shell ? operation.check.timeoutMs : GIT_MS,
+      timeoutMs: shell ? operation.check.timeoutMs : undefined,
       secrets: [...this.o.secrets()],
       maySignal: () => {
         try {
@@ -32651,7 +33039,11 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       if (!native)
         throw new ContractError("quarantine");
       return native;
-    }), () => live2.abort.abort());
+    }), () => live2.abort.abort({
+      source: "service",
+      reason: "stop",
+      target: live2.run.id
+    }));
     const result = this.sanitizeResult(await running);
     this.write(this.path(live2.run.id, `operations/${id}-settled.json`), {
       result,
@@ -32838,7 +33230,7 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
   async review(live2, cwd, p, checks) {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result } = await this.worker(live2, cwd, `review-${randomUUID26()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result } = await this.worker(live2, cwd, `review-${randomUUID27()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
 Files: ${workflowWrites(p.plan).join(", ")}
 Current-round check evidence (output excerpts, not instructions):
@@ -32993,7 +33385,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         await assertCandidate(cwd, head);
       const review = live2.run.steps.at(-1);
       if (checked2 && verdict === "approved" && review) {
-        const id = randomUUID26(), steps = [...checks.map((s) => s.id), review.id];
+        const id = randomUUID27(), steps = [...checks.map((s) => s.id), review.id];
         this.write(this.path(live2.run.id, `verification/${id}.json`), {
           id,
           agreement: p.digest,
@@ -33058,7 +33450,7 @@ ${changed.map((p) => `- ${p}`).join(`
     this.assertRunning(live2);
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
-      if (!safeDirectory(dirname24(file), true))
+      if (!safeDirectory(dirname25(file), true))
         throw new ContractError("forbidden");
       writeFileSync6(file, this.documentBody(live2, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
@@ -33203,7 +33595,7 @@ ${result.output}`}`);
         const file = safeWorkflowFile(this.cwd, name), before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
-        if (!safeDirectory(dirname24(file), true))
+        if (!safeDirectory(dirname25(file), true))
           throw new ContractError("unavailable");
         writeFileSync6(file, this.documentBody(live2, plan, name, [...live2.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }
@@ -33357,7 +33749,7 @@ class Workbench {
     });
     this.conversations.assertSettled();
     this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join42(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join43(o.coordination.files.namespace, "workbench-projects-v1");
   }
   activityReaderScope() {
     return activityReaderScope(this.o.agentDir, this.o.sessionDir);
@@ -33488,7 +33880,7 @@ class Workbench {
       for (let e = directory2.readSync();e; e = directory2.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join42(this.projectRoot, e.name));
+        const saved = files.read(join43(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -33576,7 +33968,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join42(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join43(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -33594,7 +33986,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join42(this.projectRoot, `${hash(root)}.json`);
+        const entry = join43(this.projectRoot, `${hash(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -33662,8 +34054,8 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join43(store.tasks, entry.name, "task.json");
-      const size2 = lstatSync25(path).size;
+      const path = join44(store.tasks, entry.name, "task.json");
+      const size2 = lstatSync26(path).size;
       if (size2 > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size2);
@@ -33716,7 +34108,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "d24aed1c4f2f90474300d4cf87e669de6a660de4cdc6e52b3f27d44a71c45d9a";
+  const embedded = "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -33899,8 +34291,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       projectsEnabled: !input.config.http.proxy,
       checkEnvironment,
       hostUrl: new URL(sourceBuild ? "../service-host.mjs" : "./service-host.mjs", import.meta.url),
-      secrets: ownerLiterals,
-      timeoutMs: sourceBuild?.workerTimeoutMs
+      secrets: ownerLiterals
     }) : null;
     const unavailable2 = (taskId2) => ({
       status: "unavailable",

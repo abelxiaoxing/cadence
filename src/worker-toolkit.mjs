@@ -1,5 +1,9 @@
 /** Trusted capability composition. No discovery, plugin claims or model-selected
  * permissions. Role prompts do not grant tools; the validated owner request does. */
+import {
+  createBashToolDefinition,
+  createPowerShellToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createChangeTools } from "./change-tools.mjs";
 import { createCoordinatorTools } from "./coordinator-tools.mjs";
@@ -8,43 +12,12 @@ import {
   RESEARCH_INSTRUCTIONS,
 } from "./research-tools.mjs";
 import { sanitizeText } from "./worker-redaction.mjs";
-import { captureBash } from "./worker-tools.mjs";
-
-const policies = Object.freeze({
-  edit: Object.freeze(["files", "shell"]),
-  research: Object.freeze(["observation"]),
-  diagnosis: Object.freeze(["observation"]),
-  review: Object.freeze(["observation"]),
-  coordination: Object.freeze(["coordination"]),
-});
-// One reviewed registry, not a public runtime plugin interface. An observation
-// bundle may add tools without teaching the SDK bootstrap another list of names.
-const bundles = {
-  files: () => ({
-    names: ["read", "grep", "find", "ls", "write", "edit"],
-    tools: [],
-  }),
-  shell: ({ workspace, secrets, fail, createLocalBashOperations, queue }) => ({
-    tools: [
-      captureBash(
-        workspace.cwd,
-        secrets,
-        fail,
-        createLocalBashOperations,
-        queue,
-      ),
-    ],
-  }),
-  observation: ({ workspace }) => createResearchTools(workspace),
-  changes: ({ changes }) => createChangeTools(changes),
-  coordination: () => createCoordinatorTools(),
-};
+import { captureShell } from "./worker-tools.mjs";
 
 export function createWorkerToolkit(options) {
   const { purpose, coordinator = false } = options;
   if (
-    !Object.hasOwn(policies, purpose) ||
-    purpose === "coordination" ||
+    !["edit", "research", "diagnosis", "review"].includes(purpose) ||
     (coordinator && purpose !== "research")
   )
     throw new Error("Invalid worker capability selection");
@@ -55,11 +28,58 @@ export function createWorkerToolkit(options) {
       options.changes.root !== options.workspace.roots[0])
   )
     throw new Error("Invalid review capability binding");
-  const capabilities = options.changes
-    ? Object.freeze([...policies[purpose], "changes"])
-    : policies[coordinator ? "coordination" : purpose];
-  const owned = capabilities.map((capability) => bundles[capability](options));
-  const customTools = owned.flatMap((bundle) => bundle.tools);
+  const runtime = options.runtime;
+  if (!runtime) throw new Error("Worker runtime settings are required");
+  const readonly = purpose !== "edit";
+  const names = [...runtime.tools[readonly ? "readonly" : "edit"]];
+  const owned = [];
+  const customTools = [];
+  if (coordinator) {
+    const bridge = createCoordinatorTools();
+    owned.push(bridge);
+    customTools.push(...bridge.tools);
+    names.splice(0, names.length, ...bridge.tools.map((tool) => tool.name));
+  } else if (readonly) {
+    const observation = createResearchTools(
+      options.workspace,
+      names,
+      runtime.settings,
+    );
+    owned.push(observation);
+    customTools.push(...observation.tools);
+  } else {
+    for (const name of names.filter((name) =>
+      ["bash", "powershell"].includes(name),
+    )) {
+      const bash = name === "bash";
+      const definition = (
+        bash ? createBashToolDefinition : createPowerShellToolDefinition
+      )(options.workspace.cwd);
+      const operations = () =>
+        bash
+          ? options.createLocalBashOperations({
+              shellPath: runtime.settings.shellPath,
+            })
+          : options.createLocalPowerShellOperations();
+      customTools.push(
+        captureShell(
+          options.workspace.cwd,
+          options.secrets,
+          options.fail,
+          operations,
+          options.queue,
+          definition,
+          bash ? runtime.settings.shellCommandPrefix : undefined,
+        ),
+      );
+    }
+  }
+  if (options.changes) {
+    const changes = createChangeTools(options.changes);
+    owned.push(changes);
+    customTools.push(...changes.tools);
+    names.push(...changes.tools.map((tool) => tool.name));
+  }
   if (options.reporting && !coordinator && purpose === "edit")
     customTools.push({
       name: "cadence_report",
@@ -92,9 +112,6 @@ export function createWorkerToolkit(options) {
         return { content: [{ type: "text", text }], details: undefined };
       },
     });
-  const names = owned.flatMap(
-    (bundle) => bundle.names ?? bundle.tools.map((tool) => tool.name),
-  );
   if (options.reporting && !coordinator && purpose === "edit")
     names.push("cadence_report");
   if (new Set(names).size !== names.length)
@@ -103,10 +120,7 @@ export function createWorkerToolkit(options) {
   let closed = false,
     closing;
   return {
-    capabilities,
-    instructions: capabilities.includes("observation")
-      ? RESEARCH_INSTRUCTIONS
-      : "",
+    instructions: readonly && !coordinator ? RESEARCH_INSTRUCTIONS : "",
     // Explicit allowlists are required by the installed public Pi SDK. Omitting
     // one would enable its defaults, not mean "only our custom capabilities".
     sessionOptions: {
@@ -136,7 +150,7 @@ export function createWorkerToolkit(options) {
                 "edit",
               ].includes(tool.name);
               // Stock file tools may reject an abort observer before their real
-              // I/O finishes. Join this admitted call under the worker deadline,
+              // I/O finishes. Join this admitted call to its actual settlement,
               // then suppress its result if canceled. Pi grep already waits for
               // child close on abort, so preserve its stop signal like shell and
               // changes; no mutation is replayed.

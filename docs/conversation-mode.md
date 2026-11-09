@@ -140,7 +140,9 @@ Only owned worktrees at the delivered commit, after successful post-merge checks
 Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
 Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
 There is no fixed delivery-duration or repair-round quota.
-Individual workers/checks retain their process deadlines; a settled failure can trigger diagnosis and continuation, not automatic goal termination.
+Agents have no fixed total runtime deadline.
+Setup/check commands default to no timeout; an explicitly approved per-command timeout still applies, including in older plans.
+A settled failure can trigger diagnosis and continuation, not automatic goal termination.
 Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
 Local-merge plans need clean, nonignored code and knowledge targets; use working-copy delivery for dirty or ignored documentation.
 Generated workflow notes remain separate.
@@ -177,7 +179,7 @@ There is no need to send the same message again while recovery is active.
 Refreshing or leaving the page only detaches; return to observe the same accepted turn, or use its existing Stop/Cancel control.
 Automatic recovery resends only the failed model request: it does not repeat completed tool operations, renew approval, switch models or replay work after a service restart.
 A failed partial answer stays in history and is not presented as a complete reply.
-Waiting and request time count against the worker's original deadline.
+Waiting, requests and tool work stay in the same SDK session without a total runtime deadline.
 
 `OpenAI Responses stream ended before a terminal response event` means the stream ended without a protocol completion event, not necessarily that the local timeout was too short.
 An already closed stream cannot be repaired by waiting on that connection.
@@ -220,7 +222,9 @@ The bounded `grep` tool searches literal text, not regular expressions.
 No files are copied to accelerate research.
 
 Separate runs in one project wait for the shared checkout gate; questions inside a run can overlap.
-The worker's total process deadline includes model and tool time, is not an inactivity timer, and is not renewed by progress.
+Agents have no total process deadline or substitute idle/step/tool-call quota.
+Leaving the page or losing a coordinator bridge does not cancel accepted investigations.
+Explicit Cancel/Stop retain their actual closure and recorded source.
 A timeout that confirms direct-child close does not prove all descendants stopped, nor does it prove any survived.
 
 Research replies include `runId` and step identities.
@@ -263,3 +267,21 @@ Searches use already available `rg` and `fd`/`fdfind` binaries or Pi's existing 
 Readonly subagents do not have shell or editing tools: use the direct listing, search and read tools rather than a `bash` pipeline.
 Approved implementation workers keep their existing shell and editing tools.
 This distinction preserves execution consent; it is not an OS sandbox or permission to copy credentials or profiles.
+
+### Pi settings and tools
+
+On Send, Cadence captures persisted Pi preferences from its owner's selected agent directory and the conversation directory.
+Pi merges user settings with trusted project `.pi/settings.json`.
+Automatic compaction (including model-specific token settings), agent-level request retries and configured standard tools take effect without a second Cadence configuration.
+For example, Pi's `defaultTools: ["+grep", "+find", "+ls"]` adds those tools to its normal coding defaults.
+Selecting `powershell` is also supported when that backend is available on the host.
+
+A delivery agreement shows the runtime summary.
+Changing settings/tools requires a fresh agreement before execution; accepted work keeps its snapshot through implementation and independent readonly Review.
+Workers do not copy profiles into worktrees or write settings back.
+Persisted Pi project trust controls project **settings**, not execution consent.
+Terminal-only overrides and extension/MCP closures are not silently loaded; unavailable configured tools refuse instead of silently falling back.
+
+Service differences remain explicit: cache warming and provider-internal retries are off; HTTP idle timeout defaults to disabled unless configured in Pi.
+This does not add an Agent lifetime deadline.
+Shell output is bounded/redacted rather than written to raw spill files; per-command timeout and explicit Cancel/Stop still apply.

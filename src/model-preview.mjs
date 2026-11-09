@@ -17,7 +17,6 @@ var LIMITS = Object.freeze({
   wsClientFrameBytes: 16 * 1024,
   startWaitMs: 1e4,
   stopWaitMs: 60000,
-  authWaitMs: 30000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
@@ -34,23 +33,17 @@ var LIMITS = Object.freeze({
   frameBytes: 64 * 1024,
   chunkBytes: 8 * 1024,
   detailBytes: 32 * 1024 * 1024,
-  childProtocolBytes: 128 * 1024 * 1024,
   dataFrames: 1e5,
   controlFrames: 256,
-  sdkEvents: 1e6,
+  captureEntries: 4096,
   workerQueueBytes: 4 * 1024 * 1024,
   workerQueueFrames: 1024,
   ownerQueueBytes: 8 * 1024 * 1024,
   ownerQueueFrames: 2048,
   ownerControlBytes: 1024 * 1024,
   ownerControlFrames: 256,
-  recordingStallMs: 5000,
   episodes: 8,
-  queuedAssignments: 128,
   childReservations: 2,
-  episodeMs: 6 * 60 * 60 * 1000,
-  readyWaitMs: 10 * 60 * 1000,
-  workerMs: 1200000,
   artifactPartBytes: 256 * 1024,
   progressBatchMs: 100,
   progressBatchBytes: 256 * 1024,
@@ -488,7 +481,7 @@ function checkSelection(v) {
     kind: oneOf(o.kind, ["configured", "manual"]),
     name: text(o.name, 128, true),
     command: text(o.command, 4096, true),
-    timeoutMs: integer(o.timeoutMs, 100, LIMITS.workerMs)
+    timeoutMs: integer(o.timeoutMs, 100, 1200000)
   };
   const controls = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u;
   if (controls.test(result.name) || controls.test(result.command) || /[\n\t]/.test(result.name) || result.name === "Manual command")
@@ -561,8 +554,25 @@ function decodeHandoff(v) {
     })
   };
 }
+function decodeStopCause(v) {
+  const o = closed(v, ["source", "reason", "target"]);
+  return {
+    source: oneOf(o.source, [
+      "user",
+      "service",
+      "owner",
+      "command",
+      "worker",
+      "coordinator",
+      "unknown"
+    ]),
+    reason: text(o.reason, 128, true),
+    target: text(o.target, 128, true)
+  };
+}
 function decodeNativeSettlement(v) {
   const o = closed(v, [
+    ...Object.hasOwn(v ?? {}, "stop") ? ["stop"] : [],
     "outcome",
     "closure",
     "exitCode",
@@ -574,6 +584,7 @@ function decodeNativeSettlement(v) {
     "capture"
   ]);
   const r = {
+    ...o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) },
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -945,6 +956,7 @@ function decodeCaptureEvent(v) {
 }
 function decodeCheckNativeSettlement(v) {
   const o = closed(v, [
+    ...Object.hasOwn(v ?? {}, "stop") ? ["stop"] : [],
     "outcome",
     "closure",
     "exitCode",
@@ -953,6 +965,7 @@ function decodeCheckNativeSettlement(v) {
     "stdin"
   ]);
   const r = {
+    ...o.stop === undefined ? {} : { stop: decodeStopCause(o.stop) },
     outcome: oneOf(o.outcome, [
       "completed",
       "failed",
@@ -1070,8 +1083,8 @@ function decodeRunSettlement(v) {
 }
 function decodeSourceRange(v) {
   const o = closed(v, ["first", "last", "firstObservedMs", "lastObservedMs"]);
-  const first = integer(o.first, 1, LIMITS.dataFrames + LIMITS.controlFrames);
-  const last = integer(o.last, first, LIMITS.dataFrames + LIMITS.controlFrames);
+  const first = integer(o.first, 1, Number.MAX_SAFE_INTEGER);
+  const last = integer(o.last, first, Number.MAX_SAFE_INTEGER);
   const firstObservedMs = integer(o.firstObservedMs);
   const lastObservedMs = integer(o.lastObservedMs, firstObservedMs);
   if (first === last && firstObservedMs !== lastObservedMs)

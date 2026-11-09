@@ -293,7 +293,7 @@ export class ConversationWorkflow {
           if (name === "cadence_plan")
             return this.plan(current, args, epoch, model);
           if (name !== "cadence_research") throw new ContractError("invalid");
-          return this.research(current, args, epoch, model, signal);
+          return this.research(current, args, epoch, model);
         })();
         const tracked = original.finally(() => originals.delete(tracked));
         originals.add(tracked);
@@ -366,7 +366,6 @@ export class ConversationWorkflow {
     args: unknown,
     epoch: string,
     model: ChoiceVersion,
-    signal: AbortSignal,
   ) {
     let goal: string, questions: string[], roots: string[] | undefined;
     try {
@@ -430,23 +429,10 @@ export class ConversationWorkflow {
       },
       current.file,
     );
-    const cancel = () => {
-      try {
-        this.o.workflows.command(randomUUID(), epoch, {
-          action: "cancel",
-          runId: id,
-        });
-      } catch {
-        /* Owner retains unknown fences. */
-      }
-    };
-    signal.addEventListener("abort", cancel, { once: true });
-    if (signal.aborted) cancel();
-    try {
-      await this.o.workflows.join(id);
-    } finally {
-      signal.removeEventListener("abort", cancel);
-    }
+    // Admission transferred ownership to Workflows. A bridge/observer abort has
+    // no cancellation authority. Join the original even if nobody can receive
+    // its result; explicit workflow Cancel and owner Stop remain independent.
+    await this.o.workflows.join(id);
     return this.preview(this.run(id), 4096, 2);
   }
   approval(c: Approval, caller: Caller | undefined): WorkbenchResult {

@@ -153,6 +153,13 @@ it("only exact unquoted approval/exit inputs are action intents", () => {
 it("plan cards expose actual checks and local delivery, not old Save/Start/Review steps", () => {
   const s = state();
   if (!s.proposal) throw Error("fixture proposal");
+  s.proposal.display = {
+    model: "fixture/fixed",
+    branch: "main",
+    baseCommit: "a".repeat(40),
+    runtime:
+      "Pi runtime: tools read, bash, edit, write; auto-compaction on; request retries 9.",
+  };
   const html = renderToStaticMarkup(
     <PlanCard
       proposal={s.proposal}
@@ -166,6 +173,9 @@ it("plan cards expose actual checks and local delivery, not old Save/Start/Revie
   expect(html).toContain("Declared write paths use the checkout root:");
   expect(html).toContain("<code>/fixture</code>");
   expect(html).toContain("No push, publication or deployment");
+  expect(html).toContain(
+    "Pi runtime: tools read, bash, edit, write; auto-compaction on; request retries 9.",
+  );
   expect(html).toContain("disabled");
   expect(html).toContain("outcome is unknown");
   expect(html).not.toContain("Confirm start");
@@ -496,4 +506,21 @@ it("a plan is a decision card, not an error banner, and unavailable approval exp
   expect(html).toContain("Plan approval is currently unavailable.");
   expect(html).toContain("Complete delivery agreement");
   expect(html).toContain("No push, publication or deployment.");
+});
+
+it("a changed runtime observation is not approved even when plan ID and digest are unchanged", async () => {
+  const displayed = state(),
+    changed = structuredClone(displayed);
+  if (!changed.proposal) throw Error("proposal");
+  changed.proposal.observation = "c".repeat(64);
+  const c = client(changed);
+  await expect(
+    approveWorkflow({
+      client: c.api,
+      state: displayed,
+      current: () => true,
+      submitting: () => {},
+    }),
+  ).rejects.toThrow("stale");
+  expect(c.commands).toHaveLength(1);
 });

@@ -87,7 +87,7 @@ const idle = (): CadenceModeState => ({
   previousTools: [],
 });
 function readableProposal(proposal: WorkflowProposal): string {
-  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n\n${readableDelivery(proposal.delivery)}\n\n${readableWorkflowPlan(proposal.plan)}`;
+  return `Working directory: ${proposal.cwd}\nCheckout root (declared write paths): ${proposal.checkoutRoot ?? proposal.cwd}\nModel: ${proposal.display?.model ?? "not recorded"}\n${proposal.display?.runtime ?? "Pi runtime settings not recorded."}\n\n${readableDelivery(proposal.delivery)}\n\n${readableWorkflowPlan(proposal.plan)}`;
 }
 /** Session restoration restores mode/context, NEVER a grant, pending command or action replay. */
 export function restoreCadenceMode(
@@ -232,7 +232,7 @@ export function transcriptText(turn: ChatTurn | null): string {
 const CHECK = Type.Object({
   name: Type.String(),
   command: Type.String(),
-  timeoutMs: Type.Integer({ minimum: 100, maximum: 1200000 }),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 2147483647 })),
 });
 const PLAN = Type.Object({
   goal: Type.String(),
