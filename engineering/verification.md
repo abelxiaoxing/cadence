@@ -30,6 +30,7 @@ No passing gate authorizes commit, push, publication, installation, deployment o
 
 Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, outside every Git working copy and on the checkout's disk filesystem rather than a nearly full tmpfs.
 `scripts/verification-temp.mjs` checks this before `verify` starts any stage; it refuses invalid input without creating, redirecting or cleaning directories.
+Unit runs point their workers at `cadence-test-run-<pid>` under that root and remove the whole subtree in the vitest globalSetup teardown, so a finished run leaves no fixtures behind; the caller's root is left as found.
 It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`), but no Chromium.
 
 ## Development practice
