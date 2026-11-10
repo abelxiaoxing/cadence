@@ -626,7 +626,7 @@
     "web/src/client/context-usage.ts": "ef344b9895158f3fb2660b1c542f47b85edc682fdd605b16ea2bd3690636cd30",
     "web/src/layout/ContextStatus.tsx": "ba9405d36034b3c3b8d45507cdd977d89b084dccbbc16288712ac8573e4bc456",
     "web/src/client/conversation-admin.ts": "7ff5a2af4144171ce8057edc02c5ebc94f5b67138dfb15bb620f31ab3f609f26",
-    "web/src/components/workspace/ConversationRow.tsx": "b26402e36658a4af0d7a02a720e964bee38c539a2a8f7f724354a2340448460a",
+    "web/src/components/workspace/ConversationRow.tsx": "7b203c2c358e8109289f2b1a1e834b1976a27491b248620ee19ee15f0b813960",
     "web/src/navigation/workflow-assignments.ts": "22e5b07b0bf9f3f5520f13b8b12c00b0af4f7c10f99d94e156ead125367c1fec",
     "test/web/context-usage.test.tsx": "061cd22920a908936a975461be1a81d9e4298ca4ab81b9e42e01888935b4c160",
     "test/web/conversation-rows.test.tsx": "4d16c8f532405053a89a0f4254e10f4850af8c20acb6de8230970591e972c744"

@@ -258,11 +258,14 @@ export function ConversationRow({
           />
         </div>
         <span className="session-actions">
+          {/* A press must not blur the field first: a browser that does not
+              focus a pressed button would end the rename before its click. */}
           <button
             type="submit"
             className="session-action"
             title={t("Save name")}
             aria-label={t("Save name")}
+            onMouseDown={(event) => event.preventDefault()}
           >
             <FiCheck aria-hidden="true" />
           </button>
@@ -271,6 +274,7 @@ export function ConversationRow({
             className="session-action"
             title={t("Keep the current name")}
             aria-label={t("Keep the current name")}
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               refocus.current = true;
               setDraft(null);
