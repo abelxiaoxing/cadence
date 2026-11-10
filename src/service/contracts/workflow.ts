@@ -20,6 +20,9 @@ import {
 
 export const WORKFLOW_LIMITS = {
   tasks: 16,
+  /** Assignments one run may list in all, counting those its revisions added
+   * and those they superseded. */
+  route: 48,
   /** Questions one research run may carry. How many run at once is the
    * owner's execution limit (`parallelLimit`), not a property of the plan. */
   questions: 8,
@@ -220,13 +223,24 @@ export interface WorkflowDeviation {
 }
 /** Deviations one run may record. */
 export const WORKFLOW_DEVIATIONS = 16;
-/** Where one assignment of the agreement stands. `completed` means its work is
- * in the candidate. */
+export const WORKFLOW_TASK_STATES = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "superseded",
+] as const;
+/** Where one assignment of the current route stands. `completed` means its
+ * work is in the candidate; `superseded` means a plan revision dropped it
+ * before it started. */
 export interface WorkflowTaskState {
   id: string;
   title: string;
   after: string[];
-  state: "queued" | "running" | "completed" | "failed";
+  state: (typeof WORKFLOW_TASK_STATES)[number];
+  /** The plan revision that last changed this assignment (added, rewrote or
+   * superseded it); absent for one that stands as the agreement wrote it. */
+  revision?: number;
 }
 export interface WorkflowRun {
   /** New runs retain older step pages separately; this is a view offset, not eviction. */
@@ -236,7 +250,8 @@ export interface WorkflowRun {
   scope?: string[];
   /** Where this delivery departs from the agreement, in recorded order. */
   deviations?: WorkflowDeviation[];
-  /** The agreement's assignments and where each stands. */
+  /** The current route: the agreement's assignments as revisions left them,
+   * and where each stands. */
   tasks?: WorkflowTaskState[];
   verification?: { id: string; source: string; steps: string[] };
   delivery?: DeliveryObservation;
@@ -333,6 +348,8 @@ const taskId = (v: unknown, strict = false) => {
     throw new Error("Invalid task id");
   return s;
 };
+/** The identity a new assignment may take. */
+export const workflowTaskId = (v: unknown) => taskId(v, true);
 export function decodeWorkflowCheck(v: unknown): WorkflowCheck {
   const o = closed(v, [
     "name",
@@ -961,18 +978,24 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     ...(o.tasks === undefined
       ? {}
       : {
-          tasks: list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
-            const t = closed(value, ["id", "title", "after", "state"]);
+          tasks: list(o.tasks, WORKFLOW_LIMITS.route, (value) => {
+            const t = closed(value, [
+              "id",
+              "title",
+              "after",
+              "state",
+              ...(Object.hasOwn((value ?? {}) as object, "revision")
+                ? ["revision"]
+                : []),
+            ]);
             return {
               id: taskId(t.id),
               title: text(t.title, 256, true),
               after: list(t.after, WORKFLOW_LIMITS.tasks, (id) => taskId(id)),
-              state: oneOf(t.state, [
-                "queued",
-                "running",
-                "completed",
-                "failed",
-              ] as const),
+              state: oneOf(t.state, WORKFLOW_TASK_STATES),
+              ...(t.revision === undefined
+                ? {}
+                : { revision: integer(t.revision, 1, 1_000_000) }),
             };
           }),
         }),

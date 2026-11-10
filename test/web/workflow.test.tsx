@@ -382,6 +382,7 @@ it("assignments are counted from the run, and only a side-by-side run replaces n
     running: 2,
     completed: 2,
     failed: 0,
+    superseded: 0,
   });
   expect(sideBySideCounts(current)).not.toBeNull();
   const html = line(current);
@@ -411,6 +412,19 @@ it("assignments are counted from the run, and only a side-by-side run replaces n
   });
   expect(sideBySideCounts(verifying)).toBeNull();
   expect(line(verifying)).toContain("verifying · unit</span>");
+  // A revised route: what a revision dropped is counted apart, never as waiting.
+  const revised = parallel({
+    tasks: [
+      task("a", "running"),
+      task("b", "running"),
+      { ...task("c", "superseded", ["a"]), revision: 2 },
+      { ...task("d", "queued", ["a"]), revision: 2 },
+    ],
+  });
+  expect(line(revised)).toContain(
+    "implementing · 2 running · 1 queued · 1 superseded",
+  );
+  expect(line(revised, "zh")).toContain("1 个已被取代");
   // An older service lists no assignments: nothing is counted or invented.
   expect(assignmentCounts(run())).toBeNull();
   expect(assignmentRows(run())).toEqual([]);
@@ -465,6 +479,33 @@ it("the assignment board states each assignment's state in words, its own worktr
     '<span class="workflow-task-worktree">own worktree</span>',
   );
   expect(html).not.toContain("kept for inspection");
+  // A plan revision's changes are named on the assignments they touched.
+  const revised = board(
+    parallel({
+      tasks: [
+        task("schema", "completed"),
+        { ...task("api", "superseded", ["schema"]), revision: 2 },
+        { ...task("rest", "queued", ["schema"]), revision: 2 },
+      ],
+    }),
+  );
+  expect(revised).toMatch(
+    /<span class="workflow-task-state superseded"><svg[^>]*>.*?<\/svg>superseded<\/span>/,
+  );
+  expect(revised).toContain(
+    '<span class="workflow-task-revised">dropped by route revision 2</span>',
+  );
+  expect(revised).toContain(
+    '<span class="workflow-task-revised">added or rewritten by route revision 2</span>',
+  );
+  expect(
+    board(
+      parallel({
+        tasks: [{ ...task("api", "superseded"), revision: 2 }],
+      }),
+      "zh",
+    ),
+  ).toContain("在第 2 次路线修订中取消");
   // Its steps open their subagent; the failed attempt stays listed as failed.
   expect(html).toContain("implementation · failed</button>");
   expect(html.match(/title="Open subagent context"/g)).toHaveLength(5);

@@ -157,6 +157,10 @@ export const zh = {
   "{count} queued": "{count} 个排队中",
   "{count} done": "{count} 个已完成",
   "{count} failed": "{count} 个失败",
+  "{count} superseded": "{count} 个已被取代",
+  "dropped by route revision {revision}": "在第 {revision} 次路线修订中取消",
+  "added or rewritten by route revision {revision}":
+    "由第 {revision} 次路线修订新增或改写",
   "after {ids}": "在 {ids} 之后",
   "own worktree": "独立工作区",
   integrated: "已合回",
@@ -1007,6 +1011,7 @@ export const zh = {
   settled: "已结束",
   completed: "已完成",
   failed: "失败",
+  superseded: "已被取代",
   rejected: "已拒绝",
   canceled: "已取消",
   timeout: "超时",

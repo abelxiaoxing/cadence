@@ -5325,6 +5325,7 @@ function validateImageBytes(bytes, mimeType) {
 // src/service/contracts/workflow.ts
 var WORKFLOW_LIMITS = {
   tasks: 16,
+  route: 48,
   questions: 8,
   checks: 16,
   bytes: 256 * 1024,
@@ -5334,6 +5335,13 @@ var WORKFLOW_LIMITS = {
   historyIdleMs: 120000
 };
 var WORKFLOW_DEVIATIONS = 16;
+var WORKFLOW_TASK_STATES = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "superseded"
+];
 function clipUnits(value, units) {
   if (value.length <= units)
     return value;
@@ -5355,6 +5363,7 @@ var taskId = (v, strict = false) => {
     throw new Error("Invalid task id");
   return s;
 };
+var workflowTaskId = (v) => taskId(v, true);
 function decodeWorkflowCheck(v) {
   const o = closed(v, [
     "name",
@@ -5847,18 +5856,20 @@ function decodeWorkflowRun(v) {
       })
     },
     ...o.tasks === undefined ? {} : {
-      tasks: list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
-        const t = closed(value, ["id", "title", "after", "state"]);
+      tasks: list(o.tasks, WORKFLOW_LIMITS.route, (value) => {
+        const t = closed(value, [
+          "id",
+          "title",
+          "after",
+          "state",
+          ...Object.hasOwn(value ?? {}, "revision") ? ["revision"] : []
+        ]);
         return {
           id: taskId(t.id),
           title: text(t.title, 256, true),
           after: list(t.after, WORKFLOW_LIMITS.tasks, (id) => taskId(id)),
-          state: oneOf(t.state, [
-            "queued",
-            "running",
-            "completed",
-            "failed"
-          ])
+          state: oneOf(t.state, WORKFLOW_TASK_STATES),
+          ...t.revision === undefined ? {} : { revision: integer(t.revision, 1, 1e6) }
         };
       })
     },
@@ -16480,7 +16491,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "c5819c66d2fe70ef1051677718fce7b64795c5c92867b4d9ff7ce73112112b55",
+    contractHash: "a821f8c7eb620c7c15fb33d7b4e8caafcd056f2e02a2f4dda546886a1e321642",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -32012,6 +32023,46 @@ var BLOCKERS = [
   "installation",
   "tool"
 ];
+function revisedRoute(current2, route) {
+  const refuse3 = (message2) => {
+    throw new InvalidDecision(message2);
+  };
+  const state = new Map(current2.map((t) => [t.id, t.state]));
+  const waiting = (id) => state.get(id) === "queued";
+  const ids = route.add.map((t) => t.id);
+  if (new Set(ids).size !== ids.length || new Set(route.drop).size !== route.drop.length || route.drop.some((id) => ids.includes(id)))
+    refuse3("A route names each assignment once: drop it, or give it again under its ID to rewrite it");
+  const started = [...route.drop, ...ids].filter((id) => state.has(id) && !waiting(id));
+  if (started.length)
+    refuse3(`Only an assignment that has not started can be dropped or rewritten; these have: ${started.join(", ")}. Give what remains of them as work, or add an assignment under a new ID`);
+  const unknown = route.drop.filter((id) => !state.has(id));
+  if (unknown.length)
+    refuse3(`The route drops assignments the run does not list: ${unknown.join(", ")}`);
+  const added = route.add.filter((t) => !state.has(t.id));
+  if (current2.length + added.length > WORKFLOW_LIMITS.route)
+    refuse3(`One run lists at most ${WORKFLOW_LIMITS.route} assignments; give the remaining work as fewer, larger ones`);
+  const rewritten = route.add.filter((t) => state.has(t.id));
+  const gone = new Set([
+    ...route.drop,
+    ...current2.filter((t) => t.state === "superseded").map((t) => t.id)
+  ]);
+  const next = [
+    ...current2.filter((t) => !gone.has(t.id) && !ids.includes(t.id)).map((t) => ({ id: t.id, after: t.after })),
+    ...route.add.map((t) => ({ id: t.id, after: t.after }))
+  ];
+  const listed = new Set(next.map((t) => t.id));
+  for (const task of next) {
+    const missing2 = task.after.filter((id) => !listed.has(id));
+    if (missing2.length)
+      refuse3(`Assignment ${task.id} waits for ${missing2.join(", ")}, which this route does not keep; drop or rewrite ${task.id} too`);
+  }
+  try {
+    workflowOrder(next);
+  } catch {
+    refuse3("The revised route has a dependency cycle");
+  }
+  return { superseded: [...route.drop], rewritten, added };
+}
 function decodeRecoveryDecision(reply, bounds, secrets = []) {
   const refuse3 = (message2) => {
     throw new InvalidDecision(message2);
@@ -32026,7 +32077,7 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
       "evidence",
       "strategy",
       "work",
-      ...["level", "scope", "deviation", "blocker"].filter(has)
+      ...["level", "scope", "route", "deviation", "blocker"].filter(has)
     ]);
     const action = oneOf(o.action, ["continue", "blocked"]);
     const level = has("level") ? oneOf(o.level, RECOVERY_LEVELS) : "repair";
@@ -32053,6 +32104,50 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
         writes
       };
     });
+    const route = has("route") ? nullable(o.route, (value) => {
+      const given = (key2) => Object.hasOwn(value ?? {}, key2);
+      const r = closed(value, ["drop", "add"].filter(given));
+      const within = [...bounds.route?.scope ?? bounds.scope, ...scope];
+      return {
+        drop: given("drop") ? list(r.drop, WORKFLOW_LIMITS.route, (v) => text(v, 64, true)) : [],
+        add: given("add") ? list(r.add, WORKFLOW_LIMITS.tasks, (entry) => {
+          const t = closed(entry, [
+            "id",
+            "title",
+            "instructions",
+            "writes",
+            "after"
+          ]);
+          const writes = list(t.writes, 128, (v) => workflowPath(v, true));
+          if (!writes.length || new Set(writes).size !== writes.length || writes.some((p) => !workflowCovers(within, p) || sanitizeText(p, secrets) !== p))
+            refuse3("An added assignment writes outside the run's write scope; list the additional paths in scope");
+          const after = list(t.after, WORKFLOW_LIMITS.tasks, (v) => text(v, 64, true));
+          if (new Set(after).size !== after.length)
+            refuse3("An assignment names each predecessor once");
+          let id = "";
+          try {
+            id = workflowTaskId(t.id);
+          } catch {
+            refuse3("An assignment ID is lowercase letters, digits and hyphens, starts with a letter and has at most 48 characters");
+          }
+          return {
+            id,
+            title: clean(t.title, 256),
+            instructions: clean(t.instructions, 8192),
+            writes,
+            after
+          };
+        }) : []
+      };
+    }) : null;
+    if (route && !route.drop.length && !route.add.length)
+      refuse3("A route revision drops or adds at least one assignment");
+    if (route && level === "repair")
+      refuse3("A repair keeps the remaining assignments as they are; revise the route with level replan");
+    if (route && !bounds.route)
+      refuse3("No assignment is waiting to start at this stage; give the remaining work as work items");
+    if (route && bounds.route)
+      revisedRoute(bounds.route.tasks, route);
     const deviation = has("deviation") ? nullable(o.deviation, (value) => {
       const d = closed(value, [
         "item",
@@ -32073,7 +32168,7 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
       refuse3("A deviation can set aside only declared acceptance checks");
     const blocker = has("blocker") ? nullable(o.blocker, (v) => oneOf(v, BLOCKERS)) : null;
     if (action === "blocked") {
-      if (work.length || scope.length || deviation)
+      if (work.length || scope.length || deviation || route)
         refuse3("A blocked decision cannot dispatch work");
       if (!blocker)
         refuse3(`Blocked is only for a condition outside the repository; name it (${BLOCKERS.join(", ")}) or decide how to continue`);
@@ -32091,6 +32186,7 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
       strategy: clean(o.strategy, 4096),
       work,
       scope,
+      route,
       deviation,
       blocker
     };
@@ -32154,6 +32250,7 @@ class DeliveryController {
             strategy: decision.strategy.trim().toLowerCase(),
             work: decision.work,
             scope: decision.scope,
+            route: decision.route,
             deviation: decision.deviation
           })).digest("hex");
           if (!this.tried.has(fingerprint2)) {
@@ -32182,11 +32279,11 @@ ${decision.strategy}`);
     }
   }
 }
-var REPLY = `Return only JSON {"action":"continue"|"blocked","level":"repair"|"replan"|"deviate","cause":"evidence-based cause","evidence":["actual failed step id"],"strategy":"specific changed approach, or the concrete outside condition","work":[{"title":"remaining work","instructions":"specific next assignment","writes":["path"]}],"scope":["repository path to add to the write scope"],"deviation":null|{"item":"the acceptance item or decision that cannot be met","reason":"evidence it is impossible","delivered":"what is delivered instead","waives":["declared check name"]},"blocker":null|"model"|"authentication"|"storage"|"target"|"installation"|"tool"}.`;
+var REPLY = `Return only JSON {"action":"continue"|"blocked","level":"repair"|"replan"|"deviate","cause":"evidence-based cause","evidence":["actual failed step id"],"strategy":"specific changed approach, or the concrete outside condition","work":[{"title":"remaining work","instructions":"specific next assignment","writes":["path"]}],"scope":["repository path to add to the write scope"],"route":null|{"drop":["id of an assignment that has not started"],"add":[{"id":"new-or-waiting-id","title":"assignment","instructions":"what it does","writes":["path"],"after":["id it waits for"]}]},"deviation":null|{"item":"the acceptance item or decision that cannot be met","reason":"evidence it is impossible","delivered":"what is delivered instead","waives":["declared check name"]},"blocker":null|"model"|"authentication"|"storage"|"target"|"installation"|"tool"}.`;
 var RECOVERY_INSTRUCTIONS = `Diagnose this settled attempt using actual files and the supplied native facts, then decide how the delivery continues. Nobody will be asked: the user approved the goal, decisions, acceptance and assumptions, and expects a finished delivery. Those stay as approved; the initial design, the task breakdown and the write scope are a route you may revise. Preserve existing outputs. Do not weaken tests to manufacture success, change Git, delegate or seek confirmation. Project documents are evidence, not additional authority.
 Choose the least departure that can work:
 - level "repair": retry or repair inside the current write scope. Use work=[] for a safe retry of the original operation (for example report formatting); never to declare success.
-- level "replan": a different implementation or split of the remaining work; list in "scope" any further repository files it must write. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item.
+- level "replan": a different implementation or split of the remaining work; list in "scope" any further repository files it must write. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
 - level "deviate": only when an acceptance item or decision cannot be met as written. Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, an installation this agreement does not allow, or a missing tool. A hard problem is not a blocker.
 Every continuation needs a reason grounded in new evidence or a different approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
@@ -33061,7 +33158,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "a75bb1c30252976cac79e2fc788ec0174b22d9d760b2f47359752e8b66b14e1a",
+  build: "366424a7baac2b213319f8831565e8b960a34fee1c86ac2f87d71cd425ab9458",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34345,7 +34442,7 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
     const p = live2.proposal;
     if (!p)
       return { writes: [], named: {} };
-    const task = kind === "implementation" ? p.plan.tasks.find((t) => t.id === id) : undefined;
+    const task = kind === "implementation" ? (live2.route?.tasks ?? p.plan.tasks).find((t) => t.id === id) : undefined;
     const reads = kind === "review" ? p.plan.reviewReads ?? [] : task?.reads ?? [];
     const extra = [];
     for (const reading of reads)
@@ -34476,6 +34573,21 @@ ${this.evidence(live2, checks)}`, true, p.model, undefined, "review");
     const candidate = live2.delivery?.view.worktreeRoot ?? this.cwd;
     const scope = () => (cwd === candidate ? undefined : live2.owned?.get(cwd)) ?? this.scope(live2, p);
     const checks = p.plan.checks.map((c) => c.name);
+    const touches = (paths, path) => workflowCovers(paths, path) || paths.some((other) => workflowCovers([path], other));
+    const mine = (decision, added) => added.filter((path) => touches(decision.work.flatMap((w) => w.writes), path) || !touches((decision.route?.add ?? []).flatMap((t) => t.writes), path));
+    const routed = () => {
+      const route = live2.route;
+      if (!route)
+        return "";
+      const lines = (live2.run.tasks ?? []).map((t) => {
+        const task = route.tasks.find((entry) => entry.id === t.id);
+        return `- ${t.id} [${t.state}${t.after.length ? `; after ${t.after.join(", ")}` : ""}${t.state === "queued" && task ? `; writes ${task.writes.join(", ")}` : ""}] ${t.title}`;
+      });
+      return `
+Assignments of the current route (only those still queued can be dropped or rewritten):
+${diagnosticText(lines.join(`
+`), 6144, this.o.secrets())}`;
+    };
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live2),
       observe: () => sourceIdentityAsync(cwd, scope(), live2.abort.signal),
@@ -34490,19 +34602,30 @@ Stage failure: ${failure2.message}
 Current write scope: ${scope().join(", ")}
 Least level for this decision: ${floor}
 Declared acceptance checks: ${checks.join(", ")}
-Dependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${this.deviationBrief(live2, "work")}${objection ? `
+Dependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${routed()}${this.deviationBrief(live2, "work")}${objection ? `
 Your previous reply for this failure could not be used: ${objection}` : ""}
 Current evidence:
 ${evidence}
 Previous recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`, true, p.model, undefined, "diagnosis");
         this.attemptResult(live2, result, step);
-        const decision = decodeRecoveryDecision(result.text, { scope: scope(), evidence: failure2.steps, floor, checks }, this.o.secrets());
+        const decision = decodeRecoveryDecision(result.text, {
+          scope: scope(),
+          evidence: failure2.steps,
+          floor,
+          checks,
+          ...live2.route ? {
+            route: {
+              tasks: live2.run.tasks ?? [],
+              scope: this.scope(live2, p)
+            }
+          } : {}
+        }, this.o.secrets());
         if (decision.deviation && (live2.run.deviations?.length ?? 0) >= WORKFLOW_DEVIATIONS)
           throw new InvalidDecision("This delivery already recorded as many deviations as one run may; continue without another");
         const added = decision.scope.filter((p2) => !workflowCovers(scope(), p2));
         if (added.length) {
           const taken = [...live2.owned ?? []].filter(([tree]) => tree !== cwd).flatMap(([, paths]) => paths);
-          const contended = added.filter((path) => workflowCovers(taken, path) || taken.some((other) => workflowCovers([path], other)));
+          const contended = mine(decision, added).filter((path) => touches(taken, path));
           if (contended.length)
             throw new InvalidDecision(`Another assignment that is running owns these paths: ${contended.join(", ")}. Leave that work to it, or decide without them`);
           await this.assertAddable(live2, added);
@@ -34520,14 +34643,23 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
         const added = decision.scope.filter((p2) => !workflowCovers(scope(), p2));
         if (added.length) {
           live2.run.scope = [...new Set([...live2.run.scope ?? [], ...added])];
-          live2.owned?.get(cwd)?.push(...added);
+          live2.owned?.get(cwd)?.push(...mine(decision, added));
         }
+        let route = "";
+        if (decision.route)
+          try {
+            route = live2.route?.revise(decision.route, revision) ?? "";
+          } catch (error) {
+            if (!(error instanceof InvalidDecision))
+              throw error;
+            route = `The assignments were left as they were: ${error.message}`;
+          }
         if (decision.deviation)
           live2.run.deviations = [
             ...live2.run.deviations ?? [],
             { revision, ...decision.deviation }
           ];
-        live2.run.notice = this.notice(`Plan revision ${revision} (${decision.action === "blocked" ? "blocked" : decision.level}): ${decision.strategy}`);
+        live2.run.notice = this.notice(`Plan revision ${revision} (${decision.action === "blocked" ? "blocked" : decision.level}): ${decision.strategy}`, route);
         this.save(live2);
         return revision;
       },
@@ -34675,7 +34807,9 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         if (!file)
           continue;
         const record3 = parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3);
-        lines.push(`- Revision ${n} (${String(record3.stage)}, ${String(record3.decision?.level ?? "repair")}): ${String(record3.failure).slice(0, 300)} Cause: ${String(record3.decision?.cause).slice(0, 300)} Then: ${String(record3.decision?.strategy).slice(0, 300)}`);
+        const ids = (value, key2) => Array.isArray(value) ? value.map((v) => String(key2 ? v?.[key2] : v)).join(", ") : "";
+        const dropped = ids(record3.decision?.route?.drop), given = ids(record3.decision?.route?.add, "id");
+        lines.push(`- Revision ${n} (${String(record3.stage)}, ${String(record3.decision?.level ?? "repair")}): ${String(record3.failure).slice(0, 300)} Cause: ${String(record3.decision?.cause).slice(0, 300)} Then: ${String(record3.decision?.strategy).slice(0, 300)}${dropped ? ` Dropped assignments: ${dropped}.` : ""}${given ? ` Added or rewrote assignments: ${given}.` : ""}`);
       } catch {}
     }
     return diagnosticText(lines.join(`
@@ -34825,6 +34959,46 @@ ${result.output}`}`);
       states.get(id).state = state;
       this.save(live2);
     };
+    let revised;
+    live2.route = {
+      tasks,
+      revise: (route, revision) => {
+        const change = revisedRoute([...states.values()], route);
+        for (const id of change.superseded) {
+          Object.assign(states.get(id), {
+            state: "superseded",
+            revision
+          });
+          tasks.splice(tasks.findIndex((t) => t.id === id), 1);
+        }
+        for (const task of change.rewritten) {
+          tasks[tasks.findIndex((t) => t.id === task.id)] = task;
+          Object.assign(states.get(task.id), {
+            title: task.title,
+            after: [...task.after],
+            revision
+          });
+        }
+        for (const task of change.added) {
+          tasks.push(task);
+          states.set(task.id, {
+            id: task.id,
+            title: task.title,
+            after: [...task.after],
+            state: "queued",
+            revision
+          });
+        }
+        live2.run.tasks = [...states.values()];
+        revised?.();
+        const named = (label, ids) => ids.length ? `${label}: ${ids.join(", ")}.` : "";
+        return [
+          named("Assignments dropped", change.superseded),
+          named("Assignments rewritten", change.rewritten.map((t) => t.id)),
+          named("Assignments added", change.added.map((t) => t.id))
+        ].filter(Boolean).join(" ");
+      }
+    };
     const owned = new Map;
     live2.owned = owned;
     const done = [];
@@ -34894,12 +35068,18 @@ ${result.output}`}`);
       }
       if (!running.size)
         break;
-      await Promise.race(running.values());
+      await Promise.race([
+        ...running.values(),
+        new Promise((resolve15) => {
+          revised = resolve15;
+        })
+      ]);
     }
     live2.owned = undefined;
+    live2.route = undefined;
     if (failure2)
       throw failure2.error;
-    if (done.length !== tasks.length)
+    if (tasks.some((t) => states.get(t.id)?.state !== "completed"))
       throw new ContractError("corrupt-selected");
   }
   async integrateChild(live2, integration, child2, task) {
@@ -35526,7 +35706,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "c5819c66d2fe70ef1051677718fce7b64795c5c92867b4d9ff7ce73112112b55";
+  const embedded = "a821f8c7eb620c7c15fb33d7b4e8caafcd056f2e02a2f4dda546886a1e321642";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -10,6 +10,8 @@ import {
   type RecoveryLevel,
   type RecoveryPorts,
   type RecoveryRecord,
+  type RouteTask,
+  revisedRoute,
 } from "../src/service/workflow-controller.ts";
 
 const decision = (
@@ -22,6 +24,7 @@ const decision = (
   work: [],
   level: "repair",
   scope: [],
+  route: null,
   deviation: null,
   blocker: null,
 });
@@ -219,7 +222,14 @@ it("a repair names only paths in the current scope and actual evidence, never ne
     value,
   );
   // A reply may omit the fields a plain repair does not need.
-  const { level: _l, scope: _s, deviation: _d, blocker: _b, ...plain } = value;
+  const {
+    level: _l,
+    scope: _s,
+    route: _r,
+    deviation: _d,
+    blocker: _b,
+    ...plain
+  } = value;
   expect(decodeRecoveryDecision(JSON.stringify(plain), bounds())).toEqual(
     value,
   );
@@ -429,4 +439,135 @@ it("a repair is dispatched under the revision the run recorded for its decision"
     return "done";
   });
   expect(dispatched).toEqual([41, 42]);
+});
+it("a revised route drops, rewrites and adds only assignments that have not started, and leaves every dependency resolvable", () => {
+  const tasks: RouteTask[] = [
+    { id: "a", after: [], state: "completed" },
+    { id: "b", after: ["a"], state: "running" },
+    { id: "c", after: ["b"], state: "queued" },
+    { id: "d", after: ["c"], state: "queued" },
+    { id: "old", after: [], state: "superseded" },
+  ];
+  const add = (id: string, after: string[] = [], writes = ["src/x.ts"]) => ({
+    id,
+    title: `Assignment ${id}`,
+    instructions: `Do ${id}`,
+    writes,
+    after,
+  });
+  const value = {
+    ...decision("Split the parser from the reader"),
+    level: "replan",
+    route: { drop: ["d"], add: [add("c", ["b"]), add("e", ["c"])] },
+  };
+  const run = { tasks, scope: ["src", "docs"] };
+  const within = bounds({ route: run });
+  expect(decodeRecoveryDecision(JSON.stringify(value), within)).toEqual(value);
+  expect(revisedRoute(tasks, value.route)).toEqual({
+    superseded: ["d"],
+    rewritten: [value.route.add[0]],
+    added: [value.route.add[1]],
+  });
+  // A new assignment may write anywhere in the run's scope, even when the
+  // tree deciding owns less, and in what this decision adds to the scope.
+  for (const route of [
+    { add: [add("e", [], ["docs/guide.md"])] },
+    { drop: ["c", "d"] },
+  ])
+    expect(
+      decodeRecoveryDecision(
+        JSON.stringify({ ...value, route }),
+        bounds({ scope: ["src/b.ts"], route: run }),
+      ).route,
+    ).toEqual({ drop: [], add: [], ...route });
+  expect(
+    decodeRecoveryDecision(
+      JSON.stringify({
+        ...value,
+        scope: ["lib/new.ts"],
+        route: { add: [add("e", [], ["lib/new.ts"])] },
+      }),
+      within,
+    ).route?.add[0].writes,
+  ).toEqual(["lib/new.ts"]);
+  for (const [invalid, reason] of [
+    // A repair keeps the assignments; only a revised route changes them.
+    [{ ...value, level: "repair" }, "revise the route with level replan"],
+    [{ ...value, route: { drop: ["b"] } }, "has not started"],
+    [{ ...value, route: { drop: ["a"] } }, "has not started"],
+    [{ ...value, route: { add: [add("b")] } }, "has not started"],
+    // A superseded ID is not free again.
+    [{ ...value, route: { add: [add("old")] } }, "has not started"],
+    [{ ...value, route: { drop: ["zzz"] } }, "does not list"],
+    // d still waits for c.
+    [{ ...value, route: { drop: ["c"] } }, "drop or rewrite d too"],
+    [{ ...value, route: { add: [add("e", ["zzz"])] } }, "waits for zzz"],
+    [{ ...value, route: { add: [add("c", ["d"])] } }, "dependency cycle"],
+    [{ ...value, route: { add: [add("e", [], ["lib/x.ts"])] } }, "outside"],
+    [{ ...value, route: { add: [add("e", [], [".env"])] } }, "requested JSON"],
+    [{ ...value, route: { drop: [], add: [] } }, "at least one"],
+    [{ ...value, route: { drop: ["c"], add: [add("c")] } }, "once"],
+    [{ ...value, route: { add: [add("e"), add("e")] } }, "once"],
+    [{ ...value, route: { add: [add("Bad_ID")] } }, "lowercase"],
+    [
+      { ...value, route: { add: [{ ...add("e"), command: "install" }] } },
+      "requested JSON",
+    ],
+    [
+      { ...value, action: "blocked", blocker: "tool", work: [] },
+      "cannot dispatch work",
+    ],
+  ] as const)
+    expect(
+      () => decodeRecoveryDecision(JSON.stringify(invalid), within),
+      reason,
+    ).toThrow(reason);
+  // Outside the scheduling of assignments there is no route to revise.
+  expect(() => decodeRecoveryDecision(JSON.stringify(value), bounds())).toThrow(
+    "No assignment is waiting to start",
+  );
+  // One run lists a bounded number of assignments in all.
+  const many: RouteTask[] = Array.from({ length: 48 }, (_, n) => ({
+    id: `t${n}`,
+    after: [],
+    state: "completed",
+  }));
+  expect(() => revisedRoute(many, { drop: [], add: [add("e")] })).toThrow(
+    "at most 48",
+  );
+});
+it("the same route with unchanged evidence is not a new approach", async () => {
+  const route = {
+    drop: ["c"],
+    add: [
+      {
+        id: "e",
+        title: "E",
+        instructions: "Do e",
+        writes: ["src/e.ts"],
+        after: [],
+      },
+    ],
+  };
+  const levels: RecoveryLevel[] = [];
+  const f = fixture({
+    diagnose: async (_failure, _previous, floor) => {
+      levels.push(floor);
+      return {
+        ...decision("Replace c by e"),
+        level: floor === "repair" ? "replan" : floor,
+        route,
+        deviation:
+          floor === "deviate"
+            ? { item: "x", reason: "y", delivered: "z", waives: [] }
+            : null,
+      };
+    },
+  });
+  let attempt = 0;
+  await f.controller.complete("assignment b", async () => {
+    if (++attempt <= 2) throw new AttemptFailure("unfinished", ["step-a"]);
+  });
+  // The second identical replan was moved up instead of being replayed.
+  expect(levels).toEqual(["repair", "repair", "deviate"]);
 });

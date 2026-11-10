@@ -60,7 +60,10 @@ A complete strict JSON final report remains an alternative structured report, ne
 Blocked, malformed or missing reports fail that attempt, not the goal.
 The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further work.
 A revision has a level: `repair` stays inside the current write scope; `replan` may bring further repository paths into it (never credentials, keys, `.env`, `.git` or paths outside the repository, and for a fast-forward delivery never a path the target checkout has its own changes to); `deviate` records that an acceptance item or decision cannot be met as written, what is delivered instead, and which declared checks it sets aside.
-The run keeps its added scope and its deviations (`WorkflowRun.scope`, `deviations`, at most 16 deviations); later assignments are told the delivered variant.
+While assignments are still being scheduled, a `replan` or `deviate` decision may also revise the route itself (`RecoveryRoute`): drop an assignment that has not started, add one, or give one again under its own ID to rewrite it.
+An assignment that has started never changes (what remains of the failed one is the decision's work items), every assignment that waited for a dropped one must be dropped or rewritten in the same decision, the order stays acyclic and one run lists at most 48 assignments in all.
+A new assignment may write anywhere in the run's scope, including what the same decision adds to it; those paths belong to that assignment, not to the tree that decided.
+The run keeps its current route, its added scope and its deviations (`WorkflowRun.tasks`, `scope`, `deviations`, at most 16 deviations); later assignments are told the delivered variant.
 Dependent assignments wait for completion.
 Unknown originals, Cancel and authority/storage failures stop new work.
 An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.

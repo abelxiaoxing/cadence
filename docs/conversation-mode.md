@@ -243,6 +243,7 @@ A parent session may record a whole batch of tool results together, so those tim
 Long workflows retain earlier steps in readonly pages rather than stopping at a step count.
 Open **Earlier workflow steps** in the WebUI, **Earlier steps** in native history, or use `cadence_status` with the returned `stepsBefore` as `before`.
 Route revisions and failed attempts remain visible; a later successful attempt never rewrites their original outcomes.
+A revision may also change the assignments that have not started yet (drop, rewrite or add one); the workflow view shows which revision did, and a dropped assignment stays listed as superseded.
 
 ## Discover active Pi work
 

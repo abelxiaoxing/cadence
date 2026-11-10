@@ -3913,6 +3913,13 @@ button.file-item:hover:not(:disabled),
 .workflow-task-state.failed {
   color: var(--red-text);
 }
+.workflow-task-state.superseded
+  + .workflow-task-body
+  .workflow-task-title
+  > span {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
 .workflow-task-body {
   flex: 1;
   min-width: 0;
