@@ -174,7 +174,10 @@ export class GatewayConversations {
         };
         break;
       case "conversations": {
-        result = view.records.list(request.after ?? null);
+        result = view.records.list(
+          request.after ?? null,
+          request.archived === true,
+        );
         if (result.kind === "conversations")
           result = {
             ...result,

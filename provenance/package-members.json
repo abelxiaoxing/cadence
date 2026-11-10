@@ -87,6 +87,8 @@
   "package/src/service/liveness.ts",
   "package/src/service/private-files.ts",
   "package/src/session-entries.mjs",
+  "package/src/session-file.mjs",
+  "package/src/session-rename.mjs",
   "package/src/session-sharing.ts",
   "package/src/startup-card.ts",
   "package/src/verification-diagnostics.ts",

@@ -1,7 +1,8 @@
 /** Pi session files of one project: the conversation history the terminal and
- * the browser share. Pi writes them (in the terminal, or in a browser turn's
- * SDK worker); this module only reads them, incrementally, and never repairs,
- * rewrites or deletes one. Credentials are redacted from what it returns. */
+ * the browser share. Pi writes them (in the terminal, in a browser turn's SDK
+ * worker, or in the rename child); this module only reads them, incrementally,
+ * and never repairs, rewrites or deletes one. Credentials are redacted from
+ * what it returns. */
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -62,6 +63,10 @@ const PART_TEXT_BYTES = 200 * 1024;
 const PART_ARGS_BYTES = 48 * 1024;
 /** Arguments parsed to name a tool's target; longer ones name nothing. */
 const TARGET_ARGS = 1024 * 1024;
+/** Entries one context-usage walk visits from a branch end, and the results
+ * an opened session remembers: bounds on a polled read, never on a session. */
+export const USAGE_WALK = 256;
+const USAGE_RESULTS = 64;
 
 /** Where Pi keeps this project's sessions, with Pi's own precedence: the
  * PI_CODING_AGENT_SESSION_DIR environment variable, then `sessionDir` in the
@@ -369,6 +374,44 @@ function stopStatus(m: Record<string, unknown>): {
   return { status: "completed", notice: "" };
 }
 
+/** Context size as of the last completed model response on a branch. */
+export interface BranchUsage {
+  /** What that response reported; null when a compaction came after it. */
+  tokens: number | null;
+  provider: string;
+  model: string;
+}
+/** The tokens an assistant message reported, as Pi counts a valid usage: the
+ * reply neither failed nor was aborted, and its total is above zero. */
+function reportedUsage(entry: SessionEntry): BranchUsage | undefined {
+  const m = message(entry);
+  if (!m || own(m, "role") !== "assistant") return undefined;
+  const reason = own(m, "stopReason"),
+    usage = own(m, "usage");
+  if (
+    reason === "aborted" ||
+    reason === "error" ||
+    !usage ||
+    typeof usage !== "object"
+  )
+    return undefined;
+  const count = (key: string) => {
+    const value = own(usage as Record<string, unknown>, key);
+    return typeof value === "number" ? value : Number.NaN;
+  };
+  const tokens =
+    count("totalTokens") ||
+    count("input") + count("output") + count("cacheRead") + count("cacheWrite");
+  if (!(tokens > 0) || !Number.isFinite(tokens)) return undefined;
+  const provider = own(m, "provider"),
+    model = own(m, "model");
+  return {
+    tokens: Math.min(Math.ceil(tokens), Number.MAX_SAFE_INTEGER),
+    provider: typeof provider === "string" ? provider : "",
+    model: typeof model === "string" ? model : "",
+  };
+}
+
 /** What a listing needs, folded line by line so a long session is read once. */
 export interface SessionSummary {
   id: string;
@@ -457,6 +500,7 @@ export class ParsedSession {
     { value: Record<string, unknown>; bytes: number }
   >();
   private bodyBytes = 0;
+  private readonly usages = new Map<string, BranchUsage | null>();
   constructor(readonly path: string) {}
   private body(
     pos: number,
@@ -537,6 +581,7 @@ export class ParsedSession {
         this.children.clear();
         this.bodies.clear();
         this.bodyBytes = 0;
+        this.usages.clear();
         this.header = null;
       },
     );
@@ -569,10 +614,63 @@ export class ParsedSession {
     }
     return false;
   }
-  /** Entries nothing continues from: more than one means the session branched. */
+  /** The context size the newest valid model response on this branch
+   * reported, looking back at most `USAGE_WALK` entries from `leaf` and
+   * reading only message bodies. A compaction newer than that response leaves
+   * the size unknown. Pi adds an estimate of the messages after the response;
+   * this figure does not. Null when the walk finds no such response. */
+  usage(leaf: string | null): BranchUsage | null {
+    if (leaf === null) return null;
+    const known = this.usages.get(leaf);
+    if (known !== undefined) return known;
+    let found: BranchUsage | null = null,
+      compacted = false;
+    let entry = this.byId.get(leaf);
+    for (let n = 0; entry && n < USAGE_WALK; n++) {
+      if (entry.type === "compaction") compacted = true;
+      else {
+        const usage = reportedUsage(entry);
+        if (usage) {
+          found = compacted ? { ...usage, tokens: null } : usage;
+          break;
+        }
+      }
+      entry =
+        entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    // A branch end's ancestors never change while this file is the same one.
+    if (this.usages.size >= USAGE_RESULTS)
+      this.usages.delete(this.usages.keys().next().value as string);
+    this.usages.set(leaf, found);
+    return found;
+  }
+  /** Entries nothing continues from: more than one means the session branched.
+   * A name record nothing continues is not a branch: one appended while a
+   * terminal held the session ends up beside what the terminal writes next. */
   leaves(): number {
+    // Children follow their parents in the file, so one backward pass decides
+    // which name records lead only to other name records.
+    const names = new Set<string>();
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i];
+      if (
+        entry.type === "session_info" &&
+        (this.children.get(entry.id) ?? []).every((child) =>
+          names.has(child.id),
+        )
+      )
+        names.add(entry.id);
+    }
     let count = 0;
-    for (const entry of this.entries) if (!this.children.has(entry.id)) count++;
+    for (const entry of this.entries) {
+      if (names.has(entry.id)) continue;
+      const children = this.children.get(entry.id);
+      if (
+        !children ||
+        (names.size > 0 && children.every((child) => names.has(child.id)))
+      )
+        count++;
+    }
     return count;
   }
   /** Exact browser ownership, recorded by the worker through Pi's public
@@ -711,6 +809,8 @@ export interface BuiltTurn {
   retry?: ChatTurn["retry"];
   id: string;
   entry: string | null;
+  /** The entry the turn's first message continues, as recorded. */
+  parent: string | null;
   at: number;
   status: ChatStatus;
   notice: string;
@@ -720,9 +820,11 @@ export interface BuiltTurn {
   parts: ChatItem[][];
 }
 const clip = (value: string, bytes: number) => clipText(value, bytes);
-/** Pi's entries of one turn as chat items: user and assistant text, tool calls
- * paired with their results, terminal `!` commands, summaries and extension
- * messages shown in the terminal. Thinking and images are flagged, not shown. */
+/** Pi's entries of one turn as chat items: user and assistant text, readable
+ * thinking, tool calls paired with their results, terminal `!` commands,
+ * summaries and extension messages shown in the terminal. Thinking Pi stored
+ * unreadable (redacted, or a signature without text) and unsupported media are
+ * flagged, not shown; a thinking signature is never returned. */
 export function turnItems(
   entries: SessionEntry[],
   secrets: readonly string[],
@@ -811,9 +913,24 @@ export function turnItems(
               args,
             );
             if (typeof id === "string") tools.set(id, call);
-          } else if (type === "thinking" || type === "redactedThinking")
-            omitted.thinking = true;
-          else if (type === "image") omitted.media = true;
+          } else if (type === "thinking" || type === "redactedThinking") {
+            const value = own(b, "thinking");
+            if (
+              type === "thinking" &&
+              typeof value === "string" &&
+              value.trim() &&
+              own(b, "redacted") !== true
+            )
+              add({
+                id: `${entry.id}:${items.length}`,
+                role: "thinking",
+                text: value,
+                name: "",
+                args: "",
+                error: false,
+              });
+            else omitted.thinking = true;
+          } else if (type === "image") omitted.media = true;
           else omitted.other = true;
         }
         ({ status, notice } = stopStatus(m));
@@ -876,6 +993,7 @@ export function turnItems(
   return {
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
+    parent: first?.parentId ?? null,
     at: first ? time(first.timestamp) : 0,
     status,
     notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),
@@ -940,7 +1058,9 @@ export function listTurn(turn: Omit<BuiltTurn, "steps" | "parts">): BuiltTurn {
       0,
     );
     const more =
-      listed.clipped || (item.role === "tool" && !!(item.args || item.text));
+      listed.clipped ||
+      ((item.role === "tool" || item.role === "thinking") &&
+        !!(item.args || item.text));
     return { ...listed, parts: more ? parts[index].length : 0 };
   });
   return { ...turn, steps, parts };

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -130,4 +130,44 @@ it("uses the current public SDK with literal parent auth and no resource discove
     await session.abort();
     session.dispose();
   }
+});
+
+it("Pi names an opened session with one appended session_info entry, and an empty name clears it", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cadence-sdk-name-"));
+  const id = "01a18b9d-bbbb-72ad-9486-b15306897929";
+  const file = path.join(dir, `2026-11-02T00-00-00-000Z_${id}.jsonl`);
+  const at = new Date(0).toISOString();
+  // No assistant reply yet: an opened file is appended to all the same.
+  const before = `${JSON.stringify({ type: "session", version: 3, id, timestamp: at, cwd: dir })}\n${JSON.stringify(
+    {
+      type: "message",
+      id: "aaaaaaaa",
+      parentId: null,
+      timestamp: at,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: 0,
+      },
+    },
+  )}\n`;
+  writeFileSync(file, before);
+  const manager = SessionManager.open(file, dir, dir);
+  expect(manager.getSessionId()).toBe(id);
+  const entry = manager.appendSessionInfo("  Named\nhere ");
+  const after = readFileSync(file, "utf8");
+  expect(after.startsWith(before)).toBe(true);
+  expect(after.endsWith("\n")).toBe(true);
+  expect(JSON.parse(after.slice(before.length))).toEqual({
+    type: "session_info",
+    id: entry,
+    parentId: "aaaaaaaa",
+    timestamp: expect.any(String),
+    name: "Named here",
+  });
+  expect(manager.getSessionName()).toBe("Named here");
+  manager.appendSessionInfo("");
+  expect(manager.getSessionName()).toBeUndefined();
+  expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(4);
+  expect(readdirSync(dir)).toHaveLength(1);
 });

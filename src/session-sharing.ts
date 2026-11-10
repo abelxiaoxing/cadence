@@ -1,7 +1,8 @@
 /** Tells a terminal user when the browser continued the session Pi has open.
  * Pi holds its own copy of an open session, so the browser's messages appear
  * here only after the session is resumed again, and a message sent here first
- * continues from where the terminal is, as a new branch. Readonly: it never
+ * continues from where the terminal is, as a new branch. A name recorded
+ * from the browser continues nothing and is not announced. Readonly: it never
  * writes the session or reloads it. */
 import {
   closeSync,
@@ -81,6 +82,7 @@ export function registerSessionSharing(pi: ExtensionAPI): void {
               : {};
           if (
             o.type !== "session" &&
+            o.type !== "session_info" &&
             typeof o.id === "string" &&
             !ctx.sessionManager.getEntry(o.id)
           )

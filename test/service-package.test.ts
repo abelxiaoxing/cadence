@@ -68,6 +68,7 @@ it("reviewed package closes native and maintained worker imports without a termi
   for (const entry of [
     "src/index.ts",
     "src/sdk-worker.mjs",
+    "src/session-rename.mjs",
     "src/cadence-service.mjs",
   ])
     visit(entry);

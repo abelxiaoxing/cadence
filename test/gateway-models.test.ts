@@ -54,6 +54,27 @@ it("the project-less picker reads the workbench account's sources without invent
   expect(readdirSync(f.input.stateHome)).toEqual([]);
   expect(readHostConfig).not.toHaveBeenCalled();
 });
+it("the preview's context windows reach the picker as the child projected them", async () => {
+  const f = fixture();
+  const entry = {
+    provider: "fixture",
+    model: "fixed",
+    api: "openai-completions" as const,
+    thinking: [{ level: "off" as const, selectable: true }],
+    images: false,
+    contextWindow: 200000,
+    eligibility: "candidate" as const,
+  };
+  const read = async () => ({
+    status: "complete" as const,
+    entries: [entry],
+    withheld: 0,
+    remembered: null,
+  });
+  expect(
+    (await readGatewayModels(undefined, f.input, [], read)).entries,
+  ).toEqual([entry]);
+});
 it("a never-started selected folder neither creates private state nor installs a preference", async () => {
   const f = fixture();
   await readGatewayModels(f.project, f.input, [], readModelPreview);
