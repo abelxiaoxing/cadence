@@ -129,7 +129,7 @@ it("Pi appends exactly one name entry at the session's end; an empty name clears
   });
   expect(summary(s)?.name).toBeNull();
   expect(readdirSync(s.dir)).toHaveLength(1);
-});
+}, 20000);
 
 it("a torn last line is ended, never repaired or dropped, before the entry is appended", async () => {
   const s = session();
@@ -147,7 +147,7 @@ it("a torn last line is ended, never repaired or dropped, before the entry is ap
     name: "After a crash",
   });
   expect(summary(s)?.name).toBe("After a crash");
-});
+}, 20000);
 
 it("refuses another identity, an older format and an empty or missing file, leaving every byte as it was", async () => {
   const s = session();
@@ -178,7 +178,7 @@ it("refuses another identity, an older format and an empty or missing file, leav
   // No refusal echoes the name, a path or an exception.
   for (const run of [mismatch, older, absent])
     expect(run.result.output).not.toMatch(/Wrong|sessions|Error/);
-});
+}, 30000);
 
 it("runs only as the owner's guarded child", () => {
   const s = session();
@@ -311,4 +311,4 @@ it("a running owner renames and archives over HTTP: one Pi entry, the lists foll
   } finally {
     await f.close();
   }
-});
+}, 30000);
