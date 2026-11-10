@@ -56,6 +56,8 @@ import {
   type WorkflowRequest,
   type WorkflowRun,
   type WorkflowStep,
+  type WorkflowTask,
+  type WorkflowTaskState,
   workflowBoundary,
   workflowContext,
   workflowCovers,
@@ -226,6 +228,10 @@ interface Live {
   delivered: Set<string>;
   notes: string[];
   controllers?: Map<string, DeliveryController>;
+  /** Tail of this run's serialized Git steps. */
+  git?: Promise<void>;
+  /** Write paths each running assignment owns, by its working tree. */
+  owned?: Map<string, string[]>;
   knowledgeDone?: boolean;
   barrier?: CheckoutPermit;
 }
@@ -420,7 +426,11 @@ export class Workflows {
       };
       if (run.delivery.workspace && run.delivery.workspace.state !== "removed")
         run.delivery.workspace.state = "retained";
+      for (const child of run.delivery.artifacts ?? [])
+        if (child.state !== "removed") child.state = "retained";
     }
+    for (const task of run.tasks ?? [])
+      if (task.state === "running") task.state = "failed";
     for (const step of run.steps)
       if (step.status === "running") step.status = "unknown";
     // Startup runs before model sources load: no secret projection here. The
@@ -1322,7 +1332,7 @@ export class Workflows {
     )
       throw new ContractError("stale");
     this.o.models.assertCurrent(model);
-    if (cwd !== this.cwd) await live.delivery?.assertTip();
+    if (cwd !== this.cwd) await live.delivery?.assertTip(cwd);
     const runCwd = this.executionCwd(live, cwd);
     const role = loadAgentDefinitions().find(
       (r) =>
@@ -1633,7 +1643,7 @@ ${knowledge.text}`,
     this.assertRunning(live);
     const shell = "check" in operation;
     if (cwd !== this.cwd) {
-      if (shell) await live.delivery?.assertTip();
+      if (shell) await live.delivery?.assertTip(cwd);
       else await live.delivery?.assertBinding(cwd);
     }
     if (cwd !== this.cwd && shell) await assertWorktree(this.cwd, cwd);
@@ -1756,14 +1766,23 @@ ${knowledge.text}`,
       if (cwd !== this.cwd) live.delivery?.assertWorkspace(cwd);
       return this.recordGitStep(live, cwd, title, body);
     };
-    return live.delivery
-      ? live.delivery.resources.mutate(
-          live.delivery.view.binding.target.repository,
-          live.abort.signal,
-          operation,
-          () => this.o.owner.state === "idle",
-        )
-      : operation();
+    if (!live.delivery) return operation();
+    const { delivery } = live;
+    // A run's own Git steps queue here, so assignments that finish together
+    // never spend the shared repository lease's wait on one another.
+    const turn = (live.git ?? Promise.resolve()).then(() =>
+      delivery.resources.mutate(
+        delivery.view.binding.target.repository,
+        live.abort.signal,
+        operation,
+        () => this.o.owner.state === "idle",
+      ),
+    );
+    live.git = turn.then(
+      () => {},
+      () => {},
+    );
+    return turn;
   }
   private async recordGitStep<T>(
     live: Live,
@@ -1871,7 +1890,7 @@ ${knowledge.text}`,
     if (!changes.length) return null;
     return this.gitStep(live, cwd, title, async (git) => {
       await this.unchangedHead(cwd, before);
-      if (live.delivery && (await live.delivery.assertTip()) !== before)
+      if (live.delivery && (await live.delivery.assertTip(cwd)) !== before)
         throw new ContractError("stale");
       await assertWorkflowScope(cwd, allowed);
       await git(["add", "--", ...changes]);
@@ -1890,7 +1909,7 @@ ${knowledge.text}`,
       await git(["commit", "--no-verify", "-m", message]);
       const commit = await gitHead(cwd);
       await assertWorkflowCommit(cwd, before, commit, allowed);
-      live.delivery?.update(commit);
+      live.delivery?.update(commit, cwd);
       return commit;
     });
   }
@@ -2131,7 +2150,12 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     live.controllers ??= new Map();
     const existing = live.controllers.get(cwd);
     if (existing) return existing;
-    const scope = () => this.scope(live, p);
+    // An assignment in its own worktree decides inside the paths it owns; the
+    // candidate decides inside the run's whole scope.
+    const candidate = live.delivery?.view.worktreeRoot ?? this.cwd;
+    const scope = () =>
+      (cwd === candidate ? undefined : live.owned?.get(cwd)) ??
+      this.scope(live, p);
     const checks = p.plan.checks.map((c) => c.name);
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live),
@@ -2171,7 +2195,21 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
             "This delivery already recorded as many deviations as one run may; continue without another",
           );
         const added = decision.scope.filter((p) => !workflowCovers(scope(), p));
-        if (added.length) await this.assertAddable(live, added);
+        if (added.length) {
+          const taken = [...(live.owned ?? [])]
+            .filter(([tree]) => tree !== cwd)
+            .flatMap(([, paths]) => paths);
+          const contended = added.filter(
+            (path) =>
+              workflowCovers(taken, path) ||
+              taken.some((other) => workflowCovers([path], other)),
+          );
+          if (contended.length)
+            throw new InvalidDecision(
+              `Another assignment that is running owns these paths: ${contended.join(", ")}. Leave that work to it, or decide without them`,
+            );
+          await this.assertAddable(live, added);
+        }
         return decision;
       },
       record: (record) => {
@@ -2183,8 +2221,10 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         live.run.revision = revision;
         const { decision } = record;
         const added = decision.scope.filter((p) => !workflowCovers(scope(), p));
-        if (added.length)
-          live.run.scope = [...(live.run.scope ?? []), ...added];
+        if (added.length) {
+          live.run.scope = [...new Set([...(live.run.scope ?? []), ...added])];
+          live.owned?.get(cwd)?.push(...added);
+        }
         if (decision.deviation)
           live.run.deviations = [
             ...(live.run.deviations ?? []),
@@ -2567,6 +2607,197 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       throw error;
     }
   }
+  /** Runs the agreement's assignments. With nothing else running and exactly
+   * one assignment able to start, it runs in the candidate, as a serial plan
+   * always has. When several can start, each gets its own worktree at the
+   * candidate's current commit; the owner commits its work there and picks
+   * that commit onto the candidate. Assignments that run together never own
+   * the same path, so a pick cannot conflict; whether their results fit
+   * together is what the combined checks and review decide afterwards. */
+  private async assignments(
+    live: Live,
+    integration: string,
+    p: WorkflowProposal,
+  ): Promise<void> {
+    const tasks = workflowOrder(p.plan.tasks);
+    const delivery = live.delivery;
+    // Without worktrees (direct working-copy delivery) nothing can run beside.
+    const limit = delivery
+      ? Math.max(1, this.o.parallel ?? PARALLEL.default)
+      : 1;
+    const states = new Map<string, WorkflowTaskState>(
+      tasks.map((t) => [
+        t.id,
+        { id: t.id, title: t.title, after: [...t.after], state: "queued" },
+      ]),
+    );
+    live.run.tasks = [...states.values()];
+    const mark = (id: string, state: WorkflowTaskState["state"]) => {
+      (states.get(id) as WorkflowTaskState).state = state;
+      this.save(live);
+    };
+    const owned = new Map<string, string[]>();
+    live.owned = owned;
+    const done: string[] = [];
+    const running = new Map<string, Promise<void>>();
+    let failure: { error: unknown } | undefined;
+    /** Whether a running assignment owns a path this one would write. */
+    const contended = (task: WorkflowTask) => {
+      const taken = [...owned.values()].flat();
+      return (
+        task.writes.some((path) => workflowCovers(taken, path)) ||
+        taken.some((path) => workflowCovers(task.writes, path))
+      );
+    };
+    const ready = () =>
+      tasks.filter(
+        (t) =>
+          states.get(t.id)?.state === "queued" &&
+          t.after.every((id) => done.includes(id)) &&
+          !contended(t),
+      );
+    const attempt = (cwd: string, task: WorkflowTask, before: string[]) =>
+      this.recoverStage(live, cwd, p, `assignment ${task.id}`, async () => {
+        live.run.phase = "implementing";
+        this.save(live);
+        await this.editAttempt(
+          live,
+          cwd,
+          p,
+          task.id,
+          this.assignment(task, before),
+          owned.get(cwd) ?? task.writes,
+        );
+      });
+    this.save(live);
+    for (;;) {
+      const next = failure ? [] : ready();
+      if (!running.size && next.length && (limit === 1 || next.length === 1)) {
+        const task = next[0];
+        this.assertRunning(live);
+        mark(task.id, "running");
+        owned.set(integration, [...task.writes]);
+        try {
+          await attempt(integration, task, done);
+        } catch (error) {
+          mark(task.id, "failed");
+          throw error;
+        } finally {
+          owned.delete(integration);
+        }
+        done.push(task.id);
+        mark(task.id, "completed");
+        continue;
+      }
+      if (delivery && next.length && running.size < limit) {
+        // A child starts from the candidate's commit, so what earlier
+        // assignments left there is committed before the first one forks.
+        if (!running.size)
+          await this.commit(
+            live,
+            integration,
+            this.scope(live, p),
+            "Cadence: assignments so far",
+            await delivery.assertTip(),
+            "commit-assignments",
+          );
+        for (const task of next.slice(0, limit - running.size)) {
+          // One started earlier in this pass may now own a path of this one.
+          if (contended(task)) continue;
+          mark(task.id, "running");
+          const child = delivery.childPath(task.id);
+          owned.set(child, [...task.writes]);
+          const before = [...done];
+          running.set(
+            task.id,
+            (async () => {
+              try {
+                await this.gitStep(
+                  live,
+                  this.cwd,
+                  `worktree-${task.id}`,
+                  (git) => delivery.createChild(task.id, git),
+                );
+                await this.setup(live, child, p);
+                await attempt(child, task, before);
+                // After a sibling's failure nothing more is integrated; this
+                // assignment's work stays in its retained worktree, not in
+                // the candidate.
+                if (failure) {
+                  mark(task.id, "queued");
+                  return;
+                }
+                await this.integrateChild(live, integration, child, task);
+                done.push(task.id);
+                mark(task.id, "completed");
+              } catch (error) {
+                failure ??= { error };
+                mark(task.id, "failed");
+              } finally {
+                owned.delete(child);
+                running.delete(task.id);
+              }
+            })(),
+          );
+        }
+      }
+      if (!running.size) break;
+      // Every started assignment is joined before the stage fails or ends.
+      await Promise.race(running.values());
+    }
+    live.owned = undefined;
+    if (failure) throw failure.error;
+    if (done.length !== tasks.length)
+      throw new ContractError("corrupt-selected");
+  }
+  /** Commits one assignment's work in its own worktree, picks that commit onto
+   * the candidate and removes the worktree when nothing is left in it. */
+  private async integrateChild(
+    live: Live,
+    integration: string,
+    child: string,
+    task: WorkflowTask,
+  ): Promise<void> {
+    const delivery = live.delivery;
+    if (!delivery) throw new ContractError("stale");
+    const writes = live.owned?.get(child) ?? task.writes;
+    const commit = await this.commit(
+      live,
+      child,
+      writes,
+      `Cadence: assignment ${task.id}`,
+      await delivery.assertTip(child),
+      `commit-${task.id}`,
+    );
+    if (commit)
+      await this.gitStep(
+        live,
+        integration,
+        `integrate-${task.id}`,
+        async (git) => {
+          const before = await delivery.assertTip();
+          // No worker edits the candidate while assignments run beside it.
+          await assertWorkflowScope(integration, []);
+          await git(["cherry-pick", "--no-edit", commit]);
+          const picked = await gitHead(integration);
+          await assertWorkflowCommit(integration, before, picked, writes);
+          delivery.update(picked);
+          delivery.applied(child, picked);
+        },
+      );
+    else delivery.applied(child, await delivery.assertTip());
+    await delivery.removeChild(child, (path, check) =>
+      this.gitStep(
+        live,
+        this.cwd,
+        `worktree-remove-${task.id}`,
+        async (git) => {
+          await check();
+          await git(["worktree", "remove", path]);
+        },
+      ),
+    );
+  }
   private async implement(live: Live, p: WorkflowProposal) {
     const plan = p.plan;
     const allowed = workflowWrites(plan);
@@ -2599,28 +2830,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       await this.unchangedHead(integration, base);
       await assertWorkflowScope(integration, allowed);
     }
-    const completed: string[] = [];
-    for (const task of workflowOrder(plan.tasks)) {
-      await this.recoverStage(
-        live,
-        integration,
-        p,
-        `assignment ${task.id}`,
-        async () => {
-          live.run.phase = "implementing";
-          this.save(live);
-          await this.editAttempt(
-            live,
-            integration,
-            p,
-            task.id,
-            this.assignment(task, completed),
-            task.writes,
-          );
-        },
-      );
-      completed.push(task.id);
-    }
+    await this.assignments(live, integration, p);
     await this.verifyAndRepair(live, integration, p, git);
     await this.learn(live, integration, p);
     // Documentation is part of the candidate: review and checks bind its new bytes.

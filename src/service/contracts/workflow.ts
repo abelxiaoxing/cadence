@@ -106,10 +106,26 @@ export interface AcceptanceRecord {
   /** Among `checks`, those a recorded deviation set aside; they failed. */
   waived?: string[];
 }
+/** The worktree of one assignment that ran beside others: created from the
+ * candidate's commit, committed by the owner and picked onto the candidate. */
+export interface DeliveryArtifact {
+  /** The assignment it belongs to. */
+  id: string;
+  path: string;
+  /** The candidate commit it was created from. */
+  base: string;
+  /** Its last commit recorded by the owner. */
+  head: string;
+  /** The candidate commit its work became, once integrated. */
+  applied: string | null;
+  state: "preparing" | "ready" | "removed" | "retained";
+}
 export interface DeliveryObservation {
   binding: DeliveryBinding;
   taskBranch: string;
   worktreeRoot: string;
+  /** Child worktrees of assignments that ran side by side, in creation order. */
+  artifacts?: DeliveryArtifact[];
   preparation: "pending" | "ready" | "unknown";
   workspace: {
     head: string;
@@ -204,6 +220,14 @@ export interface WorkflowDeviation {
 }
 /** Deviations one run may record. */
 export const WORKFLOW_DEVIATIONS = 16;
+/** Where one assignment of the agreement stands. `completed` means its work is
+ * in the candidate. */
+export interface WorkflowTaskState {
+  id: string;
+  title: string;
+  after: string[];
+  state: "queued" | "running" | "completed" | "failed";
+}
 export interface WorkflowRun {
   /** New runs retain older step pages separately; this is a view offset, not eviction. */
   stepsBefore?: number;
@@ -212,6 +236,8 @@ export interface WorkflowRun {
   scope?: string[];
   /** Where this delivery departs from the agreement, in recorded order. */
   deviations?: WorkflowDeviation[];
+  /** The agreement's assignments and where each stands. */
+  tasks?: WorkflowTaskState[];
   verification?: { id: string; source: string; steps: string[] };
   delivery?: DeliveryObservation;
   execution?: ExecutionContext;
@@ -626,6 +652,9 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
     "binding",
     "taskBranch",
     "worktreeRoot",
+    ...(Object.hasOwn((value ?? {}) as object, "artifacts")
+      ? ["artifacts"]
+      : []),
     "preparation",
     "workspace",
     "candidate",
@@ -692,6 +721,33 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
     binding,
     taskBranch,
     worktreeRoot: deliveryPath(d.worktreeRoot),
+    ...(d.artifacts === undefined
+      ? {}
+      : {
+          artifacts: list(d.artifacts, 256, (entry) => {
+            const a = closed(entry, [
+              "id",
+              "path",
+              "base",
+              "head",
+              "applied",
+              "state",
+            ]);
+            return {
+              id: taskId(a.id),
+              path: deliveryPath(a.path),
+              base: gitOid(a.base),
+              head: gitOid(a.head),
+              applied: nullable(a.applied, gitOid),
+              state: oneOf(a.state, [
+                "preparing",
+                "ready",
+                "removed",
+                "retained",
+              ] as const),
+            };
+          }),
+        }),
     preparation: oneOf(d.preparation, ["pending", "ready", "unknown"]),
     workspace,
     candidate,
@@ -719,7 +775,7 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
 export function readableDelivery(binding?: DeliveryBinding): string {
   if (!binding) return "";
   const t = binding.target;
-  return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval.\nAcceptance: checks and automatic Agent review of the exact candidate.\nDelivery: fast-forward only into the bound target, unchanged since approval or this run's last confirmed merge. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
+  return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate.\nAcceptance: checks and automatic Agent review of the exact candidate.\nDelivery: fast-forward only into the bound target, unchanged since approval or this run's last confirmed merge. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
 }
 export function readableDeliveryRun(d?: DeliveryObservation): string {
   if (!d) return "";
@@ -845,6 +901,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     ...(Object.hasOwn(v ?? {}, "revision") ? ["revision"] : []),
     ...(Object.hasOwn(v ?? {}, "scope") ? ["scope"] : []),
     ...(Object.hasOwn(v ?? {}, "deviations") ? ["deviations"] : []),
+    ...(Object.hasOwn(v ?? {}, "tasks") ? ["tasks"] : []),
     ...(Object.hasOwn(v ?? {}, "verification") ? ["verification"] : []),
     ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
@@ -898,6 +955,24 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
               reason: text(d.reason, 4096, true),
               delivered: text(d.delivered, 4096, true),
               waives: list(d.waives, 16, (name) => text(name, 128, true)),
+            };
+          }),
+        }),
+    ...(o.tasks === undefined
+      ? {}
+      : {
+          tasks: list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
+            const t = closed(value, ["id", "title", "after", "state"]);
+            return {
+              id: taskId(t.id),
+              title: text(t.title, 256, true),
+              after: list(t.after, WORKFLOW_LIMITS.tasks, (id) => taskId(id)),
+              state: oneOf(t.state, [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+              ] as const),
             };
           }),
         }),
@@ -1029,7 +1104,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     p.reviewReads?.length
       ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
       : ""
-  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project documents\n${
+  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project documents\n${
     p.version === undefined
       ? p.projectContext
       : documents.join("\n") ||

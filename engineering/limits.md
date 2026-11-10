@@ -42,7 +42,7 @@ An owner lets 64 auth preparations wait their turn (`PREPARATIONS` in `src/servi
 Adaptive delivery and every Agent have no fixed repair-round count or total runtime deadline.
 New setup/check definitions omit `timeoutMs` by default; explicit values (100–2147483647ms, the native timer range) remain exact, including already approved plans.
 Historical task-check codecs retain their original 20min validation boundary; they grant no current execution authority.
-Implementation uses one stable candidate on a new named branch after approval.
+Implementation uses one stable candidate on a new named branch after approval, plus at most one temporary child worktree per assignment (256 recorded artifacts per run).
 `CHANGE_LIMITS` in `src/change-tools.mjs` bounds four live Git evidence streams, 2KiB raw pages, 120s idle expiry and a 30s active-page budget; stop joins actual child closure.
 `src/service/repository-coordination.ts` bounds lease waiting at 30s with 50ms polling and recovery inspection at 256 active owner intents; no live lease expires by age.
 Pi's effective settings own agent-layer request retries/backoff; `WORKER_POLICY` in `src/worker-model.mjs` keeps provider-internal retries and cache warming off.

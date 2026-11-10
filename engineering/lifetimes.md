@@ -11,8 +11,10 @@ Model-request recovery stays inside the original SDK session, without a total ru
 The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
 A terminal model-request failure (recovery exhausted or nonretryable) ends delivery after actual cleanup, rather than starting a second network retry or provider-dependent diagnosis loop.
 Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
-Within that barrier, implementation assignments run in one stable candidate, preserving predecessor and partial-attempt outputs.
-The initial dependency order can share write paths; readonly questions within a research run may still overlap.
+Within that barrier the run's own workers may overlap: implementation assignments that are ready together run side by side in child worktrees of the stable candidate, up to the execution limit, and every started one is joined before the stage ends (see [worktree delivery](worktree-delivery.md)).
+Assignments may share write paths; those never run together.
+Readonly questions within a research run may overlap.
+A run's Git steps are serialized among themselves before they take the shared repository lease.
 A local-merge candidate lives under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/integration` (0700, outside the private service namespace and checkout).
 The candidate is on one named task branch created only after approval; mode entry, research and clarification create no Git resources.
 Git mutation groups also hold a short common-directory lease after the checkout permit, never while waiting for workers or checks.

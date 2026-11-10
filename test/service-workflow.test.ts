@@ -222,7 +222,7 @@ it("workflow output redacts owner and provider literals before retention and def
   }
 }, 30000);
 
-it("real generated owner: task IDs cannot collide with the stable candidate; sequential workers merge while preserving dirt", async () => {
+it("real generated owner: independent assignments run in their own worktrees beside the stable candidate, whatever their IDs, and merge while preserving dirt", async () => {
   const { f, git, propose, start, wait, worktrees } = await setup();
   try {
     writeFileSync(join(f.root, "unrelated.txt"), "user-owned bytes\n");
@@ -249,12 +249,45 @@ it("real generated owner: task IDs cannot collide with the stable candidate; seq
       status: "completed",
       humanReviewed: false,
     });
-    expect(f.maxActive()).toBe(1);
+    // Two assignments that share no write path ran side by side: each in a
+    // worktree of its own, committed there and picked onto the candidate. An
+    // assignment called "integration" or "tasks" is still beside the candidate.
+    const label = (id: string) => id.replace(/-[0-9a-f-]{36}$/u, "");
+    const order = run.steps.map((s) => label(s.id));
+    const worker = (id: string) =>
+      run.steps.findIndex(
+        (s) => s.kind === "implementation" && label(s.id) === id,
+      );
+    expect(worker("integration")).toBeGreaterThan(-1);
+    expect(worker("tasks")).toBeGreaterThan(-1);
+    for (const id of ["integration", "tasks"]) {
+      // Both workers had started before either's work was committed.
+      expect(order.indexOf(`commit-${id}`)).toBeGreaterThan(
+        Math.max(worker("integration"), worker("tasks")),
+      );
+      expect(order.indexOf(`integrate-${id}`)).toBeGreaterThan(
+        order.indexOf(`commit-${id}`),
+      );
+      expect(order).toContain(`worktree-remove-${id}`);
+    }
+    expect(run.tasks).toEqual([
+      { id: "integration", title: "A", after: [], state: "completed" },
+      { id: "tasks", title: "B", after: [], state: "completed" },
+    ]);
+    expect(run.delivery?.artifacts).toMatchObject([
+      { id: "integration", state: "removed" },
+      { id: "tasks", state: "removed" },
+    ]);
+    for (const child of run.delivery?.artifacts ?? []) {
+      expect(child.path).toBe(join(worktrees, run.id, "tasks", child.id));
+      expect(child.applied).toMatch(/^[0-9a-f]{40}$/u);
+    }
     // Worktrees lived outside the private namespace and were removed by plain
     // `git worktree remove` once merged and clean.
     const operations = run.steps.filter((s) => s.kind === "git");
     for (const name of [
       "worktree-integration",
+      "worktree-tasks",
       "commit-candidate",
       "merge",
       "remove-merged-worktree",
@@ -463,7 +496,8 @@ it("failed verification reaches readonly diagnosis and never merges a genuinely 
       .find((text) => text.includes("Diagnose this settled attempt"));
     expect(repair).toContain("fixture-check-diagnostic");
     expect(repair).toContain(reviews[0].id);
-    expect(repair).toContain("Approved paths");
+    expect(repair).toContain("Current write scope: a.txt, b.txt");
+    expect(repair).toContain("Least level for this decision: repair");
     // Each working-copy assignment owns its own scope, not the union: the
     // first worker writes b.txt, which only the second assignment may write.
     const direct = plan();
@@ -472,9 +506,17 @@ it("failed verification reaches readonly diagnosis and never merges a genuinely 
     const scoped = await command({ action: "propose", plan: direct, model });
     if (scoped.type !== "proposal") throw Error("proposal");
     const outside = await wait(await start(scoped.proposal));
+    // The edit is preserved and handed to recovery as a settled fact; here the
+    // scripted diagnosis then stops the delivery.
     expect(outside.status).toBe("failed");
-    expect(outside.notice).toContain("outside the approved scope");
-    expect(outside.notice).toContain("b.txt");
+    expect(outside.notice).toContain("Delivery blocked");
+    const decided = f.observations
+      .map((o) => JSON.stringify(o.messages))
+      .filter((text) => text.includes("Diagnose this settled attempt"))
+      .at(-1);
+    expect(decided).toContain("outside the write scope");
+    expect(decided).toContain("b.txt");
+    expect(decided).toContain("Current write scope: c.txt, b.txt");
     expect(readFileSync(join(f.root, "b.txt"), "utf8")).toBe(
       "implemented b.txt\n",
     );

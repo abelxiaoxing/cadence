@@ -51,7 +51,7 @@ Version-2 agreements (a fixed write scope) and unversioned ones stay readable an
 Setup never implicitly copies dependency trees, profiles or credentials.
 Recovery retries the failed setup command, not preceding successful commands and their effects.
 Baseline checks cannot require future outputs.
-One stable candidate preserves earlier outputs; each editing attempt is attributed against its own write scope.
+One stable candidate collects earlier outputs; each editing attempt is attributed against its own write scope, in the candidate or in its assignment's child worktree.
 Initial cleanliness preconditions are not rerun against the delivery's own work.
 Implementation and knowledge workers submit `cadence_report`, independently captured from successful tool-result content even after transcript preview overflow.
 A later tool invalidates the report.

@@ -5589,6 +5589,7 @@ function decodeDeliveryObservation(value) {
     "binding",
     "taskBranch",
     "worktreeRoot",
+    ...Object.hasOwn(value ?? {}, "artifacts") ? ["artifacts"] : [],
     "preparation",
     "workspace",
     "candidate",
@@ -5647,6 +5648,31 @@ function decodeDeliveryObservation(value) {
     binding,
     taskBranch,
     worktreeRoot: deliveryPath(d.worktreeRoot),
+    ...d.artifacts === undefined ? {} : {
+      artifacts: list(d.artifacts, 256, (entry) => {
+        const a = closed(entry, [
+          "id",
+          "path",
+          "base",
+          "head",
+          "applied",
+          "state"
+        ]);
+        return {
+          id: taskId(a.id),
+          path: deliveryPath(a.path),
+          base: gitOid(a.base),
+          head: gitOid(a.head),
+          applied: nullable(a.applied, gitOid),
+          state: oneOf(a.state, [
+            "preparing",
+            "ready",
+            "removed",
+            "retained"
+          ])
+        };
+      })
+    },
     preparation: oneOf(d.preparation, ["pending", "ready", "unknown"]),
     workspace,
     candidate,
@@ -5770,6 +5796,7 @@ function decodeWorkflowRun(v) {
     ...Object.hasOwn(v ?? {}, "revision") ? ["revision"] : [],
     ...Object.hasOwn(v ?? {}, "scope") ? ["scope"] : [],
     ...Object.hasOwn(v ?? {}, "deviations") ? ["deviations"] : [],
+    ...Object.hasOwn(v ?? {}, "tasks") ? ["tasks"] : [],
     ...Object.hasOwn(v ?? {}, "verification") ? ["verification"] : [],
     ...Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : [],
     ...Object.hasOwn(v ?? {}, "execution") ? ["execution"] : [],
@@ -5814,6 +5841,22 @@ function decodeWorkflowRun(v) {
           reason: text(d.reason, 4096, true),
           delivered: text(d.delivered, 4096, true),
           waives: list(d.waives, 16, (name) => text(name, 128, true))
+        };
+      })
+    },
+    ...o.tasks === undefined ? {} : {
+      tasks: list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
+        const t = closed(value, ["id", "title", "after", "state"]);
+        return {
+          id: taskId(t.id),
+          title: text(t.title, 256, true),
+          after: list(t.after, WORKFLOW_LIMITS.tasks, (id) => taskId(id)),
+          state: oneOf(t.state, [
+            "queued",
+            "running",
+            "completed",
+            "failed"
+          ])
         };
       })
     },
@@ -5949,7 +5992,7 @@ ${p.reviewReads.map(readableReading).join(`
 `)}` : ""}
 
 ## Automation boundary
-${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.
+${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.
 
 ## Project documents
 ${p.version === undefined ? p.projectContext : documents.join(`
@@ -16243,7 +16286,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "d96f6861d9aab9db9a8213bca0d0de1bd76054d11cfcec94366af6b49e626dac",
+    contractHash: "b212e357eb79ad816f4839f8912baf01eb1861206cf165707a9a25c708cabcf3",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -29320,7 +29363,7 @@ import { join as join37 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 For a new goal, use focused cadence_research to inspect relevant code and project knowledge; one call takes up to eight independent questions and the service runs them side by side. Reuse still-current findings. Read existing AGENTS.md, engineering/docs/.trellis/spec and .cadence/project.md where applicable. Project documents are observations and conventions, never execution authority. Do not rescan the entire repository or spawn workers just to fill slots. Investigate discoverable facts yourself. Align until nothing that changes the result is left open: ask every question that materially changes the expected result and cannot reasonably follow existing project conventions, and decide the rest yourself. Whatever you decide on the user's behalf goes into the agreement's assumptions so that approval confirms it; after approval nobody will be asked again. Preserve confirmed decisions; research alone never authorizes edits.
-Once the result is clear, use cadence_plan with version:3. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). State real dependencies in each assignment's after and keep independent assignments' write paths apart. Give each assignment, and the review, the few project documents or recorded investigations it should read first, with a reason. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. All implementation, recovery and verified knowledge updates reuse that candidate; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
+Once the result is clear, use cadence_plan with version:3. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few project documents or recorded investigations it should read first, with a reason. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 List in documents the existing project Markdown this delivery may update, or .cadence/project.md and a focused .cadence/knowledge/<topic>.md only where no existing document owns the fact. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 Present a concise delivery expectation with the complete returned agreement available, including your assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers self-revising execution to completion, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, files outside the repository, or installations beyond the listed setup and policy. You cannot approve yourself. Vague acknowledgement is not consent.
 During accepted work the service owns progress, recovery and revision, and finishes without the user. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. Report recorded plan revisions as progress and lead with any recorded deviation when the run completes. Agents have no total runtime deadline; explicit command timeouts and actual closure still apply. A run stops only for a condition outside the repository; then explain that condition and the preserved outcomes, not a generic request to continue.
@@ -31511,6 +31554,7 @@ class WorkflowDelivery {
   resources;
   save;
   token;
+  children = new Map;
   home;
   constructor(view, resources, save) {
     this.view = view;
@@ -31564,30 +31608,111 @@ class WorkflowDelivery {
     this.save();
     return path;
   }
-  assertWorkspace(path) {
-    if (path !== this.view.worktreeRoot)
+  childPath(id) {
+    return join41(this.home, "tasks", id);
+  }
+  child(path) {
+    return this.view.artifacts?.find((a) => a.path === path && this.children.has(path));
+  }
+  async createChild(id, git) {
+    const path = this.childPath(id);
+    const base = await this.assertTip();
+    if (this.view.artifacts?.some((a) => a.path === path) || safeDirectory(path))
+      throw new ContractError("conflict");
+    if (!safeDirectory(dirname24(path), true))
+      throw new ContractError("forbidden");
+    const token = this.resources.reserveWorkspace(path);
+    this.children.set(path, token);
+    const artifact = {
+      id,
+      path,
+      base,
+      head: base,
+      applied: null,
+      state: "preparing"
+    };
+    this.view.artifacts = [...this.view.artifacts ?? [], artifact];
+    this.save();
+    await git(["worktree", "add", "--detach", path, base]);
+    await assertWorktree(this.view.binding.target.checkoutRoot, path);
+    if (await gitHead(path) !== base)
       throw new ContractError("stale");
-    this.resources.assertWorkspace(this.token ?? "");
+    this.resources.confirmWorkspace(token);
+    artifact.state = "ready";
+    this.save();
+    return path;
+  }
+  assertWorkspace(path) {
+    if (path === this.view.worktreeRoot) {
+      this.resources.assertWorkspace(this.token ?? "");
+      return;
+    }
+    const token = this.children.get(path);
+    if (!token || !this.child(path))
+      throw new ContractError("stale");
+    this.resources.assertWorkspace(token);
   }
   async assertBinding(path) {
     this.assertWorkspace(path);
-    if (this.view.workspace?.state !== "ready" || (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !== this.view.taskBranch)
+    if (path === this.view.worktreeRoot) {
+      if (this.view.workspace?.state !== "ready" || (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !== this.view.taskBranch)
+        throw new ContractError("stale");
+    } else if (this.child(path)?.state !== "ready" || (await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0)
       throw new ContractError("stale");
     await assertWorktree(this.view.binding.target.checkoutRoot, path);
   }
-  async assertTip() {
-    await this.assertBinding(this.view.worktreeRoot);
-    const head = this.view.workspace?.head;
-    if (!head || await gitHead(this.view.worktreeRoot) !== head)
+  async assertTip(path = this.view.worktreeRoot) {
+    await this.assertBinding(path);
+    const head = path === this.view.worktreeRoot ? this.view.workspace?.head : this.child(path)?.head;
+    if (!head || await gitHead(path) !== head)
       throw new ContractError("stale");
     return head;
   }
-  update(head) {
+  update(head, path = this.view.worktreeRoot) {
+    if (path !== this.view.worktreeRoot) {
+      const child2 = this.child(path);
+      if (child2?.state !== "ready")
+        throw new ContractError("stale");
+      child2.head = head;
+      this.save();
+      return;
+    }
     if (this.view.workspace?.state !== "ready")
       throw new ContractError("stale");
     this.view.workspace.head = head;
     this.view.acceptance = null;
     this.save();
+  }
+  applied(path, commit) {
+    const child2 = this.child(path);
+    if (!child2)
+      throw new ContractError("stale");
+    child2.applied = commit;
+    this.save();
+  }
+  async removeChild(path, remove) {
+    const child2 = this.child(path);
+    if (!child2)
+      throw new ContractError("stale");
+    try {
+      await remove(path, async () => {
+        if (!child2.applied || await this.assertTip(path) !== child2.head)
+          throw new ContractError("stale");
+        if ((await worktreeResidue(path)).length)
+          throw new Error("Uncommitted, untracked, ignored or index-hidden files retained");
+      });
+      if (safeDirectory(path))
+        throw new Error("Worktree removal was not confirmed");
+      this.resources.release(this.children.get(path) ?? "");
+      this.children.delete(path);
+      child2.state = "removed";
+    } catch {
+      child2.state = "retained";
+    }
+    this.save();
+    try {
+      rmdirSync(dirname24(path));
+    } catch {}
   }
   targetHead() {
     const i = this.view.integration;
@@ -31665,6 +31790,9 @@ class WorkflowDelivery {
     this.resources.finish();
     if (this.view.workspace && this.view.workspace.state !== "removed")
       this.view.workspace.state = "retained";
+    for (const child2 of this.view.artifacts ?? [])
+      if (child2.state !== "removed")
+        child2.state = "retained";
     if (this.view.preparation === "pending")
       this.view.preparation = "unknown";
     if (this.view.cleanup.status === "pending")
@@ -32228,7 +32356,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "378b79a8ee9574b744f7ccf58ad77f664566c55202e4f0b3e19bc3e758174273",
+  build: "30702fa1acf695b6cd4016194a0f30a191bcdb1eacb50bd80b6ea8ef27497f6f",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -32422,7 +32550,13 @@ class Workflows {
       };
       if (run.delivery.workspace && run.delivery.workspace.state !== "removed")
         run.delivery.workspace.state = "retained";
+      for (const child2 of run.delivery.artifacts ?? [])
+        if (child2.state !== "removed")
+          child2.state = "retained";
     }
+    for (const task of run.tasks ?? [])
+      if (task.state === "running")
+        task.state = "failed";
     for (const step of run.steps)
       if (step.status === "running")
         step.status = "unknown";
@@ -33027,7 +33161,7 @@ class Workflows {
       throw new ContractError("stale");
     this.o.models.assertCurrent(model2);
     if (cwd !== this.cwd)
-      await live2.delivery?.assertTip();
+      await live2.delivery?.assertTip(cwd);
     const runCwd = this.executionCwd(live2, cwd);
     const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? kind === "diagnosis" ? "diagnosis-worker" : "design-explorer" : "implementation-worker"));
     if (!role3)
@@ -33239,7 +33373,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     const shell = "check" in operation;
     if (cwd !== this.cwd) {
       if (shell)
-        await live2.delivery?.assertTip();
+        await live2.delivery?.assertTip(cwd);
       else
         await live2.delivery?.assertBinding(cwd);
     }
@@ -33330,7 +33464,12 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         live2.delivery?.assertWorkspace(cwd);
       return this.recordGitStep(live2, cwd, title, body);
     };
-    return live2.delivery ? live2.delivery.resources.mutate(live2.delivery.view.binding.target.repository, live2.abort.signal, operation, () => this.o.owner.state === "idle") : operation();
+    if (!live2.delivery)
+      return operation();
+    const { delivery } = live2;
+    const turn = (live2.git ?? Promise.resolve()).then(() => delivery.resources.mutate(delivery.view.binding.target.repository, live2.abort.signal, operation, () => this.o.owner.state === "idle"));
+    live2.git = turn.then(() => {}, () => {});
+    return turn;
   }
   async recordGitStep(live2, cwd, title, body) {
     const step = this.step(live2, title, "git");
@@ -33405,7 +33544,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       return null;
     return this.gitStep(live2, cwd, title, async (git) => {
       await this.unchangedHead(cwd, before);
-      if (live2.delivery && await live2.delivery.assertTip() !== before)
+      if (live2.delivery && await live2.delivery.assertTip(cwd) !== before)
         throw new ContractError("stale");
       await assertWorkflowScope(cwd, allowed);
       await git(["add", "--", ...changes]);
@@ -33425,7 +33564,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       await git(["commit", "--no-verify", "-m", message2]);
       const commit = await gitHead(cwd);
       await assertWorkflowCommit(cwd, before, commit, allowed);
-      live2.delivery?.update(commit);
+      live2.delivery?.update(commit, cwd);
       return commit;
     });
   }
@@ -33565,7 +33704,8 @@ ${this.evidence(live2, checks)}`, true, p.model, undefined, "review");
     const existing = live2.controllers.get(cwd);
     if (existing)
       return existing;
-    const scope = () => this.scope(live2, p);
+    const candidate = live2.delivery?.view.worktreeRoot ?? this.cwd;
+    const scope = () => (cwd === candidate ? undefined : live2.owned?.get(cwd)) ?? this.scope(live2, p);
     const checks = p.plan.checks.map((c) => c.name);
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live2),
@@ -33591,8 +33731,13 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
         if (decision.deviation && (live2.run.deviations?.length ?? 0) >= WORKFLOW_DEVIATIONS)
           throw new InvalidDecision("This delivery already recorded as many deviations as one run may; continue without another");
         const added = decision.scope.filter((p2) => !workflowCovers(scope(), p2));
-        if (added.length)
+        if (added.length) {
+          const taken = [...live2.owned ?? []].filter(([tree]) => tree !== cwd).flatMap(([, paths]) => paths);
+          const contended = added.filter((path) => workflowCovers(taken, path) || taken.some((other) => workflowCovers([path], other)));
+          if (contended.length)
+            throw new InvalidDecision(`Another assignment that is running owns these paths: ${contended.join(", ")}. Leave that work to it, or decide without them`);
           await this.assertAddable(live2, added);
+        }
         return decision;
       },
       record: (record3) => {
@@ -33604,8 +33749,10 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
         live2.run.revision = revision;
         const { decision } = record3;
         const added = decision.scope.filter((p2) => !workflowCovers(scope(), p2));
-        if (added.length)
-          live2.run.scope = [...live2.run.scope ?? [], ...added];
+        if (added.length) {
+          live2.run.scope = [...new Set([...live2.run.scope ?? [], ...added])];
+          live2.owned?.get(cwd)?.push(...added);
+        }
         if (decision.deviation)
           live2.run.deviations = [
             ...live2.run.deviations ?? [],
@@ -33828,6 +33975,119 @@ ${result.output}`}`);
       throw error;
     }
   }
+  async assignments(live2, integration, p) {
+    const tasks = workflowOrder(p.plan.tasks);
+    const delivery = live2.delivery;
+    const limit = delivery ? Math.max(1, this.o.parallel ?? PARALLEL.default) : 1;
+    const states = new Map(tasks.map((t) => [
+      t.id,
+      { id: t.id, title: t.title, after: [...t.after], state: "queued" }
+    ]));
+    live2.run.tasks = [...states.values()];
+    const mark = (id, state) => {
+      states.get(id).state = state;
+      this.save(live2);
+    };
+    const owned = new Map;
+    live2.owned = owned;
+    const done = [];
+    const running = new Map;
+    let failure2;
+    const contended = (task) => {
+      const taken = [...owned.values()].flat();
+      return task.writes.some((path) => workflowCovers(taken, path)) || taken.some((path) => workflowCovers(task.writes, path));
+    };
+    const ready2 = () => tasks.filter((t) => states.get(t.id)?.state === "queued" && t.after.every((id) => done.includes(id)) && !contended(t));
+    const attempt2 = (cwd, task, before) => this.recoverStage(live2, cwd, p, `assignment ${task.id}`, async () => {
+      live2.run.phase = "implementing";
+      this.save(live2);
+      await this.editAttempt(live2, cwd, p, task.id, this.assignment(task, before), owned.get(cwd) ?? task.writes);
+    });
+    this.save(live2);
+    for (;; ) {
+      const next = failure2 ? [] : ready2();
+      if (!running.size && next.length && (limit === 1 || next.length === 1)) {
+        const task = next[0];
+        this.assertRunning(live2);
+        mark(task.id, "running");
+        owned.set(integration, [...task.writes]);
+        try {
+          await attempt2(integration, task, done);
+        } catch (error) {
+          mark(task.id, "failed");
+          throw error;
+        } finally {
+          owned.delete(integration);
+        }
+        done.push(task.id);
+        mark(task.id, "completed");
+        continue;
+      }
+      if (delivery && next.length && running.size < limit) {
+        if (!running.size)
+          await this.commit(live2, integration, this.scope(live2, p), "Cadence: assignments so far", await delivery.assertTip(), "commit-assignments");
+        for (const task of next.slice(0, limit - running.size)) {
+          if (contended(task))
+            continue;
+          mark(task.id, "running");
+          const child2 = delivery.childPath(task.id);
+          owned.set(child2, [...task.writes]);
+          const before = [...done];
+          running.set(task.id, (async () => {
+            try {
+              await this.gitStep(live2, this.cwd, `worktree-${task.id}`, (git) => delivery.createChild(task.id, git));
+              await this.setup(live2, child2, p);
+              await attempt2(child2, task, before);
+              if (failure2) {
+                mark(task.id, "queued");
+                return;
+              }
+              await this.integrateChild(live2, integration, child2, task);
+              done.push(task.id);
+              mark(task.id, "completed");
+            } catch (error) {
+              failure2 ??= { error };
+              mark(task.id, "failed");
+            } finally {
+              owned.delete(child2);
+              running.delete(task.id);
+            }
+          })());
+        }
+      }
+      if (!running.size)
+        break;
+      await Promise.race(running.values());
+    }
+    live2.owned = undefined;
+    if (failure2)
+      throw failure2.error;
+    if (done.length !== tasks.length)
+      throw new ContractError("corrupt-selected");
+  }
+  async integrateChild(live2, integration, child2, task) {
+    const delivery = live2.delivery;
+    if (!delivery)
+      throw new ContractError("stale");
+    const writes = live2.owned?.get(child2) ?? task.writes;
+    const commit = await this.commit(live2, child2, writes, `Cadence: assignment ${task.id}`, await delivery.assertTip(child2), `commit-${task.id}`);
+    if (commit)
+      await this.gitStep(live2, integration, `integrate-${task.id}`, async (git) => {
+        const before = await delivery.assertTip();
+        await assertWorkflowScope(integration, []);
+        await git(["cherry-pick", "--no-edit", commit]);
+        const picked = await gitHead(integration);
+        await assertWorkflowCommit(integration, before, picked, writes);
+        delivery.update(picked);
+        delivery.applied(child2, picked);
+      });
+    else
+      delivery.applied(child2, await delivery.assertTip());
+    await delivery.removeChild(child2, (path, check) => this.gitStep(live2, this.cwd, `worktree-remove-${task.id}`, async (git) => {
+      await check();
+      await git(["worktree", "remove", path]);
+    }));
+  }
   async implement(live2, p) {
     const plan = p.plan;
     const allowed = workflowWrites(plan);
@@ -33857,15 +34117,7 @@ ${result.output}`}`);
       await this.unchangedHead(integration, base);
       await assertWorkflowScope(integration, allowed);
     }
-    const completed = [];
-    for (const task of workflowOrder(plan.tasks)) {
-      await this.recoverStage(live2, integration, p, `assignment ${task.id}`, async () => {
-        live2.run.phase = "implementing";
-        this.save(live2);
-        await this.editAttempt(live2, integration, p, task.id, this.assignment(task, completed), task.writes);
-      });
-      completed.push(task.id);
-    }
+    await this.assignments(live2, integration, p);
     await this.verifyAndRepair(live2, integration, p, git);
     await this.learn(live2, integration, p);
     if (live2.knowledgeDone)
@@ -34420,7 +34672,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "d96f6861d9aab9db9a8213bca0d0de1bd76054d11cfcec94366af6b49e626dac";
+  const embedded = "b212e357eb79ad816f4839f8912baf01eb1861206cf165707a9a25c708cabcf3";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
