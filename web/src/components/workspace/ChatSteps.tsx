@@ -2,7 +2,7 @@
  * HalfRingSpinner and Message. MIT (c) 2026 xing-shuyin. A card keeps its
  * recorded arguments and output, read only once opened; its glyph says what was
  * recorded for that call, never whether the work succeeded. */
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import type { IconType } from "react-icons";
 import {
   FiCheck,
@@ -21,10 +21,12 @@ import type { ChatStep } from "../../../../src/service/contracts/workbench.ts";
 import type { TurnSource } from "../../client/conversation-reader";
 import { useStepDetail } from "../../client/turn-source";
 import { describeError, type MessageKey, useT } from "../../i18n/locale";
+import { parseFileMutationArgs } from "../../rich/file-diff";
 import { CopyButton } from "../rich/CopyButton";
 import { Markdown } from "../rich/Markdown";
 import { CollapsibleHead } from "../transcript/CollapsibleHead";
 import { ChatImages } from "./ChatImages";
+import { FileChangeCard } from "./FileChangeCard";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
  * the retention rule rather than an outcome of the turn, so it is not shown. */
@@ -186,7 +188,13 @@ export function ToolStep({
   const [Icon, tone] = toolLook(step.name);
   const state = toolState(turn, index);
   const status = t(STATE_LABEL[state]);
-  const command = detail.value ? toolCommand(detail.value.args) : undefined;
+  const args = detail.value?.args;
+  const command = args ? toolCommand(args) : undefined;
+  // An edit or write shows what it asked for as a change, from these arguments.
+  const change = useMemo(
+    () => (args ? parseFileMutationArgs(step.name, args) : null),
+    [step.name, args],
+  );
   return (
     <div className={`toolcall ${state}`}>
       <CollapsibleHead
@@ -240,7 +248,9 @@ export function ToolStep({
             <>
               {detail.value.args && (
                 <div className="toolcall-args">
-                  {command ? (
+                  {change ? (
+                    <FileChangeCard data={change} failed={state === "err"} />
+                  ) : command ? (
                     <div className="termline">
                       <FiTerminal
                         className="termline-icon"

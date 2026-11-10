@@ -784,6 +784,25 @@ export const zh = {
   "Copy unavailable": "无法复制",
   "Copy message": "复制消息",
   "Message actions": "消息操作",
+  "No path recorded": "未记录路径",
+  "{added} lines added, {removed} removed":
+    "新增 {added} 行，删除 {removed} 行",
+  "Built from the call's recorded arguments. It is not compared with the file, so it is not proof of what the file holds.":
+    "根据这次调用记录下来的参数生成，没有与文件比对，因此不能证明文件现在的内容。",
+  "Error recorded: requested, not applied": "记录到错误：仅为请求内容，未应用",
+  "Requested content": "请求写入的内容",
+  "Requested change": "请求的修改",
+  "No lines recorded.": "没有记录任何行。",
+  "Replacement {index} of {count}: {removed} lines for {added}":
+    "第 {index} 处替换（共 {count} 处）：{removed} 行换成 {added} 行",
+  "Showing the first {shown} of {total} lines.":
+    "仅显示前 {shown} 行，共 {total} 行。",
+  "Show all lines": "显示全部行",
+  "Open image: {name}": "放大查看图片：{name}",
+  "Zoom out": "缩小",
+  "Zoom in": "放大",
+  "Actual size": "原始大小",
+  "Fit to window": "适应窗口",
   "{state} message record, not execution outcome":
     "{state}消息记录，不代表执行结果",
   Collapse: "收起",

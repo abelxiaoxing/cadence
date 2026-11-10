@@ -2,7 +2,7 @@
  * rows with hover actions, name filter, readonly preview and path references.
  * MIT (c) 2026 xing-shuyin.
  * No file mutation, remote SSH, transfer, plugin widgets or set_cwd transport. */
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   FiCheck,
   FiChevronRight,
@@ -20,7 +20,10 @@ import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { describeError, useT } from "../../i18n/locale";
 import { notify } from "../../layout/toasts";
+import { fencedCode } from "../../rich/code-fence";
+import { detectLanguage } from "../../rich/file-diff";
 import { useCopyFeedback } from "../../rich/use-copy-feedback";
+import { Markdown } from "../rich/Markdown";
 
 const lastSegment = (path: string) =>
   path
@@ -34,6 +37,19 @@ function trail(path: string): { label: string; path: string }[] {
     path: path.slice(0, match.index + match[0].length),
   }));
 }
+
+/** A previewed file's text through the Markdown code renderer: numbered
+ * lines, a copy action and the bundled highlighter for a known extension.
+ * Memoized, so a panel re-render never highlights the same text again. */
+export const FilePreviewText = memo(function FilePreviewText({
+  path,
+  text,
+}: {
+  path: string;
+  text: string;
+}) {
+  return <Markdown text={fencedCode(text, detectLanguage(path))} />;
+});
 
 export function FilesPanel({
   client,
@@ -295,7 +311,7 @@ export function FilesPanel({
           )}
           {file && (
             <>
-              <pre>{file.text}</pre>
+              <FilePreviewText path={file.path} text={file.text} />
               {file.limited && (
                 <p className="inspector-note">
                   {t("File preview is limited; this is not the complete file.")}
