@@ -4,7 +4,7 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/gateway.ts
 import { randomUUID as randomUUID14 } from "node:crypto";
-import { opendirSync as opendirSync9 } from "node:fs";
+import { opendirSync as opendirSync10 } from "node:fs";
 import {
   createServer as createServer2,
   request as request2
@@ -5935,6 +5935,7 @@ function decodeEntryId(v) {
   return s;
 }
 var CONVERSATION_SEND_BYTES = 16 * 1024;
+var CONVERSATION_NAME_CHARS = 100;
 var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
@@ -6095,11 +6096,18 @@ function decodeWorkbenchRead(v) {
       };
     }
     case "conversations": {
-      const after = Object.hasOwn(v, "after");
-      const o = closed(v, ["kind", ...after ? ["after"] : []]);
+      const after = Object.hasOwn(v, "after"), archived = Object.hasOwn(v, "archived");
+      const o = closed(v, [
+        "kind",
+        ...after ? ["after"] : [],
+        ...archived ? ["archived"] : []
+      ]);
+      if (archived && o.archived !== true)
+        throw new ContractError("invalid");
       return {
         kind,
-        ...after ? { after: nullable(o.after, decodeChatCursor) } : {}
+        ...after ? { after: nullable(o.after, decodeChatCursor) } : {},
+        ...archived ? { archived: true } : {}
       };
     }
     case "conversation-active":
@@ -6125,6 +6133,14 @@ function decodeWorkbenchRead(v) {
       };
     }
   }
+}
+function decodeConversationName(v) {
+  const name = text(v, 4 * CONVERSATION_NAME_CHARS);
+  if (name !== name.trim() || /\p{Cc}/u.test(name))
+    throw new ContractError("invalid");
+  if ([...name].length > CONVERSATION_NAME_CHARS)
+    throw new ContractError("oversize");
+  return name;
 }
 function decodeWorkbenchCommand(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
@@ -6299,6 +6315,24 @@ function decodeWorkbenchCommand(v) {
       epoch: decodeId(o2.epoch)
     };
   }
+  if (kind === "conversation-rename") {
+    const o2 = closed(v, ["kind", "commandId", "conversationId", "name"]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeSessionId(o2.conversationId),
+      name: decodeConversationName(o2.name)
+    };
+  }
+  if (kind === "conversation-archive") {
+    const o2 = closed(v, ["kind", "commandId", "conversationId", "archived"]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeSessionId(o2.conversationId),
+      archived: bool(o2.archived)
+    };
+  }
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
     kind: oneOf(o.kind, ["open-project"]),
@@ -6448,9 +6482,12 @@ function decodeChatSummary(v) {
     "updatedAt",
     "origin",
     ...has("cadence") ? ["cadence"] : [],
-    ...has("live") ? ["live"] : []
+    ...has("live") ? ["live"] : [],
+    ...has("archived") ? ["archived"] : []
   ]);
   const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  if (has("archived") && o.archived !== true)
+    throw new ContractError("invalid");
   return {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
@@ -6464,7 +6501,8 @@ function decodeChatSummary(v) {
         commandId: decodeId(live.commandId),
         epoch: decodeId(live.epoch)
       }
-    } : {}
+    } : {},
+    ...has("archived") ? { archived: true } : {}
   };
 }
 function decodeChatAttempt(v) {
@@ -8957,10 +8995,20 @@ class ParsedSession {
     return found;
   }
   leaves() {
+    const names2 = new Set;
+    for (let i = this.entries.length - 1;i >= 0; i--) {
+      const entry = this.entries[i];
+      if (entry.type === "session_info" && (this.children.get(entry.id) ?? []).every((child) => names2.has(child.id)))
+        names2.add(entry.id);
+    }
     let count = 0;
-    for (const entry of this.entries)
-      if (!this.children.has(entry.id))
+    for (const entry of this.entries) {
+      if (names2.has(entry.id))
+        continue;
+      const children = this.children.get(entry.id);
+      if (!children || names2.size > 0 && children.every((child) => names2.has(child.id)))
         count++;
+    }
     return count;
   }
   commandEntries(commandId, parent, offset) {
@@ -13991,7 +14039,7 @@ function conversationIdentity(identity) {
 }
 
 // src/service/conversation-records.ts
-import { lstatSync as lstatSync15 } from "node:fs";
+import { lstatSync as lstatSync15, opendirSync as opendirSync8 } from "node:fs";
 import { join as join24 } from "node:path";
 var META_BYTES = 64 * 1024;
 var PAGE = 50;
@@ -14168,6 +14216,34 @@ class ConversationRecords {
   controlKey(id) {
     return observedFile(this.controlPath(id));
   }
+  archivePath(id) {
+    this.assertSupported(id);
+    return join24(this.bindings, "archive", `${decodeSessionId(id)}.json`);
+  }
+  archived(id) {
+    const path = this.archivePath(id);
+    return this.files.directory(join24(this.bindings, "archive")) && observedFile(path) !== "absent";
+  }
+  archivedSessions() {
+    const directory2 = join24(this.bindings, "archive"), ids = new Set;
+    if (!this.files.directory(directory2))
+      return ids;
+    const dir = opendirSync8(directory2);
+    try {
+      for (let e = dir.readSync();e; e = dir.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json"))
+          throw new ContractError("corrupt-selected");
+        try {
+          ids.add(decodeSessionId(e.name.slice(0, -5)));
+        } catch {
+          throw new ContractError("corrupt-selected");
+        }
+      }
+    } finally {
+      dir.closeSync();
+    }
+    return ids;
+  }
   hasCommand(id, commandId) {
     return this.accepted(commandId)?.session === id;
   }
@@ -14188,9 +14264,10 @@ class ConversationRecords {
     const commandId = this.index(id).commands.at(-1);
     return commandId ? { commandId, status: this.state(commandId).status } : null;
   }
-  summary(id, live2) {
+  summary(id, live2, archived = this.archived(id)) {
     this.assertSupported(id);
     const listed = this.sessions.find(id);
+    const hidden = archived ? { archived: true } : {};
     if (!listed) {
       if (!live2)
         return null;
@@ -14201,7 +14278,8 @@ class ConversationRecords {
         status: live2.state.status,
         updatedAt: live2.accepted.at,
         origin: "webui",
-        live: { commandId: live2.commandId, epoch: live2.epoch }
+        live: { commandId: live2.commandId, epoch: live2.epoch },
+        ...hidden
       };
     }
     const s = listed.summary;
@@ -14215,17 +14293,19 @@ class ConversationRecords {
     }
     return {
       id,
-      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") || "Conversation", 512, true),
+      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, CONVERSATION_NAME_CHARS).join("") || "Conversation", 512, true),
       leaf: s.leaf,
       status,
       updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
       origin: s.webui ? "webui" : "terminal",
-      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {}
+      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {},
+      ...hidden
     };
   }
-  list(after = null) {
+  list(after = null, archived = false) {
     this.o.assertCurrent();
-    const listed = this.sessions.list().filter((row) => !retiredConversation(this.o.coordination, row.summary.id));
+    const hidden = this.archivedSessions();
+    const listed = this.sessions.list().filter((row) => hidden.has(row.summary.id) === archived && !retiredConversation(this.o.coordination, row.summary.id));
     let start = 0;
     if (after) {
       start = listed.findIndex((l) => Math.trunc(l.mtimeMs) < after.updatedAt || Math.trunc(l.mtimeMs) === after.updatedAt && l.summary.id > after.id);
@@ -14234,7 +14314,7 @@ class ConversationRecords {
     }
     const page = listed.slice(start, start + PAGE);
     const entries2 = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived);
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
@@ -14822,7 +14902,7 @@ import {
   constants as constants7,
   fstatSync as fstatSync6,
   lstatSync as lstatSync16,
-  opendirSync as opendirSync8,
+  opendirSync as opendirSync9,
   openSync as openSync7,
   readSync as readSync5,
   realpathSync as realpathSync9
@@ -14886,7 +14966,7 @@ class WorkbenchFiles {
     const selected2 = directories ? this.browsed(path) : this.selected(path);
     if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
       throw new ContractError("forbidden");
-    const entries2 = [], dir = opendirSync8(selected2);
+    const entries2 = [], dir = opendirSync9(selected2);
     let limited = false, scanned = 0;
     try {
       for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -15083,7 +15163,7 @@ class GatewayConversations {
         };
         break;
       case "conversations": {
-        result = view.records.list(request2.after ?? null);
+        result = view.records.list(request2.after ?? null, request2.archived === true);
         if (result.kind === "conversations")
           result = {
             ...result,
@@ -16249,7 +16329,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "a1592e0793f44712f82e4515db861ec09d3a77ae95ac64ff375f2dcb75a9023e",
+    contractHash: "dd35d9e022cd8a7f061847df062b399f854ccaaaac60c6dcd7d564809c7e62b4",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -16551,7 +16631,7 @@ Content-Length: 0\r
       throw new ContractError("capacity");
     const commands2 = store.path("commands");
     if (store.files.directory(commands2)) {
-      const dir = opendirSync9(commands2);
+      const dir = opendirSync10(commands2);
       let count = 0;
       try {
         while (dir.readSync())
@@ -17133,7 +17213,7 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { lstatSync as lstatSync26, opendirSync as opendirSync16 } from "node:fs";
+import { lstatSync as lstatSync26, opendirSync as opendirSync17 } from "node:fs";
 import { join as join44 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
@@ -24153,7 +24233,7 @@ class HistoryReader {
 
 // src/history/recovery.ts
 import { createHash as createHash25, randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync19, opendirSync as opendirSync10 } from "node:fs";
+import { lstatSync as lstatSync19, opendirSync as opendirSync11 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
@@ -26433,7 +26513,7 @@ function digestHistory(files, exclude) {
     const directory2 = lstatSync19(path);
     digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
-    const dir = opendirSync10(path), names2 = [];
+    const dir = opendirSync11(path), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count2 > LIMITS.dataFrames)
@@ -27730,6 +27810,24 @@ function launchConversation(prepared, conversation, signal, options) {
       imageInput,
       onFrame: (frame) => options.onFrame(frame, secrets)
     });
+  });
+}
+var SESSION_RENAME_MS = 60000;
+function renameSession(target2, signal, maySignal) {
+  return runProcess({
+    command: process.execPath,
+    args: [fileURLToPath6(new URL("./session-rename.mjs", import.meta.url))],
+    cwd: target2.dir,
+    input: JSON.stringify({
+      id: target2.id,
+      dir: target2.dir,
+      file: target2.file,
+      cwd: target2.cwd,
+      name: target2.name
+    }),
+    timeoutMs: SESSION_RENAME_MS,
+    signal,
+    maySignal
   });
 }
 function launchWorkflowWorker(prepared, cwd, signal, options) {
@@ -29232,7 +29330,7 @@ class ServiceOwner {
 }
 
 // src/service/workbench.ts
-import { opendirSync as opendirSync15 } from "node:fs";
+import { opendirSync as opendirSync16 } from "node:fs";
 import { join as join43 } from "node:path";
 
 // src/service/conversation-images.ts
@@ -29729,7 +29827,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 
 // src/service/conversations.ts
 import { randomUUID as randomUUID25 } from "node:crypto";
-import { opendirSync as opendirSync11, statfsSync as statfsSync2 } from "node:fs";
+import { opendirSync as opendirSync12, statfsSync as statfsSync2 } from "node:fs";
 import { dirname as dirname21, join as join38 } from "node:path";
 var META_BYTES2 = 64 * 1024;
 var PREVIEW_BYTES = 64 * 1024;
@@ -29741,6 +29839,8 @@ var OMITTED_FLAG = {
   binary: "media",
   unsupported: "other"
 };
+var RENAMES = 4;
+var RENAME_RECEIPTS = 64;
 
 class LiveCapture {
   secrets;
@@ -29894,6 +29994,16 @@ class Conversations {
   records;
   contexts;
   active = new Map;
+  renaming = new Set;
+  renames = new Map;
+  maySignal = () => {
+    try {
+      this.o.owner.lease.assert();
+      return true;
+    } catch {
+      return false;
+    }
+  };
   activity() {
     return [...this.active.values()].map((live2) => managedActivity({
       id: live2.commandId,
@@ -29944,7 +30054,7 @@ class Conversations {
     const sessions = join38(this.records.root, "sessions");
     if (!this.files.directory(sessions))
       return;
-    const dir = opendirSync11(sessions);
+    const dir = opendirSync12(sessions);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isFile() || !e.name.endsWith(".json"))
@@ -29988,6 +30098,8 @@ class Conversations {
       throw new ContractError("quarantine");
     if (input.model.conversation && input.model.conversation.id !== input.conversationId)
       throw new ContractError("stale");
+    if (this.renaming.has(input.conversationId))
+      throw new ContractError("conflict");
     const execution = this.contexts.capture(input.model, !!control?.reply);
     const context = this.contexts.records.read({
       id: input.conversationId,
@@ -30072,6 +30184,97 @@ class Conversations {
     }
     begin();
     return { kind: "accepted", commandId: input.commandId };
+  }
+  rename(request3) {
+    this.o.owner.lease.assert();
+    const identity2 = canonicalJson(request3), id = request3.conversationId;
+    const prior = this.renames.get(request3.commandId);
+    if (prior) {
+      if (prior.identity !== identity2)
+        throw new ContractError("conflict");
+      return prior.result;
+    }
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    this.records.assertSupported(id);
+    if (sanitizeText(request3.name, this.o.secrets()) !== request3.name)
+      throw new ContractError("forbidden");
+    const listed = this.records.sessions.find(id);
+    if (!listed)
+      throw new ContractError("stale");
+    if (this.records.liveFor(id) || this.renaming.has(id))
+      throw new ContractError("conflict");
+    if (this.renaming.size >= RENAMES)
+      throw new ContractError("capacity");
+    const abort = new AbortController;
+    const closed2 = Promise.resolve().then(() => renameSession({
+      id,
+      dir: dirname21(listed.path),
+      file: listed.path,
+      cwd: listed.summary.cwd,
+      name: request3.name
+    }, abort.signal, this.maySignal)).catch(() => {
+      return;
+    });
+    const receipt = {
+      identity: identity2,
+      pending: true,
+      result: closed2.then((run) => {
+        this.renaming.delete(id);
+        receipt.pending = false;
+        if (run?.outcome !== "completed")
+          throw new ContractError("unavailable");
+        if (this.records.sessions.find(id)?.summary.name !== (request3.name || null))
+          throw new ContractError("receipt-inconclusive");
+        return { kind: "accepted", commandId: request3.commandId };
+      })
+    };
+    receipt.result.catch(() => {});
+    try {
+      this.o.owner.trackConversation(closed2.then((run) => ({
+        status: run && !run.closed ? "uncertain" : "settled"
+      })), () => abort.abort({
+        source: "service",
+        reason: "stop",
+        target: request3.commandId
+      }));
+    } catch (error) {
+      abort.abort();
+      throw error;
+    }
+    this.renaming.add(id);
+    this.renames.set(request3.commandId, receipt);
+    for (const [commandId, kept] of this.renames) {
+      if (this.renames.size <= RENAME_RECEIPTS)
+        break;
+      if (!kept.pending)
+        this.renames.delete(commandId);
+    }
+    return receipt.result;
+  }
+  archive(request3) {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const id = request3.conversationId, path = this.records.archivePath(id);
+    const current2 = this.files.read(path);
+    if (request3.archived && !current2) {
+      if (!this.records.sessions.find(id))
+        throw new ContractError("stale");
+      this.write(path, {
+        schema: "cadence-conversation-archive/1",
+        id,
+        at: Date.now()
+      });
+    } else if (!request3.archived && current2) {
+      try {
+        this.files.remove(path, current2);
+      } catch (error) {
+        this.o.owner.quarantine();
+        throw error;
+      }
+    }
+    return { kind: "accepted", commandId: request3.commandId };
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
@@ -30195,14 +30398,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         images: live2.images,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
-        maySignal: () => {
-          try {
-            this.o.owner.lease.assert();
-            return true;
-          } catch {
-            return false;
-          }
-        },
+        maySignal: this.maySignal,
         onNative: (value) => {
           native = value;
         },
@@ -30260,7 +30456,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 
 // src/service/workflows.ts
 import { randomUUID as randomUUID27 } from "node:crypto";
-import { opendirSync as opendirSync14, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { opendirSync as opendirSync15, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { basename as basename5, dirname as dirname25, join as join42, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
@@ -30514,7 +30710,7 @@ import {
   constants as constants10,
   fstatSync as fstatSync8,
   lstatSync as lstatSync23,
-  opendirSync as opendirSync12,
+  opendirSync as opendirSync13,
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
@@ -31147,7 +31343,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync12(dirname23(probe2));
+        directory2 = opendirSync13(dirname23(probe2));
         while (entries2 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -31587,7 +31783,7 @@ class WorkflowDelivery {
 
 // src/service/workflow-history.ts
 import { randomUUID as randomUUID26 } from "node:crypto";
-import { lstatSync as lstatSync25, opendirSync as opendirSync13 } from "node:fs";
+import { lstatSync as lstatSync25, opendirSync as opendirSync14 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -31624,7 +31820,7 @@ class WorkflowHistoryScanner {
       if (this.scans.size >= WORKFLOW_LIMITS.historyScans)
         throw new ContractError("capacity");
       const incarnation3 = this.incarnation();
-      state = { dir: opendirSync13(this.path), incarnation: incarnation3, after, ids: [] };
+      state = { dir: opendirSync14(this.path), incarnation: incarnation3, after, ids: [] };
     }
     let suspended = false;
     try {
@@ -32138,7 +32334,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "bda0d25ca7f45e455250df37af169d564b1cbaf97cb7ea2b1e5d8f9146c808fb",
+  build: "8902262b5c7e2229cd859e344f8779ce0906ad34bc4d9db792490907c2bf5b8c",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -32223,7 +32419,7 @@ class Workflows {
     if (!this.files.directory(runs))
       return;
     const ids = [];
-    const dir = opendirSync14(runs);
+    const dir = opendirSync15(runs);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isDirectory())
@@ -33937,7 +34133,7 @@ class Workbench {
         return this.workflows.view(request3.id, request3.before);
       case "conversation-active":
       case "conversations": {
-        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null);
+        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null, request3.archived === true);
         if (value2.kind !== "conversations" && value2.kind !== "conversation-active")
           return value2;
         return {
@@ -34011,7 +34207,7 @@ class Workbench {
     const entries2 = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
     if (!files.directory(this.projectRoot))
       return { kind: "projects", entries: entries2 };
-    const directory2 = opendirSync15(this.projectRoot);
+    const directory2 = opendirSync16(this.projectRoot);
     try {
       for (let e = directory2.readSync();e; e = directory2.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
@@ -34088,6 +34284,10 @@ class Workbench {
       this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
       return { kind: "accepted", commandId: request3.commandId };
     }
+    if (request3.kind === "conversation-rename")
+      return this.conversations.rename(request3);
+    if (request3.kind === "conversation-archive")
+      return this.conversations.archive(request3);
     this.o.owner.lease.assert();
     if (!this.o.projectsEnabled)
       throw new ContractError("unsupported-context");
@@ -34181,7 +34381,7 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync16(store.tasks), records = [];
+  const dir = opendirSync17(store.tasks), records = [];
   let entries2 = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -34244,7 +34444,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "a1592e0793f44712f82e4515db861ec09d3a77ae95ac64ff375f2dcb75a9023e";
+  const embedded = "dd35d9e022cd8a7f061847df062b399f854ccaaaac60c6dcd7d564809c7e62b4";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -30,6 +30,7 @@ import {
   listTurn,
   PiSessions,
   sessionDirectory,
+  summaryTitle,
   turnItems,
   turnSpans,
   USAGE_WALK,
@@ -187,6 +188,47 @@ it("lists this project's sessions newest first, extends them as Pi appends and n
   renameSync(replacement, terminal.path);
   expect(sessions.find(terminal.id)?.summary.firstUser).toBe("Rewritten");
   expect(sessions.session(terminal.id)?.entries).toHaveLength(1);
+});
+
+it("the last name record names a session, an empty one clears it, and a childless one is not a branch", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const u1 = user(null, "First question");
+  const a1 = assistant(u1.id, [{ type: "text", text: "answer" }]);
+  const { id, path } = write(dir, cwd, [u1, a1]);
+  const sessions = new PiSessions(dir, cwd);
+  const title = () => {
+    const summary = sessions.find(id)?.summary;
+    if (!summary) throw Error("session");
+    return [summary.name, summaryTitle(summary)];
+  };
+  const leaves = () => sessions.session(id)?.leaves();
+  expect(title()).toEqual([null, "First question"]);
+  expect(leaves()).toBe(1);
+  // A name appended at the session's end: still one branch, and its leaf.
+  const named = entry("session_info", a1.id, {
+    name: "Named from the browser",
+  });
+  appendFileSync(path, line(named));
+  expect(title()).toEqual(["Named from the browser", "Named from the browser"]);
+  expect(sessions.session(id)?.current()).toBe(named.id);
+  expect(leaves()).toBe(1);
+  // A terminal that held the session continues from where it was: the name
+  // record is left beside its message, which does not make a second branch.
+  const u2 = user(a1.id, "Terminal continues");
+  const renamed = entry("session_info", named.id, { name: "Again" });
+  appendFileSync(path, line(u2) + line(renamed));
+  expect(title()).toEqual(["Again", "Again"]);
+  expect(leaves()).toBe(1);
+  // A real second branch is still counted, and a continued name record is an
+  // ordinary link of its branch.
+  const u3 = user(renamed.id, "Continues the named branch");
+  appendFileSync(path, line(u3));
+  expect(leaves()).toBe(2);
+  // An empty name clears the title, as in Pi.
+  appendFileSync(path, line(entry("session_info", u3.id, { name: "" })));
+  expect(title()).toEqual([null, "First question"]);
+  expect(leaves()).toBe(2);
 });
 
 it("splits a branch into turns of chat items, redacted, with Pi's failure status", () => {

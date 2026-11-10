@@ -110,7 +110,12 @@ export type WorkbenchRead =
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string; before?: number }
   | { kind: "conversation-active" }
-  | { kind: "conversations"; after?: ChatCursor | null }
+  | {
+      kind: "conversations";
+      after?: ChatCursor | null;
+      /** Lists only archived conversations, which the history otherwise omits. */
+      archived?: true;
+    }
   | {
       kind: "conversation";
       id: string;
@@ -142,6 +147,8 @@ export type WorkbenchRead =
   | { kind: "projects" };
 /** Maximum UTF-8 bytes of one explicit conversation Send. */
 export const CONVERSATION_SEND_BYTES = 16 * 1024;
+/** Code points of a conversation name: as many as a listed title shows. */
+export const CONVERSATION_NAME_CHARS = 100;
 export type ImageSend = Extract<
   WorkbenchCommand,
   { kind: "send" | "cadence-send" }
@@ -230,6 +237,21 @@ export type WorkbenchCommand =
       conversationId: string;
       turnId: string;
       epoch: string;
+    }
+  | {
+      kind: "conversation-rename";
+      commandId: string;
+      conversationId: string;
+      /** One trimmed line, exactly as Pi will record it; empty clears the name,
+       * so the title is the first message again. */
+      name: string;
+    }
+  | {
+      kind: "conversation-archive";
+      commandId: string;
+      conversationId: string;
+      /** Whether the history list leaves this conversation out. */
+      archived: boolean;
     }
   | { kind: "open-project"; commandId: string; path: string; epoch: string };
 export type ChatStatus =
@@ -433,6 +455,8 @@ export interface ChatSummary {
   cadence?: boolean;
   /** The browser reply in progress, which Stop interrupts. */
   live?: { commandId: string; epoch: string };
+  /** Present only for a conversation the history list leaves out. */
+  archived?: true;
 }
 export interface FileEntry {
   name: string;
@@ -653,11 +677,18 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       };
     }
     case "conversations": {
-      const after = Object.hasOwn(v as object, "after");
-      const o = closed(v, ["kind", ...(after ? ["after"] : [])]);
+      const after = Object.hasOwn(v as object, "after"),
+        archived = Object.hasOwn(v as object, "archived");
+      const o = closed(v, [
+        "kind",
+        ...(after ? ["after"] : []),
+        ...(archived ? ["archived"] : []),
+      ]);
+      if (archived && o.archived !== true) throw new ContractError("invalid");
       return {
         kind,
         ...(after ? { after: nullable(o.after, decodeChatCursor) } : {}),
+        ...(archived ? { archived: true as const } : {}),
       };
     }
     case "conversation-active":
@@ -685,6 +716,16 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       };
     }
   }
+}
+/** A name Pi records unchanged: one line, trimmed, without control
+ * characters, at most `CONVERSATION_NAME_CHARS` code points. */
+function decodeConversationName(v: unknown): string {
+  const name = text(v, 4 * CONVERSATION_NAME_CHARS);
+  if (name !== name.trim() || /\p{Cc}/u.test(name))
+    throw new ContractError("invalid");
+  if ([...name].length > CONVERSATION_NAME_CHARS)
+    throw new ContractError("oversize");
+  return name;
 }
 export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
@@ -894,6 +935,24 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       epoch: decodeId(o.epoch),
     };
   }
+  if (kind === "conversation-rename") {
+    const o = closed(v, ["kind", "commandId", "conversationId", "name"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeSessionId(o.conversationId),
+      name: decodeConversationName(o.name),
+    };
+  }
+  if (kind === "conversation-archive") {
+    const o = closed(v, ["kind", "commandId", "conversationId", "archived"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeSessionId(o.conversationId),
+      archived: bool(o.archived),
+    };
+  }
 
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
@@ -1063,8 +1122,11 @@ export function decodeChatSummary(v: unknown): ChatSummary {
     "origin",
     ...(has("cadence") ? ["cadence"] : []),
     ...(has("live") ? ["live"] : []),
+    ...(has("archived") ? ["archived"] : []),
   ]);
   const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  if (has("archived") && o.archived !== true)
+    throw new ContractError("invalid");
   return {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
@@ -1081,6 +1143,7 @@ export function decodeChatSummary(v: unknown): ChatSummary {
           },
         }
       : {}),
+    ...(has("archived") ? { archived: true as const } : {}),
   };
 }
 function decodeChatAttempt(v: unknown): ChatAttempt {

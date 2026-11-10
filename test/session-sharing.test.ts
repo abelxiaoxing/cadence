@@ -51,6 +51,13 @@ it("a terminal is told once when the browser continued its open session, never f
   appendFileSync(file, `,"parentId":"b2"}\n`);
   fire("agent_settled");
   expect(notices).toHaveLength(2);
+  // A name recorded from the browser continues nothing: no notice.
+  appendFileSync(
+    file,
+    line({ type: "session_info", id: "n1", parentId: "b3", name: "Renamed" }),
+  );
+  fire("agent_settled");
+  expect(notices).toHaveLength(2);
   // A context without a session file (or an older Pi) is simply not observed.
   handlers.get("session_start")?.({}, { hasUI: true, sessionManager: {} });
   fire("session_shutdown");

@@ -145,7 +145,10 @@ export class Workbench implements WorkbenchPort {
         const value =
           request.kind === "conversation-active"
             ? this.conversations.records.activeConversations()
-            : this.conversations.records.list(request.after ?? null);
+            : this.conversations.records.list(
+                request.after ?? null,
+                request.archived === true,
+              );
         if (
           value.kind !== "conversations" &&
           value.kind !== "conversation-active"
@@ -372,6 +375,10 @@ export class Workbench implements WorkbenchPort {
       );
       return { kind: "accepted", commandId: request.commandId };
     }
+    if (request.kind === "conversation-rename")
+      return this.conversations.rename(request);
+    if (request.kind === "conversation-archive")
+      return this.conversations.archive(request);
     this.o.owner.lease.assert();
     if (!this.o.projectsEnabled) throw new ContractError("unsupported-context");
     if (this.o.owner.state !== "idle") throw new ContractError("quarantine");

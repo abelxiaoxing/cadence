@@ -1,7 +1,8 @@
 /** Pi session files of one project: the conversation history the terminal and
- * the browser share. Pi writes them (in the terminal, or in a browser turn's
- * SDK worker); this module only reads them, incrementally, and never repairs,
- * rewrites or deletes one. Credentials are redacted from what it returns. */
+ * the browser share. Pi writes them (in the terminal, in a browser turn's SDK
+ * worker, or in the rename child); this module only reads them, incrementally,
+ * and never repairs, rewrites or deletes one. Credentials are redacted from
+ * what it returns. */
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -643,10 +644,33 @@ export class ParsedSession {
     this.usages.set(leaf, found);
     return found;
   }
-  /** Entries nothing continues from: more than one means the session branched. */
+  /** Entries nothing continues from: more than one means the session branched.
+   * A name record nothing continues is not a branch: one appended while a
+   * terminal held the session ends up beside what the terminal writes next. */
   leaves(): number {
+    // Children follow their parents in the file, so one backward pass decides
+    // which name records lead only to other name records.
+    const names = new Set<string>();
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i];
+      if (
+        entry.type === "session_info" &&
+        (this.children.get(entry.id) ?? []).every((child) =>
+          names.has(child.id),
+        )
+      )
+        names.add(entry.id);
+    }
     let count = 0;
-    for (const entry of this.entries) if (!this.children.has(entry.id)) count++;
+    for (const entry of this.entries) {
+      if (names.has(entry.id)) continue;
+      const children = this.children.get(entry.id);
+      if (
+        !children ||
+        (names.size > 0 && children.every((child) => names.has(child.id)))
+      )
+        count++;
+    }
     return count;
   }
   /** Exact browser ownership, recorded by the worker through Pi's public

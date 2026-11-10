@@ -86,6 +86,7 @@ function fixture() {
   return {
     records,
     active,
+    files: coordination.files,
     cwd,
     agentDir,
     command,
@@ -498,4 +499,58 @@ it("a turn names the entry its user message continues; a live one its admitted h
     id: "0000000b",
     parent: "0000000a",
   });
+});
+it("archived sessions leave the history and its pages, and are listed alone on request", () => {
+  const f = fixture(),
+    seeded = seedPiSessions(sessionDirectory(f.cwd, f.agentDir), f.cwd, 120);
+  // Newest first; archive one row of the first page and one of the last.
+  const newest = [...seeded.ids].reverse(),
+    hidden = [newest[10], newest[115]];
+  const record = (id: string) => f.records.archivePath(id);
+  for (const id of hidden)
+    f.files.create(
+      record(id),
+      JSON.stringify({ schema: "cadence-conversation-archive/1", id, at: 1 }),
+    );
+  const pages = (archived: boolean) => {
+    const rows: { id: string; archived?: true }[] = [],
+      sizes: number[] = [];
+    let after: Parameters<typeof f.records.list>[0] = null;
+    for (;;) {
+      const page = f.records.list(after, archived);
+      if (page.kind !== "conversations") throw Error("listing");
+      decodeWorkbenchResult(page);
+      rows.push(...page.entries);
+      sizes.push(page.entries.length);
+      if (!page.next) return { rows, sizes };
+      after = page.next;
+    }
+  };
+  const shown = pages(false);
+  expect(shown.rows.map((row) => row.id)).toEqual(
+    newest.filter((id) => !hidden.includes(id)),
+  );
+  // Filtered before paging: full pages, nothing skipped or repeated.
+  expect(shown.sizes).toEqual([50, 50, 18]);
+  expect(shown.rows.some((row) => "archived" in row)).toBe(false);
+  expect(pages(true).rows).toMatchObject(
+    hidden.map((id) => ({ id, archived: true })),
+  );
+  // A link to an archived conversation still reads, and says what it is.
+  expect(f.records.conversation(hidden[0], null, null)).toMatchObject({
+    summary: { id: hidden[0], archived: true },
+    turns: 1,
+  });
+  expect(f.records.conversation(newest[0], null, null)).not.toHaveProperty(
+    "summary.archived",
+  );
+  // Listed again once its record is gone.
+  const kept = f.files.read(record(hidden[0]));
+  if (!kept) throw Error("record");
+  f.files.remove(record(hidden[0]), kept);
+  expect(pages(true).rows.map((row) => row.id)).toEqual([hidden[1]]);
+  expect(pages(false).rows).toHaveLength(119);
+  // Private state is closed: a stray name is refused, never skipped.
+  f.files.create(join(record(hidden[1]), "..", "notes.txt"), "stray");
+  expect(() => f.records.list()).toThrow("corrupt-selected");
 });
