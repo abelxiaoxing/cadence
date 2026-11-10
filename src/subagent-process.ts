@@ -1075,6 +1075,45 @@ export function launchConversation(
   );
 }
 
+/** One existing Pi session and the name to record in it. */
+export interface SessionRename {
+  id: string;
+  dir: string;
+  file: string;
+  /** The session's own directory, from its header. */
+  cwd: string;
+  name: string;
+}
+/** How long a rename child may take: it loads the SDK, lets Pi read the whole
+ * session and appends one line. */
+export const SESSION_RENAME_MS = 60_000;
+/** A fixed-purpose child that appends one `session_info` entry through Pi's
+ * `SessionManager`, as the terminal's `/name` does: no model, credentials,
+ * tools or capture protocol. The caller holds the owner lease and confirms the
+ * name by reading the session back; exit zero alone is not that evidence. */
+export function renameSession(
+  target: SessionRename,
+  signal: AbortSignal,
+  maySignal: () => boolean,
+): Promise<RunResult> {
+  return runProcess({
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./session-rename.mjs", import.meta.url))],
+    cwd: target.dir,
+    // Exactly the five fields the child accepts.
+    input: JSON.stringify({
+      id: target.id,
+      dir: target.dir,
+      file: target.file,
+      cwd: target.cwd,
+      name: target.name,
+    }),
+    timeoutMs: SESSION_RENAME_MS,
+    signal,
+    maySignal,
+  });
+}
+
 /** Owner-admitted workflow worker. The owner validates/retains the selected
  * worktree and journals launch before calling; model/auth still come from W1. */
 export function launchWorkflowWorker(

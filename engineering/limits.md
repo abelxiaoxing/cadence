@@ -96,11 +96,15 @@ The reader caches eight parsed sessions and 64 built turns; neither bounds what 
 History pages hold 50 summaries; the tree read returns the newest `TREE_NODES` (1000) user messages and says when more exist.
 A step-detail part holds at most 200KiB of encoded text and 48KiB of encoded arguments, so every part fits one 512KiB reply.
 Conversation reads have no turn-count or byte page: the head carries a summary and a count, and each read covers one turn or one part of one step.
+The head's context size looks back at most `USAGE_WALK` (256) entries from the branch end, reading message bodies only, and an opened session remembers 64 such results (`src/service/pi-sessions.ts`).
 A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_BYTES` (16KiB) of encoded text and a 1KiB tool target (arguments over 1MiB name none), which always fits one 512KiB reply; the client reads further ranges itself (`src/service/contracts/workbench.ts`).
 The WebUI keeps four reads in flight per conversation.
 Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
 A live browser turn's preview keeps at most 64KiB per streamed message or tool output (labelled when clipped), for its eight most recent messages and eight most recent tools, and 64 open details; the rest is read from the session once Pi writes it (`src/service/conversations.ts`).
 A session's index names its last 64 browser messages; the owner caches 512 message states and admits eight browser turns at a time, one per session.
+A conversation name is one trimmed line of at most `CONVERSATION_NAME_CHARS` (100) code points (`src/service/contracts/workbench.ts`).
+A rename child may run for `SESSION_RENAME_MS` (60s, `src/subagent-process.ts`); an owner runs four at once, one per session, and keeps the outcome of its last 64 rename commands for a repeated command (`src/service/conversations.ts`).
+Archive records are one small file per archived session, without a count limit.
 Admission retains the 256MiB free-space floor for the owner's records; Pi's own writes are bounded only by the disk, as in the terminal.
 Instantaneous protocol/memory and concurrency protections remain; cumulative bytes and SDK events are diagnostics, not worker lifetime quotas.
 

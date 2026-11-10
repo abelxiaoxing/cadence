@@ -1,12 +1,17 @@
 /** Ordinary and Cadence conversations, which are the project's Pi sessions:
  * the terminal and the browser read and continue the same session files.
- * Pi (the browser turn's SDK worker) writes the content; this owner keeps only
- * each browser message's admission record and reads the sessions back. */
+ * Pi (the browser turn's SDK worker, or the rename child) writes the content;
+ * this owner keeps only each browser message's admission record and its
+ * archive records, and reads the sessions back. */
 import { randomUUID } from "node:crypto";
 import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { InputImage } from "../image-content.mjs";
-import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
+import {
+  launchConversation,
+  type ProcessSpec,
+  renameSession,
+} from "../subagent-process.ts";
 import { describeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import {
   type CaptureFrame,
@@ -57,7 +62,14 @@ const OMITTED_FLAG = {
   unsupported: "other",
 } as const satisfies Record<string, keyof ChatTurn["omitted"]>;
 
+/** Rename children one owner runs at a time, and the rename commands whose
+ * outcome it keeps so that a lost reply observes the original. */
+const RENAMES = 4;
+const RENAME_RECEIPTS = 64;
+
 type Send = Extract<WorkbenchCommand, { kind: "send" }>;
+type Rename = Extract<WorkbenchCommand, { kind: "conversation-rename" }>;
+type Archive = Extract<WorkbenchCommand, { kind: "conversation-archive" }>;
 interface Options {
   contexts?: ConversationContexts;
   coordination: ServiceCoordination;
@@ -95,6 +107,8 @@ export interface Accepted {
 export interface CommandState {
   status: ChatStatus;
   notice: string;
+  /** What the live capture did not keep. Its `thinking` flag stays in the
+   * record but is not shown: the session holds the thinking Pi wrote. */
   omitted: ChatTurn["omitted"];
   /** The user message entry Pi wrote for it, null when none was written. */
   user: string | null;
@@ -239,10 +253,22 @@ export class LiveCapture {
   }
   /** The written items extended by what Pi has not written yet. Pi writes each
    * message when it ends, in the order the worker streamed them, so the
-   * written assistant messages and tool results are counted, not matched. */
+   * written assistant messages and tool results are counted, not matched.
+   * Thinking is not streamed here: a block that splits one message's text
+   * leaves that text counted once. */
   extend(items: ChatItem[]): { items: ChatItem[]; stable: number } {
     const out = items.map((item) => ({ ...item }));
-    const written = out.filter((i) => i.role === "assistant").length;
+    let written = 0,
+      counted: string | undefined;
+    for (const item of out) {
+      if (item.role === "assistant") {
+        // A written assistant item is `<entry id>:<index>`.
+        const at = item.id.lastIndexOf(":");
+        const message = at < 0 ? item.id : item.id.slice(0, at);
+        if (message !== counted) written++;
+        counted = message;
+      } else if (item.role !== "thinking") counted = undefined;
+    }
     const calls = out.filter((i) => i.role === "tool");
     const results = calls.filter((i) => i.text || i.error).length;
     let stable = out.length;
@@ -286,6 +312,21 @@ export class Conversations {
   readonly records: ConversationRecords;
   readonly contexts: ConversationContexts;
   private readonly active = new Map<string, LiveTurn>();
+  /** Sessions a rename child is appending to: no second rename, no Send. */
+  private readonly renaming = new Set<string>();
+  private readonly renames = new Map<
+    string,
+    { identity: string; pending: boolean; result: Promise<WorkbenchResult> }
+  >();
+  /** Every signal to a child is the lease holder's. */
+  private readonly maySignal = () => {
+    try {
+      this.o.owner.lease.assert();
+      return true;
+    } catch {
+      return false;
+    }
+  };
   activity() {
     return [...this.active.values()].map((live) =>
       managedActivity({
@@ -420,6 +461,9 @@ export class Conversations {
       input.model.conversation.id !== input.conversationId
     )
       throw new ContractError("stale");
+    // A rename child is appending to this session; a turn would branch beside it.
+    if (this.renaming.has(input.conversationId))
+      throw new ContractError("conflict");
     const execution = this.contexts.capture(input.model, !!control?.reply);
     const context = this.contexts.records.read({
       id: input.conversationId,
@@ -540,6 +584,120 @@ export class Conversations {
     }
     begin();
     return { kind: "accepted", commandId: input.commandId };
+  }
+  /** Records a session's name as the terminal's `/name` does: a child lets
+   * Pi append one `session_info` entry, and the command is acknowledged only
+   * once the session shows that name. This owner writes no session file. */
+  rename(request: Rename): Promise<WorkbenchResult> {
+    this.o.owner.lease.assert();
+    const identity = canonicalJson(request),
+      id = request.conversationId;
+    const prior = this.renames.get(request.commandId);
+    if (prior) {
+      if (prior.identity !== identity) throw new ContractError("conflict");
+      return prior.result;
+    }
+    if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
+    this.records.assertSupported(id);
+    // A name that reads redact could not be confirmed by reading it back.
+    if (sanitizeText(request.name, this.o.secrets()) !== request.name)
+      throw new ContractError("forbidden");
+    const listed = this.records.sessions.find(id);
+    if (!listed) throw new ContractError("stale");
+    // A live turn's worker holds its own copy of the session: an entry appended
+    // beside it would become a side branch.
+    if (this.records.liveFor(id) || this.renaming.has(id))
+      throw new ContractError("conflict");
+    if (this.renaming.size >= RENAMES) throw new ContractError("capacity");
+    const abort = new AbortController();
+    // The launch waits one turn, so a refused registration below starts nothing.
+    const closed = Promise.resolve()
+      .then(() =>
+        renameSession(
+          {
+            id,
+            dir: dirname(listed.path),
+            file: listed.path,
+            cwd: listed.summary.cwd,
+            name: request.name,
+          },
+          abort.signal,
+          this.maySignal,
+        ),
+      )
+      // A launch that throws started no child.
+      .catch(() => undefined);
+    const receipt = {
+      identity,
+      pending: true,
+      result: closed.then((run): WorkbenchResult => {
+        this.renaming.delete(id);
+        receipt.pending = false;
+        if (run?.outcome !== "completed")
+          throw new ContractError("unavailable");
+        // Exit zero is not the evidence: another writer may have named the
+        // session since, or Pi may have kept the entry in memory.
+        if (
+          this.records.sessions.find(id)?.summary.name !==
+          (request.name || null)
+        )
+          throw new ContractError("receipt-inconclusive");
+        return { kind: "accepted", commandId: request.commandId };
+      }),
+    };
+    // A lost reply leaves this unobserved until the same command asks again.
+    receipt.result.catch(() => {});
+    try {
+      // Accepted work that Stop ends: settled once the child's closure is
+      // known. The child has no capture protocol, so its closure is the fact.
+      this.o.owner.trackConversation(
+        closed.then((run) => ({
+          status: run && !run.closed ? "uncertain" : "settled",
+        })),
+        () =>
+          abort.abort({
+            source: "service",
+            reason: "stop",
+            target: request.commandId,
+          }),
+      );
+    } catch (error) {
+      abort.abort();
+      throw error;
+    }
+    this.renaming.add(id);
+    this.renames.set(request.commandId, receipt);
+    // Oldest outcomes go first; one still running is never forgotten.
+    for (const [commandId, kept] of this.renames) {
+      if (this.renames.size <= RENAME_RECEIPTS) break;
+      if (!kept.pending) this.renames.delete(commandId);
+    }
+    return receipt.result;
+  }
+  /** Leaves a session out of the history list, or lists it again. The record
+   * is this owner's own; Pi's session file is not moved, rewritten or deleted. */
+  archive(request: Archive): WorkbenchResult {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
+    const id = request.conversationId,
+      path = this.records.archivePath(id);
+    const current = this.files.read(path);
+    if (request.archived && !current) {
+      if (!this.records.sessions.find(id)) throw new ContractError("stale");
+      this.write(path, {
+        schema: "cadence-conversation-archive/1",
+        id,
+        at: Date.now(),
+      });
+    } else if (!request.archived && current) {
+      try {
+        this.files.remove(path, current);
+      } catch (error) {
+        this.o.owner.quarantine();
+        throw error;
+      }
+    }
+    return { kind: "accepted", commandId: request.commandId };
   }
   interrupt(id: string, turnId: string, epoch: string): void {
     this.o.owner.lease.assert();
@@ -694,14 +852,7 @@ export class Conversations {
             images: live.images,
             ownerSecrets: this.o.secrets,
             onCoordinator: control?.onTool,
-            maySignal: () => {
-              try {
-                this.o.owner.lease.assert();
-                return true;
-              } catch {
-                return false;
-              }
-            },
+            maySignal: this.maySignal,
             onNative: (value) => {
               native = value;
             },

@@ -25,6 +25,7 @@ Automatic Agent review is never human review, and a check's actual exit is indep
 
 Browser conversations are the project's Pi sessions, the same files `pi -r` and `/resume` list in the terminal.
 The browser sidebar lists sessions started in either place, newest first, and labels where each one started.
+A conversation archived through the service is left out of that list; archiving only hides it there, and its session file stays where Pi keeps it.
 A conversation can be continued from either side: open it in the browser, or run `/resume` (or `pi --session <id>`) in the terminal.
 Sessions from the selected checkout and its conversation directories are listed, and only those of the account the service runs as.
 

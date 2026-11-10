@@ -4,7 +4,7 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/gateway.ts
 import { randomUUID as randomUUID14 } from "node:crypto";
-import { opendirSync as opendirSync9 } from "node:fs";
+import { opendirSync as opendirSync10 } from "node:fs";
 import {
   createServer as createServer2,
   request as request2
@@ -3849,10 +3849,12 @@ function decodeModelCandidate(value) {
     "api",
     "thinking",
     "eligibility",
-    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : []
+    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : [],
+    ...Object.hasOwn(value ?? {}, "contextWindow") ? ["contextWindow"] : []
   ]);
   const candidate = {
     ...o.images === undefined ? {} : { images: bool(o.images) },
+    ...o.contextWindow === undefined ? {} : { contextWindow: integer(o.contextWindow, 1) },
     provider: text(o.provider, 128, true),
     model: text(o.model, 256, true),
     api: nullable(o.api, (v) => oneOf(v, modelApis)),
@@ -6078,6 +6080,7 @@ function decodeEntryId(v) {
   return s;
 }
 var CONVERSATION_SEND_BYTES = 16 * 1024;
+var CONVERSATION_NAME_CHARS = 100;
 var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
@@ -6117,13 +6120,14 @@ function toolTarget(args) {
 }
 function chatStep(item, parts, more = false) {
   const tool = item.role === "tool";
-  const text2 = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  const lazy = tool || item.role === "thinking";
+  const text2 = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
     role: item.role,
     text: text2,
     ...item.images?.length ? { images: item.images } : {},
-    clipped: !tool && (more || text2 !== item.text),
+    clipped: !lazy && (more || text2 !== item.text),
     name: item.name,
     target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
     error: item.error,
@@ -6237,11 +6241,18 @@ function decodeWorkbenchRead(v) {
       };
     }
     case "conversations": {
-      const after = Object.hasOwn(v, "after");
-      const o = closed(v, ["kind", ...after ? ["after"] : []]);
+      const after = Object.hasOwn(v, "after"), archived = Object.hasOwn(v, "archived");
+      const o = closed(v, [
+        "kind",
+        ...after ? ["after"] : [],
+        ...archived ? ["archived"] : []
+      ]);
+      if (archived && o.archived !== true)
+        throw new ContractError("invalid");
       return {
         kind,
-        ...after ? { after: nullable(o.after, decodeChatCursor) } : {}
+        ...after ? { after: nullable(o.after, decodeChatCursor) } : {},
+        ...archived ? { archived: true } : {}
       };
     }
     case "conversation-active":
@@ -6267,6 +6278,14 @@ function decodeWorkbenchRead(v) {
       };
     }
   }
+}
+function decodeConversationName(v) {
+  const name = text(v, 4 * CONVERSATION_NAME_CHARS);
+  if (name !== name.trim() || /\p{Cc}/u.test(name))
+    throw new ContractError("invalid");
+  if ([...name].length > CONVERSATION_NAME_CHARS)
+    throw new ContractError("oversize");
+  return name;
 }
 function decodeWorkbenchCommand(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
@@ -6441,6 +6460,24 @@ function decodeWorkbenchCommand(v) {
       epoch: decodeId(o2.epoch)
     };
   }
+  if (kind === "conversation-rename") {
+    const o2 = closed(v, ["kind", "commandId", "conversationId", "name"]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeSessionId(o2.conversationId),
+      name: decodeConversationName(o2.name)
+    };
+  }
+  if (kind === "conversation-archive") {
+    const o2 = closed(v, ["kind", "commandId", "conversationId", "archived"]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeSessionId(o2.conversationId),
+      archived: bool(o2.archived)
+    };
+  }
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
     kind: oneOf(o.kind, ["open-project"]),
@@ -6478,6 +6515,7 @@ function decodeChatTurn(v) {
     items: list(o.items, 256, decodeChatItem)
   };
 }
+var ITEM_ROLES = ["user", "assistant", "tool", "thinking"];
 function decodeChatImages(v) {
   return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
@@ -6509,7 +6547,7 @@ function decodeChatItem(v) {
   return {
     ...i.images === undefined ? {} : { images: decodeChatImages(i.images) },
     id: text(i.id, 160, true),
-    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    role: oneOf(i.role, ITEM_ROLES),
     text: text(i.text, 256 * 1024),
     name: text(i.name, 128),
     args: text(i.args, 64 * 1024),
@@ -6531,7 +6569,7 @@ function decodeChatStep(v) {
   const step = {
     ...o.images === undefined ? {} : { images: decodeChatImages(o.images) },
     id: text(o.id, 160, true),
-    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    role: oneOf(o.role, ITEM_ROLES),
     text: text(o.text, STEP_TEXT_BYTES),
     clipped: bool(o.clipped),
     name: text(o.name, 128),
@@ -6539,7 +6577,9 @@ function decodeChatStep(v) {
     error: bool(o.error),
     parts: integer(o.parts, 0)
   };
-  if (step.role === "tool" && (step.text || step.clipped))
+  if ((step.role === "tool" || step.role === "thinking") && (step.text || step.clipped))
+    throw new ContractError("invalid");
+  if (step.role === "thinking" && !step.parts)
     throw new ContractError("invalid");
   return step;
 }
@@ -6554,6 +6594,7 @@ function decodeChatTurnHeader(v) {
     ...Object.hasOwn(v ?? {}, "execution") ? ["execution"] : [],
     ...Object.hasOwn(v ?? {}, "retry") ? ["retry"] : [],
     "entry",
+    ...Object.hasOwn(v ?? {}, "parent") ? ["parent"] : [],
     "at"
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
@@ -6563,6 +6604,7 @@ function decodeChatTurnHeader(v) {
     ...o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) },
     id: decodeEntryId(o.id),
     entry: nullable(o.entry, decodeEntryId),
+    ...o.parent === undefined ? {} : { parent: nullable(o.parent, decodeEntryId) },
     at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
@@ -6585,9 +6627,12 @@ function decodeChatSummary(v) {
     "updatedAt",
     "origin",
     ...has("cadence") ? ["cadence"] : [],
-    ...has("live") ? ["live"] : []
+    ...has("live") ? ["live"] : [],
+    ...has("archived") ? ["archived"] : []
   ]);
   const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  if (has("archived") && o.archived !== true)
+    throw new ContractError("invalid");
   return {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
@@ -6601,7 +6646,8 @@ function decodeChatSummary(v) {
         commandId: decodeId(live.commandId),
         epoch: decodeId(live.epoch)
       }
-    } : {}
+    } : {},
+    ...has("archived") ? { archived: true } : {}
   };
 }
 function decodeChatAttempt(v) {
@@ -6611,6 +6657,14 @@ function decodeChatAttempt(v) {
     text: text(o.text, 16 * 1024),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024)
+  };
+}
+function decodeChatContext(v) {
+  const o = closed(v, ["tokens", "provider", "model"]);
+  return {
+    tokens: nullable(o.tokens, (n) => integer(n, 1)),
+    provider: text(o.provider, 128),
+    model: text(o.model, 256)
   };
 }
 function decodeChatTreeNode(v) {
@@ -6760,7 +6814,8 @@ function decodeWorkbenchResult(v) {
       "branches",
       "runs",
       "attempt",
-      ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []
+      ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : [],
+      ...Object.hasOwn(v ?? {}, "context") ? ["context"] : []
     ]);
     const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
     if (!summary && turns)
@@ -6768,6 +6823,7 @@ function decodeWorkbenchResult(v) {
     return {
       kind,
       ...o2.commands === undefined ? {} : { commands: list(o2.commands, 64, decodeId) },
+      ...o2.context === undefined ? {} : { context: decodeChatContext(o2.context) },
       summary,
       leaf: nullable(o2.leaf, decodeEntryId),
       continues: bool(o2.continues),
@@ -8662,6 +8718,8 @@ var NOTICE_BYTES = 1024;
 var PART_TEXT_BYTES = 200 * 1024;
 var PART_ARGS_BYTES = 48 * 1024;
 var TARGET_ARGS = 1024 * 1024;
+var USAGE_WALK = 256;
+var USAGE_RESULTS = 64;
 function sessionDirectory(cwd, agentDir, env = process.env) {
   const expand = (value) => {
     const home = value === "~" ? homedir2() : value.startsWith("~/") ? join8(homedir2(), value.slice(2)) : value;
@@ -8868,6 +8926,27 @@ function stopStatus(m) {
     return { status: "canceled", notice: "" };
   return { status: "completed", notice: "" };
 }
+function reportedUsage(entry) {
+  const m = message(entry);
+  if (!m || own2(m, "role") !== "assistant")
+    return;
+  const reason = own2(m, "stopReason"), usage = own2(m, "usage");
+  if (reason === "aborted" || reason === "error" || !usage || typeof usage !== "object")
+    return;
+  const count = (key) => {
+    const value = own2(usage, key);
+    return typeof value === "number" ? value : Number.NaN;
+  };
+  const tokens = count("totalTokens") || count("input") + count("output") + count("cacheRead") + count("cacheWrite");
+  if (!(tokens > 0) || !Number.isFinite(tokens))
+    return;
+  const provider = own2(m, "provider"), model = own2(m, "model");
+  return {
+    tokens: Math.min(Math.ceil(tokens), Number.MAX_SAFE_INTEGER),
+    provider: typeof provider === "string" ? provider : "",
+    model: typeof model === "string" ? model : ""
+  };
+}
 function emptySummary() {
   return {
     id: "",
@@ -8930,6 +9009,7 @@ class ParsedSession {
   read;
   bodies = new Map;
   bodyBytes = 0;
+  usages = new Map;
   constructor(path) {
     this.path = path;
   }
@@ -9005,6 +9085,7 @@ class ParsedSession {
       this.children.clear();
       this.bodies.clear();
       this.bodyBytes = 0;
+      this.usages.clear();
       this.header = null;
     });
     this.read = next;
@@ -9033,11 +9114,46 @@ class ParsedSession {
     }
     return false;
   }
+  usage(leaf) {
+    if (leaf === null)
+      return null;
+    const known = this.usages.get(leaf);
+    if (known !== undefined)
+      return known;
+    let found = null, compacted = false;
+    let entry = this.byId.get(leaf);
+    for (let n = 0;entry && n < USAGE_WALK; n++) {
+      if (entry.type === "compaction")
+        compacted = true;
+      else {
+        const usage = reportedUsage(entry);
+        if (usage) {
+          found = compacted ? { ...usage, tokens: null } : usage;
+          break;
+        }
+      }
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    if (this.usages.size >= USAGE_RESULTS)
+      this.usages.delete(this.usages.keys().next().value);
+    this.usages.set(leaf, found);
+    return found;
+  }
   leaves() {
+    const names2 = new Set;
+    for (let i = this.entries.length - 1;i >= 0; i--) {
+      const entry = this.entries[i];
+      if (entry.type === "session_info" && (this.children.get(entry.id) ?? []).every((child) => names2.has(child.id)))
+        names2.add(entry.id);
+    }
     let count = 0;
-    for (const entry of this.entries)
-      if (!this.children.has(entry.id))
+    for (const entry of this.entries) {
+      if (names2.has(entry.id))
+        continue;
+      const children = this.children.get(entry.id);
+      if (!children || names2.size > 0 && children.every((child) => names2.has(child.id)))
         count++;
+    }
     return count;
   }
   commandEntries(commandId, parent, offset) {
@@ -9185,9 +9301,20 @@ ${value}`, secrets);
             const call = tool(typeof id === "string" && id ? id : `${entry.id}:${items.length}`, typeof name === "string" ? name : "tool", args);
             if (typeof id === "string")
               tools.set(id, call);
-          } else if (type === "thinking" || type === "redactedThinking")
-            omitted.thinking = true;
-          else if (type === "image")
+          } else if (type === "thinking" || type === "redactedThinking") {
+            const value = own2(b, "thinking");
+            if (type === "thinking" && typeof value === "string" && value.trim() && own2(b, "redacted") !== true)
+              add({
+                id: `${entry.id}:${items.length}`,
+                role: "thinking",
+                text: value,
+                name: "",
+                args: "",
+                error: false
+              });
+            else
+              omitted.thinking = true;
+          } else if (type === "image")
             omitted.media = true;
           else
             omitted.other = true;
@@ -9220,6 +9347,7 @@ ${value}`, secrets);
   return {
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
+    parent: first?.parentId ?? null,
     at: first ? time(first.timestamp) : 0,
     status,
     notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),
@@ -9260,7 +9388,7 @@ function listTurn(turn) {
   const parts = turn.items.map(itemParts);
   const steps = turn.items.map((item, index) => {
     const listed = chatStep(item.role === "tool" && item.args.length > TARGET_ARGS ? { ...item, args: "" } : item, 0);
-    const more = listed.clipped || item.role === "tool" && !!(item.args || item.text);
+    const more = listed.clipped || (item.role === "tool" || item.role === "thinking") && !!(item.args || item.text);
     return { ...listed, parts: more ? parts[index].length : 0 };
   });
   return { ...turn, steps, parts };
@@ -14056,7 +14184,7 @@ function conversationIdentity(identity) {
 }
 
 // src/service/conversation-records.ts
-import { lstatSync as lstatSync15 } from "node:fs";
+import { lstatSync as lstatSync15, opendirSync as opendirSync8 } from "node:fs";
 import { join as join24 } from "node:path";
 var META_BYTES = 64 * 1024;
 var PAGE = 50;
@@ -14233,6 +14361,34 @@ class ConversationRecords {
   controlKey(id) {
     return observedFile(this.controlPath(id));
   }
+  archivePath(id) {
+    this.assertSupported(id);
+    return join24(this.bindings, "archive", `${decodeSessionId(id)}.json`);
+  }
+  archived(id) {
+    const path = this.archivePath(id);
+    return this.files.directory(join24(this.bindings, "archive")) && observedFile(path) !== "absent";
+  }
+  archivedSessions() {
+    const directory2 = join24(this.bindings, "archive"), ids = new Set;
+    if (!this.files.directory(directory2))
+      return ids;
+    const dir = opendirSync8(directory2);
+    try {
+      for (let e = dir.readSync();e; e = dir.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json"))
+          throw new ContractError("corrupt-selected");
+        try {
+          ids.add(decodeSessionId(e.name.slice(0, -5)));
+        } catch {
+          throw new ContractError("corrupt-selected");
+        }
+      }
+    } finally {
+      dir.closeSync();
+    }
+    return ids;
+  }
   hasCommand(id, commandId) {
     return this.accepted(commandId)?.session === id;
   }
@@ -14253,9 +14409,10 @@ class ConversationRecords {
     const commandId = this.index(id).commands.at(-1);
     return commandId ? { commandId, status: this.state(commandId).status } : null;
   }
-  summary(id, live2) {
+  summary(id, live2, archived = this.archived(id)) {
     this.assertSupported(id);
     const listed = this.sessions.find(id);
+    const hidden = archived ? { archived: true } : {};
     if (!listed) {
       if (!live2)
         return null;
@@ -14266,7 +14423,8 @@ class ConversationRecords {
         status: live2.state.status,
         updatedAt: live2.accepted.at,
         origin: "webui",
-        live: { commandId: live2.commandId, epoch: live2.epoch }
+        live: { commandId: live2.commandId, epoch: live2.epoch },
+        ...hidden
       };
     }
     const s = listed.summary;
@@ -14280,17 +14438,19 @@ class ConversationRecords {
     }
     return {
       id,
-      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") || "Conversation", 512, true),
+      title: text([...sanitizeText(summaryTitle(s), secrets)].slice(0, CONVERSATION_NAME_CHARS).join("") || "Conversation", 512, true),
       leaf: s.leaf,
       status,
       updatedAt: Math.max(Math.trunc(listed.mtimeMs), live2?.accepted.at ?? 0),
       origin: s.webui ? "webui" : "terminal",
-      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {}
+      ...live2 ? { live: { commandId: live2.commandId, epoch: live2.epoch } } : {},
+      ...hidden
     };
   }
-  list(after = null) {
+  list(after = null, archived = false) {
     this.o.assertCurrent();
-    const listed = this.sessions.list().filter((row) => !retiredConversation(this.o.coordination, row.summary.id));
+    const hidden = this.archivedSessions();
+    const listed = this.sessions.list().filter((row) => hidden.has(row.summary.id) === archived && !retiredConversation(this.o.coordination, row.summary.id));
     let start = 0;
     if (after) {
       start = listed.findIndex((l) => Math.trunc(l.mtimeMs) < after.updatedAt || Math.trunc(l.mtimeMs) === after.updatedAt && l.summary.id > after.id);
@@ -14299,7 +14459,7 @@ class ConversationRecords {
     }
     const page = listed.slice(start, start + PAGE);
     const entries2 = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id), archived);
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
@@ -14354,14 +14514,40 @@ class ConversationRecords {
       notice: sanitizeText(state.notice, this.readSecrets())
     };
   }
+  context(view) {
+    if (!view.session)
+      return;
+    let leaf = view.leaf;
+    if (view.live) {
+      const { accepted, commandId } = view.live;
+      try {
+        leaf = view.session.commandEntries(commandId, accepted.parent, accepted.offset).at(-1)?.id ?? leaf;
+      } catch (error) {
+        if (error instanceof ContractError)
+          return;
+        throw error;
+      }
+    }
+    const usage = view.session.usage(leaf);
+    if (!usage)
+      return;
+    const secrets = this.readSecrets();
+    return {
+      tokens: usage.tokens,
+      provider: clipText(sanitizeText(usage.provider, secrets), 128),
+      model: clipText(sanitizeText(usage.model, secrets), 256)
+    };
+  }
   conversation(id, leaf, known) {
     this.o.assertCurrent();
     const view = this.branch(id, leaf, false);
     const summary = this.summary(id, view.live ?? this.liveFor(id));
     const listed = this.sessions.find(id);
+    const context = this.context(view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
+      ...context ? { context } : {},
       summary,
       leaf: view.leaf,
       continues: known === null || known === view.leaf || !!view.session?.contains(view.leaf, known),
@@ -14441,7 +14627,7 @@ class ConversationRecords {
           status: recorded.status,
           notice: turn2.notice || sanitizeText(recorded.notice, secrets),
           omitted: {
-            thinking: turn2.omitted.thinking || recorded.omitted.thinking,
+            thinking: turn2.omitted.thinking,
             media: turn2.omitted.media || recorded.omitted.media,
             other: turn2.omitted.other || recorded.omitted.other
           }
@@ -14480,12 +14666,13 @@ class ConversationRecords {
     const turn = listTurn({
       id: chain[0]?.id ?? live2.commandId,
       entry: null,
+      parent: chain.length ? chain[0].parentId : live2.accepted.parent,
       at: live2.accepted.at,
       status: live2.state.status,
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
       ...live2.capture?.retry ? { retry: live2.capture.retry } : {},
       omitted: {
-        thinking: written.omitted.thinking || !!omitted?.thinking,
+        thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
         other: written.omitted.other || !!omitted?.other
       },
@@ -14523,6 +14710,7 @@ class ConversationRecords {
         steps: turn.steps.length,
         stable,
         entry: turn.entry,
+        parent: turn.parent,
         at: turn.at
       },
       start,
@@ -14859,7 +15047,7 @@ import {
   constants as constants7,
   fstatSync as fstatSync6,
   lstatSync as lstatSync16,
-  opendirSync as opendirSync8,
+  opendirSync as opendirSync9,
   openSync as openSync7,
   readSync as readSync5,
   realpathSync as realpathSync9
@@ -14923,7 +15111,7 @@ class WorkbenchFiles {
     const selected2 = directories ? this.browsed(path) : this.selected(path);
     if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
       throw new ContractError("forbidden");
-    const entries2 = [], dir = opendirSync8(selected2);
+    const entries2 = [], dir = opendirSync9(selected2);
     let limited = false, scanned = 0;
     try {
       for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -15120,7 +15308,7 @@ class GatewayConversations {
         };
         break;
       case "conversations": {
-        result = view.records.list(request2.after ?? null);
+        result = view.records.list(request2.after ?? null, request2.archived === true);
         if (result.kind === "conversations")
           result = {
             ...result,
@@ -16286,7 +16474,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "b212e357eb79ad816f4839f8912baf01eb1861206cf165707a9a25c708cabcf3",
+    contractHash: "134f728d923c37ae86fb61a4c11ae24a69c8b42c8fca438bbd7c93bfdd323af7",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -16588,7 +16776,7 @@ Content-Length: 0\r
       throw new ContractError("capacity");
     const commands2 = store.path("commands");
     if (store.files.directory(commands2)) {
-      const dir = opendirSync9(commands2);
+      const dir = opendirSync10(commands2);
       let count = 0;
       try {
         while (dir.readSync())
@@ -17170,7 +17358,7 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { lstatSync as lstatSync26, opendirSync as opendirSync16 } from "node:fs";
+import { lstatSync as lstatSync26, opendirSync as opendirSync17 } from "node:fs";
 import { join as join44 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
@@ -24190,7 +24378,7 @@ class HistoryReader {
 
 // src/history/recovery.ts
 import { createHash as createHash25, randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync19, opendirSync as opendirSync10 } from "node:fs";
+import { lstatSync as lstatSync19, opendirSync as opendirSync11 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
@@ -26470,7 +26658,7 @@ function digestHistory(files, exclude) {
     const directory2 = lstatSync19(path);
     digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
-    const dir = opendirSync10(path), names2 = [];
+    const dir = opendirSync11(path), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count2 > LIMITS.dataFrames)
@@ -27769,6 +27957,24 @@ function launchConversation(prepared, conversation, signal, options) {
     });
   });
 }
+var SESSION_RENAME_MS = 60000;
+function renameSession(target2, signal, maySignal) {
+  return runProcess({
+    command: process.execPath,
+    args: [fileURLToPath6(new URL("./session-rename.mjs", import.meta.url))],
+    cwd: target2.dir,
+    input: JSON.stringify({
+      id: target2.id,
+      dir: target2.dir,
+      file: target2.file,
+      cwd: target2.cwd,
+      name: target2.name
+    }),
+    timeoutMs: SESSION_RENAME_MS,
+    signal,
+    maySignal
+  });
+}
 function launchWorkflowWorker(prepared, cwd, signal, options) {
   let encoded2;
   return prepared.consume((material) => {
@@ -28304,6 +28510,7 @@ function projectModelCatalog(runtime, supportedThinking, current2, literals, val
           selectable: t.selectable && eligibility === "candidate"
         })),
         images: model2.input.includes("image"),
+        ...Number.isSafeInteger(model2.contextWindow) && model2.contextWindow > 0 ? { contextWindow: model2.contextWindow } : {},
         eligibility
       }));
     }
@@ -29269,7 +29476,7 @@ class ServiceOwner {
 }
 
 // src/service/workbench.ts
-import { opendirSync as opendirSync15 } from "node:fs";
+import { opendirSync as opendirSync16 } from "node:fs";
 import { join as join43 } from "node:path";
 
 // src/service/conversation-images.ts
@@ -29766,7 +29973,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 
 // src/service/conversations.ts
 import { randomUUID as randomUUID25 } from "node:crypto";
-import { opendirSync as opendirSync11, statfsSync as statfsSync2 } from "node:fs";
+import { opendirSync as opendirSync12, statfsSync as statfsSync2 } from "node:fs";
 import { dirname as dirname21, join as join38 } from "node:path";
 var META_BYTES2 = 64 * 1024;
 var PREVIEW_BYTES = 64 * 1024;
@@ -29778,6 +29985,8 @@ var OMITTED_FLAG = {
   binary: "media",
   unsupported: "other"
 };
+var RENAMES = 4;
+var RENAME_RECEIPTS = 64;
 
 class LiveCapture {
   secrets;
@@ -29878,7 +30087,17 @@ class LiveCapture {
   }
   extend(items) {
     const out = items.map((item) => ({ ...item }));
-    const written = out.filter((i) => i.role === "assistant").length;
+    let written = 0, counted;
+    for (const item of out) {
+      if (item.role === "assistant") {
+        const at = item.id.lastIndexOf(":");
+        const message2 = at < 0 ? item.id : item.id.slice(0, at);
+        if (message2 !== counted)
+          written++;
+        counted = message2;
+      } else if (item.role !== "thinking")
+        counted = undefined;
+    }
     const calls = out.filter((i) => i.role === "tool");
     const results = calls.filter((i) => i.text || i.error).length;
     let stable = out.length;
@@ -29921,6 +30140,16 @@ class Conversations {
   records;
   contexts;
   active = new Map;
+  renaming = new Set;
+  renames = new Map;
+  maySignal = () => {
+    try {
+      this.o.owner.lease.assert();
+      return true;
+    } catch {
+      return false;
+    }
+  };
   activity() {
     return [...this.active.values()].map((live2) => managedActivity({
       id: live2.commandId,
@@ -29971,7 +30200,7 @@ class Conversations {
     const sessions = join38(this.records.root, "sessions");
     if (!this.files.directory(sessions))
       return;
-    const dir = opendirSync11(sessions);
+    const dir = opendirSync12(sessions);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isFile() || !e.name.endsWith(".json"))
@@ -30015,6 +30244,8 @@ class Conversations {
       throw new ContractError("quarantine");
     if (input.model.conversation && input.model.conversation.id !== input.conversationId)
       throw new ContractError("stale");
+    if (this.renaming.has(input.conversationId))
+      throw new ContractError("conflict");
     const execution = this.contexts.capture(input.model, !!control?.reply);
     const context = this.contexts.records.read({
       id: input.conversationId,
@@ -30099,6 +30330,97 @@ class Conversations {
     }
     begin();
     return { kind: "accepted", commandId: input.commandId };
+  }
+  rename(request3) {
+    this.o.owner.lease.assert();
+    const identity2 = canonicalJson(request3), id = request3.conversationId;
+    const prior = this.renames.get(request3.commandId);
+    if (prior) {
+      if (prior.identity !== identity2)
+        throw new ContractError("conflict");
+      return prior.result;
+    }
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    this.records.assertSupported(id);
+    if (sanitizeText(request3.name, this.o.secrets()) !== request3.name)
+      throw new ContractError("forbidden");
+    const listed = this.records.sessions.find(id);
+    if (!listed)
+      throw new ContractError("stale");
+    if (this.records.liveFor(id) || this.renaming.has(id))
+      throw new ContractError("conflict");
+    if (this.renaming.size >= RENAMES)
+      throw new ContractError("capacity");
+    const abort = new AbortController;
+    const closed2 = Promise.resolve().then(() => renameSession({
+      id,
+      dir: dirname21(listed.path),
+      file: listed.path,
+      cwd: listed.summary.cwd,
+      name: request3.name
+    }, abort.signal, this.maySignal)).catch(() => {
+      return;
+    });
+    const receipt = {
+      identity: identity2,
+      pending: true,
+      result: closed2.then((run) => {
+        this.renaming.delete(id);
+        receipt.pending = false;
+        if (run?.outcome !== "completed")
+          throw new ContractError("unavailable");
+        if (this.records.sessions.find(id)?.summary.name !== (request3.name || null))
+          throw new ContractError("receipt-inconclusive");
+        return { kind: "accepted", commandId: request3.commandId };
+      })
+    };
+    receipt.result.catch(() => {});
+    try {
+      this.o.owner.trackConversation(closed2.then((run) => ({
+        status: run && !run.closed ? "uncertain" : "settled"
+      })), () => abort.abort({
+        source: "service",
+        reason: "stop",
+        target: request3.commandId
+      }));
+    } catch (error) {
+      abort.abort();
+      throw error;
+    }
+    this.renaming.add(id);
+    this.renames.set(request3.commandId, receipt);
+    for (const [commandId, kept] of this.renames) {
+      if (this.renames.size <= RENAME_RECEIPTS)
+        break;
+      if (!kept.pending)
+        this.renames.delete(commandId);
+    }
+    return receipt.result;
+  }
+  archive(request3) {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const id = request3.conversationId, path = this.records.archivePath(id);
+    const current2 = this.files.read(path);
+    if (request3.archived && !current2) {
+      if (!this.records.sessions.find(id))
+        throw new ContractError("stale");
+      this.write(path, {
+        schema: "cadence-conversation-archive/1",
+        id,
+        at: Date.now()
+      });
+    } else if (!request3.archived && current2) {
+      try {
+        this.files.remove(path, current2);
+      } catch (error) {
+        this.o.owner.quarantine();
+        throw error;
+      }
+    }
+    return { kind: "accepted", commandId: request3.commandId };
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
@@ -30222,14 +30544,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         images: live2.images,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
-        maySignal: () => {
-          try {
-            this.o.owner.lease.assert();
-            return true;
-          } catch {
-            return false;
-          }
-        },
+        maySignal: this.maySignal,
         onNative: (value) => {
           native = value;
         },
@@ -30287,7 +30602,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 
 // src/service/workflows.ts
 import { randomUUID as randomUUID27 } from "node:crypto";
-import { opendirSync as opendirSync14, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { opendirSync as opendirSync15, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { basename as basename5, dirname as dirname25, join as join42, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
@@ -30541,7 +30856,7 @@ import {
   constants as constants10,
   fstatSync as fstatSync8,
   lstatSync as lstatSync23,
-  opendirSync as opendirSync12,
+  opendirSync as opendirSync13,
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
@@ -31174,7 +31489,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync12(dirname23(probe2));
+        directory2 = opendirSync13(dirname23(probe2));
         while (entries2 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -31805,7 +32120,7 @@ class WorkflowDelivery {
 
 // src/service/workflow-history.ts
 import { randomUUID as randomUUID26 } from "node:crypto";
-import { lstatSync as lstatSync25, opendirSync as opendirSync13 } from "node:fs";
+import { lstatSync as lstatSync25, opendirSync as opendirSync14 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -31842,7 +32157,7 @@ class WorkflowHistoryScanner {
       if (this.scans.size >= WORKFLOW_LIMITS.historyScans)
         throw new ContractError("capacity");
       const incarnation3 = this.incarnation();
-      state = { dir: opendirSync13(this.path), incarnation: incarnation3, after, ids: [] };
+      state = { dir: opendirSync14(this.path), incarnation: incarnation3, after, ids: [] };
     }
     let suspended = false;
     try {
@@ -32356,7 +32671,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "30702fa1acf695b6cd4016194a0f30a191bcdb1eacb50bd80b6ea8ef27497f6f",
+  build: "31b57d115892c392bb794ebea68edba157c8904ec9dfe20e2296611d91a499f5",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -32469,7 +32784,7 @@ class Workflows {
     if (!this.files.directory(runs))
       return;
     const ids = [];
-    const dir = opendirSync14(runs);
+    const dir = opendirSync15(runs);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isDirectory())
@@ -34365,7 +34680,7 @@ class Workbench {
         return this.workflows.view(request3.id, request3.before);
       case "conversation-active":
       case "conversations": {
-        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null);
+        const value2 = request3.kind === "conversation-active" ? this.conversations.records.activeConversations() : this.conversations.records.list(request3.after ?? null, request3.archived === true);
         if (value2.kind !== "conversations" && value2.kind !== "conversation-active")
           return value2;
         return {
@@ -34439,7 +34754,7 @@ class Workbench {
     const entries2 = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
     if (!files.directory(this.projectRoot))
       return { kind: "projects", entries: entries2 };
-    const directory2 = opendirSync15(this.projectRoot);
+    const directory2 = opendirSync16(this.projectRoot);
     try {
       for (let e = directory2.readSync();e; e = directory2.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries2.length > 128)
@@ -34516,6 +34831,10 @@ class Workbench {
       this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
       return { kind: "accepted", commandId: request3.commandId };
     }
+    if (request3.kind === "conversation-rename")
+      return this.conversations.rename(request3);
+    if (request3.kind === "conversation-archive")
+      return this.conversations.archive(request3);
     this.o.owner.lease.assert();
     if (!this.o.projectsEnabled)
       throw new ContractError("unsupported-context");
@@ -34609,7 +34928,7 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync16(store.tasks), records = [];
+  const dir = opendirSync17(store.tasks), records = [];
   let entries2 = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -34672,7 +34991,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "b212e357eb79ad816f4839f8912baf01eb1861206cf165707a9a25c708cabcf3";
+  const embedded = "134f728d923c37ae86fb61a4c11ae24a69c8b42c8fca438bbd7c93bfdd323af7";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

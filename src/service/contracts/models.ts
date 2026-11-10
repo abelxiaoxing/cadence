@@ -78,6 +78,8 @@ export interface ModelChoiceState {
 }
 export interface ModelCandidate {
   images?: boolean;
+  /** The model's context window in tokens, when its source states one. */
+  contextWindow?: number;
   provider: string;
   model: string;
   api: ModelSelection["api"] | null;
@@ -145,9 +147,13 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     "thinking",
     "eligibility",
     ...(Object.hasOwn(value ?? {}, "images") ? ["images"] : []),
+    ...(Object.hasOwn(value ?? {}, "contextWindow") ? ["contextWindow"] : []),
   ]);
   const candidate: ModelCandidate = {
     ...(o.images === undefined ? {} : { images: bool(o.images) }),
+    ...(o.contextWindow === undefined
+      ? {}
+      : { contextWindow: integer(o.contextWindow, 1) }),
     provider: text(o.provider, 128, true),
     model: text(o.model, 256, true),
     api: nullable(o.api, (v) => oneOf(v, modelApis)),

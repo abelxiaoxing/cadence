@@ -30,8 +30,10 @@ import {
   listTurn,
   PiSessions,
   sessionDirectory,
+  summaryTitle,
   turnItems,
   turnSpans,
+  USAGE_WALK,
 } from "../src/service/pi-sessions.ts";
 import {
   BROWSER_COMMAND_ENTRY,
@@ -188,6 +190,47 @@ it("lists this project's sessions newest first, extends them as Pi appends and n
   expect(sessions.session(terminal.id)?.entries).toHaveLength(1);
 });
 
+it("the last name record names a session, an empty one clears it, and a childless one is not a branch", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const u1 = user(null, "First question");
+  const a1 = assistant(u1.id, [{ type: "text", text: "answer" }]);
+  const { id, path } = write(dir, cwd, [u1, a1]);
+  const sessions = new PiSessions(dir, cwd);
+  const title = () => {
+    const summary = sessions.find(id)?.summary;
+    if (!summary) throw Error("session");
+    return [summary.name, summaryTitle(summary)];
+  };
+  const leaves = () => sessions.session(id)?.leaves();
+  expect(title()).toEqual([null, "First question"]);
+  expect(leaves()).toBe(1);
+  // A name appended at the session's end: still one branch, and its leaf.
+  const named = entry("session_info", a1.id, {
+    name: "Named from the browser",
+  });
+  appendFileSync(path, line(named));
+  expect(title()).toEqual(["Named from the browser", "Named from the browser"]);
+  expect(sessions.session(id)?.current()).toBe(named.id);
+  expect(leaves()).toBe(1);
+  // A terminal that held the session continues from where it was: the name
+  // record is left beside its message, which does not make a second branch.
+  const u2 = user(a1.id, "Terminal continues");
+  const renamed = entry("session_info", named.id, { name: "Again" });
+  appendFileSync(path, line(u2) + line(renamed));
+  expect(title()).toEqual(["Again", "Again"]);
+  expect(leaves()).toBe(1);
+  // A real second branch is still counted, and a continued name record is an
+  // ordinary link of its branch.
+  const u3 = user(renamed.id, "Continues the named branch");
+  appendFileSync(path, line(u3));
+  expect(leaves()).toBe(2);
+  // An empty name clears the title, as in Pi.
+  appendFileSync(path, line(entry("session_info", u3.id, { name: "" })));
+  expect(title()).toEqual([null, "First question"]);
+  expect(leaves()).toBe(2);
+});
+
 it("splits a branch into turns of chat items, redacted, with Pi's failure status", () => {
   const cwd = project();
   const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
@@ -195,7 +238,11 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   const call = assistant(
     u1.id,
     [
-      { type: "thinking", thinking: "hidden" },
+      {
+        type: "thinking",
+        thinking: "Weighing SECRET-VALUE first",
+        thinkingSignature: "opaque-signature",
+      },
       { type: "text", text: "Reading it." },
       {
         type: "toolCall",
@@ -218,7 +265,19 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
       isError: false,
     },
   });
+  // Thinking Pi stored unreadable stays a flag: redacted, or only a signature.
   const answer = assistant(result.id, [
+    {
+      type: "thinking",
+      thinking: "[Reasoning redacted]",
+      thinkingSignature: "encrypted-payload",
+      redacted: true,
+    },
+    {
+      type: "thinking",
+      thinking: " \n",
+      thinkingSignature: "sealed-reasoning",
+    },
     { type: "text", text: "It holds SECRET-VALUE." },
   ]);
   const bash = entry("message", answer.id, {
@@ -269,6 +328,7 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   const first = turnItems(turns[0], ["SECRET-VALUE"]);
   expect(first.items.map((i) => [i.role, i.name, i.text])).toEqual([
     ["user", "", "Read the config"],
+    ["thinking", "", "Weighing [redacted] first"],
     ["assistant", "", "Reading it."],
     ["tool", "read", "token=[redacted]"],
     ["assistant", "", "It holds [redacted]."],
@@ -276,27 +336,72 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
     ["tool", "compaction", "Earlier work"],
     ["tool", "cadence-workflow-result", "Workflow done"],
   ]);
-  expect(first.items[2].args).toBe('{"path":"a.json"}');
-  expect(first.items[4].error).toBe(true);
+  expect(first.items[1].id).toBe(`${call.id}:1`);
+  expect(first.items[3].args).toBe('{"path":"a.json"}');
+  expect(first.items[5].error).toBe(true);
   expect(first.omitted).toEqual({ thinking: true, media: true, other: false });
+  for (const hidden of ["signature", "payload", "sealed", "Reasoning redacted"])
+    expect(JSON.stringify(first)).not.toContain(hidden);
   expect(first).toMatchObject({
     id: u1.id,
     entry: hidden.id,
+    parent: null,
     status: "completed",
   });
   const second = turnItems(turns[1], ["SECRET-VALUE"]);
+  // A turn names the entry its user message continues, shown or not.
   expect(second).toMatchObject({
+    parent: hidden.id,
     status: "failed",
     notice: "provider [redacted] failed",
   });
   const listed = listTurn(first);
-  expect(listed.steps[2]).toMatchObject({
+  expect(listed.steps[3]).toMatchObject({
     role: "tool",
     text: "",
     target: "a.json",
     parts: 1,
   });
   expect(listed.steps[0].parts).toBe(0);
+  // Thinking is listed without its text, which a step read returns.
+  expect(listed.steps[1]).toEqual({
+    id: `${call.id}:1`,
+    role: "thinking",
+    text: "",
+    clipped: false,
+    name: "",
+    target: "",
+    error: false,
+    parts: 1,
+  });
+  expect(listed.parts[1][0].text).toBe("Weighing [redacted] first");
+  // Readable thinking alone leaves nothing flagged as omitted.
+  const mixed = assistant(u2.id, [
+    { type: "text", text: "First." },
+    { type: "thinking", thinking: "Then this." },
+    { type: "text", text: "Last." },
+  ]);
+  expect(
+    turnItems(
+      [u2, mixed].map((raw) => ({
+        type: "message",
+        id: raw.id,
+        parentId: null,
+        timestamp: "",
+        pos: 0,
+        raw,
+      })),
+      [],
+    ),
+  ).toMatchObject({
+    omitted: { thinking: false, media: false, other: false },
+    items: [
+      { role: "user" },
+      { role: "assistant", text: "First." },
+      { role: "thinking", text: "Then this." },
+      { role: "assistant", text: "Last." },
+    ],
+  });
 });
 
 it("splits a large item into parts losslessly, each fitting one step reply", () => {
@@ -365,6 +470,7 @@ it("a full step listing at every field's encoded worst case fits one read reply"
       steps: Number.MAX_SAFE_INTEGER,
       stable: Number.MAX_SAFE_INTEGER,
       entry: "w".repeat(64),
+      parent: "v".repeat(64),
       at: Number.MAX_SAFE_INTEGER,
     },
     start: Number.MAX_SAFE_INTEGER - STEP_READ,
@@ -374,6 +480,32 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   };
   expect(decodeWorkbenchResult(value)).toEqual(value);
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
+  // Thinking is listed like a tool: its text is read per step, never listed.
+  const thinking = chatStep(
+    {
+      id: escaped(160),
+      role: "thinking",
+      text: escaped(100000),
+      name: "",
+      args: "",
+      error: false,
+    },
+    1,
+  );
+  expect(thinking).toMatchObject({ text: "", clipped: false, parts: 1 });
+  const thoughts = {
+    ...value,
+    steps: Array.from({ length: STEP_READ }, () => thinking),
+  };
+  expect(decodeWorkbenchResult(thoughts)).toEqual(thoughts);
+  for (const refused of [
+    { ...thinking, text: "listed" },
+    { ...thinking, clipped: true },
+    { ...thinking, parts: 0 },
+  ])
+    expect(() => decodeWorkbenchResult({ ...value, steps: [refused] })).toThrow(
+      "invalid",
+    );
 });
 
 it("finds a browser turn's own entries, not a terminal message sent from the same point", () => {
@@ -558,6 +690,168 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
   ]);
   expect(stable).toBe(2);
   expect(written[2].text).toBe("");
+});
+
+it("a branch's context size is its last valid model response's, unknown after a compaction and bounded", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const reply = (
+    parentId: string,
+    usage: Record<string, unknown> | undefined,
+    stopReason = "stop",
+    model = "fixed",
+  ) =>
+    entry("message", parentId, {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "reply" }],
+        provider: "fixture",
+        model,
+        ...(usage ? { usage } : {}),
+        stopReason,
+      },
+    });
+  const total = (totalTokens: number) => ({
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+  });
+  const u1 = user(null, "first");
+  const a1 = reply(u1.id, total(1200));
+  const u2 = user(a1.id, "second");
+  // None of these is a valid usage as Pi counts one.
+  const failed = reply(u2.id, total(5000), "error");
+  const aborted = reply(failed.id, total(6000), "aborted");
+  const empty = reply(aborted.id, { ...total(0), input: 0, output: 0 });
+  const partial = reply(empty.id, { totalTokens: 0, input: 9 });
+  const unreported = reply(partial.id, undefined);
+  const result = entry("message", unreported.id, {
+    message: { role: "toolResult", toolCallId: "c", content: [] },
+  });
+  // Without a provider total the four parts are summed.
+  const parts = reply(
+    result.id,
+    { input: 10, output: 5, cacheRead: 100, cacheWrite: 7, totalTokens: 0 },
+    "toolUse",
+    "other",
+  );
+  const compaction = entry("compaction", parts.id, { summary: "Earlier" });
+  const kept = user(compaction.id, "third");
+  const after = reply(kept.id, total(300));
+  const tail: Entry[] = [];
+  let parent = after.id;
+  for (let n = 0; n < USAGE_WALK; n++) {
+    const next = entry("custom", parent, { customType: "note", data: {} });
+    tail.push(next);
+    parent = next.id;
+  }
+  // A second branch from the first reply holds no response of its own.
+  const side = user(a1.id, "side");
+  const { id, path } = write(dir, cwd, [
+    u1,
+    a1,
+    u2,
+    failed,
+    aborted,
+    empty,
+    partial,
+    unreported,
+    result,
+    parts,
+    compaction,
+    kept,
+    after,
+    ...tail,
+    side,
+  ]);
+  const sessions = new PiSessions(dir, cwd);
+  const session = sessions.session(id);
+  if (!session) throw Error("session");
+  const first = { tokens: 1200, provider: "fixture", model: "fixed" };
+  expect(session.usage(null)).toBeNull();
+  expect(session.usage(u1.id)).toBeNull();
+  expect(session.usage(a1.id)).toEqual(first);
+  expect(session.usage(result.id)).toEqual(first);
+  expect(session.usage(side.id)).toEqual(first);
+  expect(session.usage(parts.id)).toEqual({
+    tokens: 122,
+    provider: "fixture",
+    model: "other",
+  });
+  // The response before a compaction no longer measures the context.
+  const unknown = { tokens: null, provider: "fixture", model: "other" };
+  expect(session.usage(compaction.id)).toEqual(unknown);
+  expect(session.usage(kept.id)).toEqual(unknown);
+  expect(session.usage(kept.id)).toBe(session.usage(kept.id));
+  expect(session.usage(after.id)).toMatchObject({ tokens: 300 });
+  // The walk visits USAGE_WALK entries from the branch end and no more.
+  expect(session.usage(tail[USAGE_WALK - 2].id)).toMatchObject({ tokens: 300 });
+  expect(session.usage(tail[USAGE_WALK - 1].id)).toBeNull();
+  // A replaced file is measured again, never answered from the old one.
+  const replacement = `${path}.new`;
+  writeFileSync(
+    replacement,
+    line({ type: "session", version: 3, id, timestamp: "", cwd }) +
+      line({ ...u1, parentId: null }) +
+      line({
+        ...a1,
+        message: { ...(a1.message as object), usage: total(77) },
+      }),
+  );
+  renameSync(replacement, path);
+  expect(sessions.session(id)?.usage(a1.id)).toMatchObject({ tokens: 77 });
+});
+
+it("written thinking never shifts the live preview's count of written messages", () => {
+  const capture = new LiveCapture(() => []);
+  for (const [workerSeq, messageId] of ["a1", "a2"].entries())
+    capture.accept({
+      protocol: 2,
+      childRunId: "c",
+      workerSeq: workerSeq + 1,
+      observedMs: 0,
+      event: {
+        kind: "message-start",
+        messageId,
+        role: "assistant",
+        source: { kind: "sdk" } as never,
+        resultCallId: null,
+      },
+    } as CaptureFrame);
+  const item = (id: string, role: "user" | "assistant" | "thinking") => ({
+    id,
+    role,
+    text: id,
+    name: "",
+    args: "",
+    error: false,
+  });
+  // One written message whose text a thinking block splits: a2 is not written.
+  const split = capture.extend([
+    item("u", "user"),
+    item("e1:1", "assistant"),
+    item("e1:2", "thinking"),
+    item("e1:3", "assistant"),
+  ]);
+  expect(split.items.map((i) => i.id)).toEqual([
+    "u",
+    "e1:1",
+    "e1:2",
+    "e1:3",
+    "a2",
+  ]);
+  expect(split.stable).toBe(4);
+  // Two written messages, the second led by its thinking: nothing to add.
+  const both = capture.extend([
+    item("u", "user"),
+    item("e1:1", "assistant"),
+    item("e2:2", "thinking"),
+    item("e2:3", "assistant"),
+  ]);
+  expect(both.items.map((i) => i.id)).toEqual(["u", "e1:1", "e2:2", "e2:3"]);
+  expect(both.stable).toBe(4);
 });
 
 it.skipIf(typeof process.getuid !== "function")(

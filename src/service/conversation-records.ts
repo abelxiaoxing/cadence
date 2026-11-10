@@ -1,5 +1,5 @@
 /** Shared readonly Pi session and browser-command records. No SDK, execution owner or writes. */
-import { lstatSync } from "node:fs";
+import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
 import { sanitizeText } from "../worker-redaction.mjs";
 import {
@@ -17,9 +17,12 @@ import { decodeExecutionContext } from "./contracts/models.ts";
 import type { WorkbenchRead } from "./contracts/workbench.ts";
 import {
   type ChatAttempt,
+  type ChatContext,
   type ChatCursor,
   type ChatStatus,
   type ChatSummary,
+  CONVERSATION_NAME_CHARS,
+  clipText,
   decodeEntryId,
   decodeSessionId,
   decodeWorkbenchCommand,
@@ -262,6 +265,40 @@ export class ConversationRecords {
   controlKey(id: string): string {
     return observedFile(this.controlPath(id));
   }
+  /** The owner's record that the history list leaves a session out. Its
+   * presence is the whole fact; Pi's session file is not involved. */
+  archivePath(id: string) {
+    this.assertSupported(id);
+    return join(this.bindings, "archive", `${decodeSessionId(id)}.json`);
+  }
+  archived(id: string): boolean {
+    const path = this.archivePath(id);
+    return (
+      this.files.directory(join(this.bindings, "archive")) &&
+      observedFile(path) !== "absent"
+    );
+  }
+  /** Every archived session, from one directory read rather than a stat each. */
+  private archivedSessions(): Set<string> {
+    const directory = join(this.bindings, "archive"),
+      ids = new Set<string>();
+    if (!this.files.directory(directory)) return ids;
+    const dir = opendirSync(directory);
+    try {
+      for (let e = dir.readSync(); e; e = dir.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json"))
+          throw new ContractError("corrupt-selected");
+        try {
+          ids.add(decodeSessionId(e.name.slice(0, -5)));
+        } catch {
+          throw new ContractError("corrupt-selected");
+        }
+      }
+    } finally {
+      dir.closeSync();
+    }
+    return ids;
+  }
   hasCommand(id: string, commandId: string): boolean {
     return this.accepted(commandId)?.session === id;
   }
@@ -289,9 +326,14 @@ export class ConversationRecords {
       ? { commandId, status: this.state(commandId).status }
       : null;
   }
-  summary(id: string, live: LiveTurn | undefined): ChatSummary | null {
+  summary(
+    id: string,
+    live: LiveTurn | undefined,
+    archived = this.archived(id),
+  ): ChatSummary | null {
     this.assertSupported(id);
     const listed = this.sessions.find(id);
+    const hidden = archived ? { archived: true as const } : {};
     if (!listed) {
       if (!live) return null;
       return {
@@ -302,6 +344,7 @@ export class ConversationRecords {
         updatedAt: live.accepted.at,
         origin: "webui",
         live: { commandId: live.commandId, epoch: live.epoch },
+        ...hidden,
       };
     }
     const s = listed.summary;
@@ -319,8 +362,9 @@ export class ConversationRecords {
     return {
       id,
       title: text(
-        [...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") ||
-          "Conversation",
+        [...sanitizeText(summaryTitle(s), secrets)]
+          .slice(0, CONVERSATION_NAME_CHARS)
+          .join("") || "Conversation",
         512,
         true,
       ),
@@ -331,14 +375,19 @@ export class ConversationRecords {
       ...(live
         ? { live: { commandId: live.commandId, epoch: live.epoch } }
         : {}),
+      ...hidden,
     };
   }
-  list(after: ChatCursor | null = null): WorkbenchResult {
+  /** The history, without archived sessions; `archived` lists only those. */
+  list(after: ChatCursor | null = null, archived = false): WorkbenchResult {
     this.o.assertCurrent();
+    const hidden = this.archivedSessions();
     const listed = this.sessions
       .list()
       .filter(
-        (row) => !retiredConversation(this.o.coordination, row.summary.id),
+        (row) =>
+          hidden.has(row.summary.id) === archived &&
+          !retiredConversation(this.o.coordination, row.summary.id),
       );
     let start = 0;
     if (after) {
@@ -352,7 +401,11 @@ export class ConversationRecords {
     }
     const page = listed.slice(start, start + PAGE);
     const entries = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      const summary = this.summary(
+        l.summary.id,
+        this.liveFor(l.summary.id),
+        archived,
+      );
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
@@ -423,6 +476,36 @@ export class ConversationRecords {
       notice: sanitizeText(state.notice, this.readSecrets()),
     };
   }
+  /** The branch's context size; a live turn counts what Pi wrote for it so
+   * far, so the figure follows each model response. */
+  private context(
+    view: ReturnType<ConversationRecords["branch"]>,
+  ): ChatContext | undefined {
+    if (!view.session) return undefined;
+    let leaf = view.leaf;
+    if (view.live) {
+      const { accepted, commandId } = view.live;
+      try {
+        leaf =
+          view.session
+            .commandEntries(commandId, accepted.parent, accepted.offset)
+            .at(-1)?.id ?? leaf;
+      } catch (error) {
+        // The turn read reports an unusable command chain; the head stays
+        // readable and claims no figure for it.
+        if (error instanceof ContractError) return undefined;
+        throw error;
+      }
+    }
+    const usage = view.session.usage(leaf);
+    if (!usage) return undefined;
+    const secrets = this.readSecrets();
+    return {
+      tokens: usage.tokens,
+      provider: clipText(sanitizeText(usage.provider, secrets), 128),
+      model: clipText(sanitizeText(usage.model, secrets), 256),
+    };
+  }
   conversation(
     id: string,
     leaf: string | null,
@@ -432,9 +515,11 @@ export class ConversationRecords {
     const view = this.branch(id, leaf, false);
     const summary = this.summary(id, view.live ?? this.liveFor(id));
     const listed = this.sessions.find(id);
+    const context = this.context(view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
+      ...(context ? { context } : {}),
       summary,
       leaf: view.leaf,
       continues:
@@ -548,8 +633,10 @@ export class ConversationRecords {
               ...(recorded.execution ? { execution: recorded.execution } : {}),
               status: recorded.status,
               notice: turn.notice || sanitizeText(recorded.notice, secrets),
+              // The recorded thinking flag says the live capture kept none; the
+              // session holds it, so only what Pi stored unreadable is omitted.
               omitted: {
-                thinking: turn.omitted.thinking || recorded.omitted.thinking,
+                thinking: turn.omitted.thinking,
                 media: turn.omitted.media || recorded.omitted.media,
                 other: turn.omitted.other || recorded.omitted.other,
               },
@@ -599,12 +686,14 @@ export class ConversationRecords {
     const turn = listTurn({
       id: chain[0]?.id ?? live.commandId,
       entry: null,
+      // Pi may record a model change between the admitted head and the message.
+      parent: chain.length ? chain[0].parentId : live.accepted.parent,
       at: live.accepted.at,
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
       ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
       omitted: {
-        thinking: written.omitted.thinking || !!omitted?.thinking,
+        thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
         other: written.omitted.other || !!omitted?.other,
       },
@@ -646,6 +735,7 @@ export class ConversationRecords {
         steps: turn.steps.length,
         stable,
         entry: turn.entry,
+        parent: turn.parent,
         at: turn.at,
       },
       start,

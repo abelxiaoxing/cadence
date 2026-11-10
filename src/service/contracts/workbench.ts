@@ -110,7 +110,12 @@ export type WorkbenchRead =
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string; before?: number }
   | { kind: "conversation-active" }
-  | { kind: "conversations"; after?: ChatCursor | null }
+  | {
+      kind: "conversations";
+      after?: ChatCursor | null;
+      /** Lists only archived conversations, which the history otherwise omits. */
+      archived?: true;
+    }
   | {
       kind: "conversation";
       id: string;
@@ -142,6 +147,8 @@ export type WorkbenchRead =
   | { kind: "projects" };
 /** Maximum UTF-8 bytes of one explicit conversation Send. */
 export const CONVERSATION_SEND_BYTES = 16 * 1024;
+/** Code points of a conversation name: as many as a listed title shows. */
+export const CONVERSATION_NAME_CHARS = 100;
 export type ImageSend = Extract<
   WorkbenchCommand,
   { kind: "send" | "cadence-send" }
@@ -231,6 +238,21 @@ export type WorkbenchCommand =
       turnId: string;
       epoch: string;
     }
+  | {
+      kind: "conversation-rename";
+      commandId: string;
+      conversationId: string;
+      /** One trimmed line, exactly as Pi will record it; empty clears the name,
+       * so the title is the first message again. */
+      name: string;
+    }
+  | {
+      kind: "conversation-archive";
+      commandId: string;
+      conversationId: string;
+      /** Whether the history list leaves this conversation out. */
+      archived: boolean;
+    }
   | { kind: "open-project"; commandId: string; path: string; epoch: string };
 export type ChatStatus =
   | "queued"
@@ -250,7 +272,9 @@ export interface ChatImage {
 export interface ChatItem {
   images?: ChatImage[];
   id: string;
-  role: "user" | "assistant" | "tool";
+  /** `thinking` is one readable thinking block of an assistant message, in its
+   * recorded place; its signature is never returned. */
+  role: "user" | "assistant" | "tool" | "thinking";
   text: string;
   name: string;
   args: string;
@@ -267,18 +291,23 @@ export interface ChatTurn {
   notice: string;
   /** Immutable full-transcript pages; items above are only the latest preview. */
   transcript?: { pages: number };
-  /** Content kinds observed and not retained; never written into `notice`.
+  /** Content kinds observed and not shown; never written into `notice`.
+   * `thinking` in a conversation turn is thinking Pi stored unreadable
+   * (redacted or without text), since readable thinking is an item; in a
+   * workflow transcript it is thinking the capture did not retain.
    * `other` is a block of a type Cadence does not recognize. */
   omitted: { thinking: boolean; media: boolean; other: boolean };
 }
 /** One recorded item of a turn as listed. A listing never carries a tool's
- * arguments or output and keeps at most `STEP_TEXT_BYTES` of message text;
- * the full item is read per step with `conversation-step`, one part at a time. */
+ * arguments or output or a thinking block's text, and keeps at most
+ * `STEP_TEXT_BYTES` of message text; the full item is read per step with
+ * `conversation-step`, one part at a time. */
 export interface ChatStep {
   images?: ChatImage[];
   id: string;
   role: ChatItem["role"];
-  /** User or assistant text, a prefix of it when `clipped`; empty for tools. */
+  /** User or assistant text, a prefix of it when `clipped`; empty for tools
+   * and thinking. */
   text: string;
   clipped: boolean;
   name: string;
@@ -303,8 +332,22 @@ export interface ChatTurnHeader {
   stable: number;
   /** The turn's last session entry: a new branch can continue from it. */
   entry: string | null;
+  /** The session entry the turn's user message continues, as Pi recorded it
+   * (null: the session's root); the admitted message's own while Pi has not
+   * written that message. A message sent with this head starts a branch
+   * beside the turn. Absent from a service that predates it. */
+  parent?: string | null;
   /** When the turn began (epoch ms), 0 when unrecorded. */
   at: number;
+}
+/** Context size as of the last completed model response on a branch: the
+ * tokens that response reported for the model that gave it, without Pi's
+ * estimate of what followed. `tokens` is null when a compaction came after
+ * that response, so the size is unknown until the next one. */
+export interface ChatContext {
+  tokens: number | null;
+  provider: string;
+  model: string;
 }
 /** A browser message that left nothing in the session, shown after the branch
  * it was sent from: a refusal before any model call or a Cadence control reply. */
@@ -376,13 +419,15 @@ export function chatStep(
   more = false,
 ): ChatStep {
   const tool = item.role === "tool";
-  const text = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  // Read on demand: neither a tool's output nor thinking is in a listing.
+  const lazy = tool || item.role === "thinking";
+  const text = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
     role: item.role,
     text,
     ...(item.images?.length ? { images: item.images } : {}),
-    clipped: !tool && (more || text !== item.text),
+    clipped: !lazy && (more || text !== item.text),
     name: item.name,
     target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
     error: item.error,
@@ -410,6 +455,8 @@ export interface ChatSummary {
   cadence?: boolean;
   /** The browser reply in progress, which Stop interrupts. */
   live?: { commandId: string; epoch: string };
+  /** Present only for a conversation the history list leaves out. */
+  archived?: true;
 }
 export interface FileEntry {
   name: string;
@@ -472,6 +519,10 @@ export type WorkbenchResult =
       attempt: ChatAttempt | null;
       /** Accepted browser commands, not inferred from session entry changes. */
       commands?: string[];
+      /** For the branch read, a live turn's written entries included. Absent
+       * when no model response is within the reader's walk of the branch end,
+       * or the service predates it. */
+      context?: ChatContext;
     }
   | {
       kind: "conversation-tree";
@@ -626,11 +677,18 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       };
     }
     case "conversations": {
-      const after = Object.hasOwn(v as object, "after");
-      const o = closed(v, ["kind", ...(after ? ["after"] : [])]);
+      const after = Object.hasOwn(v as object, "after"),
+        archived = Object.hasOwn(v as object, "archived");
+      const o = closed(v, [
+        "kind",
+        ...(after ? ["after"] : []),
+        ...(archived ? ["archived"] : []),
+      ]);
+      if (archived && o.archived !== true) throw new ContractError("invalid");
       return {
         kind,
         ...(after ? { after: nullable(o.after, decodeChatCursor) } : {}),
+        ...(archived ? { archived: true as const } : {}),
       };
     }
     case "conversation-active":
@@ -658,6 +716,16 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
       };
     }
   }
+}
+/** A name Pi records unchanged: one line, trimmed, without control
+ * characters, at most `CONVERSATION_NAME_CHARS` code points. */
+function decodeConversationName(v: unknown): string {
+  const name = text(v, 4 * CONVERSATION_NAME_CHARS);
+  if (name !== name.trim() || /\p{Cc}/u.test(name))
+    throw new ContractError("invalid");
+  if ([...name].length > CONVERSATION_NAME_CHARS)
+    throw new ContractError("oversize");
+  return name;
 }
 export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
@@ -867,6 +935,24 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       epoch: decodeId(o.epoch),
     };
   }
+  if (kind === "conversation-rename") {
+    const o = closed(v, ["kind", "commandId", "conversationId", "name"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeSessionId(o.conversationId),
+      name: decodeConversationName(o.name),
+    };
+  }
+  if (kind === "conversation-archive") {
+    const o = closed(v, ["kind", "commandId", "conversationId", "archived"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeSessionId(o.conversationId),
+      archived: bool(o.archived),
+    };
+  }
 
   const o = closed(v, ["kind", "commandId", "path", "epoch"]);
   return {
@@ -914,6 +1000,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     items: list(o.items, 256, decodeChatItem),
   };
 }
+const ITEM_ROLES = ["user", "assistant", "tool", "thinking"] as const;
 function decodeChatImages(v: unknown): ChatImage[] {
   return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
@@ -945,7 +1032,7 @@ export function decodeChatItem(v: unknown): ChatItem {
   return {
     ...(i.images === undefined ? {} : { images: decodeChatImages(i.images) }),
     id: text(i.id, 160, true),
-    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    role: oneOf(i.role, ITEM_ROLES),
     text: text(i.text, 256 * 1024),
     name: text(i.name, 128),
     args: text(i.args, 64 * 1024),
@@ -967,7 +1054,7 @@ function decodeChatStep(v: unknown): ChatStep {
   const step = {
     ...(o.images === undefined ? {} : { images: decodeChatImages(o.images) }),
     id: text(o.id, 160, true),
-    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    role: oneOf(o.role, ITEM_ROLES),
     text: text(o.text, STEP_TEXT_BYTES),
     clipped: bool(o.clipped),
     name: text(o.name, 128),
@@ -975,7 +1062,13 @@ function decodeChatStep(v: unknown): ChatStep {
     error: bool(o.error),
     parts: integer(o.parts, 0),
   };
-  if (step.role === "tool" && (step.text || step.clipped))
+  if (
+    (step.role === "tool" || step.role === "thinking") &&
+    (step.text || step.clipped)
+  )
+    throw new ContractError("invalid");
+  // A thinking block is listed only when it has text to read.
+  if (step.role === "thinking" && !step.parts)
     throw new ContractError("invalid");
   return step;
 }
@@ -990,6 +1083,7 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
     ...(Object.hasOwn(v ?? {}, "retry") ? ["retry"] : []),
     "entry",
+    ...(Object.hasOwn(v ?? {}, "parent") ? ["parent"] : []),
     "at",
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
@@ -1001,6 +1095,9 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     ...(o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) }),
     id: decodeEntryId(o.id),
     entry: nullable(o.entry, decodeEntryId),
+    ...(o.parent === undefined
+      ? {}
+      : { parent: nullable(o.parent, decodeEntryId) }),
     at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
@@ -1025,8 +1122,11 @@ export function decodeChatSummary(v: unknown): ChatSummary {
     "origin",
     ...(has("cadence") ? ["cadence"] : []),
     ...(has("live") ? ["live"] : []),
+    ...(has("archived") ? ["archived"] : []),
   ]);
   const live = has("live") ? closed(o.live, ["commandId", "epoch"]) : null;
+  if (has("archived") && o.archived !== true)
+    throw new ContractError("invalid");
   return {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
@@ -1043,6 +1143,7 @@ export function decodeChatSummary(v: unknown): ChatSummary {
           },
         }
       : {}),
+    ...(has("archived") ? { archived: true as const } : {}),
   };
 }
 function decodeChatAttempt(v: unknown): ChatAttempt {
@@ -1052,6 +1153,14 @@ function decodeChatAttempt(v: unknown): ChatAttempt {
     text: text(o.text, 16 * 1024),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
+  };
+}
+function decodeChatContext(v: unknown): ChatContext {
+  const o = closed(v, ["tokens", "provider", "model"]);
+  return {
+    tokens: nullable(o.tokens, (n) => integer(n, 1)),
+    provider: text(o.provider, 128),
+    model: text(o.model, 256),
   };
 }
 function decodeChatTreeNode(v: unknown): ChatTreeNode {
@@ -1213,6 +1322,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       "runs",
       "attempt",
       ...(Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []),
+      ...(Object.hasOwn(v ?? {}, "context") ? ["context"] : []),
     ]);
     const summary = nullable(o.summary, decodeChatSummary),
       turns = integer(o.turns, 0);
@@ -1222,6 +1332,9 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       ...(o.commands === undefined
         ? {}
         : { commands: list(o.commands, 64, decodeId) }),
+      ...(o.context === undefined
+        ? {}
+        : { context: decodeChatContext(o.context) }),
       summary,
       leaf: nullable(o.leaf, decodeEntryId),
       continues: bool(o.continues),
