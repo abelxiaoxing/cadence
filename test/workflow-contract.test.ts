@@ -10,6 +10,7 @@ import {
   decodeWorkflowProposal,
   decodeWorkflowRequest,
   decodeWorkflowRun,
+  readableWorkflowPlan,
   WORKFLOW_LIMITS,
   type WorkflowPlan,
   workflowAncestors,
@@ -181,28 +182,88 @@ it("global preferences persist only exact model choice and never silently replac
   expect(readFileSync(p.path, "utf8")).toBe('{"schema":"unknown"}');
 });
 
-it("retained fixed-pipeline agreements remain readable but cannot authorize adaptive delivery", () => {
+it("retained agreements remain readable but only a current one authorizes delivery", () => {
   const current = plan();
-  const { version: _version, knowledge: _knowledge, ...body } = current;
-  const old = {
+  expect(decodeWorkflowPlan(current, { strict: true })).toEqual(current);
+  const {
+    version: _version,
+    assumptions: _assumptions,
+    documents: _documents,
+    reviewReads: _reviewReads,
+    policy: _policy,
+    tasks,
+    ...body
+  } = current;
+  const earlierTasks = tasks.map(({ reads: _reads, ...task }) => task);
+  // The original fixed pipeline, and adaptive delivery in a fixed write scope.
+  const fixed = {
     ...body,
+    tasks: earlierTasks,
     projectContext: "Original planning notes",
     repairAttempts: 2,
   };
-  expect(decodeWorkflowPlan(old)).toEqual(old);
-  expect(() => decodeWorkflowPlan(old, { strict: true })).toThrow("readonly");
-  expect(() =>
-    decodeWorkflowPlan({ ...current, repairAttempts: 2 }, { strict: true }),
-  ).toThrow();
-  expect(() =>
-    decodeWorkflowPlan(
-      { ...current, knowledge: ["../secret.md"] },
-      { strict: true },
-    ),
-  ).toThrow();
-  expect(() =>
-    decodeWorkflowPlan({ ...current, knowledge: [".env"] }, { strict: true }),
-  ).toThrow();
+  const adaptive = {
+    ...body,
+    tasks: earlierTasks,
+    version: 2,
+    knowledge: ["docs/guide.md"],
+  };
+  for (const retained of [fixed, adaptive]) {
+    expect(decodeWorkflowPlan(retained)).toEqual(retained);
+    expect(() => decodeWorkflowPlan(retained, { strict: true })).toThrow(
+      "readonly",
+    );
+  }
+  // Versions do not mix their fields.
+  for (const mixed of [
+    { ...current, repairAttempts: 2 },
+    { ...current, knowledge: [] },
+    { ...adaptive, assumptions: "" },
+    { ...current, version: 4 },
+  ])
+    expect(() => decodeWorkflowPlan(mixed)).toThrow();
+  for (const path of ["../secret.md", ".env", "notes.txt"])
+    expect(() =>
+      decodeWorkflowPlan({ ...current, documents: [path] }, { strict: true }),
+    ).toThrow();
+});
+it("a current agreement states assumptions, an installation policy and what each worker reads first", () => {
+  const p = plan();
+  p.assumptions = "Keep the public CLI flags unchanged.";
+  p.policy = { installs: true };
+  p.reviewReads = [
+    { path: "engineering/limits.md", reason: "Bounds touched by the change" },
+  ];
+  p.tasks[0].reads = [
+    { path: "AGENTS.md", section: "Development", reason: "House rules" },
+    { research: "0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10", reason: "Prior map" },
+  ];
+  const decoded = decodeWorkflowPlan(p, { strict: true });
+  expect(decoded).toEqual(p);
+  const readable = readableWorkflowPlan(decoded);
+  expect(readable).toContain("## Assumptions (confirmed by approval)");
+  expect(readable).toContain("Keep the public CLI flags unchanged.");
+  expect(readable).toContain("AGENTS.md § Development — House rules");
+  expect(readable).toContain(
+    "works to completion without further confirmation",
+  );
+  expect(readable).toContain("recorded deviation");
+  expect(readable).toContain(
+    "Revisions may add dependency-installation commands",
+  );
+  for (const invalid of [
+    { ...p, policy: {} },
+    { ...p, policy: { installs: "yes" } },
+    { ...p, assumptions: undefined },
+    { ...p, reviewReads: [{ path: "../x.md", reason: "r" }] },
+    { ...p, reviewReads: [{ path: "a.md" }] },
+    { ...p, reviewReads: [{ research: "not-an-id", reason: "r" }] },
+    {
+      ...p,
+      tasks: [{ ...p.tasks[0], reads: undefined }, p.tasks[1]],
+    },
+  ])
+    expect(() => decodeWorkflowPlan(invalid, { strict: true })).toThrow();
 });
 
 it("new setup/check commands default to no timeout without rewriting approved explicit values", () => {

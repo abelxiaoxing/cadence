@@ -10,16 +10,21 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
 ## Normal path
 
 1. Cadence delegates focused readonly repository investigations, reuses existing project documentation, and consolidates questions in the main conversation.
-2. Discuss requirements and decisions until the implementation and acceptance criteria are clear.
-3. Cadence presents one readable delivery agreement: expected result, acceptance, scope, setup/check commands, project knowledge and delivery policy.
-   The technical route is an initial suggestion; routine recovery and in-scope implementation changes need no further approval.
+2. Discuss requirements and decisions until nothing that changes the result is left open.
+   This is the last time you are asked: what Cadence decides on your behalf is listed in the agreement as its assumptions.
+3. Cadence presents one readable delivery agreement: expected result, acceptance, decisions, assumptions, the initial route and write scope, setup/check commands, documents to update and delivery policy.
+   The technical route is an initial suggestion.
+   After approval the service finishes on its own: it repairs and re-plans, may bring further files of the repository into the write scope (never credentials, keys, `.env`, `.git` or anything outside the repository), and installs dependencies only if the agreement says revisions may.
+   If an acceptance item proves impossible it delivers the closest achievable result and records the deviation: what could not be met, why, what was delivered instead and any declared check set aside because of it.
+   The automatic review must confirm each deviation, and a run that deviated says so first when it completes; the task branch is kept, so the merge can be undone.
 4. Type `按计划实施` after the plan to authorize those exact bytes.
    In the browser, click **Implement this plan** or send that exact approval phrase for the currently displayed plan.
    In Pi, the Start tool can alternatively present one native confirmation of the complete plan.
    Native confirmation retains its raw-terminal guard.
    Quoted/generated text, an old session entry and vague agreement are not approval; browser authentication alone is not consent.
-5. The persistent owner implements, reviews, verifies and delivers within that boundary.
-   Routine internal steps do not ask for more approval.
+5. The persistent owner implements, reviews, verifies and delivers.
+   Nothing asks for more approval.
+   It stops early only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, an installation the agreement does not allow, or a missing tool.
 6. Completion returns the conversation to Cadence **ready**, not ordinary mode.
    Ask for status, more detail, cancellation, or the next goal normally.
 

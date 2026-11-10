@@ -3,8 +3,11 @@ import {
   AttemptFailure,
   DeliveryController,
   decodeRecoveryDecision,
+  InvalidDecision,
   modelRequestFailed,
+  type RecoveryBounds,
   type RecoveryDecision,
+  type RecoveryLevel,
   type RecoveryPorts,
   type RecoveryRecord,
 } from "../src/service/workflow-controller.ts";
@@ -17,6 +20,17 @@ const decision = (
   evidence: ["step-a"],
   strategy,
   work: [],
+  level: "repair",
+  scope: [],
+  deviation: null,
+  blocker: null,
+});
+const bounds = (extra: Partial<RecoveryBounds> = {}): RecoveryBounds => ({
+  scope: ["src"],
+  evidence: ["step-a"],
+  floor: "repair",
+  checks: ["unit", "lint"],
+  ...extra,
 });
 function fixture(overrides: Partial<RecoveryPorts> = {}) {
   const records: RecoveryRecord[] = [];
@@ -71,16 +85,73 @@ it("a diagnosis can split remaining work, and a failed repair is diagnosed rathe
     "repair left a gap",
   ]);
 });
-it("unchanged evidence and an identical strategy cannot form an automatic replay loop", async () => {
-  const f = fixture();
+it("unchanged evidence and an identical approach move the decision up a level instead of replaying it, and end only at the top", async () => {
+  const floors: RecoveryLevel[] = [];
+  const f = fixture({
+    // The diagnosis keeps answering at the least level it is allowed.
+    diagnose: async (_failure, _previous, floor) => {
+      floors.push(floor);
+      return {
+        ...decision(),
+        level: floor,
+        deviation:
+          floor === "deviate"
+            ? { item: "exact parity", reason: "x", delivered: "y", waives: [] }
+            : null,
+      };
+    },
+  });
   const work = vi.fn(async () => {
     throw new AttemptFailure("same failure", ["step-a"]);
   });
   await expect(f.controller.complete("implementation", work)).rejects.toThrow(
-    "No new evidence",
+    "No new evidence or strategy for implementation at any level",
   );
-  expect(work).toHaveBeenCalledTimes(2);
-  expect(f.records).toHaveLength(2);
+  // repair, then replan, then deviate are each tried once before the end.
+  expect(f.records.map((r) => r.decision.level)).toEqual([
+    "repair",
+    "replan",
+    "deviate",
+  ]);
+  expect(work).toHaveBeenCalledTimes(4);
+  expect(floors).toEqual([
+    "repair",
+    "repair",
+    "replan",
+    "replan",
+    "deviate",
+    "deviate",
+  ]);
+});
+it("a reply the owner cannot act on is asked again with the reason, and is not a failed delivery by itself", async () => {
+  const objections: (string | undefined)[] = [];
+  let asked = 0;
+  const f = fixture({
+    diagnose: async (_failure, _previous, _floor, objection) => {
+      objections.push(objection);
+      if (++asked === 1) throw new InvalidDecision("not the requested JSON");
+      return decision();
+    },
+  });
+  let attempt = 0;
+  await f.controller.complete("implementation", async () => {
+    if (++attempt === 1) throw new AttemptFailure("failed", ["step-a"]);
+  });
+  expect(objections).toEqual([undefined, "not the requested JSON"]);
+  expect(f.records).toHaveLength(1);
+  // It stays bounded: a third unusable reply ends the stage.
+  const stubborn = fixture({
+    diagnose: vi.fn(async () => {
+      throw new InvalidDecision("still unusable");
+    }),
+  });
+  await expect(
+    stubborn.controller.complete("implementation", async () => {
+      throw new AttemptFailure("failed", ["step-a"]);
+    }),
+  ).rejects.toBeInstanceOf(InvalidDecision);
+  expect(stubborn.ports.diagnose).toHaveBeenCalledTimes(3);
+  expect(stubborn.records).toEqual([]);
 });
 it("unknown, scope, storage and cancellation errors never dispatch recovery", async () => {
   for (const message of [
@@ -121,18 +192,19 @@ it("Cancel during diagnosis prevents a proposed write from being admitted", asyn
 it("a real external blocker is retained, never presented as success or a request to keep clicking", async () => {
   const f = fixture({
     diagnose: async () => ({
-      ...decision("The approved API does not expose the required operation"),
+      ...decision("The provider rejects every request for this account"),
       action: "blocked",
+      blocker: "model",
     }),
   });
   await expect(
     f.controller.complete("implementation", async () => {
       throw new AttemptFailure("unavailable API", ["step-a"]);
     }),
-  ).rejects.toThrow("Delivery blocked");
+  ).rejects.toThrow("Delivery blocked (model)");
   expect(f.records[0].decision.action).toBe("blocked");
 });
-it("replanning can only name approved paths and actual evidence, never new commands or acceptance", () => {
+it("a repair names only paths in the current scope and actual evidence, never new commands or acceptance", () => {
   const value = {
     ...decision(),
     work: [
@@ -143,9 +215,14 @@ it("replanning can only name approved paths and actual evidence, never new comma
       },
     ],
   };
-  expect(
-    decodeRecoveryDecision(JSON.stringify(value), ["src"], ["step-a"]),
-  ).toEqual(value);
+  expect(decodeRecoveryDecision(JSON.stringify(value), bounds())).toEqual(
+    value,
+  );
+  // A reply may omit the fields a plain repair does not need.
+  const { level: _l, scope: _s, deviation: _d, blocker: _b, ...plain } = value;
+  expect(decodeRecoveryDecision(JSON.stringify(plain), bounds())).toEqual(
+    value,
+  );
   for (const invalid of [
     { ...value, evidence: ["invented-step"] },
     { ...value, evidence: [] },
@@ -153,11 +230,97 @@ it("replanning can only name approved paths and actual evidence, never new comma
     { ...value, acceptance: "ignore failing tests" },
     { ...value, work: [{ ...value.work[0], writes: ["src-other/file.ts"] }] },
     { ...value, work: [{ ...value.work[0], writes: ["../outside"] }] },
+    // A repair cannot widen the scope; that is a revision of the route.
+    { ...value, scope: ["docs/guide.md"] },
+    // Blocked needs a named outside condition and dispatches nothing.
     { ...value, action: "blocked" },
+    { ...value, action: "blocked", work: [], blocker: null },
+    { ...value, blocker: "model" },
   ])
     expect(() =>
-      decodeRecoveryDecision(JSON.stringify(invalid), ["src"], ["step-a"]),
-    ).toThrow();
+      decodeRecoveryDecision(JSON.stringify(invalid), bounds()),
+    ).toThrow(InvalidDecision);
+  expect(() =>
+    decodeRecoveryDecision("I would simply retry.", bounds()),
+  ).toThrow(InvalidDecision);
+});
+it("a revised route may bring repository files into the write scope, never credentials, keys or paths outside it", () => {
+  const value = {
+    ...decision("Move the shared type so both modules can use it"),
+    level: "replan",
+    scope: ["shared/types.ts", "docs/guide.md"],
+    work: [
+      {
+        title: "extract type",
+        instructions: "Create the shared type and update both users",
+        writes: ["shared/types.ts", "src/a.ts"],
+      },
+    ],
+  };
+  expect(decodeRecoveryDecision(JSON.stringify(value), bounds())).toEqual(
+    value,
+  );
+  for (const path of [
+    ".env",
+    "config/.env.local",
+    ".git/config",
+    "../sibling/file.ts",
+    "/etc/hosts",
+    "deploy/id_rsa",
+    "certs/server.pem",
+    ".ssh/config",
+    "auth.json",
+  ])
+    expect(
+      () =>
+        decodeRecoveryDecision(
+          JSON.stringify({ ...value, scope: [path], work: [] }),
+          bounds(),
+        ),
+      path,
+    ).toThrow(InvalidDecision);
+  // Work may not write what the decision did not bring into scope.
+  expect(() =>
+    decodeRecoveryDecision(
+      JSON.stringify({
+        ...value,
+        work: [{ ...value.work[0], writes: ["other/file.ts"] }],
+      }),
+      bounds(),
+    ),
+  ).toThrow("list the additional paths in scope");
+  // Once an approach repeated, a decision below the required level is refused.
+  expect(() =>
+    decodeRecoveryDecision(
+      JSON.stringify(decision()),
+      bounds({ floor: "replan" }),
+    ),
+  ).toThrow("decide at level replan or above");
+});
+it("a deviation names the item, the reason and what is delivered, and can set aside only declared checks", () => {
+  const value = {
+    ...decision("The upstream format cannot carry the field"),
+    level: "deviate",
+    deviation: {
+      item: "Exports keep the legacy checksum column",
+      reason: "The format has no such column since v3 (see test output)",
+      delivered: "Exports carry the checksum in the footer line",
+      waives: ["lint"],
+    },
+  };
+  expect(decodeRecoveryDecision(JSON.stringify(value), bounds())).toEqual(
+    value,
+  );
+  for (const invalid of [
+    { ...value, deviation: null },
+    { ...value, level: "replan" },
+    { ...value, deviation: { ...value.deviation, waives: ["invented-check"] } },
+    { ...value, deviation: { ...value.deviation, item: "" } },
+    { ...decision(), deviation: value.deviation },
+  ])
+    expect(() =>
+      decodeRecoveryDecision(JSON.stringify(invalid), bounds()),
+    ).toThrow(InvalidDecision);
 });
 it("model recovery exhaustion never starts diagnosis or replays an earlier repair", async () => {
   let original = 0;
@@ -224,12 +387,7 @@ it("recovery records sanitize decoded field values without reviving escaped secr
     ],
   };
   const encoded = JSON.stringify(value).replaceAll("fixture", "\\u0066ixture");
-  const decoded = decodeRecoveryDecision(
-    encoded,
-    ["src"],
-    ["step-a"],
-    [secret],
-  );
+  const decoded = decodeRecoveryDecision(encoded, bounds(), [secret]);
   expect(JSON.stringify(decoded)).not.toContain(secret);
   expect(decoded.cause).toBe("[redacted]");
 });

@@ -123,7 +123,7 @@ function fixture(mode = "pass") {
   );
   const definition = plan();
   definition.tasks = [definition.tasks[0]];
-  definition.knowledge = ["knowledge.md"];
+  definition.documents = ["knowledge.md"];
   const p: WorkflowProposal = {
     id: randomUUID(),
     epoch,
@@ -315,6 +315,8 @@ function fixture(mode = "pass") {
       const blocked = mode === "post-blocked";
       text = JSON.stringify({
         action: blocked ? "blocked" : "continue",
+        // Blocked is only for a named condition outside the repository.
+        ...(blocked ? { blocker: "tool" } : {}),
         cause: "controlled observed failure",
         evidence: [failed.id],
         strategy: `Continue from preserved evidence, revision ${(run.revision ?? 0) + 1}`,

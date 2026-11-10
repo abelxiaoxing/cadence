@@ -265,8 +265,8 @@ export const zh = {
     "Cadence 将持续开启。确认一次计划后开始实施。",
   "Cadence workflow": "Cadence 工作流",
   "Current implementation plan": "当前实施计划",
-  "Approval covers this goal and boundary: adaptive implementation, checks, recovery, project knowledge and the displayed local delivery. No push, publication or deployment.":
-    "批准仅覆盖本计划中的实施、检查、有限修复和所列的本地交付。不包含推送、发布或部署。",
+  "Approval covers this goal, its decisions, acceptance and assumptions. The service then finishes on its own: it may revise the route and write scope inside the repository, and records any deviation from the acceptance for the automatic review and the final report. No push, publication or deployment.":
+    "批准覆盖本目标及其决定、验收标准和假设。之后由服务自行完成：它可以在仓库内调整路线和写入范围；对验收的任何偏离都会记录下来，交给自动审查确认，并在最终报告中置顶。不包含推送、发布或部署。",
   "Implement this plan": "按此计划实施",
   "To change the plan, continue the conversation. A changed plan requires fresh approval.":
     "需要修改计划时继续对话。计划变更后需要重新批准。",

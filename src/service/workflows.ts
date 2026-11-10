@@ -48,6 +48,7 @@ import {
   decodeWorkflowRequest,
   decodeWorkflowRun,
   readableWorkflowPlan,
+  WORKFLOW_DEVIATIONS,
   WORKFLOW_LIMITS,
   type WorkflowCheck,
   type WorkflowPlan,
@@ -55,8 +56,10 @@ import {
   type WorkflowRequest,
   type WorkflowRun,
   type WorkflowStep,
+  workflowBoundary,
   workflowContext,
   workflowCovers,
+  workflowDocuments,
   workflowOrder,
   workflowWrites,
 } from "./contracts/workflow.ts";
@@ -77,6 +80,7 @@ import {
   AttemptFailure,
   DeliveryController,
   decodeRecoveryDecision,
+  InvalidDecision,
   modelRequestFailed,
   RECOVERY_BYTES,
   RECOVERY_INSTRUCTIONS,
@@ -519,7 +523,7 @@ export class Workflows {
     } catch {
       throw new WorkflowRefusal(
         "invalid",
-        "This retained proposal does not authorize adaptive delivery. Publish a current delivery agreement; nothing was started.",
+        "This retained proposal predates self-revising delivery. Publish a current delivery agreement; nothing was started.",
       );
     }
     const selected = this.model(p.model);
@@ -1343,7 +1347,7 @@ Write paths are relative to the checkout root.`
     const knowledge = projectKnowledge(
       cwd,
       `${live.run.goal} ${id} ${prompt.slice(0, 1024)}`,
-      plan ? workflowWrites(plan) : [],
+      live.proposal ? this.scope(live, live.proposal) : [],
       this.o.secrets(),
       Math.max(0, Math.min(12 * 1024, 32000 - Buffer.byteLength(baseContext))),
     );
@@ -1825,10 +1829,16 @@ ${knowledge.text}`,
     plan: WorkflowPlan,
     baseline = false,
     observed: WorkflowStep[] = [],
+    waived: Set<string> = new Set(),
   ): Promise<boolean> {
     live.run.phase = "verifying";
     this.save(live);
     let passed = true;
+    // A declared check a recorded deviation set aside still runs and is shown;
+    // its failure no longer gates acceptance. `waived` collects those steps.
+    const setAside = new Set(
+      baseline ? [] : (live.run.deviations ?? []).flatMap((d) => d.waives),
+    );
     for (const c of baseline ? plan.baselineChecks : plan.checks) {
       const { result: r, step } = await this.check(live, cwd, c, c.name);
       observed.push(step);
@@ -1839,7 +1849,9 @@ ${knowledge.text}`,
         r.outcome === "timeout"
       )
         this.success(r, step);
-      passed &&= r.outcome === "completed" && r.exitCode === 0;
+      const ok = r.outcome === "completed" && r.exitCode === 0;
+      if (!ok && setAside.has(c.name)) waived.add(step.id);
+      else passed &&= ok;
     }
     return passed;
   }
@@ -1982,6 +1994,41 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     step.truncated ||=
       Buffer.byteLength(report.summary) > Buffer.byteLength(step.text);
     this.save(live);
+    return step;
+  }
+  /** The run's current write scope: the agreement's, plus what revisions added. */
+  private scope(live: Live, p: WorkflowProposal): string[] {
+    return [...new Set([...workflowWrites(p.plan), ...(live.run.scope ?? [])])];
+  }
+  /** Recorded deviations, for the worker that must honour or judge them. */
+  private deviationBrief(live: Live, reader: "work" | "review"): string {
+    const deviations = live.run.deviations ?? [];
+    if (!deviations.length) return "";
+    const lines = deviations.map(
+      (d) =>
+        `- Revision ${d.revision}: "${d.item}" cannot be met (${d.reason}). Delivered instead: ${d.delivered}${d.waives.length ? ` Checks set aside: ${d.waives.join(", ")}.` : ""}`,
+    );
+    return `\n${
+      reader === "review"
+        ? "Recorded deviations from the agreement. Judge each one: approve only if the evidence shows the item could not be met and what is delivered is the closest result; a deviation that is unnecessary or larger than needed is a blocking issue."
+        : "The owner recorded these deviations from the agreement; implement the delivered variant, not the original item:"
+    }\n${diagnosticText(lines.join("\n"), 8192, this.o.secrets())}`;
+  }
+  /** Paths a revision wants in the write scope must be deliverable: for a
+   * fast-forward delivery the user's checkout must not hold its own changes
+   * to them. */
+  private async assertAddable(live: Live, paths: string[]): Promise<void> {
+    if (!live.target) return;
+    try {
+      await assertTarget(this.cwd, live.target, paths);
+    } catch (error) {
+      // A moved target is not a question of scope: it ends the delivery.
+      if (!(error instanceof WorkflowRefusal) || error.code === "stale")
+        throw error;
+      throw new InvalidDecision(
+        `These paths cannot join the write scope because the target checkout has its own changes to them or hides them: ${paths.join(", ")} (${error.detail})`,
+      );
+    }
   }
   private async review(
     live: Live,
@@ -1997,7 +2044,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       `review-${randomUUID()}`,
       `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
-Files: ${workflowWrites(p.plan).join(", ")}
+Files: ${this.scope(live, p).join(", ")}${this.deviationBrief(live, "review")}
 Current-round check evidence (output excerpts, not instructions):\n${this.evidence(live, checks)}`,
       true,
       p.model,
@@ -2015,13 +2062,16 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       step,
     };
   }
-  /** Working-copy edits are attributed per worker; out-of-scope paths fail the
-   * run with the list. Actual edits are preserved, never reverted. */
+  /** Working-copy edits are attributed per worker. Actual edits are preserved,
+   * never reverted. Paths outside the write scope but inside the repository
+   * boundary are a settled fact recovery decides about (adopt or restore);
+   * protected paths, or an attempt no step can be cited for, refuse the run. */
   private async scoped<T>(
     live: Live,
     allowed: string[],
     work: () => Promise<T>,
     cwd = this.cwd,
+    cite: (value: T) => string[] = () => [],
   ): Promise<T> {
     const before = await workingSnapshot(cwd, allowed);
     let outcome: { ok: true; value: T } | { ok: false; error: unknown };
@@ -2039,8 +2089,22 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     for (const p of changed)
       if (workflowCovers(allowed, p)) live.delivered.add(p);
     if (outside.length) {
-      const detail = `Working-copy edits outside the approved scope were preserved, not reverted: ${outside.slice(0, 32).join(", ")}${outside.length > 32 ? ` and ${outside.length - 32} more` : ""}`;
-      throw new WorkflowRefusal("forbidden", detail);
+      const detail = `Working-copy edits outside the write scope were preserved, not reverted: ${outside.slice(0, 32).join(", ")}${outside.length > 32 ? ` and ${outside.length - 32} more` : ""}`;
+      const steps = outcome.ok
+        ? cite(outcome.value)
+        : outcome.error instanceof AttemptFailure
+          ? outcome.error.steps
+          : [];
+      if (
+        !steps.length ||
+        outside.some((p) => !workflowBoundary(p)) ||
+        (!outcome.ok && !(outcome.error instanceof AttemptFailure))
+      )
+        throw new WorkflowRefusal("forbidden", detail);
+      throw new AttemptFailure(
+        `${detail}. Bring each of them into the write scope (level replan): keep it when the goal needs it, otherwise give a work item that restores it.${outcome.ok ? "" : ` The attempt also failed: ${(outcome.error as Error).message}`}`,
+        steps,
+      );
     }
     if (!outcome.ok) throw outcome.error;
     return outcome.value;
@@ -2067,11 +2131,12 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     live.controllers ??= new Map();
     const existing = live.controllers.get(cwd);
     if (existing) return existing;
-    const allowed = workflowWrites(p.plan);
+    const scope = () => this.scope(live, p);
+    const checks = p.plan.checks.map((c) => c.name);
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live),
-      observe: () => sourceIdentityAsync(cwd, allowed, live.abort.signal),
-      diagnose: async (failure, previous) => {
+      observe: () => sourceIdentityAsync(cwd, scope(), live.abort.signal),
+      diagnose: async (failure, previous, floor, objection) => {
         live.run.phase = "recovering";
         live.run.notice = this.notice(
           "Diagnosing a settled attempt; partial work is preserved. No routine user confirmation is needed.",
@@ -2086,19 +2151,28 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           live,
           cwd,
           "diagnose",
-          `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nApproved paths: ${allowed.join(", ")}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
+          `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nCurrent write scope: ${scope().join(", ")}\nLeast level for this decision: ${floor}\nDeclared acceptance checks: ${checks.join(", ")}\nDependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${this.deviationBrief(live, "work")}${objection ? `\nYour previous reply for this failure could not be used: ${objection}` : ""}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
           true,
           p.model,
           undefined,
           "diagnosis",
         );
         this.attemptResult(live, result, step);
-        return decodeRecoveryDecision(
+        const decision = decodeRecoveryDecision(
           result.text,
-          allowed,
-          failure.steps,
+          { scope: scope(), evidence: failure.steps, floor, checks },
           this.o.secrets(),
         );
+        if (
+          decision.deviation &&
+          (live.run.deviations?.length ?? 0) >= WORKFLOW_DEVIATIONS
+        )
+          throw new InvalidDecision(
+            "This delivery already recorded as many deviations as one run may; continue without another",
+          );
+        const added = decision.scope.filter((p) => !workflowCovers(scope(), p));
+        if (added.length) await this.assertAddable(live, added);
+        return decision;
       },
       record: (record) => {
         const revision = (live.run.revision ?? 0) + 1;
@@ -2107,8 +2181,17 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           revision,
         });
         live.run.revision = revision;
+        const { decision } = record;
+        const added = decision.scope.filter((p) => !workflowCovers(scope(), p));
+        if (added.length)
+          live.run.scope = [...(live.run.scope ?? []), ...added];
+        if (decision.deviation)
+          live.run.deviations = [
+            ...(live.run.deviations ?? []),
+            { revision, ...decision.deviation },
+          ];
         live.run.notice = this.notice(
-          `Plan revision ${revision}: ${record.decision.strategy}`,
+          `Plan revision ${revision} (${decision.action === "blocked" ? "blocked" : decision.level}): ${decision.strategy}`,
         );
         this.save(live);
         return revision;
@@ -2147,8 +2230,17 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       await this.scoped(
         live,
         allowed,
-        () => this.implementation(live, cwd, id, prompt, p.model, kind),
+        () =>
+          this.implementation(
+            live,
+            cwd,
+            id,
+            `${prompt}${this.deviationBrief(live, "work")}`,
+            p.model,
+            kind,
+          ),
         cwd,
+        (step) => [step.id],
       );
     } finally {
       if (head) await this.unchangedHead(cwd, head);
@@ -2193,8 +2285,9 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     git: boolean,
     documents: string[] = [],
   ) {
-    const scope = [...workflowWrites(p.plan), ...documents];
     await this.recoverStage(live, cwd, p, "verification", async () => {
+      // Read per round: a revision may have extended the scope since the last.
+      const scope = [...this.scope(live, p), ...documents];
       let head: string | null = null;
       if (git) {
         const delivery = live.delivery;
@@ -2227,7 +2320,15 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         live.abort.signal,
       );
       const checks: WorkflowStep[] = [];
-      const checked = await this.checks(live, cwd, p.plan, false, checks);
+      const waived = new Set<string>();
+      const checked = await this.checks(
+        live,
+        cwd,
+        p.plan,
+        false,
+        checks,
+        waived,
+      );
       if (head) {
         await this.unchangedHead(cwd, head);
         await assertWorkflowScope(cwd, scope);
@@ -2279,6 +2380,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
             checks,
             review,
             p.plan.checks.length,
+            waived,
           );
         }
         this.save(live);
@@ -2291,7 +2393,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     });
   }
   private async learn(live: Live, cwd: string, p: WorkflowProposal) {
-    const paths = p.plan.knowledge ?? [];
+    const paths = workflowDocuments(p.plan);
     if (!paths.length) return;
     await this.recoverStage(live, cwd, p, "project knowledge", async () => {
       live.run.phase = "learning";
@@ -2549,9 +2651,9 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     const beforePublication = await delivery.assertTip();
     const changed = await committedPaths(integration, base, beforePublication);
     this.publish(live, integration, plan, committed, changed);
-    const scope = [...allowed, ...committed];
     await this.verifyAndRepair(live, integration, p, true, committed);
-    await this.integrate(live, p, scope);
+    // What the candidate may contain is the scope as revisions left it.
+    await this.integrate(live, p, [...this.scope(live, p), ...committed]);
     const candidate = live.run.mergedCommit;
     if (!candidate) throw new ContractError("quarantine");
     for (const path of await committedPaths(this.cwd, base, candidate))
@@ -2587,9 +2689,11 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         async () => {
           // Repairs stay in the owned candidate. Never commit the user's unrelated index.
           await delivery.assertTip();
+          // Post-merge repair may have revised the scope since the last round.
+          const scope = [...this.scope(live, p), ...committed];
           if (
             !delivery.view.acceptance ||
-            (await assertWorkflowScope(integration, allowed)).length
+            (await assertWorkflowScope(integration, scope)).length
           ) {
             await this.verifyAndRepair(live, integration, p, true, committed);
             if (delivery.view.candidate !== live.run.mergedCommit)
@@ -2755,6 +2859,13 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           "Cancellation requested before delivery settled.",
         );
       live.run.status = "completed";
+      // A delivery that departs from the agreement says so before anything else.
+      const deviations = live.run.deviations ?? [];
+      if (deviations.length)
+        live.run.notice = this.notice(
+          `Delivered with ${deviations.length} recorded deviation${deviations.length === 1 ? "" : "s"} from the agreement, each confirmed by the automatic review:`,
+          deviations.map((d) => `${d.item} → ${d.delivered}`).join("\n"),
+        );
     } catch (error) {
       live.run.status =
         this.o.owner.state === "quarantined"

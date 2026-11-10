@@ -4,8 +4,11 @@ export const plan = (): WorkflowPlan => ({
   design: "Implement two files without touching existing files.",
   decisions: "No remote push or installation.",
   acceptance: "Both files contain their expected text.",
-  version: 2,
-  knowledge: [],
+  version: 3,
+  assumptions: "",
+  documents: [],
+  reviewReads: [],
+  policy: { installs: false },
   tasks: [
     {
       id: "a",
@@ -13,6 +16,7 @@ export const plan = (): WorkflowPlan => ({
       instructions: "Create a.txt",
       writes: ["a.txt"],
       after: [],
+      reads: [],
     },
     {
       id: "b",
@@ -20,6 +24,7 @@ export const plan = (): WorkflowPlan => ({
       instructions: "Create b.txt",
       writes: ["b.txt"],
       after: [],
+      reads: [],
     },
   ],
   checks: [

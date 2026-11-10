@@ -489,15 +489,15 @@
     "test/web/folder-draft.test.tsx": "57bec7437030a1b9ddcea2bd2783218d52d3ddf222e8d0f4614598e7704bf253",
     "web/src/components/workspace/WorkingFolderButton.tsx": "375a04cc39b8aac1356621a34ee4781784644a1ccc9b9092a2bb625f8f4f7849",
     "web/src/client/last-project.ts": "409bf18974d1f827adcfc6d49dbf0c74ca2c91639b4fbb60e70c8648c51bf9d6",
-    "src/cadence-instructions.ts": "f5f822e32d0bc5a7584fb54e8aa90c5cee8690f277ef35029cdee9c79a2d1643",
-    "src/coordinator-tools.mjs": "de9025e5e640bc94fca183f8883a6414f2a9ec9e072969fcbb764de9dec138ac",
+    "src/cadence-instructions.ts": "5201a10ed0795922a4b2494f045ac141ef1bb6629e97d5ba8bab54ae19931099",
+    "src/coordinator-tools.mjs": "e724bdfebc90bc70206e932a0cec1b835f0f39245b1206bc9ea760faa8891ea7",
     "src/service/conversation-workflow.ts": "fdf77d4d18ffc4009cc311aaafd93665b75551f1e2d5756b4ef038524ab025ec",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
-    "web/src/components/workspace/WorkflowPanel.tsx": "f40c0210272d00e895770643f1d772570ec53e8a269632cb37123d153422957b",
+    "web/src/components/workspace/WorkflowPanel.tsx": "844381e1ae9bc7ca2aeed6c3e2d1161c45cc5d15918a31daee4fc9a8b7de73d1",
     "web/src/components/workspace/ChatTurnView.tsx": "66e7ebc9286de46004f2fb6ca8474f17db5e08810bc4f6ba36618f6f300c9db9",
     "test/web/model-retry.test.tsx": "695e4f2374ad8cf911786a3db5f101015d44177fc9a5c2a7fd643686f65d9341",
     "test/service-conversation-workflow.test.ts": "8533466cbea513b525265cdb94d0ce73fa8f660584c6ed240fec486b1cbc332a",
-    "test/web/workflow.test.tsx": "0c6edeeb0efa74eb9675d50789910b7ee91387964bf247d766946256765f139c",
+    "test/web/workflow.test.tsx": "b604ba15b4e60c1ede6fc57d726b038c0148fd03aa492d29f50f77c890ccc42f",
     "src/service/workbench-send-refusal.ts": "3f7481c2c07fc84bdece4ea843ccc6892495fb0ca5b7363aa6e897f0fca69878",
     "web/src/components/workspace/WorkflowAgentView.tsx": "886f213432348e9fc6396c55b661a4f5572781eb684caeb63fbe532d90503c71",
     "src/service/workflow-history.ts": "d135a518a989bb2a5e34facc5b4613f976b034d35f3651e93e5b330cf65d928c",
@@ -559,7 +559,7 @@
     "web/src/layout/use-panel-layout.ts": "dcd206b5c3980971fe9259d78fe8b75c45c4bc80ab9066d94ce3a55887300f6c",
     "test/web/workspace-layout.test.tsx": "02e70a4ad0feb7cc1fdb9323543083ed36bb964b5962be783149cbe767543195",
     "test/web/workspace-states.test.tsx": "ed0af96b1cce7f04a454b51d6edf8def5c266e2bd4334a012a06e1edf24c46ad",
-    "web/src/i18n/zh.ts": "6071340d5c9df72f8763e75fe8b44aad68b39f4be1b5b77da45b8769c8555329",
+    "web/src/i18n/zh.ts": "515d37ca1afdf1cdbf4d9e06dd9b93d33fc3b9898324b7c759388f2ea6577a8f",
     "test/web/model-picker.test.tsx": "f870707a183cab872f6f26824598acf301c849c0eab383fa8c5207012de93506",
     "web/src/client/use-model-catalog.ts": "a15d9b4162b1cef224f4ec9329364e586b3e529cc724a8445f0fe748ba2d32a8",
     "test/web/model-catalog.test.tsx": "1e30b1533181fa51016126152bd3a750bf90b8417aa0d6bbec107a2ae4eb6675",
@@ -905,6 +905,11 @@
       "id": "files-without-execution",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned integration: the stopped-owner reader answers the readonly files/file reads for a stopped or never-prepared folder through the shared WorkbenchFiles and assertConversationDirectory rule, with the owner's bounds, refusals and redaction and no write or startup. The Files pane is enabled once the folder is observed instead of waiting for an execution attachment, and reads again when execution starts, stops or is replaced. No pi-web-ui source is newly adapted; destination pins are refreshed for the changed bodies and tests."
+    },
+    {
+      "id": "self-revising-delivery-agreement",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned integration: execution limits and the version-3 self-revising delivery agreement. A research run carries up to eight questions and the owner's CADENCE_PARALLEL bounds how many workflow workers are in flight; the agreement gains assumptions, per-assignment and review reading lists, documents and an installation policy, and the owner may revise the route and write scope inside the repository and record deviations that the automatic review must confirm. The plan card states what one approval covers. No pi-web-ui source is newly adapted; destination pins are refreshed for the changed bodies and tests."
     }
   ],
   "testAdaptations": [

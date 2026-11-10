@@ -7,7 +7,7 @@ This is not a second executor, fixed task pipeline, Git daemon, sandbox or trans
 ## Entry and authorization
 
 Enabling `/cadence`, discussing a goal, researching, refreshing or reconnecting creates no Git branch or worktree.
-Only admission of a freshly approved version-2 `local-merge` agreement authorizes creation.
+Only admission of a freshly approved version-3 `local-merge` agreement authorizes creation.
 Each new admitted delivery has its own run ID, branch and worktree; clarification and recovery within that delivery reuse them.
 Completion keeps conversation mode enabled; a new goal still needs its own agreement and approval.
 `working-copy` remains separately explicit, never a fallback after isolated delivery fails.
@@ -69,14 +69,14 @@ Coordination covers one state home, not arbitrary external Git commands, other a
 ## Exact candidate acceptance
 
 There is no delivery-duration or fixed repair-round quota.
-The main adaptive controller preserves partial outputs, diagnoses settled failures and changes the in-scope route; original scope, commands, acceptance and closure protections remain authoritative.
+The main adaptive controller preserves partial outputs, diagnoses settled failures and revises the route, including its write scope inside the repository boundary and, as a last level, a recorded deviation; the approved goal, decisions, acceptance, assumptions, declared commands and closure protections remain authoritative (see [checks and review](checks-review.md)).
 Worker failures, rejected/unparseable review and check failures retain their actual evidence.
-Repeated unchanged evidence and an identical strategy cannot become an endless retry loop.
+Repeated unchanged evidence and an identical approach move the decision up a level and cannot become an endless retry loop.
 
 Every local verification round:
 
 1. Checks owned placement and the last owner-recorded HEAD, preserving legitimate uncommitted partial work.
-2. Commits only the approved scope, including approved knowledge and owner-generated delivery notes when applicable.
+2. Commits only the run's current write scope (the agreement's plus what recorded revisions added), including approved documents and owner-generated delivery notes when applicable.
 3. Records the exact candidate commit/tree and invalidates earlier acceptance.
 4. Runs the declared real checks and a separate readonly Agent review.
 5. Rechecks source identity, candidate HEAD, index, worktree and complete committed scope before recording current check/review references bound to the agreement and execution context.

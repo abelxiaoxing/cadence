@@ -45,8 +45,9 @@ Local operation errors neither hide an independent observation error nor imply t
 
 ## Automatic conversation workflow
 
-Native/browser approval binds a version-2 delivery agreement: goal, explicit decisions, immutable acceptance, declared code/Markdown paths, exact setup/baseline/acceptance commands and local delivery policy.
-The initial route and assignments are adjustable inside that boundary, not a user-managed repair budget.
+Native/browser approval binds a version-3 delivery agreement: goal, explicit decisions, acceptance, the coordinator's assumptions, the initial route with its assignments and write paths, what each assignment and the review read first, exact setup/baseline/acceptance commands, the installation policy and the local delivery policy.
+Goal, decisions, acceptance and assumptions stay as approved; the route, the assignments and the write scope are the owner's to revise after approval, without a repair budget and without asking again.
+Version-2 agreements (a fixed write scope) and unversioned ones stay readable and cannot be approved for execution.
 Setup never implicitly copies dependency trees, profiles or credentials.
 Recovery retries the failed setup command, not preceding successful commands and their effects.
 Baseline checks cannot require future outputs.
@@ -57,15 +58,20 @@ A later tool invalidates the report.
 The SDK still needs real final-message/native/auth/storage closure; a report alone cannot override any of those outcomes.
 A complete strict JSON final report remains an alternative structured report, never a prose inference.
 Blocked, malformed or missing reports fail that attempt, not the goal.
-The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further in-scope work.
+The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further work.
+A revision has a level: `repair` stays inside the current write scope; `replan` may bring further repository paths into it (never credentials, keys, `.env`, `.git` or paths outside the repository, and for a fast-forward delivery never a path the target checkout has its own changes to); `deviate` records that an acceptance item or decision cannot be met as written, what is delivered instead, and which declared checks it sets aside.
+The run keeps its added scope and its deviations (`WorkflowRun.scope`, `deviations`, at most 16 deviations); later assignments are told the delivered variant.
 Dependent assignments wait for completion.
-Unknown originals, scope violations, Cancel and authority/storage failures stop new work.
+Unknown originals, Cancel and authority/storage failures stop new work.
 An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.
 A timed-out shell check is not automatically replayed because descendant/tool closure was not established.
 Checks and readonly Agent review still decide delivery.
 Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
-The original acceptance and exact commands cannot be weakened or replaced.
-Repeated unchanged evidence and an identical strategy do not restart the same attempt indefinitely.
+Every declared check runs in every round.
+A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.
+The review is given every recorded deviation and must find each necessary and minimal; rejecting one sends the delivery back to recovery.
+A completed run that deviated says so first in its notice.
+Repeated unchanged evidence and an identical approach escalate the decision's level instead of restarting the same attempt.
 Current-round native exit/closure facts and labelled redacted result excerpts reach diagnosis, repair and review.
 Old failures are historical context, not current check evidence; baseline and post-merge rounds collect their own original check identities.
 Every relevant repair or knowledge edit triggers fresh checks/review on the combined candidate.
