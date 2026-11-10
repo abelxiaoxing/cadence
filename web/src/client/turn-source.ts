@@ -8,9 +8,11 @@ import type { TurnSource } from "./conversation-reader";
 
 /** A turn whose full items are already at hand, such as a workflow subagent's. */
 export function recordedTurn(turn: ChatTurn): TurnSource {
+  // Message text is whole here; a tool's output and a thinking block's text
+  // stay behind `detail`, as in a listing.
   const steps = turn.items.map((item) => ({
     ...chatStep(item, 1),
-    text: item.role === "tool" ? "" : item.text,
+    text: item.role === "tool" || item.role === "thinking" ? "" : item.text,
     clipped: false,
   }));
   return {

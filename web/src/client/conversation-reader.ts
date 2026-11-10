@@ -5,6 +5,7 @@
 import { abortScope } from "../../../src/abort-scope.ts";
 import type {
   ChatAttempt,
+  ChatContext,
   ChatImage,
   ChatStatus,
   ChatStep,
@@ -46,6 +47,9 @@ export interface ConversationView {
   /** A browser message that left nothing in the session, after this branch. */
   attempt: ChatAttempt | null;
   commands: string[];
+  /** The branch's context size as of its last completed model response;
+   * absent when the head read states none. */
+  context?: ChatContext;
   /** Turns the branch has. */
   count: number;
   /** Shown turns, oldest first: the most recent ones without gaps. */
@@ -75,6 +79,7 @@ export class ConversationReader {
   private runs: string[] = [];
   private attempt: ChatAttempt | null = null;
   private commands: string[] = [];
+  private context: ChatContext | undefined;
   private count = 0;
   private first: number | null = null;
   private readonly turns = new Map<number, LoadedTurn>();
@@ -129,6 +134,7 @@ export class ConversationReader {
     this.abort = new AbortController();
     this.pinned = leaf;
     this.summary = undefined;
+    this.context = undefined;
     this.error = "";
     this.forget();
     this.publish();
@@ -172,6 +178,7 @@ export class ConversationReader {
       runs: this.runs,
       attempt: this.attempt,
       commands: this.commands,
+      ...(this.context ? { context: this.context } : {}),
       count: this.count,
       turns,
       earlier: (turns[0]?.ordinal ?? this.count) > 0,
@@ -234,6 +241,7 @@ export class ConversationReader {
     this.runs = head.runs;
     this.attempt = head.attempt;
     this.commands = head.commands ?? [];
+    this.context = head.context;
     this.summary = head.summary;
     this.count = head.turns;
     this.first = Math.min(

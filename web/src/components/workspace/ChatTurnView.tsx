@@ -1,6 +1,6 @@
 /* A conversation turn in pi-web-ui's Message composition: a meta line (speaker,
- * model, time) over a body of message text and tool cards in recorded order,
- * then the message's action bar. MIT (c) 2026 xing-shuyin. */
+ * model, time) over a body of message text, thinking blocks and tool cards in
+ * recorded order, then the message's action bar. MIT (c) 2026 xing-shuyin. */
 import { memo, useState } from "react";
 import { FiCornerDownRight } from "react-icons/fi";
 import type { TurnSource } from "../../client/conversation-reader";
@@ -17,6 +17,7 @@ import {
   MessageAction,
   MessageActions,
 } from "./MessageActions";
+import { ThinkingStep } from "./ThinkingStep";
 
 const clock = (at: number, locale: string) =>
   new Date(at).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-GB", {
@@ -56,9 +57,11 @@ export const ChatTurnView = memo(function ChatTurnView({
   );
   const live = header.status === "queued" || header.status === "running";
   const [context, setContext] = useState(false);
+  // Readable thinking is a block in the reply; this flag is thinking that
+  // could not be read (stored unreadable, or not kept by a workflow capture).
   const { thinking, media, other } = header.omitted;
   const omitted = [
-    thinking && t("Thinking is not retained."),
+    thinking && t("Thinking that could not be read is not shown."),
     media && t("Media is not retained."),
     other && t("Other content is not retained."),
   ].filter((note) => note !== false);
@@ -66,7 +69,8 @@ export const ChatTurnView = memo(function ChatTurnView({
     .split("\n")
     .filter((line) => line && line !== LEGACY_OMITTED_NOTICE);
   const { execution } = header;
-  // While the reply is live its last message is still being written.
+  // While the reply is live its last message is still being written; a
+  // thinking block or a tool card at the end is not message text.
   const streaming = live && replies.at(-1)?.step.role === "assistant";
   // Nothing visibly in progress: no tool call or message is being written yet.
   const waiting =
@@ -134,6 +138,13 @@ export const ChatTurnView = memo(function ChatTurnView({
             {replies.map(({ step, index }, position) =>
               step.role === "tool" ? (
                 <ToolStep key={index} turn={turn} index={index} step={step} />
+              ) : step.role === "thinking" ? (
+                <ThinkingStep
+                  key={index}
+                  turn={turn}
+                  index={index}
+                  step={step}
+                />
               ) : (
                 <div className="msg-part" key={index}>
                   {step.error && (

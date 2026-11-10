@@ -29,6 +29,7 @@ import {
   type ModelSelector,
   publicError,
 } from "../../../../src/service-contract.ts";
+import { type ContextUsage, contextUsage } from "../../client/context-usage";
 import {
   assertSendModel,
   captureSend,
@@ -94,6 +95,9 @@ export interface ConversationActivity {
   /** When the live turn began (epoch ms), 0 when unrecorded; null when no
    * reply is queued or running. */
   runningSince: number | null;
+  /** The branch's context size as of its last completed model response;
+   * absent when the head read states none. */
+  context?: ContextUsage;
 }
 function stored(key: string, fallback = "") {
   try {
@@ -127,6 +131,7 @@ export function ChatWorkspace({
   reference,
   onReferenceUsed,
   hidden = false,
+  observe = 0,
   onOpenAgent,
   onWorkflowRuns,
 }: {
@@ -147,6 +152,9 @@ export function ChatWorkspace({
   canInterrupt?: boolean;
   /** Kept mounted (draft, scroll, observations) while a subagent view covers it. */
   hidden?: boolean;
+  /** Changes when something outside this view (a rename or archive from the
+   * sidebar) may have changed the conversation's summary: read it again. */
+  observe?: number;
   onOpenAgent?(agent: WorkflowAgent): void;
   /** This conversation's recent workflow runs, for the subagent dock. */
   onWorkflowRuns?(ids: string[]): void;
@@ -355,11 +363,41 @@ export function ChatWorkspace({
     : lastTurn && ["queued", "running"].includes(lastTurn.status)
       ? lastTurn.at
       : 0;
+  // The branch's context size beside the window of the model that reported
+  // it, from the catalog already read here; each head read is a new object.
+  const {
+    tokens: usedTokens,
+    provider: usedProvider,
+    model: usedModel,
+  } = conversation.context ?? {};
+  const modelEntries = modelRead.catalog?.entries ?? modelRead.preview?.entries;
+  const usage = useMemo(
+    () =>
+      usedTokens === undefined ||
+      usedProvider === undefined ||
+      usedModel === undefined
+        ? undefined
+        : contextUsage(
+            { tokens: usedTokens, provider: usedProvider, model: usedModel },
+            modelEntries,
+          ),
+    [usedTokens, usedProvider, usedModel, modelEntries],
+  );
+  const observeConversation = conversation.refresh;
+  useEffect(() => {
+    // Readonly: the header shows a new name once the head read states it.
+    if (observe) observeConversation();
+  }, [observe, observeConversation]);
   const onActivityRef = useRef(onActivity);
   onActivityRef.current = onActivity;
   useEffect(() => {
-    onActivityRef.current?.({ id, turns: conversation.count, runningSince });
-  }, [id, conversation.count, runningSince]);
+    onActivityRef.current?.({
+      id,
+      turns: conversation.count,
+      runningSince,
+      ...(usage ? { context: usage } : {}),
+    });
+  }, [id, conversation.count, runningSince, usage]);
   const [branchesOpen, setBranchesOpen] = useState(false);
   // A failed read must not strand a half-started owner behind an unreadable
   // conversation. Explicit Send may prepare it, but cannot infer or rebase the
@@ -1106,6 +1144,10 @@ export function ChatWorkspace({
                   : t("Started in the WebUI")
               }`}
           </span>
+          {/* Read by link while the history leaves it out; shown on phones too. */}
+          {summary?.archived && (
+            <span className="conversation-badge">{t("Archived")}</span>
+          )}
           {(conversation.branches > 1 || conversation.pinned) && (
             <button
               type="button"

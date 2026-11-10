@@ -7,6 +7,11 @@ History is evidence, not a second task manager or renewed execution consent.
 
 - In the conversation, select a workflow's line to open its steps: actual checks, Agent review, delivery and failures.
   **Open subagent context** shows the retained transcript; **Read retained step result** reads the retained result rather than its clipped status preview.
+- A delivery's view lists the agreement's assignments with each one's state (queued, running, completed, failed), its steps, and its own worktree when it ran beside others.
+  While assignments run side by side, the line in the conversation counts them by state instead of naming steps.
+- A delivery that could not meet an acceptance item or decision as written records a deviation.
+  The completed line then says "delivered with N deviations", and the view leads with each one: what could not be met, why, what was delivered instead and which declared checks it set aside.
+  A check set aside this way ran and failed; it is labelled as set aside, never as passed.
 - A workflow belongs to the conversation that started it, in the browser or in the terminal, and its line stays after the turn it started in.
   An active workflow is also listed under **Running conversations** in the browser sidebar.
 - In a trusted Pi terminal, `/cadence-history` lists workflows without asking a model.
@@ -25,7 +30,11 @@ Automatic Agent review is never human review, and a check's actual exit is indep
 
 Browser conversations are the project's Pi sessions, the same files `pi -r` and `/resume` list in the terminal.
 The browser sidebar lists sessions started in either place, newest first, and labels where each one started.
-A conversation archived through the service is left out of that list; archiving only hides it there, and its session file stays where Pi keeps it.
+Each row there offers **Rename** and **Archive**.
+A rename is recorded in the session as the terminal's `/name` records it, so both places show the name; an emptied name titles the conversation by its first message again.
+An archived conversation is left out of that list; archiving only hides it there, and its session file stays where Pi keeps it, so `pi -r` still lists it.
+The archive button beside **Conversation history** shows the archived conversations, each with **Unarchive**; an archived conversation still opens from there or by its link, where its header says it is archived.
+Rename and archive need the project's execution service running: while it is stopped the actions are shown disabled, and the next message you send starts it.
 A conversation can be continued from either side: open it in the browser, or run `/resume` (or `pi --session <id>`) in the terminal.
 Sessions from the selected checkout and its conversation directories are listed, and only those of the account the service runs as.
 

@@ -196,7 +196,7 @@ it("a turn's messages and tool cards keep their recorded order under one speaker
   ].map((mark) => html.indexOf(mark));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
-  expect(html).toContain("Thinking is not retained.");
+  expect(html).toContain("Thinking that could not be read is not shown.");
   expect(html).not.toContain("Hidden thinking");
   expect(html).not.toContain("chat-turn-notice");
 });
@@ -264,13 +264,110 @@ it("each omitted content kind gets its own line, also when nothing else was reco
     renderTurn({ omitted: { thinking, media, other }, items: [user] });
   const all = omitted(true, true, true);
   expect(all.match(/class="msg-omitted"/g)).toHaveLength(3);
-  expect(all).toContain("Thinking is not retained.");
+  expect(all).toContain("Thinking that could not be read is not shown.");
   expect(all).toContain("Other content is not retained.");
   expect(all.match(/class="msg-role">Cadence</g)).toHaveLength(1);
   const other = omitted(false, false, true);
   expect(other.match(/class="msg-omitted"/g)).toHaveLength(1);
   expect(other).not.toContain("Media is not retained.");
   expect(omitted(false, false, false)).not.toContain("msg-assistant");
+});
+it("a readable thinking block is a folded card in its recorded place, never the answer and never a tool", async () => {
+  const user = chatItem("user", "user", { text: "Analyze" });
+  const think = (id: string, text: string) =>
+    chatItem(id, "thinking", { text });
+  const read = chatItem("t", "tool", { name: "read", args: '{"path":"a.ts"}' });
+  const answer = chatItem("a", "assistant", { text: "**Final** answer" });
+  const items = [
+    user,
+    think("k1", "First I should read the file."),
+    read,
+    think("k2", "  The import moved.\n\nSo the fix is one line.  "),
+    answer,
+  ];
+  const turn = sourceOf({ items });
+  // Listed like a tool: no text until its step detail is read.
+  expect(turn.steps.map((step) => [step.role, step.text])).toEqual([
+    ["user", "Analyze"],
+    ["thinking", ""],
+    ["tool", ""],
+    ["thinking", ""],
+    ["assistant", "**Final** answer"],
+  ]);
+  expect(turnParts(turn.steps).replies.map(({ step }) => step.id)).toEqual([
+    "k1",
+    "t",
+    "k2",
+    "a",
+  ]);
+  expect(await turn.detail(3, 1, new AbortController().signal)).toEqual({
+    text: "  The import moved.\n\nSo the fix is one line.  ",
+    args: "",
+  });
+  const html = renderToStaticMarkup(<ChatTurnView turn={turn} />);
+  expect(html.match(/<div class="thinking">/g)).toHaveLength(2);
+  expect(html.match(/<div class="toolcall /g)).toHaveLength(1);
+  // Folded, and its text is not in the page until it is opened.
+  expect(html).toMatch(
+    /<div class="thinking"><div class="chead thinking-head"><button type="button" class="chead-main" aria-expanded="false" title="Show thinking">/,
+  );
+  expect(html).not.toContain("First I should read");
+  expect(html).not.toContain("thinking-body");
+  expect(html).not.toContain("Thinking still being recorded");
+  const order = [
+    'class="thinking"',
+    'title="a.ts"',
+    "<strong>Final</strong>",
+  ].map((mark) => html.indexOf(mark));
+  expect(order).toEqual([...order].sort((a, b) => a - b));
+  expect(html.indexOf('class="thinking"', order[1])).toBeGreaterThan(order[1]);
+  // The reply's copy takes the answer text only.
+  const answerParts = turnParts(turn.steps).replies.filter(
+    ({ step }) => step.role === "assistant",
+  );
+  expect(messageText(turn, answerParts, new AbortController().signal)).toBe(
+    "**Final** answer",
+  );
+  // The flag is only thinking that could not be read; shown thinking needs none.
+  expect(html).not.toContain("could not be read");
+  expect(
+    renderTurn({
+      omitted: { thinking: true, media: false, other: false },
+      items,
+    }),
+  ).toContain("Thinking that could not be read is not shown.");
+  expect(
+    renderToStaticMarkup(
+      <LocaleProvider initial="zh">
+        <ChatTurnView turn={turn} />
+      </LocaleProvider>,
+    ),
+  ).toContain('title="展开思考内容"');
+  // A thinking block after a call is not the later message that proves the
+  // call's result: it may belong to the message that made the call.
+  const cut = sourceOf({
+    status: "failed",
+    items: [user, read, think("k", "…")],
+  });
+  expect(toolState(cut, 1)).toBe("idle");
+  // A live reply that ends in a thinking block is not streaming message text:
+  // with everything listed settled, the reply itself is what is in progress.
+  const settled = sourceOf({
+    status: "running",
+    items: [user, think("k", "Working it out")],
+  });
+  const waiting = renderToStaticMarkup(<ChatTurnView turn={settled} />);
+  expect(waiting).toMatch(/class="msg-working" role="status">.*Working…/);
+  expect(waiting).toContain('<div class="thinking">');
+  // One the owner may still change says so, without inventing its text.
+  const recording = renderToStaticMarkup(
+    <ChatTurnView
+      turn={{ ...settled, header: { ...settled.header, stable: 1 } }}
+    />,
+  );
+  expect(recording).toContain('aria-label="Thinking still being recorded"');
+  expect(recording).not.toContain("msg-working");
+  expect(recording).not.toContain("Working it out");
 });
 it("a turn names its speakers, start time and the context fixed at admission", () => {
   const turn = sourceOf({

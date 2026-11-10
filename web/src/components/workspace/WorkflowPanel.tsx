@@ -1,18 +1,36 @@
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { FiSquare } from "react-icons/fi";
 import {
+  FiAlertTriangle,
+  FiCheckCircle,
+  FiClock,
+  FiSquare,
+  FiXCircle,
+} from "react-icons/fi";
+import {
+  type DeliveryArtifact,
   type DeliveryObservation,
   readableDelivery,
   readableWorkflowPlan,
   type WorkflowProposal,
   type WorkflowRun,
+  type WorkflowStep,
   workflowDiagnostics,
 } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { describeError, type Translator, useT } from "../../i18n/locale";
+import {
+  type AssignmentState,
+  assignmentCounts,
+  assignmentRows,
+  checkSetAside,
+  describeCounts,
+  sideBySideCounts,
+  workflowAgentLabel,
+} from "../../navigation/workflow-assignments";
 import { Markdown } from "../rich/Markdown";
-import { type WorkflowAgent, workflowAgentLabel } from "./AgentDock";
+import type { WorkflowAgent } from "./AgentDock";
+import { HalfRingSpinner } from "./ChatSteps";
 
 const LIVE = ["queued", "running"];
 export const workflowLive = (run: WorkflowRun) => LIVE.includes(run.status);
@@ -131,27 +149,45 @@ export function WorkflowLine({
     };
   }, []);
   const live = workflowLive(run);
-  const meta = live
-    ? [
-        tx(workflowActivity(run)),
-        run.steps
-          .filter((step) => step.status === "running")
-          .map((step) => workflowAgentLabel(step.id))
-          .join(", "),
-      ]
-    : [
-        tx(run.status),
+  // Assignments that run side by side are counted, not named: their names
+  // would not fit the line, and the queued ones have no step to name.
+  const counts = live ? sideBySideCounts(run) : null;
+  // A completed delivery that departed from its agreement says so here.
+  const deviations =
+    run.status === "completed" ? (run.deviations?.length ?? 0) : 0;
+  const deviated = !deviations
+    ? ""
+    : deviations === 1
+      ? t("delivered with 1 deviation")
+      : t("delivered with {count} deviations", { count: deviations });
+  const join = (parts: string[]) => parts.filter(Boolean).join(" · ");
+  const lead = join(
+    live
+      ? [
+          tx(workflowActivity(run)),
+          counts
+            ? describeCounts(counts, t)
+            : run.steps
+                .filter((step) => step.status === "running")
+                .map((step) => workflowAgentLabel(step.id))
+                .join(", "),
+        ]
+      : [tx(run.status)],
+  );
+  const tail = live
+    ? ""
+    : join([
         run.mergedCommit
           ? t("merged {commit}", { commit: run.mergedCommit.slice(0, 7) })
           : "",
         workflowDuration(run, t),
-      ];
+      ]);
   // Only an unsuccessful end needs its reason in the conversation.
   const reason =
     live || run.status === "completed"
       ? ""
       : (run.notice.split("\n").find((line) => line.trim()) ?? "");
-  const state = meta.filter(Boolean).join(" · ");
+  const state = join([lead, deviated, tail]);
   return (
     <article className={`workflow-line ${run.status}`} aria-labelledby={goal}>
       <button
@@ -168,7 +204,18 @@ export function WorkflowLine({
           className={`workflow-line-meta ep-state ${run.status}`}
           title={state}
         >
-          {state}
+          {deviated ? (
+            <>
+              {`${lead} · `}
+              <span className="workflow-line-deviation">
+                <FiAlertTriangle aria-hidden="true" />
+                {deviated}
+              </span>
+              {tail && ` · ${tail}`}
+            </>
+          ) : (
+            state
+          )}
         </span>
       </button>
       {live && (
@@ -367,6 +414,9 @@ function WorkflowCardView({
           {t("State unavailable is not completion. No automatic resubmission.")}
         </p>
       )}
+      {/* What the delivery could not meet leads the view, before anything
+          that reads as an ordinary outcome. */}
+      {run && <Deviations run={run} />}
       {run?.execution && (
         <p className="inspector-note">
           {t("Context fixed at admission:")} <code>{run.execution.cwd}</code> ·{" "}
@@ -376,6 +426,43 @@ function WorkflowCardView({
         </p>
       )}
       {run?.notice && <p>{run.notice}</p>}
+      {run && shown && (
+        <AssignmentBoard
+          run={run}
+          steps={shown.steps}
+          partial={(shown.stepsBefore ?? 0) > 0 || before !== undefined}
+          onOpen={
+            onOpenAgent &&
+            ((step) =>
+              onOpenAgent({
+                runId: id,
+                stepId: step.id,
+                label: workflowAgentLabel(step.id),
+              }))
+          }
+        />
+      )}
+      {run && ((run.revision ?? 0) > 0 || !!run.scope?.length) && (
+        <section className="workflow-route" aria-label={t("Route revisions")}>
+          {(run.revision ?? 0) > 0 && (
+            <p>
+              {t("Implementation route updates")}: {run.revision}
+            </p>
+          )}
+          {!!run.scope?.length && (
+            <>
+              <p>{t("Paths added to the write scope after approval:")}</p>
+              <ul className="workflow-scope">
+                {run.scope.map((path) => (
+                  <li key={path}>
+                    <code>{path}</code>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
       {run?.delivery && <DeliveryDetails delivery={run.delivery} />}
       {run && (
         <details>
@@ -393,11 +480,6 @@ function WorkflowCardView({
           {t(
             "Agent review is not human review. Worktrees and retained results are preserved.",
           )}
-        </p>
-      )}
-      {run && (run.revision ?? 0) > 0 && (
-        <p>
-          {t("Implementation route updates")}: {run.revision}
         </p>
       )}
       {run && ((shown?.stepsBefore ?? 0) > 0 || before !== undefined) && (
@@ -428,7 +510,7 @@ function WorkflowCardView({
       {shown?.steps.map((step) => (
         <details key={step.id} className="chat-tool">
           <summary>
-            {tx(step.kind)} · {workflowAgentLabel(step.id)} · {tx(step.status)}
+            <WorkflowStepSummary run={run ?? shown} step={step} />
           </summary>
           {step.exitCode !== null && (
             <p>
@@ -504,6 +586,195 @@ function WorkflowCardView({
   );
 }
 
+/** A step's one line: its kind, its assignment or name, and its status. A
+ * check a recorded deviation set aside ran and failed and stopped gating
+ * acceptance: that is said in words, so it never reads as a check that passed. */
+export function WorkflowStepSummary({
+  run,
+  step,
+}: {
+  run: WorkflowRun;
+  step: WorkflowStep;
+}) {
+  const { t, tx } = useT();
+  return (
+    <>
+      {`${tx(step.kind)} · ${workflowAgentLabel(step.id)} · ${tx(step.status)}`}
+      {checkSetAside(run, step) && (
+        <span className="workflow-set-aside">
+          {t("set aside by a recorded deviation")}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** Every deviation the run recorded: what could not be met as written, why,
+ * what was delivered instead and which declared checks it set aside. */
+export function Deviations({ run }: { run: WorkflowRun }) {
+  const { t } = useT();
+  const deviations = run.deviations ?? [];
+  if (!deviations.length) return null;
+  return (
+    <section
+      className="workflow-deviations"
+      aria-label={t("Deviations from the agreement")}
+    >
+      <h3>
+        <FiAlertTriangle aria-hidden="true" />
+        {t("Deviations from the agreement: {count}", {
+          count: deviations.length,
+        })}
+      </h3>
+      <p className="workflow-deviations-note">
+        {t(
+          "Each is an acceptance item or decision that could not be met as written, with what was delivered instead. The automatic Agent review is asked to confirm each one; it is not human review.",
+        )}
+      </p>
+      <ol>
+        {deviations.map((deviation) => (
+          <li key={`${deviation.revision}:${deviation.item}`}>
+            <dl>
+              <dt>{t("Could not be met")}</dt>
+              <dd>{deviation.item}</dd>
+              <dt>{t("Why")}</dt>
+              <dd>{deviation.reason}</dd>
+              <dt>{t("Delivered instead")}</dt>
+              <dd>{deviation.delivered}</dd>
+              <dt>{t("Checks set aside")}</dt>
+              <dd>
+                {deviation.waives.length
+                  ? deviation.waives.map((name) => (
+                      <code key={name}>{name}</code>
+                    ))
+                  : t("None")}
+              </dd>
+              <dt>{t("Recorded at")}</dt>
+              <dd>
+                {t("route revision {revision}", {
+                  revision: deviation.revision,
+                })}
+              </dd>
+            </dl>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function AssignmentIcon({ state }: { state: AssignmentState }) {
+  return state === "running" ? (
+    <HalfRingSpinner />
+  ) : state === "completed" ? (
+    <FiCheckCircle aria-hidden="true" />
+  ) : state === "failed" ? (
+    <FiXCircle aria-hidden="true" />
+  ) : (
+    <FiClock aria-hidden="true" />
+  );
+}
+/** What is recorded about an assignment's own worktree, in words. */
+function worktreeFacts(artifact: DeliveryArtifact, t: Translator["t"]) {
+  return [
+    t("own worktree"),
+    artifact.applied ? t("integrated") : "",
+    artifact.state === "retained" ? t("kept for inspection") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+/** The agreement's assignments and where each stands, each with the listed
+ * steps that carry its ID. States come from the run, never from its steps. */
+export function AssignmentBoard({
+  run,
+  steps,
+  partial = false,
+  onOpen,
+}: {
+  run: WorkflowRun;
+  /** The steps shown: the newest page, or an earlier one being read. */
+  steps: readonly WorkflowStep[];
+  /** Other step pages exist, so the grouping below is not every step. */
+  partial?: boolean;
+  onOpen?(step: WorkflowStep): void;
+}) {
+  const { t, tx } = useT();
+  const counts = assignmentCounts(run);
+  if (!counts) return null;
+  return (
+    <section className="workflow-board" aria-label={t("Assignments")}>
+      <h3>
+        {t("Assignments")}
+        <span className="workflow-board-counts">
+          {describeCounts(counts, t)}
+        </span>
+      </h3>
+      {partial && (
+        <p className="inspector-note">
+          {t(
+            "Only the steps on this page are grouped below; other pages hold more.",
+          )}
+        </p>
+      )}
+      <ul>
+        {assignmentRows(run, steps).map(({ task, steps: own, artifact }) => (
+          <li className="workflow-task" key={task.id}>
+            <span className={`workflow-task-state ${task.state}`}>
+              <AssignmentIcon state={task.state} />
+              {tx(task.state)}
+            </span>
+            <div className="workflow-task-body">
+              <div className="workflow-task-title">
+                <span>{task.title}</span>
+                <code>{task.id}</code>
+              </div>
+              {(task.after.length > 0 || artifact) && (
+                <div className="workflow-task-meta">
+                  {task.after.length > 0 && (
+                    <span>
+                      {t("after {ids}", { ids: task.after.join(", ") })}
+                    </span>
+                  )}
+                  {artifact && (
+                    <span className="workflow-task-worktree">
+                      {worktreeFacts(artifact, t)}
+                    </span>
+                  )}
+                </div>
+              )}
+              {artifact?.state === "retained" && (
+                <code className="workflow-task-path">{artifact.path}</code>
+              )}
+              {own.length > 0 && (
+                <div className="workflow-task-steps">
+                  {own.map((step) =>
+                    step.childRunId && onOpen ? (
+                      <button
+                        type="button"
+                        className="ghost"
+                        key={step.id}
+                        title={t("Open subagent context")}
+                        onClick={() => onOpen(step)}
+                      >
+                        {`${tx(step.kind)} · ${tx(step.status)}`}
+                      </button>
+                    ) : (
+                      <span key={step.id}>
+                        {`${tx(step.kind)} · ${tx(step.status)}`}
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** Only owner-recorded facts; an accepted candidate is not an applied merge. */
 export function DeliveryDetails({
   delivery: d,
@@ -523,7 +794,18 @@ export function DeliveryDetails({
     [
       t("Candidate acceptance"),
       d.acceptance
-        ? `${t("Checks and automatic Agent review passed")} · ${d.acceptance.candidate}`
+        ? `${
+            // A check a deviation set aside failed: never "checks passed".
+            d.acceptance.waived?.length
+              ? t(
+                  "Accepted with {count} of {total} checks set aside by a recorded deviation; the others and the automatic Agent review passed",
+                  {
+                    count: d.acceptance.waived.length,
+                    total: d.acceptance.checks.length,
+                  },
+                )
+              : t("Checks and automatic Agent review passed")
+          } · ${d.acceptance.candidate}`
         : t("Not recorded"),
     ],
     [

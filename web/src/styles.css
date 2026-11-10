@@ -869,6 +869,111 @@ summary:focus-visible,
 .session-state.timeout {
   color: var(--amber-text);
 }
+/* A conversation row and its actions (rename, archive or unarchive). With a
+ * pointer that hovers they lie over the row's end and appear while the row is
+ * hovered or holds focus, so they stay in the tab order and the time gives
+ * them its place; a touch screen shows them beside the row at all times.
+ * A disabled action is still shown: its reason is the line above the list. */
+.conversation-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+}
+.conversation-row > .session-item {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.session-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+.session-action {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+}
+.session-action:hover:not(:disabled) {
+  border-color: var(--border-soft);
+  background: var(--bg-elev3);
+  color: var(--text);
+}
+.session-action > svg {
+  width: 13px;
+  height: 13px;
+}
+@media (hover: hover) {
+  .session-actions {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    margin: 0;
+    opacity: 0;
+  }
+  .conversation-row:hover > .session-actions,
+  .conversation-row:focus-within > .session-actions,
+  .conversation-row.renaming > .session-actions {
+    opacity: 1;
+  }
+  .conversation-row.has-actions:hover > .session-item,
+  .conversation-row.has-actions:focus-within > .session-item,
+  .conversation-row.renaming > .session-item {
+    padding-right: 60px;
+  }
+  .conversation-row.has-actions:hover .session-time,
+  .conversation-row.has-actions:focus-within .session-time {
+    display: none;
+  }
+}
+/* While it is renamed the row is a field, not a button (pi RowMain). */
+.session-item.renaming,
+.session-item.renaming:hover {
+  background: var(--bg-elev2);
+  color: var(--text);
+  cursor: text;
+}
+.session-rename-input:focus {
+  box-shadow: none;
+}
+/* What a request is doing, or an outcome that is not known: it stays with
+ * the row, under it. */
+.session-note {
+  flex-basis: 100%;
+  margin: 0 10px 4px 32px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.session-note[role="alert"] {
+  color: var(--amber-text);
+}
+.lp-back {
+  justify-content: flex-start;
+  margin: 0 2px 2px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.lp-back > svg {
+  width: 13px;
+  height: 13px;
+}
+.lp-actions-hint {
+  padding: 0 10px 6px;
+}
+.lp-section-action[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
 /* The history filter (pi .lp-filter) and its day groups. */
 .lp-filter {
   margin: 2px 2px 6px;
@@ -1783,6 +1888,28 @@ summary:focus-visible,
 .bar-item-duration {
   white-space: nowrap;
 }
+/* The context item (pi .status-ctx / .context-usage-bar). Its words state the
+ * figures; the small meter only repeats them and leaves on narrow screens. */
+.ctx-meter {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+  @media (max-width: 900px) {
+    display: none;
+  }
+}
+.ctx-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.status-ctx.warn .ctx-meter > span {
+  background: var(--amber);
+}
 .status-dot {
   display: inline-block;
   width: 6px;
@@ -2248,6 +2375,9 @@ summary:focus-visible,
   :where(input, textarea, select) {
     font-size: 16px;
   }
+  .session-rename-input {
+    font-size: 16px;
+  }
   .fp-toc-layout {
     flex-direction: column;
   }
@@ -2328,6 +2458,10 @@ summary:focus-visible,
     min-width: 32px;
     min-height: 32px;
     justify-content: center;
+  }
+  .session-action {
+    width: 32px;
+    height: 32px;
   }
 }
 
@@ -2520,11 +2654,13 @@ summary:focus-visible,
   flex: none;
 }
 .conversation-badge {
+  flex: none;
   color: var(--accent-text);
   font-size: 12px;
   background: var(--accent-soft);
   border-radius: 5px;
   padding: 1px 6px;
+  white-space: nowrap;
 }
 .conversation-info {
   margin: 2px 0 0;
@@ -2707,6 +2843,44 @@ summary:focus-visible,
   border-radius: 6px;
   background: var(--accent-soft);
 }
+/* Rows are grouped per run: its goal, and where its assignments stand, head
+ * the agents that belong to it. The head opens the run's own view. */
+.agent-dock-run + .agent-dock-run {
+  margin-top: 4px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border-soft);
+}
+.agent-dock-run-head {
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 0 8px;
+  width: 100%;
+  min-height: 0;
+  padding: 5px 7px 2px;
+  border: 0;
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+}
+.agent-dock-run-head.active {
+  border-radius: 6px;
+  background: var(--accent-soft);
+}
+.agent-dock-run-goal {
+  flex: 1 1 8em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.agent-dock-run-state {
+  flex: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .agent-dot {
   width: 6px;
   height: 6px;
@@ -2853,6 +3027,30 @@ summary:focus-visible,
 }
 .chat-turn .toolcall.idle .toolcall-status {
   color: var(--text-faint);
+}
+/* A thinking block (pi .thinking): a quiet folded card in its recorded place
+ * among the reply's text and tool cards. Its text is read once it is opened
+ * and scrolls inside the card. */
+.chat-turn .thinking {
+  margin: 6px 0;
+  overflow: hidden;
+}
+.chat-turn .thinking .chead-main {
+  flex: none;
+}
+.thinking-label {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.chat-turn .thinking-body {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.thinking-body > p {
+  margin: 0;
+  font-style: normal;
+  white-space: normal;
 }
 .half-ring-spin {
   display: inline-block;
@@ -3521,6 +3719,22 @@ button.file-item:hover:not(:disabled),
   white-space: nowrap;
   font-size: 12px;
 }
+/* A phone has no room for the goal and its state side by side: the state
+ * (assignment counts, a deviation statement) goes under the goal, whole. */
+@media (max-width: 640px) {
+  .workflow-line-open {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .workflow-line-goal {
+    flex-basis: calc(100% - 16px);
+  }
+  .workflow-line-meta.ep-state {
+    flex-basis: 100%;
+    padding-left: 16px;
+    white-space: normal;
+  }
+}
 .workflow-line .agent-dot.queued,
 .workflow-line .agent-dot.running {
   @media (prefers-reduced-motion: no-preference) {
@@ -3574,6 +3788,181 @@ button.file-item:hover:not(:disabled),
   white-space: nowrap;
   color: var(--text-dim);
   font-size: 12px;
+}
+/* A completed delivery that departed from its agreement says so on its line:
+ * words with a warning glyph, never a tint alone. */
+.workflow-line-deviation {
+  color: var(--amber-text);
+  font-weight: 600;
+}
+.workflow-line-deviation > svg {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+/* The workflow view's deviations lead it: each one is what could not be met,
+ * why, what was delivered instead and the checks it set aside. */
+.workflow-deviations {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--notice-warn-border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+.workflow-deviations > h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: var(--amber-text);
+}
+.workflow-deviations > h3 > svg {
+  flex: none;
+}
+.workflow-deviations-note {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.workflow-deviations ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-deviations li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.workflow-deviations dl {
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
+  margin: 0;
+  @media (max-width: 640px) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+.workflow-deviations dd {
+  @media (max-width: 640px) {
+    margin-bottom: 6px;
+  }
+}
+.workflow-deviations dd > code + code {
+  margin-left: 8px;
+}
+.workflow-set-aside {
+  color: var(--amber-text);
+}
+/* The assignment board: one row per assignment of the agreement. Its state
+ * is an icon and a word; its own worktree and its steps follow the title. */
+.workflow-board {
+  margin: 10px 0;
+}
+.workflow-board > h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.workflow-board-counts {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+.workflow-board > ul,
+.workflow-scope {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-task {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 7px 2px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12.5px;
+  @media (max-width: 640px) {
+    flex-direction: column;
+  }
+}
+.workflow-task-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 7.5em;
+  color: var(--text-faint);
+  font-size: 12px;
+  @media (max-width: 640px) {
+    width: auto;
+  }
+}
+.workflow-task-state > svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+.workflow-task-state.running {
+  color: var(--accent-text);
+}
+.workflow-task-state.completed {
+  color: var(--green);
+}
+.workflow-task-state.failed {
+  color: var(--red-text);
+}
+.workflow-task-body {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-task-title {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.workflow-task-title > code {
+  margin-left: 4px;
+  color: var(--text-faint);
+}
+.workflow-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.workflow-task-worktree {
+  color: var(--accent-text);
+}
+.workflow-task-path {
+  display: block;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.workflow-task-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.workflow-task-steps > button {
+  min-height: 22px;
+  padding: 1px 7px;
+  border-color: var(--border-soft);
+  font-size: 11.5px;
+  @media (pointer: coarse) {
+    min-height: 32px;
+  }
+}
+.workflow-route > p {
+  margin: 6px 0 2px;
+}
+.workflow-scope > li {
+  padding: 1px 0 1px 12px;
 }
 .workflow-delivery dl {
   grid-template-columns: minmax(8rem, 1fr) minmax(0, 3fr);

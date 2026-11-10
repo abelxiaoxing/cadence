@@ -979,6 +979,31 @@
   overflow: hidden;
 }
 
+.thinking {
+  margin: 8px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--card-bg, var(--glow-015));
+}
+
+.thinking-icon {
+  color: var(--accent);
+}
+
+.thinking-body {
+  padding: var(--card-body-pad, 4px 14px 12px);
+  padding-block: 6px 8px;
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 13px;
+  white-space: pre-wrap;
+
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  border-top: 1px solid var(--border-soft);
+}
+
 .toolcall-name {
   font-family: var(--mono);
   font-weight: 600;
@@ -1104,6 +1129,19 @@
   cursor: pointer;
   padding: 0;
   display: inline-flex;
+}
+
+.session-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input, transparent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  padding: 1px 5px;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .file-diff-card {

@@ -1,7 +1,8 @@
 /* Adapted from pi-web-ui components/BarItem.tsx bottom-bar items (connection,
  * message count, working timer) and FooterBar.tsx. MIT (c) 2026 xing-shuyin.
  * Presentation only: every value is an observation its caller already holds.
- * No layout editing, plugin slots, token/cost statistics or host metrics. */
+ * No layout editing, plugin slots, cost statistics or host metrics; the open
+ * conversation's context size is its own item (`ContextStatus.tsx`). */
 import { type ReactNode, useEffect, useState } from "react";
 
 export function StatusItem({
