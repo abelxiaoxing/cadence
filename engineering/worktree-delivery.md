@@ -35,7 +35,9 @@ The branch is `refs/heads/cadence/<sanitized-goal>-<full-run-id>`.
 The goal is a readable label; the unique run ID is the identity, and existing refs/paths are never adopted or overwritten.
 The stable candidate lives at `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration`.
 The candidate collects all work, and checks, review, knowledge maintenance and recovery of the combined result use it.
-`Workflows.assignments` schedules the agreement's assignments: one whose dependencies are integrated and whose write paths no running assignment owns is ready; up to the execution limit (`parallelLimit`) run at once and the rest wait.
+`Workflows.assignments` schedules the current route until none of its assignments is left: the agreement's, as plan revisions changed the ones that had not started (`WorkflowTaskState` lists every one, a dropped one as `superseded`, each with the revision that last changed it).
+One whose dependencies are integrated and whose write paths no running assignment owns is ready; up to the execution limit (`parallelLimit`) run at once and the rest wait.
+A revision wakes the scheduler, so an added assignment can start beside the ones already running; a dropped one never starts and running siblings carry on.
 With nothing running and exactly one ready assignment, it runs in the candidate itself, so a serial plan never creates another worktree and keeps predecessor and partial-attempt outputs in place.
 When several are ready, what the candidate holds is committed first and each gets a child worktree at `<run-id>/tasks/<assignment-id>`, detached at the candidate's commit (it never owns or moves a branch) and recorded as a `DeliveryArtifact`.
 The setup commands run in each child; its worker and its own recovery are confined to the paths it owns (its declared writes plus what its revisions add, never a path a running sibling owns).

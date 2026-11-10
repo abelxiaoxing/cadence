@@ -367,3 +367,90 @@ it("changes found outside the scope when a candidate is about to be committed go
     changed.mockRestore();
   }
 });
+it("a revision made while assignments are scheduled is told the route, changes it, and leaves a new assignment's paths to that assignment", async () => {
+  const { owner, live, proposal, replies, prompts, failed, records } =
+    fixture();
+  const child = join(owner.cwd, "tasks", "a");
+  const revised: unknown[] = [];
+  const repairs: string[][] = [];
+  Object.assign(live, {
+    delivery: { view: { worktreeRoot: owner.cwd } },
+    owned: new Map([[child, ["a.txt"]]]),
+    route: {
+      tasks: proposal.plan.tasks,
+      revise: (route: unknown, revision: number) => {
+        revised.push({ route, revision });
+        return "Assignments added: e.";
+      },
+    },
+  });
+  Object.assign(live.run, {
+    tasks: [
+      { id: "a", title: "A", after: [], state: "running" },
+      { id: "b", title: "B", after: [], state: "queued" },
+    ],
+  });
+  owner.editAttempt = async (...args: unknown[]) => {
+    repairs.push(args[5] as string[]);
+  };
+  const first = failed();
+  const added = {
+    id: "e",
+    title: "E",
+    instructions: "Create the shared entry",
+    writes: ["lib/e.ts"],
+    after: ["a"],
+  };
+  replies.push(
+    reply(first.id, {
+      level: "replan",
+      strategy: "split the entry out",
+      scope: ["lib/e.ts", "lib/shared.ts"],
+      work: [
+        { title: "share", instructions: "Move it", writes: ["lib/shared.ts"] },
+      ],
+      route: { add: [added] },
+    }),
+  );
+  let attempt = 0;
+  await owner
+    .controller(live, child, proposal)
+    .complete("assignment a", async () => {
+      if (++attempt === 1)
+        throw new AttemptFailure("needs an entry", [first.id]);
+    });
+  // The diagnosis saw what is still waiting and what it would write.
+  expect(prompts[0]).toContain("Assignments of the current route");
+  expect(prompts[0]).toContain("- a [running] A");
+  expect(prompts[0]).toContain("- b [queued; writes b.txt] B");
+  expect(revised).toEqual([{ route: { drop: [], add: [added] }, revision: 1 }]);
+  expect(live.run.notice).toContain("Assignments added: e.");
+  // Both paths join the run's scope; this tree owns only what its own work writes.
+  expect(live.run.scope).toEqual(["lib/e.ts", "lib/shared.ts"]);
+  expect(
+    (live as unknown as { owned: Map<string, string[]> }).owned.get(child),
+  ).toEqual(["a.txt", "lib/shared.ts"]);
+  expect(repairs).toEqual([["lib/shared.ts"]]);
+  expect(
+    records.get(join(owner.root, "runs", live.run.id, "revisions", "1.json")),
+  ).toMatchObject({ decision: { route: { add: [{ id: "e" }] } } });
+
+  // Once assignments are no longer scheduled there is no route to revise: the
+  // diagnosis is told so and decides with work items instead.
+  Object.assign(live, { route: undefined });
+  const second = failed();
+  replies.push(
+    reply(second.id, { level: "replan", route: { drop: ["b"] } }),
+    reply(second.id, { level: "replan" }),
+  );
+  attempt = 0;
+  await owner
+    .controller(live, owner.cwd, proposal)
+    .complete("verification", async () => {
+      if (++attempt === 1)
+        throw new AttemptFailure("checks failed", [second.id]);
+    });
+  expect(prompts.at(-1)).toContain("No assignment is waiting to start");
+  expect(prompts.at(-1)).not.toContain("Assignments of the current route");
+  expect(revised).toHaveLength(1);
+});

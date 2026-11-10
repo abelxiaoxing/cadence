@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import type { WorkflowTask } from "../src/service/contracts/workflow.ts";
+import { InvalidDecision } from "../src/service/workflow-controller.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -49,6 +50,15 @@ function fixture(
     abort: new AbortController(),
     delivered: new Set<string>(),
     owned: undefined as Map<string, string[]> | undefined,
+    route: undefined as
+      | {
+          tasks: WorkflowTask[];
+          revise(
+            route: { drop: string[]; add: WorkflowTask[] },
+            revision: number,
+          ): string;
+        }
+      | undefined,
     delivery:
       options.delivery === false
         ? undefined
@@ -76,7 +86,9 @@ function fixture(
       status: "running",
       phase: "implementing",
       steps: [],
-      tasks: undefined as { id: string; state: string }[] | undefined,
+      tasks: undefined as
+        | { id: string; state: string; title: string; revision?: number }[]
+        | undefined,
     },
   };
   const owner = Object.assign(Object.create(Workflows.prototype), {
@@ -316,4 +328,96 @@ it("a failure in the candidate lane ends the stage at once, marked on that assig
   await expect(f.run()).rejects.toThrow("terminal a");
   expect(f.states()).toEqual({ a: "failed", b: "queued" });
   expect(f.attempts.map((a) => a.id)).toEqual(["a"]);
+});
+
+it("a plan revision changes the assignments that have not started: a dropped one never starts, a rewritten one runs as rewritten, an added one is scheduled", async () => {
+  const f = fixture(
+    [
+      task("a", ["src/a.ts"]),
+      task("b", ["src/b.ts"], ["a"]),
+      task("c", ["src/c.ts"], ["a"]),
+      task("d", ["src/d.ts"], ["c"]),
+    ],
+    { parallel: 4 },
+  );
+  const held = gate();
+  f.gates.set("a", held.closed);
+  const running = f.run();
+  await settle();
+  expect(f.states()).toMatchObject({ a: "running", c: "queued" });
+  const note = f.live.route?.revise(
+    {
+      drop: ["d"],
+      add: [
+        { ...task("c", ["src/c2.ts"], ["a"]), title: "C rewritten" },
+        task("e", ["src/e.ts"], ["c"]),
+      ],
+    },
+    3,
+  );
+  expect(note).toBe(
+    "Assignments dropped: d. Assignments rewritten: c. Assignments added: e.",
+  );
+  expect(f.live.run.tasks).toEqual([
+    { id: "a", title: "A", after: [], state: "running" },
+    { id: "b", title: "B", after: ["a"], state: "queued" },
+    {
+      id: "c",
+      title: "C rewritten",
+      after: ["a"],
+      state: "queued",
+      revision: 3,
+    },
+    { id: "d", title: "D", after: ["c"], state: "superseded", revision: 3 },
+    { id: "e", title: "E", after: ["c"], state: "queued", revision: 3 },
+  ]);
+  // What already started stays as it is.
+  expect(() => f.live.route?.revise({ drop: ["a"], add: [] }, 4)).toThrow(
+    InvalidDecision,
+  );
+  held.open();
+  await running;
+  expect(f.states()).toEqual({
+    a: "completed",
+    b: "completed",
+    c: "completed",
+    d: "superseded",
+    e: "completed",
+  });
+  expect(f.attempts.map((a) => a.id).sort()).toEqual(["a", "b", "c", "e"]);
+  expect(f.attempts.find((a) => a.id === "c")?.writes).toEqual(["src/c2.ts"]);
+  expect(f.attempts.find((a) => a.id === "e")?.prompt).toContain("Do e");
+  // The route exists only while assignments are scheduled.
+  expect(f.live.route).toBeUndefined();
+});
+
+it("an assignment added while others run side by side starts without waiting for one of them to end", async () => {
+  const f = fixture([task("a", ["src/a.ts"]), task("b", ["src/b.ts"])], {
+    parallel: 4,
+  });
+  const a = gate(),
+    b = gate();
+  f.gates.set("a", a.closed);
+  f.gates.set("b", b.closed);
+  const running = f.run();
+  await settle();
+  await settle();
+  expect(f.states()).toEqual({ a: "running", b: "running" });
+  f.live.route?.revise(
+    { drop: [], add: [task("e", ["src/e.ts"]), task("g", ["src/a.ts"])] },
+    1,
+  );
+  await settle();
+  await settle();
+  // e runs beside them; g would write what a owns, so it waits for a.
+  expect(f.states()).toMatchObject({ e: "completed", g: "queued" });
+  a.open();
+  b.open();
+  await running;
+  expect(f.states()).toEqual({
+    a: "completed",
+    b: "completed",
+    e: "completed",
+    g: "completed",
+  });
 });

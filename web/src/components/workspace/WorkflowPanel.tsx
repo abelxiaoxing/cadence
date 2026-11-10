@@ -3,6 +3,7 @@ import {
   FiAlertTriangle,
   FiCheckCircle,
   FiClock,
+  FiSlash,
   FiSquare,
   FiXCircle,
 } from "react-icons/fi";
@@ -670,6 +671,8 @@ function AssignmentIcon({ state }: { state: AssignmentState }) {
     <FiCheckCircle aria-hidden="true" />
   ) : state === "failed" ? (
     <FiXCircle aria-hidden="true" />
+  ) : state === "superseded" ? (
+    <FiSlash aria-hidden="true" />
   ) : (
     <FiClock aria-hidden="true" />
   );
@@ -684,8 +687,9 @@ function worktreeFacts(artifact: DeliveryArtifact, t: Translator["t"]) {
     .filter(Boolean)
     .join(" · ");
 }
-/** The agreement's assignments and where each stands, each with the listed
- * steps that carry its ID. States come from the run, never from its steps. */
+/** The assignments of the run's current route and where each stands, each
+ * with the listed steps that carry its ID: the agreement's, as plan revisions
+ * left them. States come from the run, never from its steps. */
 export function AssignmentBoard({
   run,
   steps,
@@ -729,8 +733,20 @@ export function AssignmentBoard({
                 <span>{task.title}</span>
                 <code>{task.id}</code>
               </div>
-              {(task.after.length > 0 || artifact) && (
+              {(task.after.length > 0 ||
+                artifact ||
+                task.revision !== undefined) && (
                 <div className="workflow-task-meta">
+                  {task.revision !== undefined && (
+                    <span className="workflow-task-revised">
+                      {t(
+                        task.state === "superseded"
+                          ? "dropped by route revision {revision}"
+                          : "added or rewritten by route revision {revision}",
+                        { revision: task.revision },
+                      )}
+                    </span>
+                  )}
                   {task.after.length > 0 && (
                     <span>
                       {t("after {ids}", { ids: task.after.join(", ") })}

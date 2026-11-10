@@ -20,11 +20,18 @@ export function workflowAgentLabel(stepId: string) {
 
 export type AssignmentState = WorkflowTaskState["state"];
 export type AssignmentCounts = Readonly<Record<AssignmentState, number>>;
-/** How many of the agreement's assignments are in each state; null when the
- * run lists none. */
+/** How many assignments of the run's current route are in each state (one a
+ * plan revision dropped before it started is `superseded`); null when the run
+ * lists none. */
 export function assignmentCounts(run: WorkflowRun): AssignmentCounts | null {
   if (!run.tasks?.length) return null;
-  const counts = { queued: 0, running: 0, completed: 0, failed: 0 };
+  const counts = {
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    superseded: 0,
+  };
   for (const task of run.tasks) counts[task.state] += 1;
   return counts;
 }
@@ -33,6 +40,7 @@ const COUNT_TEXT: readonly (readonly [AssignmentState, MessageKey])[] = [
   ["queued", "{count} queued"],
   ["completed", "{count} done"],
   ["failed", "{count} failed"],
+  ["superseded", "{count} superseded"],
 ];
 /** "2 running · 1 queued · 3 done": states with none are left out. */
 export function describeCounts(

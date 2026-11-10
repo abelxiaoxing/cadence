@@ -92,6 +92,9 @@ import {
   modelRequestFailed,
   RECOVERY_BYTES,
   RECOVERY_INSTRUCTIONS,
+  type RecoveryDecision,
+  type RecoveryRoute,
+  revisedRoute,
   settledWorkerCleanup,
 } from "./workflow-controller.ts";
 import {
@@ -237,6 +240,12 @@ interface Live {
   controllers?: Map<string, DeliveryController>;
   /** Tail of this run's serialized Git steps. */
   git?: Promise<void>;
+  /** The current route while assignments are scheduled: the agreement's, as
+   * plan revisions left them. `revise` applies a recorded revision. */
+  route?: {
+    tasks: WorkflowTask[];
+    revise(route: RecoveryRoute, revision: number): string;
+  };
   /** Write paths each running assignment owns, by its working tree. */
   owned?: Map<string, string[]>;
   /** This delivery maintains the project's knowledge store. */
@@ -2049,7 +2058,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     if (!p) return { writes: [], named: {} };
     const task =
       kind === "implementation"
-        ? p.plan.tasks.find((t) => t.id === id)
+        ? (live.route?.tasks ?? p.plan.tasks).find((t) => t.id === id)
         : undefined;
     const reads =
       kind === "review" ? (p.plan.reviewReads ?? []) : (task?.reads ?? []);
@@ -2258,6 +2267,32 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       (cwd === candidate ? undefined : live.owned?.get(cwd)) ??
       this.scope(live, p);
     const checks = p.plan.checks.map((c) => c.name);
+    const touches = (paths: string[], path: string) =>
+      workflowCovers(paths, path) ||
+      paths.some((other) => workflowCovers([path], other));
+    /** Paths a decision adds for its own work here, not only for an
+     * assignment its route adds, which will own them when it runs. */
+    const mine = (decision: RecoveryDecision, added: string[]) =>
+      added.filter(
+        (path) =>
+          touches(
+            decision.work.flatMap((w) => w.writes),
+            path,
+          ) ||
+          !touches(
+            (decision.route?.add ?? []).flatMap((t) => t.writes),
+            path,
+          ),
+      );
+    const routed = () => {
+      const route = live.route;
+      if (!route) return "";
+      const lines = (live.run.tasks ?? []).map((t) => {
+        const task = route.tasks.find((entry) => entry.id === t.id);
+        return `- ${t.id} [${t.state}${t.after.length ? `; after ${t.after.join(", ")}` : ""}${t.state === "queued" && task ? `; writes ${task.writes.join(", ")}` : ""}] ${t.title}`;
+      });
+      return `\nAssignments of the current route (only those still queued can be dropped or rewritten):\n${diagnosticText(lines.join("\n"), 6144, this.o.secrets())}`;
+    };
     const controller = new DeliveryController({
       assertRunning: () => this.assertRunning(live),
       observe: () => sourceIdentityAsync(cwd, scope(), live.abort.signal),
@@ -2276,7 +2311,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           live,
           cwd,
           "diagnose",
-          `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nCurrent write scope: ${scope().join(", ")}\nLeast level for this decision: ${floor}\nDeclared acceptance checks: ${checks.join(", ")}\nDependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${this.deviationBrief(live, "work")}${objection ? `\nYour previous reply for this failure could not be used: ${objection}` : ""}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
+          `${RECOVERY_INSTRUCTIONS}\nStage failure: ${failure.message}\nCurrent write scope: ${scope().join(", ")}\nLeast level for this decision: ${floor}\nDeclared acceptance checks: ${checks.join(", ")}\nDependency installation by revision: ${p.plan.policy?.installs ? "allowed with the project's own package manager" : "not allowed"}${routed()}${this.deviationBrief(live, "work")}${objection ? `\nYour previous reply for this failure could not be used: ${objection}` : ""}\nCurrent evidence:\n${evidence}\nPrevious recovery (historical, not current check evidence): ${previous ? diagnosticText(canonicalJson(previous), 2048, this.o.secrets()) : "none"}`,
           true,
           p.model,
           undefined,
@@ -2285,7 +2320,20 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         this.attemptResult(live, result, step);
         const decision = decodeRecoveryDecision(
           result.text,
-          { scope: scope(), evidence: failure.steps, floor, checks },
+          {
+            scope: scope(),
+            evidence: failure.steps,
+            floor,
+            checks,
+            ...(live.route
+              ? {
+                  route: {
+                    tasks: live.run.tasks ?? [],
+                    scope: this.scope(live, p),
+                  },
+                }
+              : {}),
+          },
           this.o.secrets(),
         );
         if (
@@ -2300,10 +2348,8 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           const taken = [...(live.owned ?? [])]
             .filter(([tree]) => tree !== cwd)
             .flatMap(([, paths]) => paths);
-          const contended = added.filter(
-            (path) =>
-              workflowCovers(taken, path) ||
-              taken.some((other) => workflowCovers([path], other)),
+          const contended = mine(decision, added).filter((path) =>
+            touches(taken, path),
           );
           if (contended.length)
             throw new InvalidDecision(
@@ -2324,8 +2370,17 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         const added = decision.scope.filter((p) => !workflowCovers(scope(), p));
         if (added.length) {
           live.run.scope = [...new Set([...(live.run.scope ?? []), ...added])];
-          live.owned?.get(cwd)?.push(...added);
+          live.owned?.get(cwd)?.push(...mine(decision, added));
         }
+        let route = "";
+        if (decision.route)
+          try {
+            route = live.route?.revise(decision.route, revision) ?? "";
+          } catch (error) {
+            // What was waiting when the decision was checked has started since.
+            if (!(error instanceof InvalidDecision)) throw error;
+            route = `The assignments were left as they were: ${error.message}`;
+          }
         if (decision.deviation)
           live.run.deviations = [
             ...(live.run.deviations ?? []),
@@ -2333,6 +2388,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           ];
         live.run.notice = this.notice(
           `Plan revision ${revision} (${decision.action === "blocked" ? "blocked" : decision.level}): ${decision.strategy}`,
+          route,
         );
         this.save(live);
         return revision;
@@ -2601,10 +2657,25 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         ) as {
           stage?: unknown;
           failure?: unknown;
-          decision?: { level?: unknown; cause?: unknown; strategy?: unknown };
+          decision?: {
+            level?: unknown;
+            cause?: unknown;
+            strategy?: unknown;
+            route?: { drop?: unknown; add?: unknown } | null;
+          };
         };
+        const ids = (value: unknown, key?: string) =>
+          Array.isArray(value)
+            ? value
+                .map((v) =>
+                  String(key ? (v as Record<string, unknown>)?.[key] : v),
+                )
+                .join(", ")
+            : "";
+        const dropped = ids(record.decision?.route?.drop),
+          given = ids(record.decision?.route?.add, "id");
         lines.push(
-          `- Revision ${n} (${String(record.stage)}, ${String(record.decision?.level ?? "repair")}): ${String(record.failure).slice(0, 300)} Cause: ${String(record.decision?.cause).slice(0, 300)} Then: ${String(record.decision?.strategy).slice(0, 300)}`,
+          `- Revision ${n} (${String(record.stage)}, ${String(record.decision?.level ?? "repair")}): ${String(record.failure).slice(0, 300)} Cause: ${String(record.decision?.cause).slice(0, 300)} Then: ${String(record.decision?.strategy).slice(0, 300)}${dropped ? ` Dropped assignments: ${dropped}.` : ""}${given ? ` Added or rewrote assignments: ${given}.` : ""}`,
         );
       } catch {
         /* An unreadable revision is simply not part of the brief. */
@@ -2820,13 +2891,15 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       throw error;
     }
   }
-  /** Runs the agreement's assignments. With nothing else running and exactly
-   * one assignment able to start, it runs in the candidate, as a serial plan
-   * always has. When several can start, each gets its own worktree at the
-   * candidate's current commit; the owner commits its work there and picks
-   * that commit onto the candidate. Assignments that run together never own
-   * the same path, so a pick cannot conflict; whether their results fit
-   * together is what the combined checks and review decide afterwards. */
+  /** Runs the current route's assignments until none is left: the agreement's,
+   * as plan revisions left the ones that had not started. With nothing else
+   * running and exactly one assignment able to start, it runs in the
+   * candidate, as a serial plan always has. When several can start, each gets
+   * its own worktree at the candidate's current commit; the owner commits its
+   * work there and picks that commit onto the candidate. Assignments that run
+   * together never own the same path, so a pick cannot conflict; whether
+   * their results fit together is what the combined checks and review decide
+   * afterwards. */
   private async assignments(
     live: Live,
     integration: string,
@@ -2848,6 +2921,59 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     const mark = (id: string, state: WorkflowTaskState["state"]) => {
       (states.get(id) as WorkflowTaskState).state = state;
       this.save(live);
+    };
+    /** Wakes the loop below when a revision changed what can start. */
+    let revised: (() => void) | undefined;
+    live.route = {
+      tasks,
+      revise: (route, revision) => {
+        const change = revisedRoute([...states.values()], route);
+        for (const id of change.superseded) {
+          Object.assign(states.get(id) as WorkflowTaskState, {
+            state: "superseded",
+            revision,
+          });
+          tasks.splice(
+            tasks.findIndex((t) => t.id === id),
+            1,
+          );
+        }
+        for (const task of change.rewritten) {
+          tasks[tasks.findIndex((t) => t.id === task.id)] = task;
+          Object.assign(states.get(task.id) as WorkflowTaskState, {
+            title: task.title,
+            after: [...task.after],
+            revision,
+          });
+        }
+        for (const task of change.added) {
+          tasks.push(task);
+          states.set(task.id, {
+            id: task.id,
+            title: task.title,
+            after: [...task.after],
+            state: "queued",
+            revision,
+          });
+        }
+        live.run.tasks = [...states.values()];
+        revised?.();
+        const named = (label: string, ids: string[]) =>
+          ids.length ? `${label}: ${ids.join(", ")}.` : "";
+        return [
+          named("Assignments dropped", change.superseded),
+          named(
+            "Assignments rewritten",
+            change.rewritten.map((t) => t.id),
+          ),
+          named(
+            "Assignments added",
+            change.added.map((t) => t.id),
+          ),
+        ]
+          .filter(Boolean)
+          .join(" ");
+      },
     };
     const owned = new Map<string, string[]>();
     live.owned = owned;
@@ -2956,11 +3082,17 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       }
       if (!running.size) break;
       // Every started assignment is joined before the stage fails or ends.
-      await Promise.race(running.values());
+      await Promise.race([
+        ...running.values(),
+        new Promise<void>((resolve) => {
+          revised = resolve;
+        }),
+      ]);
     }
     live.owned = undefined;
+    live.route = undefined;
     if (failure) throw failure.error;
-    if (done.length !== tasks.length)
+    if (tasks.some((t) => states.get(t.id)?.state !== "completed"))
       throw new ContractError("corrupt-selected");
   }
   /** Commits one assignment's work in its own worktree, picks that commit onto
