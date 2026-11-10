@@ -221,7 +221,9 @@ A previewed file is shown verbatim through the Markdown code renderer: numbered 
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
-The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+A conversation row is its title and last-modified time; a second line appears only for a live workflow's phase or a reply that is not simply completed.
+History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
 Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
 There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
 A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.

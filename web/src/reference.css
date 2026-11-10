@@ -1065,6 +1065,45 @@
   color: var(--on-accent);
 }
 
+.lp-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 6px 6px;
+  padding: 0 8px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-faint);
+}
+
+.lp-filter:focus-within {
+  border-color: var(--accent);
+  color: var(--text-dim);
+}
+
+.lp-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.lp-filter-clear {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+}
+
 .file-diff-card {
   display: flex;
   flex-direction: column;
