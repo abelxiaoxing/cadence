@@ -1210,12 +1210,62 @@ export const zh = {
   "Started in the terminal": "在终端中开始",
   "Started in the WebUI": "在 WebUI 中开始",
   "Branches ({count})": "分支（{count}）",
+  Branches: "分支",
   "Show the latest": "查看最新",
-  "Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted.":
-    "只显示到这一轮结束为止的对话。下一条消息会从那里开始一个新分支，不会删除任何内容。",
+  "Filter messages…": "筛选消息…",
+  "Refresh branches": "刷新分支",
+  "A chosen branch is shown, not the latest.":
+    "当前显示的是你选中的分支，不是最新的。",
+  "No messages yet.": "还没有消息。",
+  "No matching messages": "没有匹配的消息",
+  "Edit and resend: {text}": "编辑并重新发送：{text}",
+  "Continue from here: {text}": "从这里继续：{text}",
+  // The anchor: where the next message continues
+  "Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted.":
+    "下一条消息接在这一轮结束的位置发送，并从那里开始一个新分支；后面的轮次留在原来的分支上，不会删除任何内容。",
   "Continue from here": "从这里继续",
-  "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.":
-    "你正在查看这段对话较早的位置。现在发送的消息会从这里开始一个新分支，其余内容仍保留在会话中。",
+  "Edit and resend": "编辑并重新发送",
+  "Put this message back in the composer. Sending it starts a new branch beside this one; nothing is deleted.":
+    "把这条消息放回输入框。发送后会在它旁边开始一个新分支，不会删除任何内容。",
+  "Conversation turn, not in the new message's context":
+    "对话轮次，不会进入新消息的上下文",
+  "Version {index} of {count}": "第 {index} 个版本，共 {count} 个",
+  "Previous version": "上一个版本",
+  "Next version": "下一个版本",
+  "This message cannot be rewritten from here: the entry it continued is not known.":
+    "无法从这里重写这条消息：不知道它接在哪一条记录之后。",
+  "Part of the message could not be read back. Check the text and images before sending.":
+    "这条消息有一部分没能读回来。发送前请检查文字和图片。",
+  "That message could not be found in this conversation.":
+    "在这段对话里找不到那条消息。",
+  "Rewriting a message": "正在重写一条消息",
+  "Continuing after an earlier turn": "接在较早的一轮之后继续",
+  "Send starts a new branch beside it; that message and the turns after it stay on their branch and are not in the new context.":
+    "发送后会在它旁边开始一个新分支；那条消息和之后的轮次留在原来的分支上，不会进入新的上下文。",
+  "Send starts a new branch after that turn; the turns after it stay on their branch and are not in the new context.":
+    "发送后会在那一轮之后开始一个新分支；再往后的轮次留在原来的分支上，不会进入新的上下文。",
+  "Only the conversation is rewound: files on disk stay as they are.":
+    "回退的只是对话，磁盘上的文件不会变。",
+  "Reading the message's images…": "正在读取这条消息的图片…",
+  "Attachments that were not retained are not attached again.":
+    "没有保留下来的附件不会重新附上。",
+  "Cancel and restore the draft that was here": "取消，并恢复原来的草稿",
+  Cancel: "取消",
+  "A chosen branch is shown, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.":
+    "当前显示的是你选中的分支，不是最新的。现在发送的消息会接在所显示内容的末尾，其余内容仍保留在会话中。",
+  "From here on, the turns stay on their branch: the message being written will not have them in its context.":
+    "从这里往下的轮次留在原来的分支上：正在写的这条消息的上下文里不会有它们。",
+  // Question rail and composer
+  "Questions in this conversation": "这段对话里的提问",
+  "Message box height: automatic. Drag or use the arrow keys to set it.":
+    "输入框高度：自动。拖动或用方向键可以调整。",
+  "Message box height: fixed. Double-click or press Home for automatic.":
+    "输入框高度：固定。双击或按 Home 键恢复自动。",
+  Automatic: "自动",
+  "{pixels} pixels": "{pixels} 像素",
+  "Files to reference": "可引用的文件",
+  "Files in the conversation folder": "对话文件夹里的文件",
+  "Enter inserts the path · Esc closes": "回车插入路径 · Esc 关闭",
   "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).":
     "此版本不再支持这类旧 Cadence 会话。请新建会话；原有文件会保留（{code}）。",
 } satisfies Record<string, string>;

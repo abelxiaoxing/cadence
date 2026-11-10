@@ -41,8 +41,11 @@ Sessions from the selected checkout and its conversation directories are listed,
 Pi keeps a session as a tree.
 When a message continues an earlier point, the session gains a branch instead of losing anything:
 
-- In the browser, **Continue from here** under an earlier reply shows the conversation up to that point; the next message starts a new branch there.
-- **Branches** in the conversation header opens the tree of messages; choose a line to read that branch, and **Show the latest** to follow the newest again.
+- In the browser, **Continue from here** under an earlier reply makes the next message start a new branch after that turn, and **Edit and resend** under one of your messages puts it back in the composer (with its images) so the rewritten message starts a branch beside it.
+  The later turns stay visible but dimmed, a strip above the composer says what is being rewritten and has **Cancel**, and only the conversation is rewound: files on disk are not changed.
+- Where a message has several versions, `‹ 2/3 ›` beside it steps between their branches.
+- The **Branches** tab of the right panel (the branch count in the conversation header opens it) shows the tree of messages; choose a line to read that branch, and **Show the latest** to follow the newest again.
+  The address keeps the branch shown, so a refresh returns to it.
 - In the terminal, `/tree` shows the same tree.
 
 A terminal holds its own copy of an open session.
