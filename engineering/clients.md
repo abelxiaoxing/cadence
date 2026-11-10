@@ -293,7 +293,8 @@ A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence
 A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
 The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking, and the session holds what Pi wrote.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
-A restart never resumes pending turns; a turn whose closure is unknown keeps fences.
+A restart never resumes pending turns.
+A turn the previous owner's death cut short (still recorded queued or running) is reported as interrupted and does not keep the next owner from starting, because host startup has already stopped that owner's workers by exact identity; a turn whose closure an owner itself recorded as unknown keeps fences and refuses startup.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader or prompt composer.
 SDK-native automatic compaction is enabled, and terminal `/compact` entries are honoured when continued; original history is retained.
 The service-owned SDK session retries transient model-request errors with the bounded policy in `src/worker-model.mjs`; native Pi's main dialogue retains its own settings, which Cadence neither changes nor copies.

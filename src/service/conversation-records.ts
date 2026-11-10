@@ -242,6 +242,15 @@ export class ConversationRecords {
     this.states.set(commandId, { key, state });
     return state;
   }
+  /** Whether the owner that ran this command recorded that it could not
+   * establish its worker's closure. A command merely left queued or running was
+   * cut short by that owner's death; startup healing has stopped its workers
+   * before any reader exists, so that one is interrupted, not unknown. */
+  closureUnknown(commandId: string): boolean {
+    const value = this.read(this.path(commandId, "state.json"));
+    if (value === undefined) throw new ContractError("corrupt-selected");
+    return decodeState(value).status === "unknown";
+  }
   liveFor(id: string): LiveTurn | undefined {
     for (const live of this.active.values())
       if (live.accepted.session === id) return live;

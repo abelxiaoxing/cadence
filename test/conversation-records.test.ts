@@ -11,7 +11,11 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import { ConversationRecords } from "../src/service/conversation-records.ts";
-import { LiveCapture, type LiveTurn } from "../src/service/conversations.ts";
+import {
+  Conversations,
+  LiveCapture,
+  type LiveTurn,
+} from "../src/service/conversations.ts";
 import type { ServiceCoordination } from "../src/service/coordination.ts";
 import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
@@ -553,4 +557,39 @@ it("archived sessions leave the history and its pages, and are listed alone on r
   // Private state is closed: a stray name is refused, never skipped.
   f.files.create(join(record(hidden[1]), "..", "notes.txt"), "stray");
   expect(() => f.records.list()).toThrow("corrupt-selected");
+});
+it("a reply the previous owner's death interrupted does not refuse the next start; a recorded unknown closure still does", () => {
+  const f = fixture();
+  const owner = (g: ReturnType<typeof fixture>) =>
+    Object.assign(Object.create(Conversations.prototype), {
+      o: {
+        owner: { lease: { assert() {} } },
+        coordination: { files: g.files },
+      },
+      records: g.records,
+    }) as Conversations;
+  // Nothing was ever sent: nothing to settle.
+  expect(() => owner(f).assertSettled()).not.toThrow();
+  for (const [persisted, refuses] of [
+    ["completed", false],
+    ["failed", false],
+    // Cut short by the owner's death: startup healing stopped its worker.
+    ["queued", false],
+    ["running", false],
+    // An owner recorded that it could not establish closure itself.
+    ["unknown", true],
+  ] as const) {
+    const g = fixture(),
+      id = randomUUID();
+    const command = g.command(id, persisted, null);
+    const start = () => owner(g).assertSettled();
+    if (refuses) expect(start, persisted).toThrow("quarantine");
+    else expect(start, persisted).not.toThrow();
+    // Either way the reader still reports an unfinished reply as interrupted.
+    if (persisted === "queued" || persisted === "running")
+      expect(g.records.state(command)).toMatchObject({
+        status: "unknown",
+        notice: expect.stringContaining("Interrupted"),
+      });
+  }
 });
