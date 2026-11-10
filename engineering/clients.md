@@ -276,7 +276,8 @@ Older records without a snapshot stay readable without invented model/directory 
 A Send names the entry it continues: the end of the branch the browser shows, or none for an empty session.
 The owner admits one browser message per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
 A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on.
-A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
+A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
+The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking, and the session holds what Pi wrote.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns; a turn whose closure is unknown keeps fences.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader or prompt composer.
@@ -292,8 +293,10 @@ History lists the project's sessions by last modification, newest first, 50 per 
 Listing reads each file once and then only what Pi appends, ignoring a torn final line; a replaced or shortened file is read again from its start.
 A conversation reads one branch, named by its last entry, as one continuous transcript: the head read gives the summary, the branch end, whether it still continues the one shown before, the branch and leaf counts and the terminal's workflows; each turn (a user message and what followed it) is read by position as listed steps, and a step's full item is read separately in parts that each fit one reply.
 Without a chosen branch the WebUI follows Pi's current leaf, the entry appended last; a live browser turn ends the branch it was sent from until it settles.
-A listing never carries a tool's arguments or output and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
-Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps; thinking and unsupported media are flagged as omitted.
+A listing never carries a tool's arguments or output or a thinking block's text, and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
+Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps.
+A readable thinking block is a step of its own role in its recorded place, read in full through the step-detail read like a tool's output; its signature is never returned.
+Thinking Pi stored unreadable (redacted, or a signature without text) and unsupported media are flagged as omitted.
 Supported user images are small entry/index/MIME descriptors on their exact branch.
 A live turn extends that view only with its verified command-owned prefix; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.

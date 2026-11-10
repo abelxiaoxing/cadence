@@ -195,7 +195,11 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   const call = assistant(
     u1.id,
     [
-      { type: "thinking", thinking: "hidden" },
+      {
+        type: "thinking",
+        thinking: "Weighing SECRET-VALUE first",
+        thinkingSignature: "opaque-signature",
+      },
       { type: "text", text: "Reading it." },
       {
         type: "toolCall",
@@ -218,7 +222,19 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
       isError: false,
     },
   });
+  // Thinking Pi stored unreadable stays a flag: redacted, or only a signature.
   const answer = assistant(result.id, [
+    {
+      type: "thinking",
+      thinking: "[Reasoning redacted]",
+      thinkingSignature: "encrypted-payload",
+      redacted: true,
+    },
+    {
+      type: "thinking",
+      thinking: " \n",
+      thinkingSignature: "sealed-reasoning",
+    },
     { type: "text", text: "It holds SECRET-VALUE." },
   ]);
   const bash = entry("message", answer.id, {
@@ -269,6 +285,7 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   const first = turnItems(turns[0], ["SECRET-VALUE"]);
   expect(first.items.map((i) => [i.role, i.name, i.text])).toEqual([
     ["user", "", "Read the config"],
+    ["thinking", "", "Weighing [redacted] first"],
     ["assistant", "", "Reading it."],
     ["tool", "read", "token=[redacted]"],
     ["assistant", "", "It holds [redacted]."],
@@ -276,9 +293,12 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
     ["tool", "compaction", "Earlier work"],
     ["tool", "cadence-workflow-result", "Workflow done"],
   ]);
-  expect(first.items[2].args).toBe('{"path":"a.json"}');
-  expect(first.items[4].error).toBe(true);
+  expect(first.items[1].id).toBe(`${call.id}:1`);
+  expect(first.items[3].args).toBe('{"path":"a.json"}');
+  expect(first.items[5].error).toBe(true);
   expect(first.omitted).toEqual({ thinking: true, media: true, other: false });
+  for (const hidden of ["signature", "payload", "sealed", "Reasoning redacted"])
+    expect(JSON.stringify(first)).not.toContain(hidden);
   expect(first).toMatchObject({
     id: u1.id,
     entry: hidden.id,
@@ -290,13 +310,52 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
     notice: "provider [redacted] failed",
   });
   const listed = listTurn(first);
-  expect(listed.steps[2]).toMatchObject({
+  expect(listed.steps[3]).toMatchObject({
     role: "tool",
     text: "",
     target: "a.json",
     parts: 1,
   });
   expect(listed.steps[0].parts).toBe(0);
+  // Thinking is listed without its text, which a step read returns.
+  expect(listed.steps[1]).toEqual({
+    id: `${call.id}:1`,
+    role: "thinking",
+    text: "",
+    clipped: false,
+    name: "",
+    target: "",
+    error: false,
+    parts: 1,
+  });
+  expect(listed.parts[1][0].text).toBe("Weighing [redacted] first");
+  // Readable thinking alone leaves nothing flagged as omitted.
+  const mixed = assistant(u2.id, [
+    { type: "text", text: "First." },
+    { type: "thinking", thinking: "Then this." },
+    { type: "text", text: "Last." },
+  ]);
+  expect(
+    turnItems(
+      [u2, mixed].map((raw) => ({
+        type: "message",
+        id: raw.id,
+        parentId: null,
+        timestamp: "",
+        pos: 0,
+        raw,
+      })),
+      [],
+    ),
+  ).toMatchObject({
+    omitted: { thinking: false, media: false, other: false },
+    items: [
+      { role: "user" },
+      { role: "assistant", text: "First." },
+      { role: "thinking", text: "Then this." },
+      { role: "assistant", text: "Last." },
+    ],
+  });
 });
 
 it("splits a large item into parts losslessly, each fitting one step reply", () => {
@@ -374,6 +433,32 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   };
   expect(decodeWorkbenchResult(value)).toEqual(value);
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
+  // Thinking is listed like a tool: its text is read per step, never listed.
+  const thinking = chatStep(
+    {
+      id: escaped(160),
+      role: "thinking",
+      text: escaped(100000),
+      name: "",
+      args: "",
+      error: false,
+    },
+    1,
+  );
+  expect(thinking).toMatchObject({ text: "", clipped: false, parts: 1 });
+  const thoughts = {
+    ...value,
+    steps: Array.from({ length: STEP_READ }, () => thinking),
+  };
+  expect(decodeWorkbenchResult(thoughts)).toEqual(thoughts);
+  for (const refused of [
+    { ...thinking, text: "listed" },
+    { ...thinking, clipped: true },
+    { ...thinking, parts: 0 },
+  ])
+    expect(() => decodeWorkbenchResult({ ...value, steps: [refused] })).toThrow(
+      "invalid",
+    );
 });
 
 it("finds a browser turn's own entries, not a terminal message sent from the same point", () => {
@@ -558,6 +643,56 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
   ]);
   expect(stable).toBe(2);
   expect(written[2].text).toBe("");
+});
+
+it("written thinking never shifts the live preview's count of written messages", () => {
+  const capture = new LiveCapture(() => []);
+  for (const [workerSeq, messageId] of ["a1", "a2"].entries())
+    capture.accept({
+      protocol: 2,
+      childRunId: "c",
+      workerSeq: workerSeq + 1,
+      observedMs: 0,
+      event: {
+        kind: "message-start",
+        messageId,
+        role: "assistant",
+        source: { kind: "sdk" } as never,
+        resultCallId: null,
+      },
+    } as CaptureFrame);
+  const item = (id: string, role: "user" | "assistant" | "thinking") => ({
+    id,
+    role,
+    text: id,
+    name: "",
+    args: "",
+    error: false,
+  });
+  // One written message whose text a thinking block splits: a2 is not written.
+  const split = capture.extend([
+    item("u", "user"),
+    item("e1:1", "assistant"),
+    item("e1:2", "thinking"),
+    item("e1:3", "assistant"),
+  ]);
+  expect(split.items.map((i) => i.id)).toEqual([
+    "u",
+    "e1:1",
+    "e1:2",
+    "e1:3",
+    "a2",
+  ]);
+  expect(split.stable).toBe(4);
+  // Two written messages, the second led by its thinking: nothing to add.
+  const both = capture.extend([
+    item("u", "user"),
+    item("e1:1", "assistant"),
+    item("e2:2", "thinking"),
+    item("e2:3", "assistant"),
+  ]);
+  expect(both.items.map((i) => i.id)).toEqual(["u", "e1:1", "e2:2", "e2:3"]);
+  expect(both.stable).toBe(4);
 });
 
 it.skipIf(typeof process.getuid !== "function")(

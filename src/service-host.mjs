@@ -5972,13 +5972,14 @@ function toolTarget(args) {
 }
 function chatStep(item, parts, more = false) {
   const tool = item.role === "tool";
-  const text2 = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  const lazy = tool || item.role === "thinking";
+  const text2 = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
     role: item.role,
     text: text2,
     ...item.images?.length ? { images: item.images } : {},
-    clipped: !tool && (more || text2 !== item.text),
+    clipped: !lazy && (more || text2 !== item.text),
     name: item.name,
     target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
     error: item.error,
@@ -6333,6 +6334,7 @@ function decodeChatTurn(v) {
     items: list(o.items, 256, decodeChatItem)
   };
 }
+var ITEM_ROLES = ["user", "assistant", "tool", "thinking"];
 function decodeChatImages(v) {
   return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
@@ -6364,7 +6366,7 @@ function decodeChatItem(v) {
   return {
     ...i.images === undefined ? {} : { images: decodeChatImages(i.images) },
     id: text(i.id, 160, true),
-    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    role: oneOf(i.role, ITEM_ROLES),
     text: text(i.text, 256 * 1024),
     name: text(i.name, 128),
     args: text(i.args, 64 * 1024),
@@ -6386,7 +6388,7 @@ function decodeChatStep(v) {
   const step = {
     ...o.images === undefined ? {} : { images: decodeChatImages(o.images) },
     id: text(o.id, 160, true),
-    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    role: oneOf(o.role, ITEM_ROLES),
     text: text(o.text, STEP_TEXT_BYTES),
     clipped: bool(o.clipped),
     name: text(o.name, 128),
@@ -6394,7 +6396,9 @@ function decodeChatStep(v) {
     error: bool(o.error),
     parts: integer(o.parts, 0)
   };
-  if (step.role === "tool" && (step.text || step.clipped))
+  if ((step.role === "tool" || step.role === "thinking") && (step.text || step.clipped))
+    throw new ContractError("invalid");
+  if (step.role === "thinking" && !step.parts)
     throw new ContractError("invalid");
   return step;
 }
@@ -9040,9 +9044,20 @@ ${value}`, secrets);
             const call = tool(typeof id === "string" && id ? id : `${entry.id}:${items.length}`, typeof name === "string" ? name : "tool", args);
             if (typeof id === "string")
               tools.set(id, call);
-          } else if (type === "thinking" || type === "redactedThinking")
-            omitted.thinking = true;
-          else if (type === "image")
+          } else if (type === "thinking" || type === "redactedThinking") {
+            const value = own2(b, "thinking");
+            if (type === "thinking" && typeof value === "string" && value.trim() && own2(b, "redacted") !== true)
+              add({
+                id: `${entry.id}:${items.length}`,
+                role: "thinking",
+                text: value,
+                name: "",
+                args: "",
+                error: false
+              });
+            else
+              omitted.thinking = true;
+          } else if (type === "image")
             omitted.media = true;
           else
             omitted.other = true;
@@ -9115,7 +9130,7 @@ function listTurn(turn) {
   const parts = turn.items.map(itemParts);
   const steps = turn.items.map((item, index) => {
     const listed = chatStep(item.role === "tool" && item.args.length > TARGET_ARGS ? { ...item, args: "" } : item, 0);
-    const more = listed.clipped || item.role === "tool" && !!(item.args || item.text);
+    const more = listed.clipped || (item.role === "tool" || item.role === "thinking") && !!(item.args || item.text);
     return { ...listed, parts: more ? parts[index].length : 0 };
   });
   return { ...turn, steps, parts };
@@ -14296,7 +14311,7 @@ class ConversationRecords {
           status: recorded.status,
           notice: turn2.notice || sanitizeText(recorded.notice, secrets),
           omitted: {
-            thinking: turn2.omitted.thinking || recorded.omitted.thinking,
+            thinking: turn2.omitted.thinking,
             media: turn2.omitted.media || recorded.omitted.media,
             other: turn2.omitted.other || recorded.omitted.other
           }
@@ -14340,7 +14355,7 @@ class ConversationRecords {
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
       ...live2.capture?.retry ? { retry: live2.capture.retry } : {},
       omitted: {
-        thinking: written.omitted.thinking || !!omitted?.thinking,
+        thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
         other: written.omitted.other || !!omitted?.other
       },
@@ -16141,7 +16156,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7",
+    contractHash: "c3656a44aeb1b45638303930a39dbd5d3429987a6ff648851552c032366223ef",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -29732,7 +29747,17 @@ class LiveCapture {
   }
   extend(items) {
     const out = items.map((item) => ({ ...item }));
-    const written = out.filter((i) => i.role === "assistant").length;
+    let written = 0, counted;
+    for (const item of out) {
+      if (item.role === "assistant") {
+        const at = item.id.lastIndexOf(":");
+        const message2 = at < 0 ? item.id : item.id.slice(0, at);
+        if (message2 !== counted)
+          written++;
+        counted = message2;
+      } else if (item.role !== "thinking")
+        counted = undefined;
+    }
     const calls = out.filter((i) => i.role === "tool");
     const results = calls.filter((i) => i.text || i.error).length;
     let stable = out.length;
@@ -32019,7 +32044,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "2fe5d655f35f6778f8a9ddf13c90a1ce7e39078d3a0cf86d9ff48e5dae5d3fe3",
+  build: "bac3abbd01ddfeb27ffc309fe007b63fa19db1983434df6f7ad37c2d27089583",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34125,7 +34150,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7";
+  const embedded = "c3656a44aeb1b45638303930a39dbd5d3429987a6ff648851552c032366223ef";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

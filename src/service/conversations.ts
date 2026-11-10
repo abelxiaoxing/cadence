@@ -95,6 +95,8 @@ export interface Accepted {
 export interface CommandState {
   status: ChatStatus;
   notice: string;
+  /** What the live capture did not keep. Its `thinking` flag stays in the
+   * record but is not shown: the session holds the thinking Pi wrote. */
   omitted: ChatTurn["omitted"];
   /** The user message entry Pi wrote for it, null when none was written. */
   user: string | null;
@@ -239,10 +241,22 @@ export class LiveCapture {
   }
   /** The written items extended by what Pi has not written yet. Pi writes each
    * message when it ends, in the order the worker streamed them, so the
-   * written assistant messages and tool results are counted, not matched. */
+   * written assistant messages and tool results are counted, not matched.
+   * Thinking is not streamed here: a block that splits one message's text
+   * leaves that text counted once. */
   extend(items: ChatItem[]): { items: ChatItem[]; stable: number } {
     const out = items.map((item) => ({ ...item }));
-    const written = out.filter((i) => i.role === "assistant").length;
+    let written = 0,
+      counted: string | undefined;
+    for (const item of out) {
+      if (item.role === "assistant") {
+        // A written assistant item is `<entry id>:<index>`.
+        const at = item.id.lastIndexOf(":");
+        const message = at < 0 ? item.id : item.id.slice(0, at);
+        if (message !== counted) written++;
+        counted = message;
+      } else if (item.role !== "thinking") counted = undefined;
+    }
     const calls = out.filter((i) => i.role === "tool");
     const results = calls.filter((i) => i.text || i.error).length;
     let stable = out.length;

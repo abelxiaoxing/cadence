@@ -13,6 +13,7 @@ import { expect, it, vi } from "vitest";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
+  decodeChatItem,
   decodeChatTurn,
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
@@ -441,4 +442,19 @@ it("turns saved before omissions were flagged still decode; other shapes stay cl
     }),
   ).toThrow();
   expect(() => decodeChatTurn({ ...saved, extra: true })).toThrow();
+});
+it("readable thinking is its own item role; no signature or other role is accepted", () => {
+  const item = {
+    id: "abcdef12:1",
+    role: "thinking",
+    text: "Weighing the options",
+    name: "",
+    args: "",
+    error: false,
+  };
+  expect(decodeChatItem(item)).toEqual(item);
+  expect(() => decodeChatItem({ ...item, role: "reasoning" })).toThrow();
+  expect(() =>
+    decodeChatItem({ ...item, thinkingSignature: "opaque" }),
+  ).toThrow();
 });
