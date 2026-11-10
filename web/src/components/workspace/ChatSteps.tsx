@@ -113,11 +113,14 @@ export function StepText({
   turn,
   index,
   step,
+  copy = true,
   render = (text) => <Markdown text={text} />,
 }: {
   turn: TurnSource;
   index: number;
   step: ChatStep;
+  /** False where the message's action bar already copies this very text. */
+  copy?: boolean;
   render?(text: string): ReactNode;
 }) {
   const { t } = useT();
@@ -132,7 +135,7 @@ export function StepText({
       {text.trim() !== "" && (
         <div className="msg-text single">
           <div className="msg-text-main">{render(text)}</div>
-          <CopyButton text={text} className="msg-text-copy" />
+          {copy && <CopyButton text={text} className="msg-text-copy" />}
         </div>
       )}
       {step.clipped && settled && !full.value && (

@@ -209,7 +209,10 @@ The topbar's More menu holds Refresh status, Disconnect this page (detach; start
 Its items are compact icon-and-value observations (`web/src/layout/StatusItem.tsx`) that wrap rather than clip; the elapsed time counts from the live turn's recorded start and is absent when that start is unrecorded.
 The open conversation reports its own turn count and live turn to the statusbar; another conversation's last report is never shown for it, and no token, cost or host-resource figure appears because the owner records none.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
+The conversation header is one line: the title, a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), the branch controls, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
 One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
+A transient local result is a toast under the topbar (`web/src/layout/toasts.ts`, browser-local): a copied link, a failed copy, or a refusal that reached no owner (a Send or image the browser itself refused, or one the owner answered with `effect:none`).
+An error toast stays until dismissed or until its conversation's next attempt, the others pause while hovered or focused; an unknown outcome, an owner-side effect (execution prepared, a Stop or approval reply) and every observation statement stay in place, never in a toast.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
 Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.
 The Files pane is a crumb trail from that directory (its name, never a bare root), a `..` row for the parent and one row per entry whose reference and copy-path actions appear on hover or focus and stay visible on touch screens.
@@ -232,6 +235,7 @@ Backend cookies and native capabilities never reach the browser; proxied actions
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit-Send preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
+It has a light and a dark colour scheme, both compiled into the one stylesheet as `light-dark()` tokens (light values from pi-web-ui's white theme, the violet accent kept, text at WCAG AA): it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
 ### Image admission
@@ -382,6 +386,7 @@ A card names the tool and what it acted on, and reads its arguments and output o
 Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
+Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without tool cards or failed attempts), and under the user's message of an earlier settled turn it offers "Continue from here"; a reply still being written has none.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.

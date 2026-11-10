@@ -27,6 +27,7 @@ import {
   ChatWorkspace,
 } from "../../web/src/components/workspace/ChatWorkspace";
 import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
+import { messageText } from "../../web/src/components/workspace/MessageActions";
 import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker";
 import { WorkingFolderButton } from "../../web/src/components/workspace/WorkingFolderButton";
 import { LocaleProvider } from "../../web/src/i18n/locale";
@@ -318,6 +319,100 @@ it("a turn names its speakers, start time and the context fixed at admission", (
   const bare = renderToStaticMarkup(<ChatTurnView turn={turn} />);
   expect(bare).not.toContain("msg-model");
   expect(bare).not.toContain("<time");
+});
+it("each message carries an action bar: copy on both, a branch point only where the turn offers one", async () => {
+  const items = [
+    chatItem("user", "user", { text: "Analyze" }),
+    chatItem("t1", "tool", { name: "ls", args: '{"path":"."}' }),
+    chatItem("m1", "assistant", { text: "Looking." }),
+    chatItem("bad", "assistant", { text: "half an answer", error: true }),
+    chatItem("m2", "assistant", { text: "**Final** answer" }),
+  ];
+  const turn = sourceOf({ items });
+  const plain = renderToStaticMarkup(<ChatTurnView turn={turn} />);
+  expect(
+    plain.match(
+      /class="msg-actions" role="group" aria-label="Message actions"/g,
+    ),
+  ).toHaveLength(2);
+  expect(plain.match(/aria-label="Copy message"/g)).toHaveLength(2);
+  // The bubble's own text is copied by its bar, not by a second button in it;
+  // each reply text keeps its own.
+  expect(plain.match(/class="msg-text-copy"/g)).toHaveLength(3);
+  expect(plain).not.toContain("Continue from here");
+  // Offered: one named action under the user's message, which hands back the
+  // turn's end and nothing else.
+  const chosen: string[] = [];
+  const settled = { ...turn, header: { ...turn.header, entry: "entry-9" } };
+  const offered = renderToStaticMarkup(
+    <ChatTurnView turn={settled} onContinue={(entry) => chosen.push(entry)} />,
+  );
+  expect(offered.match(/aria-label="Continue from here"/g)).toHaveLength(1);
+  expect(offered).toMatch(
+    /<article class="msg msg-user">.*class="msg-action labelled"[^>]*aria-label="Continue from here".*<\/article><article class="msg msg-assistant">/,
+  );
+  expect(offered).toContain(
+    'title="Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted."',
+  );
+  expect(chosen).toEqual([]);
+  // A turn that Pi has not ended (no entry) offers no branch point.
+  expect(
+    renderToStaticMarkup(<ChatTurnView turn={turn} onContinue={() => {}} />),
+  ).not.toContain("Continue from here");
+  // Without a user message the reply's bar offers it instead.
+  const replyOnly = sourceOf({ items: items.slice(2) });
+  const headless = renderToStaticMarkup(
+    <ChatTurnView
+      turn={{ ...replyOnly, header: { ...replyOnly.header, entry: "e" } }}
+      onContinue={() => {}}
+    />,
+  );
+  expect(headless).not.toContain("msg-user");
+  expect(headless.match(/aria-label="Continue from here"/g)).toHaveLength(1);
+  // A reply still being written has no bar; its message keeps one.
+  const live = renderTurn({ status: "running", items });
+  expect(live.match(/class="msg-actions"/g)).toHaveLength(1);
+  // Only tool cards: nothing of the reply to copy.
+  expect(
+    renderTurn({ items: items.slice(0, 2) }).match(/class="msg-actions"/g),
+  ).toHaveLength(1);
+
+  // A whole-reply copy is the answer's text in recorded order: no tool card and
+  // no failed attempt.
+  const signal = new AbortController().signal;
+  const { user, replies } = turnParts(turn.steps);
+  const answer = replies.filter(
+    ({ step }) => step.role === "assistant" && !step.error,
+  );
+  expect(messageText(turn, user, signal)).toBe("Analyze");
+  expect(messageText(turn, answer, signal)).toBe(
+    "Looking.\n\n**Final** answer",
+  );
+  // A clipped part that can no longer change is read whole; one still being
+  // written has only its listed preview.
+  const reads: number[] = [];
+  const clipped = {
+    ...turn,
+    steps: turn.steps.map((step) =>
+      step.id === "m2" ? { ...step, clipped: true, parts: 2 } : step,
+    ),
+    detail: async (step: number, parts: number) => {
+      reads.push(step, parts);
+      return { text: "the whole final answer", args: "" };
+    },
+  };
+  const parts = turnParts(clipped.steps).replies.filter(
+    ({ step }) => step.role === "assistant" && !step.error,
+  );
+  await expect(messageText(clipped, parts, signal)).resolves.toBe(
+    "Looking.\n\nthe whole final answer",
+  );
+  expect(reads).toEqual([4, 2]);
+  const writing = { ...clipped, header: { ...clipped.header, stable: 4 } };
+  expect(messageText(writing, parts, signal)).toBe(
+    "Looking.\n\n**Final** answer",
+  );
+  expect(reads).toEqual([4, 2]);
 });
 
 it("folder setup uses the conversation shell, keeps input editable and cannot send or start work", () => {

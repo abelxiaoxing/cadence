@@ -1,24 +1,42 @@
 /* Extracted from the pi-web-ui-adapted App. MIT (c) 2026 xing-shuyin.
  * Shared conversation chrome for folder setup and selected conversations.
  * Presentation only: no client, owner, execution context or navigation route. */
-import { type CSSProperties, type ReactNode, useRef } from "react";
+import { type CSSProperties, type ReactNode, useRef, useState } from "react";
 import {
   FiChevronRight,
   FiFolder,
   FiGlobe,
   FiLogOut,
   FiMenu,
+  FiMonitor,
+  FiMoon,
   FiMoreHorizontal,
   FiRefreshCw,
   FiServer,
   FiSidebar,
+  FiSun,
 } from "react-icons/fi";
 import { localBuild } from "../client/build-identity";
-import { Template, useT } from "../i18n/locale";
+import { type MessageKey, Template, useT } from "../i18n/locale";
 import { ResizeHandle } from "./ResizeHandle";
+import { ToastStack } from "./ToastStack";
+import {
+  chooseTheme,
+  currentTheme,
+  nextTheme,
+  type ThemeChoice,
+} from "./theme";
 import { useDrawerFocus } from "./use-drawer-focus";
 import type { usePanelLayout } from "./use-panel-layout";
 import { useSwipeDrawer } from "./use-swipe-drawer";
+
+const THEMES: Readonly<
+  Record<ThemeChoice, readonly [typeof FiSun, MessageKey]>
+> = {
+  system: [FiMonitor, "System"],
+  light: [FiSun, "Light"],
+  dark: [FiMoon, "Dark"],
+};
 
 export function AppShell({
   panels,
@@ -55,6 +73,12 @@ export function AppShell({
   content: ReactNode;
 }) {
   const { t, locale, setLocale } = useT();
+  const [theme, setTheme] = useState(currentTheme);
+  const [ThemeIcon, themeName] = THEMES[theme];
+  const themeTip = t("Theme: {current}. Switch to {next}.", {
+    current: t(themeName),
+    next: t(THEMES[nextTheme(theme)][1]),
+  });
   const { mobile, overlay: drawer, closeDrawer } = panels;
   const layout = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDetailsElement>(null);
@@ -102,6 +126,19 @@ export function AppShell({
             >
               <FiGlobe aria-hidden="true" />
               <span>{locale === "zh" ? "EN" : "中文"}</span>
+            </button>
+            <button
+              type="button"
+              className="chip chip-theme"
+              aria-label={themeTip}
+              data-tip={themeTip}
+              onClick={() => {
+                const next = nextTheme(theme);
+                chooseTheme(next);
+                setTheme(next);
+              }}
+            >
+              <ThemeIcon aria-hidden="true" />
             </button>
             <details
               className="more-menu"
@@ -289,6 +326,7 @@ export function AppShell({
         <div className="statusbar-left">{status}</div>
         <div className="statusbar-right">{folder}</div>
       </footer>
+      <ToastStack />
     </div>
   );
 }

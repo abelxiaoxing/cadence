@@ -5,12 +5,46 @@
  * empty-state, scroll-bottom and scrollbar families). MIT (c) 2026 xing-shuyin;
  * source-family lineage in provenance/webui-reuse.json. Tokens come from reference.css. */
 :root {
-  color-scheme: dark;
+  /* Every colour token is one light-dark() pair: the light value is pi-web-ui's
+   * themes/white.css (b627452c) with Cadence's violet accent kept, the dark one
+   * pi's default. The scheme follows the system until `data-theme` names one
+   * (web/src/layout/theme.ts). */
+  color-scheme: light dark;
   /* WCAG AA (4.5:1) for small safety statements, selected-tab text and the
-   * primary button; pi's #6b7284 and #8b5cf6 text read 3.5–4.2:1 here. */
-  --text-faint: #858c9e;
-  --accent-text: #a78bfa;
+   * primary button, on the page, raised and tinted surfaces of either scheme
+   * (test/web/theme.test.tsx). pi's #6b7284 and #8b5cf6 text read 3.5–4.2:1 on
+   * the dark surfaces and white.css's #818b98 3.2–3.5:1 on the light ones. */
+  --text-faint: light-dark(#636c76, #858c9e);
+  --accent-text: light-dark(#6d28d9, #a78bfa);
   --accent-strong: #7c3aed;
+  /* Text and glyphs on a filled accent, danger or brand surface. */
+  --on-accent: #ffffff;
+  /* Elevation: resting cards, floating menus and tooltips, dialogs and drawers. */
+  --shadow-1: light-dark(rgba(31, 35, 40, 0.08), rgba(0, 0, 0, 0.2));
+  --shadow-2: light-dark(rgba(31, 35, 40, 0.14), rgba(0, 0, 0, 0.42));
+  --shadow-3: light-dark(rgba(31, 35, 40, 0.2), rgba(0, 0, 0, 0.55));
+  --scrim: light-dark(rgba(31, 35, 40, 0.4), rgba(0, 0, 0, 0.5));
+  /* Syntax colours: highlight.js's GitHub and GitHub Dark themes, the light
+   * comment darkened from #6e7781 (4.27:1 on the code surface) to AA. */
+  --hl-keyword: light-dark(#cf222e, #ff7b72);
+  --hl-title: light-dark(#8250df, #d2a8ff);
+  --hl-constant: light-dark(#0550ae, #79c0ff);
+  --hl-string: light-dark(#0a3069, #a5d6ff);
+  --hl-builtin: light-dark(#953800, #ffa657);
+  --hl-comment: light-dark(#636c76, #8b949e);
+  --hl-tag: light-dark(#116329, #7ee787);
+  --hl-section: light-dark(#0550ae, #1f6feb);
+  --hl-bullet: light-dark(#0550ae, #f2cc60);
+  --hl-addition: light-dark(#116329, #aff5b4);
+  --hl-addition-bg: light-dark(#dafbe1, #033a16);
+  --hl-deletion: light-dark(#82071e, #ffdcd7);
+  --hl-deletion-bg: light-dark(#ffebe9, #67060c);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 * {
   box-sizing: border-box;
@@ -165,15 +199,15 @@ code {
 :where(button.primary) {
   border-color: var(--accent-strong);
   background: var(--accent-strong);
-  color: #fff;
+  color: var(--on-accent);
 }
 :where(button.primary:hover:not(:disabled)) {
   border-color: var(--link-hover);
   background: color-mix(in srgb, var(--accent-strong) 85%, #000);
-  color: #fff;
+  color: var(--on-accent);
 }
 :where(button.danger) {
-  border-color: rgba(248, 113, 113, 0.45);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
   background: var(--red-soft);
   color: var(--red-text);
 }
@@ -307,12 +341,12 @@ summary:focus-visible,
   height: 26px;
   border-radius: 7px;
   background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 700;
   font-size: 15px;
   line-height: 1;
   flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 3px var(--shadow-1);
 }
 .brand-name {
   margin: 0;
@@ -422,7 +456,7 @@ summary:focus-visible,
   border-radius: 6px;
   background: var(--tooltip-bg);
   color: var(--text);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 14px var(--shadow-2);
   font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
@@ -433,7 +467,9 @@ summary:focus-visible,
   z-index: 40;
 }
 .chip[data-tip]:hover::after,
-.panel-toggle[data-tip]:hover::after {
+.chip[data-tip]:focus-visible::after,
+.panel-toggle[data-tip]:hover::after,
+.panel-toggle[data-tip]:focus-visible::after {
   opacity: 1;
 }
 .banner-notice {
@@ -469,6 +505,103 @@ summary:focus-visible,
 }
 .recovery-details time {
   color: var(--text-faint);
+}
+
+/* ---- Toasts (pi .notices / .notice): transient local results. The stack
+   sits under the topbar, clear of the composer, and lets clicks through
+   everywhere but on a toast; each level has its own glyph as well as colour. ---- */
+.notices {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(620px, 90vw);
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--notice-info-border);
+  border-radius: 9px;
+  background: var(--notice-info-bg);
+  color: var(--text);
+  box-shadow: 0 8px 24px var(--shadow-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
+  pointer-events: auto;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: notice-in 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.notice.paused {
+  border-color: var(--accent);
+}
+.notice-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--info-blue);
+}
+.notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.notice-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+.notice-close:hover {
+  background: var(--glow-12);
+  color: var(--text);
+}
+.notice-error {
+  border-left-color: var(--notice-err-border);
+  background: var(--notice-err-bg);
+  color: var(--red-text);
+}
+.notice-error .notice-icon {
+  color: var(--red);
+}
+.notice-warning {
+  border-left-color: var(--notice-warn-border);
+  background: var(--notice-warn-bg);
+  color: var(--amber-text);
+}
+.notice-warning .notice-icon {
+  color: var(--amber);
 }
 
 /* ============================================================
@@ -676,7 +809,7 @@ summary:focus-visible,
 }
 .session-item.active,
 .session-item.active:hover {
-  border-color: rgba(139, 92, 246, 0.3);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -1045,7 +1178,7 @@ summary:focus-visible,
 }
 .msg-user .msg-body {
   padding: 10px 14px;
-  border: 1px solid rgba(139, 92, 246, 0.25);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   border-radius: 12px;
   background: var(--accent-soft);
 }
@@ -1106,7 +1239,7 @@ summary:focus-visible,
   background: var(--bg-elev2);
   color: var(--text-dim);
   font-size: 12px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px var(--shadow-2);
 }
 .scroll-bottom:hover:not(:disabled) {
   border-color: var(--accent);
@@ -1161,7 +1294,7 @@ summary:focus-visible,
   font-weight: 600;
 }
 .toolcall.err {
-  border-color: rgba(248, 113, 113, 0.45);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
 }
 .toolcall .chead {
   flex-wrap: wrap;
@@ -1218,7 +1351,7 @@ summary:focus-visible,
 }
 .msg-user .detail-pane {
   background: transparent;
-  border-color: rgba(139, 92, 246, 0.25);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .detail-identity {
   font-size: 11px;
@@ -1306,9 +1439,87 @@ summary:focus-visible,
 .code-line-body {
   flex: 1;
 }
+/* Syntax highlighting: highlight.js's GitHub theme selectors over the --hl-*
+ * tokens, so one rule set serves both schemes. */
+.hljs {
+  color: var(--code-text);
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: var(--hl-keyword);
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: var(--hl-title);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--hl-constant);
+}
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: var(--hl-string);
+}
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--hl-builtin);
+}
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--hl-comment);
+}
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--hl-tag);
+}
+.hljs-subst {
+  color: var(--code-text);
+}
+.hljs-section {
+  color: var(--hl-section);
+  font-weight: bold;
+}
+.hljs-bullet {
+  color: var(--hl-bullet);
+}
+.hljs-emphasis {
+  color: var(--code-text);
+  font-style: italic;
+}
+.hljs-strong {
+  color: var(--code-text);
+  font-weight: bold;
+}
+.hljs-addition {
+  color: var(--hl-addition);
+  background-color: var(--hl-addition-bg);
+}
+.hljs-deletion {
+  color: var(--hl-deletion);
+  background-color: var(--hl-deletion-bg);
+}
 ::highlight(cadence-page) {
   background: color-mix(in srgb, var(--amber) 28%, transparent);
-  color: #fff;
+  color: var(--md-strong);
 }
 ::highlight(cadence-page-active) {
   background: color-mix(in srgb, var(--amber) 80%, transparent);
@@ -1428,10 +1639,10 @@ summary:focus-visible,
   height: 44px;
   border-radius: 12px;
   background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
-  color: #fff;
+  color: var(--on-accent);
   font-size: 22px;
   font-weight: 700;
-  box-shadow: 0 6px 24px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* ---- Statusbar (pi .statusbar / .bar-item / .status-item / .status-dot /
@@ -1652,7 +1863,7 @@ summary:focus-visible,
   text-align: left;
 }
 .gs-item.active {
-  border-color: rgba(139, 92, 246, 0.3);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
 }
 .gs-item-title {
@@ -1679,11 +1890,12 @@ summary:focus-visible,
   border-radius: 14px;
   background: var(--bg-elev2);
   color: var(--text);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 20px 60px var(--shadow-3);
   font-size: 13px;
 }
+/* A ::backdrop inherits custom properties only in 2024 and later engines. */
 .action-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim, rgba(0, 0, 0, 0.5));
 }
 .action-dialog > header,
 .action-dialog > footer {
@@ -1825,6 +2037,21 @@ summary:focus-visible,
     flex-wrap: wrap;
     --topbar-ctl-h: 30px;
   }
+  .notices {
+    top: 50px;
+    left: 10px;
+    right: 10px;
+    align-items: stretch;
+    transform: none;
+  }
+  .notice {
+    max-width: none;
+  }
+  /* One row at most: an open drawer or the transcript loses only its first
+     line to the newest toast, and an older one returns when that one leaves. */
+  .notice:not(:last-child) {
+    display: none;
+  }
   .topbar-flow {
     display: contents;
   }
@@ -1894,7 +2121,7 @@ summary:focus-visible,
     width: min(300px, 86vw);
     z-index: 20;
     background: var(--bg-elev);
-    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 40px var(--shadow-3);
     @media (prefers-reduced-motion: no-preference) {
       transition: transform 0.18s ease;
     }
@@ -1927,7 +2154,7 @@ summary:focus-visible,
     padding: 0;
     border: 0;
     border-radius: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--scrim);
     z-index: 19;
     opacity: 0;
     pointer-events: none;
@@ -2026,6 +2253,14 @@ summary:focus-visible,
   .ep-toggle {
     min-height: 32px;
   }
+  .notice-close {
+    width: 32px;
+    height: 32px;
+  }
+  .chat-turn .msg-action {
+    min-width: 32px;
+    min-height: 32px;
+  }
 }
 
 /* Conversation-first workspace: pi's project/session hierarchy, with Cadence
@@ -2050,7 +2285,7 @@ summary:focus-visible,
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-elev);
-  box-shadow: 0 8px 24px #0006;
+  box-shadow: 0 8px 24px var(--shadow-2);
 }
 .view-menu-items button {
   display: flex;
@@ -2087,7 +2322,7 @@ summary:focus-visible,
     z-index: 20;
     width: min(var(--right-w), 92vw);
     background: var(--bg-elev);
-    box-shadow: 0 0 40px #0008;
+    box-shadow: 0 0 40px var(--shadow-3);
   }
   .inspector-overlay .drawer-backdrop.on {
     display: block;
@@ -2098,7 +2333,7 @@ summary:focus-visible,
     padding: 0;
     border: 0;
     border-radius: 0;
-    background: #0008;
+    background: var(--scrim);
     z-index: 19;
   }
 }
@@ -2594,6 +2829,45 @@ summary:focus-visible,
   color: var(--accent-text);
   font-size: 12.5px;
 }
+/* A message's action bar (pi .msg-actions): under the user's bubble at its
+ * end, under a reply at its start. Revealed while the message is hovered or
+ * holds focus, so it stays in the tab order; touch screens always show it
+ * (reference.css, hover: none). A named action shows its words. */
+.chat-turn .msg-actions {
+  min-height: 26px;
+  margin-top: 2px;
+}
+.chat-turn .msg-assistant .msg-actions {
+  justify-content: flex-start;
+  margin-left: -6px;
+}
+.chat-turn .msg-action {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.chat-turn .msg-action > svg {
+  width: 14px;
+  height: 14px;
+}
+.msg:focus-within .msg-action,
+.msg-action.done {
+  opacity: 1;
+}
+.msg-action.done {
+  color: var(--green);
+}
+.msg-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.chat-turn .msg-action.labelled {
+  width: auto;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
 .msg-omitted {
   margin: 6px 0 0 2px;
   color: var(--text-faint);
@@ -2615,7 +2889,7 @@ summary:focus-visible,
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 6px 24px #0003;
+  box-shadow: 0 6px 24px var(--shadow-1);
 }
 .chat-composer:focus-within {
   border-color: var(--accent);
@@ -2674,12 +2948,12 @@ summary:focus-visible,
 .composer-toolbar > .danger {
   border-color: var(--red);
   background: var(--red);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: 0 0 0 4px var(--red-soft);
 }
 .composer-toolbar > .danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--red) 85%, #000);
-  color: #fff;
+  color: var(--on-accent);
 }
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
 .chat-messages-wrap > .scroll-bottom {
@@ -3251,16 +3525,42 @@ button.file-item:hover:not(:disabled),
   flex-wrap: wrap;
   gap: 6px;
 }
-/* One line while it fits: the title and its labels, then branch and status. */
+/* One slim line: the title, then a quiet mode/origin note, the branch
+ * controls and whatever the conversation is doing. Only the title gives way. */
 .chat-workspace > .conversation-header {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
-  padding-block: 8px;
+  padding-block: 6px;
 }
 .chat-workspace > .conversation-header > .conversation-heading {
-  flex: 1 1 260px;
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+}
+.chat-workspace > .conversation-header > .conversation-heading > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+.chat-workspace > .conversation-header h2 {
+  flex: 0 1 auto;
+}
+.chat-workspace > .conversation-header > .conversation-branch {
+  flex: none;
+  flex-wrap: nowrap;
+  max-width: 70%;
+}
+.conversation-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Phones keep the title: the composer's Cadence control names the mode and
+   * the sidebar row where the conversation started. */
+  @media (max-width: 640px) {
+    display: none;
+  }
 }
 .chat-workspace > .conversation-header .ep-state {
   max-width: none;
@@ -3319,14 +3619,6 @@ button.file-item:hover:not(:disabled),
   flex: none;
   color: var(--text-faint);
   font-size: 10.5px;
-}
-.turn-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 2px 0 10px;
-  font-size: 11px;
-  color: var(--text-faint);
 }
 .chat-attempt {
   margin: 8px 0;
@@ -3389,7 +3681,7 @@ button.file-item:hover:not(:disabled),
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-elev);
-  box-shadow: 0 12px 32px #0008;
+  box-shadow: 0 12px 32px var(--shadow-3);
   overflow: hidden;
 }
 .model-popover-lead {
@@ -3575,7 +3867,7 @@ button.link:hover:not(:disabled) {
   background: var(--accent-strong);
 }
 .mode-toggle.on .mode-switch::after {
-  background: #fff;
+  background: var(--on-accent);
   transform: translateX(11px);
 }
 
@@ -3600,7 +3892,7 @@ button.link:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-elev);
-  box-shadow: 0 8px 24px #0006;
+  box-shadow: 0 8px 24px var(--shadow-2);
 }
 .more-menu-items button {
   display: flex;

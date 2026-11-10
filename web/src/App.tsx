@@ -76,6 +76,7 @@ import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
 import { StatusItem, WorkingStatus } from "./layout/StatusItem";
+import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
@@ -720,7 +721,9 @@ export function App({
                                 : undefined,
                             ),
                           ).then((ok) =>
-                            setError(ok ? "" : t("Link copy unavailable.")),
+                            ok
+                              ? notify("info", t("Link copied."))
+                              : notify("error", t("Link copy unavailable.")),
                           );
                       }}
                     >
@@ -876,8 +879,9 @@ export function App({
                   }
                 }}
                 onCancelWorkflow={async (run) => {
-                  const code = await cancelWorkflow(api.client, run);
-                  if (code) setError(code);
+                  // The banner holds the last request's refusal: an accepted
+                  // request clears it, nothing else does.
+                  setError(await cancelWorkflow(api.client, run));
                   workflowActivity.refresh();
                 }}
                 onTask={selectTask}

@@ -496,6 +496,12 @@ export const zh = {
   "Export selected scope": "导出所选范围",
   "Copy token-free link": "复制不含令牌的链接",
   "Link copy unavailable.": "无法复制链接。",
+  "Link copied.": "链接已复制。",
+  "Dismiss notification": "关闭通知",
+  "Theme: {current}. Switch to {next}.": "主题：{current}。点击切换为{next}。",
+  System: "跟随系统",
+  Light: "浅色",
+  Dark: "深色",
   "Observe current state": "重新观察当前状态",
   "Choose owner model": "选择所有者模型",
   Model: "模型",
@@ -776,6 +782,8 @@ export const zh = {
   // Transcript and tools
   "Copy displayed text": "复制显示的文本",
   "Copy unavailable": "无法复制",
+  "Copy message": "复制消息",
+  "Message actions": "消息操作",
   "{state} message record, not execution outcome":
     "{state}消息记录，不代表执行结果",
   Collapse: "收起",
@@ -1090,8 +1098,8 @@ export const zh = {
   "Started in the WebUI": "在 WebUI 中开始",
   "Branches ({count})": "分支（{count}）",
   "Show the latest": "查看最新",
-  "Show the conversation up to here. The next message starts a new branch; nothing is deleted.":
-    "只显示到这里为止的对话。下一条消息会从这里开始一个新分支，不会删除任何内容。",
+  "Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted.":
+    "只显示到这一轮结束为止的对话。下一条消息会从那里开始一个新分支，不会删除任何内容。",
   "Continue from here": "从这里继续",
   "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.":
     "你正在查看这段对话较早的位置。现在发送的消息会从这里开始一个新分支，其余内容仍保留在会话中。",
