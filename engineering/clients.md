@@ -197,6 +197,7 @@ Ordinary Send binds its exact text, session entry it continues, conversation/cwd
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 `web/src/layout/AppShell.tsx` owns the one shared topbar, More menu, navigation/files panes, resizing, focus-contained drawers and statusbar for both folder setup and selected conversations.
+It also heads the inspector with its tabs and a collapse button, which folds the pane exactly as the topbar toggle does.
 Its chrome is conversation-first: a compact topbar, collapsible conversation navigation, transcript/tool cards and a bottom statusbar; the inspector is closed by default, including before a folder is selected.
 `FolderSetup.tsx` supplies only initial input and guidance; the superseded `WorkbenchHome` and its project-list navigation are removed.
 Cross-folder active work remains in the existing sidebar discovery, and service management remains in More, not a separate home.
@@ -204,11 +205,15 @@ Desktop navigation/inspector visibility and widths are display-only browser pref
 `web/src/layout/workspace-layout.ts` owns the shared pane bounds and center-space budget: a narrow desktop overlays the inspector rather than squeezing the conversation, and both pointer and keyboard resizing account for the other docked pane.
 Effective widths shrink without overwriting wider-window preferences; phones use independent drawers, and overlays retain focus containment, Escape, a backdrop and inert covered content.
 Headings and messages share the reading width; the composer frame allows inset padding and its toolbar wraps instead of pushing controls out of a narrow center.
-The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, active runs when there are any, an incompatible build and the working folder.
-The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading.
+The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state, the open conversation's turn count, a live reply's elapsed time, active runs when there are any, an incompatible build and the working folder.
+Its items are compact icon-and-value observations (`web/src/layout/StatusItem.tsx`) that wrap rather than clip; the elapsed time counts from the live turn's recorded start and is absent when that start is unrecorded.
+The open conversation reports its own turn count and live turn to the statusbar; another conversation's last report is never shown for it, and no token, cost or host-resource figure appears because the owner records none.
+The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
 One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
 Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.
+The Files pane is a crumb trail from that directory (its name, never a bare root), a `..` row for the parent and one row per entry whose reference and copy-path actions appear on hover or focus and stay visible on touch screens.
+Its name filter narrows the entries already listed and reads nothing; the readonly/reference statement opens from the help crumb, while bounded-listing and limited-preview notes stay in place.
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
@@ -368,8 +373,12 @@ In Cadence mode a failed, interrupted or unknown turn keeps its actual status in
 An approval attempt guards only its own in-flight request: the owner consumes a plan once, so a lost reply is resolved by the next observation, not by a browser-side lock.
 Ordinary Send does not depend on the Cadence-mode read; when that read fails the owner still refuses an ordinary Send to a Cadence conversation.
 Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
-Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and folds its tool calls into the transcript.
-An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
+Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.
+An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text and one card per tool call, with nothing folded behind a summary.
+A card names the tool and what it acted on, and reads its arguments and output only once opened.
+Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
+A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
+The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.

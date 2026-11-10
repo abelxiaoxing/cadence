@@ -1,14 +1,29 @@
-/* Folded tool presentation split out of ChatWorkspace, adapted from pi-web-ui
- * MessageList. MIT (c) 2026 xing-shuyin. One disclosure for a turn's intermediate
- * steps, so the answer leads; steps keep their recorded arguments and output and
- * nothing is inferred about success. */
+/* A turn's tool cards and message text, adapted from pi-web-ui ToolCallBlock,
+ * HalfRingSpinner and Message. MIT (c) 2026 xing-shuyin. A card keeps its
+ * recorded arguments and output, read only once opened; its glyph says what was
+ * recorded for that call, never whether the work succeeded. */
 import { type ReactNode, useState } from "react";
-import { FiChevronRight } from "react-icons/fi";
+import type { IconType } from "react-icons";
+import {
+  FiCheck,
+  FiCompass,
+  FiEdit2,
+  FiEdit3,
+  FiFileText,
+  FiFolder,
+  FiMinus,
+  FiSearch,
+  FiTerminal,
+  FiTool,
+  FiX,
+} from "react-icons/fi";
 import type { ChatStep } from "../../../../src/service/contracts/workbench.ts";
 import type { TurnSource } from "../../client/conversation-reader";
 import { useStepDetail } from "../../client/turn-source";
 import { describeError, type MessageKey, useT } from "../../i18n/locale";
+import { CopyButton } from "../rich/CopyButton";
 import { Markdown } from "../rich/Markdown";
+import { CollapsibleHead } from "../transcript/CollapsibleHead";
 import { ChatImages } from "./ChatImages";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
@@ -20,175 +35,75 @@ export interface IndexedStep {
   step: ChatStep;
   index: number;
 }
-/** Failed/incomplete attempts stay in steps, never in the successful answer. */
+/** A turn's user messages and, in recorded order, what followed them. An
+ * assistant message that only carried tool calls has no text and is not shown. */
 export function turnParts(steps: readonly ChatStep[]): {
   user: IndexedStep[];
-  steps: IndexedStep[];
-  answer: IndexedStep[];
+  replies: IndexedStep[];
 } {
   const indexed = steps.map((step, index) => ({ step, index }));
-  const replies = indexed.filter(({ step }) => step.role !== "user");
-  const last = replies.findLastIndex(
-    ({ step }) => step.role === "tool" || step.error,
-  );
-  const shown = ({ step }: IndexedStep) =>
-    step.role === "tool" || step.text.trim() !== "";
   return {
     user: indexed.filter(({ step }) => step.role === "user"),
-    steps: replies.slice(0, last + 1).filter(shown),
-    answer: replies.slice(last + 1).filter(shown),
+    replies: indexed.filter(
+      ({ step }) =>
+        step.role === "tool" ||
+        (step.role === "assistant" && step.text.trim() !== ""),
+    ),
   };
 }
 
-type Kind = "read" | "list" | "search" | "run" | "edit" | "other";
-const KINDS: Readonly<Record<string, Kind>> = {
-  read: "read",
-  ls: "list",
-  find: "search",
-  grep: "search",
-  bash: "run",
-  powershell: "run",
-  edit: "edit",
-  write: "edit",
+type Tone = "exec" | "read" | "edit" | "search" | "default";
+const TOOLS: Readonly<Record<string, readonly [IconType, Tone]>> = {
+  bash: [FiTerminal, "exec"],
+  powershell: [FiTerminal, "exec"],
+  read: [FiFileText, "read"],
+  ls: [FiFolder, "read"],
+  write: [FiEdit3, "edit"],
+  edit: [FiEdit2, "edit"],
+  grep: [FiSearch, "search"],
+  find: [FiCompass, "search"],
 };
+const PLAIN_TOOL: readonly [IconType, Tone] = [FiTool, "default"];
 // Tool names are model-chosen: `constructor` or `__proto__` must not reach the prototype.
-const kindOf = (name: string): Kind =>
-  Object.hasOwn(KINDS, name) ? KINDS[name] : "other";
-const PHRASES: Readonly<Record<Kind, readonly [MessageKey, MessageKey]>> = {
-  read: ["Read 1 file", "Read {n} files"],
-  list: ["Listed 1 directory", "Listed {n} directories"],
-  search: ["Searched once", "Searched {n} times"],
-  run: ["Ran 1 command", "Ran {n} commands"],
-  edit: ["Edited 1 file", "Edited {n} files"],
-  other: ["Used 1 tool", "Used {n} tools"],
-};
-// Files and directories count once however often they are touched; calls count each time.
-const BY_TARGET: ReadonlySet<Kind> = new Set(["read", "list", "edit"]);
-function countKey(step: ChatStep, kind: Kind): string {
-  if (!BY_TARGET.has(kind)) return step.id;
-  if (step.target) return step.target;
-  // `ls` without a path lists the working directory.
-  return kind === "list" ? "." : step.id;
-}
+const toolLook = (name: string) =>
+  Object.hasOwn(TOOLS, name) ? TOOLS[name] : PLAIN_TOOL;
 
-export function ChatSteps({
-  turn,
-  steps,
-  live,
-  answered,
-  toggled = null,
-  onToggle,
-}: {
-  turn: TurnSource;
-  steps: readonly IndexedStep[];
-  live: boolean;
-  answered: boolean;
-  /** The user's own choice, kept by the caller across remounts. */
-  toggled?: boolean | null;
-  onToggle?(open: boolean): void;
-}) {
-  const { t } = useT();
-  // A turn that ends without an answer opens, so its steps explain the outcome;
-  // this follows the turn as it settles until the user toggles it themselves.
-  const [own, setOwn] = useState<boolean | null>(toggled);
-  const open = own ?? (!live && !answered);
-  const tools = steps
-    .map(({ step }) => step)
-    .filter((step) => step.role === "tool");
-  const failed = tools.filter((step) => step.error).length;
-  const { thinking, media, other } = turn.header.omitted;
-  const notes = [
-    thinking && t("Thinking is not retained."),
-    media && t("Media is not retained."),
-    other && t("Other content is not retained."),
-  ].filter((note) => note !== false);
-  let title: string;
-  if (live) {
-    const latest = tools.at(-1);
-    title = latest
-      ? `${t("Working…")} ${latest.name || t("Tool")} ${latest.target}`.trim()
-      : t("Working…");
-  } else {
-    const seen = new Map<Kind, Set<string>>();
-    for (const step of tools) {
-      const kind = kindOf(step.name);
-      seen.set(kind, (seen.get(kind) ?? new Set()).add(countKey(step, kind)));
-    }
-    const parts = [...seen].map(([kind, keys]) =>
-      keys.size === 1
-        ? t(PHRASES[kind][0])
-        : t(PHRASES[kind][1], { n: keys.size }),
-    );
-    title =
-      parts.join(" · ") ||
-      (thinking
-        ? t("Thought")
-        : media
-          ? t("Media not retained")
-          : other
-            ? t("Content not retained")
-            : "");
-  }
-  const head = (
-    <>
-      {live ? (
-        <span className="chat-steps-live" aria-hidden="true" />
-      ) : (
-        <FiChevronRight className="chat-steps-chevron" aria-hidden="true" />
-      )}
-      <span className="chat-steps-title">{title}</span>
-      {failed > 0 && (
-        <span className="ep-state failed">
-          {t("{n} failed", { n: failed })}
-        </span>
-      )}
-    </>
-  );
-  if (steps.length === 0 && notes.length === 0)
-    return (
-      <div className="chat-steps" role="status">
-        <div className="chat-steps-head">{head}</div>
-      </div>
-    );
+/** What is recorded for one tool call. `ok` only where its result must exist:
+ * the turn completed, or a later assistant message followed the call. */
+export type ToolState = "run" | "ok" | "err" | "idle";
+export function toolState(turn: TurnSource, index: number): ToolState {
+  const { header, steps } = turn;
+  if (steps[index]?.error) return "err";
+  const live = header.status === "queued" || header.status === "running";
+  if (live && index >= header.stable) return "run";
+  return header.status === "completed" ||
+    live ||
+    steps.slice(index + 1).some((step) => step.role === "assistant")
+    ? "ok"
+    : "idle";
+}
+const STATE_LABEL: Readonly<Record<ToolState, MessageKey>> = {
+  run: "Tool call in progress",
+  ok: "Tool result recorded",
+  err: "Tool error recorded",
+  idle: "No tool result observed",
+};
+
+function HalfRingSpinner() {
   return (
-    <details
-      className="chat-steps"
-      aria-label={t("Working steps")}
-      open={open}
-      onToggle={(event) => {
-        const next = event.currentTarget.open;
-        if (next === open) return;
-        setOwn(next);
-        onToggle?.(next);
-      }}
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      width="1em"
+      height="1em"
+      className="half-ring-spin"
+      aria-hidden="true"
     >
-      <summary className="chat-steps-head">{head}</summary>
-      {steps.length > 0 && (
-        <ol className="chat-steps-list">
-          {steps.map(({ step, index }) => (
-            <li key={index}>
-              {step.role === "tool" ? (
-                <ToolStep turn={turn} index={index} step={step} />
-              ) : (
-                <div className="chat-step-note">
-                  {step.error && (
-                    <span className="ep-state failed">
-                      {t("Incomplete model response")}
-                    </span>
-                  )}
-                  <StepText turn={turn} index={index} step={step} />
-                </div>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-      {notes.map((note) => (
-        <p className="chat-steps-omitted" key={note}>
-          {note}
-        </p>
-      ))}
-    </details>
+      <path d="M 12 2 A 10 10 0 0 1 12 22" />
+    </svg>
   );
 }
 
@@ -208,12 +123,18 @@ export function StepText({
   const { t } = useT();
   const settled = index < turn.header.stable;
   const full = useStepDetail(turn, index, step, step.clipped && settled);
+  const text = full.value?.text ?? step.text;
   return (
     <>
       {step.images?.length ? (
         <ChatImages images={step.images} turn={turn} />
       ) : null}
-      {render(full.value?.text ?? step.text)}
+      {text.trim() !== "" && (
+        <div className="msg-text single">
+          <div className="msg-text-main">{render(text)}</div>
+          <CopyButton text={text} className="msg-text-copy" />
+        </div>
+      )}
       {step.clipped && settled && !full.value && (
         <p className={full.error ? "banner-notice" : "inspector-note"}>
           {full.error
@@ -225,7 +146,28 @@ export function StepText({
   );
 }
 
-function ToolStep({
+/** A command as typed, or the arguments as recorded when they hold none. */
+function toolCommand(args: string): string | undefined {
+  try {
+    const value: unknown = JSON.parse(args);
+    const command =
+      value && typeof value === "object" && Object.hasOwn(value, "command")
+        ? (value as { command: unknown }).command
+        : undefined;
+    return typeof command === "string" && command ? command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function readableArgs(args: string): string {
+  try {
+    return JSON.stringify(JSON.parse(args), null, 2);
+  } catch {
+    return args;
+  }
+}
+
+export function ToolStep({
   turn,
   index,
   step,
@@ -235,36 +177,95 @@ function ToolStep({
   step: ChatStep;
 }) {
   const { t } = useT();
-  // Arguments and output are read only once the step is opened.
+  // Arguments and output are read only once the card is opened.
   const [open, setOpen] = useState(false);
   const detail = useStepDetail(turn, index, step, open);
+  const [Icon, tone] = toolLook(step.name);
+  const state = toolState(turn, index);
+  const status = t(STATE_LABEL[state]);
+  const command = detail.value ? toolCommand(detail.value.args) : undefined;
   return (
-    <details
-      className="chat-tool"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        <span className="chat-tool-name">{step.name || t("Tool")}</span>
-        {step.target && (
-          <span className="chat-tool-target" title={step.target}>
-            {step.target}
-          </span>
-        )}
-        {step.error && <span className="ep-state failed">{t("failed")}</span>}
-      </summary>
-      {open &&
-        step.parts > 0 &&
-        (detail.value ? (
+    <div className={`toolcall ${state}`}>
+      <CollapsibleHead
+        open={open}
+        onToggle={() => setOpen((shown) => !shown)}
+        headClassName="toolcall-head"
+        titleText={t(open ? "Collapse" : "Show arguments and output")}
+        icon={<Icon aria-hidden="true" />}
+        iconClassName={`toolcall-icon tc-tone-${tone}`}
+        titleClassName="toolcall-name"
+        after={
           <>
-            {detail.value.args && <pre>{detail.value.args}</pre>}
-            {detail.value.text && <pre>{detail.value.text}</pre>}
+            <span
+              className="toolcall-status"
+              role="img"
+              title={status}
+              aria-label={status}
+            >
+              {state === "err" ? (
+                <FiX aria-hidden="true" />
+              ) : state === "ok" ? (
+                <FiCheck aria-hidden="true" />
+              ) : state === "run" ? (
+                <HalfRingSpinner />
+              ) : (
+                <FiMinus aria-hidden="true" />
+              )}
+            </span>
+            {step.target && (
+              <span className="toolcall-path" title={step.target}>
+                {tone === "exec" && "$ "}
+                {step.target}
+              </span>
+            )}
+            <span className="toolcall-spacer" />
+            {step.target && (
+              <CopyButton text={step.target} className="chead-copy" />
+            )}
           </>
-        ) : (
-          <p className={detail.error ? "banner-notice" : "inspector-note"}>
-            {detail.error ? describeError(t, detail.error) : t("Reading…")}
-          </p>
-        ))}
-    </details>
+        }
+      >
+        {step.name || t("Tool")}
+      </CollapsibleHead>
+      {open && (
+        <div className="toolcall-body">
+          {step.parts === 0 ? (
+            <p className="inspector-note">
+              {t("Nothing more is recorded for this call.")}
+            </p>
+          ) : detail.value ? (
+            <>
+              {detail.value.args && (
+                <div className="toolcall-args">
+                  {command ? (
+                    <div className="termline">
+                      <FiTerminal
+                        className="termline-icon"
+                        aria-hidden="true"
+                      />
+                      <code>{command}</code>
+                    </div>
+                  ) : (
+                    <pre>{readableArgs(detail.value.args)}</pre>
+                  )}
+                </div>
+              )}
+              {detail.value.text && (
+                <div className="toolcall-output">
+                  <div className="toolcall-output-label">
+                    {t(step.error ? "Error output" : "Output")}
+                  </div>
+                  <pre>{detail.value.text}</pre>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className={detail.error ? "banner-notice" : "inspector-note"}>
+              {detail.error ? describeError(t, detail.error) : t("Reading…")}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

@@ -19,6 +19,7 @@ import {
   FiLayers,
   FiLink,
   FiMessageSquare,
+  FiServer,
   FiSquare,
   FiTool,
 } from "react-icons/fi";
@@ -57,7 +58,10 @@ import {
   AgentDock,
   type WorkflowAgent,
 } from "./components/workspace/AgentDock";
-import { ChatWorkspace } from "./components/workspace/ChatWorkspace";
+import {
+  ChatWorkspace,
+  type ConversationActivity,
+} from "./components/workspace/ChatWorkspace";
 import { FilesPanel } from "./components/workspace/FilesPanel";
 import { InspectorPanel } from "./components/workspace/InspectorPanel";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
@@ -71,6 +75,7 @@ import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
+import { StatusItem, WorkingStatus } from "./layout/StatusItem";
 import { usePanelLayout } from "./layout/use-panel-layout";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
@@ -140,6 +145,9 @@ export function App({
   );
   const [reference, setReference] = useState<string>();
   const [chatLocation, setChatLocation] = useState<ConversationLocation>();
+  // What the open conversation reports for the statusbar; another
+  // conversation's last report is never shown for this one.
+  const [reported, setReported] = useState<ConversationActivity>();
   const [newConversationCwd, setNewConversationCwd] = useState<
     string | undefined
   >(() => {
@@ -255,6 +263,7 @@ export function App({
       : undefined);
   const currentChatLocation =
     chatLocation?.id === chatId ? chatLocation : undefined;
+  const activity = reported?.id === chatId ? reported : undefined;
   useEffect(() => {
     if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
       history.replaceState(
@@ -938,6 +947,7 @@ export function App({
                 initialLeaf={activitySelection.leaf}
                 initialCwd={initialCwd}
                 onLocation={setChatLocation}
+                onActivity={setReported}
                 hidden={!!agent}
                 onOpenAgent={setAgent}
                 onWorkflowRuns={setChatRuns}
@@ -1155,104 +1165,115 @@ export function App({
             )}
           </>
         }
-        inspector={
-          <div className="workbench-right">
-            <nav className="rp-tabs" aria-label={t("Workspace panels")}>
+        inspectorTabs={
+          <>
+            <button
+              type="button"
+              className="rp-tab"
+              aria-pressed={rightTab === "files" || !scope}
+              onClick={() => setRightTab("files")}
+            >
+              <FiFolder aria-hidden="true" />
+              {t("Files")}
+            </button>
+            {scope && (
               <button
                 type="button"
                 className="rp-tab"
-                aria-pressed={rightTab === "files" || !scope}
-                onClick={() => setRightTab("files")}
+                aria-pressed={rightTab === "task"}
+                disabled={!seed}
+                onClick={() => setRightTab("task")}
               >
-                <FiFolder />
-                {t("Files")}
+                <FiLayers aria-hidden="true" />
+                {t("History details")}
               </button>
-              {scope && (
-                <button
-                  type="button"
-                  className="rp-tab"
-                  aria-pressed={rightTab === "task"}
-                  disabled={!seed}
-                  onClick={() => setRightTab("task")}
-                >
-                  <FiLayers />
-                  {t("History details")}
-                </button>
-              )}
-            </nav>
-            {rightTab === "files" || !scope ? (
-              <FilesPanel
-                key={fileLocation?.cwd ?? "owner"}
-                location={fileLocation}
-                client={api.client}
-                enabled={!!workspace.workspace && !!fileLocation}
-                onReference={(path) => {
-                  if (!chatId) selectChat(filesConversationId);
-                  // A reference opened from a legacy view may enter a conversation
-                  // in another subdirectory. Keep that reference's original base.
-                  const reference =
-                    !chatId && fileLocation
-                      ? `${fileLocation.cwd.replace(/[\\/]+$/, "")}${fileLocation.cwd.startsWith("/") ? "/" : "\\"}${path}`
-                      : path;
-                  setReference(reference);
-                  closeDrawer();
-                }}
-              />
-            ) : seed ? (
-              <InspectorPanel
-                key={taskId}
-                client={api.client}
-                seed={{
-                  ...seed,
-                  scope: { kind: "task", id: taskId ?? seed.scope.id },
-                }}
-              />
-            ) : (
-              <p className="panel-empty" role="status">
-                {workspace.error
-                  ? t("Recorded history could not be read.")
-                  : t("Reading recorded history…")}
-              </p>
             )}
-          </div>
+          </>
+        }
+        inspector={
+          rightTab === "files" || !scope ? (
+            <FilesPanel
+              key={fileLocation?.cwd ?? "owner"}
+              location={fileLocation}
+              client={api.client}
+              enabled={!!workspace.workspace && !!fileLocation}
+              onReference={(path) => {
+                if (!chatId) selectChat(filesConversationId);
+                // A reference opened from a legacy view may enter a conversation
+                // in another subdirectory. Keep that reference's original base.
+                const reference =
+                  !chatId && fileLocation
+                    ? `${fileLocation.cwd.replace(/[\\/]+$/, "")}${fileLocation.cwd.startsWith("/") ? "/" : "\\"}${path}`
+                    : path;
+                setReference(reference);
+                closeDrawer();
+              }}
+            />
+          ) : seed ? (
+            <InspectorPanel
+              key={taskId}
+              client={api.client}
+              seed={{
+                ...seed,
+                scope: { kind: "task", id: taskId ?? seed.scope.id },
+              }}
+            />
+          ) : (
+            <p className="panel-empty" role="status">
+              {workspace.error
+                ? t("Recorded history could not be read.")
+                : t("Reading recorded history…")}
+            </p>
+          )
         }
         status={
           <>
-            <span
-              className="status-item"
+            <StatusItem
               role="status"
-              title={t("Connection freshness is not execution outcome.")}
+              tip={t("Connection freshness is not execution outcome.")}
+              dot={
+                connecting
+                  ? "busy"
+                  : executionStopped
+                    ? ""
+                    : !observationFresh || !workspace.workspace
+                      ? "error"
+                      : observation.transportStatus !== "current"
+                        ? "busy"
+                        : !observation.state ||
+                            observation.state.connection === "current"
+                          ? "ok"
+                          : "busy"
+              }
             >
-              <span
-                className={`status-dot ${
-                  connecting
-                    ? "busy"
-                    : executionStopped
-                      ? ""
-                      : !observationFresh || !workspace.workspace
-                        ? "error"
-                        : observation.transportStatus !== "current"
-                          ? "busy"
-                          : !observation.state
-                            ? ""
-                            : observation.state.connection === "current"
-                              ? "ok"
-                              : "busy"
-                }`}
-                aria-hidden="true"
-              />
               {tx(connection)}
-            </span>
+            </StatusItem>
             {project && (
-              <span className="status-item faint">
+              <StatusItem tone="faint" icon={<FiServer />}>
                 {t("Execution service: {status}", {
                   status: tx(execution.readiness),
                 })}
-              </span>
+              </StatusItem>
+            )}
+            {activity && activity.turns > 0 && (
+              <StatusItem
+                icon={<FiMessageSquare />}
+                tip={t("Turns in this conversation: {count}", {
+                  count: activity.turns,
+                })}
+              >
+                {activity.turns}
+              </StatusItem>
+            )}
+            {activity && activity.runningSince !== null && (
+              <WorkingStatus
+                since={activity.runningSince}
+                label={t("Working")}
+              />
             )}
             {roster?.status === "complete"
               ? activeRuns.length > 0 && (
-                  <span className="status-item warn">
+                  <StatusItem tone="warn">
                     {t(
                       !observationFresh
                         ? "Last observed: {count} active runs"
@@ -1261,15 +1282,15 @@ export function App({
                           : "{count} active runs",
                       { count: activeRuns.length },
                     )}
-                  </span>
+                  </StatusItem>
                 )
               : !connecting &&
                 !executionStopped && (
-                  <span className="status-item faint">
+                  <StatusItem tone="faint">
                     {t(
                       "Active roster unavailable; absence is not proof of settlement.",
                     )}
-                  </span>
+                  </StatusItem>
                 )}
           </>
         }
@@ -1286,11 +1307,11 @@ export function App({
               />
             )}
             {workspace.compatible === false && (
-              <span className="status-item warn">
+              <StatusItem tone="warn">
                 {t(
                   "unavailable / mismatch — reload built assets; normal actions disabled",
                 )}
-              </span>
+              </StatusItem>
             )}
           </>
         }

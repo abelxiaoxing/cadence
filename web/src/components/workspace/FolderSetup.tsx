@@ -8,6 +8,7 @@ import type { PreviewModels } from "../../client/model-preview";
 import { useModelCatalog } from "../../client/use-model-catalog";
 import { useT } from "../../i18n/locale";
 import { AppShell } from "../../layout/AppShell";
+import { StatusItem } from "../../layout/StatusItem";
 import { usePanelLayout } from "../../layout/use-panel-layout";
 import { ModelPicker } from "../actions/ModelPicker";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
@@ -144,9 +145,14 @@ export function FolderSetup({
               <span className="composer-hint">
                 {t("Choose a folder before sending.")}
               </span>
-              <button type="button" className="primary" disabled>
+              <button
+                type="button"
+                className="primary"
+                aria-label={t("Send")}
+                title={t("Send")}
+                disabled
+              >
                 <FiArrowUp aria-hidden="true" />
-                {t("Send")}
               </button>
             </div>
           </div>
@@ -154,19 +160,13 @@ export function FolderSetup({
       }
       inspector={
         <aside className="panel files-panel">
-          <header className="files-toolbar">
-            <FiFolder aria-hidden="true" />
-            {t("Files")}
-          </header>
           <p className="panel-hint">
             {t("Files appear here after you open a working folder.")}
           </p>
         </aside>
       }
       status={
-        <span className="status-item faint">
-          {t("Choose a working folder")}
-        </span>
+        <StatusItem tone="faint">{t("Choose a working folder")}</StatusItem>
       }
       folder={<WorkingFolderButton disabled={!ready} onClick={choose} />}
     />

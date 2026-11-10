@@ -211,9 +211,12 @@
         "web/src/components/workspace/AgentDock.tsx",
         "web/src/components/workspace/FilesPanel.tsx",
         "web/src/components/workspace/ProjectPicker.tsx",
-        "web/src/components/workspace/ChatTurnView.tsx"
+        "web/src/components/workspace/ChatTurnView.tsx",
+        "web/src/layout/StatusItem.tsx",
+        "web/src/components/workspace/WorkingFolderButton.tsx",
+        "web/src/components/rich/CopyButton.tsx"
       ],
-      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; each workflow is one line after the turn it started in, opening its own main-area view of steps, checks and delivery, instead of a card of every step below the newest message. The subagent dock heading leads its total with the queued or running count. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer's model button opens an anchored, searchable model panel with a separate thinking row, a Send without a model waits there for one explicit choice, a Cadence mode switch replaces the mode select and the empty subagent dock stays folded. Whole-turn capture is paged by the owner; the chat transcript is one continuous, lazily mounted list of turns read by position, with tool detail read when a step opens, and no conversation or transcript page is switched. Checkpoints stream and persist per-message hash-chain records rather than a single capped context file; no consent, replay, migration or cleanup behavior is added. Conversation counts and turn counts no longer gate admission. The sidebar has bounded recent-first history scans/pages and a separate live roster; immutable ordinal slots keep metadata finite while extending old prefixes on explicit Send. Recent control links are a projection over durable workflow associations, not an attempt cap. Activity discovery adds activity-only native reports and bounded readonly registry-owner summaries, separate from history outcomes and control authority. Activity attribution uses immutable admission context, not copied/forked history or the retired workflow-link index. Directory/session navigation remains nonactivating and configuration-bound; source counts are deduplicated and partial observation never proves completion."
+      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer. Workflow research/implementation/review subagents join the agent dock beside legacy task children and open their transcript and retained result in a main-area view; each workflow is one line after the turn it started in, opening its own main-area view of steps, checks and delivery, instead of a card of every step below the newest message. The subagent dock heading leads its total with the queued or running count. Automatic recovery adds a one-time recovery notice above the workspace (dismissed per browser) and rewords the registry-busy refusal to name cadence doctor. The composer's model button opens an anchored, searchable model panel with a separate thinking row, a Send without a model waits there for one explicit choice, a Cadence mode switch replaces the mode select and the empty subagent dock stays folded. Whole-turn capture is paged by the owner; the chat transcript is one continuous, lazily mounted list of turns read by position, with tool detail read when a step opens, and no conversation or transcript page is switched. Checkpoints stream and persist per-message hash-chain records rather than a single capped context file; no consent, replay, migration or cleanup behavior is added. Conversation counts and turn counts no longer gate admission. The sidebar has bounded recent-first history scans/pages and a separate live roster; immutable ordinal slots keep metadata finite while extending old prefixes on explicit Send. Recent control links are a projection over durable workflow associations, not an attempt cap. Activity discovery adds activity-only native reports and bounded readonly registry-owner summaries, separate from history outcomes and control authority. Activity attribution uses immutable admission context, not copied/forked history or the retired workflow-link index. Directory/session navigation remains nonactivating and configuration-bound; source counts are deduplicated and partial observation never proves completion. Presentation revision pi-status-files-transcript (see presentationReference): the statusbar becomes compact pi bar items (connection, turn count, live-turn timer, folder chip) in StatusItem; the Files pane takes pi's crumb trail, parent row, hover actions and a name filter over listed entries; a turn's summary fold is replaced by pi's message meta line and one tool card per call, whose glyph states only what was recorded for that call."
     }
   ],
   "newIntegrationFiles": [
@@ -366,7 +369,8 @@
     "src/model-preview.mjs",
     "test/model-preview-process.test.ts",
     "test/model-preview-recovery.test.ts",
-    "test/web/model-wait.test.tsx"
+    "test/web/model-wait.test.tsx",
+    "web/src/layout/StatusItem.tsx"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -375,8 +379,8 @@
     "test/web/project-entry.test.tsx": "cb9c82be7454b045cd396cf48ec9ba78db97f5d0ba94a9b36caeccfe2069e2bd",
     "test/web/project-resume.test.tsx": "e1aa7ac1f16944c7eea6fd38bf5b7e2428ece4c3d57b069f872cad57c31a6141",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "9487a232c25059a7276802932c4e30c259c9eed2a3171e01cd5f7b3169582595",
-    "web/src/layout/AppShell.tsx": "7d0970de3e2c37e9a4235aa87d17eb07ef938e03c8037a120651559aab1102a2",
+    "web/src/App.tsx": "85af362ab97793a649bf3c8dec541cb68c7487525e0e872e6d8d3bcdbd11de1e",
+    "web/src/layout/AppShell.tsx": "b9667491f753d60fdf84970c13a9ec2afd18e500fc3ff4419d2e3becb17f11d7",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "0b944562e448a214d52483095a5ed05c163cb716024636aec35e4aaf6dfbb652",
@@ -396,7 +400,7 @@
     "web/src/components/review/ArtifactPreview.tsx": "e64c7b7476a11d2935df7bab65050348bc3169a686d6f18a9b3cd9862ac8a732",
     "web/src/components/review/DiffView.tsx": "038102afae254cd1d6662eb7898ed126ca73ae8dfcedaf22979783b4edac703b",
     "web/src/components/review/ObservationPanel.tsx": "0a83557bd3949e0c593b4311c4cdf4abfa146cfc031a461a3610254c4107eaa4",
-    "web/src/components/rich/CopyButton.tsx": "0c92a6c7501e21be77ffe8cb116e6fb0775ee3e144221bbf211c65e232e60f61",
+    "web/src/components/rich/CopyButton.tsx": "f95ccf1ef498eea4946e22383e13a854635e910f5176c35d12a1330f9bce158d",
     "web/src/components/rich/Markdown.tsx": "1236273f6dd3978185c1e84670dcc62238fb46d806eddaf59fc707e91042f652",
     "web/src/components/rich/StreamMarkdown.tsx": "0bc78a104899ce0f236febcc9f9191b37aceb4cf8f5bb0c076a5d67559fca846",
     "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
@@ -424,7 +428,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "8b19b0ee23513ac44f26693eaeaa09d8b493ac31a55c7247a0a0d4e534d811e0",
+    "web/src/styles.css": "da243ea05a501f18ae51d1111430a8b5e6b681c03377743077b3effe91e45acc",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -463,11 +467,11 @@
     "src/service/workbench.ts": "24c30fc6987a49eb954f3a0d8253a8ff4bac8533402b9d8f9e544412412f3a16",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "0857f8eef878f58df84b9df9005e65cdb0e023135bdb5262bd1cce3d82dcd6ca",
-    "test/web/workbench.test.tsx": "c5519668f680abf4b62ed7745f162356ca6929738503d620040bba592a36d271",
-    "web/src/components/workspace/ChatWorkspace.tsx": "528ececc3c9d84978c419f00b30ab0b81352b42f1fe5f9b5a066f0b9b3914f27",
-    "web/src/components/workspace/ChatSteps.tsx": "1037cf8575f8724d1a4b0e0be8dcb5521dc3d4d02d430c583ee99645ba6ccb8b",
+    "test/web/workbench.test.tsx": "a99b6775b02bfc4b51e2ec017755c9768ccb1087ae52cb85ceb13347a63e7fad",
+    "web/src/components/workspace/ChatWorkspace.tsx": "8772102dae30fe4250bd1967f5d62aacbf356f5552e7da46aaa7160ae24bc1ef",
+    "web/src/components/workspace/ChatSteps.tsx": "639712ccee5718b5651867dac8d1e1d0aaae8ae21ac5a76861725a484a885952",
     "web/src/components/workspace/AgentDock.tsx": "c79805bf6bdbe34822f738f60966452c8b39c8c9107c3fd1ca7539e50e99e3a8",
-    "web/src/components/workspace/FilesPanel.tsx": "e4c11327e9384a684785f627f3dccc96eb843485e5dc3d6327c5b1f53ca25213",
+    "web/src/components/workspace/FilesPanel.tsx": "720932cc762a1e14b38424c0b1ce62b3425b4a695e8dc10bc8476f672fe58068",
     "web/src/components/workspace/ProjectPicker.tsx": "aaef3a8e9de8250f7e4031cb4bc50cd699fe4208a41ab749a49f0934723959e9",
     "src/service/gateway.ts": "feeea63b37b4a5c994c8a852d287154efb1e5d5493124f92d8dae71957c937c1",
     "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
@@ -479,18 +483,18 @@
     "test/helpers/gateway-fixture.ts": "04c23a258e36730039d40c0774aa1e31d7b9a58de2d9fcc8c0ff62b318856486",
     "web/src/components/workspace/ChatWelcome.tsx": "4e91a272915ff8bdd6c013abd70079fd63c6017ff19d2b332032b9d766635669",
     "web/src/components/workspace/ConversationActions.tsx": "a10e51800f557c141244b38e40ce6c12dac0ad8e1a259d8f34d7ca61220c9a52",
-    "web/src/components/workspace/FolderSetup.tsx": "c2bfc3b0cfe79645493b46e9a5310010be65bde749869efd16b726d63afaaab0",
+    "web/src/components/workspace/FolderSetup.tsx": "79db0bd78631571df3aefde1074b81b9218d8c848e7d2fb2d04265e5dbe10ae1",
     "web/src/client/folder-draft.ts": "e824b32a68c3204e84495410dc3455761b7fa3e3d35d559e98900024c085f595",
     "test/web/folder-draft.test.tsx": "57bec7437030a1b9ddcea2bd2783218d52d3ddf222e8d0f4614598e7704bf253",
-    "web/src/components/workspace/WorkingFolderButton.tsx": "5da778239ed8c37eaa7f8b585c000439ca8c25e1da059c92225090c26b0a91b0",
+    "web/src/components/workspace/WorkingFolderButton.tsx": "375a04cc39b8aac1356621a34ee4781784644a1ccc9b9092a2bb625f8f4f7849",
     "web/src/client/last-project.ts": "409bf18974d1f827adcfc6d49dbf0c74ca2c91639b4fbb60e70c8648c51bf9d6",
     "src/cadence-instructions.ts": "f5f822e32d0bc5a7584fb54e8aa90c5cee8690f277ef35029cdee9c79a2d1643",
     "src/coordinator-tools.mjs": "36558a98ab225365ab0f424f8c761ca4e2b2dfd21cb2c3832523e0052f773111",
     "src/service/conversation-workflow.ts": "6e2141cb73d5fe60363cd50878fdf23a21e2e872b3db3e60b2e2cc7d40cb5905",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
     "web/src/components/workspace/WorkflowPanel.tsx": "f40c0210272d00e895770643f1d772570ec53e8a269632cb37123d153422957b",
-    "web/src/components/workspace/ChatTurnView.tsx": "0da47a146aaaa4fca8634f9aaed0a91aa9f3121fc14c2e28e305cece47a4971f",
-    "test/web/model-retry.test.tsx": "a0a3c7edbe1802f148917d2e62086a481e5996431d9329af6b02ff64b7beb705",
+    "web/src/components/workspace/ChatTurnView.tsx": "66e7ebc9286de46004f2fb6ca8474f17db5e08810bc4f6ba36618f6f300c9db9",
+    "test/web/model-retry.test.tsx": "695e4f2374ad8cf911786a3db5f101015d44177fc9a5c2a7fd643686f65d9341",
     "test/service-conversation-workflow.test.ts": "8533466cbea513b525265cdb94d0ce73fa8f660584c6ed240fec486b1cbc332a",
     "test/web/workflow.test.tsx": "0c6edeeb0efa74eb9675d50789910b7ee91387964bf247d766946256765f139c",
     "src/service/workbench-send-refusal.ts": "3f7481c2c07fc84bdece4ea843ccc6892495fb0ca5b7363aa6e897f0fca69878",
@@ -544,7 +548,7 @@
     "web/src/client/activity.ts": "8aba471e36887f2895179aed67123aa4264bd7b155d2fcc68800ea4181e80913",
     "web/src/client/use-activity.ts": "832eab330c56be98476a6eb605c3c97e4e0e1c8a5e60d5e4427cb37dea8685a0",
     "web/src/components/workspace/ActivityList.tsx": "e447ae9bd021877d64c8b08deeb7d46bef554aff90f5ab44fbb0a7995af63147",
-    "test/web/stale-banner.test.tsx": "bc9c2c0731740eff1b2e95d11babc7219c15f8c00b2cdff9c128c9330a492332",
+    "test/web/stale-banner.test.tsx": "c8e74ba0083b825f4dd9d5858afb20e6ac9de6abe0b54c94191fad0389c67a5a",
     "web/src/components/workspace/CadenceModeButton.tsx": "9352a9f95f23412ee53991e13bede62d1f5a2a7ff55c2127f5e6ee8688549f7b",
     "web/src/i18n/locale.tsx": "a37645cc447df10f8b76c736d29a46aeb345a68b33937213fdc69bfe484ed88e",
     "web/src/components/workspace/WorkspaceNotice.tsx": "930083f053dfcaac7cac9720308fe20ba82a9ad98a3c1e1cb12f1bd0b525479a",
@@ -553,7 +557,7 @@
     "web/src/layout/use-panel-layout.ts": "dcd206b5c3980971fe9259d78fe8b75c45c4bc80ab9066d94ce3a55887300f6c",
     "test/web/workspace-layout.test.tsx": "02e70a4ad0feb7cc1fdb9323543083ed36bb964b5962be783149cbe767543195",
     "test/web/workspace-states.test.tsx": "25d7c6e35f1d6a6d13a88eac38ede96d3092972fb8b7c6370284045927adc74c",
-    "web/src/i18n/zh.ts": "db9e2a5694b49b96b52f143afa54f6cd6ed1711c7881434dab78fb01904de181",
+    "web/src/i18n/zh.ts": "b6c4c2e998d6a9536f5526c18785c573f9d0af4fdcd9676253a28111191341a0",
     "test/web/model-picker.test.tsx": "f870707a183cab872f6f26824598acf301c849c0eab383fa8c5207012de93506",
     "web/src/client/use-model-catalog.ts": "a15d9b4162b1cef224f4ec9329364e586b3e529cc724a8445f0fe748ba2d32a8",
     "test/web/model-catalog.test.tsx": "1e30b1533181fa51016126152bd3a750bf90b8417aa0d6bbec107a2ae4eb6675",
@@ -570,7 +574,8 @@
     "src/model-preview.mjs": "7873b5895b03f72cc3016b70b3dff5dbd2a4f2995b1358000a08b5bdad38cb16",
     "test/model-preview-process.test.ts": "3dd670bc539b3ed567839d9ddff7a66f0b17c291c2a9d493eae6ea42c1d24026",
     "test/model-preview-recovery.test.ts": "1654c8d51ecdfa683bd3a89fb764d87b36757673838a906d842cbc8e2d83bc8b",
-    "test/web/model-wait.test.tsx": "34df9ee2bb9d4f3fe42cd432d0d926ef2066931f8c581a5c68dac03864abecac"
+    "test/web/model-wait.test.tsx": "34df9ee2bb9d4f3fe42cd432d0d926ef2066931f8c581a5c68dac03864abecac",
+    "web/src/layout/StatusItem.tsx": "481fa044cd63d84f2468d67add44fa70ebe3b2dbdd14652cd1de4bd232abd7c3"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -888,6 +893,11 @@
       "id": "bounded-model-request-recovery",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned integration: SDK-only bounded model-request recovery, owner-held credential-free progress and localized retry presentation; incomplete assistant attempts stay labeled in working steps, never concatenated into a successful answer. Readonly refresh, cancellation and command/approval identities remain unchanged. Destination pins are refreshed for the changed bodies and SSR regression; upstream source/license pins and historical evidence are preserved. No real-browser or external-provider qualification is claimed."
+    },
+    {
+      "id": "pi-status-files-transcript",
+      "originalSourcePinPreserved": true,
+      "note": "Presentation-only pass against pi-web-ui b627452c: FooterBar/BarItem status items become StatusItem (connection dot, the open conversation's turn count, a live turn's elapsed time from its recorded start, folder-name chip with the full path as title); RightPanel's crumb toolbar, path trail, parent row, hover actions and name filter replace the Files toolbar, still readonly and bounded; AppShell heads the inspector with its tabs and a collapse button. ToolCallBlock/Message/HalfRingSpinner composition replaces the per-turn summary fold: one meta line (speaker, admitted model, start time) and one card per tool call in recorded order, arguments/output read on open, a state glyph limited to what was recorded for that call. Incomplete assistant attempts remain their own labelled block. No service contract, read, command, consent boundary or admission gate changes; Send/Stop, model, Cadence-mode and folder controls keep their accessible names. Destination pins are refreshed for the changed bodies and SSR tests; qualification is pure/SSR plus local headless renders of fixture data, not real-browser or device validation."
     }
   ],
   "testAdaptations": [
@@ -930,5 +940,20 @@
       "web/src/styles.css": "db03521c220016e7b3da010dac43bfeaa72ed0326035efebd30497c145724b40"
     },
     "note": "Additional ordinary-chat, file/project-picker and compact dock presentation reference. Existing source pins and historic evidence remain unchanged; no upstream runtime or prompt composer is imported."
+  },
+  "presentationReference": {
+    "repository": "https://github.com/xing-shuyin/pi-web-ui",
+    "commit": "b627452c40d47b2b40cf2f1ab30e8be925aa1180",
+    "sources": {
+      "web/src/components/FooterBar.tsx": "518c177be3635edf5193810f7915cdc77058d36447e99732ddb4ee09ddafe903",
+      "web/src/components/BarItem.tsx": "49020f57226b46fa968da634ade019f24e7fd471dcc65078c4e4aaebe6ced829",
+      "web/src/components/RightPanel.tsx": "28e24df550589a5ab2b2ebdd1ac05b8fc6a3df797a94d9b0271227bc2267d37f",
+      "web/src/components/ToolCallBlock.tsx": "fcd1a2e08d5ffbcb808ccfb56085454c289a0d859132736343986e566f6a0b67",
+      "web/src/components/HalfRingSpinner.tsx": "a9c83cac488bcbd710b5d1b2c472d459e22e2b92a9e194467f38285400a3e9fe",
+      "web/src/components/Message.tsx": "80bde56e1190a2bf17bee04a6be9d0aa30ef20fd2bf6ebd345dfd311e33834b2",
+      "web/src/components/CollapsibleHead.tsx": "fa9ef3ad60ce523262d0f115e460dbcdc3357dceb80250872b5f6fa826a01c17",
+      "web/src/styles.css": "08ba2194e120890e01e0729b310213fffdd86b823a671fe455d36b810d247ed0"
+    },
+    "note": "Statusbar item, Files pane and ordinary-turn card presentation reference. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, token/cost/host statistic, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
   }
 }

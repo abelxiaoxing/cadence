@@ -3,14 +3,21 @@ import { memo, useState } from "react";
 import { FiCheck, FiCopy } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
 import { useCopyFeedback } from "../../rich/use-copy-feedback";
-export const CopyButton = memo(function CopyButton({ text }: { text: string }) {
+export const CopyButton = memo(function CopyButton({
+  text,
+  className = "copy-btn",
+}: {
+  text: string;
+  /** The pi button family it belongs to: a code block, a card head or a message. */
+  className?: string;
+}) {
   const { t } = useT();
   const [failed, setFailed] = useState(false);
   const { copied, copy } = useCopyFeedback();
   return (
     <button
       type="button"
-      className="copy-btn"
+      className={copied ? `${className} copied` : className}
       title={t("Copy displayed text")}
       aria-label={t("Copy displayed text")}
       onClick={() => {

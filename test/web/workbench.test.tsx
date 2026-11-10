@@ -18,6 +18,7 @@ import { recordedTurn } from "../../web/src/client/turn-source";
 import { cadenceInput } from "../../web/src/client/use-workbench";
 import {
   LEGACY_OMITTED_NOTICE,
+  toolState,
   turnParts,
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
@@ -61,7 +62,7 @@ it("only an explicit leading command selects Cadence; mentions, quoted commands 
     text: "explicit mode",
   });
 });
-it("ordinary messages use rich text and folded real tool results, not task success inference", async () => {
+it("ordinary messages use rich text and real tool cards, not task success inference", async () => {
   const turn = recordedTurn({
     id: "turn",
     epoch: "epoch",
@@ -97,9 +98,12 @@ it("ordinary messages use rich text and folded real tool results, not task succe
   });
   const html = renderToStaticMarkup(<ChatTurnView turn={turn} />);
   expect(html).toContain("<strong>Visible</strong>");
-  expect(html).toContain('<details class="chat-tool">');
+  // The reply that followed the call is what records its result.
+  expect(html).toContain('<div class="toolcall ok">');
+  expect(html).toContain('aria-label="Tool result recorded"');
   expect(html).toContain(">file.txt</span>");
-  // A tool's arguments and output are read only once its step is opened.
+  // A tool's arguments and output are read only once its card is opened.
+  expect(html).toContain('aria-expanded="false"');
   expect(html).not.toContain("actual output");
   expect(await turn.detail(1, 1, new AbortController().signal)).toEqual({
     text: "actual output",
@@ -122,20 +126,18 @@ const chatItem = (
   error: false,
   ...fields,
 });
+const sourceOf = (turn: Partial<ChatTurn> & Pick<ChatTurn, "items">) =>
+  recordedTurn({
+    id: "turn",
+    epoch: "epoch",
+    status: "completed",
+    notice: "",
+    omitted: { thinking: false, media: false, other: false },
+    ...turn,
+  });
 const renderTurn = (turn: Partial<ChatTurn> & Pick<ChatTurn, "items">) =>
-  renderToStaticMarkup(
-    <ChatTurnView
-      turn={recordedTurn({
-        id: "turn",
-        epoch: "epoch",
-        status: "completed",
-        notice: "",
-        omitted: { thinking: false, media: false, other: false },
-        ...turn,
-      })}
-    />,
-  );
-it("a turn's steps fold under one summary line and its answer keeps the only speaker label", () => {
+  renderToStaticMarkup(<ChatTurnView turn={sourceOf(turn)} />);
+it("a turn's messages and tool cards keep their recorded order under one speaker label", () => {
   const items = [
     chatItem("user", "user", { text: "Analyze" }),
     chatItem("m1", "assistant"),
@@ -158,66 +160,81 @@ it("a turn's steps fold under one summary line and its answer keeps the only spe
     chatItem("m3", "assistant"),
     chatItem("m4", "assistant", { text: "**Final** answer" }),
   ];
-  const parts = turnParts(
-    recordedTurn({
-      id: "turn",
-      epoch: "epoch",
-      status: "completed",
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      items,
-    }).steps,
-  );
-  expect(parts.steps.map(({ step }) => step.id)).toEqual([
+  const parts = turnParts(sourceOf({ items }).steps);
+  expect(parts.user.map(({ step }) => step.id)).toEqual(["user"]);
+  // Assistant messages that only carried tool calls have nothing to show.
+  expect(parts.replies.map(({ step }) => step.id)).toEqual([
     "t1",
     "m2",
     "t2",
     "t3",
     "t4",
     "t5",
+    "m4",
   ]);
-  expect(parts.answer.map(({ step }) => step.id)).toEqual(["m4"]);
   const html = renderTurn({
     notice: LEGACY_OMITTED_NOTICE,
     omitted: { thinking: true, media: false, other: false },
     items,
   });
-  expect(html.match(/chat-message-role">Cadence</g)).toHaveLength(1);
-  expect(html).toContain("Listed 1 directory · Read 2 files · Ran 1 command");
-  expect(html).toContain("1 failed");
-  expect(html).not.toMatch(/<details class="chat-steps"[^>]*\sopen/);
-  expect(html).toContain(">git log</span>");
-  expect(html).toContain("Looking at the sources.");
+  expect(html.match(/class="msg-role">Cadence</g)).toHaveLength(1);
+  expect(html.match(/<div class="toolcall /g)).toHaveLength(5);
+  expect(html.match(/<div class="toolcall err">/g)).toHaveLength(1);
+  expect(html).toContain('aria-label="Tool error recorded"');
+  // No card is open, and none is folded away behind a summary.
+  expect(html).not.toContain('aria-expanded="true"');
+  expect(html).not.toContain("<details");
+  expect(html).toContain(">$ git log</span>");
+  const order = [
+    'title="."',
+    "Looking at the sources.",
+    'title="a.ts"',
+    'title="b.ts"',
+    'title="git log"',
+    "<strong>Final</strong>",
+  ].map((mark) => html.indexOf(mark));
+  expect(order.every((at) => at >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
   expect(html).toContain("Thinking is not retained.");
   expect(html).not.toContain("Hidden thinking");
   expect(html).not.toContain("chat-turn-notice");
-  expect(html).toContain("<strong>Final</strong>");
 });
-it("a running turn shows its latest step live and a turn ending without an answer opens its steps", () => {
+it("a tool card states what was recorded for its call, live or settled", () => {
   const user = chatItem("user", "user", { text: "Analyze" });
   const read = chatItem("t", "tool", {
     name: "read",
     args: '{"path":"src/x.ts"}',
   });
+  // Everything listed is settled, so the reply itself is what is in progress.
   const running = renderTurn({ status: "running", items: [user, read] });
-  expect(running).toContain("chat-steps-live");
-  expect(running).toContain("Working… read src/x.ts");
+  expect(running).toContain('<div class="toolcall ok">');
+  expect(running).toMatch(/class="msg-working" role="status">.*Working…/);
   expect(renderTurn({ status: "running", items: [user] })).toContain(
     "Working…",
   );
-  expect(renderTurn({ status: "failed", items: [user, read] })).toMatch(
-    /<details class="chat-steps"[^>]*\sopen=""/,
-  );
+  // A call the owner may still change is the one in progress.
+  const settled = sourceOf({ status: "running", items: [user, read] });
+  const live = { ...settled, header: { ...settled.header, stable: 1 } };
+  expect(toolState(live, 1)).toBe("run");
+  const inFlight = renderToStaticMarkup(<ChatTurnView turn={live} />);
+  expect(inFlight).toContain('<div class="toolcall run">');
+  expect(inFlight).toContain('aria-label="Tool call in progress"');
+  expect(inFlight).not.toContain("msg-working");
+  // A turn that ended badly right after a call never claims its result.
+  const failed = renderTurn({ status: "failed", items: [user, read] });
+  expect(failed).toContain('<div class="toolcall idle">');
+  expect(failed).toContain('aria-label="No tool result observed"');
+  expect(failed).not.toContain("Tool result recorded");
   const plain = renderTurn({
     items: [user, chatItem("a", "assistant", { text: "Hi" })],
   });
-  expect(plain).not.toContain("chat-steps");
-  expect(plain.match(/chat-message-role">Cadence</g)).toHaveLength(1);
+  expect(plain).not.toContain("toolcall");
+  expect(plain.match(/class="msg-role">Cadence</g)).toHaveLength(1);
   expect(toolTarget('{"path":')).toBe("");
   expect(toolTarget('["path"]')).toBe("");
   expect(toolTarget('{"pattern":"TODO","path":"src"}')).toBe("TODO  src");
 });
-it("step summaries count model-named tools without reaching the prototype", () => {
+it("tool cards take model-named tools without reaching the prototype", () => {
   const user = chatItem("user", "user", { text: "Analyze" });
   const tool = (id: string, name: string, args = "{}") =>
     chatItem(id, "tool", { name, args });
@@ -228,29 +245,79 @@ it("step summaries count model-named tools without reaching the prototype", () =
       tool("b", "__proto__"),
       tool("c", "toString"),
       tool("d", "powershell", '{"command":"Get-ChildItem"}'),
-      tool("e", "ls"),
-      tool("f", "ls", '{"limit":5}'),
-      tool("g", "ls", '{"path":"src"}'),
+      tool("e", "ls", '{"path":"src"}'),
       chatItem("z", "assistant", { text: "Done" }),
     ],
   });
-  // A listing without a path is the working directory and counts once.
-  expect(html).toContain("Used 3 tools · Ran 1 command · Listed 2 directories");
+  // A name matching no known kind, inherited ones included, is a plain tool.
+  expect(html.match(/tc-tone-default/g)).toHaveLength(3);
+  expect(html.match(/tc-tone-exec/g)).toHaveLength(1);
+  expect(html.match(/tc-tone-read/g)).toHaveLength(1);
+  for (const name of ["constructor", "__proto__", "toString"])
+    expect(html).toContain(`toolcall-name">${name}</span>`);
+  expect(html).toContain(">$ Get-ChildItem</span>");
 });
-it("each omitted content kind gets its own line and a title when no tool ran", () => {
+it("each omitted content kind gets its own line, also when nothing else was recorded", () => {
   const user = chatItem("user", "user", { text: "Analyze" });
   const omitted = (thinking: boolean, media: boolean, other: boolean) =>
     renderTurn({ omitted: { thinking, media, other }, items: [user] });
   const all = omitted(true, true, true);
-  expect(all.match(/class="chat-steps-omitted"/g)).toHaveLength(3);
+  expect(all.match(/class="msg-omitted"/g)).toHaveLength(3);
+  expect(all).toContain("Thinking is not retained.");
   expect(all).toContain("Other content is not retained.");
-  expect(all).toContain('chat-steps-title">Thought<');
-  expect(omitted(false, true, false)).toContain(
-    'chat-steps-title">Media not retained<',
-  );
+  expect(all.match(/class="msg-role">Cadence</g)).toHaveLength(1);
   const other = omitted(false, false, true);
-  expect(other).toContain('chat-steps-title">Content not retained<');
+  expect(other.match(/class="msg-omitted"/g)).toHaveLength(1);
   expect(other).not.toContain("Media is not retained.");
+  expect(omitted(false, false, false)).not.toContain("msg-assistant");
+});
+it("a turn names its speakers, start time and the context fixed at admission", () => {
+  const turn = sourceOf({
+    items: [
+      chatItem("user", "user", { text: "Analyze" }),
+      chatItem("a", "assistant", { text: "Done" }),
+    ],
+  });
+  const at = Date.UTC(2026, 0, 2, 3, 4);
+  const html = renderToStaticMarkup(
+    <ChatTurnView
+      turn={{
+        ...turn,
+        header: {
+          ...turn.header,
+          at,
+          execution: {
+            cwd: "/project/sub",
+            checkoutRoot: "/project",
+            version: {
+              epoch: "epoch",
+              accessGeneration: 1,
+              configRev: 1,
+              catalogId: "catalog",
+            },
+            model: {
+              sourceSelectionId: "source",
+              provider: "fabricated",
+              model: "selected",
+              api: "openai-completions",
+              thinking: "off",
+            },
+          },
+        },
+      }}
+    />,
+  );
+  expect(html).toContain('<article class="msg msg-user">');
+  expect(html).toContain(`dateTime="${new Date(at).toISOString()}"`);
+  // The model is the admitted one; its folder stays behind the disclosure.
+  expect(html).toMatch(
+    /class="msg-model" aria-expanded="false" title="Context fixed at admission:">fabricated\/selected</,
+  );
+  expect(html).not.toContain("/project/sub");
+  // A record without a snapshot invents neither a model nor a time.
+  const bare = renderToStaticMarkup(<ChatTurnView turn={turn} />);
+  expect(bare).not.toContain("msg-model");
+  expect(bare).not.toContain("<time");
 });
 
 it("folder setup uses the conversation shell, keeps input editable and cannot send or start work", () => {

@@ -1,21 +1,39 @@
-/* Adapted from pi-web-ui RightPanel.tsx: files tab, breadcrumb, directory rows,
- * readonly preview and path references. MIT (c) 2026 xing-shuyin.
+/* Adapted from pi-web-ui RightPanel.tsx: crumb toolbar, path trail, directory
+ * rows with hover actions, name filter, readonly preview and path references.
+ * MIT (c) 2026 xing-shuyin.
  * No file mutation, remote SSH, transfer, plugin widgets or set_cwd transport. */
 import { useState } from "react";
 import {
-  FiArrowUp,
+  FiCheck,
+  FiChevronRight,
   FiCopy,
   FiFile,
   FiFolder,
-  FiPlus,
+  FiHelpCircle,
+  FiLink,
   FiRefreshCw,
+  FiSearch,
   FiX,
 } from "react-icons/fi";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { describeError, useT } from "../../i18n/locale";
-import { copyTextToClipboard } from "../../rich/use-copy-feedback";
+import { useCopyFeedback } from "../../rich/use-copy-feedback";
+
+const lastSegment = (path: string) =>
+  path
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
+    .pop() || path;
+/** Each folder on the way to `path`, keeping the listing's own separators. */
+function trail(path: string): { label: string; path: string }[] {
+  return [...path.matchAll(/[^\\/]+/g)].map((match) => ({
+    label: match[0],
+    path: path.slice(0, match.index + match[0].length),
+  }));
+}
+
 export function FilesPanel({
   client,
   enabled,
@@ -31,6 +49,11 @@ export function FilesPanel({
   const [path, setPath] = useState(""),
     [selected, setSelected] = useState<string | null>(null),
     [notice, setNotice] = useState("");
+  // A name filter over the entries already listed; it reads nothing.
+  const [filter, setFilter] = useState<string | null>(null);
+  const [copiedPath, setCopiedPath] = useState("");
+  const [help, setHelp] = useState(false);
+  const { copied, copy } = useCopyFeedback();
   const files = useWorkbench(
     client,
     enabled ? { kind: "files", path, ...(location ? { location } : {}) } : null,
@@ -43,32 +66,34 @@ export function FilesPanel({
   );
   const listing = files.value?.kind === "files" ? files.value : undefined;
   const file = preview.value?.kind === "file" ? preview.value : undefined;
+  const open = (next: string) => {
+    setPath(next);
+    setFilter(null);
+  };
+  const query = filter?.trim().toLowerCase() ?? "";
+  const entries = listing?.entries.filter(
+    (entry) => !query || entry.name.toLowerCase().includes(query),
+  );
   return (
     <div className="files-panel">
-      <header className="files-toolbar">
+      <header className="panel-crumbs">
         <button
           type="button"
-          className="ghost"
-          aria-label={t("Parent folder")}
-          disabled={listing?.parent == null}
-          onClick={() => {
-            if (listing?.parent != null) setPath(listing.parent);
-          }}
-        >
-          <FiArrowUp />
-        </button>
-        <span
-          className="files-path"
+          className={`crumb${path ? "" : " active"}`}
           title={
-            location ? `${location.cwd}${path ? ` / ${path}` : ""}` : undefined
+            location
+              ? `${t("Conversation folder:")} ${location.cwd}`
+              : undefined
           }
+          disabled={!location}
+          onClick={() => open("")}
         >
-          {t("Conversation folder:")}{" "}
-          {path || location?.cwd || t("Not observed")}
-        </span>
+          {location ? lastSegment(location.cwd) : t("Not observed")}
+        </button>
         <button
           type="button"
-          className="ghost"
+          className="crumb"
+          title={t("Refresh files")}
           aria-label={t("Refresh files")}
           disabled={!enabled}
           onClick={() => {
@@ -76,9 +101,72 @@ export function FilesPanel({
             preview.refresh();
           }}
         >
-          <FiRefreshCw />
+          <FiRefreshCw aria-hidden="true" />
         </button>
+        <button
+          type="button"
+          className={`crumb${filter === null ? "" : " active"}`}
+          aria-label={t("Filter this folder…")}
+          title={t("Filter this folder…")}
+          aria-pressed={filter !== null}
+          disabled={!listing}
+          onClick={() => setFilter(filter === null ? "" : null)}
+        >
+          <FiSearch aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={`crumb${help ? " active" : ""}`}
+          aria-label={t("About this panel")}
+          title={t("About this panel")}
+          aria-expanded={help}
+          onClick={() => setHelp((shown) => !shown)}
+        >
+          <FiHelpCircle aria-hidden="true" />
+        </button>
+        {trail(path).map((segment) => (
+          <span className="crumb-seg" key={segment.path}>
+            <FiChevronRight aria-hidden="true" />
+            <button
+              type="button"
+              className={`crumb${segment.path === path ? " active" : ""}`}
+              title={segment.path}
+              onClick={() => open(segment.path)}
+            >
+              {segment.label}
+            </button>
+          </span>
+        ))}
       </header>
+      {help && (
+        <p className="files-policy">
+          {t("Readonly preview · references send paths, not file contents")}
+        </p>
+      )}
+      {filter !== null && (
+        <label className="file-filter">
+          <FiSearch aria-hidden="true" />
+          <input
+            // biome-ignore lint/a11y/noAutofocus: opened by the filter button the user just pressed
+            autoFocus
+            value={filter}
+            aria-label={t("Filter this folder…")}
+            placeholder={t("Filter this folder…")}
+            onChange={(event) => setFilter(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setFilter(null);
+            }}
+          />
+          <button
+            type="button"
+            className="crumb"
+            aria-label={t("Close")}
+            onClick={() => setFilter(null)}
+          >
+            <FiX aria-hidden="true" />
+          </button>
+        </label>
+      )}
       {files.error && (
         <p className="inspector-note" role="alert">
           {describeError(t, files.error)}
@@ -98,45 +186,76 @@ export function FilesPanel({
             {t("Reading files…")}
           </p>
         ) : null}
-        {listing?.entries.map((entry) => (
-          <div className="file-row" key={entry.path}>
+        {listing && listing.parent != null && !query && (
+          <button
+            type="button"
+            className="file-item dir"
+            aria-label={t("Parent folder")}
+            title={t("Parent folder")}
+            onClick={() => open(listing.parent ?? "")}
+          >
+            <FiFolder className="file-icon" aria-hidden="true" />
+            <span className="file-name">..</span>
+          </button>
+        )}
+        {entries?.map((entry) => (
+          <div
+            className={`file-item ${entry.directory ? "dir" : "file"}${selected === entry.path ? " selected" : ""}`}
+            key={entry.path}
+          >
             <button
               type="button"
-              className={`file-name${selected === entry.path ? " selected" : ""}`}
+              className="file-main"
               title={entry.path}
               onClick={() =>
-                entry.directory ? setPath(entry.path) : setSelected(entry.path)
+                entry.directory ? open(entry.path) : setSelected(entry.path)
               }
             >
-              {entry.directory ? <FiFolder /> : <FiFile />}
-              <span>{entry.name}</span>
+              {entry.directory ? (
+                <FiFolder className="file-icon" aria-hidden="true" />
+              ) : (
+                <FiFile className="file-icon" aria-hidden="true" />
+              )}
+              <span className="file-name">{entry.name}</span>
             </button>
             <button
               type="button"
-              className="file-action"
+              className="file-attach"
               aria-label={t("Reference {path}", { path: entry.name })}
+              title={t("Reference {path}", { path: entry.name })}
               disabled={!enabled || !!files.error}
               onClick={() => onReference(entry.path)}
             >
-              <FiPlus />
+              <FiLink aria-hidden="true" />
             </button>
             <button
               type="button"
-              className="file-action"
+              className={`file-attach${copied && copiedPath === entry.path ? " copied" : ""}`}
               aria-label={t("Copy path {path}", { path: entry.name })}
-              onClick={() =>
-                void copyTextToClipboard(entry.path).then((ok) =>
+              title={t("Copy path {path}", { path: entry.name })}
+              onClick={() => {
+                setCopiedPath(entry.path);
+                void copy(entry.path).then((ok) =>
                   setNotice(ok ? "" : t("Link copy unavailable.")),
-                )
-              }
+                );
+              }}
             >
-              <FiCopy />
+              {copied && copiedPath === entry.path ? (
+                <FiCheck aria-hidden="true" />
+              ) : (
+                <FiCopy aria-hidden="true" />
+              )}
             </button>
           </div>
         ))}
-        {enabled && !files.error && listing?.entries.length === 0 && (
-          <p className="panel-empty">{t("No visible files")}</p>
-        )}
+        {enabled &&
+          !files.error &&
+          entries?.length === 0 &&
+          (query ? (
+            <p className="panel-empty">{t("No matching files")}</p>
+          ) : (
+            <p className="panel-empty">{t("No visible files")}</p>
+          ))}
         {listing?.limited && (
           <p className="inspector-note">
             {t("Bounded listing; narrow the directory to see more.")}
@@ -146,14 +265,16 @@ export function FilesPanel({
       {selected && (
         <section className="file-preview">
           <header>
-            <span title={selected}>{selected}</span>
+            <FiFile aria-hidden="true" />
+            <span title={selected}>{lastSegment(selected)}</span>
             <button
               type="button"
-              className="ghost"
+              className="crumb"
               aria-label={t("Close preview")}
+              title={t("Close preview")}
               onClick={() => setSelected(null)}
             >
-              <FiX />
+              <FiX aria-hidden="true" />
             </button>
           </header>
           {preview.error && (
@@ -172,9 +293,6 @@ export function FilesPanel({
         </section>
       )}
       {notice && <p role="alert">{notice}</p>}
-      <p className="files-policy">
-        {t("Readonly preview · references send paths, not file contents")}
-      </p>
     </div>
   );
 }

@@ -30,7 +30,7 @@ it("restored owner progress is visible in both locales without a client retry ac
   expect(render("en")).toContain('role="status"');
   expect(render("en")).not.toContain("<button");
 });
-it("partial failed replies are labeled in steps instead of concatenated into the final answer", () => {
+it("partial failed replies are labeled as their own message, never concatenated into the final answer", () => {
   const value = fixture();
   value.status = "completed";
   delete value.retry;
@@ -54,10 +54,15 @@ it("partial failed replies are labeled in steps instead of concatenated into the
   ];
   const source = recordedTurn(value);
   const parts = turnParts(source.steps);
-  expect(parts.steps.map((i) => i.step.text)).toEqual(["Partial"]);
-  expect(parts.answer.map((i) => i.step.text)).toEqual(["Complete"]);
-  expect(renderToStaticMarkup(<ChatTurnView turn={source} />)).toContain(
-    "Incomplete model response",
+  expect(parts.replies.map((i) => [i.step.text, i.step.error])).toEqual([
+    ["Partial", true],
+    ["Complete", false],
+  ]);
+  const html = renderToStaticMarkup(<ChatTurnView turn={source} />);
+  // The label heads the failed attempt's own block; the answer has none.
+  expect(html.match(/Incomplete model response/g)).toHaveLength(1);
+  expect(html).toMatch(
+    /<div class="msg-part"><span class="ep-state failed">Incomplete model response<\/span>.*?Partial.*?<div class="msg-part"><div class="msg-text single">.*?Complete/,
   );
 });
 
