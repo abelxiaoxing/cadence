@@ -600,7 +600,7 @@
     "src/session-rename.mjs": "1feafef55bdc1fba26331cecce20186af002618f4ed28b2f9b2dcabc54616c2c",
     "test/conversation-rename.test.ts": "8b7593da7a769412db8c77de51b0696e15202d5ecbf11786c79b21633ac268df",
     "test/gateway-archive.test.ts": "a4f7721d49a5fa211cace0c088b8740d8e5b3ddb17e58727556f5198a4bc438b",
-    "test/session-rename.test.ts": "ce84337d4873dd5308e29008ea8965691a302b0e53c6c5309fae6dca802e4850",
+    "test/session-rename.test.ts": "402353ea542541e9da1f8f4993dca69e10f17ea4452e7ed26f8a944ef2e325c4",
     "web/src/layout/toasts.ts": "2a56d85a77a5a3e6db7d298cd89b4b3b5c076204e137eee0b2908c2f81803137",
     "web/src/layout/ToastStack.tsx": "07139cb026fea53f10c24d82a56a301adbc5904617660adcc3ea2c1ecdab255b",
     "web/src/layout/theme.ts": "ceebe4a7442f311183ffeea3517c3695a143bcb256078b3e3cd3517155e449f3",
