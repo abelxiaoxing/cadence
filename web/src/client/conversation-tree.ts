@@ -3,7 +3,7 @@
  * a message where the session forks, and the questions of the branch shown.
  * Everything here is readonly: choosing a row or a version only changes what
  * is read. */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChatTreeNode } from "../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../src/service-client.ts";
 import { useWorkbench } from "./use-workbench";
@@ -94,46 +94,50 @@ export function questionOrdinal(
   return ordinal >= 0 && ordinal < count ? ordinal : undefined;
 }
 
-/** One tree read per branch shown. The previous tree stays while the next is
- * read (a growing branch names a new leaf every message), so the rail, the
- * version pagers and the Branches tab never blink. */
+/** One tree read for the branch shown, made again only when that branch gains
+ * or changes a message: `shape` names what would change the tree (the branch's
+ * newest turn and turn count, the session's leaf count, a reply settling). A
+ * branch that only grows inside its last turn names a new leaf with every
+ * entry of the reply, and keeps the tree it has. The previous tree also stays
+ * while the next is read, so the rail, the version pagers and the Branches tab
+ * never blink; `current` says the tree shown was read for the branch as it is. */
 export function useConversationTree(
   client: Pick<ServiceClient, "workbenchRead">,
   id: string,
   leaf: string | null,
-  /** Leaves in the session: a branch that appeared elsewhere re-reads the tree. */
-  branches: number,
+  shape: string,
   enabled: boolean,
 ): {
   tree: ConversationTree | undefined;
+  current: boolean;
   error: string | undefined;
   loading: boolean;
   refresh(): void;
 } {
+  const [asked, setAsked] = useState<{ shape: string; leaf: string | null }>();
+  useEffect(() => {
+    if (enabled)
+      setAsked((was) => (was?.shape === shape ? was : { shape, leaf }));
+  }, [enabled, shape, leaf]);
   const read = useWorkbench(
     client,
-    enabled ? { kind: "conversation-tree", id, leaf } : null,
+    asked ? { kind: "conversation-tree", id, leaf: asked.leaf } : null,
   );
   const { value, refresh } = read;
   const fresh = useMemo<ConversationTree | undefined>(
     () =>
-      value?.kind === "conversation-tree"
-        ? { leaf, nodes: value.nodes, truncated: value.truncated }
+      asked && value?.kind === "conversation-tree"
+        ? { leaf: asked.leaf, nodes: value.nodes, truncated: value.truncated }
         : undefined,
-    [value, leaf],
+    [value, asked],
   );
   const [kept, setKept] = useState<ConversationTree>();
   useEffect(() => {
     if (fresh) setKept(fresh);
   }, [fresh]);
-  const observed = useRef(branches);
-  useEffect(() => {
-    if (observed.current === branches) return;
-    observed.current = branches;
-    refresh();
-  }, [branches, refresh]);
   return {
     tree: fresh ?? kept,
+    current: !!fresh && asked?.shape === shape,
     error: read.error,
     loading: read.loading,
     refresh,

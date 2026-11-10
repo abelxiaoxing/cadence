@@ -430,13 +430,22 @@ export function ChatWorkspace({
   useEffect(() => {
     onActivityRef.current?.({ id, turns: conversation.count, runningSince });
   }, [id, conversation.count, runningSince]);
-  // One tree read per branch shown feeds the version pagers, the question
-  // rail and the Branches tab.
+  const newest = turns.at(-1);
+  const unsettled =
+    !!newest && ["queued", "running"].includes(newest.header.status);
+  // One tree read for the branch shown feeds the version pagers, the question
+  // rail and the Branches tab. It is made again when the branch gains or
+  // changes a message, not for every entry a reply appends.
   const treeRead = useConversationTree(
     client,
     id,
     conversation.leaf,
-    conversation.branches,
+    [
+      newest?.header.id ?? "",
+      conversation.count,
+      conversation.branches,
+      unsettled,
+    ].join(),
     available && !!summary,
   );
   const { tree } = treeRead;
@@ -444,9 +453,6 @@ export function ChatWorkspace({
     () => messageVersions(tree ?? { nodes: [], truncated: false }),
     [tree],
   );
-  const newest = turns.at(-1);
-  const unsettled =
-    !!newest && ["queued", "running"].includes(newest.header.status);
   // The branch's user messages; a live turn's own is not on the listed branch
   // until it settles, so it is added from the turn shown.
   const questions = useMemo(() => {
@@ -1273,7 +1279,6 @@ export function ChatWorkspace({
   // The target's turn is shown: act on it and scroll there. Until then the
   // tree of the branch shown says where it is: on another branch, which is
   // then shown, or at a turn of this one, which is then read.
-  const treeCurrent = !!tree && tree.leaf === conversation.leaf;
   useEffect(() => {
     if (!target) return;
     const shown = turns.find((turn) => turn.header.id === target.id);
@@ -1291,7 +1296,7 @@ export function ChatWorkspace({
     // The conversation's own read error is already shown in the transcript.
     if (conversation.error) return setTarget(null);
     if (!observed || (!turns.length && conversation.count > 0)) return;
-    if (!treeCurrent || treeRead.loading) {
+    if (!treeRead.current) {
       if (treeRead.error && !treeRead.loading)
         giveUp(describeError(t, treeRead.error));
       return;
