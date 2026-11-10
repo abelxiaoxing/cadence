@@ -41,6 +41,7 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
       throw new Error("outside scope");
     return dirty;
   },
+  changedPaths: async (cwd: string) => [...seam.trees.get(cwd)!.dirty],
   assertCandidate: async (cwd: string, oid: string) => {
     const tree = seam.trees.get(cwd)!;
     if (tree.head !== oid || tree.dirty.size)

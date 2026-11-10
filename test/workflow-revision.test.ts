@@ -329,3 +329,41 @@ it("acceptance records which checks were set aside and never accepts a candidate
     acceptanceRecord(...args, [format], review, 1, new Set([format.id])),
   ).toThrow();
 });
+it("changes found outside the scope when a candidate is about to be committed go to recovery as their own failed step; a protected path is left to the commit's refusal", async () => {
+  const { owner, live } = fixture();
+  const changed = vi.spyOn(
+    await import("../src/service/workflow-git.ts"),
+    "changedPaths",
+  );
+  try {
+    changed.mockResolvedValue(["a.txt", "src/extra.ts"]);
+    const failed = owner.leftOutside(live, owner.cwd, ["a.txt", "b.txt"]);
+    await expect(failed).rejects.toBeInstanceOf(AttemptFailure);
+    const step = live.run.steps.at(-1) as {
+      id: string;
+      kind: string;
+      status: string;
+      text: string;
+    };
+    expect(step).toMatchObject({ kind: "check", status: "failed" });
+    expect(step.text).toContain("src/extra.ts");
+    await failed.catch((error: AttemptFailure) => {
+      expect(error.steps).toEqual([step.id]);
+      expect(error.message).toContain("level replan");
+    });
+    // Everything inside the scope: nothing to say.
+    changed.mockResolvedValue(["a.txt"]);
+    await expect(
+      owner.leftOutside(live, owner.cwd, ["a.txt", "b.txt"]),
+    ).resolves.toBeUndefined();
+    // A credential path is not something a revision could adopt.
+    changed.mockResolvedValue([".env"]);
+    const steps = live.run.steps.length;
+    await expect(
+      owner.leftOutside(live, owner.cwd, ["a.txt"]),
+    ).resolves.toBeUndefined();
+    expect(live.run.steps).toHaveLength(steps);
+  } finally {
+    changed.mockRestore();
+  }
+});

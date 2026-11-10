@@ -33061,7 +33061,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "f2fd28c5781da733632b73f874ad24060bc15a75d75f18bd9b28a7bdee50d9d9",
+  build: "a75bb1c30252976cac79e2fc788ec0174b22d9d760b2f47359752e8b66b14e1a",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34542,6 +34542,17 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
     live2.controllers.set(cwd, controller);
     return controller;
   }
+  async leftOutside(live2, cwd, scope) {
+    const outside = (await changedPaths(cwd)).filter((path) => !workflowCovers(scope, path));
+    if (!outside.length || outside.some((path) => !workflowBoundary(path)))
+      return;
+    const step = this.step(live2, "write-scope", "check");
+    const detail = `Changes outside the write scope were preserved, not committed: ${outside.slice(0, 32).join(", ")}${outside.length > 32 ? ` and ${outside.length - 32} more` : ""}`;
+    this.closeStep(live2, step, detail);
+    if (step.status !== "failed")
+      this.assertRunning(live2);
+    throw new AttemptFailure(`${detail}. Bring each of them into the write scope (level replan): keep it when the goal needs it, otherwise give a work item that restores it.`, [step.id]);
+  }
   async editAttempt(live2, cwd, p, id, prompt, allowed, kind = "implementation") {
     const head = live2.target ? await gitHead(cwd) : null;
     if (live2.delivery) {
@@ -34580,6 +34591,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         const delivery = live2.delivery;
         if (!delivery)
           throw new ContractError("stale");
+        await this.leftOutside(live2, cwd, scope);
         const before = await delivery.assertTip();
         await this.commit(live2, cwd, scope, "Cadence: candidate for verification", before, "commit-candidate");
         head = await delivery.assertTip();

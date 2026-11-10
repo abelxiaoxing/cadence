@@ -30,6 +30,7 @@ Agents have no total runtime deadline; setup/check commands are unlimited unless
 Original closure requirements are unchanged.
 Settled failures enter readonly diagnosis; authority, storage, cancellation and unknown-closure failures never authorize another attempt.
 An edit outside the write scope is a settled failure when it stays inside the repository boundary (`workflowBoundary`) and its attempt's step can be cited: the diagnosis adopts or restores it.
+Changes found outside the scope when a candidate is about to be committed are recorded as their own failed `write-scope` step and decided the same way.
 A protected path (credentials, keys, `.env`, `.git`) or an uncitable attempt still ends the run with the edits preserved.
 The same approach meeting unchanged failure/source evidence does not replay: the decision moves up one level (repair, then a revised route, then a recorded deviation) and the run ends only when the top level also repeats.
 A recovery reply the owner cannot act on is asked again with the reason, at most twice per failure (`OBJECTIONS`), before it ends the stage.
