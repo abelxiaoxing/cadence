@@ -25,10 +25,13 @@ export interface WindowRow {
   /** Changes whenever the row's content (and so its height) may change. */
   version: number;
 }
-/** `rows` must keep its identity while unchanged; it re-plans the window. */
+/** `rows` must keep its identity while unchanged; it re-plans the window.
+ * `pinned` names a row that stays mounted wherever it is: a jump target has
+ * its real height before the view scrolls to it. */
 export function useLazyWindow(
   scrollRef: RefObject<HTMLElement | null>,
   rows: readonly WindowRow[],
+  pinned: string | null = null,
   tailBudget = 1800,
 ) {
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -42,6 +45,7 @@ export function useLazyWindow(
   versionsRef.current = new Map(rows.map((r) => [r.id, r.version]));
   const alwaysRef = useRef(new Set<string>());
   alwaysRef.current = pickAlways(rows, heightsRef.current, tailBudget);
+  if (pinned !== null) alwaysRef.current.add(pinned);
   const recordMeasured = useCallback((id: string, h: number) => {
     const len = versionsRef.current.get(id);
     if (len === undefined) return;
@@ -79,12 +83,13 @@ export function useLazyWindow(
     });
   }, [sweep]);
   useLayoutEffect(() => {
+    void pinned; // A newly pinned row is planned at once, not on the next scroll.
     if (!rows.length) {
       setHidden(new Set());
       return;
     }
     sweep();
-  }, [sweep, rows]);
+  }, [sweep, rows, pinned]);
   useEffect(() => {
     const observer = new ResizeObserver(scheduleSweep);
     if (scrollRef.current) observer.observe(scrollRef.current);

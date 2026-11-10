@@ -1,6 +1,9 @@
 /* Adapted from pi-web-ui ChatInput/MessageList: bottom composer, streaming
  * transcript, tool cards and per-conversation drafts. MIT (c) 2026 xing-shuyin.
- * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
+ * No upstream prompt, dispatch tool, queue, plugin or subagent runtime.
+ * Cadence: the branch shown (the view) and the entry the next message
+ * continues (the anchor) are separate. Choosing a branch, a version or a
+ * question only reads; an anchor only changes what the next Send names. */
 import {
   Fragment,
   useCallback,
@@ -12,15 +15,16 @@ import {
 } from "react";
 import {
   FiArrowDown,
-  FiArrowUp,
+  FiCornerDownRight,
+  FiEdit2,
   FiGitBranch,
-  FiImage,
   FiMessageSquare,
-  FiSquare,
 } from "react-icons/fi";
-import { IMAGE_TYPES } from "../../../../src/image-content.mjs";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
-import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
+import type {
+  ChatSummary,
+  ChatTreeNode,
+} from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import {
@@ -30,6 +34,13 @@ import {
   publicError,
 } from "../../../../src/service-contract.ts";
 import { type ContextUsage, contextUsage } from "../../client/context-usage";
+import {
+  editHead,
+  firstLine,
+  offBranch,
+  sendHead,
+} from "../../client/conversation-anchor";
+import type { LoadedTurn } from "../../client/conversation-reader";
 import {
   assertSendModel,
   captureSend,
@@ -50,9 +61,20 @@ import {
   waitingModelSend,
   withSendModel,
 } from "../../client/conversation-send";
+import {
+  branchQuestions,
+  messageVersions,
+  questionOrdinal,
+  useConversationTree,
+} from "../../client/conversation-tree";
 import type { FolderDraft } from "../../client/folder-draft";
 import { uploadImages } from "../../client/images";
 import type { PreviewModels } from "../../client/model-preview";
+import {
+  activityRoute,
+  chatFromLocation,
+  rememberBranch,
+} from "../../client/project-route";
 import { useConversation } from "../../client/use-conversation";
 import {
   type ModelAvailability,
@@ -64,17 +86,20 @@ import {
   cadenceApproval,
   cadenceExit,
 } from "../../client/workflow-entry";
+import { pushPromptHistory } from "../../composer/prompt-history";
 import { describeError, useT } from "../../i18n/locale";
 import { dismissToasts, notify } from "../../layout/toasts";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
-import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
 import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
-import { BranchTree } from "./BranchTree";
-import { CadenceModeButton } from "./CadenceModeButton";
-import { DraftImage, useImageDraft } from "./ChatImages";
+import type { BranchesView } from "./BranchesPanel";
+import { ChatComposer } from "./ChatComposer";
+import { useImageDraft } from "./ChatImages";
+import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
+import { QuestionRail } from "./QuestionRail";
+import { useSendAnchor } from "./use-send-anchor";
 import {
   nextRunWindow,
   PlanCard,
@@ -106,6 +131,13 @@ function stored(key: string, fallback = "") {
     return fallback;
   }
 }
+/** A message of the tree to bring into view, and what to do once it is. */
+interface Target {
+  id: string;
+  then: "show" | "edit" | "continue";
+  /** Its own branch was already asked for. */
+  switched?: boolean;
+}
 export function ChatWorkspace({
   client,
   id,
@@ -134,6 +166,8 @@ export function ChatWorkspace({
   observe = 0,
   onOpenAgent,
   onWorkflowRuns,
+  onBranches,
+  onOpenBranches,
 }: {
   client: ServiceClient;
   id: string;
@@ -158,6 +192,10 @@ export function ChatWorkspace({
   onOpenAgent?(agent: WorkflowAgent): void;
   /** This conversation's recent workflow runs, for the subagent dock. */
   onWorkflowRuns?(ids: string[]): void;
+  /** The session tree and the ways to act on it, for the Branches tab. */
+  onBranches?(view: BranchesView): void;
+  /** Open the Branches tab. */
+  onOpenBranches?(): void;
   /** Observed execution availability, independent of the readable history. */
   modelAvailability: ModelAvailability;
   previewModels?: PreviewModels;
@@ -183,7 +221,32 @@ export function ChatWorkspace({
   const imageDraft = useImageDraft();
   const removeImages = imageDraft.remove;
   const sentImages = useRef<readonly File[]>([]);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const alive = useRef(true);
+  // The entry the next message continues when that is not the end of the
+  // view, and the draft set aside for it.
+  const sendAnchor = useSendAnchor({
+    draftKey,
+    draft,
+    setDraft,
+    images: imageDraft,
+    alive,
+    onUnread: () =>
+      refuse(
+        t(
+          "Part of the message could not be read back. Check the text and images before sending.",
+        ),
+      ),
+  });
+  const { anchor, attaching } = sendAnchor;
+  const releaseAnchor = sendAnchor.release;
+  // Each render's handlers, for callers that keep one callback across renders:
+  // memoized turn rows, the Branches tab and effects.
+  const acts = useRef({
+    chooseBranch(_leaf: string | null, _first?: number) {},
+    followAnchor() {},
+    show(_id: string, _then: Target["then"]) {},
+    stepVersion(_turnId: string, _step: -1 | 1) {},
+  });
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
     stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
   );
@@ -313,7 +376,14 @@ export function ChatWorkspace({
     if (contextKnown && locationCwd)
       onLocationRef.current?.({ id, cwd: locationCwd });
   }, [contextKnown, id, locationCwd]);
-  const conversation = useConversation(client, id, available, initialLeaf);
+  // The address names the branch shown (`rememberBranch` keeps it current),
+  // so a remount or a refresh opens on it again.
+  const [entryLeaf] = useState(() =>
+    typeof window !== "undefined" && chatFromLocation() === id
+      ? activityRoute(window.location.hash, id).leaf
+      : initialLeaf,
+  );
+  const conversation = useConversation(client, id, available, entryLeaf);
   const { turns } = conversation;
   // Undefined until observed; null is a conversation not started yet.
   const observed = conversation.summary !== undefined;
@@ -398,7 +468,51 @@ export function ChatWorkspace({
       ...(usage ? { context: usage } : {}),
     });
   }, [id, conversation.count, runningSince, usage]);
-  const [branchesOpen, setBranchesOpen] = useState(false);
+  const newest = turns.at(-1);
+  const unsettled =
+    !!newest && ["queued", "running"].includes(newest.header.status);
+  // One tree read for the branch shown feeds the version pagers, the question
+  // rail and the Branches tab. It is made again when the branch gains or
+  // changes a message, not for every entry a reply appends.
+  const treeRead = useConversationTree(
+    client,
+    id,
+    conversation.leaf,
+    [
+      newest?.header.id ?? "",
+      conversation.count,
+      conversation.branches,
+      unsettled,
+    ].join(),
+    available && !!summary,
+  );
+  const { tree } = treeRead;
+  const versions = useMemo(
+    () => messageVersions(tree ?? { nodes: [], truncated: false }),
+    [tree],
+  );
+  // The branch's user messages; a live turn's own is not on the listed branch
+  // until it settles, so it is added from the turn shown.
+  const questions = useMemo(() => {
+    const listed = branchQuestions(tree?.nodes ?? []).map((node) => ({
+      id: node.id,
+      text: node.text,
+    }));
+    if (
+      !newest ||
+      !unsettled ||
+      listed.some((question) => question.id === newest.header.id)
+    )
+      return listed;
+    const text = turnParts(newest.steps).user[0]?.step.text ?? "";
+    return [...listed, { id: newest.header.id, text: firstLine(text) }];
+  }, [tree, newest, unsettled]);
+  // A message to bring into view; once its turn is shown, the row jumped to
+  // (a new object per jump, kept mounted until the next one).
+  const [target, setTarget] = useState<Target | null>(null);
+  const [jump, setJump] = useState<{ id: string } | null>(null);
+  // The turn at the top of the transcript, for the rail.
+  const [activeTurn, setActiveTurn] = useState<string | null>(null);
   // A failed read must not strand a half-started owner behind an unreadable
   // conversation. Explicit Send may prepare it, but cannot infer or rebase the
   // missing head: the user reviews the restored context and sends again.
@@ -458,7 +572,6 @@ export function ChatWorkspace({
     if (!hidden && scroll.current && !stick.current)
       scroll.current.scrollTop = lastTop.current;
   }, [hidden]);
-  const alive = useRef(true);
   const observedHead = useRef("");
   const sentDraft = useRef(draft);
 
@@ -532,6 +645,12 @@ export function ChatWorkspace({
       setModelCommand("");
       removeImages(sentImages.current);
       setDraft((value) => (value === sentDraft.current ? "" : value));
+      // Only a message carries the model marker; leaving Cadence does not.
+      if (modelDraftConsumed(pending, modelCommand))
+        pushPromptHistory(workspaceId, sentDraft.current);
+      // The composer stayed locked since that Send, so an anchor still set is
+      // the one it used: the reply's branch is followed as the latest.
+      acts.current.followAnchor();
       onChanged();
     }
     if (stick.current && scroll.current)
@@ -545,6 +664,7 @@ export function ChatWorkspace({
     state,
     conversation,
     removeImages,
+    workspaceId,
   ]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
@@ -560,7 +680,7 @@ export function ChatWorkspace({
       })),
     [turns],
   );
-  const lazy = useLazyWindow(scroll, rows);
+  const lazy = useLazyWindow(scroll, rows, jump?.id ?? null);
   // Earlier turns load while the reader is near the top, on scroll and after
   // each render (a short transcript fills itself); no page is ever switched.
   const { earlier, loadEarlier } = conversation;
@@ -569,14 +689,58 @@ export function ChatWorkspace({
     if (el && !hidden && earlier && el.scrollTop < 1200) loadEarlier();
   };
   useEffect(nearTop);
+  // The question the transcript is at: the last one at its end, else the
+  // turn that has reached the top of the view.
+  const tracking = useRef(0);
+  const trackActive = () => {
+    if (tracking.current) return;
+    tracking.current = requestAnimationFrame(() => {
+      tracking.current = 0;
+      const el = scroll.current;
+      if (!el) return;
+      let at: string | null = null;
+      if (!stick.current) {
+        const line = el.getBoundingClientRect().top + 140;
+        for (const row of el.querySelectorAll<HTMLElement>("[data-lazy-id]")) {
+          if (at !== null && row.getBoundingClientRect().top > line) break;
+          at = row.dataset.lazyId ?? null;
+        }
+      }
+      setActiveTurn(at);
+    });
+  };
+  useEffect(
+    () => () => {
+      if (tracking.current) cancelAnimationFrame(tracking.current);
+    },
+    [],
+  );
+  // Scroll to the row jumped to once it is mounted at its real height.
+  useEffect(() => {
+    if (!jump) return;
+    const frame = requestAnimationFrame(() => {
+      const row = [
+        ...(scroll.current?.querySelectorAll<HTMLElement>("[data-lazy-id]") ??
+          []),
+      ].find((el) => el.dataset.lazyId === jump.id);
+      if (!row) return;
+      stick.current = false;
+      row.scrollIntoView({ block: "start" });
+      row.classList.remove("msg-flash");
+      void row.offsetWidth;
+      row.classList.add("msg-flash");
+      setActiveTurn(jump.id);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [jump]);
   // Inserted earlier turns must not move what is being read. Scroll anchoring
   // does this natively; without it the inserted height is skipped here.
   const firstOrdinal = turns[0]?.ordinal;
-  const anchor = useRef<{ ordinal?: number; height: number }>({ height: 0 });
+  const inserted = useRef<{ ordinal?: number; height: number }>({ height: 0 });
   useLayoutEffect(() => {
     const el = scroll.current;
     if (!el) return;
-    const previous = anchor.current;
+    const previous = inserted.current;
     if (
       !NATIVE_ANCHORING &&
       !stick.current &&
@@ -585,7 +749,7 @@ export function ChatWorkspace({
       firstOrdinal < previous.ordinal
     )
       el.scrollTop += el.scrollHeight - previous.height;
-    anchor.current = { ordinal: firstOrdinal, height: el.scrollHeight };
+    inserted.current = { ordinal: firstOrdinal, height: el.scrollHeight };
   });
   useEffect(() => {
     try {
@@ -727,6 +891,8 @@ export function ChatWorkspace({
     if (
       (!(exiting ? canExit : canSend) && !canPrepareOnly) ||
       running ||
+      // A rewritten message waits for its own images.
+      (attaching && !retained) ||
       (!message.trim() && !images.length)
     )
       return;
@@ -821,7 +987,11 @@ export function ChatWorkspace({
         retained ??
         captureSend({
           id,
-          head: conversation.leaf,
+          // The anchor when one is set, else the end of the branch shown.
+          // Leaving Cadence is no message: it never starts a branch.
+          head: exiting
+            ? conversation.leaf
+            : sendHead(anchor, conversation.leaf),
           text: message,
           images,
           revision: state?.revision ?? 0,
@@ -984,7 +1154,9 @@ export function ChatWorkspace({
         if (command.kind === "cadence-send") {
           setMode("chat");
         }
+        if (!override) pushPromptHistory(workspaceId, message);
         // The new reply ends the branch: follow it as the session's latest.
+        // An anchor is used up, and the draft set aside for it comes back.
         chooseBranch(null);
       }
       workflow.refresh();
@@ -1058,7 +1230,11 @@ export function ChatWorkspace({
     setBusy(false);
     conversation.refresh();
   };
-  const chooseBranch = (leaf: string | null) => {
+  // Changes the branch shown: readonly. An anchor belongs to the branch it
+  // was set on, so it is released and the draft set aside for it comes back.
+  // `first` is the oldest turn to show at once, for a branch entered at one of
+  // its messages.
+  const chooseBranch = (leaf: string | null, first?: number) => {
     ++sendGeneration.current;
     departure.current.abort();
     departure.current = new AbortController();
@@ -1069,17 +1245,117 @@ export function ChatWorkspace({
     setModelOpen(false);
     setBusy(false);
     setPreparing(false);
-    conversation.choose(leaf);
-    setBranchesOpen(false);
+    releaseAnchor();
+    conversation.choose(leaf, first);
+    rememberBranch(id, leaf);
   };
-  // Turn rows are memoized: they get one stable callback, which always
-  // reaches the current `chooseBranch`.
-  const chooseLatest = useRef(chooseBranch);
-  chooseLatest.current = chooseBranch;
+  // An anchor may move only while nothing of this conversation is in flight.
+  const canAnchor = !running && !busy && !pending && !awaitingModel;
+  const toComposer = () => {
+    clearError();
+    textarea.current?.focus();
+  };
+  const startContinue = (turn: LoadedTurn) => {
+    if (!canAnchor || !turn.header.entry) return;
+    // After the newest turn is where a message goes anyway.
+    if (turn.ordinal >= conversation.count - 1) releaseAnchor();
+    else sendAnchor.continueAfter(turn);
+    toComposer();
+  };
+  const startEdit = (turn: LoadedTurn) => {
+    if (!canAnchor) return;
+    const previous = turns.find((other) => other.ordinal === turn.ordinal - 1);
+    if (sendAnchor.edit(turn, previous)) toComposer();
+    else
+      refuse(
+        t(
+          "This message cannot be rewritten from here: the entry it continued is not known.",
+        ),
+      );
+  };
+  // Brings a message of the session into view: its branch is shown first
+  // when it is on another one, and its turn read when it is not shown yet.
+  // `then` may also move the anchor to it.
+  const show = (messageId: string, then: Target["then"]) =>
+    setTarget({ id: messageId, then });
+  // Another version of a message: its branch, opened at that same turn.
+  const stepVersion = (turnId: string, step: -1 | 1) => {
+    const list = versions.get(turnId) ?? [];
+    const next = list[list.findIndex((node) => node.id === turnId) + step];
+    if (!next) return;
+    chooseBranch(
+      next.leaf === summary?.leaf ? null : next.leaf,
+      turns.find((turn) => turn.header.id === turnId)?.ordinal,
+    );
+    show(next.id, "show");
+  };
+  acts.current = {
+    chooseBranch,
+    followAnchor() {
+      if (sendAnchor.current()) chooseBranch(null);
+    },
+    show,
+    stepVersion,
+  };
+  // Turn rows are memoized: each gets callbacks that never change.
   const continueFrom = useCallback(
-    (entry: string) => chooseLatest.current(entry),
+    (turnId: string) => acts.current.show(turnId, "continue"),
     [],
   );
+  const editFrom = useCallback(
+    (turnId: string) => acts.current.show(turnId, "edit"),
+    [],
+  );
+  const versionStep = useCallback(
+    (turnId: string, step: -1 | 1) => acts.current.stepVersion(turnId, step),
+    [],
+  );
+  const jumpTo = useCallback(
+    (messageId: string) => acts.current.show(messageId, "show"),
+    [],
+  );
+  // The target's turn is shown: act on it and scroll there. Until then the
+  // tree of the branch shown says where it is: on another branch, which is
+  // then shown, or at a turn of this one, which is then read.
+  useEffect(() => {
+    if (!target) return;
+    const shown = turns.find((turn) => turn.header.id === target.id);
+    if (shown) {
+      setTarget(null);
+      if (target.then === "edit") startEdit(shown);
+      else if (target.then === "continue") startContinue(shown);
+      setJump({ id: shown.header.id });
+      return;
+    }
+    const giveUp = (why: string) => {
+      setTarget(null);
+      refuse(why);
+    };
+    // The conversation's own read error is already shown in the transcript.
+    if (conversation.error) return setTarget(null);
+    if (!observed || (!turns.length && conversation.count > 0)) return;
+    if (!treeRead.current) {
+      if (treeRead.error && !treeRead.loading)
+        giveUp(describeError(t, treeRead.error));
+      return;
+    }
+    const node = tree?.nodes.find((other) => other.id === target.id);
+    if (node && !node.current && !target.switched) {
+      chooseBranch(node.leaf === summary?.leaf ? null : node.leaf);
+      return setTarget({ ...target, switched: true });
+    }
+    const ordinal = questionOrdinal(
+      questions,
+      target.id,
+      turns,
+      conversation.count,
+      unsettled,
+    );
+    // Not in the tree read, or the turn in its place is another message.
+    if (ordinal === undefined || turns.some((turn) => turn.ordinal === ordinal))
+      return giveUp(t("That message could not be found in this conversation."));
+    conversation.showFrom(ordinal);
+  });
   // The reply's own state. A completed reply and an idle Cadence conversation
   // need no label: the mode is in the meta line and on the composer control.
   const replyState = !summary
@@ -1095,7 +1371,8 @@ export function ChatWorkspace({
       : summary.status === "completed"
         ? ""
         : tx(summary.status);
-  const imagesLocked = busy || awaitingModel || !!pending || !!running;
+  const imagesLocked =
+    busy || awaitingModel || !!pending || !!running || attaching;
   const addImages = (files: File[]) => {
     if (imagesLocked) return;
     try {
@@ -1105,6 +1382,125 @@ export function ChatWorkspace({
       refuse(tx(error instanceof Error ? error.message : "unavailable"));
     }
   };
+  // What the Branches tab shows and may ask for; its callbacks never change.
+  const onBranchesRef = useRef(onBranches);
+  onBranchesRef.current = onBranches;
+  const treeActions = useMemo(
+    () => ({
+      onShow: (node: ChatTreeNode) => acts.current.show(node.id, "show"),
+      onEdit: (node: ChatTreeNode) => acts.current.show(node.id, "edit"),
+      onContinue: (node: ChatTreeNode) =>
+        acts.current.show(node.id, "continue"),
+      onLatest: () => acts.current.chooseBranch(null),
+    }),
+    [],
+  );
+  const {
+    error: treeError,
+    loading: treeLoading,
+    refresh: treeRefresh,
+  } = treeRead;
+  const { pinned } = conversation;
+  useEffect(() => {
+    onBranchesRef.current?.({
+      id,
+      tree,
+      error: treeError,
+      loading: treeLoading,
+      pinned,
+      canAct: canAnchor,
+      onRefresh: treeRefresh,
+      ...treeActions,
+    });
+  }, [
+    id,
+    tree,
+    treeError,
+    treeLoading,
+    pinned,
+    canAnchor,
+    treeRefresh,
+    treeActions,
+  ]);
+  // The turns the message being composed will not have in its context. A
+  // restored anchor dims nothing unless its own turn is on the branch shown.
+  const anchored =
+    anchor !== null &&
+    (turns.some((turn) => turn.header.id === anchor.turnId) ||
+      questions.some((question) => question.id === anchor.turnId))
+      ? anchor
+      : null;
+  const firstOff = anchored
+    ? rows.find(({ turn }) => offBranch(anchored, turn.ordinal))?.id
+    : undefined;
+  const activeQuestion =
+    activeTurn === null
+      ? questions.length - 1
+      : questions.findIndex((question) => question.id === activeTurn);
+  const keepEnd = useCallback(() => {
+    if (stick.current && scroll.current)
+      scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, []);
+  const strip = anchor ? (
+    <div className="composer-anchor">
+      {anchor.kind === "edit" ? (
+        <FiEdit2 aria-hidden="true" />
+      ) : (
+        <FiCornerDownRight aria-hidden="true" />
+      )}
+      <div className="composer-anchor-text" role="status">
+        <strong>
+          {anchor.kind === "edit"
+            ? t("Rewriting a message")
+            : t("Continuing after an earlier turn")}
+        </strong>
+        {anchor.label && (
+          <span className="composer-anchor-quote">{anchor.label}</span>
+        )}
+        <span>
+          {anchor.kind === "edit"
+            ? t(
+                "Send starts a new branch beside it; that message and the turns after it stay on their branch and are not in the new context.",
+              )
+            : t(
+                "Send starts a new branch after that turn; the turns after it stay on their branch and are not in the new context.",
+              )}{" "}
+          {t(
+            "Only the conversation is rewound: files on disk stay as they are.",
+          )}
+        </span>
+        {attaching && <span>{t("Reading the message's images…")}</span>}
+        {anchor.media && (
+          <span>
+            {t("Attachments that were not retained are not attached again.")}
+          </span>
+        )}
+      </div>
+      <button
+        type="button"
+        className="ghost"
+        title={t("Cancel and restore the draft that was here")}
+        disabled={busy || !!pending}
+        onClick={() => {
+          releaseAnchor();
+          textarea.current?.focus();
+        }}
+      >
+        {t("Cancel")}
+      </button>
+    </div>
+  ) : pinned && !running ? (
+    <div className="composer-anchor quiet">
+      <FiGitBranch aria-hidden="true" />
+      <div className="composer-anchor-text" role="status">
+        <span>
+          {t(
+            "A chosen branch is shown, not the latest. A message sent now continues from the end of what is shown; the rest stays in the session.",
+          )}
+        </span>
+      </div>
+    </div>
+  ) : undefined;
   return (
     <section
       className="chat-workspace"
@@ -1148,22 +1544,22 @@ export function ChatWorkspace({
           {summary?.archived && (
             <span className="conversation-badge">{t("Archived")}</span>
           )}
-          {(conversation.branches > 1 || conversation.pinned) && (
+          {/* The session forks: its tree is the inspector's Branches tab. */}
+          {onOpenBranches && (conversation.branches > 1 || pinned) && (
             <button
               type="button"
               className="ghost"
-              aria-expanded={branchesOpen}
               aria-label={t("Branches ({count})", {
                 count: conversation.branches,
               })}
               title={t("Branches ({count})", { count: conversation.branches })}
-              onClick={() => setBranchesOpen((open) => !open)}
+              onClick={onOpenBranches}
             >
               <FiGitBranch aria-hidden="true" />
               {conversation.branches}
             </button>
           )}
-          {conversation.pinned && (
+          {pinned && (
             <button
               type="button"
               className="ghost"
@@ -1206,15 +1602,6 @@ export function ChatWorkspace({
           {t("Preparing execution for this Send…")}
         </p>
       )}
-      {branchesOpen && (
-        <BranchTree
-          client={client}
-          id={id}
-          leaf={conversation.leaf}
-          onChoose={chooseBranch}
-          onClose={() => setBranchesOpen(false)}
-        />
-      )}
       <div className="chat-messages-wrap">
         <div
           className="chat-messages"
@@ -1227,6 +1614,7 @@ export function ChatWorkspace({
                 el.scrollHeight - el.scrollTop - el.clientHeight < 80;
               setAway(!stick.current);
               nearTop();
+              trackActive();
             }
           }}
         >
@@ -1266,32 +1654,57 @@ export function ChatWorkspace({
             </div>
           )}
           {placed.start.map(workflowLine)}
-          {rows.map(({ id, version, turn }) => (
-            <Fragment key={id}>
-              <LazyMount
-                id={id}
-                show={!lazy.hidden.has(id)}
-                height={lazy.placeholder(id, version, 320)}
-                containerRef={scroll}
-                onMeasured={lazy.recordMeasured}
-                lazyRef={lazy.register(id)}
-              >
-                {/* An earlier settled turn offers its end as a branch point. */}
-                <ChatTurnView
-                  turn={turn}
-                  onContinue={
-                    turn.header.entry &&
-                    turn.ordinal < conversation.count - 1 &&
-                    !running
-                      ? continueFrom
-                      : undefined
-                  }
-                />
-              </LazyMount>
-              {/* Workflows that started in this turn. */}
-              {placed.after.get(id)?.map(workflowLine)}
-            </Fragment>
-          ))}
+          {rows.map(({ id, version, turn }, position) => {
+            const forks = versions.get(id);
+            return (
+              <Fragment key={id}>
+                {id === firstOff && (
+                  <p className="chat-anchor-divider">
+                    <FiGitBranch aria-hidden="true" />
+                    {t(
+                      "From here on, the turns stay on their branch: the message being written will not have them in its context.",
+                    )}
+                  </p>
+                )}
+                <LazyMount
+                  id={id}
+                  show={!lazy.hidden.has(id) || id === jump?.id}
+                  height={lazy.placeholder(id, version, 320)}
+                  containerRef={scroll}
+                  onMeasured={lazy.recordMeasured}
+                  lazyRef={lazy.register(id)}
+                >
+                  {/* An earlier settled turn offers its end as the place to
+                      continue from; a message may be rewritten where the
+                      entry it continued is known. */}
+                  <ChatTurnView
+                    turn={turn}
+                    onContinue={
+                      canAnchor &&
+                      turn.header.entry &&
+                      turn.ordinal < conversation.count - 1
+                        ? continueFrom
+                        : undefined
+                    }
+                    onEdit={
+                      canAnchor &&
+                      editHead(turn, rows[position - 1]?.turn) !== undefined
+                        ? editFrom
+                        : undefined
+                    }
+                    version={
+                      forks ? forks.findIndex((node) => node.id === id) + 1 : 0
+                    }
+                    versions={forks?.length ?? 0}
+                    onVersion={versionStep}
+                    off={offBranch(anchored, turn.ordinal)}
+                  />
+                </LazyMount>
+                {/* Workflows that started in this turn. */}
+                {placed.after.get(id)?.map(workflowLine)}
+              </Fragment>
+            );
+          })}
           {placed.end.map(workflowLine)}
           {conversation.attempt && (
             <article className="chat-attempt" aria-label={t("Message")}>
@@ -1363,13 +1776,6 @@ export function ChatWorkspace({
               </button>
             </p>
           )}
-          {conversation.pinned && !running && (
-            <p className="inspector-note">
-              {t(
-                "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.",
-              )}
-            </p>
-          )}
         </div>
         {away && (
           <button
@@ -1385,51 +1791,36 @@ export function ChatWorkspace({
             {t("Latest messages")}
           </button>
         )}
-      </div>
-      <form
-        className="chat-composer"
-        onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files"))
-            event.preventDefault();
-        }}
-        onDrop={(event) => {
-          if (!event.dataTransfer.types.includes("Files")) return;
-          event.preventDefault();
-          addImages(Array.from(event.dataTransfer.files));
-        }}
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-      >
-        <input
-          ref={fileInput}
-          type="file"
-          accept={IMAGE_TYPES.join(",")}
-          multiple
-          hidden
-          disabled={imagesLocked}
-          aria-label={t("Add images")}
-          onChange={(event) => {
-            addImages(Array.from(event.currentTarget.files ?? []));
-            event.currentTarget.value = "";
-          }}
-        />
-        {imageDraft.files.length > 0 && (
-          <div className="chat-images">
-            {imageDraft.files.map((file) => (
-              <DraftImage
-                key={imageDraft.key(file)}
-                file={file}
-                disabled={imagesLocked}
-                remove={() => removeImages([file])}
-              />
-            ))}
-          </div>
+        {/* A jump to a turn not shown yet reads back to it first. */}
+        {target && (
+          <p className="chat-jump-status" role="status">
+            {t("Reading earlier messages…")}
+          </p>
         )}
-        {!running && !canPrepareOnly && !canSend && !preparing && (
-          <p className="composer-status" role="status">
-            {pending
+        {questions.length > 1 && (
+          <QuestionRail
+            questions={questions}
+            active={activeQuestion}
+            reading={target?.id ?? null}
+            onJump={jumpTo}
+          />
+        )}
+      </div>
+      <ChatComposer
+        inputRef={textarea}
+        draft={draft}
+        onDraft={setDraft}
+        locked={busy || !!pending || awaitingModel}
+        images={imageDraft.files}
+        imageKey={imageDraft.key}
+        imagesLocked={imagesLocked}
+        onAddImages={addImages}
+        onRemoveImage={(file) => removeImages([file])}
+        anchor={strip}
+        status={
+          running || canPrepareOnly || canSend || preparing
+            ? undefined
+            : pending
               ? t("The last Send is not yet confirmed. No message is resent.")
               : awaitingModel
                 ? t("Choose a model; your message is sent right after.")
@@ -1437,124 +1828,73 @@ export function ChatWorkspace({
                   ? t("Sending…")
                   : t(
                       "Sending is unavailable until the current context is observed. Your draft stays here.",
-                    )}
-          </p>
-        )}
-        <textarea
-          ref={textarea}
-          disabled={busy || !!pending || awaitingModel}
-          aria-label={t("Message")}
-          value={draft}
-          placeholder={t(
-            "Message, or /cadence to enter continuous Cadence mode…",
-          )}
-          rows={3}
-          onChange={(event) => setDraft(event.target.value)}
-          onPaste={(event) => {
-            const files = Array.from(event.clipboardData.files).filter((f) =>
-              f.type.startsWith("image/"),
-            );
-            if (!files.length) return;
-            event.preventDefault();
-            addImages(files);
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void send();
+                    )
+        }
+        cadence={{
+          active: cadence,
+          armed: input.mode === "cadence",
+          known: cadenceKnown,
+          disabled: cadence
+            ? !canExit
+            : !!running || busy || !!pending || awaitingModel,
+          onClick: () => {
+            if (cadence) {
+              void send("exit cadence");
+              return;
             }
-          }}
-        />
-        <div className="composer-toolbar">
-          <button
-            type="button"
-            className="ghost icon"
-            disabled={imagesLocked}
-            aria-label={t("Add images")}
-            title={t("Add images")}
-            onClick={() => fileInput.current?.click()}
-          >
-            <FiImage aria-hidden="true" />
-          </button>
-          <CadenceModeButton
-            active={cadence}
-            armed={input.mode === "cadence"}
-            known={cadenceKnown}
-            disabled={
-              cadence
-                ? !canExit
-                : !!running || busy || !!pending || awaitingModel
-            }
-            onClick={() => {
-              if (cadence) {
-                void send("exit cadence");
-                return;
-              }
-              if (input.mode === "cadence") {
-                setMode("chat");
-                if (cadenceInput(draft, "chat").mode === "cadence")
-                  setDraft(input.text);
-              } else setMode("cadence");
-            }}
-          />
-          <ModelPicker
-            client={modelClient}
-            availability={availability}
-            read={modelRead}
-            lastModel={context?.model}
-            draftModel={draftModel}
-            onPreviewChoice={
-              previewModels ? (choice) => chosenModel(choice, false) : undefined
-            }
-            locked={!!running || busy || !!pending}
-            open={modelOpen}
-            onOpenChange={openModels}
-            onChanged={() => {
-              contextRead.refresh();
-              onModelChanged();
-            }}
-            onChosen={(choice) => chosenModel(choice, true)}
-            awaitingSend={awaitingModel}
-          />
-          <span className="composer-hint">
-            {cadence
-              ? t("Cadence stays on. Confirm one plan before implementation.")
-              : input.mode === "cadence"
-                ? t("Your next message turns on Cadence mode.")
-                : ""}
-          </span>
-          {running ? (
-            <button
-              type="button"
-              className="danger"
-              aria-label={t("Stop response")}
-              title={t("Stop response")}
-              disabled={busy || !canInterrupt}
-              onClick={() => void interrupt()}
-            >
-              <FiSquare aria-hidden="true" />
-            </button>
-          ) : (
-            <button
-              aria-label={t("Send")}
-              title={t("Send")}
-              type="submit"
-              className="primary"
-              disabled={
-                (!(cadence && cadenceExit(draft) ? canExit : canSend) &&
-                  !canPrepareOnly) ||
-                (!draft.trim() && !imageDraft.files.length)
-              }
-            >
-              <FiArrowUp aria-hidden="true" />
-            </button>
-          )}
-        </div>
-      </form>
+            if (input.mode === "cadence") {
+              setMode("chat");
+              if (cadenceInput(draft, "chat").mode === "cadence")
+                setDraft(input.text);
+            } else setMode("cadence");
+          },
+        }}
+        model={{
+          client: modelClient,
+          availability,
+          read: modelRead,
+          lastModel: context?.model,
+          draftModel,
+          onPreviewChoice: previewModels
+            ? (choice) => chosenModel(choice, false)
+            : undefined,
+          locked: !!running || busy || !!pending,
+          open: modelOpen,
+          onOpenChange: openModels,
+          onChanged: () => {
+            contextRead.refresh();
+            onModelChanged();
+          },
+          onChosen: (choice) => chosenModel(choice, true),
+          awaitingSend: awaitingModel,
+        }}
+        hint={
+          cadence
+            ? t("Cadence stays on. Confirm one plan before implementation.")
+            : input.mode === "cadence"
+              ? t("Your next message turns on Cadence mode.")
+              : ""
+        }
+        running={!!running}
+        canStop={!busy && canInterrupt}
+        onStop={() => void interrupt()}
+        canSend={
+          ((cadence && cadenceExit(draft) ? canExit : canSend) ||
+            canPrepareOnly) &&
+          !attaching &&
+          (!!draft.trim() || imageDraft.files.length > 0)
+        }
+        onSend={() => void send()}
+        historyScope={workspaceId}
+        files={{
+          client,
+          location:
+            available && contextKnown && context
+              ? { id, cwd: context.cwd }
+              : undefined,
+        }}
+        onResized={keepEnd}
+      />
     </section>
   );
 }

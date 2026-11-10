@@ -1,8 +1,9 @@
 /* Direct selected rule families from pi-web-ui web/src/styles.css
  * e8bab487af208bc9a1ab60a821652323f598127f; MIT (c) 2026 xing-shuyin.
  * Workspace/transcript/tools/rich/preview/SCM/search/plan/responsive families only.
- * From b627452c: the msg-actions, file-diff/diff and lp-filter families, and
- * the tokens' light values (themes/white.css, the violet accent kept). */
+ * From b627452c: the msg-actions, file-diff/diff, lp-filter and qn-rail
+ * families, and the tokens' light values (themes/white.css, the violet accent
+ * kept). */
 :root {
   --bg: light-dark(#ffffff, #0d0e12);
   --bg-elev: light-dark(#ffffff, #14161c);
@@ -701,11 +702,6 @@
 .main:has(.goalbar) .scroll-bottom,
 .main:has(.dialog-inline) .scroll-bottom {
   bottom: 4px;
-}
-
-.main:has(.goalbar) .qn-rail,
-.main:has(.dialog-inline) .qn-rail {
-  bottom: 10px;
 }
 
 .messages {
@@ -1496,6 +1492,235 @@ div.chead[role="button"]:focus-visible,
 .msg-user .msg-action > svg {
   width: 14px;
   height: 14px;
+}
+
+/* The question rail (pi .qn-rail / .qn-bar / .qn-list, b627452c): one bar per
+ * user message at the transcript's edge. Cadence: it opens on focus as well as
+ * hover, the active bar is longer as well as tinted, and no per-message tag. */
+.qn-rail {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  right: 14px;
+  width: 24px;
+  z-index: 15;
+  border-radius: 12px;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 0;
+  gap: var(--rail-gap, 27px);
+}
+
+.qn-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 216px;
+  pointer-events: none;
+}
+
+.qn-rail:hover::before,
+.qn-rail:focus-within::before {
+  pointer-events: auto;
+}
+
+.qn-bar {
+  position: relative;
+  flex-shrink: 0;
+  width: 10px;
+  height: 3px;
+  min-height: 0;
+  border: none;
+  border-radius: 2px;
+  background: var(--glow-22);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.12s,
+    width 0.12s;
+}
+
+/* A larger target than the 3px bar itself. */
+.qn-bar::after {
+  content: "";
+  position: absolute;
+  inset: -3px -5px;
+}
+
+.qn-bar:hover,
+.qn-bar:focus-visible {
+  background: var(--glow-38);
+  outline: none;
+}
+
+.qn-bar.active {
+  width: 16px;
+  background: var(--accent);
+}
+
+.qn-bar[aria-busy="true"] {
+  background: var(--amber);
+}
+
+.qn-bar-text {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 210px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  pointer-events: auto;
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    visibility 0s;
+}
+
+.qn-rail:hover .qn-bar-text,
+.qn-rail:focus-within .qn-bar-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+.qn-bar:hover .qn-bar-text,
+.qn-bar:focus-visible .qn-bar-text {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.qn-bar.active .qn-bar-text {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.qn-rail.many .qn-bar-text {
+  display: none;
+}
+
+.qn-list {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 0;
+  bottom: 0;
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px var(--shadow-2);
+  pointer-events: none;
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    visibility 0s;
+}
+
+.qn-rail.many:hover .qn-list,
+.qn-rail.many:focus-within .qn-list {
+  pointer-events: auto;
+  visibility: visible;
+  opacity: 1;
+}
+
+.qn-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.qn-list-item:hover,
+.qn-list-item:focus-visible {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+
+.qn-list-item.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.qn-list-idx {
+  flex-shrink: 0;
+  min-width: 17px;
+  height: 17px;
+  line-height: 17px;
+  text-align: center;
+  border-radius: 5px;
+  background: var(--bg-elev3);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+
+.qn-list-item.active .qn-list-idx {
+  background: var(--accent-strong);
+  color: var(--on-accent);
+}
+
+.qn-list-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes qn-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  }
+
+  100% {
+    background-color: transparent;
+  }
+}
+
+.msg-flash {
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .msg-flash {
+    animation: qn-flash 1.6s ease-out;
+  }
 }
 
 .chead-copy > svg,

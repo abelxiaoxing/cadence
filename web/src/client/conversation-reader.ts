@@ -1,7 +1,7 @@
 /** Reads one conversation (a Pi session) for display: a small head poll, every
  * shown turn of the branch once, and only an unsettled or growing turn again.
- * Earlier turns load on request. It follows the session's current leaf unless
- * a branch is chosen. */
+ * Earlier turns load on request, a few at a time or back to a named turn. It
+ * follows the session's current leaf unless a branch is chosen. */
 import { abortScope } from "../../../src/abort-scope.ts";
 import type {
   ChatAttempt,
@@ -82,6 +82,8 @@ export class ConversationReader {
   private context: ChatContext | undefined;
   private count = 0;
   private first: number | null = null;
+  /** The oldest turn a chosen branch opens at, until its head is read. */
+  private opening: number | null = null;
   private readonly turns = new Map<number, LoadedTurn>();
   private readonly imageReaders = new Map<
     string,
@@ -125,9 +127,15 @@ export class ConversationReader {
   refresh = (): void => {
     void this.tick();
   };
-  /** Show the branch that ends at `leaf`; null follows the current leaf again. */
-  choose = (leaf: string | null): void => {
-    if (this.closed || this.pinned === leaf) return;
+  /** Show the branch that ends at `leaf`; null follows the current leaf again.
+   * `first` names the oldest turn to show at once, for a branch chosen at one
+   * of its messages rather than at its end. */
+  choose = (leaf: string | null, first?: number): void => {
+    if (this.closed) return;
+    if (this.pinned === leaf) {
+      if (first !== undefined) this.showFrom(first);
+      return;
+    }
     // Navigation retires reads, never an admitted Send or owner operation.
     // A retained summary is not a fresh observation of the selected branch.
     this.abort.abort();
@@ -137,6 +145,7 @@ export class ConversationReader {
     this.context = undefined;
     this.error = "";
     this.forget();
+    this.opening = first === undefined ? null : Math.max(0, first);
     this.publish();
     void this.tick();
   };
@@ -150,6 +159,21 @@ export class ConversationReader {
   loadEarlier = (): void => {
     if (this.closed || this.loadingEarlier || !this.first) return;
     this.first = Math.max(0, this.first - EARLIER_TURNS);
+    this.loadingEarlier = true;
+    this.publish();
+    void this.tick();
+  };
+  /** Show every turn from `ordinal` on: a jump to a turn not loaded yet. The
+   * shown turns stay gap-free, so each turn in between is read too. */
+  showFrom = (ordinal: number): void => {
+    if (this.closed) return;
+    if (this.first === null) {
+      // Nothing is shown yet: the head read under way opens there.
+      this.opening = Math.max(0, ordinal);
+      return;
+    }
+    if (ordinal >= this.first) return;
+    this.first = Math.max(0, ordinal);
     this.loadingEarlier = true;
     this.publish();
     void this.tick();
@@ -206,7 +230,8 @@ export class ConversationReader {
     } finally {
       this.running = false;
     }
-    if (earlier) this.loadingEarlier = false;
+    // A request made meanwhile is served by the pass that follows.
+    if (earlier && !this.again) this.loadingEarlier = false;
     this.publish();
     if (this.again) {
       this.again = false;
@@ -244,10 +269,10 @@ export class ConversationReader {
     this.context = head.context;
     this.summary = head.summary;
     this.count = head.turns;
-    this.first = Math.min(
-      this.first ?? Math.max(0, head.turns - INITIAL_TURNS),
-      head.turns,
-    );
+    // Never fewer than the newest turns, however late the named one is.
+    const newest = Math.max(0, head.turns - INITIAL_TURNS);
+    this.first = Math.min(this.first ?? this.opening ?? newest, newest);
+    this.opening = null;
     this.publish();
     const wanted: number[] = [];
     for (let o = this.first; o < this.count; o++) {

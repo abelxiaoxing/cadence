@@ -51,3 +51,25 @@ export function activityRoute(
     return { selected: false, leaf: null };
   }
 }
+
+/** A chat hash naming the branch shown, or no longer naming one. Only the leaf
+ * changes: the conversation and an activity mark stay as they are. */
+export function branchHash(hash: string, leaf: string | null): string {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  if (leaf === null) params.delete("leaf");
+  else params.set("leaf", decodeEntryId(leaf));
+  return `#${params}`;
+}
+/** Keeps the branch shown in the address, so a refresh shows it again. The
+ * entry is replaced, which is no navigation: nothing is re-read or sent. */
+export function rememberBranch(conversation: string, leaf: string | null) {
+  if (typeof window === "undefined" || chatFromLocation() !== conversation)
+    return;
+  const hash = branchHash(window.location.hash, leaf);
+  if (hash !== window.location.hash)
+    history.replaceState(
+      history.state,
+      "",
+      `${location.pathname}${location.search}${hash}`,
+    );
+}

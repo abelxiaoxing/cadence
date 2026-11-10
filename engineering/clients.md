@@ -125,7 +125,7 @@ Saved plan approval does not prepare a stopped owner: it still requires fresh li
 Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
 Use `/cadence [goal]` at the beginning of an explicit Send, or select Cadence on Send, to enable persistent mode in that same conversation.
 Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
-Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts/display preferences and uncertain attempt IDs.
+Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts (with the anchor of a message being rewritten), the prompts this tab sent (sessionStorage, for recall), display preferences and uncertain attempt IDs.
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
@@ -212,7 +212,7 @@ The open conversation reports its own turn count, live turn and context size to 
 The context item (`web/src/layout/ContextStatus.tsx`) states the tokens the head read reports (see [Ordinary conversations](#ordinary-conversations)) and, when the model catalog already read for the composer has an entry for that reply's provider and model with a context window, the window and the percentage in use; without such an entry it states the tokens only, after a compaction it says the size is unknown, and it is absent when the head read states no context size.
 Its tooltip says the figure is as of the last completed model response and leaves out the messages after it; it adds no read or poll of its own, takes the statusbar's warning tone from 90% of the window, and shows a figure above the window as more than 100%.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
-The conversation header is one line: the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch controls, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
+The conversation header is one line: the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch count of a forked session (it opens the Branches tab) with the way back to the latest branch, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
 One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
 A transient local result is a toast under the topbar (`web/src/layout/toasts.ts`, browser-local): a copied link, a failed copy, or a refusal that reached no owner (a Send, image, rename or archive the browser itself refused, or one the owner answered with `effect:none`).
 An error toast stays until dismissed or until its conversation's next attempt, the others pause while hovered or focused; an unknown outcome, an owner-side effect (execution prepared, a Stop or approval reply) and every observation statement stay in place, never in a toast.
@@ -223,6 +223,9 @@ Its name filter narrows the entries already listed and reads nothing; the readon
 A previewed file is shown verbatim through the Markdown code renderer: numbered lines, a copy action and, for a known extension, the bundled highlighter.
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
+The composer (`ChatComposer.tsx`) edits the conversation's draft and holds no message state: its text area grows with the text up to a bound, and a keyboard-operable handle on its top edge sets a fixed height remembered in that browser.
+Up and Down on the first and last visual line recall the prompts this tab sent in the checkout (Escape returns to the draft), and an `@` typed there opens a popup that completes a path one folder at a time from the bounded Files listing and inserts the same path reference as the Files pane; none of these sends, reads a file's contents or starts anything.
+The question rail at the transcript's right edge has one numbered bar per user message of the branch shown, opens on hover or focus, is one arrow-key group and is absent on phones.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
 The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
 A conversation row is its title and last-modified time; a second line appears only for a live workflow's phase or a reply that is not simply completed.
@@ -242,6 +245,7 @@ When a workflow ID list changes, observations of still-listed live runs survive 
 A compact sidebar list notes only partial, redacted or omitted recording coverage; complete coverage needs no note there.
 It is not a subagent engine.
 The right sidebar uses the current conversation's cwd for readonly files, bounded text previews and path-only references; retained content/check/change/review evidence occupies its History details tab.
+An open conversation adds a Branches tab: the session's user messages as a tree with one rail per fork level, the branch shown marked by a filled dot and weight as well as its tint, a filter over the rows listed, a click that shows a message in its branch, and per-row "Edit and resend" and "Continue from here" (see [Ordinary conversations](#ordinary-conversations)).
 The lower-right folder button contains recent directories and selects one on the service host without starting its independent owner.
 The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
 Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/build/CSRF checks.
@@ -296,7 +300,7 @@ Each admitted turn/workflow records its original execution context; queue releas
 File views follow the retained conversation cwd, and directory navigation does not rewrite that cwd; choosing a different folder opens a separate conversation context.
 The UI labels recorded context as fixed at admission, not as proof that tools ran.
 Older records without a snapshot stay readable without invented model/directory evidence.
-A Send names the entry it continues: the end of the branch the browser shows, or none for an empty session.
+A Send names the entry it continues: the composer's anchor when one is set, else the end of the branch the browser shows; none for an empty session or a rewritten first message.
 The owner admits one browser message per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
 A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on.
 A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
@@ -332,9 +336,14 @@ Authenticated `conversation-image` reads return bounded parts, including through
 A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.
 The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
+A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
-A branch tree (Pi's `/tree`, user messages only) chooses the branch to read; "Continue from here" shows a turn's end, and the next message starts a new branch there; nothing is moved or deleted.
+The branch shown (the view) and the entry the next message continues (the anchor) are separate: the view is chosen from one `conversation-tree` read for the branch shown (Pi's `/tree`, user messages only; made again when that branch gains or changes a message, not for each entry of a reply), which feeds the inspector's Branches tab, a version pager on each message where the session forks (the user messages that follow the same earlier one) and the question rail; choosing any of them only reads.
+The anchor is the end of the view unless one is set: "Edit and resend" on a user message sets it to the entry that message continued, loads the message's text into the composer and reads its images back as bytes into the in-memory draft, and "Continue from here" on a turn's last message sets it to that turn's end with an empty draft.
+The turns the new message will not have in its context stay shown, dimmed under a divider that says so, and a strip above the composer names what is rewritten or continued, states that only the conversation is rewound (files on disk are untouched) and has Cancel, which restores the draft set aside; an accepted Send restores it too and follows the new branch as the latest.
+An anchor is kept with the conversation's draft in sessionStorage, is released when another branch is chosen, and is not offered while a reply is queued or running; a service that predates the turn's `parent` leaves a rewrite only where the previous shown turn's end can stand in, never for a first message.
+Nothing is moved or deleted, and setting or cancelling an anchor sends nothing.
 While a terminal holds a session, its extension notices entries it did not write (a name recorded from the browser is not one) and suggests `/resume`; a message sent there first continues from where the terminal is, as a new branch.
 Pre-Pi Cadence conversations are no longer supported.
 Their identities are refused as `retired-conversation`, never reused as empty Pi sessions; start a new conversation.
@@ -357,6 +366,7 @@ Send preparation uses one scope through gateway observation, POST and fresh atta
 History images keep one scope across all pages; parallel detail parts each dispose only their own scope, so an early Promise.all rejection cannot disconnect still-pending siblings from navigation cancellation.
 
 Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
+The chat hash also names a chosen branch (`leaf`): the conversation replaces it in place when the branch shown changes, which is no navigation, so a refresh shows that branch again and following the latest removes it.
 Project readiness, viewer freshness and actual work status are separate observations.
 A failed/unavailable readiness read retains earlier history identity but marks it stale/unknown; a pending re-observation or epoch change cannot make a retained value current.
 Positive stopped/not-started observations keep preparation guidance in the statusbar, not a global banner; explicit Send still displays its local preparation progress.
@@ -425,7 +435,8 @@ An opened `edit` or `write` card shows those arguments as the requested change (
 Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
-Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts), and under the user's message of an earlier settled turn it offers "Continue from here"; a reply still being written has none.
+Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
+Neither anchor action is offered while a reply is queued or running or a Send is in flight, and a reply still being written has no bar.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.
