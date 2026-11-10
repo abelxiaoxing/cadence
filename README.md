@@ -59,10 +59,12 @@ Choose a vision-capable model; see [image input](docs/conversation-mode.md#image
 
 Enter `/cadence <goal>` once in any trusted project's Pi conversation.
 Continue with normal messages: Cadence investigates, consolidates questions and develops a readable plan with you.
-After one explicit delivery approval it automatically implements, recovers, reviews and verifies within the agreed boundary.
+After one explicit delivery approval it finishes without asking again: it implements, recovers, re-plans when the route does not work, reviews and verifies.
+The goal, decisions, acceptance and its listed assumptions stay as approved; if an acceptance item proves impossible it delivers the closest result and reports that deviation first.
 Each approved local delivery gets a named branch and one stable worktree that preserves partial work, runs independent assignments side by side in temporary worktrees beside it, then merges back into the displayed original branch.
 Mode entry/research create no Git resources; approved local commits/merge never imply a remote push.
-Relevant project documents are injected into workers and updated from verified lessons, without a separate knowledge-management command.
+Workers are given the documents and sections that own the code they touch, and each delivery ends by curating a small knowledge store under `.cadence/` that stays inside a fixed budget: new lessons displace or compress old ones, without a separate knowledge-management command.
+`CADENCE_PARALLEL` (default 4) sets how many workers of one run are active at once.
 
 **Completing a goal leaves the conversation in Cadence mode.**
 No repeated command is needed.
