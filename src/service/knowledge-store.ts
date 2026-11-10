@@ -19,6 +19,9 @@ export const KNOWLEDGE_STORE = {
   entryBytes: 1024,
   totalBytes: 200 * 1024,
   topicFiles: 64,
+  /** Curated deliveries without any worker being routed to a route's target
+   * before the curator is told it is a candidate for removal. */
+  idleDeliveries: 8,
 } as const;
 /** Paths a delivery may always maintain: the store itself. */
 export const KNOWLEDGE_SCOPE: readonly string[] = [
@@ -277,8 +280,103 @@ function readSource(root: string, path: string): string {
 const size = (bytes: number) =>
   bytes === Number.MAX_SAFE_INTEGER ? "more than one read" : `${bytes} bytes`;
 
+/** What a route leads to, as readers and the usage record name it. */
+export const routeLabel = (
+  route: Pick<KnowledgeRoute, "target" | "section">,
+) => (route.section ? `${route.target}#${route.section}` : route.target);
+/** How the store has been used, counted in curated deliveries. The owner
+ * keeps it in its private state: it decides which topic is looked over next
+ * and which routes nothing has needed for a long time. Nothing is pinned and
+ * nothing here is knowledge; losing it only restarts the counting. */
+export interface KnowledgeUse {
+  deliveries: number;
+  /** By route label: the delivery it was first seen at and last routed in. */
+  routes: Record<string, { first: number; used?: number }>;
+  /** By topic path: the delivery that last looked it over. */
+  topics: Record<string, { reviewed: number }>;
+}
+export function decodeKnowledgeUse(value: unknown): KnowledgeUse {
+  const count = (v: unknown) => {
+    if (!Number.isSafeInteger(v) || (v as number) < 0)
+      throw new Error("Invalid knowledge use");
+    return v as number;
+  };
+  const record = (v: unknown) => {
+    if (!v || typeof v !== "object" || Array.isArray(v))
+      throw new Error("Invalid knowledge use");
+    return Object.entries(v as Record<string, unknown>);
+  };
+  const o = Object.fromEntries(record(value));
+  return {
+    deliveries: count(o.deliveries),
+    routes: Object.fromEntries(
+      record(o.routes).map(([label, entry]) => {
+        const e = Object.fromEntries(record(entry));
+        return [
+          label,
+          {
+            first: count(e.first),
+            ...(e.used === undefined ? {} : { used: count(e.used) }),
+          },
+        ];
+      }),
+    ),
+    topics: Object.fromEntries(
+      record(o.topics).map(([path, entry]) => [
+        path,
+        { reviewed: count(Object.fromEntries(record(entry)).reviewed) },
+      ]),
+    ),
+  };
+}
+/** One more curated delivery: `routed` are the routes its workers were given.
+ * Returns the record to keep, the topic that has gone longest without a look
+ * (now marked as looked over) and the routes idle for `idleDeliveries`.
+ * Routes and topics no longer in the store are forgotten. */
+export function advanceKnowledgeUse(
+  previous: KnowledgeUse | null,
+  store: { routes: readonly string[]; topics: readonly string[] },
+  routed: Iterable<string>,
+): { use: KnowledgeUse; rotation: string | null; idle: string[] } {
+  const deliveries = (previous?.deliveries ?? 0) + 1;
+  const given = new Set(routed);
+  const routes: KnowledgeUse["routes"] = {};
+  for (const label of store.routes) {
+    const known = previous?.routes[label];
+    routes[label] = {
+      first: known?.first ?? deliveries,
+      ...(given.has(label)
+        ? { used: deliveries }
+        : known?.used === undefined
+          ? {}
+          : { used: known.used }),
+    };
+  }
+  const topics: KnowledgeUse["topics"] = {};
+  let rotation: string | null = null;
+  for (const path of store.topics) {
+    const reviewed = previous?.topics[path]?.reviewed ?? 0;
+    if (reviewed) topics[path] = { reviewed };
+    if (rotation === null || reviewed < (topics[rotation]?.reviewed ?? 0))
+      rotation = path;
+  }
+  if (rotation !== null) topics[rotation] = { reviewed: deliveries };
+  return {
+    use: { deliveries, routes, topics },
+    rotation,
+    idle: Object.entries(routes)
+      .filter(
+        ([, entry]) =>
+          deliveries - (entry.used ?? entry.first) >=
+          KNOWLEDGE_STORE.idleDeliveries,
+      )
+      .map(([label]) => label),
+  };
+}
 export interface KnowledgeLint {
   findings: KnowledgeFinding[];
+  /** What the route table leads to, by label. */
+  routes: string[];
   /** Entries about code this delivery changed: the curator checks them again. */
   revalidate: KnowledgeEntry[];
   usage: {
@@ -383,6 +481,7 @@ export function lintKnowledge(
   }
   return {
     findings,
+    routes: [...new Set((store.index?.routes ?? []).map(routeLabel))],
     revalidate,
     usage: {
       indexBytes: store.index?.bytes ?? 0,

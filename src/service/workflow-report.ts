@@ -134,18 +134,43 @@ export function reviewReport(
 export function implementationReport(
   reply: string,
   secrets: readonly string[] = [],
-): { status: "completed" | "blocked"; summary: string } | null {
+): {
+  status: "completed" | "blocked";
+  summary: string;
+  /** What the worker proposes as worth knowing next time; unverified. */
+  lessons?: string[];
+} | null {
   try {
     const body = reply
       .trim()
       .replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
-    const o = closed(parseWireJson(body, 16384), ["status", "summary"]);
+    const raw = parseWireJson(body, 16384);
+    const o = closed(raw, [
+      "status",
+      "summary",
+      ...(Object.hasOwn((raw ?? {}) as object, "lessons") ? ["lessons"] : []),
+    ]);
     if (o.status !== "completed" && o.status !== "blocked") return null;
     if (typeof o.summary !== "string" || !o.summary.trim()) return null;
+    if (
+      o.lessons !== undefined &&
+      (!Array.isArray(o.lessons) ||
+        o.lessons.length > 5 ||
+        o.lessons.some(
+          (lesson) =>
+            typeof lesson !== "string" || !lesson.trim() || lesson.length > 400,
+        ))
+    )
+      return null;
     // Decode structure before sanitizing field values: display regexes must
     // never eat JSON delimiters, and escaped literals need decoding first.
     const summary = sanitizeText(o.summary, secrets);
-    return summary.trim() ? { status: o.status, summary } : null;
+    const lessons = ((o.lessons as string[] | undefined) ?? [])
+      .map((lesson) => sanitizeText(lesson, secrets).trim())
+      .filter(Boolean);
+    return summary.trim()
+      ? { status: o.status, summary, ...(lessons.length ? { lessons } : {}) }
+      : null;
   } catch {
     return null;
   }

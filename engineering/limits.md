@@ -125,7 +125,9 @@ Checkout session discovery considers at most 256 directory sources and remembers
 The one shared reader retains its existing eight parsed-session and 64 built-turn bounds across those sources, not one cache per directory; no checkout tree is scanned and no session directory is created by discovery.
 
 Project knowledge observations use `KNOWLEDGE_LIMITS` in `src/service/project-knowledge.ts`: 160 candidate documents, depth 3, 64KiB observed per file, 8KiB per named source and 4KiB per discovered one, and at most 16KiB of selected context (less when the existing 32KiB worker context needs the room).
-The managed store's budget is `KNOWLEDGE_STORE` in `src/service/knowledge-store.ts`: a 4KiB route table, 8KiB per topic, 1KiB per entry, 200KiB in all and 64 topic files; a delivery that leaves it over budget does not pass.
+The managed store's budget is `KNOWLEDGE_STORE` in `src/service/knowledge-store.ts`: a 4KiB route table, 8KiB per topic, 1KiB per entry, 200KiB in all and 64 topic files; a delivery that leaves it over budget does not pass; a route no worker was routed to for eight curated deliveries (`idleDeliveries`) is named to the curator.
+Recorded investigations use `INVESTIGATIONS` in `src/service/investigations.ts`: 32 cited files per record out of 256 path-like words examined, files up to 2MiB, and reuse of an answer for 14 days.
+A worker's report may propose five lessons of 400 characters; one delivery keeps 32 (`LESSONS` in `src/service/workflows.ts`).
 Selected excerpts and omitted sources are labelled.
 These are per-observation bounds, not delivery budgets.
 
