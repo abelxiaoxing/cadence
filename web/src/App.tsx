@@ -1196,7 +1196,8 @@ export function App({
               key={fileLocation?.cwd ?? "owner"}
               location={fileLocation}
               client={api.client}
-              enabled={!!workspace.workspace && !!fileLocation}
+              enabled={conversationAvailable && !!fileLocation}
+              observed={`${execution.readiness}:${execution.value?.epoch ?? ""}`}
               onReference={(path) => {
                 if (!chatId) selectChat(filesConversationId);
                 // A reference opened from a legacy view may enter a conversation

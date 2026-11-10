@@ -2,7 +2,7 @@
  * rows with hover actions, name filter, readonly preview and path references.
  * MIT (c) 2026 xing-shuyin.
  * No file mutation, remote SSH, transfer, plugin widgets or set_cwd transport. */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FiCheck,
   FiChevronRight,
@@ -38,11 +38,15 @@ export function FilesPanel({
   client,
   enabled,
   location,
+  observed = "",
   onReference,
 }: {
   client: ServiceClient;
   enabled: boolean;
   location?: ConversationLocation;
+  /** Changes when execution starts, stops or is replaced: the reads move
+   * between the stopped-owner reader and the owner, so they are made again. */
+  observed?: string;
   onReference(path: string): void;
 }) {
   const { t } = useT();
@@ -64,6 +68,15 @@ export function FilesPanel({
       ? { kind: "file", path: selected, ...(location ? { location } : {}) }
       : null,
   );
+  const { refresh: refreshFiles } = files,
+    { refresh: refreshPreview } = preview;
+  const lastObserved = useRef(observed);
+  useEffect(() => {
+    if (lastObserved.current === observed) return;
+    lastObserved.current = observed;
+    refreshFiles();
+    refreshPreview();
+  }, [observed, refreshFiles, refreshPreview]);
   const listing = files.value?.kind === "files" ? files.value : undefined;
   const file = preview.value?.kind === "file" ? preview.value : undefined;
   const open = (next: string) => {
@@ -177,7 +190,7 @@ export function FilesPanel({
           <p className="panel-empty" role="status">
             {t(
               location
-                ? "Files are unavailable until the execution state is ready."
+                ? "Files appear once this folder has been observed."
                 : "The conversation folder has not been observed.",
             )}
           </p>

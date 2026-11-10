@@ -209,6 +209,18 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
       .toBe(false);
     const snapshot = tree(c.files.namespace);
     expect(await observe()).toEqual({ ...before, status: "stopped" });
+    // The stopped owner's folder stays browsable through the same HTTP read,
+    // with the owner's refusals; the namespace hash below proves no write.
+    writeFileSync(join(workspace, "visible.txt"), "still readable\n");
+    const listing = await read({ kind: "files", path: "" });
+    if (listing.kind !== "files") throw Error("files");
+    expect(listing.entries.map((entry) => entry.name)).toContain("visible.txt");
+    expect(await read({ kind: "file", path: "visible.txt" })).toEqual({
+      kind: "file",
+      path: "visible.txt",
+      text: "still readable\n",
+      limited: false,
+    });
     const page = await read({ kind: "conversations" });
     if (page.kind !== "conversations") throw Error("listing");
     expect(page.entries.find((row) => row.id === id)?.cadence).toBe(true);

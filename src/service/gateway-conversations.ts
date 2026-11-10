@@ -1,11 +1,15 @@
-/** Retained conversation views for stopped owners. Never starts an owner, loads
- * Pi, repairs records or treats an unresponsive owner as stopped. */
+/** Retained conversation views and readonly files for stopped owners. Never
+ * starts an owner, loads Pi, repairs records or treats an unresponsive owner as
+ * stopped. */
 import { homedir } from "node:os";
 import { AccessMaterial, type TokenSource } from "./auth.ts";
 import { ContractError } from "./contracts/core.ts";
 import type { ProjectEntry } from "./contracts/gateway.ts";
 import type { WorkbenchRead, WorkbenchResult } from "./contracts/workbench.ts";
-import { ConversationContextRecords } from "./conversation-contexts.ts";
+import {
+  assertConversationDirectory,
+  ConversationContextRecords,
+} from "./conversation-contexts.ts";
 import { ConversationControls } from "./conversation-controls.ts";
 import { ConversationRecords } from "./conversation-records.ts";
 import { ServiceCoordination } from "./coordination.ts";
@@ -17,6 +21,7 @@ import {
 } from "./model-config.ts";
 import { readHostConfig } from "./runtime.ts";
 import { readServerConfig } from "./server-config.ts";
+import { WorkbenchFiles } from "./workbench-files.ts";
 
 /** Each reader has its existing bounded history scans/cache. Eviction closes
  * scans, so a stale continuation refuses rather than silently starting over. */
@@ -27,7 +32,9 @@ interface View {
   controls: ConversationControls;
   assertCurrent(): void;
 }
-export function retainedConversationRead(request: WorkbenchRead): boolean {
+/** Reads this gateway answers itself while no owner runs: they need the
+ * project's files, never execution. */
+function retainedRead(request: WorkbenchRead): boolean {
   return [
     "conversations",
     "conversation",
@@ -37,6 +44,8 @@ export function retainedConversationRead(request: WorkbenchRead): boolean {
     "cadence-conversation",
     "conversation-context",
     "conversation-tree",
+    "files",
+    "file",
   ].includes(request.kind);
 }
 /** A never-prepared selection can show an initial conversation even while the
@@ -67,7 +76,7 @@ export class GatewayConversations {
     project: ProjectEntry,
     request: WorkbenchRead,
   ): WorkbenchResult | undefined {
-    if (!retainedConversationRead(request)) return undefined;
+    if (!retainedRead(request)) return undefined;
     const c = new ServiceCoordination(project.path, this.stateHome);
     if (c.store.root !== project.path) throw new ContractError("stale");
     const status = c.inspect().status;
@@ -152,6 +161,7 @@ export class GatewayConversations {
       this.views.set(project.id, view);
     }
     view.assertCurrent();
+    const { records } = view;
     let result: WorkbenchResult;
     switch (request.kind) {
       case "conversation-context":
@@ -208,6 +218,28 @@ export class GatewayConversations {
       case "cadence-conversation":
         result = { kind: request.kind, state: view.controls.state(request.id) };
         break;
+      case "files":
+      case "file": {
+        // The owner's own rule for a conversation directory, minus its lease:
+        // same refusals, limits and redaction, and nothing is written.
+        const secrets = records.readSecrets();
+        const cwd = request.location
+          ? new ConversationContextRecords(c, records.sessions).read(
+              request.location,
+            ).context.cwd
+          : project.cwd;
+        assertConversationDirectory(c.store.root, cwd, secrets);
+        const files = new WorkbenchFiles(
+          cwd,
+          [c.files.namespace, agentDir],
+          () => records.readSecrets(),
+        );
+        result =
+          request.kind === "files"
+            ? files.list(request.path)
+            : files.read(request.path);
+        break;
+      }
       default:
         throw new ContractError("invalid");
     }

@@ -89,6 +89,25 @@ export class ConversationContextRecords {
     return { context, file };
   }
 }
+/** A conversation's directory is exactly one existing directory of this
+ * checkout, named by a path that needs no redaction. The live owner and the
+ * stopped-owner readers share this rule. */
+export function assertConversationDirectory(
+  root: string,
+  cwd: string,
+  secrets?: readonly string[],
+): void {
+  let actual: ReturnType<typeof resolveWorkspace>;
+  try {
+    actual = resolveWorkspace(cwd);
+  } catch {
+    throw new ContractError("stale");
+  }
+  if (actual.cwd !== cwd || actual.root !== root)
+    throw new ContractError("stale");
+  if (secrets && sanitizeText(cwd, secrets) !== cwd)
+    throw new ContractError("forbidden");
+}
 export class ConversationContexts {
   readonly records: ConversationContextRecords;
   private readonly seed = randomUUID();
@@ -109,16 +128,11 @@ export class ConversationContexts {
   private current(cwd: string, checkSecrets = true) {
     this.o.owner.lease.assert();
     if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
-    let actual: ReturnType<typeof resolveWorkspace>;
-    try {
-      actual = resolveWorkspace(cwd);
-    } catch {
-      throw new ContractError("stale");
-    }
-    if (actual.cwd !== cwd || actual.root !== this.o.coordination.store.root)
-      throw new ContractError("stale");
-    if (checkSecrets && sanitizeText(cwd, this.o.secrets()) !== cwd)
-      throw new ContractError("forbidden");
+    assertConversationDirectory(
+      this.o.coordination.store.root,
+      cwd,
+      checkSecrets ? this.o.secrets() : undefined,
+    );
   }
   directory(location?: ConversationLocation): string {
     const cwd = location ? this.records.read(location).context.cwd : this.o.cwd;

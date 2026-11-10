@@ -90,8 +90,8 @@ export const zh = {
   "Nothing more is recorded for this call.": "此调用没有更多记录。",
   Output: "输出",
   "Error output": "错误输出",
-  "Files are unavailable until the execution state is ready.":
-    "执行状态就绪后才能读取文件。",
+  "Files appear once this folder has been observed.":
+    "读取到该目录的状态后即可浏览文件。",
   "The conversation folder has not been observed.": "尚未读取到当前会话目录。",
   "Reading files…": "正在读取文件…",
   "Plan approval is currently unavailable.": "当前无法批准此计划。",
