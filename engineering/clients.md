@@ -210,15 +210,21 @@ The topbar's More menu holds Refresh status, Disconnect this page (detach; start
 Its items are compact icon-and-value observations (`web/src/layout/StatusItem.tsx`) that wrap rather than clip; the elapsed time counts from the live turn's recorded start and is absent when that start is unrecorded.
 The open conversation reports its own turn count and live turn to the statusbar; another conversation's last report is never shown for it, and no token, cost or host-resource figure appears there: the head read states a context size (see [Ordinary conversations](#ordinary-conversations)) that the statusbar does not show yet, and the owner records no cost or host-resource figure.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
+The conversation header is one line: the title, a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), the branch controls, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
 One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
+A transient local result is a toast under the topbar (`web/src/layout/toasts.ts`, browser-local): a copied link, a failed copy, or a refusal that reached no owner (a Send or image the browser itself refused, or one the owner answered with `effect:none`).
+An error toast stays until dismissed or until its conversation's next attempt, the others pause while hovered or focused; an unknown outcome, an owner-side effect (execution prepared, a Stop or approval reply) and every observation statement stay in place, never in a toast.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
 Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.
 The Files pane is a crumb trail from that directory (its name, never a bare root), a `..` row for the parent and one row per entry whose reference and copy-path actions appear on hover or focus and stay visible on touch screens.
 Its name filter narrows the entries already listed and reads nothing; the readonly/reference statement opens from the help crumb, while bounded-listing and limited-preview notes stay in place.
+A previewed file is shown verbatim through the Markdown code renderer: numbered lines, a copy action and, for a known extension, the bundled highlighter.
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
-The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike and each labelled with where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+A conversation row is its title and last-modified time; a second line appears only for a live workflow's phase or a reply that is not simply completed.
+History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
 Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
 There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
 A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
@@ -233,6 +239,7 @@ Backend cookies and native capabilities never reach the browser; proxied actions
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit-Send preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
+It has a light and a dark colour scheme, both compiled into the one stylesheet as `light-dark()` tokens (light values from pi-web-ui's white theme, the violet accent kept, text at WCAG AA): it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
 ### Image admission
@@ -312,6 +319,7 @@ Thinking Pi stored unreadable (redacted, or a signature without text) and unsupp
 Supported user images are small entry/index/MIME descriptors on their exact branch.
 A live turn extends that view only with its verified command-owned prefix; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
+A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.
 The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
@@ -394,9 +402,11 @@ Only `/cadence` (with the slash) at the start of a Send activates the mode; a se
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.
 An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text and one card per tool call, with nothing folded behind a summary.
 A card names the tool and what it acted on, and reads its arguments and output only once opened.
+An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
 Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
+Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without tool cards or failed attempts), and under the user's message of an earlier settled turn it offers "Continue from here"; a reply still being written has none.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.
