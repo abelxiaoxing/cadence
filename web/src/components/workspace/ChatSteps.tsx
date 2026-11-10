@@ -37,8 +37,9 @@ export interface IndexedStep {
   step: ChatStep;
   index: number;
 }
-/** A turn's user messages and, in recorded order, what followed them. An
- * assistant message that only carried tool calls has no text and is not shown. */
+/** A turn's user messages and, in recorded order, what followed them: message
+ * text, thinking blocks and tool calls. An assistant message that only carried
+ * tool calls has no text and is not shown. */
 export function turnParts(steps: readonly ChatStep[]): {
   user: IndexedStep[];
   replies: IndexedStep[];
@@ -49,6 +50,7 @@ export function turnParts(steps: readonly ChatStep[]): {
     replies: indexed.filter(
       ({ step }) =>
         step.role === "tool" ||
+        step.role === "thinking" ||
         (step.role === "assistant" && step.text.trim() !== ""),
     ),
   };
@@ -71,7 +73,8 @@ const toolLook = (name: string) =>
   Object.hasOwn(TOOLS, name) ? TOOLS[name] : PLAIN_TOOL;
 
 /** What is recorded for one tool call. `ok` only where its result must exist:
- * the turn completed, or a later assistant message followed the call. */
+ * the turn completed, or a later assistant message followed the call. A later
+ * thinking block is not that evidence: it may belong to the calling message. */
 export type ToolState = "run" | "ok" | "err" | "idle";
 export function toolState(turn: TurnSource, index: number): ToolState {
   const { header, steps } = turn;
@@ -91,7 +94,7 @@ const STATE_LABEL: Readonly<Record<ToolState, MessageKey>> = {
   idle: "No tool result observed",
 };
 
-function HalfRingSpinner() {
+export function HalfRingSpinner() {
   return (
     <svg
       viewBox="0 0 24 24"

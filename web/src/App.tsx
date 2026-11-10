@@ -75,6 +75,7 @@ import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
+import { ContextStatus } from "./layout/ContextStatus";
 import { StatusItem, WorkingStatus } from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
@@ -149,6 +150,9 @@ export function App({
   // What the open conversation reports for the statusbar; another
   // conversation's last report is never shown for this one.
   const [reported, setReported] = useState<ConversationActivity>();
+  // Counts renames and archives of the open conversation requested from the
+  // sidebar, so its head is read again rather than on its next idle poll.
+  const [summaryChanges, setSummaryChanges] = useState(0);
   const [newConversationCwd, setNewConversationCwd] = useState<
     string | undefined
   >(() => {
@@ -575,6 +579,13 @@ export function App({
     workspace.transportStatus === "current" &&
     (!observation.state || observation.state.connection === "current");
   const observationFresh = executionReady && viewerFresh;
+  // What an owner-side action needs: a live compatible owner, freshly observed.
+  const actionsReady =
+    executionReady &&
+    !!workspace.workspace &&
+    !!workspace.compatible &&
+    !workspace.error &&
+    viewerFresh;
   const connecting =
     initialViewer.current &&
     !observation.state &&
@@ -867,6 +878,23 @@ export function App({
                 conversationId={chatId}
                 onConversation={selectChat}
                 onNewConversation={() => selectChat()}
+                actionsUnavailable={
+                  actionsReady
+                    ? ""
+                    : executionStopped
+                      ? t(
+                          "Rename and archive need the execution service; it starts with your next Send.",
+                        )
+                      : t(
+                          "Rename and archive are unavailable until the execution service is observed.",
+                        )
+                }
+                onConversationsChanged={(id) => {
+                  // The lists and the open conversation's head say what is
+                  // recorded; nothing here is changed ahead of those reads.
+                  chats.refresh();
+                  if (id === chatId) setSummaryChanges((count) => count + 1);
+                }}
                 workflows={background?.runs}
                 workflowLinks={background?.links}
                 workflowError={!!workflowActivity.error}
@@ -967,13 +995,8 @@ export function App({
                     : undefined
                 }
                 prepareForSend={prepareSend}
-                actionsReady={
-                  executionReady &&
-                  !!workspace.workspace &&
-                  !!workspace.compatible &&
-                  !workspace.error &&
-                  viewerFresh
-                }
+                actionsReady={actionsReady}
+                observe={summaryChanges}
                 available={conversationAvailable}
                 canInterrupt={!!workspace.cancelCompatible}
                 enabled={
@@ -1270,6 +1293,7 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
+            {activity?.context && <ContextStatus usage={activity.context} />}
             {activity && activity.runningSince !== null && (
               <WorkingStatus
                 since={activity.runningSince}

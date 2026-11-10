@@ -18,16 +18,27 @@ import {
 } from "../../web/src/client/workflow-entry";
 import {
   AgentDock,
-  workflowAgentLabel,
+  WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
 import {
+  AssignmentBoard,
   DeliveryDetails,
+  Deviations,
   nextRunWindow,
   PlanCard,
   placeWorkflows,
   WorkflowLine,
+  WorkflowStepSummary,
 } from "../../web/src/components/workspace/WorkflowPanel";
 import { LocaleProvider } from "../../web/src/i18n/locale";
+import {
+  assignmentCounts,
+  assignmentRows,
+  checkSetAside,
+  dockGroups,
+  sideBySideCounts,
+  workflowAgentLabel,
+} from "../../web/src/navigation/workflow-assignments";
 import type { ActiveRuns, RunProjection } from "../../web/src/types";
 import { plan } from "../helpers/workflow-plan.ts";
 import { transport } from "./fixtures";
@@ -301,6 +312,407 @@ it("a settled line keeps its outcome, owner-clock duration and, when unsuccessfu
   expect(line(run({ status: "canceled", diagnostics: undefined }))).toContain(
     "canceled</span>",
   );
+});
+const task = (
+  id: string,
+  state: NonNullable<WorkflowRun["tasks"]>[number]["state"],
+  after: string[] = [],
+) => ({ id, title: `Write ${id}`, after, state });
+const observed = () =>
+  deliveryObservation(
+    {
+      policy: "task-branch-v1",
+      target: {
+        checkoutRoot: "/fixture",
+        repository: "/fixture/.git",
+        repositoryIdentity: "a".repeat(64),
+        branch: "refs/heads/main",
+        head: "a".repeat(40),
+      },
+    },
+    "/worktrees",
+    randomUUID(),
+    "feature",
+  );
+const child = (
+  id: string,
+  applied: string | null,
+  state: "preparing" | "ready" | "removed" | "retained",
+) => ({
+  id,
+  path: `/worktrees/run/tasks/${id}`,
+  base: "b".repeat(40),
+  head: "c".repeat(40),
+  applied,
+  state,
+});
+/** Five assignments in mixed states, two of them in their own worktrees. */
+function parallel(over: Partial<WorkflowRun> = {}): WorkflowRun {
+  const delivery = observed();
+  delivery.artifacts = [
+    child("api", "d".repeat(40), "removed"),
+    child("ui", null, "ready"),
+  ];
+  return run({
+    goal: "Five assignments",
+    tasks: [
+      task("schema", "completed"),
+      task("api", "completed", ["schema"]),
+      task("ui", "running", ["schema"]),
+      task("cli", "running", ["schema"]),
+      task("docs", "queued", ["api", "ui"]),
+    ],
+    delivery,
+    steps: [
+      step("schema", "implementation", "completed"),
+      step("worktree-api", "git", "completed"),
+      step("api", "implementation", "completed"),
+      step("ui", "implementation", "running"),
+      step("cli", "implementation", "failed"),
+      step("repair-1", "implementation", "running"),
+      step("cli", "implementation", "running"),
+    ],
+    ...over,
+  });
+}
+it("assignments are counted from the run, and only a side-by-side run replaces names with counts", () => {
+  const current = parallel();
+  expect(assignmentCounts(current)).toEqual({
+    queued: 1,
+    running: 2,
+    completed: 2,
+    failed: 0,
+  });
+  expect(sideBySideCounts(current)).not.toBeNull();
+  const html = line(current);
+  expect(html).toContain("implementing · 2 running · 1 queued · 2 done");
+  expect(html).not.toContain("repair-1");
+  expect(html).not.toContain("ui, ");
+  expect(line(current, "zh")).toContain(
+    "实施中 · 2 个运行中 · 1 个排队中 · 2 个已完成",
+  );
+  // One running after others ran in their own worktrees is still side by side.
+  const tail = parallel({
+    tasks: [task("a", "completed"), task("b", "running"), task("c", "failed")],
+  });
+  expect(line(tail)).toContain("implementing · 1 running · 1 done · 1 failed");
+  // A serial run keeps naming what runs: nothing ran beside anything.
+  const serial = run({
+    tasks: [task("a", "running"), task("b", "queued", ["a"])],
+    steps: [step("a", "implementation", "running")],
+  });
+  expect(sideBySideCounts(serial)).toBeNull();
+  expect(line(serial)).toContain("implementing · a</span>");
+  // Once every assignment is in the candidate the steps are named again.
+  const verifying = parallel({
+    phase: "verifying",
+    tasks: [task("a", "completed"), task("b", "completed")],
+    steps: [step("unit", "check", "running")],
+  });
+  expect(sideBySideCounts(verifying)).toBeNull();
+  expect(line(verifying)).toContain("verifying · unit</span>");
+  // An older service lists no assignments: nothing is counted or invented.
+  expect(assignmentCounts(run())).toBeNull();
+  expect(assignmentRows(run())).toEqual([]);
+});
+it("the assignment board states each assignment's state in words, its own worktree and its steps", () => {
+  const current = parallel();
+  const rows = assignmentRows(current);
+  expect(rows.map((row) => [row.task.id, row.steps.length])).toEqual([
+    ["schema", 1],
+    ["api", 1],
+    ["ui", 1],
+    ["cli", 2],
+    ["docs", 0],
+  ]);
+  // A git step named after an assignment is not one of its attempts.
+  expect(rows[1].steps.every((s) => s.kind === "implementation")).toBe(true);
+  expect(rows[1].artifact?.applied).toBe("d".repeat(40));
+  expect(rows[0].artifact).toBeUndefined();
+  const opened: string[] = [];
+  const board = (r: WorkflowRun, locale: "en" | "zh" = "en", partial = false) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <AssignmentBoard
+          run={r}
+          steps={r.steps}
+          partial={partial}
+          onOpen={(s) => opened.push(s.id)}
+        />
+      </LocaleProvider>,
+    );
+  const html = board(current);
+  expect(html).toContain(
+    '<span class="workflow-board-counts">2 running · 1 queued · 2 done</span>',
+  );
+  expect(html.match(/<li class="workflow-task">/g)).toHaveLength(5);
+  // Each state is a word beside its icon, never a colour alone.
+  expect(html).toMatch(
+    /<span class="workflow-task-state completed"><svg[^>]*>.*?<\/svg>completed<\/span>/,
+  );
+  expect(html).toMatch(
+    /<span class="workflow-task-state queued"><svg[^>]*>.*?<\/svg>queued<\/span>/,
+  );
+  expect(html.match(/workflow-task-state running/g)).toHaveLength(2);
+  expect(html).toContain("<span>Write api</span><code>api</code>");
+  expect(html).toContain("<span>after api, ui</span>");
+  // Only those that ran beside others have a worktree of their own.
+  expect(html.match(/own worktree/g)).toHaveLength(2);
+  expect(html).toContain(
+    '<span class="workflow-task-worktree">own worktree · integrated</span>',
+  );
+  expect(html).toContain(
+    '<span class="workflow-task-worktree">own worktree</span>',
+  );
+  expect(html).not.toContain("kept for inspection");
+  // Its steps open their subagent; the failed attempt stays listed as failed.
+  expect(html).toContain("implementation · failed</button>");
+  expect(html.match(/title="Open subagent context"/g)).toHaveLength(5);
+  expect(html).not.toContain("Only the steps on this page");
+  expect(board(current, "en", true)).toContain(
+    "Only the steps on this page are grouped below; other pages hold more.",
+  );
+  // After a failure unintegrated work stays where it can be inspected.
+  const stopped = parallel({ status: "failed", phase: "finished" });
+  if (!stopped.delivery?.artifacts || !stopped.tasks) throw Error("fixture");
+  stopped.delivery.artifacts[1] = child("ui", null, "retained");
+  stopped.tasks[2] = task("ui", "failed", ["schema"]);
+  const kept = board(stopped);
+  expect(kept).toContain(
+    '<span class="workflow-task-worktree">own worktree · kept for inspection</span>',
+  );
+  expect(kept).toContain(
+    '<code class="workflow-task-path">/worktrees/run/tasks/ui</code>',
+  );
+  expect(kept).toMatch(
+    /<span class="workflow-task-state failed"><svg[^>]*>.*?<\/svg>failed<\/span>/,
+  );
+  const zh = board(current, "zh");
+  expect(zh).toContain("独立工作区 · 已合回");
+  expect(zh).toContain("排队中</span>");
+  // Without recorded assignments there is no board, not an empty one.
+  expect(board(run())).toBe("");
+});
+it("the dock groups subagents per run, live first, and shows each one's assignment state", () => {
+  const live = parallel();
+  const done = run({
+    goal: "Earlier research",
+    status: "completed",
+    phase: "finished",
+    steps: [
+      step("question-1", "research", "completed"),
+      step("unit", "check", "completed"),
+    ],
+  });
+  const empty = run({ goal: "Checks only", steps: [] });
+  const runs = new Map([live, done, empty].map((r) => [r.id, r]));
+  // Listed oldest first, as the dock receives them; an unread ID has no rows.
+  const groups = dockGroups([live.id, done.id, empty.id, randomUUID()], runs);
+  expect(groups.map((g) => g.run.goal)).toEqual([
+    "Five assignments",
+    "Earlier research",
+  ]);
+  // Live agents lead; the newest comes first among equals; no git or check row.
+  expect(
+    groups[0].steps.map((s) => `${workflowAgentLabel(s.id)}:${s.status}`),
+  ).toEqual([
+    "cli:running",
+    "repair-1:running",
+    "ui:running",
+    "cli:failed",
+    "api:completed",
+    "schema:completed",
+  ]);
+  expect(groups[1].steps).toHaveLength(1);
+  // A settled run that is newer still follows the one with live agents.
+  expect(dockGroups([live.id, done.id], runs).map((g) => g.run.goal)).toEqual([
+    "Five assignments",
+    "Earlier research",
+  ]);
+  const group = (index: number, locale: "en" | "zh" = "en") =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <WorkflowAgentGroup
+          run={groups[index].run}
+          steps={groups[index].steps}
+          selected={{
+            runId: live.id,
+            stepId: groups[0].steps[2].id,
+            label: "ui",
+          }}
+        />
+      </LocaleProvider>,
+    );
+  const html = group(0);
+  expect(html).toContain(
+    '<span class="agent-dock-run-goal">Five assignments</span><span class="agent-dock-run-state">2 running · 1 queued · 2 done</span>',
+  );
+  expect(html.match(/class="agent-dock-row/g)).toHaveLength(6);
+  expect(html.match(/class="agent-dock-row active"/g)).toHaveLength(1);
+  // The step's own status, and under its name the assignment's state: a
+  // finished worker is not an integrated assignment, and the reverse.
+  expect(html).toMatch(
+    /implementation · cli<\/strong><small>Assignment: running<\/small><\/span><span class="ep-state failed">failed<\/span>/,
+  );
+  expect(html).toMatch(
+    /implementation · api<\/strong><small>Assignment: completed<\/small>/,
+  );
+  // A repair step is no assignment of the agreement: it claims no state.
+  expect(html).toMatch(
+    /implementation · repair-1<\/strong><\/span><span class="ep-state running">/,
+  );
+  expect(group(0, "zh")).toContain("子任务：运行中");
+  const research = group(1);
+  expect(research).not.toContain("agent-dock-run-state");
+  expect(research).not.toContain("Assignment:");
+});
+it("a completed delivery states its deviations on its line and leads its view with each of them", () => {
+  const deviations = [
+    {
+      revision: 2,
+      item: "Acceptance 3: the export finishes in under 2 seconds",
+      reason: "The upstream API allows 20 rows per request (step export-9)",
+      delivered: "A paged export that finishes in about 6 seconds",
+      waives: ["perf-budget"],
+    },
+    {
+      revision: 3,
+      item: "Decision: keep the CSV column order",
+      reason: "The new parser sorts columns by name",
+      delivered: "Columns in name order, documented in the README",
+      waives: [],
+    },
+  ];
+  const delivered = run(
+    {
+      status: "completed",
+      phase: "finished",
+      revision: 3,
+      mergedCommit: "9a94027ea14a0351c29deb872349614ad9bc7513",
+      deviations,
+    },
+    1_000_000,
+    1_072_000,
+  );
+  const html = line(delivered);
+  expect(html).toContain(
+    'title="completed · delivered with 2 deviations · merged 9a94027 · 1m 12s"',
+  );
+  expect(html).toMatch(
+    /completed · <span class="workflow-line-deviation"><svg[^>]*>.*?<\/svg>delivered with 2 deviations<\/span> · merged 9a94027 · 1m 12s<\/span>/,
+  );
+  expect(line(delivered, "zh")).toContain("交付时有 2 处偏离");
+  expect(line({ ...delivered, deviations: deviations.slice(0, 1) })).toContain(
+    "delivered with 1 deviation<",
+  );
+  // "Delivered" is claimed only by a completed run; a live or failed one
+  // keeps its own state on the line and its deviations in its view.
+  for (const status of ["running", "failed"] as const) {
+    const other = line({ ...delivered, status });
+    expect(other).not.toContain("delivered with");
+    expect(other).not.toContain("workflow-line-deviation");
+  }
+  expect(line({ ...delivered, deviations: [] })).toContain(
+    "completed · merged 9a94027 · 1m 12s",
+  );
+  const view = (r: WorkflowRun, locale: "en" | "zh" = "en") =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <Deviations run={r} />
+      </LocaleProvider>,
+    );
+  const list = view(delivered);
+  expect(list).toContain("Deviations from the agreement: 2");
+  expect(list.match(/<li>/g)).toHaveLength(2);
+  for (const d of deviations)
+    for (const text of [d.item, d.reason, d.delivered])
+      expect(list).toContain(`<dd>${text}</dd>`);
+  expect(list).toContain(
+    "<dt>Checks set aside</dt><dd><code>perf-budget</code></dd>",
+  );
+  expect(list).toContain("<dt>Checks set aside</dt><dd>None</dd>");
+  expect(list).toContain("<dd>route revision 3</dd>");
+  expect(list).toContain("it is not human review");
+  expect(view(delivered, "zh")).toContain("与约定的偏离：2 处");
+  expect(view(run())).toBe("");
+});
+it("a check a deviation set aside reads as set aside and failed, never as passed", () => {
+  const perf = step("perf-budget", "check", "failed");
+  const unit = step("unit", "check", "completed");
+  const earlier = step("perf-budget", "check", "failed");
+  const review = step("review", "review", "completed");
+  const delivery = observed();
+  delivery.candidate = "b".repeat(40);
+  delivery.acceptance = {
+    candidate: delivery.candidate,
+    tree: "c".repeat(40),
+    planDigest: "d".repeat(64),
+    contextDigest: "e".repeat(64),
+    checks: [unit.id, perf.id],
+    review: review.id,
+    waived: [perf.id],
+  };
+  const accepted = run({
+    status: "completed",
+    phase: "finished",
+    delivery,
+    deviations: [
+      {
+        revision: 2,
+        item: "Acceptance 3",
+        reason: "Impossible",
+        delivered: "Closest",
+        waives: ["perf-budget"],
+      },
+    ],
+    steps: [earlier, unit, perf, review],
+  });
+  expect(checkSetAside(accepted, perf)).toBe(true);
+  expect(checkSetAside(accepted, unit)).toBe(false);
+  // The same check's earlier failure, before the deviation, is only a failure.
+  expect(checkSetAside(accepted, earlier)).toBe(false);
+  expect(checkSetAside(accepted, review)).toBe(false);
+  const summary = (
+    r: WorkflowRun,
+    s: WorkflowStep,
+    locale: "en" | "zh" = "en",
+  ) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <WorkflowStepSummary run={r} step={s} />
+      </LocaleProvider>,
+    );
+  expect(summary(accepted, perf)).toBe(
+    'check · perf-budget · failed<span class="workflow-set-aside">set aside by a recorded deviation</span>',
+  );
+  expect(summary(accepted, earlier)).toBe("check · perf-budget · failed");
+  expect(summary(accepted, unit)).toBe("check · unit · completed");
+  expect(summary(accepted, perf, "zh")).toContain("已被记录的偏离搁置");
+  // A direct working-copy delivery has no acceptance record: its verification
+  // lists the round, and only a failed check a deviation names is set aside.
+  const direct = run({
+    ...accepted,
+    delivery: undefined,
+    verification: {
+      id: randomUUID(),
+      source: "f".repeat(64),
+      steps: [unit.id, perf.id, review.id],
+    },
+  });
+  expect(checkSetAside(direct, perf)).toBe(true);
+  expect(checkSetAside(direct, earlier)).toBe(false);
+  expect(checkSetAside({ ...direct, deviations: [] }, perf)).toBe(false);
+  // The acceptance line never says the checks passed when one was set aside.
+  const facts = renderToStaticMarkup(
+    <LocaleProvider initial="en">
+      <DeliveryDetails delivery={delivery} />
+    </LocaleProvider>,
+  );
+  expect(facts).toContain(
+    "Accepted with 1 of 2 checks set aside by a recorded deviation; the others and the automatic Agent review passed",
+  );
+  expect(facts).not.toContain("Checks and automatic Agent review passed");
+  expect(facts.match(/<dt>/g)).toHaveLength(9);
 });
 it("each workflow line follows the turn it started in, never the newest message", () => {
   const turn = (id: string, at: number) => ({ header: { id, at } });
