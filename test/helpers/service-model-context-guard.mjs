@@ -7,6 +7,7 @@ import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gitArguments } from "../../src/git-environment.mjs";
 
 let violations = 0;
 function refuse() {
@@ -120,7 +121,9 @@ cp.spawnSync = function (executable, args, options) {
   if (
     !liveness &&
     (executable !== "git" ||
-      JSON.stringify(args) !== '["rev-parse","--show-toplevel"]')
+      // The service's own checkout probe, with the prefix it gives every Git call.
+      JSON.stringify(args) !==
+        JSON.stringify(gitArguments(["rev-parse", "--show-toplevel"])))
   )
     refuse();
   return spawnSync.call(this, executable, args, options);

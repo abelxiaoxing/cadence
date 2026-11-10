@@ -118,6 +118,9 @@ const make = (extra = {}) =>
     environment: { ...process.env },
     owner,
     accounting,
+    // A small waiting bound keeps the capacity scenarios short; the service
+    // composes the default (`PREPARATIONS`, see model-preparation-bound.test).
+    preparations: 2,
     ...extra,
   });
 const context = make();

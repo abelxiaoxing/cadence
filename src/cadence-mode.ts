@@ -975,10 +975,10 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_research",
     label: "Investigate project",
     description:
-      "Delegate one or two focused readonly investigations. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
+      "Delegate up to eight focused, independent readonly investigations; the service runs as many at once as this machine is configured for. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
     parameters: Type.Object({
       goal: Type.String(),
-      questions: Type.Array(Type.String(), { minItems: 1, maxItems: 2 }),
+      questions: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
       roots: Type.Optional(
         Type.Array(
           Type.String({

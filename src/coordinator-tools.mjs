@@ -73,7 +73,8 @@ export function createCoordinatorTools() {
         "Investigate bounded project questions with readonly subagents; returns recorded evidence. Never edits.",
       parameters: Type.Object({
         goal: Type.String(),
-        questions: Type.Array(Type.String(), { minItems: 1, maxItems: 2 }),
+        // Split independent questions freely; the owner bounds how many run at once.
+        questions: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
         roots: Type.Optional(
           Type.Array(
             Type.String({

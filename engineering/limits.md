@@ -36,7 +36,9 @@ Image input has no Cadence-specific count, byte, dimension or pixel quota; brows
 `src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
 The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
-Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters), two concurrent readonly research workers, 16 checks per set and four explicit setup commands.
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters), eight questions per research run, 16 checks per set and four explicit setup commands.
+How many workflow workers of one run are in flight is an execution limit, not a plan bound: `PARALLEL` in `src/service/workflows.ts` (default 4, at most 16), set by `CADENCE_PARALLEL` in the owner's environment; a value that is not a whole number from 1 is the default.
+An owner lets 64 auth preparations wait their turn (`PREPARATIONS` in `src/service/model-context.ts`).
 Adaptive delivery and every Agent have no fixed repair-round count or total runtime deadline.
 New setup/check definitions omit `timeoutMs` by default; explicit values (100–2147483647ms, the native timer range) remain exact, including already approved plans.
 Historical task-check codecs retain their original 20min validation boundary; they grant no current execution authority.

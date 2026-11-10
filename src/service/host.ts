@@ -57,6 +57,7 @@ import {
 import { healProject, RegistryHealer } from "./self-heal.ts";
 import { readServerConfig } from "./server-config.ts";
 import { Workbench } from "./workbench.ts";
+import { parallelLimit } from "./workflows.ts";
 
 /** A restarted owner waits this long for the process it replaces to exit. */
 const SUCCESSOR_WAIT_MS = 60_000;
@@ -455,6 +456,8 @@ export async function createServiceHost(
           agentDir: input.config.agentDir,
           projectsEnabled: !input.config.http.proxy,
           checkEnvironment,
+          // The owner's own setting; workers never see CADENCE_* variables.
+          parallel: parallelLimit(process.env),
           hostUrl: new URL(
             sourceBuild ? "../service-host.mjs" : "./service-host.mjs",
             import.meta.url,

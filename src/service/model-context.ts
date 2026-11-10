@@ -62,7 +62,14 @@ export interface ModelContextOptions {
   accounting: AuthAccountingPort;
   /** Real host-owned process route; absent adapters retain DIRECT-only refusal. */
   network?: AuthNetwork;
+  /** Preparations that may be outstanding at once; defaults to `PREPARATIONS`. */
+  preparations?: number;
 }
+/** Preparations run one at a time; this bounds how many may wait their turn.
+ * Every live worker of an owner can have one request in flight, so the bound
+ * follows the owner's worker ceilings (8 turns, 8 coordinators, 16 workflow
+ * workers) with room to spare. One more is refused, never silently dropped. */
+export const PREPARATIONS = 64;
 interface Selected {
   selection: ModelSelection;
   model: Model<Api>;
@@ -610,7 +617,10 @@ export class OwnerModelContext {
   prepareTracked(input: ModelPreparationInput): TrackedModelPreparation {
     // Capacity is reserved before any await/copy/SDK effect. Caller cancellation
     // does NOT refund an outstanding original or its settlement write.
-    if (this.#loading || this.#pending >= LIMITS.childReservations)
+    if (
+      this.#loading ||
+      this.#pending >= (this.#options.preparations ?? PREPARATIONS)
+    )
       return {
         result: Promise.resolve(refusal(new ContractError("capacity"))),
         settled: Promise.resolve(),

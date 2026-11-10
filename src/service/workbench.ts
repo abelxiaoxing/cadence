@@ -60,6 +60,8 @@ export class Workbench implements WorkbenchPort {
       hostUrl: URL;
       secrets(): readonly string[];
       checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
+      /** Workflow workers of one run in flight at once (`CADENCE_PARALLEL`). */
+      parallel?: number;
       /** Where the project's Pi sessions live; defaults to Pi's own resolution. */
       sessionDir?: string;
     },

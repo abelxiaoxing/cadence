@@ -49,6 +49,7 @@ Access rotation does not revoke an accepted worker's pinned model choice; source
 
 SDK provider registration/availability checks and prompt preflight can overlap several authentication resolutions inside one worker, before its first model request.
 The private auth bridge queues those SDK callers and joins each original in order, with one owner IPC request in flight; worker-reservation counts must not reject this queue.
+On the owner side preparations run one at a time and the rest wait their turn up to `PREPARATIONS` (`src/service/model-context.ts`), a bound sized for every live worker having one request in flight; only one more than that is refused.
 A reply resolves only its own caller, while disconnect rejects queued observers without dispatching/replaying their requests; the owner still joins an already-started auth/writeback operation.
 
 ## Retired task execution
@@ -158,7 +159,7 @@ A running owner that does not answer, a holder on another host and a PID that ca
 Stopping an unresponsive owner requires its recorded start identity; taking over a foreign or unidentifiable holder touches no process.
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
-Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
+Research runs share the exclusive checkout gate; one admitted run carries up to eight questions, runs as many at once as the owner's execution limit allows (`parallelLimit`, `CADENCE_PARALLEL`), starts no further question after one fails and joins every started one before release.
 Queueing, repeated investigations and model/tool work have no total Agent deadline and need no renewal mechanism.
 Readonly investigations use Pi's standard file tools with explicit paths and default search roots (conversation cwd by default), never an arbitrary shell.
 Pi owns matching, ignore behavior and truncation; partial output is not exhaustive evidence or an atomic source snapshot.

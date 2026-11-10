@@ -8,7 +8,9 @@ import {
   clipUnits,
   decodeWorkflowPlan,
   decodeWorkflowProposal,
+  decodeWorkflowRequest,
   decodeWorkflowRun,
+  WORKFLOW_LIMITS,
   type WorkflowPlan,
   workflowAncestors,
   workflowCovers,
@@ -223,4 +225,25 @@ it("new setup/check commands default to no timeout without rewriting approved ex
     p.checks[0].timeoutMs = timeoutMs;
     expect(() => decodeWorkflowPlan(p)).toThrow();
   }
+});
+it("a research run carries as many independent questions as the plan needs, within its wire bound", () => {
+  const request = (count: number) => ({
+    action: "research",
+    goal: "Map the delivery executor",
+    questions: Array.from({ length: count }, (_, i) => `Question ${i + 1}`),
+    model: {
+      epoch: randomUUID(),
+      accessGeneration: 1,
+      configRev: 1,
+      catalogId: randomUUID(),
+    },
+  });
+  // How many run at once is the owner's execution limit, not this bound.
+  expect(WORKFLOW_LIMITS.questions).toBe(8);
+  const full = decodeWorkflowRequest(request(WORKFLOW_LIMITS.questions));
+  expect(full.action === "research" && full.questions).toHaveLength(8);
+  expect(() =>
+    decodeWorkflowRequest(request(WORKFLOW_LIMITS.questions + 1)),
+  ).toThrow();
+  expect(() => decodeWorkflowRequest(request(0))).toThrow();
 });

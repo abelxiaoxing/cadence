@@ -5323,7 +5323,7 @@ function validateImageBytes(bytes, mimeType) {
 // src/service/contracts/workflow.ts
 var WORKFLOW_LIMITS = {
   tasks: 16,
-  parallel: 2,
+  questions: 8,
   checks: 16,
   bytes: 256 * 1024,
   historyScanEntries: 200,
@@ -5659,7 +5659,7 @@ function decodeWorkflowRequest(v) {
       "model",
       ...Object.hasOwn(v ?? {}, "roots") ? ["roots"] : []
     ]);
-    const questions = list(o2.questions, WORKFLOW_LIMITS.parallel, (q) => text(q, 8192, true));
+    const questions = list(o2.questions, WORKFLOW_LIMITS.questions, (q) => text(q, 8192, true));
     if (!questions.length)
       throw new Error("Research needs a question");
     const roots = o2.roots === undefined ? undefined : list(o2.roots, 8, (p) => text(p, 4096, true));
@@ -16141,7 +16141,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7",
+    contractHash: "c37eb1a2a428288faeb2b53b1f1b293582d3692a6d67002e872d15d408d87dc6",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -28236,6 +28236,7 @@ function readWorkerRuntime(cwd, agentDir, model2, pi) {
 }
 
 // src/service/model-context.ts
+var PREPARATIONS = 64;
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -28570,7 +28571,7 @@ class OwnerModelContext {
     return this.prepareTracked(input).result;
   }
   prepareTracked(input) {
-    if (this.#loading || this.#pending >= LIMITS.childReservations)
+    if (this.#loading || this.#pending >= (this.#options.preparations ?? PREPARATIONS))
       return {
         result: Promise.resolve(refusal2(new ContractError("capacity"))),
         settled: Promise.resolve()
@@ -29456,11 +29457,11 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       ]);
       goal = text(a.goal, 8192, true);
       roots = a.roots === undefined ? undefined : list(a.roots, 8, (p) => text(p, 4096, true));
-      questions = list(a.questions, 2, (q) => text(q, 8192, true));
+      questions = list(a.questions, WORKFLOW_LIMITS.questions, (q) => text(q, 8192, true));
       if (!questions.length)
         throw new ContractError("invalid");
     } catch {
-      return refusal3("invalid", "An investigation needs a goal and one or two non-empty questions. Nothing was started.");
+      return refusal3("invalid", `An investigation needs a goal and one to ${WORKFLOW_LIMITS.questions} non-empty questions. Nothing was started.`);
     }
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
@@ -29488,7 +29489,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       runs: [...current2.state.runs, id]
     }, current2.file);
     await this.o.workflows.join(id);
-    return this.preview(this.run(id), 4096, 2);
+    return this.preview(this.run(id), 4096, questions.length);
   }
   approval(c, caller) {
     if (!caller)
@@ -32019,7 +32020,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "2fe5d655f35f6778f8a9ddf13c90a1ce7e39078d3a0cf86d9ff48e5dae5d3fe3",
+  build: "dca633543a03837711e2ee7e4b0462c02de8cdc49380cb2976dc1d32d660798e",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -32031,6 +32032,34 @@ var EVIDENCE_BYTES2 = 8192;
 var MAX_STEPS = 256;
 var STEP_UNITS = 80;
 var MAX_ACTIVE = 4;
+var PARALLEL = { default: 4, maximum: 16 };
+function parallelLimit(environment2) {
+  const raw = environment2.CADENCE_PARALLEL ?? "";
+  return /^[1-9][0-9]{0,3}$/u.test(raw) ? Math.min(Number(raw), PARALLEL.maximum) : PARALLEL.default;
+}
+async function settleLimited(limit, tasks) {
+  const settled = new Array(tasks.length);
+  let next = 0, failed = false;
+  const lane = async () => {
+    for (let index = next++;index < tasks.length; index = next++) {
+      if (failed) {
+        settled[index] = {
+          status: "rejected",
+          reason: new ContractError("stale")
+        };
+        continue;
+      }
+      try {
+        settled[index] = { status: "fulfilled", value: await tasks[index]() };
+      } catch (reason) {
+        failed = true;
+        settled[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, lane));
+  return settled;
+}
 var RESTARTED = "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
 var FINAL_UNAVAILABLE = "The final message exceeded the retained transcript bound and was not retained.";
 
@@ -33693,7 +33722,7 @@ ${result.output}`}`);
       live2.run.status = "running";
       this.save(live2);
       if (request3.action === "research") {
-        const answers = await Promise.allSettled(request3.questions.map((q, i) => this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
+        const answers = await settleLimited(this.o.parallel ?? PARALLEL.default, request3.questions.map((q, i) => () => this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
 Investigation: ${q}
 Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots, "research")));
         for (const a of answers) {
@@ -34125,7 +34154,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "069d95cf6e4efcd6d8975b2ee3f707c51d11038477a01f76398a610712f1c9d7";
+  const embedded = "c37eb1a2a428288faeb2b53b1f1b293582d3692a6d67002e872d15d408d87dc6";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -34307,6 +34336,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       agentDir: input.config.agentDir,
       projectsEnabled: !input.config.http.proxy,
       checkEnvironment,
+      parallel: parallelLimit(process.env),
       hostUrl: new URL(sourceBuild ? "../service-host.mjs" : "./service-host.mjs", import.meta.url),
       secrets: ownerLiterals
     }) : null;

@@ -24,6 +24,7 @@ import {
 } from "./contracts/workbench.ts";
 import {
   decodeWorkflowPlan,
+  WORKFLOW_LIMITS,
   type WorkflowPlan,
   type WorkflowRun,
 } from "./contracts/workflow.ts";
@@ -379,12 +380,14 @@ export class ConversationWorkflow {
         a.roots === undefined
           ? undefined
           : list(a.roots, 8, (p) => text(p, 4096, true));
-      questions = list(a.questions, 2, (q) => text(q, 8192, true));
+      questions = list(a.questions, WORKFLOW_LIMITS.questions, (q) =>
+        text(q, 8192, true),
+      );
       if (!questions.length) throw new ContractError("invalid");
     } catch {
       return refusal(
         "invalid",
-        "An investigation needs a goal and one or two non-empty questions. Nothing was started.",
+        `An investigation needs a goal and one to ${WORKFLOW_LIMITS.questions} non-empty questions. Nothing was started.`,
       );
     }
     // Readonly investigations may queue behind each other, never behind a
@@ -433,7 +436,8 @@ export class ConversationWorkflow {
     // no cancellation authority. Join the original even if nobody can receive
     // its result; explicit workflow Cancel and owner Stop remain independent.
     await this.o.workflows.join(id);
-    return this.preview(this.run(id), 4096, 2);
+    // One step per question: every answer is returned, each within its bound.
+    return this.preview(this.run(id), 4096, questions.length);
   }
   approval(c: Approval, caller: Caller | undefined): WorkbenchResult {
     if (!caller) throw new ContractError("forbidden");
