@@ -258,6 +258,10 @@ File header/dimension validation is not an image codec or sandbox.
 
 Ordinary conversations run through the same isolated SDK process launcher, exact model/auth sources and orderly Stop as tasks.
 A conversation is one of the project's Pi sessions, the JSONL files the terminal writes: the WebUI lists and reads them, and a browser turn's worker continues one with Pi's own `SessionManager`, so the terminal and the browser share one history without copying or importing it.
+A rename is the same kind of write: `conversation-rename` lets the fixed-purpose `src/session-rename.mjs` child append one `session_info` entry through Pi's `SessionManager`, as the terminal's `/name` does, and is acknowledged only once the owner reads that name back from the session; an empty name clears it, so the first message titles the session again.
+The owner refuses a rename while a browser turn is live in that session (its worker holds its own copy, so the entry would become a side branch), while another rename of it runs, for a session Pi has not written and for a name its reads would redact; a Send to a session being renamed is refused as a conflict, and a repeated rename command observes its original outcome while this owner runs.
+The child opens only an existing current-format file whose header names that session, ends a torn last line as a browser turn's worker does, and is the owner's accepted work: Stop signals it and an unknown closure quarantines.
+A terminal holding the session keeps its old name until `/resume`; its next message leaves the name record beside it, which the reader does not count as a branch.
 The session directory follows Pi's precedence: `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in the project's `.pi/settings.json` or the agent directory's `settings.json`, then `<agentDir>/sessions/--<cwd>--`; session headers bind their own cwd within the owning checkout.
 Same-checkout subdirectories share the owner's readonly session cache, not one execution cwd; another account's agent directory is never adopted.
 Each browser turn records `cadence-browser-command/1` after each finalized Pi message, naming its actual user entry and owned prefix through the worker's public SessionManager; command identity and parent/offset checks, never prompt text, associate its entries.
@@ -265,6 +269,8 @@ A browser-created session carries a `cadence-webui/1` custom entry, which Pi kee
 Pi writes each message when it ends, raw: thinking, signatures and tool output are stored as the terminal stores them, and the owner redacts its credentials from everything it returns instead.
 Read redaction uses the owner's current literals, or the last ones observed while the model configuration is reloaded or edited; without any, reads refuse rather than return unredacted content.
 The owner never rewrites, repairs or deletes a session file; its own private `service-v1/conversation-commands-v1` records each browser message's admission (command, the entry it continues, the file size then, status, auth journal and native closure), never content.
+Archiving is the owner's own record too: `conversation-archive` writes or removes `service-v1/conversations-v1/archive/<session>.json`, whose presence is the whole fact, and never moves, rewrites or deletes the session file, so `pi -r` still lists the session.
+The record covers the checkout: one owner lists every same-checkout session, and other checkouts are unaffected.
 Their tools operate on the host, not in a sandbox.
 Each turn holds the checkout's exclusive gate, so ordinary turns, Cadence children and parent checks cannot edit/read across one another's active write window; leaving a tab only detaches.
 An active turn retains independent interruption authority; explicit Cancel or Stop signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
@@ -289,7 +295,8 @@ Low-level `agent_end` and retry-end events do not establish turn completion: the
 Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers, so a terminal extension's tools are shown in history but not offered to a browser turn.
 When a turn's model or thinking level differs from the session's, the worker records the change, so a terminal resume keeps it.
 Conversation and per-conversation turn counts have no lifetime admission cap; only active-work concurrency is bounded.
-History lists the project's sessions by last modification, newest first, 50 per page; active conversations use a separate roster and never disappear merely because an older history page is selected.
+History lists the project's sessions that are not archived by last modification, newest first, 50 per page, and a read may ask for only the archived ones instead; active conversations use a separate roster and never disappear merely because an older history page is selected.
+An archived conversation stays in that roster while a reply runs and still reads by link, where its summary says it is archived; the stopped-owner reader applies the same records.
 Listing reads each file once and then only what Pi appends, ignoring a torn final line; a replaced or shortened file is read again from its start.
 A conversation reads one branch, named by its last entry, as one continuous transcript: the head read gives the summary, the branch end, whether it still continues the one shown before, the branch and leaf counts, the terminal's workflows and the branch's context size; each turn (a user message and what followed it) is read by position as listed steps, and a step's full item is read separately in parts that each fit one reply.
 The context size is what the branch's last completed model response reported: its token total by Pi's rule for a valid usage (a reply neither failed nor aborted, above zero), with that reply's provider and model, both redacted like other session text.
@@ -309,7 +316,7 @@ The WebUI shows the newest turns first and reads earlier ones as the top of the 
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
 A branch tree (Pi's `/tree`, user messages only) chooses the branch to read; "Continue from here" shows a turn's end, and the next message starts a new branch there; nothing is moved or deleted.
-While a terminal holds a session, its extension notices entries it did not write and suggests `/resume`; a message sent there first continues from where the terminal is, as a new branch.
+While a terminal holds a session, its extension notices entries it did not write (a name recorded from the browser is not one) and suggests `/resume`; a message sent there first continues from where the terminal is, as a new branch.
 Pre-Pi Cadence conversations are no longer supported.
 Their identities are refused as `retired-conversation`, never reused as empty Pi sessions; start a new conversation.
 Old files remain untouched, without a migration UI/API or checkpoint decoder.
@@ -356,7 +363,7 @@ Known older history/directory draft namespaces remain usable in place; they are 
 Existing browser draft/pending namespaces are read and retained in place; new directories use that key before history exists, so startup cannot lose their drafts.
 A positively observed new epoch replaces only the serialized execution attachment, never a pending Send or approval.
 A stopped execution owner is labelled as such, not as an incompatible build.
-Message dispatch, server-side model installation and approval still require a live compatible owner; local model preselection does not, and only current Send may prepare one.
+Message dispatch, server-side model installation, approval, rename and archive still require a live compatible owner; local model preselection does not, and only current Send may prepare one.
 The gateway folder picker and draft remain available while stopped, and a failed first readiness observation does not hide independently readable conversations.
 An unreadable context does not lock local draft editing; an in-flight or uncertain Send and its captured images retain their original locks and identity.
 When conversation reads fail, the composer still accepts a new draft for preparation-only Send; it cannot infer a head or submit that message until a subsequent explicit Send observes the restored context.

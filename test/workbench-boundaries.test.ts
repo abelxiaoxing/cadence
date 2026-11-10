@@ -13,7 +13,9 @@ import { expect, it, vi } from "vitest";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
+  CONVERSATION_NAME_CHARS,
   decodeChatItem,
+  decodeChatSummary,
   decodeChatTurn,
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
@@ -521,4 +523,71 @@ it("a turn header's parent entry is an optional key an older owner omits", () =>
     expect(() =>
       decodeWorkbenchResult({ ...read, turn: { ...read.turn, parent } }),
     ).toThrow();
+});
+it("rename and archive are closed commands; a name is exactly the one line Pi would record", () => {
+  const rename = {
+    kind: "conversation-rename",
+    commandId: randomUUID(),
+    conversationId: randomUUID(),
+    name: "Release notes 发布说明 👨‍👩‍👧",
+  };
+  expect(decodeWorkbenchCommand(rename)).toEqual(rename);
+  // Empty clears the name; the bound counts code points, not bytes.
+  for (const name of ["", "名".repeat(CONVERSATION_NAME_CHARS)])
+    expect(decodeWorkbenchCommand({ ...rename, name })).toMatchObject({ name });
+  for (const name of [
+    " padded",
+    "padded ",
+    "two\nlines",
+    "tab\tbed",
+    "nul\u0000",
+    "x".repeat(CONVERSATION_NAME_CHARS + 1),
+    7,
+    undefined,
+  ])
+    expect(() => decodeWorkbenchCommand({ ...rename, name })).toThrow();
+  expect(() => decodeWorkbenchCommand({ ...rename, head: null })).toThrow();
+  const archive = {
+    kind: "conversation-archive",
+    commandId: randomUUID(),
+    conversationId: randomUUID(),
+    archived: true,
+  };
+  expect(decodeWorkbenchCommand(archive)).toEqual(archive);
+  expect(decodeWorkbenchCommand({ ...archive, archived: false })).toMatchObject(
+    { archived: false },
+  );
+  for (const refused of [
+    { ...archive, archived: "yes" },
+    { ...archive, conversationId: "../escape" },
+    { kind: archive.kind, commandId: archive.commandId, archived: true },
+  ])
+    expect(() => decodeWorkbenchCommand(refused)).toThrow();
+});
+it("the archived listing and flag are optional keys that can only say true", () => {
+  expect(decodeWorkbenchRead({ kind: "conversations" })).toEqual({
+    kind: "conversations",
+  });
+  expect(
+    decodeWorkbenchRead({ kind: "conversations", after: null, archived: true }),
+  ).toEqual({ kind: "conversations", after: null, archived: true });
+  for (const archived of [false, null, "true"])
+    expect(() =>
+      decodeWorkbenchRead({ kind: "conversations", archived }),
+    ).toThrow();
+  const summary = {
+    id: randomUUID(),
+    title: "Conversation",
+    leaf: null,
+    status: "completed",
+    updatedAt: 0,
+    origin: "terminal",
+  };
+  // An older owner's summary has no flag at all.
+  expect(decodeChatSummary(summary)).toEqual(summary);
+  expect(decodeChatSummary({ ...summary, archived: true })).toEqual({
+    ...summary,
+    archived: true,
+  });
+  expect(() => decodeChatSummary({ ...summary, archived: false })).toThrow();
 });

@@ -155,6 +155,16 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
         conversationId: id,
       }),
     );
+    // The owner's archive record for another session, as its command writes it.
+    const archived = seed.ids[1];
+    c.files.create(
+      join(c.directory, "conversations-v1", "archive", `${archived}.json`),
+      JSON.stringify({
+        schema: "cadence-conversation-archive/1",
+        id: archived,
+        at: 0,
+      }),
+    );
     const controlPath = join(
       c.directory,
       "conversation-workflows-v1",
@@ -224,9 +234,13 @@ it("stopped-owner history and mode use the same readers, retain exact bytes and 
     const page = await read({ kind: "conversations" });
     if (page.kind !== "conversations") throw Error("listing");
     expect(page.entries.find((row) => row.id === id)?.cadence).toBe(true);
+    // The stopped reader honours the archive record in both listings.
     expect(page.entries.map((row) => row.id).sort()).toEqual(
-      [...seed.ids].sort(),
+      seed.ids.filter((row) => row !== archived).sort(),
     );
+    const hidden = await read({ kind: "conversations", archived: true });
+    if (hidden.kind !== "conversations") throw Error("archived listing");
+    expect(hidden.entries).toMatchObject([{ id: archived, archived: true }]);
     expect(
       await read(
         { kind: "conversation", leaf: null, known: null, id },

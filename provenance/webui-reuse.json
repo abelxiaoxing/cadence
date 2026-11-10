@@ -371,7 +371,12 @@
     "test/model-preview-process.test.ts",
     "test/model-preview-recovery.test.ts",
     "test/web/model-wait.test.tsx",
-    "web/src/layout/StatusItem.tsx"
+    "web/src/layout/StatusItem.tsx",
+    "src/session-file.mjs",
+    "src/session-rename.mjs",
+    "test/conversation-rename.test.ts",
+    "test/gateway-archive.test.ts",
+    "test/session-rename.test.ts"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -462,12 +467,12 @@
     "web/vitest.config.ts": "f01dacc799c02c04941c875004414c2ed59f2c1594bb0b010b81ba44ee3b015b",
     "test/web/conversations.test.tsx": "98c127ab07bae0bf69f2e209393759bdf70ec8328e85f4aa510469fb96e097a1",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
-    "src/service/contracts/workbench.ts": "e55812fcec7052f1f50b0a04177a7540f0b54aee454a504365455c112051074e",
-    "src/service/conversations.ts": "f1309f87cbdbf379efbfafe916b5bf4c3280f2d168970d7ea52d3feef41f52a5",
+    "src/service/contracts/workbench.ts": "5a5c8a24e17db783221af9c6c54ddbf8c31a5d4bd32f8a8e26f9bc4e5884c96d",
+    "src/service/conversations.ts": "b6e237cf7c6c6673e61a13387fa6aa5009590c5d665d0c3d62105611aee47bbc",
     "src/service/workbench-files.ts": "03499ec86d55014cd5f1d7575424f2e9f12cca0cb1165d0a8c1a0e3343b6b7e1",
-    "src/service/workbench.ts": "24c30fc6987a49eb954f3a0d8253a8ff4bac8533402b9d8f9e544412412f3a16",
+    "src/service/workbench.ts": "90f6525d4f1cc3699a51acaa591dda4f76ce7607937a8d05fee94c7445332a69",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
-    "test/workbench-boundaries.test.ts": "aa713b98e5cb39cbb1221140f621f350654630d72098c09dbe30670ec13d0b38",
+    "test/workbench-boundaries.test.ts": "420dd1b26b363f2c1606bcf673aad8d4a4dc4ac4fc2535a84f9c26d1c311a733",
     "test/web/workbench.test.tsx": "a99b6775b02bfc4b51e2ec017755c9768ccb1087ae52cb85ceb13347a63e7fad",
     "web/src/components/workspace/ChatWorkspace.tsx": "8772102dae30fe4250bd1967f5d62aacbf356f5552e7da46aaa7160ae24bc1ef",
     "web/src/components/workspace/ChatSteps.tsx": "639712ccee5718b5651867dac8d1e1d0aaae8ae21ac5a76861725a484a885952",
@@ -514,13 +519,13 @@
     "web/src/transcript/use-lazy-window.ts": "b0fda000520898f4193c0c4539cea2c055bf4d9e7fd7b0fc089f5f9271498799",
     "test/web/conversation-reader.test.tsx": "680d64ec7358a9634ed4e711b2e372c778f9adaa2cf91304e823d759b0e851a3",
     "web/src/components/workspace/BranchTree.tsx": "b8317cb224680ecb7fe544d87b4b809c2ffb8991d16c0901e891bbb07d9e8931",
-    "src/service/pi-sessions.ts": "eb086b98d9f3b9d986d039df7603079f21a57f457164695a5249398400fa313c",
+    "src/service/pi-sessions.ts": "a1564f1a30e361042e67ab0397f7aa72ef82941db40a12273e96b6544c79bb9d",
     "src/service/turn-capture.ts": "f1c869c1ec30bd35dd6348d86322f70c0cef4398fca0ad9be6e102a758f902c2",
-    "test/pi-sessions.test.ts": "023dbca0063b6c38a807c6436ef39ff81738a76990a0a36ddd4633b597d6df78",
-    "src/service/conversation-records.ts": "af705ca5bc204f9f663ccdb6948de1f051742cd5274faf4ddcadae36edc9bf22",
+    "test/pi-sessions.test.ts": "9344d800093c74baba530f675b4a4a556d83cf96eb327eaea891ec104994126c",
+    "src/service/conversation-records.ts": "ded06789360884afbe5042e02c10a0cc454e2474e388890bf7d03dfc6e564014",
     "src/service/conversation-controls.ts": "f652c47ad1d0c8191793250791c9fdc91f617c95432a7782dc3f2b065b923e88",
-    "src/service/gateway-conversations.ts": "da41f0d499e5dee2810df4c9cde2d5ee9a60833c6975c6591e2396e538197155",
-    "test/gateway-conversations.test.ts": "3d16973642546c9e8c9bde7c904969d3c4acdb508fd949d0add2ee6419297771",
+    "src/service/gateway-conversations.ts": "a764c506d113adf5966506c2621b812e4b24a810f2d87fd23d6e969d22fa5b5a",
+    "test/gateway-conversations.test.ts": "9a2bd35bf2aef29a5ffb0d64dc6881215574e854fc1ab22bdef1f994f64a9e66",
     "test/gateway-files.test.ts": "7ca7c18d8502703fdfa043aa2287da3f4bfe57db229e871746d2cc4a2cb0a6c5",
     "web/src/client/use-project-observation.ts": "db1d5926ec11111544c5b5e3170adc52ed7b757c160cd89bfd1b784acd88ecce",
     "web/src/client/conversation-send.ts": "bd28de9d0bc644010cd68afc4a4f4b8e0ce8dca489f71b937535aad63a787f0c",
@@ -528,7 +533,7 @@
     "test/gateway-send.test.ts": "1b4086b3e23de6123f3d7aaa24c417bf5a06666569e45f92272574ca236045ee",
     "test/web/conversation-send.test.tsx": "0cd5e8d3e0e5d5ea7759d75a67303a4086f9e61e5c839af14beef50fbcbf27ee",
     "test/web/send-observation.test.tsx": "652b00bb1bc4e6a093186b533a5b51630cb8bbffaa4ded7cf775e8a5e9289203",
-    "test/conversation-records.test.ts": "2ac28a3a2158e356c9cf9a59fb16afbda0539d2987f33715ed232a4314b91d98",
+    "test/conversation-records.test.ts": "dfc5196aa57f4b8e5150aa16ab47741858c716e47e5a836035d5535eb5109170",
     "test/conversation-retirement.test.ts": "680e8110a30495fb1b7d915471b5da9d046f1554d99b40be300ed891a0c9b9e8",
     "src/image-content.mjs": "993d203282eed4d2104fe971c691b0bf51a3ca031e1275c91667cf56a4b808d1",
     "src/image-content.d.mts": "15895be7b1804528c2f8a9be22fea00e4b299a4fe24ba81f6dfda9d8cbd04e02",
@@ -577,7 +582,12 @@
     "test/model-preview-process.test.ts": "3dd670bc539b3ed567839d9ddff7a66f0b17c291c2a9d493eae6ea42c1d24026",
     "test/model-preview-recovery.test.ts": "1654c8d51ecdfa683bd3a89fb764d87b36757673838a906d842cbc8e2d83bc8b",
     "test/web/model-wait.test.tsx": "34df9ee2bb9d4f3fe42cd432d0d926ef2066931f8c581a5c68dac03864abecac",
-    "web/src/layout/StatusItem.tsx": "481fa044cd63d84f2468d67add44fa70ebe3b2dbdd14652cd1de4bd232abd7c3"
+    "web/src/layout/StatusItem.tsx": "481fa044cd63d84f2468d67add44fa70ebe3b2dbdd14652cd1de4bd232abd7c3",
+    "src/session-file.mjs": "1609585df8c0a95df4b31cbb030a28749fbf4b334aaf1a4b146277c9c1fc6305",
+    "src/session-rename.mjs": "1feafef55bdc1fba26331cecce20186af002618f4ed28b2f9b2dcabc54616c2c",
+    "test/conversation-rename.test.ts": "8b7593da7a769412db8c77de51b0696e15202d5ecbf11786c79b21633ac268df",
+    "test/gateway-archive.test.ts": "a4f7721d49a5fa211cace0c088b8740d8e5b3ddb17e58727556f5198a4bc438b",
+    "test/session-rename.test.ts": "ce84337d4873dd5308e29008ea8965691a302b0e53c6c5309fae6dca802e4850"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -909,7 +919,7 @@
     {
       "id": "conversation-service-capabilities",
       "originalSourcePinPreserved": true,
-      "note": "Cadence-owned integration: conversation reads gain service-side capabilities without adapting any new pi-web-ui source. A readable thinking block of a Pi assistant message is a chat item and listed step of its own role in its recorded place, listed without text and read through the existing step-detail read; its signature is never returned, thinking Pi stored unreadable stays an omitted flag, and the thinking flag a live capture records is no longer reported beside shown thinking. The conversation head states the branch's context size as of its last valid model response (a bounded, memoized walk; unknown after a compaction, no estimate of later messages), and the shared model projection states a model's context window for the live catalog and the gateway preview. A turn header names the entry its user message continues, the head a later edited resend will send. Destination pins are refreshed for the changed bodies and tests; the WebUI renders none of these yet."
+      "note": "Cadence-owned integration: conversation reads and two commands gain service-side capabilities without adapting any new pi-web-ui source. A readable thinking block of a Pi assistant message is a chat item and listed step of its own role in its recorded place, listed without text and read through the existing step-detail read; its signature is never returned, thinking Pi stored unreadable stays an omitted flag, and the thinking flag a live capture records is no longer reported beside shown thinking. The conversation head states the branch's context size as of its last valid model response (a bounded, memoized walk; unknown after a compaction, no estimate of later messages), and the shared model projection states a model's context window for the live catalog and the gateway preview. A turn header names the entry its user message continues, the head a later edited resend will send. conversation-rename lets a fixed-purpose child (src/session-rename.mjs, sharing src/session-file.mjs with the SDK worker) append one session_info entry through Pi's SessionManager under the owner's lease, refused during a live turn and acknowledged only after the name is read back; conversation-archive keeps an owner-private presence record that the history list honours for live and stopped owners, never moving, rewriting or deleting a session file; the terminal extension no longer announces a name record. Destination pins are refreshed for the changed bodies and tests and the new files are pinned; the WebUI offers none of these yet."
     }
   ],
   "testAdaptations": [

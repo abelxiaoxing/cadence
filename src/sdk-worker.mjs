@@ -1,16 +1,7 @@
 // Isolated SDK child, not Pi CLI startup. Task discovery stays disabled;
 // ordinary conversations explicitly load only context/skills, never extensions.
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  createReadStream,
-  fstatSync,
-  openSync,
-  readFileSync,
-  readSync,
-  writeSync,
-} from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import {
   createProvider,
   InMemoryCredentialStore,
@@ -35,6 +26,7 @@ import {
   BROWSER_COMMAND_ENTRY,
   WEBUI_SESSION_ENTRY,
 } from "./session-entries.mjs";
+import { terminateLastLine } from "./session-file.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
 import {
   decodeWorkerRuntime,
@@ -152,21 +144,6 @@ const abortForFailure = () => {
       fail("cleanup", "cleanup-failure");
     }
   })();
-};
-/** A torn final line (a writer killed mid-line) would swallow the next entry. */
-const terminateLastLine = (file) => {
-  const fd = openSync(
-    file,
-    constants.O_RDWR | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0),
-  );
-  try {
-    const size = fstatSync(fd).size;
-    const last = Buffer.alloc(1);
-    if (size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10)
-      writeSync(fd, "\n");
-  } finally {
-    closeSync(fd);
-  }
 };
 /** The project's Pi session a browser turn writes, as the terminal shares it:
  * continued from the entry the browser showed, so a session that moved on

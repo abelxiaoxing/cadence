@@ -1,5 +1,5 @@
 /** Shared readonly Pi session and browser-command records. No SDK, execution owner or writes. */
-import { lstatSync } from "node:fs";
+import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
 import { sanitizeText } from "../worker-redaction.mjs";
 import {
@@ -21,6 +21,7 @@ import {
   type ChatCursor,
   type ChatStatus,
   type ChatSummary,
+  CONVERSATION_NAME_CHARS,
   clipText,
   decodeEntryId,
   decodeSessionId,
@@ -264,6 +265,40 @@ export class ConversationRecords {
   controlKey(id: string): string {
     return observedFile(this.controlPath(id));
   }
+  /** The owner's record that the history list leaves a session out. Its
+   * presence is the whole fact; Pi's session file is not involved. */
+  archivePath(id: string) {
+    this.assertSupported(id);
+    return join(this.bindings, "archive", `${decodeSessionId(id)}.json`);
+  }
+  archived(id: string): boolean {
+    const path = this.archivePath(id);
+    return (
+      this.files.directory(join(this.bindings, "archive")) &&
+      observedFile(path) !== "absent"
+    );
+  }
+  /** Every archived session, from one directory read rather than a stat each. */
+  private archivedSessions(): Set<string> {
+    const directory = join(this.bindings, "archive"),
+      ids = new Set<string>();
+    if (!this.files.directory(directory)) return ids;
+    const dir = opendirSync(directory);
+    try {
+      for (let e = dir.readSync(); e; e = dir.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json"))
+          throw new ContractError("corrupt-selected");
+        try {
+          ids.add(decodeSessionId(e.name.slice(0, -5)));
+        } catch {
+          throw new ContractError("corrupt-selected");
+        }
+      }
+    } finally {
+      dir.closeSync();
+    }
+    return ids;
+  }
   hasCommand(id: string, commandId: string): boolean {
     return this.accepted(commandId)?.session === id;
   }
@@ -291,9 +326,14 @@ export class ConversationRecords {
       ? { commandId, status: this.state(commandId).status }
       : null;
   }
-  summary(id: string, live: LiveTurn | undefined): ChatSummary | null {
+  summary(
+    id: string,
+    live: LiveTurn | undefined,
+    archived = this.archived(id),
+  ): ChatSummary | null {
     this.assertSupported(id);
     const listed = this.sessions.find(id);
+    const hidden = archived ? { archived: true as const } : {};
     if (!listed) {
       if (!live) return null;
       return {
@@ -304,6 +344,7 @@ export class ConversationRecords {
         updatedAt: live.accepted.at,
         origin: "webui",
         live: { commandId: live.commandId, epoch: live.epoch },
+        ...hidden,
       };
     }
     const s = listed.summary;
@@ -321,8 +362,9 @@ export class ConversationRecords {
     return {
       id,
       title: text(
-        [...sanitizeText(summaryTitle(s), secrets)].slice(0, 100).join("") ||
-          "Conversation",
+        [...sanitizeText(summaryTitle(s), secrets)]
+          .slice(0, CONVERSATION_NAME_CHARS)
+          .join("") || "Conversation",
         512,
         true,
       ),
@@ -333,14 +375,19 @@ export class ConversationRecords {
       ...(live
         ? { live: { commandId: live.commandId, epoch: live.epoch } }
         : {}),
+      ...hidden,
     };
   }
-  list(after: ChatCursor | null = null): WorkbenchResult {
+  /** The history, without archived sessions; `archived` lists only those. */
+  list(after: ChatCursor | null = null, archived = false): WorkbenchResult {
     this.o.assertCurrent();
+    const hidden = this.archivedSessions();
     const listed = this.sessions
       .list()
       .filter(
-        (row) => !retiredConversation(this.o.coordination, row.summary.id),
+        (row) =>
+          hidden.has(row.summary.id) === archived &&
+          !retiredConversation(this.o.coordination, row.summary.id),
       );
     let start = 0;
     if (after) {
@@ -354,7 +401,11 @@ export class ConversationRecords {
     }
     const page = listed.slice(start, start + PAGE);
     const entries = page.flatMap((l) => {
-      const summary = this.summary(l.summary.id, this.liveFor(l.summary.id));
+      const summary = this.summary(
+        l.summary.id,
+        this.liveFor(l.summary.id),
+        archived,
+      );
       return summary ? [summary] : [];
     });
     const last = page.at(-1);
