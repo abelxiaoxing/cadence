@@ -214,7 +214,8 @@ Conversation response completion is distinct from workflow completion; read the 
 
 ### Research scope, timing and retained results
 
-Each research call accepts one or two questions and optional specific `roots` (default: the conversation directory).
+Each research call accepts up to eight independent questions and optional specific `roots` (default: the conversation directory).
+The service runs as many of them at once as `CADENCE_PARALLEL` allows (default 4, at most 16) and queues the rest; set it in the service's environment to match what your model provider or local model server can serve.
 Provide the actual investigation directory, especially for large mounted/backup trees; do not begin by enumerating `/` or broad parent directories.
 Research tools are readonly and bounded.
 Search limits and omitted coverage are reported explicitly; a partial search does not prove that no other matching file exists.

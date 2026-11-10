@@ -144,6 +144,50 @@ const EVIDENCE_BYTES = 8192;
 const MAX_STEPS = 256;
 const STEP_UNITS = 80;
 const MAX_ACTIVE = 4;
+/** Workflow workers of one run that may be in flight at once. The plan decides
+ * what can run side by side; this bounds how much does on this machine (model
+ * throughput, provider rate limits, memory). `CADENCE_PARALLEL` sets it. */
+export const PARALLEL = { default: 4, maximum: 16 } as const;
+/** A whole number from 1 is used, capped at the maximum; anything else is the
+ * default. A tuning value never prevents an owner from starting. */
+export function parallelLimit(environment: NodeJS.ProcessEnv): number {
+  const raw = environment.CADENCE_PARALLEL ?? "";
+  return /^[1-9][0-9]{0,3}$/u.test(raw)
+    ? Math.min(Number(raw), PARALLEL.maximum)
+    : PARALLEL.default;
+}
+/** Runs the tasks in order, at most `limit` at a time, and reports every
+ * settlement in input order. It never rejects: the caller joins all of them
+ * before failing. After the first rejection no further task is started. */
+export async function settleLimited<T>(
+  limit: number,
+  tasks: readonly (() => Promise<T>)[],
+): Promise<PromiseSettledResult<T>[]> {
+  const settled: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let next = 0,
+    failed = false;
+  const lane = async () => {
+    for (let index = next++; index < tasks.length; index = next++) {
+      if (failed) {
+        settled[index] = {
+          status: "rejected",
+          reason: new ContractError("stale"),
+        };
+        continue;
+      }
+      try {
+        settled[index] = { status: "fulfilled", value: await tasks[index]() };
+      } catch (reason) {
+        failed = true;
+        settled[index] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, lane),
+  );
+  return settled;
+}
 /** Private-worktree Git operations: realistic for large repositories. */
 const RESTARTED =
   "Interrupted: Cadence stopped before this run finished (machine restart, crash or automatic recovery). Nothing was replayed; its worktrees and any partial edits are kept for inspection. Start it again to continue.";
@@ -159,6 +203,8 @@ interface Options {
   gate: CheckoutGate;
   cwd: string;
   checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
+  /** Workflow workers of one run in flight at once; defaults to `PARALLEL`. */
+  parallel?: number;
   secrets(): readonly string[];
 }
 interface Live {
@@ -2676,18 +2722,20 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       live.run.status = "running";
       this.save(live);
       if (request.action === "research") {
-        const answers = await Promise.allSettled(
-          request.questions.map((q, i) =>
-            this.worker(
-              live,
-              this.cwd,
-              `research-${i + 1}`,
-              `Goal: ${request.goal}\nInvestigation: ${q}\nRead only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`,
-              true,
-              request.model,
-              request.roots,
-              "research",
-            ),
+        const answers = await settleLimited(
+          this.o.parallel ?? PARALLEL.default,
+          request.questions.map(
+            (q, i) => () =>
+              this.worker(
+                live,
+                this.cwd,
+                `research-${i + 1}`,
+                `Goal: ${request.goal}\nInvestigation: ${q}\nRead only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`,
+                true,
+                request.model,
+                request.roots,
+                "research",
+              ),
           ),
         );
         for (const a of answers) {

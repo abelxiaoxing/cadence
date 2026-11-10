@@ -20,7 +20,9 @@ import {
 
 export const WORKFLOW_LIMITS = {
   tasks: 16,
-  parallel: 2,
+  /** Questions one research run may carry. How many run at once is the
+   * owner's execution limit (`parallelLimit`), not a property of the plan. */
+  questions: 8,
   checks: 16,
   bytes: 256 * 1024,
   // Read budgets, never a lifetime cap on retained runs.
@@ -656,7 +658,7 @@ export function decodeWorkflowRequest(v: unknown): WorkflowRequest {
       "model",
       ...(Object.hasOwn(v ?? {}, "roots") ? ["roots"] : []),
     ]);
-    const questions = list(o.questions, WORKFLOW_LIMITS.parallel, (q) =>
+    const questions = list(o.questions, WORKFLOW_LIMITS.questions, (q) =>
       text(q, 8192, true),
     );
     if (!questions.length) throw new Error("Research needs a question");
