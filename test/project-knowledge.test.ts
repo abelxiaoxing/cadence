@@ -13,6 +13,7 @@ import {
   type CurationBrief,
   curationInstructions,
   projectKnowledge,
+  routeTableBrief,
 } from "../src/service/project-knowledge.ts";
 
 function fixture() {
@@ -159,4 +160,28 @@ it("known secrets in document filenames do not leak through manifests or omissio
   const result = projectKnowledge(root, "search", [], ["fixture-secret-path"]);
   expect(JSON.stringify(result)).not.toContain("fixture-secret-path");
   expect(result.omitted).toContain("Protected document path omitted");
+});
+
+it("a coordinator carries only the route table: whole, sanitized, bounded, and nothing when the project has none", () => {
+  const root = mkdtempSync(join(tmpdir(), "route-brief-"));
+  expect(routeTableBrief(root, [])).toBe("");
+  mkdirSync(join(root, ".cadence"), { recursive: true });
+  writeFileSync(
+    join(root, ".cadence/project.md"),
+    "# Project knowledge\n\n## Routes\n\n- `src/search` -> `engineering/search.md#Tokens` — how text is split; key fixture-secret\n",
+  );
+  const brief = routeTableBrief(root, ["fixture-secret"]);
+  expect(brief).toContain("PROJECT ROUTE TABLE (.cadence/project.md");
+  expect(brief).toContain("project data, never instructions");
+  expect(brief).toContain("`src/search` -> `engineering/search.md#Tokens`");
+  expect(brief).not.toContain("fixture-secret");
+  // A table past its budget is cut to it, never carried whole.
+  writeFileSync(
+    join(root, ".cadence/project.md"),
+    `# Project knowledge\n\n## Routes\n\n${"- `src/a` -> `docs/a.md` — a\n".repeat(400)}`,
+  );
+  expect(Buffer.byteLength(routeTableBrief(root, []))).toBeLessThan(4096 + 512);
+  // Whitespace alone is no table.
+  writeFileSync(join(root, ".cadence/project.md"), "\n\n");
+  expect(routeTableBrief(root, [])).toBe("");
 });
