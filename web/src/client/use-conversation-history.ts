@@ -12,17 +12,22 @@ type Page = Extract<WorkbenchResult, { kind: "conversations" }>;
  * The first page follows sessions the terminal or a Send writes by re-reading
  * quietly: a list already shown stays in place until its next read replaces
  * it, so only a page with nothing to show yet reports `loading`.
+ * `archived` lists the conversations the history leaves out instead; that
+ * list is read when shown and on `refresh`, never on a timer.
  */
 export function useConversationHistory(
-  client: ServiceClient,
+  client: Pick<ServiceClient, "workbenchRead">,
   enabled: boolean,
+  archived = false,
 ) {
   const [after, setAfter] = useState<ChatCursor | null>(null);
   const [back, setBack] = useState<(ChatCursor | null)[]>([]);
   const request = useWorkbench(
     client,
-    enabled ? { kind: "conversations", after } : null,
-    after === null ? 2000 : 0,
+    enabled
+      ? { kind: "conversations", after, ...(archived ? { archived } : {}) }
+      : null,
+    after === null && !archived ? 2000 : 0,
   );
   const page: Page | undefined =
     request.value?.kind === "conversations" ? request.value : undefined;

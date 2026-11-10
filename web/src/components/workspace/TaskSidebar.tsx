@@ -1,27 +1,28 @@
 /* Adapted from pi-web-ui LeftPanel.tsx project/current/history sections,
  * nested subagent rows, the filter box and time-grouped slim rows.
  * MIT (c) 2026 xing-shuyin. Navigation only observes the Cadence owner; no
- * session import, cwd mutation, replay or repair. */
+ * session import, cwd mutation, replay or repair. A row's rename and archive
+ * are explicit owner commands (`ConversationRow.tsx`). */
 import { type ReactNode, useState } from "react";
 import {
+  FiArchive,
   FiChevronDown,
   FiChevronRight,
   FiCpu,
   FiMessageSquare,
   FiSearch,
   FiSquare,
-  FiTerminal,
   FiX,
 } from "react-icons/fi";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
+import { useConversationHistory } from "../../client/use-conversation-history";
 import { usePage } from "../../history/use-page";
 import { type MessageKey, useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
 import {
   groupByTime,
   matchesFilter,
-  rowTime,
   type TimeGroupKey,
 } from "../../navigation/time-groups";
 import type {
@@ -39,6 +40,11 @@ import {
   activityKey,
 } from "./ActivityList";
 import { ConversationActions } from "./ConversationActions";
+import {
+  ArchivedList,
+  ConversationRow,
+  useConversationCommands,
+} from "./ConversationRow";
 import { workflowActivity } from "./WorkflowPanel";
 
 type OpenScope = (scope: Scope, snapshot?: string, label?: string) => void;
@@ -53,11 +59,14 @@ function SidebarSection({
   children,
   className = "",
   count,
+  actions,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
   count?: string;
+  /** Controls beside the heading; they stay reachable while it is folded. */
+  actions?: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -77,6 +86,7 @@ function SidebarSection({
           <span className="lp-section-title">{title}</span>
           {count && <span className="lp-count">{count}</span>}
         </button>
+        {actions && <span className="lp-section-actions">{actions}</span>}
       </header>
       <div className="lp-section-body" hidden={!open}>
         {children}
@@ -248,6 +258,8 @@ export function TaskSidebar({
   conversationId,
   onConversation,
   onNewConversation,
+  actionsUnavailable = "",
+  onConversationsChanged,
   workflows,
   workflowLinks = [],
   workflowError = false,
@@ -276,6 +288,12 @@ export function TaskSidebar({
   conversationId?: string | null;
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
+  /** Why rename and archive cannot be requested now (they need a live
+   * compatible execution owner); empty when they can. */
+  actionsUnavailable?: string;
+  /** A rename or archive was accepted, or its outcome is unknown: the
+   * conversation lists should be read again. */
+  onConversationsChanged?: (id: string) => void;
   /** Active Cadence workflow runs; undefined until first observed. */
   workflows?: WorkflowRun[];
   workflowLinks?: { runId: string; conversationId: string }[];
@@ -285,9 +303,17 @@ export function TaskSidebar({
   onWorkflow?: (run: WorkflowRun, conversationId: string | null) => void;
   onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
 }) {
-  const { t, tx, locale } = useT();
+  const { t, tx } = useT();
   // A filter over the history rows already listed; it reads nothing.
   const [filter, setFilter] = useState("");
+  // The conversations the history leaves out, read only while they are shown.
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const archived = useConversationHistory(client, archivedOpen, true);
+  const refreshArchived = archived.refresh;
+  const commands = useConversationCommands(client, (id) => {
+    refreshArchived();
+    onConversationsChanged?.(id);
+  });
   const request: ListRequest | null = workspace
     ? {
         reader: "tasks",
@@ -395,7 +421,8 @@ export function TaskSidebar({
     );
   // A slim row: the title and when it last changed. Its icon says where the
   // conversation started; a second line appears only for a live workflow's
-  // phase or a reply that is not simply completed.
+  // phase or a reply that is not simply completed. A row outside Running work
+  // also offers its actions: rename and archive, or unarchive once archived.
   const chatRow = (chat: ChatSummary) => {
     const live = chat.status === "running" || chat.status === "queued";
     const flow =
@@ -407,52 +434,25 @@ export function TaskSidebar({
         : chat.status === "completed"
           ? ""
           : tx(chat.status);
-    const origin =
-      chat.origin === "terminal"
-        ? t("Started in the terminal")
-        : t("Started in the WebUI");
-    const tag = locale === "zh" ? "zh-CN" : "en-GB";
     return (
-      <button
-        type="button"
+      <ConversationRow
         key={chat.id}
-        className={`session-item${chat.id === conversationId ? " active" : ""}`}
-        aria-current={chat.id === conversationId ? "true" : undefined}
-        onClick={() => onConversation?.(chat.id)}
-        title={chat.title}
-      >
-        <span
-          className="session-icon"
-          role="img"
-          aria-label={origin}
-          title={origin}
-        >
-          {chat.origin === "terminal" ? (
-            <FiTerminal aria-hidden="true" />
-          ) : (
-            <FiMessageSquare aria-hidden="true" />
-          )}
-        </span>
-        <span className="session-info">
-          <span className="session-title">{chat.title}</span>
-          {state && (
-            <span
-              className={`session-sub session-state ${flow ? "running" : chat.status}`}
-            >
-              {state}
-            </span>
-          )}
-        </span>
-        {chat.updatedAt > 0 && (
-          <time
-            className="session-time"
-            dateTime={new Date(chat.updatedAt).toISOString()}
-            title={new Date(chat.updatedAt).toLocaleString(tag)}
-          >
-            {rowTime(chat.updatedAt, tag)}
-          </time>
-        )}
-      </button>
+        chat={chat}
+        selected={chat.id === conversationId}
+        state={state}
+        tone={flow ? "running" : chat.status}
+        onOpen={() => onConversation?.(chat.id)}
+        row={commands.states.get(chat.id)}
+        unavailable={actionsUnavailable}
+        onArchive={
+          live ? undefined : (value) => commands.archive(chat.id, value)
+        }
+        onRename={
+          live || chat.archived
+            ? undefined
+            : (name) => commands.rename(chat.id, name)
+        }
+      />
     );
   };
   const shownChats = pastChats.filter((chat) =>
@@ -579,17 +579,47 @@ export function TaskSidebar({
         </SidebarSection>
       )}
       <SidebarSection
-        title={t("Conversation history")}
+        title={
+          archivedOpen ? t("Archived conversations") : t("Conversation history")
+        }
         count={
-          !workspace
-            ? `${pastChats.length}${chatHistoryPartial ? "+" : ""}`
-            : tasks.page && !("kind" in tasks.page)
-              ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
+          archivedOpen
+            ? archived.value
+              ? `${archived.value.entries.length}${archived.value.next || archived.canPrevious ? "+" : ""}`
               : t("Not observed")
+            : !workspace
+              ? `${pastChats.length}${chatHistoryPartial ? "+" : ""}`
+              : tasks.page && !("kind" in tasks.page)
+                ? `${pastChats.length + history.length}${tasks.page.next || tasks.canPrevious || chatHistoryPartial ? "+" : ""}`
+                : t("Not observed")
         }
         className="grow"
+        actions={
+          <button
+            type="button"
+            className="lp-section-action"
+            aria-pressed={archivedOpen}
+            title={t(archivedOpen ? "Back to history" : "Show archived")}
+            aria-label={t(archivedOpen ? "Back to history" : "Show archived")}
+            onClick={() => setArchivedOpen((open) => !open)}
+          >
+            <FiArchive aria-hidden="true" />
+          </button>
+        }
       >
-        <nav aria-label={t("Tasks")} className="task-list">
+        {archivedOpen && (
+          <ArchivedList
+            list={archived}
+            unavailable={actionsUnavailable}
+            onBack={() => setArchivedOpen(false)}
+            row={chatRow}
+          />
+        )}
+        <nav
+          aria-label={t("Tasks")}
+          className="task-list"
+          hidden={archivedOpen}
+        >
           {(pastChats.length > 0 || history.length > 0) && (
             <label className="lp-filter">
               <FiSearch aria-hidden="true" />
@@ -612,6 +642,9 @@ export function TaskSidebar({
                 </button>
               )}
             </label>
+          )}
+          {actionsUnavailable && pastChats.length > 0 && (
+            <p className="panel-hint lp-actions-hint">{actionsUnavailable}</p>
           )}
           {groupByTime(shownChats, (chat) => chat.updatedAt).map((group) => (
             <div className="lp-time-group" key={group.key}>
@@ -667,7 +700,9 @@ export function TaskSidebar({
           {chatHistoryControls}
           {workspace && <PageControls pager={tasks} compact />}
         </nav>
-        {!shownTasks.some((r) => r.owner.taskId === taskId) && conversations}
+        {!archivedOpen &&
+          !shownTasks.some((r) => r.owner.taskId === taskId) &&
+          conversations}
       </SidebarSection>
     </aside>
   );
