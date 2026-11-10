@@ -6415,6 +6415,7 @@ function decodeChatTurnHeader(v) {
     ...Object.hasOwn(v ?? {}, "execution") ? ["execution"] : [],
     ...Object.hasOwn(v ?? {}, "retry") ? ["retry"] : [],
     "entry",
+    ...Object.hasOwn(v ?? {}, "parent") ? ["parent"] : [],
     "at"
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
@@ -6424,6 +6425,7 @@ function decodeChatTurnHeader(v) {
     ...o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) },
     id: decodeEntryId(o.id),
     entry: nullable(o.entry, decodeEntryId),
+    ...o.parent === undefined ? {} : { parent: nullable(o.parent, decodeEntryId) },
     at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
@@ -9152,6 +9154,7 @@ ${value}`, secrets);
   return {
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
+    parent: first?.parentId ?? null,
     at: first ? time(first.timestamp) : 0,
     status,
     notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),
@@ -14438,6 +14441,7 @@ class ConversationRecords {
     const turn = listTurn({
       id: chain[0]?.id ?? live2.commandId,
       entry: null,
+      parent: chain.length ? chain[0].parentId : live2.accepted.parent,
       at: live2.accepted.at,
       status: live2.state.status,
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
@@ -14481,6 +14485,7 @@ class ConversationRecords {
         steps: turn.steps.length,
         stable,
         entry: turn.entry,
+        parent: turn.parent,
         at: turn.at
       },
       start,
@@ -16244,7 +16249,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "8bd684fa7359018ef9e6340992c89cf1b52960980b791c6a131e6a5f0a4fb41f",
+    contractHash: "a1592e0793f44712f82e4515db861ec09d3a77ae95ac64ff375f2dcb75a9023e",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -32133,7 +32138,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "13c522fdd482ce60b85dc378711f435018e4bd0e8c12cedf628a2ab712c5bf5f",
+  build: "bda0d25ca7f45e455250df37af169d564b1cbaf97cb7ea2b1e5d8f9146c808fb",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34239,7 +34244,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "8bd684fa7359018ef9e6340992c89cf1b52960980b791c6a131e6a5f0a4fb41f";
+  const embedded = "a1592e0793f44712f82e4515db861ec09d3a77ae95ac64ff375f2dcb75a9023e";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

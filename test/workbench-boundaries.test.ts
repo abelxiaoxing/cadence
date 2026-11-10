@@ -492,3 +492,33 @@ it("the conversation head's context size is an optional closed key an older owne
       decodeWorkbenchResult({ ...head, context: refused }),
     ).toThrow();
 });
+it("a turn header's parent entry is an optional key an older owner omits", () => {
+  const read = {
+    kind: "conversation-turn",
+    conversationId: randomUUID(),
+    leaf: "abcdef12",
+    ordinal: 0,
+    turn: {
+      id: "abcdef12",
+      status: "completed",
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      steps: 0,
+      stable: 0,
+      entry: "abcdef12",
+      at: 0,
+    },
+    start: 0,
+    steps: [],
+  };
+  expect(decodeWorkbenchResult(read)).toEqual(read);
+  // A root message continues nothing; that is stated, unlike an unknown parent.
+  for (const parent of [null, "0123abcd"])
+    expect(
+      decodeWorkbenchResult({ ...read, turn: { ...read.turn, parent } }),
+    ).toMatchObject({ turn: { parent } });
+  for (const parent of ["", "has space", 7, undefined])
+    expect(() =>
+      decodeWorkbenchResult({ ...read, turn: { ...read.turn, parent } }),
+    ).toThrow();
+});

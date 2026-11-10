@@ -443,3 +443,59 @@ it("the head carries the branch's context size, redacted, and a live turn's foll
     context: { tokens: 2500, provider: "fixture", model: "next" },
   });
 });
+it("a turn names the entry its user message continues; a live one its admitted head until Pi writes the message", () => {
+  const f = fixture();
+  const said = (role: string, text: string) => ({
+    role,
+    content: [{ type: "text", text }],
+    ...(role === "assistant" ? { stopReason: "stop" } : {}),
+  });
+  const session = writeSession(f, [
+    said("user", "Earlier"),
+    said("assistant", "Reply"),
+    said("user", "Again"),
+    said("assistant", "Second"),
+  ]);
+  const [first, reply, again, second] = session.entries;
+  const header = (leaf: string, ordinal: number) => {
+    const read = decodeWorkbenchResult(
+      f.records.turnSteps(session.id, leaf, ordinal, null),
+    );
+    if (read.kind !== "conversation-turn") throw Error("turn");
+    return read.turn;
+  };
+  expect(header(second, 0)).toMatchObject({ id: first, parent: null });
+  expect(header(second, 1)).toMatchObject({ id: again, parent: reply });
+  // An edited message is sent from the entry the original continued.
+  const commandId = f.command(session.id, "running", null, "Edited", "", reply);
+  goLive(f, commandId);
+  expect(header(reply, 1)).toMatchObject({
+    id: commandId,
+    parent: reply,
+    entry: null,
+  });
+  // Pi records a model change between that head and the message it writes.
+  const row = (id: string, parentId: string, body: object) =>
+    `${JSON.stringify({ id, parentId, timestamp: "", ...body })}\n`;
+  appendFileSync(
+    session.path,
+    row("0000000a", reply, {
+      type: "model_change",
+      provider: "fixture",
+      modelId: "next",
+    }) +
+      row("0000000b", "0000000a", {
+        type: "message",
+        message: said("user", "Edited"),
+      }) +
+      row("0000000c", "0000000b", {
+        type: "custom",
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId, userId: "0000000b" },
+      }),
+  );
+  expect(header(reply, 1)).toMatchObject({
+    id: "0000000b",
+    parent: "0000000a",
+  });
+});
