@@ -217,6 +217,7 @@ It never claims retained history is displayed when none was read, nor diagnoses 
 Missing history/files have explicit reading or unavailable states, not empty success; Files names the conversation directory rather than the host `/`.
 The Files pane is a crumb trail from that directory (its name, never a bare root), a `..` row for the parent and one row per entry whose reference and copy-path actions appear on hover or focus and stay visible on touch screens.
 Its name filter narrows the entries already listed and reads nothing; the readonly/reference statement opens from the help crumb, while bounded-listing and limited-preview notes stay in place.
+A previewed file is shown verbatim through the Markdown code renderer: numbered lines, a copy action and, for a known extension, the bundled highlighter.
 The composer's Cadence control names off, armed for the next Send, confirmed on and unobserved states distinctly, including on phones; arming is neither a confirmed mode change nor plan approval.
 Off, it arms Cadence for the next Send (or clears a typed `/cadence`); on, it is the mode exit, alongside the typed `exit cadence`.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
@@ -301,6 +302,7 @@ Terminal `!` commands, compaction and branch summaries and displayed extension m
 Supported user images are small entry/index/MIME descriptors on their exact branch.
 A live turn extends that view only with its verified command-owned prefix; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
+A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.
 The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
@@ -383,6 +385,7 @@ Only `/cadence` (with the slash) at the start of a Send activates the mode; a se
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.
 An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text and one card per tool call, with nothing folded behind a summary.
 A card names the tool and what it acted on, and reads its arguments and output only once opened.
+An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
 Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
