@@ -1,19 +1,29 @@
-/* Adapted from pi-web-ui LeftPanel.tsx project/current/history sections and
- * nested subagent rows. MIT (c) 2026 xing-shuyin. Navigation only observes the
- * Cadence owner; no session import, cwd mutation, replay or repair. */
+/* Adapted from pi-web-ui LeftPanel.tsx project/current/history sections,
+ * nested subagent rows, the filter box and time-grouped slim rows.
+ * MIT (c) 2026 xing-shuyin. Navigation only observes the Cadence owner; no
+ * session import, cwd mutation, replay or repair. */
 import { type ReactNode, useState } from "react";
 import {
   FiChevronDown,
   FiChevronRight,
   FiCpu,
   FiMessageSquare,
+  FiSearch,
   FiSquare,
+  FiTerminal,
+  FiX,
 } from "react-icons/fi";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { usePage } from "../../history/use-page";
-import { useT } from "../../i18n/locale";
+import { type MessageKey, useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
+import {
+  groupByTime,
+  matchesFilter,
+  rowTime,
+  type TimeGroupKey,
+} from "../../navigation/time-groups";
 import type {
   ActiveRuns,
   ListRequest,
@@ -32,6 +42,11 @@ import { ConversationActions } from "./ConversationActions";
 import { workflowActivity } from "./WorkflowPanel";
 
 type OpenScope = (scope: Scope, snapshot?: string, label?: string) => void;
+const TIME_GROUPS: Readonly<Record<TimeGroupKey, MessageKey>> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  earlier: "Earlier",
+};
 
 function SidebarSection({
   title,
@@ -270,7 +285,9 @@ export function TaskSidebar({
   onWorkflow?: (run: WorkflowRun, conversationId: string | null) => void;
   onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
 }) {
-  const { t, tx } = useT();
+  const { t, tx, locale } = useT();
+  // A filter over the history rows already listed; it reads nothing.
+  const [filter, setFilter] = useState("");
   const request: ListRequest | null = workspace
     ? {
         reader: "tasks",
@@ -376,38 +393,72 @@ export function TaskSidebar({
         (link) => link.runId === run.id && link.conversationId === chat.id,
       ),
     );
+  // A slim row: the title and when it last changed. Its icon says where the
+  // conversation started; a second line appears only for a live workflow's
+  // phase or a reply that is not simply completed.
   const chatRow = (chat: ChatSummary) => {
-    const flow = ["running", "queued", "completed"].includes(chat.status)
-      ? liveWorkflow(chat)
-      : undefined;
+    const live = chat.status === "running" || chat.status === "queued";
+    const flow =
+      live || chat.status === "completed" ? liveWorkflow(chat) : undefined;
+    const state = flow
+      ? tx(workflowActivity(flow))
+      : chat.cadence && live
+        ? t("Discussing")
+        : chat.status === "completed"
+          ? ""
+          : tx(chat.status);
+    const origin =
+      chat.origin === "terminal"
+        ? t("Started in the terminal")
+        : t("Started in the WebUI");
+    const tag = locale === "zh" ? "zh-CN" : "en-GB";
     return (
       <button
         type="button"
         key={chat.id}
         className={`session-item${chat.id === conversationId ? " active" : ""}`}
+        aria-current={chat.id === conversationId ? "true" : undefined}
         onClick={() => onConversation?.(chat.id)}
         title={chat.title}
       >
-        <span className="session-icon">
-          <FiMessageSquare />
+        <span
+          className="session-icon"
+          role="img"
+          aria-label={origin}
+          title={origin}
+        >
+          {chat.origin === "terminal" ? (
+            <FiTerminal aria-hidden="true" />
+          ) : (
+            <FiMessageSquare aria-hidden="true" />
+          )}
         </span>
         <span className="session-info">
           <span className="session-title">{chat.title}</span>
-          <span className="session-sub">
-            {chat.origin === "terminal" ? t("Terminal") : "WebUI"} ·{" "}
-            {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
-            {flow
-              ? tx(workflowActivity(flow))
-              : chat.cadence && ["running", "queued"].includes(chat.status)
-                ? t("Discussing")
-                : chat.cadence && chat.status === "completed"
-                  ? t("Ready for conversation")
-                  : tx(chat.status)}
-          </span>
+          {state && (
+            <span
+              className={`session-sub session-state ${flow ? "running" : chat.status}`}
+            >
+              {state}
+            </span>
+          )}
         </span>
+        {chat.updatedAt > 0 && (
+          <time
+            className="session-time"
+            dateTime={new Date(chat.updatedAt).toISOString()}
+            title={new Date(chat.updatedAt).toLocaleString(tag)}
+          >
+            {rowTime(chat.updatedAt, tag)}
+          </time>
+        )}
       </button>
     );
   };
+  const shownChats = pastChats.filter((chat) =>
+    matchesFilter(chat.title, filter),
+  );
+  const shownTasks = history.filter((r) => matchesFilter(r.goal, filter));
   return (
     <aside className="panel panel-left lp-panel">
       {discovery && (
@@ -539,8 +590,39 @@ export function TaskSidebar({
         className="grow"
       >
         <nav aria-label={t("Tasks")} className="task-list">
-          {pastChats.map(chatRow)}
-          {history.map((r) => (
+          {(pastChats.length > 0 || history.length > 0) && (
+            <label className="lp-filter">
+              <FiSearch aria-hidden="true" />
+              <input
+                type="search"
+                value={filter}
+                placeholder={t("Filter conversations…")}
+                aria-label={t("Filter conversations…")}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+              {filter && (
+                <button
+                  type="button"
+                  className="lp-filter-clear"
+                  title={t("Clear filter")}
+                  aria-label={t("Clear filter")}
+                  onClick={() => setFilter("")}
+                >
+                  <FiX aria-hidden="true" />
+                </button>
+              )}
+            </label>
+          )}
+          {groupByTime(shownChats, (chat) => chat.updatedAt).map((group) => (
+            <div className="lp-time-group" key={group.key}>
+              <h3 className="lp-time-label">{t(TIME_GROUPS[group.key])}</h3>
+              {group.items.map(chatRow)}
+            </div>
+          ))}
+          {shownTasks.length > 0 && (
+            <h3 className="lp-time-label">{t("Tasks")}</h3>
+          )}
+          {shownTasks.map((r) => (
             <div key={r.owner.taskId}>
               <button
                 type="button"
@@ -566,6 +648,15 @@ export function TaskSidebar({
               {r.owner.taskId === taskId && conversations}
             </div>
           ))}
+          {shownChats.length === 0 &&
+            shownTasks.length === 0 &&
+            (pastChats.length > 0 || history.length > 0) && (
+              <p className="panel-hint" role="status">
+                {t(
+                  "No listed conversation matches. Pages not loaded are not searched.",
+                )}
+              </p>
+            )}
           {tasks.page &&
             !("kind" in tasks.page) &&
             history.length === 0 &&
@@ -576,7 +667,7 @@ export function TaskSidebar({
           {chatHistoryControls}
           {workspace && <PageControls pager={tasks} compact />}
         </nav>
-        {!history.some((r) => r.owner.taskId === taskId) && conversations}
+        {!shownTasks.some((r) => r.owner.taskId === taskId) && conversations}
       </SidebarSection>
     </aside>
   );

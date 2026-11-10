@@ -1,7 +1,8 @@
 /* Adapted from pi-web-ui components/copy-button.tsx; MIT (c) 2026 xing-shuyin. */
-import { memo, useState } from "react";
+import { memo } from "react";
 import { FiCheck, FiCopy } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
+import { notify } from "../../layout/toasts";
 import { useCopyFeedback } from "../../rich/use-copy-feedback";
 export const CopyButton = memo(function CopyButton({
   text,
@@ -12,7 +13,6 @@ export const CopyButton = memo(function CopyButton({
   className?: string;
 }) {
   const { t } = useT();
-  const [failed, setFailed] = useState(false);
   const { copied, copy } = useCopyFeedback();
   return (
     <button
@@ -21,12 +21,13 @@ export const CopyButton = memo(function CopyButton({
       title={t("Copy displayed text")}
       aria-label={t("Copy displayed text")}
       onClick={() => {
-        setFailed(false);
-        void copy(text).then((ok) => setFailed(!ok));
+        // The check glyph is the success; only a failure needs words.
+        void copy(text).then((ok) => {
+          if (!ok) notify("error", t("Copy unavailable"));
+        });
       }}
     >
       {copied ? <FiCheck /> : <FiCopy />}
-      {failed && t("Copy unavailable")}
     </button>
   );
 });

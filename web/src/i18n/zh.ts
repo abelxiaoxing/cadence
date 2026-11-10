@@ -254,7 +254,6 @@ export const zh = {
     "工具和检查直接在服务主机运行，不是安全沙箱。",
   Discussing: "对话中",
   "Awaiting plan approval": "等待批准计划",
-  "Ready for conversation": "可以继续对话",
   "Cadence conversation": "Cadence 对话",
   "Cadence on": "Cadence 已开启",
   "Exit Cadence": "退出 Cadence",
@@ -496,6 +495,12 @@ export const zh = {
   "Export selected scope": "导出所选范围",
   "Copy token-free link": "复制不含令牌的链接",
   "Link copy unavailable.": "无法复制链接。",
+  "Link copied.": "链接已复制。",
+  "Dismiss notification": "关闭通知",
+  "Theme: {current}. Switch to {next}.": "主题：{current}。点击切换为{next}。",
+  System: "跟随系统",
+  Light: "浅色",
+  Dark: "深色",
   "Observe current state": "重新观察当前状态",
   "Choose owner model": "选择所有者模型",
   Model: "模型",
@@ -776,6 +781,27 @@ export const zh = {
   // Transcript and tools
   "Copy displayed text": "复制显示的文本",
   "Copy unavailable": "无法复制",
+  "Copy message": "复制消息",
+  "Message actions": "消息操作",
+  "No path recorded": "未记录路径",
+  "{added} lines added, {removed} removed":
+    "新增 {added} 行，删除 {removed} 行",
+  "Built from the call's recorded arguments. It is not compared with the file, so it is not proof of what the file holds.":
+    "根据这次调用记录下来的参数生成，没有与文件比对，因此不能证明文件现在的内容。",
+  "Error recorded: requested, not applied": "记录到错误：仅为请求内容，未应用",
+  "Requested content": "请求写入的内容",
+  "Requested change": "请求的修改",
+  "No lines recorded.": "没有记录任何行。",
+  "Replacement {index} of {count}: {removed} lines for {added}":
+    "第 {index} 处替换（共 {count} 处）：{removed} 行换成 {added} 行",
+  "Showing the first {shown} of {total} lines.":
+    "仅显示前 {shown} 行，共 {total} 行。",
+  "Show all lines": "显示全部行",
+  "Open image: {name}": "放大查看图片：{name}",
+  "Zoom out": "缩小",
+  "Zoom in": "放大",
+  "Actual size": "原始大小",
+  "Fit to window": "适应窗口",
   "{state} message record, not execution outcome":
     "{state}消息记录，不代表执行结果",
   Collapse: "收起",
@@ -834,6 +860,13 @@ export const zh = {
   " / failed child": " / 有失败的子运行",
   " / unknown child": " / 有未知的子运行",
   "No active or recent episode observed.": "未观察到活动或近期的执行轮次。",
+  "Filter conversations…": "筛选对话…",
+  "Clear filter": "清除筛选",
+  "No listed conversation matches. Pages not loaded are not searched.":
+    "已列出的对话中没有匹配项。尚未加载的分页不在筛选范围内。",
+  Today: "今天",
+  Yesterday: "昨天",
+  Earlier: "更早",
   "All retained episodes for task": "此任务的全部保留执行轮次",
 
   // Timeline
@@ -1090,12 +1123,11 @@ export const zh = {
   "Started in the WebUI": "在 WebUI 中开始",
   "Branches ({count})": "分支（{count}）",
   "Show the latest": "查看最新",
-  "Show the conversation up to here. The next message starts a new branch; nothing is deleted.":
-    "只显示到这里为止的对话。下一条消息会从这里开始一个新分支，不会删除任何内容。",
+  "Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted.":
+    "只显示到这一轮结束为止的对话。下一条消息会从那里开始一个新分支，不会删除任何内容。",
   "Continue from here": "从这里继续",
   "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.":
     "你正在查看这段对话较早的位置。现在发送的消息会从这里开始一个新分支，其余内容仍保留在会话中。",
-  Terminal: "终端",
   "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).":
     "此版本不再支持这类旧 Cadence 会话。请新建会话；原有文件会保留（{code}）。",
 } satisfies Record<string, string>;
