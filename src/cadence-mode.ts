@@ -36,6 +36,7 @@ import {
   workflowDiagnostics,
 } from "./service/contracts/workflow.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
+import { routeTableBrief } from "./service/project-knowledge.ts";
 import {
   ContractError,
   canonicalJson,
@@ -911,7 +912,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) =>
     engaged(ctx)
       ? {
-          systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}`,
+          systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTableBrief(resolveWorkspace(ctx.cwd).cwd, [])}`,
           message: {
             customType: CONTEXT,
             content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}.`,
