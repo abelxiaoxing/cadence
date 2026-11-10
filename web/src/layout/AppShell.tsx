@@ -3,6 +3,8 @@
  * Presentation only: no client, owner, execution context or navigation route. */
 import { type CSSProperties, type ReactNode, useRef } from "react";
 import {
+  FiChevronRight,
+  FiFolder,
   FiGlobe,
   FiLogOut,
   FiMenu,
@@ -23,6 +25,7 @@ export function AppShell({
   navigation,
   inspector,
   inspectorLabel,
+  inspectorTabs,
   toolbar,
   actions,
   notices,
@@ -38,6 +41,8 @@ export function AppShell({
   navigation: ReactNode;
   inspector: ReactNode;
   inspectorLabel?: string;
+  /** The inspector's tab buttons; one Files tab when absent. */
+  inspectorTabs?: ReactNode;
   toolbar?: ReactNode;
   actions?: ReactNode;
   notices?: ReactNode;
@@ -258,7 +263,26 @@ export function AppShell({
           tabIndex={-1}
           inert={mobile ? drawer !== "right" : !panels.inspector}
         >
-          {inspector}
+          <div className="workbench-right">
+            <nav className="rp-tabs" aria-label={t("Workspace panels")}>
+              {inspectorTabs ?? (
+                <span className="rp-tab" aria-current="true">
+                  <FiFolder aria-hidden="true" />
+                  {t("Files")}
+                </span>
+              )}
+              <button
+                type="button"
+                className="panel-collapse-btn"
+                aria-label={t("Collapse panel")}
+                title={t("Collapse panel")}
+                onClick={() => panels.toggle("right")}
+              >
+                <FiChevronRight aria-hidden="true" />
+              </button>
+            </nav>
+            {inspector}
+          </div>
         </section>
       </div>
       <footer className="statusbar">

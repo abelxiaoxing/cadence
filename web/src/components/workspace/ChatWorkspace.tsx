@@ -1,9 +1,8 @@
 /* Adapted from pi-web-ui ChatInput/MessageList: bottom composer, streaming
- * transcript, folded tools and per-conversation drafts. MIT (c) 2026 xing-shuyin.
+ * transcript, tool cards and per-conversation drafts. MIT (c) 2026 xing-shuyin.
  * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
 import {
   Fragment,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -86,6 +85,15 @@ import {
 
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+/** What the open conversation tells the statusbar: observations only. */
+export interface ConversationActivity {
+  id: string;
+  /** Turns on the branch shown. */
+  turns: number;
+  /** When the live turn began (epoch ms), 0 when unrecorded; null when no
+   * reply is queued or running. */
+  runningSince: number | null;
+}
 function stored(key: string, fallback = "") {
   try {
     return sessionStorage.getItem(key) ?? fallback;
@@ -101,6 +109,7 @@ export function ChatWorkspace({
   initialLeaf = null,
   activitySelected = false,
   onLocation,
+  onActivity,
   enabled,
   actionsReady = enabled,
   prepareForSend,
@@ -127,6 +136,7 @@ export function ChatWorkspace({
   initialLeaf?: string | null;
   activitySelected?: boolean;
   onLocation?(location: ConversationLocation): void;
+  onActivity?(activity: ConversationActivity): void;
   enabled: boolean;
   actionsReady?: boolean;
   prepareForSend?: PrepareForSend;
@@ -327,6 +337,18 @@ export function ChatWorkspace({
   // A failed or interrupted reply stays in the session; the next message
   // continues the branch as it would in the terminal.
   const settledBadly = !!summary && summary.status !== "completed" && !running;
+  // The live turn ends the branch; before Pi lists it the start is unrecorded.
+  const lastTurn = turns.at(-1)?.header;
+  const runningSince = !running
+    ? null
+    : lastTurn && ["queued", "running"].includes(lastTurn.status)
+      ? lastTurn.at
+      : 0;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
+  useEffect(() => {
+    onActivityRef.current?.({ id, turns: conversation.count, runningSince });
+  }, [id, conversation.count, runningSince]);
   const [branchesOpen, setBranchesOpen] = useState(false);
   // A failed read must not strand a half-started owner behind an unreadable
   // conversation. Explicit Send may prepare it, but cannot infer or rebase the
@@ -490,11 +512,6 @@ export function ChatWorkspace({
     [turns],
   );
   const lazy = useLazyWindow(scroll, rows);
-  // The user's own choice to open or fold a turn's steps outlives its remount.
-  const toggles = useRef(new Map<string, boolean>());
-  const rememberToggle = useCallback((turnId: string, open: boolean) => {
-    toggles.current.set(turnId, open);
-  }, []);
   // Earlier turns load while the reader is near the top, on scroll and after
   // each render (a short transcript fills itself); no page is ever switched.
   const { earlier, loadEarlier } = conversation;
@@ -1122,184 +1139,182 @@ export function ChatWorkspace({
           onClose={() => setBranchesOpen(false)}
         />
       )}
-      <div
-        className="chat-messages"
-        ref={scroll}
-        onScroll={() => {
-          const el = scroll.current;
-          if (el && !hidden) {
-            lastTop.current = el.scrollTop;
-            stick.current =
-              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-            setAway(!stick.current);
-            nearTop();
-          }
-        }}
-      >
-        {activitySelected && !conversation.summary && (
-          <p role="status" className="panel-hint">
-            {t(
-              "Activity was discovered; session history is not yet readable. No transcript was created.",
-            )}
-          </p>
-        )}
-        {!available && (
-          <p role="status" className="panel-hint">
-            {t(
-              "Conversation content has not been read. You can keep a draft; nothing is sent until the context is available.",
-            )}
-          </p>
-        )}
-        {conversation.summary === null &&
-          !conversation.error &&
-          !activitySelected && (
-            <ChatWelcome
-              hint={t(
-                "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
-              )}
-            />
-          )}
-        {available &&
-          !conversation.error &&
-          (!observed || (turns.length === 0 && conversation.count > 0)) && (
-            <p className="inspector-note chat-reading" role="status">
-              {t("Reading this conversation…")}
-            </p>
-          )}
-        {turns.length > 0 && earlier && (
-          <div className="chat-earlier" role="status">
-            {conversation.loadingEarlier && t("Reading earlier messages…")}
-          </div>
-        )}
-        {placed.start.map(workflowLine)}
-        {rows.map(({ id, version, turn }) => (
-          <Fragment key={id}>
-            <LazyMount
-              id={id}
-              show={!lazy.hidden.has(id)}
-              height={lazy.placeholder(id, version, 320)}
-              containerRef={scroll}
-              onMeasured={lazy.recordMeasured}
-              lazyRef={lazy.register(id)}
-            >
-              <ChatTurnView
-                turn={turn}
-                toggled={toggles.current.get(id) ?? null}
-                onToggle={rememberToggle}
-              />
-            </LazyMount>
-            {/* Workflows that started in this turn, then the turn's branch point. */}
-            {placed.after.get(id)?.map(workflowLine)}
-            {turn.header.entry &&
-              turn.ordinal < conversation.count - 1 &&
-              !running && (
-                <button
-                  type="button"
-                  className="ghost turn-branch"
-                  title={t(
-                    "Show the conversation up to here. The next message starts a new branch; nothing is deleted.",
-                  )}
-                  onClick={() => chooseBranch(turn.header.entry)}
-                >
-                  <FiCornerDownRight aria-hidden="true" />
-                  {t("Continue from here")}
-                </button>
-              )}
-          </Fragment>
-        ))}
-        {placed.end.map(workflowLine)}
-        {conversation.attempt && (
-          <article className="chat-attempt" aria-label={t("Message")}>
-            <p className="chat-attempt-text">{conversation.attempt.text}</p>
-            <p className="inspector-note">
-              <span className={`ep-state ${conversation.attempt.status}`}>
-                {tx(conversation.attempt.status)}
-              </span>{" "}
-              {conversation.attempt.notice
-                ? tx(conversation.attempt.notice)
-                : ""}
-            </p>
-          </article>
-        )}
-        {state?.enabled && state.proposal && (
-          <PlanCard
-            proposal={state.proposal}
-            canApprove={
-              !modelPending &&
-              actionsReady &&
-              canSend &&
-              cadenceKnown &&
-              planApprovable &&
-              !running &&
-              !approving
+      <div className="chat-messages-wrap">
+        <div
+          className="chat-messages"
+          ref={scroll}
+          onScroll={() => {
+            const el = scroll.current;
+            if (el && !hidden) {
+              lastTop.current = el.scrollTop;
+              stick.current =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              setAway(!stick.current);
+              nearTop();
             }
-            approvalHint={approvalHint}
-            onApprove={() => void approve()}
-          />
-        )}
-        {state?.enabled && !state.proposal && runs.length === 0 && (
-          <p className="inspector-note">
-            {t(
-              "Cadence stays on for this conversation until you explicitly exit.",
-            )}
-          </p>
-        )}
-        {flows.failed && (
-          <p className="inspector-note" role="status">
-            {t(
-              "Workflow activity unavailable; retained work may still be running.",
-            )}
-          </p>
-        )}
-        {state?.notice && (
-          <p role="alert" className="banner-notice">
-            {tx(state.notice)}
-          </p>
-        )}
-        {[...new Set([error, conversation.error, workflow.error])]
-          .filter(Boolean)
-          .map((notice) => (
-            <p key={notice} role="alert" className="banner-notice">
-              {describeError(t, notice ?? "")}
-            </p>
-          ))}
-        {conversation.error && conversation.summary !== undefined && (
-          <p role="status" className="inspector-note">
-            {t(
-              "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
-            )}
-          </p>
-        )}
-        {pending && (
-          <p className="inspector-note">
-            {t("Send outcome not yet observed:")} <code>{pending}</code>{" "}
-            <button type="button" onClick={conversation.refresh}>
-              {t("Observe current state")}
-            </button>
-          </p>
-        )}
-        {conversation.pinned && !running && (
-          <p className="inspector-note">
-            {t(
-              "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.",
-            )}
-          </p>
-        )}
-      </div>
-      {away && (
-        <button
-          type="button"
-          className="chat-scroll-bottom"
-          aria-label={t("Latest messages")}
-          onClick={() => {
-            if (scroll.current)
-              scroll.current.scrollTop = scroll.current.scrollHeight;
-            stick.current = true;
           }}
         >
-          <FiArrowDown />
-        </button>
-      )}
+          {activitySelected && !conversation.summary && (
+            <p role="status" className="panel-hint">
+              {t(
+                "Activity was discovered; session history is not yet readable. No transcript was created.",
+              )}
+            </p>
+          )}
+          {!available && (
+            <p role="status" className="panel-hint">
+              {t(
+                "Conversation content has not been read. You can keep a draft; nothing is sent until the context is available.",
+              )}
+            </p>
+          )}
+          {conversation.summary === null &&
+            !conversation.error &&
+            !activitySelected && (
+              <ChatWelcome
+                hint={t(
+                  "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
+                )}
+              />
+            )}
+          {available &&
+            !conversation.error &&
+            (!observed || (turns.length === 0 && conversation.count > 0)) && (
+              <p className="inspector-note chat-reading" role="status">
+                {t("Reading this conversation…")}
+              </p>
+            )}
+          {turns.length > 0 && earlier && (
+            <div className="chat-earlier" role="status">
+              {conversation.loadingEarlier && t("Reading earlier messages…")}
+            </div>
+          )}
+          {placed.start.map(workflowLine)}
+          {rows.map(({ id, version, turn }) => (
+            <Fragment key={id}>
+              <LazyMount
+                id={id}
+                show={!lazy.hidden.has(id)}
+                height={lazy.placeholder(id, version, 320)}
+                containerRef={scroll}
+                onMeasured={lazy.recordMeasured}
+                lazyRef={lazy.register(id)}
+              >
+                <ChatTurnView turn={turn} />
+              </LazyMount>
+              {/* Workflows that started in this turn, then the turn's branch point. */}
+              {placed.after.get(id)?.map(workflowLine)}
+              {turn.header.entry &&
+                turn.ordinal < conversation.count - 1 &&
+                !running && (
+                  <button
+                    type="button"
+                    className="ghost turn-branch"
+                    title={t(
+                      "Show the conversation up to here. The next message starts a new branch; nothing is deleted.",
+                    )}
+                    onClick={() => chooseBranch(turn.header.entry)}
+                  >
+                    <FiCornerDownRight aria-hidden="true" />
+                    {t("Continue from here")}
+                  </button>
+                )}
+            </Fragment>
+          ))}
+          {placed.end.map(workflowLine)}
+          {conversation.attempt && (
+            <article className="chat-attempt" aria-label={t("Message")}>
+              <p className="chat-attempt-text">{conversation.attempt.text}</p>
+              <p className="inspector-note">
+                <span className={`ep-state ${conversation.attempt.status}`}>
+                  {tx(conversation.attempt.status)}
+                </span>{" "}
+                {conversation.attempt.notice
+                  ? tx(conversation.attempt.notice)
+                  : ""}
+              </p>
+            </article>
+          )}
+          {state?.enabled && state.proposal && (
+            <PlanCard
+              proposal={state.proposal}
+              canApprove={
+                !modelPending &&
+                actionsReady &&
+                canSend &&
+                cadenceKnown &&
+                planApprovable &&
+                !running &&
+                !approving
+              }
+              approvalHint={approvalHint}
+              onApprove={() => void approve()}
+            />
+          )}
+          {state?.enabled && !state.proposal && runs.length === 0 && (
+            <p className="inspector-note">
+              {t(
+                "Cadence stays on for this conversation until you explicitly exit.",
+              )}
+            </p>
+          )}
+          {flows.failed && (
+            <p className="inspector-note" role="status">
+              {t(
+                "Workflow activity unavailable; retained work may still be running.",
+              )}
+            </p>
+          )}
+          {state?.notice && (
+            <p role="alert" className="banner-notice">
+              {tx(state.notice)}
+            </p>
+          )}
+          {[...new Set([error, conversation.error, workflow.error])]
+            .filter(Boolean)
+            .map((notice) => (
+              <p key={notice} role="alert" className="banner-notice">
+                {describeError(t, notice ?? "")}
+              </p>
+            ))}
+          {conversation.error && conversation.summary !== undefined && (
+            <p role="status" className="inspector-note">
+              {t(
+                "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
+              )}
+            </p>
+          )}
+          {pending && (
+            <p className="inspector-note">
+              {t("Send outcome not yet observed:")} <code>{pending}</code>{" "}
+              <button type="button" onClick={conversation.refresh}>
+                {t("Observe current state")}
+              </button>
+            </p>
+          )}
+          {conversation.pinned && !running && (
+            <p className="inspector-note">
+              {t(
+                "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.",
+              )}
+            </p>
+          )}
+        </div>
+        {away && (
+          <button
+            type="button"
+            className="scroll-bottom"
+            onClick={() => {
+              if (scroll.current)
+                scroll.current.scrollTop = scroll.current.scrollHeight;
+              stick.current = true;
+            }}
+          >
+            <FiArrowDown aria-hidden="true" />
+            {t("Latest messages")}
+          </button>
+        )}
+      </div>
       <form
         className="chat-composer"
         onDragOver={(event) => {
@@ -1445,14 +1460,17 @@ export function ChatWorkspace({
             <button
               type="button"
               className="danger"
+              aria-label={t("Stop response")}
+              title={t("Stop response")}
               disabled={busy || !canInterrupt}
               onClick={() => void interrupt()}
             >
-              <FiSquare />
-              {t("Stop response")}
+              <FiSquare aria-hidden="true" />
             </button>
           ) : (
             <button
+              aria-label={t("Send")}
+              title={t("Send")}
               type="submit"
               className="primary"
               disabled={
@@ -1461,8 +1479,7 @@ export function ChatWorkspace({
                 (!draft.trim() && !imageDraft.files.length)
               }
             >
-              <FiArrowUp />
-              {t("Send")}
+              <FiArrowUp aria-hidden="true" />
             </button>
           )}
         </div>

@@ -125,7 +125,8 @@ it.each(["en", "zh"] as const)(
     expect(statusbar).toMatch(
       /class="statusbar-right".*class="status-cwd" title="\/fixture"/,
     );
-    expect(statusbar).toContain("<span>/fixture</span>");
+    // The chip shows the folder's own name; its title keeps the whole path.
+    expect(statusbar).toContain("<span>fixture</span>");
     expect(statusbar).toContain(
       locale === "zh"
         ? 'aria-label="切换工作文件夹"'
