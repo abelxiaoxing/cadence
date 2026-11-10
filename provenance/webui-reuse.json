@@ -442,7 +442,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "4ba67f40db7831bb676084de26462b78a69de8f0160b1b5df2bc38da9d82bbdd",
+    "web/src/styles.css": "dbc4b7894be3858084c0ff7c4e54e4bdc008ac97cbb336c533f0884bc7fdeb82",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -507,7 +507,7 @@
     "src/service/conversation-workflow.ts": "6e2141cb73d5fe60363cd50878fdf23a21e2e872b3db3e60b2e2cc7d40cb5905",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
     "web/src/components/workspace/WorkflowPanel.tsx": "f40c0210272d00e895770643f1d772570ec53e8a269632cb37123d153422957b",
-    "web/src/components/workspace/ChatTurnView.tsx": "9daff4b4cc089750b46e74056428941920505db1301b2bbd8b468a9ede3ef6a0",
+    "web/src/components/workspace/ChatTurnView.tsx": "e3988d583ba14c873c950cc84760c618048d78f8a1a641c45be896ca019a11b5",
     "test/web/model-retry.test.tsx": "695e4f2374ad8cf911786a3db5f101015d44177fc9a5c2a7fd643686f65d9341",
     "test/service-conversation-workflow.test.ts": "8533466cbea513b525265cdb94d0ce73fa8f660584c6ed240fec486b1cbc332a",
     "test/web/workflow.test.tsx": "0c6edeeb0efa74eb9675d50789910b7ee91387964bf247d766946256765f139c",
@@ -931,6 +931,11 @@
       "id": "files-without-execution",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned integration: the stopped-owner reader answers the readonly files/file reads for a stopped or never-prepared folder through the shared WorkbenchFiles and assertConversationDirectory rule, with the owner's bounds, refusals and redaction and no write or startup. The Files pane is enabled once the folder is observed instead of waiting for an execution attachment, and reads again when execution starts, stops or is replaced. No pi-web-ui source is newly adapted; destination pins are refreshed for the changed bodies and tests."
+    },
+    {
+      "id": "webui-stage-a-local",
+      "originalSourcePinPreserved": true,
+      "note": "Client-only pass against pi-web-ui b627452c; no service contract, read, command, consent boundary or admission gate changes. notice-policy and App's NoticeToast become a browser-local toast store and one stack in AppShell for transient local results (an error stays until dismissed); copy failures, a copied link and Send refusals that reached no owner move there, while unknown outcomes, owner-side effects and observation statements stay in place. Every colour token is one light-dark() pair compiled into the single stylesheet: light values from themes/white.css with Cadence's violet accent and WCAG AA text, the scheme following the system until theme.ts's data-theme choice (a topbar chip, remembered in the browser, applied before the first render); hard-coded colours in styles.css/reference.css become tokens and syntax highlighting uses token-driven rules instead of the dark-only highlight.js sheet. Message's .msg-actions family becomes a hover/focus action bar (always shown on touch) with whole-message copy; Continue from here moves into it with its conditions and chooseBranch call unchanged, and the conversation header is one line. FileChangeCard and file-diff become the body of an opened edit/write tool card, built only from the recorded call arguments (current and older edit shapes), never compared with the file and without split/raw/fullscreen views, result-details patches or streaming-partial recovery. The Files preview renders through the existing Markdown code renderer as one fenced block; ImageLightbox becomes a native modal dialog over its own Blob URL without OCR, annotation, attach, copy or download. LeftPanel's groupSessionsByTime and filter box give day groups and a title filter over the rows already listed, with slim title-and-time rows. Ported unit tests are recorded in testAdaptations. Destination pins are refreshed for the changed bodies and tests; qualification is pure/SSR tests plus local headless renders of fixture data in both schemes at desktop and phone widths, not real-browser, device, pointer or assistive-technology validation."
     }
   ],
   "testAdaptations": [
@@ -1017,6 +1022,6 @@
       "tests/unit/file-diff.test.ts": "a441608a872642718b90f20cee6a645be9f3af2ffb16c40f69390dfb5f56ff30",
       "web/src/components/LeftPanel.tsx": "e2f4940101c672a0ee52d36c307a2e5a991eb872a7452b3bc162d6f6e7283f90"
     },
-    "note": "Statusbar item, Files pane and ordinary-turn card presentation reference. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, token/cost/host statistic, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
+    "note": "Statusbar item, Files pane and ordinary-turn card presentation reference; also the toast queue, white theme palette, message action bar, edit/write change card, image lightbox, conversation filter and day groups of revision webui-stage-a-local, with their ported unit tests. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, token/cost/host statistic, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
   }
 }

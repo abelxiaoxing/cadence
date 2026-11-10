@@ -2320,6 +2320,14 @@ summary:focus-visible,
     min-width: 32px;
     min-height: 32px;
   }
+  .lp-filter {
+    height: 34px;
+  }
+  .lp-filter-clear {
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+  }
 }
 
 /* Conversation-first workspace: pi's project/session hierarchy, with Cadence
@@ -2945,10 +2953,6 @@ summary:focus-visible,
 .msg-action.done {
   color: var(--green);
 }
-.msg-action:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
 .chat-turn .msg-action.labelled {
   width: auto;
   gap: 5px;
@@ -3293,6 +3297,11 @@ button.file-item:hover:not(:disabled),
 @media (hover: none) {
   .file-attach {
     opacity: 1;
+  }
+  /* A code block's copy action, the previewed file's included, has no hover
+     to reveal it on a touch screen. */
+  .codeblock .copy-btn {
+    opacity: 0.55;
   }
 }
 .cwd-location {
@@ -4099,10 +4108,6 @@ button.link:hover:not(:disabled) {
   line-height: 0;
   cursor: zoom-in;
 }
-.chat-image-open:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 .chat-image-draft {
   position: relative;
   max-width: 160px;
@@ -4202,10 +4207,6 @@ button.link:hover:not(:disabled) {
   border-color: transparent;
   background: color-mix(in srgb, var(--text) 12%, transparent);
   color: var(--text);
-}
-.img-lightbox-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 .img-lightbox-btn:disabled {
   opacity: 0.36;

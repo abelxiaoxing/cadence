@@ -78,23 +78,30 @@ export const ChatTurnView = memo(function ChatTurnView({
   );
   return (
     <section className="chat-turn" aria-label={t("Conversation turn")}>
-      {user.map(({ step, index }, position) => (
-        <article className="msg msg-user" key={index}>
-          <div className="msg-meta">
-            <span className="msg-role">{t("You")}</span>
-            {time}
-          </div>
-          <div className="msg-body">
-            <StepText turn={turn} index={index} step={step} copy={false} />
-          </div>
-          <MessageActions label={t("Message actions")}>
-            {step.text.trim() !== "" && (
-              <CopyMessageAction turn={turn} parts={[{ step, index }]} />
+      {user.map(({ step, index }, position) => {
+        const copyable = step.text.trim() !== "";
+        const branch = position === user.length - 1 && continueAction;
+        return (
+          <article className="msg msg-user" key={index}>
+            <div className="msg-meta">
+              <span className="msg-role">{t("You")}</span>
+              {time}
+            </div>
+            <div className="msg-body">
+              <StepText turn={turn} index={index} step={step} copy={false} />
+            </div>
+            {/* An image-only message of the newest turn has nothing to offer. */}
+            {(copyable || branch) && (
+              <MessageActions label={t("Message actions")}>
+                {copyable && (
+                  <CopyMessageAction turn={turn} parts={[{ step, index }]} />
+                )}
+                {branch}
+              </MessageActions>
             )}
-            {position === user.length - 1 && continueAction}
-          </MessageActions>
-        </article>
-      ))}
+          </article>
+        );
+      })}
       {(replies.length > 0 || live || omitted.length > 0) && (
         <article className="msg msg-assistant">
           <div className="msg-meta">
