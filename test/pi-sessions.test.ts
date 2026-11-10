@@ -303,10 +303,13 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   expect(first).toMatchObject({
     id: u1.id,
     entry: hidden.id,
+    parent: null,
     status: "completed",
   });
   const second = turnItems(turns[1], ["SECRET-VALUE"]);
+  // A turn names the entry its user message continues, shown or not.
   expect(second).toMatchObject({
+    parent: hidden.id,
     status: "failed",
     notice: "provider [redacted] failed",
   });
@@ -425,6 +428,7 @@ it("a full step listing at every field's encoded worst case fits one read reply"
       steps: Number.MAX_SAFE_INTEGER,
       stable: Number.MAX_SAFE_INTEGER,
       entry: "w".repeat(64),
+      parent: "v".repeat(64),
       at: Number.MAX_SAFE_INTEGER,
     },
     start: Number.MAX_SAFE_INTEGER - STEP_READ,

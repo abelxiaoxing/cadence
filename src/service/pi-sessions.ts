@@ -785,6 +785,8 @@ export interface BuiltTurn {
   retry?: ChatTurn["retry"];
   id: string;
   entry: string | null;
+  /** The entry the turn's first message continues, as recorded. */
+  parent: string | null;
   at: number;
   status: ChatStatus;
   notice: string;
@@ -967,6 +969,7 @@ export function turnItems(
   return {
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
+    parent: first?.parentId ?? null,
     at: first ? time(first.timestamp) : 0,
     status,
     notice: clip(sanitizeText(notice, secrets), NOTICE_BYTES),

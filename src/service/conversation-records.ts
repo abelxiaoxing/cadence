@@ -635,6 +635,8 @@ export class ConversationRecords {
     const turn = listTurn({
       id: chain[0]?.id ?? live.commandId,
       entry: null,
+      // Pi may record a model change between the admitted head and the message.
+      parent: chain.length ? chain[0].parentId : live.accepted.parent,
       at: live.accepted.at,
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
@@ -682,6 +684,7 @@ export class ConversationRecords {
         steps: turn.steps.length,
         stable,
         entry: turn.entry,
+        parent: turn.parent,
         at: turn.at,
       },
       start,

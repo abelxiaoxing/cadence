@@ -310,6 +310,11 @@ export interface ChatTurnHeader {
   stable: number;
   /** The turn's last session entry: a new branch can continue from it. */
   entry: string | null;
+  /** The session entry the turn's user message continues, as Pi recorded it
+   * (null: the session's root); the admitted message's own while Pi has not
+   * written that message. A message sent with this head starts a branch
+   * beside the turn. Absent from a service that predates it. */
+  parent?: string | null;
   /** When the turn began (epoch ms), 0 when unrecorded. */
   at: number;
 }
@@ -1019,6 +1024,7 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
     ...(Object.hasOwn(v ?? {}, "retry") ? ["retry"] : []),
     "entry",
+    ...(Object.hasOwn(v ?? {}, "parent") ? ["parent"] : []),
     "at",
   ]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
@@ -1030,6 +1036,9 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
     ...(o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) }),
     id: decodeEntryId(o.id),
     entry: nullable(o.entry, decodeEntryId),
+    ...(o.parent === undefined
+      ? {}
+      : { parent: nullable(o.parent, decodeEntryId) }),
     at: integer(o.at, 0),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
