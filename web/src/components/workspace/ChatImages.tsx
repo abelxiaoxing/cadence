@@ -21,7 +21,21 @@ export function useImageDraft() {
     current.current = current.current.filter((f) => !removed.includes(f));
     setFiles(current.current);
   }, []);
-  return { files, add, remove, key: (file: File) => keys.current.get(file) };
+  /** The draft becomes exactly these files, which were drafts before: a draft
+   * set aside while a message is rewritten comes back as it was. */
+  const replace = useCallback((next: readonly File[]) => {
+    for (const file of next)
+      if (!keys.current.has(file)) keys.current.set(file, crypto.randomUUID());
+    current.current = [...next];
+    setFiles(current.current);
+  }, []);
+  return {
+    files,
+    add,
+    remove,
+    replace,
+    key: (file: File) => keys.current.get(file),
+  };
 }
 /** One image enlarged at a time. The lightbox takes the bytes rather than the
  * thumbnail's URL and is rendered beside the thumbnail, so it stays open while

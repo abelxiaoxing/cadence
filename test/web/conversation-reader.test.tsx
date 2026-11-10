@@ -502,3 +502,97 @@ it("failed re-observation preserves the last server status and history, never a 
     reader.close();
   }
 });
+
+it("a jump reads back to the named turn without a gap; a later or shown turn reads nothing", async () => {
+  vi.useFakeTimers();
+  const turns = Array.from({ length: 9 }, () => settled());
+  const o = owner(turns);
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([7, 8]);
+  o.reads.length = 0;
+  reader.showFrom(8);
+  reader.showFrom(7);
+  expect(reader.view().loadingEarlier).toBe(false);
+  expect(o.reads).toEqual([]);
+  reader.showFrom(3);
+  expect(reader.view().loadingEarlier).toBe(true);
+  // What is shown stays until every turn in between is read.
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([7, 8]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([3, 4, 5, 6, 7, 8]);
+  expect(reader.view()).toMatchObject({ earlier: true, loadingEarlier: false });
+  expect(kinds(o.reads).sort()).toEqual([
+    "conversation",
+    "turn 3/null",
+    "turn 4/null",
+    "turn 5/null",
+    "turn 6/null",
+  ]);
+  // A second jump asked for while the first is read is served after it.
+  let release!: () => void;
+  o.hold(new Promise<void>((resolve) => (release = resolve)));
+  reader.showFrom(2);
+  await vi.advanceTimersByTimeAsync(0);
+  reader.showFrom(0);
+  expect(reader.view().loadingEarlier).toBe(true);
+  o.hold(undefined);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([
+    0, 1, 2, 3, 4, 5, 6, 7, 8,
+  ]);
+  expect(reader.view()).toMatchObject({
+    earlier: false,
+    loadingEarlier: false,
+  });
+  reader.close();
+});
+
+it("a branch chosen at one of its messages opens there, never with fewer than the newest turns", async () => {
+  vi.useFakeTimers();
+  const turns = Array.from({ length: 6 }, () => settled());
+  const o = owner(turns);
+  // Another branch: the owner says it does not continue the one shown.
+  const read = o.client.workbenchRead;
+  o.client.workbenchRead = async (request: WorkbenchRead) => {
+    const reply = await read(request);
+    if (request.kind !== "conversation" || reply.value.kind !== "conversation")
+      return reply;
+    const leaf = request.leaf ?? reply.value.leaf;
+    return {
+      ...reply,
+      value: {
+        ...reply.value,
+        leaf,
+        continues: request.known === null || request.known === leaf,
+      },
+    };
+  };
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([4, 5]);
+  // A sibling version of the third message: its branch is shown from there.
+  reader.choose("version-b", 2);
+  expect(reader.view()).toMatchObject({ pinned: true, count: 0 });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([2, 3, 4, 5]);
+  // The same branch named again only reads further back.
+  o.reads.length = 0;
+  reader.choose("version-b", 1);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([1, 2, 3, 4, 5]);
+  expect(kinds(o.reads).sort()).toEqual(["conversation", "turn 1/null"]);
+  // Chosen at its last message: the newest turns are shown as usual.
+  reader.choose("version-c", 5);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([4, 5]);
+  // Following the latest again starts at its end.
+  reader.choose(null);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view()).toMatchObject({ pinned: false });
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([4, 5]);
+  reader.close();
+});

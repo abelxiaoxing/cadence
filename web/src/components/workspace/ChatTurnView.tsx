@@ -1,8 +1,16 @@
 /* A conversation turn in pi-web-ui's Message composition: a meta line (speaker,
  * model, time) over a body of message text and tool cards in recorded order,
- * then the message's action bar. MIT (c) 2026 xing-shuyin. */
+ * then the message's action bar. MIT (c) 2026 xing-shuyin.
+ * Cadence: where the session forks, the user's message also carries a version
+ * pager; its actions and the pager only choose what is read or where the next
+ * message will continue, never send. */
 import { memo, useState } from "react";
-import { FiCornerDownRight } from "react-icons/fi";
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiCornerDownRight,
+  FiEdit2,
+} from "react-icons/fi";
 import type { TurnSource } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
 import { StreamMarkdown } from "../rich/StreamMarkdown";
@@ -28,11 +36,26 @@ const clock = (at: number, locale: string) =>
 export const ChatTurnView = memo(function ChatTurnView({
   turn,
   onContinue,
+  onEdit,
+  version = 0,
+  versions = 0,
+  onVersion,
+  off = false,
 }: {
   turn: TurnSource;
-  /** Present when this turn's end may be chosen as the branch to read: it only
-   * changes what is shown, and the next message starts a new branch there. */
-  onContinue?(entry: string): void;
+  /** Present when the next message may continue from this turn's end: it only
+   * moves the composer's anchor, and that message starts a new branch there. */
+  onContinue?(turnId: string): void;
+  /** Present when the turn's message may be put back in the composer to be
+   * rewritten: sending it starts a branch beside this turn. */
+  onEdit?(turnId: string): void;
+  /** This message's place (from 1) among the `versions` the session holds of
+   * it; a step shows the neighbouring version's branch. */
+  version?: number;
+  versions?: number;
+  onVersion?(turnId: string, step: -1 | 1): void;
+  /** Shown, but the message being composed will not have it in its context. */
+  off?: boolean;
 }) {
   const { t, tx, locale } = useT();
   const { header } = turn;
@@ -42,19 +65,29 @@ export const ChatTurnView = memo(function ChatTurnView({
   const answer = replies.filter(
     ({ step }) => step.role === "assistant" && !step.error,
   );
-  const { entry } = header;
-  const continueAction = onContinue && entry && (
+  const live = header.status === "queued" || header.status === "running";
+  // "After this turn": offered on the turn's last message, once Pi ended it.
+  const continueAction = onContinue && header.entry && (
     <MessageAction
       icon={<FiCornerDownRight aria-hidden="true" />}
       label={t("Continue from here")}
       title={t(
-        "Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted.",
+        "Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted.",
       )}
       showLabel
-      onClick={() => onContinue(entry)}
+      onClick={() => onContinue(header.id)}
     />
   );
-  const live = header.status === "queued" || header.status === "running";
+  const editAction = onEdit && !live && (
+    <MessageAction
+      icon={<FiEdit2 aria-hidden="true" />}
+      label={t("Edit and resend")}
+      title={t(
+        "Put this message back in the composer. Sending it starts a new branch beside this one; nothing is deleted.",
+      )}
+      onClick={() => onEdit(header.id)}
+    />
+  );
   const [context, setContext] = useState(false);
   const { thinking, media, other } = header.omitted;
   const omitted = [
@@ -76,23 +109,70 @@ export const ChatTurnView = memo(function ChatTurnView({
       {clock(header.at, locale)}
     </time>
   );
+  const replied = replies.length > 0 || live || omitted.length > 0;
   return (
-    <section className="chat-turn" aria-label={t("Conversation turn")}>
+    <section
+      className={off ? "chat-turn off-branch" : "chat-turn"}
+      aria-label={
+        off
+          ? t("Conversation turn, not in the new message's context")
+          : t("Conversation turn")
+      }
+    >
       {user.map(({ step, index }, position) => {
         const copyable = step.text.trim() !== "";
-        const branch = position === user.length - 1 && continueAction;
+        const edit = position === 0 && editAction;
+        // Without a reply the user's message is the turn's last.
+        const branch =
+          !replied && position === user.length - 1 && continueAction;
         return (
           <article className="msg msg-user" key={index}>
             <div className="msg-meta">
               <span className="msg-role">{t("You")}</span>
               {time}
+              {position === 0 && versions > 1 && (
+                // biome-ignore lint/a11y/useSemanticElements: a compact pager in a meta line, not a form fieldset
+                <span
+                  className="msg-versions"
+                  role="group"
+                  aria-label={t("Version {index} of {count}", {
+                    index: version,
+                    count: versions,
+                  })}
+                >
+                  <button
+                    type="button"
+                    className="msg-version-step"
+                    aria-label={t("Previous version")}
+                    title={t("Previous version")}
+                    disabled={!onVersion || version <= 1}
+                    onClick={() => onVersion?.(header.id, -1)}
+                  >
+                    <FiChevronLeft aria-hidden="true" />
+                  </button>
+                  <span className="msg-version-count" aria-hidden="true">
+                    {version}/{versions}
+                  </span>
+                  <button
+                    type="button"
+                    className="msg-version-step"
+                    aria-label={t("Next version")}
+                    title={t("Next version")}
+                    disabled={!onVersion || version >= versions}
+                    onClick={() => onVersion?.(header.id, 1)}
+                  >
+                    <FiChevronRight aria-hidden="true" />
+                  </button>
+                </span>
+              )}
             </div>
             <div className="msg-body">
               <StepText turn={turn} index={index} step={step} copy={false} />
             </div>
-            {/* An image-only message of the newest turn has nothing to offer. */}
-            {(copyable || branch) && (
+            {/* An image-only message with no action offered has no bar. */}
+            {(copyable || edit || branch) && (
               <MessageActions label={t("Message actions")}>
+                {edit}
                 {copyable && (
                   <CopyMessageAction turn={turn} parts={[{ step, index }]} />
                 )}
@@ -102,7 +182,7 @@ export const ChatTurnView = memo(function ChatTurnView({
           </article>
         );
       })}
-      {(replies.length > 0 || live || omitted.length > 0) && (
+      {replied && (
         <article className="msg msg-assistant">
           <div className="msg-meta">
             <span className="msg-role">Cadence</span>
@@ -167,12 +247,12 @@ export const ChatTurnView = memo(function ChatTurnView({
             ))}
           </div>
           {/* Nothing to act on while the reply is still being written. */}
-          {!live && (answer.length > 0 || user.length === 0) && (
+          {!live && (answer.length > 0 || continueAction) && (
             <MessageActions label={t("Message actions")}>
               {answer.length > 0 && (
                 <CopyMessageAction turn={turn} parts={answer} />
               )}
-              {user.length === 0 && continueAction}
+              {continueAction}
             </MessageActions>
           )}
         </article>

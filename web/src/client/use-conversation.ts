@@ -15,7 +15,8 @@ export function useConversation(
 ): ConversationView & {
   refresh(): void;
   loadEarlier(): void;
-  choose(leaf: string | null): void;
+  showFrom(ordinal: number): void;
+  choose(leaf: string | null, first?: number): void;
 } {
   const [reader, setReader] = useState<ConversationReader | null>(null);
   const [view, setView] = useState<ConversationView | null>(null);
@@ -46,6 +47,7 @@ export function useConversation(
     }),
     refresh: reader?.refresh ?? noop,
     loadEarlier: reader?.loadEarlier ?? noop,
+    showFrom: reader?.showFrom ?? noop,
     choose: reader?.choose ?? noop,
   };
 }
