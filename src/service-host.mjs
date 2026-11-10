@@ -3849,10 +3849,12 @@ function decodeModelCandidate(value) {
     "api",
     "thinking",
     "eligibility",
-    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : []
+    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : [],
+    ...Object.hasOwn(value ?? {}, "contextWindow") ? ["contextWindow"] : []
   ]);
   const candidate = {
     ...o.images === undefined ? {} : { images: bool(o.images) },
+    ...o.contextWindow === undefined ? {} : { contextWindow: integer(o.contextWindow, 1) },
     provider: text(o.provider, 128, true),
     model: text(o.model, 256, true),
     api: nullable(o.api, (v) => oneOf(v, modelApis)),
@@ -6472,6 +6474,14 @@ function decodeChatAttempt(v) {
     notice: text(o.notice, 1024)
   };
 }
+function decodeChatContext(v) {
+  const o = closed(v, ["tokens", "provider", "model"]);
+  return {
+    tokens: nullable(o.tokens, (n) => integer(n, 1)),
+    provider: text(o.provider, 128),
+    model: text(o.model, 256)
+  };
+}
 function decodeChatTreeNode(v) {
   const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
   return {
@@ -6619,7 +6629,8 @@ function decodeWorkbenchResult(v) {
       "branches",
       "runs",
       "attempt",
-      ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []
+      ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : [],
+      ...Object.hasOwn(v ?? {}, "context") ? ["context"] : []
     ]);
     const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
     if (!summary && turns)
@@ -6627,6 +6638,7 @@ function decodeWorkbenchResult(v) {
     return {
       kind,
       ...o2.commands === undefined ? {} : { commands: list(o2.commands, 64, decodeId) },
+      ...o2.context === undefined ? {} : { context: decodeChatContext(o2.context) },
       summary,
       leaf: nullable(o2.leaf, decodeEntryId),
       continues: bool(o2.continues),
@@ -8521,6 +8533,8 @@ var NOTICE_BYTES = 1024;
 var PART_TEXT_BYTES = 200 * 1024;
 var PART_ARGS_BYTES = 48 * 1024;
 var TARGET_ARGS = 1024 * 1024;
+var USAGE_WALK = 256;
+var USAGE_RESULTS = 64;
 function sessionDirectory(cwd, agentDir, env = process.env) {
   const expand = (value) => {
     const home = value === "~" ? homedir2() : value.startsWith("~/") ? join8(homedir2(), value.slice(2)) : value;
@@ -8727,6 +8741,27 @@ function stopStatus(m) {
     return { status: "canceled", notice: "" };
   return { status: "completed", notice: "" };
 }
+function reportedUsage(entry) {
+  const m = message(entry);
+  if (!m || own2(m, "role") !== "assistant")
+    return;
+  const reason = own2(m, "stopReason"), usage = own2(m, "usage");
+  if (reason === "aborted" || reason === "error" || !usage || typeof usage !== "object")
+    return;
+  const count = (key) => {
+    const value = own2(usage, key);
+    return typeof value === "number" ? value : Number.NaN;
+  };
+  const tokens = count("totalTokens") || count("input") + count("output") + count("cacheRead") + count("cacheWrite");
+  if (!(tokens > 0) || !Number.isFinite(tokens))
+    return;
+  const provider = own2(m, "provider"), model = own2(m, "model");
+  return {
+    tokens: Math.min(Math.ceil(tokens), Number.MAX_SAFE_INTEGER),
+    provider: typeof provider === "string" ? provider : "",
+    model: typeof model === "string" ? model : ""
+  };
+}
 function emptySummary() {
   return {
     id: "",
@@ -8789,6 +8824,7 @@ class ParsedSession {
   read;
   bodies = new Map;
   bodyBytes = 0;
+  usages = new Map;
   constructor(path) {
     this.path = path;
   }
@@ -8864,6 +8900,7 @@ class ParsedSession {
       this.children.clear();
       this.bodies.clear();
       this.bodyBytes = 0;
+      this.usages.clear();
       this.header = null;
     });
     this.read = next;
@@ -8891,6 +8928,31 @@ class ParsedSession {
       entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
     }
     return false;
+  }
+  usage(leaf) {
+    if (leaf === null)
+      return null;
+    const known = this.usages.get(leaf);
+    if (known !== undefined)
+      return known;
+    let found = null, compacted = false;
+    let entry = this.byId.get(leaf);
+    for (let n = 0;entry && n < USAGE_WALK; n++) {
+      if (entry.type === "compaction")
+        compacted = true;
+      else {
+        const usage = reportedUsage(entry);
+        if (usage) {
+          found = compacted ? { ...usage, tokens: null } : usage;
+          break;
+        }
+      }
+      entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    if (this.usages.size >= USAGE_RESULTS)
+      this.usages.delete(this.usages.keys().next().value);
+    this.usages.set(leaf, found);
+    return found;
   }
   leaves() {
     let count = 0;
@@ -14224,14 +14286,40 @@ class ConversationRecords {
       notice: sanitizeText(state.notice, this.readSecrets())
     };
   }
+  context(view) {
+    if (!view.session)
+      return;
+    let leaf = view.leaf;
+    if (view.live) {
+      const { accepted, commandId } = view.live;
+      try {
+        leaf = view.session.commandEntries(commandId, accepted.parent, accepted.offset).at(-1)?.id ?? leaf;
+      } catch (error) {
+        if (error instanceof ContractError)
+          return;
+        throw error;
+      }
+    }
+    const usage = view.session.usage(leaf);
+    if (!usage)
+      return;
+    const secrets = this.readSecrets();
+    return {
+      tokens: usage.tokens,
+      provider: clipText(sanitizeText(usage.provider, secrets), 128),
+      model: clipText(sanitizeText(usage.model, secrets), 256)
+    };
+  }
   conversation(id, leaf, known) {
     this.o.assertCurrent();
     const view = this.branch(id, leaf, false);
     const summary = this.summary(id, view.live ?? this.liveFor(id));
     const listed = this.sessions.find(id);
+    const context = this.context(view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
+      ...context ? { context } : {},
       summary,
       leaf: view.leaf,
       continues: known === null || known === view.leaf || !!view.session?.contains(view.leaf, known),
@@ -16156,7 +16244,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "c3656a44aeb1b45638303930a39dbd5d3429987a6ff648851552c032366223ef",
+    contractHash: "8bd684fa7359018ef9e6340992c89cf1b52960980b791c6a131e6a5f0a4fb41f",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -28174,6 +28262,7 @@ function projectModelCatalog(runtime, supportedThinking, current2, literals, val
           selectable: t.selectable && eligibility === "candidate"
         })),
         images: model2.input.includes("image"),
+        ...Number.isSafeInteger(model2.contextWindow) && model2.contextWindow > 0 ? { contextWindow: model2.contextWindow } : {},
         eligibility
       }));
     }
@@ -32044,7 +32133,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "bac3abbd01ddfeb27ffc309fe007b63fa19db1983434df6f7ad37c2d27089583",
+  build: "13c522fdd482ce60b85dc378711f435018e4bd0e8c12cedf628a2ab712c5bf5f",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34150,7 +34239,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "c3656a44aeb1b45638303930a39dbd5d3429987a6ff648851552c032366223ef";
+  const embedded = "8bd684fa7359018ef9e6340992c89cf1b52960980b791c6a131e6a5f0a4fb41f";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

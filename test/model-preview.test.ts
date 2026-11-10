@@ -24,6 +24,7 @@ const sdk = vi.hoisted(() => ({
     id: "m",
     api: "openai-completions",
     input: ["text", "image"],
+    contextWindow: undefined as unknown,
   },
   error: undefined as string | undefined,
 }));
@@ -78,6 +79,7 @@ function bytes(dir: string): unknown {
 beforeEach(() => {
   sdk.error = undefined;
   sdk.model.id = "m";
+  sdk.model.contextWindow = undefined;
   sdk.create.mockReset().mockImplementation(async () => ({
     getError: () => sdk.error,
     getRegisteredNativeProvider: () => undefined,
@@ -108,6 +110,30 @@ it("reads selectable models and a default before first startup without touching 
   for (const key of ["version", "selected", "sourceSelectionId", "apiKey"])
     expect(() =>
       decodeModelPreview({ ...catalog, [key]: "not-authority" }),
+    ).toThrow();
+});
+it("projects a model's stated context window, and nothing for an unknown or malformed one", async () => {
+  const f = fixture();
+  sdk.model.contextWindow = 200000;
+  const catalog = await readModelPreview(f.input);
+  expect(catalog.entries).toMatchObject([
+    { model: "m", contextWindow: 200000 },
+  ]);
+  expect(decodeModelPreview(structuredClone(catalog))).toEqual(catalog);
+  for (const unknown of [undefined, 0, -1, 1.5, "200000", Number.NaN]) {
+    sdk.model.contextWindow = unknown;
+    expect((await readModelPreview(f.input)).entries[0]).not.toHaveProperty(
+      "contextWindow",
+    );
+  }
+  // The key is optional for an older preview, and closed and typed when present.
+  const [entry] = catalog.entries;
+  for (const contextWindow of [0, 1.5, "200000", null])
+    expect(() =>
+      decodeModelPreview({
+        ...catalog,
+        entries: [{ ...entry, contextWindow }],
+      }),
     ).toThrow();
 });
 it("constructs only an offline model registry with a readonly snapshot store", async () => {

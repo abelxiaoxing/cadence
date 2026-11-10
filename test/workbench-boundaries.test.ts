@@ -17,6 +17,7 @@ import {
   decodeChatTurn,
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
+  decodeWorkbenchResult,
 } from "../src/service/contracts/workbench.ts";
 import { TurnCapture } from "../src/service/turn-capture.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
@@ -457,4 +458,37 @@ it("readable thinking is its own item role; no signature or other role is accept
   expect(() =>
     decodeChatItem({ ...item, thinkingSignature: "opaque" }),
   ).toThrow();
+});
+it("the conversation head's context size is an optional closed key an older owner omits", () => {
+  const head = {
+    kind: "conversation",
+    summary: null,
+    leaf: null,
+    continues: true,
+    turns: 0,
+    branches: 0,
+    runs: [],
+    attempt: null,
+  };
+  expect(decodeWorkbenchResult(head)).not.toHaveProperty("context");
+  const context = { tokens: 1200, provider: "fixture", model: "fixed" };
+  expect(decodeWorkbenchResult({ ...head, context })).toEqual({
+    ...head,
+    context,
+  });
+  // Unknown after a compaction is stated, not left out.
+  expect(
+    decodeWorkbenchResult({ ...head, context: { ...context, tokens: null } }),
+  ).toMatchObject({ context: { tokens: null } });
+  for (const refused of [
+    { ...context, tokens: 0 },
+    { ...context, tokens: 1.5 },
+    { ...context, contextWindow: 200000 },
+    { tokens: 1, provider: "fixture" },
+    { ...context, model: 7 },
+    null,
+  ])
+    expect(() =>
+      decodeWorkbenchResult({ ...head, context: refused }),
+    ).toThrow();
 });

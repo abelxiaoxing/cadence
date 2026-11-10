@@ -202,6 +202,11 @@ export function projectModelCatalog(
             selectable: t.selectable && eligibility === "candidate",
           })),
           images: model.input.includes("image"),
+          // A source may state none, or zero for an unknown window.
+          ...(Number.isSafeInteger(model.contextWindow) &&
+          model.contextWindow > 0
+            ? { contextWindow: model.contextWindow }
+            : {}),
           eligibility,
         }),
       );

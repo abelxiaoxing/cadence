@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -9,6 +15,7 @@ import { LiveCapture, type LiveTurn } from "../src/service/conversations.ts";
 import type { ServiceCoordination } from "../src/service/coordination.ts";
 import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
+import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 function fixture() {
@@ -224,13 +231,45 @@ function writeSession(f: ReturnType<typeof fixture>, messages: unknown[]) {
     timestamp: at,
     message,
   }));
+  const path = join(directory, `2026-11-02T00-00-00-000Z_${id}.jsonl`);
   writeFileSync(
-    join(directory, `2026-11-02T00-00-00-000Z_${id}.jsonl`),
+    path,
     [{ type: "session", version: 3, id, timestamp: at, cwd: f.cwd }, ...entries]
       .map((line) => `${JSON.stringify(line)}\n`)
       .join(""),
   );
-  return { id, entries: entries.map((entry) => entry.id) };
+  return { id, path, entries: entries.map((entry) => entry.id) };
+}
+/** Makes an admitted command the owner's live turn. */
+function goLive(
+  f: ReturnType<typeof fixture>,
+  commandId: string,
+  capture: LiveCapture | null = null,
+) {
+  const accepted = f.records.accepted(commandId);
+  if (!accepted) throw Error("admission");
+  f.active.set(commandId, {
+    commandId,
+    accepted,
+    epoch: randomUUID(),
+    title: accepted.command.text,
+    execution: {
+      cwd: f.cwd,
+      checkoutRoot: f.cwd,
+      model: null,
+      version: accepted.command.model,
+    },
+    state: {
+      status: "running",
+      notice: "",
+      user: null,
+      omitted: { thinking: false, media: false, other: false },
+    },
+    stateFile: null,
+    capture,
+    abort: new AbortController(),
+    original: new Promise(() => {}),
+  });
 }
 it("thinking Pi wrote is a lazily read step; the capture's recorded thinking flag is not reported beside it", () => {
   const f = fixture(),
@@ -293,15 +332,13 @@ it("a live turn reports thinking as omitted only when Pi stored it unreadable", 
     },
   ]);
   const commandId = f.command(
-      session.id,
-      "running",
-      null,
-      "Next",
-      "",
-      session.entries[1],
-    ),
-    accepted = f.records.accepted(commandId);
-  if (!accepted) throw Error("admission");
+    session.id,
+    "running",
+    null,
+    "Next",
+    "",
+    session.entries[1],
+  );
   const capture = new LiveCapture(() => []);
   capture.accept({
     protocol: 2,
@@ -325,28 +362,7 @@ it("a live turn reports thinking as omitted only when Pi stored it unreadable", 
     },
   });
   expect(capture.omitted.thinking).toBe(true);
-  f.active.set(commandId, {
-    commandId,
-    accepted,
-    epoch: randomUUID(),
-    title: "Next",
-    execution: {
-      cwd: f.cwd,
-      checkoutRoot: f.cwd,
-      model: null,
-      version: accepted.command.model,
-    },
-    state: {
-      status: "running",
-      notice: "",
-      user: null,
-      omitted: { thinking: false, media: false, other: false },
-    },
-    stateFile: null,
-    capture,
-    abort: new AbortController(),
-    original: new Promise(() => {}),
-  });
+  goLive(f, commandId, capture);
   expect(
     f.records.turnSteps(session.id, session.entries[1], 1, null),
   ).toMatchObject({
@@ -354,5 +370,76 @@ it("a live turn reports thinking as omitted only when Pi stored it unreadable", 
       status: "running",
       omitted: { thinking: false, media: false, other: false },
     },
+  });
+});
+it("the head carries the branch's context size, redacted, and a live turn's follows what Pi has written", () => {
+  const f = fixture(),
+    secret = "fabricated-provider-credential";
+  const usage = (totalTokens: number) => ({
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+  });
+  const session = writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Earlier" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Reply" }],
+      provider: `gateway-${secret}`,
+      model: "fixed",
+      usage: usage(1200),
+      stopReason: "stop",
+    },
+  ]);
+  const [question, reply] = session.entries;
+  f.secrets([secret]);
+  expect(
+    decodeWorkbenchResult(f.records.conversation(session.id, null, null)),
+  ).toMatchObject({
+    context: { tokens: 1200, provider: "gateway-[redacted]", model: "fixed" },
+  });
+  // A branch end no model response precedes claims no figure.
+  expect(f.records.conversation(session.id, question, null)).not.toHaveProperty(
+    "context",
+  );
+  // A live turn sent from the reply measures that branch until Pi writes more.
+  const commandId = f.command(session.id, "running", null, "Next", "", reply);
+  goLive(f, commandId);
+  expect(f.records.conversation(session.id, null, null)).toMatchObject({
+    leaf: reply,
+    context: { tokens: 1200 },
+  });
+  const row = (id: string, parentId: string, body: object) =>
+    `${JSON.stringify({ id, parentId, timestamp: "", ...body })}\n`;
+  const marker = {
+    type: "custom",
+    customType: BROWSER_COMMAND_ENTRY,
+    data: { commandId, userId: "0000000a" },
+  };
+  appendFileSync(
+    session.path,
+    row("0000000a", reply, {
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "Next" }] },
+    }) +
+      row("0000000b", "0000000a", marker) +
+      row("0000000c", "0000000b", {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [],
+          provider: "fixture",
+          model: "next",
+          usage: usage(2500),
+          stopReason: "toolUse",
+        },
+      }) +
+      row("0000000d", "0000000c", marker),
+  );
+  expect(f.records.conversation(session.id, null, null)).toMatchObject({
+    leaf: reply,
+    context: { tokens: 2500, provider: "fixture", model: "next" },
   });
 });

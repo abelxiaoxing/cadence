@@ -1641,10 +1641,12 @@ function decodeModelCandidate(value) {
     "api",
     "thinking",
     "eligibility",
-    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : []
+    ...Object.hasOwn(value ?? {}, "images") ? ["images"] : [],
+    ...Object.hasOwn(value ?? {}, "contextWindow") ? ["contextWindow"] : []
   ]);
   const candidate = {
     ...o.images === undefined ? {} : { images: bool(o.images) },
+    ...o.contextWindow === undefined ? {} : { contextWindow: integer(o.contextWindow, 1) },
     provider: text(o.provider, 128, true),
     model: text(o.model, 256, true),
     api: nullable(o.api, (v) => oneOf(v, modelApis)),
@@ -3094,6 +3096,7 @@ function projectModelCatalog(runtime, supportedThinking, current, literals, vali
           selectable: t.selectable && eligibility === "candidate"
         })),
         images: model2.input.includes("image"),
+        ...Number.isSafeInteger(model2.contextWindow) && model2.contextWindow > 0 ? { contextWindow: model2.contextWindow } : {},
         eligibility
       }));
     }

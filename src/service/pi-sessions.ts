@@ -62,6 +62,10 @@ const PART_TEXT_BYTES = 200 * 1024;
 const PART_ARGS_BYTES = 48 * 1024;
 /** Arguments parsed to name a tool's target; longer ones name nothing. */
 const TARGET_ARGS = 1024 * 1024;
+/** Entries one context-usage walk visits from a branch end, and the results
+ * an opened session remembers: bounds on a polled read, never on a session. */
+export const USAGE_WALK = 256;
+const USAGE_RESULTS = 64;
 
 /** Where Pi keeps this project's sessions, with Pi's own precedence: the
  * PI_CODING_AGENT_SESSION_DIR environment variable, then `sessionDir` in the
@@ -369,6 +373,44 @@ function stopStatus(m: Record<string, unknown>): {
   return { status: "completed", notice: "" };
 }
 
+/** Context size as of the last completed model response on a branch. */
+export interface BranchUsage {
+  /** What that response reported; null when a compaction came after it. */
+  tokens: number | null;
+  provider: string;
+  model: string;
+}
+/** The tokens an assistant message reported, as Pi counts a valid usage: the
+ * reply neither failed nor was aborted, and its total is above zero. */
+function reportedUsage(entry: SessionEntry): BranchUsage | undefined {
+  const m = message(entry);
+  if (!m || own(m, "role") !== "assistant") return undefined;
+  const reason = own(m, "stopReason"),
+    usage = own(m, "usage");
+  if (
+    reason === "aborted" ||
+    reason === "error" ||
+    !usage ||
+    typeof usage !== "object"
+  )
+    return undefined;
+  const count = (key: string) => {
+    const value = own(usage as Record<string, unknown>, key);
+    return typeof value === "number" ? value : Number.NaN;
+  };
+  const tokens =
+    count("totalTokens") ||
+    count("input") + count("output") + count("cacheRead") + count("cacheWrite");
+  if (!(tokens > 0) || !Number.isFinite(tokens)) return undefined;
+  const provider = own(m, "provider"),
+    model = own(m, "model");
+  return {
+    tokens: Math.min(Math.ceil(tokens), Number.MAX_SAFE_INTEGER),
+    provider: typeof provider === "string" ? provider : "",
+    model: typeof model === "string" ? model : "",
+  };
+}
+
 /** What a listing needs, folded line by line so a long session is read once. */
 export interface SessionSummary {
   id: string;
@@ -457,6 +499,7 @@ export class ParsedSession {
     { value: Record<string, unknown>; bytes: number }
   >();
   private bodyBytes = 0;
+  private readonly usages = new Map<string, BranchUsage | null>();
   constructor(readonly path: string) {}
   private body(
     pos: number,
@@ -537,6 +580,7 @@ export class ParsedSession {
         this.children.clear();
         this.bodies.clear();
         this.bodyBytes = 0;
+        this.usages.clear();
         this.header = null;
       },
     );
@@ -568,6 +612,36 @@ export class ParsedSession {
         entry.parentId === null ? undefined : this.byId.get(entry.parentId);
     }
     return false;
+  }
+  /** The context size the newest valid model response on this branch
+   * reported, looking back at most `USAGE_WALK` entries from `leaf` and
+   * reading only message bodies. A compaction newer than that response leaves
+   * the size unknown. Pi adds an estimate of the messages after the response;
+   * this figure does not. Null when the walk finds no such response. */
+  usage(leaf: string | null): BranchUsage | null {
+    if (leaf === null) return null;
+    const known = this.usages.get(leaf);
+    if (known !== undefined) return known;
+    let found: BranchUsage | null = null,
+      compacted = false;
+    let entry = this.byId.get(leaf);
+    for (let n = 0; entry && n < USAGE_WALK; n++) {
+      if (entry.type === "compaction") compacted = true;
+      else {
+        const usage = reportedUsage(entry);
+        if (usage) {
+          found = compacted ? { ...usage, tokens: null } : usage;
+          break;
+        }
+      }
+      entry =
+        entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    // A branch end's ancestors never change while this file is the same one.
+    if (this.usages.size >= USAGE_RESULTS)
+      this.usages.delete(this.usages.keys().next().value as string);
+    this.usages.set(leaf, found);
+    return found;
   }
   /** Entries nothing continues from: more than one means the session branched. */
   leaves(): number {

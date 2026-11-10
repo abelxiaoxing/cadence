@@ -313,6 +313,15 @@ export interface ChatTurnHeader {
   /** When the turn began (epoch ms), 0 when unrecorded. */
   at: number;
 }
+/** Context size as of the last completed model response on a branch: the
+ * tokens that response reported for the model that gave it, without Pi's
+ * estimate of what followed. `tokens` is null when a compaction came after
+ * that response, so the size is unknown until the next one. */
+export interface ChatContext {
+  tokens: number | null;
+  provider: string;
+  model: string;
+}
 /** A browser message that left nothing in the session, shown after the branch
  * it was sent from: a refusal before any model call or a Cadence control reply. */
 export interface ChatAttempt {
@@ -481,6 +490,10 @@ export type WorkbenchResult =
       attempt: ChatAttempt | null;
       /** Accepted browser commands, not inferred from session entry changes. */
       commands?: string[];
+      /** For the branch read, a live turn's written entries included. Absent
+       * when no model response is within the reader's walk of the branch end,
+       * or the service predates it. */
+      context?: ChatContext;
     }
   | {
       kind: "conversation-tree";
@@ -1070,6 +1083,14 @@ function decodeChatAttempt(v: unknown): ChatAttempt {
     notice: text(o.notice, 1024),
   };
 }
+function decodeChatContext(v: unknown): ChatContext {
+  const o = closed(v, ["tokens", "provider", "model"]);
+  return {
+    tokens: nullable(o.tokens, (n) => integer(n, 1)),
+    provider: text(o.provider, 128),
+    model: text(o.model, 256),
+  };
+}
 function decodeChatTreeNode(v: unknown): ChatTreeNode {
   const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
   return {
@@ -1229,6 +1250,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       "runs",
       "attempt",
       ...(Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []),
+      ...(Object.hasOwn(v ?? {}, "context") ? ["context"] : []),
     ]);
     const summary = nullable(o.summary, decodeChatSummary),
       turns = integer(o.turns, 0);
@@ -1238,6 +1260,9 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       ...(o.commands === undefined
         ? {}
         : { commands: list(o.commands, 64, decodeId) }),
+      ...(o.context === undefined
+        ? {}
+        : { context: decodeChatContext(o.context) }),
       summary,
       leaf: nullable(o.leaf, decodeEntryId),
       continues: bool(o.continues),
