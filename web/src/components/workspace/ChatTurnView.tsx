@@ -1,7 +1,8 @@
 /* A conversation turn in pi-web-ui's Message composition: a meta line (speaker,
- * model, time) over a body of message text and tool cards in recorded order.
- * MIT (c) 2026 xing-shuyin. */
+ * model, time) over a body of message text and tool cards in recorded order,
+ * then the message's action bar. MIT (c) 2026 xing-shuyin. */
 import { memo, useState } from "react";
+import { FiCornerDownRight } from "react-icons/fi";
 import type { TurnSource } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
 import { StreamMarkdown } from "../rich/StreamMarkdown";
@@ -11,6 +12,11 @@ import {
   ToolStep,
   turnParts,
 } from "./ChatSteps";
+import {
+  CopyMessageAction,
+  MessageAction,
+  MessageActions,
+} from "./MessageActions";
 
 const clock = (at: number, locale: string) =>
   new Date(at).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-GB", {
@@ -21,12 +27,33 @@ const clock = (at: number, locale: string) =>
 /** Memoized: a settled turn keeps its source, so polling never re-renders it. */
 export const ChatTurnView = memo(function ChatTurnView({
   turn,
+  onContinue,
 }: {
   turn: TurnSource;
+  /** Present when this turn's end may be chosen as the branch to read: it only
+   * changes what is shown, and the next message starts a new branch there. */
+  onContinue?(entry: string): void;
 }) {
   const { t, tx, locale } = useT();
   const { header } = turn;
   const { user, replies } = turnParts(turn.steps);
+  // A whole-reply copy takes the answer's text parts in recorded order: no tool
+  // card, and no failed or incomplete attempt (its own labelled block).
+  const answer = replies.filter(
+    ({ step }) => step.role === "assistant" && !step.error,
+  );
+  const { entry } = header;
+  const continueAction = onContinue && entry && (
+    <MessageAction
+      icon={<FiCornerDownRight aria-hidden="true" />}
+      label={t("Continue from here")}
+      title={t(
+        "Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted.",
+      )}
+      showLabel
+      onClick={() => onContinue(entry)}
+    />
+  );
   const live = header.status === "queued" || header.status === "running";
   const [context, setContext] = useState(false);
   const { thinking, media, other } = header.omitted;
@@ -51,15 +78,21 @@ export const ChatTurnView = memo(function ChatTurnView({
   );
   return (
     <section className="chat-turn" aria-label={t("Conversation turn")}>
-      {user.map(({ step, index }) => (
+      {user.map(({ step, index }, position) => (
         <article className="msg msg-user" key={index}>
           <div className="msg-meta">
             <span className="msg-role">{t("You")}</span>
             {time}
           </div>
           <div className="msg-body">
-            <StepText turn={turn} index={index} step={step} />
+            <StepText turn={turn} index={index} step={step} copy={false} />
           </div>
+          <MessageActions label={t("Message actions")}>
+            {step.text.trim() !== "" && (
+              <CopyMessageAction turn={turn} parts={[{ step, index }]} />
+            )}
+            {position === user.length - 1 && continueAction}
+          </MessageActions>
         </article>
       ))}
       {(replies.length > 0 || live || omitted.length > 0) && (
@@ -126,6 +159,15 @@ export const ChatTurnView = memo(function ChatTurnView({
               </p>
             ))}
           </div>
+          {/* Nothing to act on while the reply is still being written. */}
+          {!live && (answer.length > 0 || user.length === 0) && (
+            <MessageActions label={t("Message actions")}>
+              {answer.length > 0 && (
+                <CopyMessageAction turn={turn} parts={answer} />
+              )}
+              {user.length === 0 && continueAction}
+            </MessageActions>
+          )}
         </article>
       )}
       {header.status === "running" && header.retry && (

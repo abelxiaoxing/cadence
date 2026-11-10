@@ -19,6 +19,7 @@ import type { ConversationLocation } from "../../../../src/service/contracts/mod
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { describeError, useT } from "../../i18n/locale";
+import { notify } from "../../layout/toasts";
 import { useCopyFeedback } from "../../rich/use-copy-feedback";
 
 const lastSegment = (path: string) =>
@@ -51,8 +52,7 @@ export function FilesPanel({
 }) {
   const { t } = useT();
   const [path, setPath] = useState(""),
-    [selected, setSelected] = useState<string | null>(null),
-    [notice, setNotice] = useState("");
+    [selected, setSelected] = useState<string | null>(null);
   // A name filter over the entries already listed; it reads nothing.
   const [filter, setFilter] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState("");
@@ -248,9 +248,9 @@ export function FilesPanel({
               title={t("Copy path {path}", { path: entry.name })}
               onClick={() => {
                 setCopiedPath(entry.path);
-                void copy(entry.path).then((ok) =>
-                  setNotice(ok ? "" : t("Link copy unavailable.")),
-                );
+                void copy(entry.path).then((ok) => {
+                  if (!ok) notify("error", t("Copy unavailable"));
+                });
               }}
             >
               {copied && copiedPath === entry.path ? (
@@ -305,7 +305,6 @@ export function FilesPanel({
           )}
         </section>
       )}
-      {notice && <p role="alert">{notice}</p>}
     </div>
   );
 }

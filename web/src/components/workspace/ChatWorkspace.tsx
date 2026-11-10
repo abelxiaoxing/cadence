@@ -3,6 +3,7 @@
  * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,7 +13,6 @@ import {
 import {
   FiArrowDown,
   FiArrowUp,
-  FiCornerDownRight,
   FiGitBranch,
   FiImage,
   FiMessageSquare,
@@ -64,6 +64,7 @@ import {
   cadenceExit,
 } from "../../client/workflow-entry";
 import { describeError, useT } from "../../i18n/locale";
+import { dismissToasts, notify } from "../../layout/toasts";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { ModelPicker } from "../actions/ModelPicker";
 import { LazyMount } from "../transcript/LazyMount";
@@ -180,6 +181,16 @@ export function ChatWorkspace({
   );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  // A definite local refusal (nothing reached the owner) is a toast this
+  // conversation withdraws on its next attempt; an unknown outcome or an
+  // owner-side effect stays in the transcript as `error`, which no toast clears.
+  const toastKey = `conversation:${id}`;
+  const clearError = () => {
+    setError("");
+    dismissToasts(toastKey);
+  };
+  const refuse = (text: string) => notify("error", text, toastKey);
+  useEffect(() => () => dismissToasts(toastKey), [toastKey]);
   const [pending, setPending] = useState(() => stored(`${draftKey}:pending`));
   const [modelCommand, setModelCommand] = useState(() =>
     stored(`${draftKey}:model-command`),
@@ -276,7 +287,7 @@ export function ChatWorkspace({
       modelWaitDisposition(waiting, latestAvailability.current) === "cancel"
     ) {
       clearModelWait();
-      setError(
+      refuse(
         t(
           "The connection changed. Your model choice and draft are kept; send again when ready.",
         ),
@@ -285,7 +296,7 @@ export function ChatWorkspace({
     }
     waitingSend.current = chooseWaitingModel(waiting, choice, installed);
     setAwaitingModel(false);
-    setError("");
+    clearError();
     setResume(true);
   };
   const onLocationRef = useRef(onLocation);
@@ -620,7 +631,7 @@ export function ChatWorkspace({
   );
   const approve = async () => {
     if (!state?.proposal) {
-      setError(t("No plan is awaiting approval."));
+      refuse(t("No plan is awaiting approval."));
       return;
     }
     if (
@@ -636,7 +647,7 @@ export function ChatWorkspace({
     const observed = state;
     const generation = sendGeneration.current;
     setBusy(true);
-    setError("");
+    clearError();
     try {
       const reply = await approveWorkflow({
         client,
@@ -688,7 +699,7 @@ export function ChatWorkspace({
     )
       return;
     if (exiting && images.length) {
-      setError(t("Remove images before exiting Cadence."));
+      refuse(t("Remove images before exiting Cadence."));
       return;
     }
     if (
@@ -699,7 +710,7 @@ export function ChatWorkspace({
       cadenceApproval(message)
     ) {
       if (!actionsReady)
-        setError(
+        refuse(
           t(
             "Execution is not ready to approve this plan. Send a message to refresh the conversation first; nothing was approved.",
           ),
@@ -709,7 +720,7 @@ export function ChatWorkspace({
     }
     const selecting = cadenceInput(message, mode).mode === "cadence";
     if (!canPrepareOnly && (cadence || selecting) && !cadenceKnown) {
-      setError(
+      refuse(
         t(
           "Cadence state unavailable. Observe the conversation before sending.",
         ),
@@ -719,12 +730,18 @@ export function ChatWorkspace({
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
-    setError("");
+    clearError();
     const generation = sendGeneration.current;
     const current = () =>
       alive.current && sendGeneration.current === generation;
     let dispatched = false;
     let preparation: PreparationStage = "not-dispatched";
+    // Only `effect: none` proves the owner took nothing.
+    const sendRefused = (code: string, effect?: string) => {
+      const text = t(sendFailureMessage(effect), { code });
+      if (effect === "none") refuse(text);
+      else setError(text);
+    };
     const pendingCommand = (id: string) => {
       if (current()) {
         setPending(id);
@@ -802,11 +819,7 @@ export function ChatWorkspace({
         const reply = await dispatchSend(client, command, pendingCommand);
         if (!current()) return;
         if (reply.kind === "error") {
-          setError(
-            t(sendFailureMessage(reply.error.effect), {
-              code: reply.error.code,
-            }),
-          );
+          sendRefused(reply.error.code, reply.error.effect);
         } else {
           setPending("");
           setMode("chat");
@@ -830,7 +843,7 @@ export function ChatWorkspace({
           setAwaitingModel(true);
         } else {
           clearModelWait();
-          setError(
+          refuse(
             t(
               "The connection changed. Your model choice and draft are kept; send again when ready.",
             ),
@@ -905,7 +918,7 @@ export function ChatWorkspace({
               m.images,
           )
         ) {
-          setError(
+          refuse(
             t(
               "The selected model does not support images. Choose a vision model or remove the images.",
             ),
@@ -923,9 +936,7 @@ export function ChatWorkspace({
       const reply = await dispatchSend(client, command, pendingCommand);
       if (!current()) return;
       if (reply.kind === "error") {
-        setError(
-          t(sendFailureMessage(reply.error.effect), { code: reply.error.code }),
-        );
+        sendRefused(reply.error.code, reply.error.effect);
         // Even a lost reply can have accepted work. Observe this exact turn ID.
       } else {
         removeImages(sentImages.current);
@@ -942,12 +953,15 @@ export function ChatWorkspace({
       conversation.refresh();
       onChanged();
     } catch (error) {
-      if (current())
-        setError(
-          t(dispatched ? sendFailureMessage() : unsentMessage(preparation), {
-            code: error instanceof Error ? error.message : "unavailable",
-          }),
+      if (current()) {
+        const text = t(
+          dispatched ? sendFailureMessage() : unsentMessage(preparation),
+          { code: error instanceof Error ? error.message : "unavailable" },
         );
+        // Unsent with no preparation dispatched: nothing reached the owner.
+        if (!dispatched && preparation === "not-dispatched") refuse(text);
+        else setError(text);
+      }
     } finally {
       if (sendGeneration.current === generation) sending.current = false;
       if (current()) {
@@ -968,17 +982,19 @@ export function ChatWorkspace({
       waitingSend.current = null;
       setAwaitingModel(false);
       setResume(false);
-      setError(
+      notify(
+        "error",
         t(
           "The connection changed. Your model choice and draft are kept; send again when ready.",
         ),
+        toastKey,
       );
     } else if (resume && disposition === "ready" && canSend && !running) {
       setResume(false);
       waitingSend.current = null;
       void sendLatest.current(undefined, waiting);
     }
-  }, [resume, awaitingModel, canSend, running, availability, t]);
+  }, [resume, awaitingModel, canSend, running, availability, t, toastKey]);
   // Never a late surprise: if sending stays impossible, the message waits.
   useEffect(() => {
     if (!resume) return;
@@ -1018,14 +1034,37 @@ export function ChatWorkspace({
     conversation.choose(leaf);
     setBranchesOpen(false);
   };
+  // Turn rows are memoized: they get one stable callback, which always
+  // reaches the current `chooseBranch`.
+  const chooseLatest = useRef(chooseBranch);
+  chooseLatest.current = chooseBranch;
+  const continueFrom = useCallback(
+    (entry: string) => chooseLatest.current(entry),
+    [],
+  );
+  // The reply's own state. A completed reply and an idle Cadence conversation
+  // need no label: the mode is in the meta line and on the composer control.
+  const replyState = !summary
+    ? ""
+    : cadence
+      ? running
+        ? t("Discussing")
+        : settledBadly
+          ? tx(summary.status)
+          : state?.proposal
+            ? t("Awaiting plan approval")
+            : ""
+      : summary.status === "completed"
+        ? ""
+        : tx(summary.status);
   const imagesLocked = busy || awaitingModel || !!pending || !!running;
   const addImages = (files: File[]) => {
     if (imagesLocked) return;
     try {
       imageDraft.add(files);
-      setError("");
+      clearError();
     } catch (error) {
-      setError(tx(error instanceof Error ? error.message : "unavailable"));
+      refuse(tx(error instanceof Error ? error.message : "unavailable"));
     }
   };
   return (
@@ -1051,31 +1090,35 @@ export function ChatWorkspace({
                   ? t("New conversation")
                   : t("Conversation"))}
           </h2>
-          <span className="conversation-badge">
+        </div>
+        <div className="conversation-branch">
+          {/* One quiet line: the mode, then where the session started. */}
+          <span className="conversation-meta">
             {!cadenceKnown
               ? t("Cadence state unavailable")
               : cadence
                 ? t("Cadence on")
                 : t("Ordinary")}
+            {summary &&
+              ` · ${
+                summary.origin === "terminal"
+                  ? t("Started in the terminal")
+                  : t("Started in the WebUI")
+              }`}
           </span>
-          {summary && (
-            <span className="conversation-badge">
-              {summary.origin === "terminal"
-                ? t("Started in the terminal")
-                : t("Started in the WebUI")}
-            </span>
-          )}
-        </div>
-        <div className="conversation-branch">
           {(conversation.branches > 1 || conversation.pinned) && (
             <button
               type="button"
               className="ghost"
               aria-expanded={branchesOpen}
+              aria-label={t("Branches ({count})", {
+                count: conversation.branches,
+              })}
+              title={t("Branches ({count})", { count: conversation.branches })}
               onClick={() => setBranchesOpen((open) => !open)}
             >
               <FiGitBranch aria-hidden="true" />
-              {t("Branches ({count})", { count: conversation.branches })}
+              {conversation.branches}
             </button>
           )}
           {conversation.pinned && (
@@ -1091,25 +1134,16 @@ export function ChatWorkspace({
               mode; beside it the reply's status stays only when that reply
               ended badly or a plan awaits approval. */}
           {activeRun && (
-            <span className="ep-state running">
+            <span className="ep-state running" role="status">
               {tx(workflowActivity(activeRun))}
             </span>
           )}
           {summary &&
+            replyState &&
             (!activeRun ||
               settledBadly ||
               (cadence && !running && !!state?.proposal)) && (
-              <span className={`ep-state ${summary.status}`}>
-                {cadence
-                  ? running
-                    ? t("Discussing")
-                    : settledBadly
-                      ? tx(summary.status)
-                      : state?.proposal
-                        ? t("Awaiting plan approval")
-                        : t("Ready for conversation")
-                  : tx(summary.status)}
-              </span>
+              <span className={`ep-state ${summary.status}`}>{replyState}</span>
             )}
         </div>
       </header>
@@ -1200,25 +1234,20 @@ export function ChatWorkspace({
                 onMeasured={lazy.recordMeasured}
                 lazyRef={lazy.register(id)}
               >
-                <ChatTurnView turn={turn} />
+                {/* An earlier settled turn offers its end as a branch point. */}
+                <ChatTurnView
+                  turn={turn}
+                  onContinue={
+                    turn.header.entry &&
+                    turn.ordinal < conversation.count - 1 &&
+                    !running
+                      ? continueFrom
+                      : undefined
+                  }
+                />
               </LazyMount>
-              {/* Workflows that started in this turn, then the turn's branch point. */}
+              {/* Workflows that started in this turn. */}
               {placed.after.get(id)?.map(workflowLine)}
-              {turn.header.entry &&
-                turn.ordinal < conversation.count - 1 &&
-                !running && (
-                  <button
-                    type="button"
-                    className="ghost turn-branch"
-                    title={t(
-                      "Show the conversation up to here. The next message starts a new branch; nothing is deleted.",
-                    )}
-                    onClick={() => chooseBranch(turn.header.entry)}
-                  >
-                    <FiCornerDownRight aria-hidden="true" />
-                    {t("Continue from here")}
-                  </button>
-                )}
             </Fragment>
           ))}
           {placed.end.map(workflowLine)}

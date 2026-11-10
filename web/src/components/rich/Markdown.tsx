@@ -12,7 +12,6 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
 import "katex/dist/katex.min.css";
-import "highlight.js/styles/github-dark.css";
 import { splitCodeLines } from "../../rich/code-lines";
 import remarkBackslashMath from "../../rich/remark-backslash-math";
 import { CopyButton } from "./CopyButton";

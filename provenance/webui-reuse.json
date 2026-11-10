@@ -371,7 +371,13 @@
     "test/model-preview-process.test.ts",
     "test/model-preview-recovery.test.ts",
     "test/web/model-wait.test.tsx",
-    "web/src/layout/StatusItem.tsx"
+    "web/src/layout/StatusItem.tsx",
+    "web/src/layout/toasts.ts",
+    "web/src/layout/ToastStack.tsx",
+    "web/src/layout/theme.ts",
+    "web/src/components/workspace/MessageActions.tsx",
+    "test/web/toasts.test.tsx",
+    "test/web/theme.test.tsx"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -380,8 +386,8 @@
     "test/web/project-entry.test.tsx": "cb9c82be7454b045cd396cf48ec9ba78db97f5d0ba94a9b36caeccfe2069e2bd",
     "test/web/project-resume.test.tsx": "e1aa7ac1f16944c7eea6fd38bf5b7e2428ece4c3d57b069f872cad57c31a6141",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "6f8e33ee711e8fa766bd697d1119ad7d6763ec5f9a6b0e814b462ddf62adddd0",
-    "web/src/layout/AppShell.tsx": "b9667491f753d60fdf84970c13a9ec2afd18e500fc3ff4419d2e3becb17f11d7",
+    "web/src/App.tsx": "d05c39903ed3732187dd11fbad9ac660208bfb99d8c283c2968e31575beab46d",
+    "web/src/layout/AppShell.tsx": "3ff9582b33f0732218fbad0f411340178692c61b9b380ede5d1740141e727c91",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "0b944562e448a214d52483095a5ed05c163cb716024636aec35e4aaf6dfbb652",
@@ -401,8 +407,8 @@
     "web/src/components/review/ArtifactPreview.tsx": "e64c7b7476a11d2935df7bab65050348bc3169a686d6f18a9b3cd9862ac8a732",
     "web/src/components/review/DiffView.tsx": "038102afae254cd1d6662eb7898ed126ca73ae8dfcedaf22979783b4edac703b",
     "web/src/components/review/ObservationPanel.tsx": "0a83557bd3949e0c593b4311c4cdf4abfa146cfc031a461a3610254c4107eaa4",
-    "web/src/components/rich/CopyButton.tsx": "f95ccf1ef498eea4946e22383e13a854635e910f5176c35d12a1330f9bce158d",
-    "web/src/components/rich/Markdown.tsx": "1236273f6dd3978185c1e84670dcc62238fb46d806eddaf59fc707e91042f652",
+    "web/src/components/rich/CopyButton.tsx": "18d44a8cc6cd594b85f3e8a0326fb1995944cff0b4b2b855187b7ca7372e290c",
+    "web/src/components/rich/Markdown.tsx": "822f4fd5e1774a9891b79d4e87097aaa02bee0979c2c03e563a03f517688c026",
     "web/src/components/rich/StreamMarkdown.tsx": "0bc78a104899ce0f236febcc9f9191b37aceb4cf8f5bb0c076a5d67559fca846",
     "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
     "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
@@ -421,15 +427,15 @@
     "web/src/layout/swipe-drawer.ts": "1404d6dacc4e8af0d358e9b9e60b00af81b4a8507eb3adc27e31b27deee6950a",
     "web/src/layout/use-drawer-focus.ts": "399ab20232c16085fae3fc07c200c7fe766c1bd5ac43754718ab4ad432430446",
     "web/src/layout/use-swipe-drawer.ts": "3eb0b5ad000dfb36e4fc78b7d8690c714c7ad8bc16b8dd55262667e0035d740a",
-    "web/src/main.tsx": "613d7e6ba8e82aa351bbd86343467d2555f1a77dea6b17f7f6efc1be59bcfd97",
+    "web/src/main.tsx": "71f52298dd89aa25b24a2c4ddde3d04cbd333eec350b4152c3bcd230b3f0114f",
     "web/src/navigation/assignment-rows.ts": "366ee712340945865fdb4745f378a33750b5ca1a92d1875728e81f8ced63f439",
-    "web/src/reference.css": "953600b1376a075edbb0ae091d1604f569a5d548a7c785636f4dbb0c8a27e963",
+    "web/src/reference.css": "46087095b952fa6aa812dfa2886cd57f4eb5753dcbf883ccc7d5217138b8b58f",
     "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
     "web/src/rich/code-lines.ts": "d0b58279669bfe675df638b10735211ff175ef4e8fb1a6a8ff1279f41e79081e",
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "da243ea05a501f18ae51d1111430a8b5e6b681c03377743077b3effe91e45acc",
+    "web/src/styles.css": "6762dbb27b5f24b4cdc4a5e68b79f904339b4522a78ba7530dfcc57defd7e790",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -468,11 +474,11 @@
     "src/service/workbench.ts": "24c30fc6987a49eb954f3a0d8253a8ff4bac8533402b9d8f9e544412412f3a16",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "0857f8eef878f58df84b9df9005e65cdb0e023135bdb5262bd1cce3d82dcd6ca",
-    "test/web/workbench.test.tsx": "a99b6775b02bfc4b51e2ec017755c9768ccb1087ae52cb85ceb13347a63e7fad",
-    "web/src/components/workspace/ChatWorkspace.tsx": "8772102dae30fe4250bd1967f5d62aacbf356f5552e7da46aaa7160ae24bc1ef",
-    "web/src/components/workspace/ChatSteps.tsx": "639712ccee5718b5651867dac8d1e1d0aaae8ae21ac5a76861725a484a885952",
+    "test/web/workbench.test.tsx": "fa6efa780d15bdac58629bc6c4ef36eaee439016b7907cc574e814308007ad81",
+    "web/src/components/workspace/ChatWorkspace.tsx": "0f4c9ada68ebe8d1649447c997eb8df519ef4b23b50cfd8075b589119a9dea41",
+    "web/src/components/workspace/ChatSteps.tsx": "dba3227b207bf1d96a34dfb24e60ade7f4af8a5c1fc489748447c85db3d95e8d",
     "web/src/components/workspace/AgentDock.tsx": "c79805bf6bdbe34822f738f60966452c8b39c8c9107c3fd1ca7539e50e99e3a8",
-    "web/src/components/workspace/FilesPanel.tsx": "f8eb5eee8eedaf0b83dfb31b35a47bcd9ef158691bbb26f0a839443f39470914",
+    "web/src/components/workspace/FilesPanel.tsx": "99745582ae3a04285d417b02e7e06c9a334f8e8ae85fc3fe3c8386480f5a50a9",
     "web/src/components/workspace/ProjectPicker.tsx": "aaef3a8e9de8250f7e4031cb4bc50cd699fe4208a41ab749a49f0934723959e9",
     "src/service/gateway.ts": "feeea63b37b4a5c994c8a852d287154efb1e5d5493124f92d8dae71957c937c1",
     "src/service/gateway-cli.ts": "a8ccb93a5906af900224431cb813edb9624b601996608f596a51d9fcb57d64dc",
@@ -494,7 +500,7 @@
     "src/service/conversation-workflow.ts": "6e2141cb73d5fe60363cd50878fdf23a21e2e872b3db3e60b2e2cc7d40cb5905",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
     "web/src/components/workspace/WorkflowPanel.tsx": "f40c0210272d00e895770643f1d772570ec53e8a269632cb37123d153422957b",
-    "web/src/components/workspace/ChatTurnView.tsx": "66e7ebc9286de46004f2fb6ca8474f17db5e08810bc4f6ba36618f6f300c9db9",
+    "web/src/components/workspace/ChatTurnView.tsx": "9daff4b4cc089750b46e74056428941920505db1301b2bbd8b468a9ede3ef6a0",
     "test/web/model-retry.test.tsx": "695e4f2374ad8cf911786a3db5f101015d44177fc9a5c2a7fd643686f65d9341",
     "test/service-conversation-workflow.test.ts": "8533466cbea513b525265cdb94d0ce73fa8f660584c6ed240fec486b1cbc332a",
     "test/web/workflow.test.tsx": "0c6edeeb0efa74eb9675d50789910b7ee91387964bf247d766946256765f139c",
@@ -559,7 +565,7 @@
     "web/src/layout/use-panel-layout.ts": "dcd206b5c3980971fe9259d78fe8b75c45c4bc80ab9066d94ce3a55887300f6c",
     "test/web/workspace-layout.test.tsx": "02e70a4ad0feb7cc1fdb9323543083ed36bb964b5962be783149cbe767543195",
     "test/web/workspace-states.test.tsx": "ed0af96b1cce7f04a454b51d6edf8def5c266e2bd4334a012a06e1edf24c46ad",
-    "web/src/i18n/zh.ts": "6071340d5c9df72f8763e75fe8b44aad68b39f4be1b5b77da45b8769c8555329",
+    "web/src/i18n/zh.ts": "9abf7b8b16780a2d9b1c2d4a6e6ad241b4ba51106efb7a438917e20f9fe9e412",
     "test/web/model-picker.test.tsx": "f870707a183cab872f6f26824598acf301c849c0eab383fa8c5207012de93506",
     "web/src/client/use-model-catalog.ts": "a15d9b4162b1cef224f4ec9329364e586b3e529cc724a8445f0fe748ba2d32a8",
     "test/web/model-catalog.test.tsx": "1e30b1533181fa51016126152bd3a750bf90b8417aa0d6bbec107a2ae4eb6675",
@@ -577,7 +583,13 @@
     "test/model-preview-process.test.ts": "3dd670bc539b3ed567839d9ddff7a66f0b17c291c2a9d493eae6ea42c1d24026",
     "test/model-preview-recovery.test.ts": "1654c8d51ecdfa683bd3a89fb764d87b36757673838a906d842cbc8e2d83bc8b",
     "test/web/model-wait.test.tsx": "34df9ee2bb9d4f3fe42cd432d0d926ef2066931f8c581a5c68dac03864abecac",
-    "web/src/layout/StatusItem.tsx": "481fa044cd63d84f2468d67add44fa70ebe3b2dbdd14652cd1de4bd232abd7c3"
+    "web/src/layout/StatusItem.tsx": "481fa044cd63d84f2468d67add44fa70ebe3b2dbdd14652cd1de4bd232abd7c3",
+    "web/src/layout/toasts.ts": "2a56d85a77a5a3e6db7d298cd89b4b3b5c076204e137eee0b2908c2f81803137",
+    "web/src/layout/ToastStack.tsx": "07139cb026fea53f10c24d82a56a301adbc5904617660adcc3ea2c1ecdab255b",
+    "web/src/layout/theme.ts": "ceebe4a7442f311183ffeea3517c3695a143bcb256078b3e3cd3517155e449f3",
+    "web/src/components/workspace/MessageActions.tsx": "76bf904edcea719f09b7b198c2c6dab468a004bd9b537f52e2b1157a7a35229d",
+    "test/web/toasts.test.tsx": "2c408a3fe0099a48971ff1803abc2339991bdf1de398ef586237f455f432c306",
+    "test/web/theme.test.tsx": "d63231fc6272a33ab87777973f0d4801bddb604d30b7c80212d399c2bc577d68"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -932,6 +944,19 @@
       ],
       "destination": "test/web/presentation.test.tsx",
       "scope": "Adapt tree/immutability/copy/search intent to immutable retained pages and exact UTF-8 anchors; no hidden thinking, client-only archive search or provider delta schema."
+    },
+    {
+      "source": "tests/unit/notice-policy.test.ts",
+      "destination": "test/web/toasts.test.tsx",
+      "scope": "Queue policy port (tiered durations, deduplication, cap that protects errors) without the suppression patterns; adds the browser-local store and source keys. Not DOM/timer evidence."
+    },
+    {
+      "sources": [
+        "tests/unit/theme-text-contrast.test.ts",
+        "tests/helpers/theme-contrast.ts"
+      ],
+      "destination": "test/web/theme.test.tsx",
+      "scope": "Contrast-floor idea ported to Cadence's light-dark() token pairs at WCAG AA (4.5:1 text, 3:1 glyphs), plus tinted surfaces, a no-literal-colour rule and the theme choice; computed from stylesheet sources, not a rendered page."
     }
   ],
   "workbenchReference": {
@@ -959,7 +984,14 @@
       "web/src/components/HalfRingSpinner.tsx": "a9c83cac488bcbd710b5d1b2c472d459e22e2b92a9e194467f38285400a3e9fe",
       "web/src/components/Message.tsx": "80bde56e1190a2bf17bee04a6be9d0aa30ef20fd2bf6ebd345dfd311e33834b2",
       "web/src/components/CollapsibleHead.tsx": "fa9ef3ad60ce523262d0f115e460dbcdc3357dceb80250872b5f6fa826a01c17",
-      "web/src/styles.css": "08ba2194e120890e01e0729b310213fffdd86b823a671fe455d36b810d247ed0"
+      "web/src/styles.css": "08ba2194e120890e01e0729b310213fffdd86b823a671fe455d36b810d247ed0",
+      "web/src/notice-policy.ts": "21b4f5b2710341417135fff893c9315003ad42e1e0bd32b258d467a0b6059d8c",
+      "web/src/App.tsx": "55b67aca56290fab87d8f5be700c8db435ad4679d35b40325f7deb09a17b70c8",
+      "web/src/theme.ts": "602dfd7bad27063a57d2b5e19343101b2d4344e8a88e7b1f1ac52fd99991f8f9",
+      "themes/white.css": "a4105bcb2342f61283f2fd8d73d1215e5edde0acc4ede74cbf79003c6233e5d2",
+      "tests/unit/notice-policy.test.ts": "e99f570edcc1393e9ff8fc6137fa37ad8b6093fc58619c3175b19f10f625a269",
+      "tests/unit/theme-text-contrast.test.ts": "0704df04ec37abb069189c1fd1483f44ddc34590920383d932979a94b8538f9d",
+      "tests/helpers/theme-contrast.ts": "a9576bd8d39ff8d9c25d9b4fb4cda62670bc185c310b6e446b3bc2044bc11438"
     },
     "note": "Statusbar item, Files pane and ordinary-turn card presentation reference. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, token/cost/host statistic, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
   }
