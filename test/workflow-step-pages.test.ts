@@ -87,3 +87,45 @@ it("step bounds are readonly page bounds, not a lifetime execution quota; archiv
   }
   expect(run.stepsBefore).toBeGreaterThan(384);
 });
+it("a step that is still running stays in view while older settled steps are paged around it", () => {
+  const records = new Map<string, unknown>();
+  const run: WorkflowRun = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    goal: "Parallel delivery",
+    status: "running",
+    phase: "implementing",
+    steps: [],
+    stepsBefore: 0,
+    revision: 0,
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+  };
+  const live = { run };
+  const owner = Object.assign(Object.create(Workflows.prototype), {
+    root: "/fixture",
+    active: new Map([[run.id, live]]),
+    o: { secrets: () => [], owner: { lease: { assert() {} } } },
+    save() {},
+    write: (p: string, value: unknown) => {
+      records.set(p, structuredClone(value));
+    },
+  });
+  // The first step outlives hundreds of its siblings' steps.
+  const long = owner.step(live, "long-task", "implementation");
+  const settled: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const step = owner.step(live, "sibling", "check");
+    step.status = "completed";
+    settled.push(step.id);
+  }
+  expect(run.steps[0].id).toBe(long.id);
+  expect(run.steps[0].status).toBe("running");
+  expect(run.stepsBefore).toBe(128);
+  const page = records.get(`/fixture/runs/${run.id}/pages/0.json`) as {
+    steps: { id: string }[];
+  };
+  expect(page.steps.map((s) => s.id)).toEqual(settled.slice(0, 128));
+  expect(run.steps.map((s) => s.id)).toEqual([long.id, ...settled.slice(128)]);
+});

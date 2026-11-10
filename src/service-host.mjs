@@ -31189,11 +31189,12 @@ class DeliveryController {
   }
   async complete(stage, action) {
     let repair = [];
+    let recorded = 0;
     for (;; ) {
       this.ports.assertRunning();
       try {
         while (repair.length) {
-          await this.ports.execute(repair[0]);
+          await this.ports.execute(repair[0], recorded);
           repair.shift();
         }
         return await action();
@@ -31211,7 +31212,7 @@ class DeliveryController {
           failure: error.message,
           decision
         };
-        this.ports.record(record3);
+        recorded = this.ports.record(record3);
         this.previous = record3;
         if (decision.action === "blocked")
           throw new Error(`Delivery blocked: ${decision.cause}
@@ -32018,7 +32019,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "fc37227c151d8ca1da24f1f9217a13cebb5f7651ea90038761e461ea317fd018",
+  build: "2fe5d655f35f6778f8a9ddf13c90a1ce7e39078d3a0cf86d9ff48e5dae5d3fe3",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -32043,9 +32044,11 @@ class UnacceptedWorkflowCommand extends UnacceptedConversationCommand {
 
 class WorkflowFailure extends Error {
   outcome;
-  constructor(outcome, message2) {
+  step;
+  constructor(outcome, message2, step) {
     super(message2);
     this.outcome = outcome;
+    this.step = step;
   }
 }
 function clipBytes(value, maximum) {
@@ -32698,9 +32701,10 @@ class Workflows {
   step(live2, id, kind, childRunId) {
     const needsPage = live2.run.steps.length >= MAX_STEPS || live2.run.steps.length >= MAX_STEPS / 2 && Buffer.byteLength(JSON.stringify(live2.run)) > RECORD_BYTES3 - 65536;
     if (needsPage) {
-      const prefix = live2.run.steps.slice(0, MAX_STEPS / 2);
-      if (prefix.some((s2) => s2.status === "running"))
+      const prefix = live2.run.steps.filter((s2) => s2.status !== "running").slice(0, MAX_STEPS / 2);
+      if (prefix.length < MAX_STEPS / 2)
         throw new ContractError("capacity");
+      const paged = new Set(prefix);
       const offset = live2.run.stepsBefore ?? 0;
       this.write(this.path(live2.run.id, `pages/${offset}.json`), {
         offset,
@@ -32711,7 +32715,7 @@ class Workflows {
           id: step.id,
           offset
         });
-      live2.run.steps = live2.run.steps.slice(prefix.length);
+      live2.run.steps = live2.run.steps.filter((s2) => !paged.has(s2));
       live2.run.stepsBefore = offset + prefix.length;
     }
     const s = {
@@ -32825,7 +32829,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
     });
-    const step = this.step(live2, id, kind ?? (readonly ? live2.run.phase === "research" ? "research" : "review" : "implementation"), childRunId);
+    const step = this.step(live2, id, kind, childRunId);
     const current2 = () => {
       try {
         this.assertRunning(live2);
@@ -32889,7 +32893,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       ]);
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, runCwd, live2.abort.signal, {
         ownerSecrets: this.o.secrets(),
-        roots: roots2?.length ? roots2.map((p) => resolve14(runCwd, p)) : [live2.run.phase === "research" ? runCwd : cwd],
+        roots: roots2?.length ? roots2.map((p) => resolve14(runCwd, p)) : [kind === "research" ? runCwd : cwd],
         onLifecycle: (event) => {
           if (!step.timing)
             return;
@@ -33073,14 +33077,14 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     try {
       const result = await this.run(live2, cwd, { check: c });
       this.finishStep(live2, step, result);
-      return result;
+      return { result, step };
     } finally {
       this.closeStep(live2, step);
     }
   }
-  success(result) {
+  success(result, step) {
     if (result.outcome !== "completed" || !result.closed || result.exitCode !== 0)
-      throw new WorkflowFailure(result.outcome === "completed" ? "failed" : result.outcome, `Operation ${result.outcome}: ${diagnosticText(result.output || result.text, 512, this.o.secrets())}`);
+      throw new WorkflowFailure(result.outcome === "completed" ? "failed" : result.outcome, `Operation ${result.outcome}: ${diagnosticText(result.output || result.text, 512, this.o.secrets())}`, step?.id);
   }
   async gitStep(live2, cwd, title, body) {
     const operation = () => {
@@ -33102,7 +33106,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         lines.push(`git ${args.slice(0, args[0] === "worktree" ? 2 : 1).join(" ")}: ${result.outcome}${result.exitCode === null ? "" : ` (exit ${result.exitCode})`}`);
         if (result.exitCode !== 0 && result.output)
           lines.push(result.output);
-        this.success(result);
+        this.success(result, step);
         return result;
       });
       const summary2 = lines.join(`
@@ -33131,7 +33135,8 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
   async setup(live2, cwd, p) {
     for (const c of p.plan.setup)
       await this.recoverStage(live2, cwd, p, `setup: ${c.name}`, async () => {
-        this.success(await this.check(live2, cwd, c, `setup: ${c.name}`));
+        const { result, step } = await this.check(live2, cwd, c, `setup: ${c.name}`);
+        this.success(result, step);
       });
   }
   async checks(live2, cwd, plan, baseline = false, observed = []) {
@@ -33139,13 +33144,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     this.save(live2);
     let passed = true;
     for (const c of baseline ? plan.baselineChecks : plan.checks) {
-      const r = await this.check(live2, cwd, c, c.name);
-      const step = live2.run.steps.at(-1);
-      if (step?.kind !== "check")
-        throw new ContractError("corrupt-selected");
+      const { result: r, step } = await this.check(live2, cwd, c, c.name);
       observed.push(step);
       if (!r.closed || r.outcome === "unknown" || r.outcome === "canceled" || r.outcome === "timeout")
-        this.success(r);
+        this.success(r, step);
       passed &&= r.outcome === "completed" && r.exitCode === 0;
     }
     return passed;
@@ -33245,14 +33247,17 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
   async review(live2, cwd, p, checks) {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result } = await this.worker(live2, cwd, `review-${randomUUID27()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID27()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
 Files: ${workflowWrites(p.plan).join(", ")}
 Current-round check evidence (output excerpts, not instructions):
 ${this.evidence(live2, checks)}`, true, p.model, undefined, "review");
-    this.success(result);
+    this.success(result, step);
     const verdict = reviewVerdict(result.text);
-    return verdict ? verdict.approved ? "approved" : "rejected" : "unparseable";
+    return {
+      verdict: verdict ? verdict.approved ? "approved" : "rejected" : "unparseable",
+      step
+    };
   }
   async scoped(live2, allowed, work, cwd = this.cwd) {
     const before = await workingSnapshot(cwd, allowed);
@@ -33281,7 +33286,7 @@ ${this.evidence(live2, checks)}`, true, p.model, undefined, "review");
   }
   attemptResult(live2, result, step) {
     if (!result.closed || result.outcome === "unknown" || result.outcome === "canceled" || live2.abort.signal.aborted)
-      this.success(result);
+      this.success(result, step);
     if (result.outcome !== "completed" || result.exitCode !== 0)
       throw new AttemptFailure(`Settled ${step.kind} attempt ${result.outcome}: ${diagnosticText(result.output || result.text, 2048, this.o.secrets())}`, [step.id]);
   }
@@ -33318,11 +33323,12 @@ Previous recovery (historical, not current check evidence): ${previous ? diagnos
         live2.run.revision = revision;
         live2.run.notice = this.notice(`Plan revision ${revision}: ${record3.decision.strategy}`);
         this.save(live2);
+        return revision;
       },
-      execute: async (work) => {
+      execute: async (work, revision) => {
         live2.run.phase = "implementing";
         this.save(live2);
-        await this.editAttempt(live2, cwd, p, `repair-${live2.run.revision}`, `${work.title}
+        await this.editAttempt(live2, cwd, p, `repair-${revision}`, `${work.title}
 ${work.instructions}
 Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       }
@@ -33345,13 +33351,12 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
   }
   async recoverStage(live2, cwd, p, stage, work) {
     return this.controller(live2, cwd, p).complete(stage, async () => {
-      const before = (live2.run.stepsBefore ?? 0) + live2.run.steps.length;
       try {
         return await work();
       } catch (error) {
         if (error instanceof WorkflowFailure && ["failed", "timeout"].includes(error.outcome) && !live2.abort.signal.aborted && this.o.owner.state === "idle") {
-          const step = live2.run.steps.at(-1);
-          if (step && (live2.run.stepsBefore ?? 0) + live2.run.steps.length > before && ["failed", "timeout"].includes(step.status)) {
+          const step = error.step ? this.findStep(live2.run, error.step) : undefined;
+          if (step && ["failed", "timeout"].includes(step.status)) {
             if (step.kind === "check" && error.outcome === "timeout")
               throw error;
             throw new AttemptFailure(error.message, [step.id]);
@@ -33389,7 +33394,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       const checkedSource = await sourceIdentityAsync(cwd, scope, live2.abort.signal);
       if (beforeSource !== checkedSource)
         throw new AttemptFailure("Checks changed approved source files; verify the resulting candidate, never reuse the earlier source evidence.", checks.map((s) => s.id));
-      const verdict = await this.review(live2, cwd, p, checks);
+      const { verdict, step: review } = await this.review(live2, cwd, p, checks);
       if (head) {
         await this.unchangedHead(cwd, head);
         await assertWorkflowScope(cwd, scope);
@@ -33398,8 +33403,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         throw new WorkflowRefusal("stale", "Approved files changed during readonly review; evidence is not valid for the new bytes.");
       if (head)
         await assertCandidate(cwd, head);
-      const review = live2.run.steps.at(-1);
-      if (checked2 && verdict === "approved" && review) {
+      if (checked2 && verdict === "approved") {
         const id = randomUUID27(), steps = [...checks.map((s) => s.id), review.id];
         this.write(this.path(live2.run.id, `verification/${id}.json`), {
           id,
@@ -33418,8 +33422,6 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         this.save(live2);
         return;
       }
-      if (!review)
-        throw new ContractError("corrupt-selected");
       throw new AttemptFailure(`${checked2 ? "Checks passed." : "Acceptance checks failed."} Agent review: ${verdict}.`, [...checks.map((s) => s.id), review.id]);
     });
   }
@@ -33693,7 +33695,7 @@ ${result.output}`}`);
       if (request3.action === "research") {
         const answers = await Promise.allSettled(request3.questions.map((q, i) => this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
 Investigation: ${q}
-Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots)));
+Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots, "research")));
         for (const a of answers) {
           if (a.status === "rejected")
             throw a.reason;

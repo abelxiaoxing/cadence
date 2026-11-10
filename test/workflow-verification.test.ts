@@ -50,7 +50,7 @@ it.each(["stable", "check-change", "review-change"])(
       review: vi.fn(async () => {
         live.run.steps.push(review);
         if (scenario === "review-change") observation.value = "c".repeat(64);
-        return "approved";
+        return { verdict: "approved", step: review };
       }),
       write: (_path: string, value: unknown) => records.push(value),
     });

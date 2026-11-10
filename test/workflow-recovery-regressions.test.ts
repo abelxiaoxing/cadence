@@ -79,7 +79,7 @@ function fixture() {
     ) => {
       const step = owner.step(live, title, "check");
       owner.finishStep(live, step, success);
-      return success;
+      return { result: success, step };
     },
     recoverStage: async (
       _live: unknown,
@@ -111,9 +111,9 @@ it("setup recovery retries only the failed command, never preceding successful e
     calls.push(title);
     if (title.endsWith("prepare-environment") && failure) {
       failure = false;
-      return { ...success, outcome: "failed", exitCode: 1 };
+      return { result: { ...success, outcome: "failed", exitCode: 1 } };
     }
-    return success;
+    return { result: success };
   };
   owner.recoverStage = async (
     _l: unknown,
@@ -157,7 +157,7 @@ it("baseline recovery cites only the failed checks of the current round", async 
       ? { ...success, outcome: "failed", exitCode: 1 }
       : success;
     owner.finishStep(live, step, result);
-    return result;
+    return { result, step };
   };
   owner.recoverStage = async (
     _l: unknown,
@@ -192,4 +192,42 @@ it("cleanup quarantine cannot be overwritten by a completed workflow status", as
   expect(result.status).toBe("uncertain");
   expect(live.run.status).toBe("unknown");
   expect(release).not.toHaveBeenCalled();
+});
+it("a stage failure is attributed to the step it settled, not the newest step of the run", async () => {
+  const { owner, live } = fixture();
+  const cited: string[][] = [];
+  // Stand in for the controller: note what recovery would be asked to diagnose.
+  owner.controller = () => ({
+    complete: async (_stage: string, action: () => Promise<unknown>) => {
+      try {
+        return await action();
+      } catch (error) {
+        if (error instanceof AttemptFailure) cited.push(error.steps);
+        throw error;
+      }
+    },
+  });
+  const failure = { ...success, outcome: "failed", exitCode: 1 };
+  // The fixture stubs recoverStage; this exercises the owner's own.
+  const recoverStage = (
+    Workflows.prototype as unknown as {
+      recoverStage(...args: unknown[]): Promise<unknown>;
+    }
+  ).recoverStage.bind(owner);
+  await expect(
+    recoverStage(live, owner.cwd, live.proposal, "setup: tool", () => {
+      const failed = owner.step(live, "setup: tool", "check");
+      owner.finishStep(live, failed, failure);
+      // Another assignment records a step before this failure surfaces.
+      owner.step(live, "sibling", "implementation");
+      owner.success(failure, failed);
+    }),
+  ).rejects.toBeInstanceOf(AttemptFailure);
+  expect(cited).toEqual([[live.run.steps[0].id]]);
+  // A failure that settled no step is not turned into a repair.
+  await expect(
+    recoverStage(live, owner.cwd, live.proposal, "setup: tool", () => {
+      owner.success(failure);
+    }),
+  ).rejects.not.toBeInstanceOf(AttemptFailure);
 });
