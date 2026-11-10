@@ -95,8 +95,10 @@ export interface RecoveryPorts {
     failure: AttemptFailure,
     previous: RecoveryRecord | undefined,
   ): Promise<RecoveryDecision>;
-  record(record: RecoveryRecord): void;
-  execute(work: RecoveryWork): Promise<void>;
+  /** Durably records the revision and returns the number the run gave it. */
+  record(record: RecoveryRecord): number;
+  /** `revision` is the recorded decision this work belongs to. */
+  execute(work: RecoveryWork, revision: number): Promise<void>;
 }
 /** One controller per accepted delivery, shared by setup, implementation and verification.
  * Full revisions are durably recorded by the owner; memory only retains fingerprints. */
@@ -107,11 +109,12 @@ export class DeliveryController {
   constructor(private readonly ports: RecoveryPorts) {}
   async complete<T>(stage: string, action: () => Promise<T>): Promise<T> {
     let repair: RecoveryWork[] = [];
+    let recorded = 0;
     for (;;) {
       this.ports.assertRunning();
       try {
         while (repair.length) {
-          await this.ports.execute(repair[0]);
+          await this.ports.execute(repair[0], recorded);
           repair.shift();
         }
         return await action();
@@ -128,7 +131,7 @@ export class DeliveryController {
           failure: error.message,
           decision,
         };
-        this.ports.record(record);
+        recorded = this.ports.record(record);
         this.previous = record;
         if (decision.action === "blocked")
           throw new Error(

@@ -133,7 +133,7 @@ it.each([
         { plan: { tasks: [] }, model: {} },
         [],
       );
-    await expect(review()).resolves.toBe(verdict);
+    await expect(review()).resolves.toMatchObject({ verdict, step });
     expect(step).toMatchObject({ status, exitCode: 0 });
     // No intermediate completed snapshot may end the panel's observation early.
     expect(saved).toEqual(["running", status]);

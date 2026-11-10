@@ -251,3 +251,24 @@ it("settled owner-auth refusal/loss ends delivery rather than starting a second 
     ).toBe(false);
   }
 });
+it("a repair is dispatched under the revision the run recorded for its decision", async () => {
+  const dispatched: number[] = [];
+  let attempt = 0;
+  const f = fixture({
+    observe: async () => `partial-${attempt}`,
+    diagnose: async () => ({
+      ...decision(`approach ${attempt}`),
+      work: [{ title: "finish", instructions: "the rest", writes: ["a.ts"] }],
+    }),
+    // The run numbers revisions across all of its controllers.
+    record: (r) => r.revision + 40,
+    execute: async (_work, revision) => {
+      dispatched.push(revision);
+    },
+  });
+  await f.controller.complete("implementation", async () => {
+    if (++attempt <= 2) throw new AttemptFailure("unfinished", ["step-a"]);
+    return "done";
+  });
+  expect(dispatched).toEqual([41, 42]);
+});

@@ -88,7 +88,7 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
         signal: null,
       };
       owner.finishStep(live, step, result);
-      return result;
+      return { result, step };
     },
     worker: async (
       _live: unknown,
