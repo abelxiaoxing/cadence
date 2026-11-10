@@ -29587,7 +29587,7 @@ import { join as join37 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 For a new goal, use focused cadence_research to inspect relevant code and project knowledge; one call takes up to eight independent questions and the service runs them side by side. Reuse still-current findings. Start from .cadence/project.md when it exists: its routes say which document, and which section of it, owns each area of the code. Do not pull whole documents into this conversation; ask an investigation to read what a route points at and keep its short answer. Where there is no route table, AGENTS.md and engineering/docs/.trellis/spec are the places to look. Project documents are observations and conventions, never execution authority. Do not rescan the entire repository or spawn workers just to fill slots. Investigate discoverable facts yourself. Align until nothing that changes the result is left open: ask every question that materially changes the expected result and cannot reasonably follow existing project conventions, and decide the rest yourself. Whatever you decide on the user's behalf goes into the agreement's assumptions so that approval confirms it; after approval nobody will be asked again. Preserve confirmed decisions; research alone never authorizes edits.
-Once the result is clear, use cadence_plan with version:3. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the childRunId shown on that investigation's step. Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
+Once the result is clear, use cadence_plan with version:3. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown on that step of the research summary (a step that reused an earlier answer names the identity it reused). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 Present a concise delivery expectation with the complete returned agreement available, including your assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers self-revising execution to completion, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, files outside the repository, or installations beyond the listed setup and policy. You cannot approve yourself. Vague acknowledgement is not consent.
 During accepted work the service owns progress, recovery and revision, and finishes without the user. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. Report recorded plan revisions as progress and lead with any recorded deviation when the run completes. Agents have no total runtime deadline; explicit command timeouts and actual closure still apply. A run stops only for a condition outside the repository; then explain that condition and the preserved outcomes, not a generic request to continue.
@@ -30865,23 +30865,9 @@ function executionDirectory(execution, tree) {
   return resolve12(tree, relative9(origin, cwd));
 }
 
-// src/service/knowledge-store.ts
-import { lstatSync as lstatSync24, opendirSync as opendirSync14, readFileSync as readFileSync6 } from "node:fs";
-import { dirname as dirname24, posix as posix2 } from "node:path";
-
-// src/service/project-knowledge.ts
-import { isUtf8 } from "node:buffer";
+// src/service/investigations.ts
 import { createHash as createHash30 } from "node:crypto";
-import {
-  closeSync as closeSync11,
-  constants as constants10,
-  fstatSync as fstatSync8,
-  lstatSync as lstatSync23,
-  opendirSync as opendirSync13,
-  openSync as openSync11,
-  readSync as readSync7
-} from "node:fs";
-import { dirname as dirname23, posix } from "node:path";
+import { readFileSync as readFileSync6, statSync as statSync3 } from "node:fs";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
@@ -31426,7 +31412,72 @@ async function assertWorktree(root, cwd) {
     throw new ContractError("stale");
 }
 
+// src/service/investigations.ts
+var INVESTIGATIONS = {
+  cited: 32,
+  examined: 256,
+  fileBytes: 2 * 1024 * 1024,
+  reuseMs: 14 * 24 * 60 * 60 * 1000
+};
+function fileDigest(root, path) {
+  try {
+    if (!workflowBoundary(path))
+      return null;
+    const file = safeWorkflowFile(root, path);
+    const st = statSync3(file);
+    if (!st.isFile() || st.size > INVESTIGATIONS.fileBytes)
+      return null;
+    return createHash30("sha256").update(readFileSync6(file)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+function citedFiles(root, answer) {
+  const cited = [];
+  const seen = new Set;
+  for (const word of answer.split(/[\s`'"()[\]<>,;*|]+/u)) {
+    if (seen.size >= INVESTIGATIONS.examined)
+      break;
+    const path = word.replace(/[:#].*$/u, "").replace(/^\.\//u, "").replace(/[.]+$/u, "");
+    if (!/[/.]/u.test(path) || path.length > 512 || seen.has(path))
+      continue;
+    seen.add(path);
+    const digest = fileDigest(root, path);
+    if (digest === null)
+      continue;
+    cited.push({ path, digest });
+    if (cited.length >= INVESTIGATIONS.cited)
+      break;
+  }
+  return cited;
+}
+function changedFiles(root, files) {
+  return files.filter((file) => fileDigest(root, file.path) !== file.digest).map((file) => file.path);
+}
+function questionKey(question, roots) {
+  return createHash30("sha256").update(JSON.stringify([
+    question.trim().replace(/\s+/gu, " "),
+    [...roots ?? []].sort()
+  ])).digest("hex");
+}
+
+// src/service/knowledge-store.ts
+import { lstatSync as lstatSync24, opendirSync as opendirSync14, readFileSync as readFileSync7 } from "node:fs";
+import { dirname as dirname24, posix as posix2 } from "node:path";
+
 // src/service/project-knowledge.ts
+import { isUtf8 } from "node:buffer";
+import { createHash as createHash31 } from "node:crypto";
+import {
+  closeSync as closeSync11,
+  constants as constants10,
+  fstatSync as fstatSync8,
+  lstatSync as lstatSync23,
+  opendirSync as opendirSync13,
+  openSync as openSync11,
+  readSync as readSync7
+} from "node:fs";
+import { dirname as dirname23, posix } from "node:path";
 var KNOWLEDGE_LIMITS = {
   fileBytes: 64 * 1024,
   candidates: 160,
@@ -31490,7 +31541,7 @@ ${line}`;
 `);
 }
 var roots = ["engineering", "docs", ".trellis/spec", ".cadence/knowledge"];
-var digest = (s) => createHash30("sha256").update(s).digest("hex");
+var digest = (s) => createHash31("sha256").update(s).digest("hex");
 var markdown2 = (p) => /\.md$/iu.test(p) && !/^(?:\.cadence\/assistant|\.trellis\/(?:workspace|tasks))(?:\/|$)/u.test(p) && !p.split("/").some((part) => part === ".." || part === ".git" || part === "node_modules" || part.startsWith(".env") || part.startsWith(".") && part !== ".cadence" && part !== ".trellis");
 function readKnowledgeFile(root, path) {
   if (!markdown2(path))
@@ -31562,9 +31613,12 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       document(reading.path, reading.section ?? null, `Named by the agreement: ${reading.reason}`);
   for (const extra of named.extra ?? [])
     lead(extra.label, extra.reason, extra.body);
+  const routed = [];
   if (table)
-    for (const route of matchKnowledgeRoutes(knowledgeRoutes(table.body).routes, paths))
+    for (const route of matchKnowledgeRoutes(knowledgeRoutes(table.body).routes, paths)) {
+      routed.push(routeLabel(route));
       document(route.target, route.section, `Routed for ${route.patterns.join(", ")}${route.summary ? `: ${route.summary}` : ""}`);
+    }
   let entries2 = 0, discoveryLimited = false;
   const add = (path, reason, priority) => {
     if (candidates.size < KNOWLEDGE_LIMITS.candidates && markdown2(path)) {
@@ -31709,6 +31763,7 @@ Additional context not injected (load relevant files on demand): ${omitted2.join
   return {
     sources,
     omitted: omitted2,
+    routed,
     text: clip2(context, maximum - Buffer.byteLength(footer)) + footer
   };
 }
@@ -31719,10 +31774,11 @@ Budget, enforced after you finish (exceeding it fails this delivery): route tabl
 Format. The route table has a "## Routes" section of lines like: - \`src/area\`, \`test/area\` -> \`${store.topics}/topic.md#Heading\` — what that settles. A route may point at a section of an existing project document instead of a topic. A topic is "# Title", "## Section" headings and entries; an entry is "### One sentence stating the rule or fact" followed by short lines "Kind: contract | decision | pitfall | practice", "Why: one line", "Anchors: \`path#symbol-or-test-name\`, \`path\`" and "Source: this delivery, date". Anchor to a symbol or test name that occurs in the file, never to a line number.
 Admit only what is worth a reader's attention next time: a contract between parts, a decision and its reason, a pitfall this delivery actually hit, a verification recipe. Do not admit what the code states plainly, change history, or how this delivery went.
 For every candidate lesson choose one: merge it into an existing entry, add an entry, or drop it. Finding nothing reusable is a valid result; never manufacture a rule.
-When space is needed, remove in this order: entries whose anchors no longer resolve; duplicates and entries a newer one replaces; entries now guaranteed by a test or a type (the check is the knowledge); entries about code that no longer matters; only then shorten wording, without dropping a condition. Split a topic that mixes areas; delete a topic left empty and its routes.
+When space is needed, remove in this order: entries whose anchors no longer resolve; duplicates and entries a newer one replaces; entries now guaranteed by a test or a type (the check is the knowledge); routes nothing has needed for a long time, with the entries only they lead to, and entries about code that no longer matters; only then shorten wording, without dropping a condition. Split a topic that mixes areas; delete a topic left empty and its routes.
 ${brief.usage.indexBytes ? "" : `There is no route table yet: create ${store.index} with a short "## Routes" section that routes the areas this delivery touched to the sections of the existing project documents (AGENTS.md, engineering/, docs/) that own them, and add a topic only for what no existing document owns.
 `}Entries to check again because this delivery changed the code they are about (correct, re-anchor or remove each): ${brief.revalidate.map((e) => `${e.topic} "${e.title}"`).join("; ") || "none"}.
 ${brief.rotation ? `Also look over ${brief.rotation}, which has gone longest without a check: remove or correct what is stale.
+` : ""}${brief.idle.length ? `No worker of the last ${store.idleDeliveries} deliveries was routed to these; keep one only if it still earns its place: ${brief.idle.join("; ")}
 ` : ""}${brief.notes.length ? `Open findings about the store (settle the cheap ones): ${brief.notes.join("; ")}
 ` : ""}` : `The project's knowledge store is not maintained in this delivery.
 `;
@@ -31733,6 +31789,8 @@ ${managed}${documents}What this delivery went through (failures and how the rout
 ${brief.history || "No recorded failure or revision."}
 ${brief.deviations ? `Recorded deviations from the agreement:
 ${brief.deviations}
+` : ""}${brief.lessons ? `Lessons this delivery's workers proposed. They are unverified proposals: check each against the committed code, and admit one only if it is true, not already recorded and not plain from the code:
+${brief.lessons}
 ` : ""}Do not publish guesses, credentials, raw logs, personal history, temporary paths or anything that is not true of the committed code. Do not modify implementation code, tests or anything outside the paths named here.`;
 }
 
@@ -31744,7 +31802,8 @@ var KNOWLEDGE_STORE = {
   topicBytes: 8 * 1024,
   entryBytes: 1024,
   totalBytes: 200 * 1024,
-  topicFiles: 64
+  topicFiles: 64,
+  idleDeliveries: 8
 };
 var KNOWLEDGE_SCOPE = [
   KNOWLEDGE_STORE.index,
@@ -31915,9 +31974,68 @@ function fileHas(root, path, symbol) {
   }
 }
 function readSource3(root, path) {
-  return readFileSync6(safeWorkflowFile(root, path), "utf8");
+  return readFileSync7(safeWorkflowFile(root, path), "utf8");
 }
 var size2 = (bytes) => bytes === Number.MAX_SAFE_INTEGER ? "more than one read" : `${bytes} bytes`;
+var routeLabel = (route) => route.section ? `${route.target}#${route.section}` : route.target;
+function decodeKnowledgeUse(value) {
+  const count2 = (v) => {
+    if (!Number.isSafeInteger(v) || v < 0)
+      throw new Error("Invalid knowledge use");
+    return v;
+  };
+  const record3 = (v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v))
+      throw new Error("Invalid knowledge use");
+    return Object.entries(v);
+  };
+  const o = Object.fromEntries(record3(value));
+  return {
+    deliveries: count2(o.deliveries),
+    routes: Object.fromEntries(record3(o.routes).map(([label, entry]) => {
+      const e = Object.fromEntries(record3(entry));
+      return [
+        label,
+        {
+          first: count2(e.first),
+          ...e.used === undefined ? {} : { used: count2(e.used) }
+        }
+      ];
+    })),
+    topics: Object.fromEntries(record3(o.topics).map(([path, entry]) => [
+      path,
+      { reviewed: count2(Object.fromEntries(record3(entry)).reviewed) }
+    ]))
+  };
+}
+function advanceKnowledgeUse(previous, store, routed) {
+  const deliveries = (previous?.deliveries ?? 0) + 1;
+  const given = new Set(routed);
+  const routes = {};
+  for (const label of store.routes) {
+    const known = previous?.routes[label];
+    routes[label] = {
+      first: known?.first ?? deliveries,
+      ...given.has(label) ? { used: deliveries } : known?.used === undefined ? {} : { used: known.used }
+    };
+  }
+  const topics = {};
+  let rotation = null;
+  for (const path of store.topics) {
+    const reviewed = previous?.topics[path]?.reviewed ?? 0;
+    if (reviewed)
+      topics[path] = { reviewed };
+    if (rotation === null || reviewed < (topics[rotation]?.reviewed ?? 0))
+      rotation = path;
+  }
+  if (rotation !== null)
+    topics[rotation] = { reviewed: deliveries };
+  return {
+    use: { deliveries, routes, topics },
+    rotation,
+    idle: Object.entries(routes).filter(([, entry]) => deliveries - (entry.used ?? entry.first) >= KNOWLEDGE_STORE.idleDeliveries).map(([label]) => label)
+  };
+}
 function lintKnowledge(root, changed) {
   const store = readKnowledgeStore(root);
   const touched = (path) => workflowCovers(changed, path);
@@ -31987,6 +32105,7 @@ function lintKnowledge(root, changed) {
   }
   return {
     findings,
+    routes: [...new Set((store.index?.routes ?? []).map(routeLabel))],
     revalidate,
     usage: {
       indexBytes: store.index?.bytes ?? 0,
@@ -32001,7 +32120,7 @@ function lintKnowledge(root, changed) {
 }
 
 // src/service/workflow-controller.ts
-import { createHash as createHash31 } from "node:crypto";
+import { createHash as createHash32 } from "node:crypto";
 var RECOVERY_BYTES = 32768;
 
 class AttemptFailure extends Error {
@@ -32242,7 +32361,7 @@ class DeliveryController {
           this.ports.assertRunning();
           if (decision.action === "blocked")
             break;
-          const fingerprint2 = createHash31("sha256").update(canonicalJson({
+          const fingerprint2 = createHash32("sha256").update(canonicalJson({
             stage,
             observation,
             failure: error.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
@@ -32922,13 +33041,21 @@ function reviewReport(reply, secrets) {
 function implementationReport(reply, secrets = []) {
   try {
     const body = reply.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, "$1");
-    const o = closed(parseWireJson(body, 16384), ["status", "summary"]);
+    const raw = parseWireJson(body, 16384);
+    const o = closed(raw, [
+      "status",
+      "summary",
+      ...Object.hasOwn(raw ?? {}, "lessons") ? ["lessons"] : []
+    ]);
     if (o.status !== "completed" && o.status !== "blocked")
       return null;
     if (typeof o.summary !== "string" || !o.summary.trim())
       return null;
+    if (o.lessons !== undefined && (!Array.isArray(o.lessons) || o.lessons.length > 5 || o.lessons.some((lesson) => typeof lesson !== "string" || !lesson.trim() || lesson.length > 400)))
+      return null;
     const summary2 = sanitizeText(o.summary, secrets);
-    return summary2.trim() ? { status: o.status, summary: summary2 } : null;
+    const lessons = (o.lessons ?? []).map((lesson) => sanitizeText(lesson, secrets).trim()).filter(Boolean);
+    return summary2.trim() ? { status: o.status, summary: summary2, ...lessons.length ? { lessons } : {} } : null;
   } catch {
     return null;
   }
@@ -33158,7 +33285,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "366424a7baac2b213319f8831565e8b960a34fee1c86ac2f87d71cd425ab9458",
+  build: "68b0090ca443b47660495d23ae24987705d0381f6d0b0077d43312e16d9d2201",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -33223,7 +33350,8 @@ function clipBytes(value, maximum) {
     return value;
   return Buffer.from(value).subarray(0, maximum).toString("utf8").replace(/�+$/u, "");
 }
-var IMPLEMENTATION_REPORT = `After all tools, call cadence_report with status completed or blocked and a concrete summary of actual work and remaining gaps. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
+var LESSONS = 32;
+var IMPLEMENTATION_REPORT = `After all tools, call cadence_report with status completed or blocked and a concrete summary of actual work and remaining gaps. Its optional lessons are for what this work taught that the code does not show and a later worker here would have to rediscover; usually there is none. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
 
 class Workflows {
   o;
@@ -33978,6 +34106,11 @@ Checkout root: ${cwd}
 Write paths are relative to the checkout root.` : "Read applicable project documentation. Cite evidence and separate observations from assumptions.";
     const reader = await this.reader(live2, cwd, id, kind);
     const knowledge = projectKnowledge(cwd, `${live2.run.goal} ${id} ${prompt.slice(0, 1024)}`, reader.writes, this.o.secrets(), Math.max(0, Math.min(16 * 1024, 32000 - Buffer.byteLength(baseContext))), reader.named);
+    if (live2.proposal) {
+      live2.routed ??= new Set;
+      for (const label of knowledge.routed)
+        live2.routed.add(label);
+    }
     const request3 = decodeWorkerPublicRequest({
       protocol: 2,
       taskId: live2.run.id,
@@ -34418,6 +34551,11 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     const { result, step, report: report2 } = await this.worker(live2, cwd, id, `${prompt}
 ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
     this.attemptResult(live2, result, step);
+    for (const lesson of report2?.lessons ?? []) {
+      live2.lessons ??= [];
+      if (live2.lessons.length < LESSONS)
+        live2.lessons.push({ from: id, text: lesson });
+    }
     if (!report2 || report2.status === "blocked") {
       step.status = "failed";
       step.text = diagnosticText(report2 ? `Assignment blocked: ${report2.summary}` : "Assignment did not return a complete structured completion report; native exit zero is not task completion.", 1024, this.o.secrets());
@@ -34447,7 +34585,7 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
     const extra = [];
     for (const reading of reads)
       if ("research" in reading) {
-        const found = await this.investigation(reading.research);
+        const found = await this.investigation(reading.research, cwd);
         if (found)
           extra.push({
             label: `investigation ${reading.research}`,
@@ -34463,17 +34601,19 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
   investigationPath(id) {
     return join42(this.root, "investigations", `${decodeId(id)}.json`);
   }
-  async investigation(id) {
+  recordedInvestigation(id) {
     try {
       const index = this.files.read(this.investigationPath(id), RECORD_BYTES3);
       if (!index)
         return null;
-      const record3 = closed(parseWireJson(index.bytes.toString("utf8")), [
+      const raw = parseWireJson(index.bytes.toString("utf8"));
+      const record3 = closed(raw, [
         "run",
         "step",
         "question",
         "commit",
-        "at"
+        "at",
+        ...Object.hasOwn(raw ?? {}, "files") ? ["files"] : []
       ]);
       const result = this.files.read(this.path(decodeId(record3.run), `results/${hash(text(record3.step, 160, true))}.json`), RECORD_BYTES3);
       if (!result)
@@ -34482,16 +34622,69 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
       const answer = diagnosticText(typeof stored.result?.text === "string" ? stored.result.text : "", 6144, this.o.secrets());
       if (!answer)
         return null;
-      let head = null;
-      try {
-        head = await gitHead(this.cwd);
-      } catch {}
-      const moved = typeof record3.commit === "string" && head && record3.commit !== head ? `Recorded at commit ${record3.commit.slice(0, 12)}; the checkout has changed since. Verify before relying on it.
-` : "";
-      return `Question: ${diagnosticText(text(record3.question, 8192), 512, this.o.secrets())}
-${moved}${answer}`;
+      return {
+        question: diagnosticText(text(record3.question, 8192), 512, this.o.secrets()),
+        answer,
+        commit: typeof record3.commit === "string" ? record3.commit : null,
+        at: typeof record3.at === "number" ? record3.at : 0,
+        files: record3.files === undefined ? [] : list(record3.files, INVESTIGATIONS.cited, (value) => {
+          const file = closed(value, ["path", "digest"]);
+          return {
+            path: text(file.path, 512, true),
+            digest: text(file.digest, 64, true)
+          };
+        })
+      };
     } catch {
       return null;
+    }
+  }
+  async investigation(id, cwd) {
+    const record3 = this.recordedInvestigation(id);
+    if (!record3)
+      return null;
+    const changed = changedFiles(cwd, record3.files);
+    if (changed.length)
+      return `Question: ${record3.question}
+This recorded investigation is out of date: ${changed.slice(0, 8).join(", ")}${changed.length > 8 ? ` and ${changed.length - 8} more` : ""} changed since it was made, so its answer is not given here. Read the code as it is now.`;
+    let head = null;
+    try {
+      head = await gitHead(cwd);
+    } catch {}
+    const moved = !record3.files.length && record3.commit && head && record3.commit !== head ? `Recorded at commit ${record3.commit.slice(0, 12)}; the checkout has changed since. Verify before relying on it.
+` : "";
+    return `Question: ${record3.question}
+${moved}${record3.answer}`;
+  }
+  questionPath(question, roots2) {
+    return join42(this.root, "investigations", "questions", `${questionKey(question, roots2)}.json`);
+  }
+  answered(question, roots2) {
+    try {
+      const index = this.files.read(this.questionPath(question, roots2), RECORD_BYTES3);
+      if (!index)
+        return null;
+      const id = decodeId(closed(parseWireJson(index.bytes.toString("utf8")), ["id"]).id);
+      const record3 = this.recordedInvestigation(id);
+      if (!record3?.files.length || Date.now() - record3.at > INVESTIGATIONS.reuseMs || changedFiles(this.cwd, record3.files).length)
+        return null;
+      return { id, at: record3.at, answer: record3.answer };
+    } catch {
+      return null;
+    }
+  }
+  keep(path, value) {
+    try {
+      this.o.owner.lease.assert();
+      const body = canonicalJson(value, RECORD_BYTES3);
+      const existing = this.files.read(path, RECORD_BYTES3);
+      if (existing)
+        this.files.replace(path, existing, body, RECORD_BYTES3);
+      else
+        this.files.create(path, body, RECORD_BYTES3);
+      return true;
+    } catch {
+      return false;
     }
   }
   deviationBrief(live2, reader) {
@@ -34815,6 +35008,21 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
     return diagnosticText(lines.join(`
 `), 6144, this.o.secrets());
   }
+  knowledgeTurn(live2, lint) {
+    const topics = lint.usage.topics.map((t) => t.path);
+    const path = join42(this.root, "knowledge-use.json");
+    try {
+      const file = this.files.read(path, RECORD_BYTES3);
+      const next = advanceKnowledgeUse(file ? decodeKnowledgeUse(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3)) : null, { routes: lint.routes, topics }, live2.routed ?? []);
+      if (this.keep(path, next.use))
+        return { rotation: next.rotation, idle: next.idle };
+    } catch {}
+    live2.notes.push("The knowledge store's usage record could not be read or kept; it was left as it is, and this delivery chose the topic to look over without it.");
+    return {
+      rotation: topics.length ? topics[Number.parseInt(live2.run.id.slice(0, 8), 16) % topics.length] : null,
+      idle: []
+    };
+  }
   async learn(live2, cwd, p) {
     const documents = workflowDocuments(p.plan);
     const managed = p.plan.version === 3 && await this.storeDeliverable(live2);
@@ -34822,11 +35030,11 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       return;
     live2.managed = managed;
     const paths = [...managed ? KNOWLEDGE_SCOPE : [], ...documents];
+    const turn = managed ? this.knowledgeTurn(live2, lintKnowledge(cwd, [...live2.delivered])) : { rotation: null, idle: [] };
     await this.recoverStage(live2, cwd, p, "project knowledge", async () => {
       live2.run.phase = "learning";
       this.save(live2);
       const before = lintKnowledge(cwd, [...live2.delivered]);
-      const topics = before.usage.topics.map((t) => t.path);
       const facts = (live2.run.verification?.steps ?? []).map((id) => this.findStep(live2.run, id)).filter((s) => !!s);
       const step = await this.editAttempt(live2, cwd, p, "project-knowledge", `${curationInstructions({
         documents,
@@ -34834,7 +35042,10 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         usage: before.usage,
         revalidate: before.revalidate,
         notes: before.findings.map((f) => `${f.path}: ${f.detail}`),
-        rotation: topics.length ? topics[Number.parseInt(live2.run.id.slice(0, 8), 16) % topics.length] : null,
+        rotation: turn.rotation,
+        idle: turn.idle,
+        lessons: diagnosticText((live2.lessons ?? []).map((lesson) => `- (${lesson.from}) ${lesson.text}`).join(`
+`), 6144, this.o.secrets()),
         history: this.revisionHistory(live2),
         deviations: this.deviationBrief(live2, "work").trim()
       })}
@@ -35253,9 +35464,27 @@ ${result.output}`}`);
       live2.run.status = "running";
       this.save(live2);
       if (request3.action === "research") {
-        const answers = await settleLimited(this.o.parallel ?? PARALLEL.default, request3.questions.map((q, i) => () => this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
+        const answers = await settleLimited(this.o.parallel ?? PARALLEL.default, request3.questions.map((q, i) => async () => {
+          const known = this.answered(q, request3.roots);
+          if (!known)
+            return this.worker(live2, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
 Investigation: ${q}
-Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots, "research")));
+Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots, "research");
+          const step = this.step(live2, `research-${i + 1}`, "research");
+          const result = {
+            outcome: "completed",
+            closed: true,
+            exitCode: 0,
+            signal: null,
+            durationMs: 0,
+            truncated: false,
+            output: "",
+            text: `Reused recorded investigation ${known.id} of ${new Date(known.at).toISOString().slice(0, 10)}: the question is the same and the files it cites have not changed.
+${known.answer}`
+          };
+          this.finishStep(live2, step, result);
+          return { result, step };
+        }));
         let commit = null;
         try {
           commit = await gitHead(this.cwd);
@@ -35265,14 +35494,19 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
             throw a.reason;
           this.success(a.value.result);
           const { childRunId, id } = a.value.step;
-          if (childRunId)
-            this.write(this.investigationPath(childRunId), {
-              run: live2.run.id,
-              step: id,
-              question: request3.questions[i],
-              commit,
-              at: Date.now()
-            });
+          if (!childRunId)
+            continue;
+          this.write(this.investigationPath(childRunId), {
+            run: live2.run.id,
+            step: id,
+            question: request3.questions[i],
+            commit,
+            at: Date.now(),
+            files: citedFiles(this.cwd, a.value.result.text)
+          });
+          this.keep(this.questionPath(request3.questions[i], request3.roots), {
+            id: childRunId
+          });
         }
       } else if (live2.proposal)
         await this.implement(live2, live2.proposal);

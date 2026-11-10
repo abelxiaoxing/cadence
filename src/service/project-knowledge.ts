@@ -22,6 +22,7 @@ import {
   knowledgeRoutes,
   knowledgeSection,
   matchKnowledgeRoutes,
+  routeLabel,
 } from "./knowledge-store.ts";
 import { safeWorkflowFile } from "./workflow-git.ts";
 
@@ -115,6 +116,8 @@ export interface KnowledgeSource {
 export interface KnowledgeContext {
   sources: KnowledgeSource[];
   omitted: string[];
+  /** What the route table led this reader to, by label, whether or not it fit. */
+  routed: string[];
   text: string;
 }
 const roots = ["engineering", "docs", ".trellis/spec", ".cadence/knowledge"];
@@ -234,16 +237,19 @@ export function projectKnowledge(
       );
   for (const extra of named.extra ?? [])
     lead(extra.label, extra.reason, extra.body);
+  const routed: string[] = [];
   if (table)
     for (const route of matchKnowledgeRoutes(
       knowledgeRoutes(table.body).routes,
       paths,
-    ))
+    )) {
+      routed.push(routeLabel(route));
       document(
         route.target,
         route.section,
         `Routed for ${route.patterns.join(", ")}${route.summary ? `: ${route.summary}` : ""}`,
       );
+    }
   let entries = 0,
     discoveryLimited = false;
   const add = (path: string, reason: string, priority: number) => {
@@ -456,6 +462,7 @@ export function projectKnowledge(
   return {
     sources,
     omitted,
+    routed,
     text: clip(context, maximum - Buffer.byteLength(footer)) + footer,
   };
 }
@@ -473,6 +480,10 @@ export interface CurationBrief {
   notes: readonly string[];
   /** The topic that has gone longest without a look, if any. */
   rotation: string | null;
+  /** Routes no worker has been routed to for a long time. */
+  idle: readonly string[];
+  /** What the workers of this delivery proposed as lessons, unverified. */
+  lessons: string;
   /** What failed and how the route was revised, oldest first. */
   history: string;
   /** Recorded deviations from the agreement. */
@@ -489,9 +500,9 @@ Budget, enforced after you finish (exceeding it fails this delivery): route tabl
 Format. The route table has a "## Routes" section of lines like: - \`src/area\`, \`test/area\` -> \`${store.topics}/topic.md#Heading\` — what that settles. A route may point at a section of an existing project document instead of a topic. A topic is "# Title", "## Section" headings and entries; an entry is "### One sentence stating the rule or fact" followed by short lines "Kind: contract | decision | pitfall | practice", "Why: one line", "Anchors: \`path#symbol-or-test-name\`, \`path\`" and "Source: this delivery, date". Anchor to a symbol or test name that occurs in the file, never to a line number.
 Admit only what is worth a reader's attention next time: a contract between parts, a decision and its reason, a pitfall this delivery actually hit, a verification recipe. Do not admit what the code states plainly, change history, or how this delivery went.
 For every candidate lesson choose one: merge it into an existing entry, add an entry, or drop it. Finding nothing reusable is a valid result; never manufacture a rule.
-When space is needed, remove in this order: entries whose anchors no longer resolve; duplicates and entries a newer one replaces; entries now guaranteed by a test or a type (the check is the knowledge); entries about code that no longer matters; only then shorten wording, without dropping a condition. Split a topic that mixes areas; delete a topic left empty and its routes.
+When space is needed, remove in this order: entries whose anchors no longer resolve; duplicates and entries a newer one replaces; entries now guaranteed by a test or a type (the check is the knowledge); routes nothing has needed for a long time, with the entries only they lead to, and entries about code that no longer matters; only then shorten wording, without dropping a condition. Split a topic that mixes areas; delete a topic left empty and its routes.
 ${brief.usage.indexBytes ? "" : `There is no route table yet: create ${store.index} with a short "## Routes" section that routes the areas this delivery touched to the sections of the existing project documents (AGENTS.md, engineering/, docs/) that own them, and add a topic only for what no existing document owns.\n`}Entries to check again because this delivery changed the code they are about (correct, re-anchor or remove each): ${brief.revalidate.map((e) => `${e.topic} "${e.title}"`).join("; ") || "none"}.
-${brief.rotation ? `Also look over ${brief.rotation}, which has gone longest without a check: remove or correct what is stale.\n` : ""}${brief.notes.length ? `Open findings about the store (settle the cheap ones): ${brief.notes.join("; ")}\n` : ""}`
+${brief.rotation ? `Also look over ${brief.rotation}, which has gone longest without a check: remove or correct what is stale.\n` : ""}${brief.idle.length ? `No worker of the last ${store.idleDeliveries} deliveries was routed to these; keep one only if it still earns its place: ${brief.idle.join("; ")}\n` : ""}${brief.notes.length ? `Open findings about the store (settle the cheap ones): ${brief.notes.join("; ")}\n` : ""}`
     : "The project's knowledge store is not maintained in this delivery.\n";
   const documents = brief.documents.length
     ? `Existing project documents you may also update, preserving human text and unrelated conventions, in the owner of each fact and never as a duplicate: ${brief.documents.join(", ")}.\n`
@@ -499,5 +510,5 @@ ${brief.rotation ? `Also look over ${brief.rotation}, which has gone longest wit
   return `Maintain project knowledge from the actual implemented files and current check evidence, not from the initial plan's predictions.
 ${managed}${documents}What this delivery went through (failures and how the route was revised; the most valuable lessons are usually here):
 ${brief.history || "No recorded failure or revision."}
-${brief.deviations ? `Recorded deviations from the agreement:\n${brief.deviations}\n` : ""}Do not publish guesses, credentials, raw logs, personal history, temporary paths or anything that is not true of the committed code. Do not modify implementation code, tests or anything outside the paths named here.`;
+${brief.deviations ? `Recorded deviations from the agreement:\n${brief.deviations}\n` : ""}${brief.lessons ? `Lessons this delivery's workers proposed. They are unverified proposals: check each against the committed code, and admit one only if it is true, not already recorded and not plain from the code:\n${brief.lessons}\n` : ""}Do not publish guesses, credentials, raw logs, personal history, temporary paths or anything that is not true of the committed code. Do not modify implementation code, tests or anything outside the paths named here.`;
 }

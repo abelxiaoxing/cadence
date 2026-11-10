@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import {
+  advanceKnowledgeUse,
+  decodeKnowledgeUse,
   KNOWLEDGE_STORE,
+  type KnowledgeUse,
   knowledgeEntries,
   knowledgeRoutes,
   knowledgeSection,
@@ -340,5 +343,93 @@ it("named sources that do not fit keep their reason as a pointer", () => {
   expect(Buffer.byteLength(context.text)).toBeLessThanOrEqual(2048);
   expect(context.text).toMatch(
     /load\s+on\s+demand|load relevant files on demand/u,
+  );
+});
+
+it("usage is counted in curated deliveries: the topic unchecked longest is looked over next, and a route nothing was routed to for long is named", () => {
+  const store = {
+    routes: ["engineering/a.md#Rules", ".cadence/knowledge/b.md"],
+    topics: [".cadence/knowledge/b.md", ".cadence/knowledge/c.md"],
+  };
+  let use: KnowledgeUse | null = null;
+  const rotations: (string | null)[] = [];
+  let idle: string[] = [];
+  // Every delivery routes its workers to a.md; nothing ever needs b.md.
+  for (
+    let delivery = 1;
+    delivery <= KNOWLEDGE_STORE.idleDeliveries + 1;
+    delivery++
+  ) {
+    const next = advanceKnowledgeUse(use, store, ["engineering/a.md#Rules"]);
+    use = decodeKnowledgeUse(JSON.parse(JSON.stringify(next.use)));
+    rotations.push(next.rotation);
+    idle = next.idle;
+    if (delivery === KNOWLEDGE_STORE.idleDeliveries) expect(idle).toEqual([]);
+  }
+  // Topics take turns, the one never looked at first.
+  expect(rotations.slice(0, 4)).toEqual([
+    ".cadence/knowledge/b.md",
+    ".cadence/knowledge/c.md",
+    ".cadence/knowledge/b.md",
+    ".cadence/knowledge/c.md",
+  ]);
+  expect(idle).toEqual([".cadence/knowledge/b.md"]);
+  expect(use).toMatchObject({
+    deliveries: 9,
+    routes: {
+      "engineering/a.md#Rules": { first: 1, used: 9 },
+      ".cadence/knowledge/b.md": { first: 1 },
+    },
+  });
+  // A new topic has never been looked at, so it comes first; what left the
+  // store is forgotten, and a route that is used again is no longer idle.
+  const later = advanceKnowledgeUse(
+    use,
+    {
+      routes: [".cadence/knowledge/b.md"],
+      topics: [".cadence/knowledge/c.md", ".cadence/knowledge/new.md"],
+    },
+    [".cadence/knowledge/b.md", "not/in/the/table.md"],
+  );
+  expect(later.rotation).toBe(".cadence/knowledge/new.md");
+  expect(later.idle).toEqual([]);
+  expect(Object.keys(later.use.routes)).toEqual([".cadence/knowledge/b.md"]);
+  expect(Object.keys(later.use.topics).sort()).toEqual([
+    ".cadence/knowledge/c.md",
+    ".cadence/knowledge/new.md",
+  ]);
+  // An empty store has nothing to rotate.
+  expect(advanceKnowledgeUse(null, { routes: [], topics: [] }, [])).toEqual({
+    use: { deliveries: 1, routes: {}, topics: {} },
+    rotation: null,
+    idle: [],
+  });
+  for (const invalid of [
+    null,
+    [],
+    { deliveries: -1, routes: {}, topics: {} },
+    { deliveries: 1, routes: { a: { first: "1" } }, topics: {} },
+    { deliveries: 1, routes: {}, topics: { a: {} } },
+    { deliveries: 1, routes: [], topics: {} },
+  ])
+    expect(() => decodeKnowledgeUse(invalid)).toThrow();
+});
+it("lint names what the route table leads to, and a reader reports which of it its write paths were routed to", () => {
+  const p = project({
+    [KNOWLEDGE_STORE.index]:
+      "# Project knowledge\n\n## Routes\n\n- `src/a` -> `docs/a.md#Rules` — a\n- `src/b` -> `docs/b.md` — b\n",
+    "docs/a.md": "# A\n\n## Rules\n\nKeep a.\n",
+    "docs/b.md": "# B\n\nKeep b.\n",
+    "src/a/x.ts": "export const x = 1;\n",
+  });
+  expect(lintKnowledge(p.root, []).routes).toEqual([
+    "docs/a.md#Rules",
+    "docs/b.md",
+  ]);
+  expect(
+    projectKnowledge(p.root, "change x", ["src/a/x.ts"], []).routed,
+  ).toEqual(["docs/a.md#Rules"]);
+  expect(projectKnowledge(p.root, "change x", ["lib/y.ts"], []).routed).toEqual(
+    [],
   );
 });

@@ -160,7 +160,24 @@ it("implementation reports distinguish blocked work from a complete assignment w
       '```json\n{"status":"blocked","summary":"Dependency missing"}\n```',
     ),
   ).toEqual({ status: "blocked", summary: "Dependency missing" });
+  // Proposed lessons ride along; none is the usual case and is not a field.
+  expect(
+    implementationReport(
+      '{"status":"completed","summary":"Built","lessons":["The bundler reads .ts first"]}',
+    ),
+  ).toEqual({
+    status: "completed",
+    summary: "Built",
+    lessons: ["The bundler reads .ts first"],
+  });
+  expect(
+    implementationReport('{"status":"blocked","summary":"Stuck","lessons":[]}'),
+  ).toEqual({ status: "blocked", summary: "Stuck" });
   for (const reply of [
+    '{"status":"completed","summary":"ok","lessons":"one"}',
+    '{"status":"completed","summary":"ok","lessons":[1]}',
+    '{"status":"completed","summary":"ok","lessons":[""]}',
+    '{"status":"completed","summary":"ok","lessons":["a","b","c","d","e","f"]}',
     "Stopped without building anything.",
     "Completed everything!",
     '{"status":"completed","summary":""}',

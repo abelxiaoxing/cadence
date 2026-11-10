@@ -92,6 +92,13 @@ export function createWorkerToolkit(options) {
           Type.Literal("blocked"),
         ]),
         summary: Type.String({ minLength: 1, maxLength: 8192 }),
+        lessons: Type.Optional(
+          Type.Array(Type.String({ minLength: 1, maxLength: 400 }), {
+            maxItems: 5,
+            description:
+              "Usually omitted. Only what this work taught that the code does not show and a later worker here would have to rediscover: a constraint between parts, a trap you hit, a convention. One sentence each, naming the file or symbol. The owner checks each before keeping it.",
+          }),
+        ),
       }),
       async execute(_id, input) {
         if (
@@ -99,12 +106,30 @@ export function createWorkerToolkit(options) {
           !["completed", "blocked"].includes(input.status) ||
           typeof input.summary !== "string" ||
           !input.summary.trim() ||
-          Object.keys(input).some((key) => !["status", "summary"].includes(key))
+          Object.keys(input).some(
+            (key) => !["status", "summary", "lessons"].includes(key),
+          ) ||
+          (input.lessons !== undefined &&
+            (!Array.isArray(input.lessons) ||
+              input.lessons.length > 5 ||
+              input.lessons.some(
+                (lesson) =>
+                  typeof lesson !== "string" ||
+                  !lesson.trim() ||
+                  lesson.length > 400,
+              )))
         )
           throw new Error("Invalid assignment report");
         const report = {
           status: input.status,
           summary: sanitizeText(input.summary, options.secrets ?? []),
+          ...(input.lessons?.length
+            ? {
+                lessons: input.lessons.map((lesson) =>
+                  sanitizeText(lesson, options.secrets ?? []),
+                ),
+              }
+            : {}),
         };
         const text = JSON.stringify(report);
         if (!report.summary.trim() || Buffer.byteLength(text) > 16384)

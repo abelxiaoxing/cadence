@@ -32,6 +32,10 @@ A route or anchor that does not resolve, a duplicate entry title and an entry wi
 Entries anchored to a file the delivery changed are listed for the curator to check again.
 Nothing is pinned: every entry competes for its place.
 
+How the store is used is counted in curated deliveries in the owner's private `workflows-v1/knowledge-use.json` (`KnowledgeUse`): per route target, the delivery it was first seen at and the last one whose workers were routed to it; per topic, the delivery that last looked it over.
+It only decides what the curator looks at; it is not knowledge, and routes or topics that left the store are forgotten.
+When the record cannot be read or kept, its bytes are left as they are, the run says so, and that delivery picks a topic without it.
+
 ## What a worker reads first
 
 Each worker launch observes the documents afresh, before launching the pinned worker under the checkout gate, and `projectKnowledge` composes them in this order:
@@ -53,7 +57,12 @@ It is not universal business-secret detection or a sandbox.
 Documents can guide implementation but never grant permissions, skip mandatory checks or authorize a new remote action.
 
 The coordinator keeps its own conversation small: it starts from the route table and asks investigations to read what a route points at.
-Every completed investigation is recorded under `workflows-v1/investigations/` by its step's child run identity, with the commit it was made at, so a later agreement can name it instead of having each worker explore again.
+Every completed investigation is recorded under `workflows-v1/investigations/` by its step's child run identity, with the commit it was made at and a digest of each project file its answer cites (`citedFiles`, at most 32), so a later agreement can name it instead of having each worker explore again.
+The coordinator's summary of a research run shows that identity on each step.
+A worker is given a named investigation's answer only while every cited file still reads as recorded in its own working tree; otherwise it gets a pointer saying which files changed, without the stale answer.
+One that cites no file carries a caution once the checkout has moved.
+Asking the same question about the same directories again within 14 days, with every cited file unchanged, is answered from the record by a step that says so and starts no worker; an answer that cites nothing is always investigated again.
+The records are kept as long as the runs they point into; nothing is deleted to make room.
 
 ## Curation
 
@@ -62,9 +71,10 @@ For a version-3 agreement it maintains the managed store, whose paths then belon
 A fast-forward cannot carry ignored paths or ones the target checkout has its own changes to; then the store is skipped with a note in the run, and only named documents are maintained.
 Direct working-copy delivery always maintains it.
 
-The curator is given, prepared by the owner rather than recalled by a model: the budget and current usage, the entries to check again, open findings, one topic chosen by rotation, what the run failed at and how it revised its route (`revisions/`), recorded deviations and the latest verification evidence.
+The curator is given, prepared by the owner rather than recalled by a model: the budget and current usage, the entries to check again, open findings, the topic that has gone longest without a look, the routes no worker has been routed to for eight deliveries, what the run failed at and how it revised its route (`revisions/`), recorded deviations, the lessons its workers proposed and the latest verification evidence.
+A worker may propose up to five one-sentence lessons in its `cadence_report` (completed or blocked); the run keeps at most 32 and hands them over as unverified proposals to check against the committed code.
 It merges, adds or drops each lesson; finding nothing reusable is a valid no-change result.
-When space is needed it removes, in order: entries whose anchors no longer resolve, duplicates and superseded entries, entries now guaranteed by a test or type, entries about code that no longer matters, and only then shortens wording without dropping a condition.
+When space is needed it removes, in order: entries whose anchors no longer resolve, duplicates and superseded entries, entries now guaranteed by a test or type, routes nothing has needed for a long time with the entries only they lead to and entries about code that no longer matters, and only then shortens wording without dropping a condition.
 With no route table yet, the first delivery creates one that routes the areas it touched to the existing documents that own them.
 Parallel assignments never edit knowledge; only this one assignment does, in the candidate.
 
@@ -78,7 +88,8 @@ The old `projectContext` proposal field and version 2's `knowledge` paths are re
 
 - `test/knowledge-store.test.ts`: route and entry parsing, section addressing, the budget, blocking versus noted findings, the reading order, section-aware excerpts and Chinese goals.
 - `test/project-knowledge.test.ts`, `test/project-knowledge-bounds.test.ts`: fresh source observation, discovery, Trellis-spec reading without activation/import, privacy, partial coverage and the curator's brief.
-- `test/workflow-knowledge.test.ts`: the curating step, its failing store check, undeliverable stores, failure history and what each worker is named.
+- `test/workflow-knowledge.test.ts`: the curating step, its failing store check, undeliverable stores, failure history, what each worker is named, the usage record, proposed lessons, and stale or reused investigations.
+- `test/investigations.test.ts`: which files an answer cites, changed citations and the identity of a repeated question.
 - `test/workflow-delivery.test.ts`: implementation failure, autonomous continuation, real-result handoff, knowledge maintenance and fresh combined-candidate verification in one owner loop.
 - `test/workflow-contract.test.ts`: versioned agreement, reading lists and the documentation write boundary.
 - Existing workflow scope/Git and lifecycle tests retain process closure, unexpected edits and original user-data outcomes.

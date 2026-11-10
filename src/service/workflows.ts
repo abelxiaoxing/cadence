@@ -31,6 +31,7 @@ import {
   canonicalJson,
   closed,
   decodeId,
+  list,
   parseWireJson,
   text,
 } from "./contracts/core.ts";
@@ -69,8 +70,18 @@ import { ConversationContexts } from "./conversation-contexts.ts";
 
 import type { ServiceCoordination } from "./coordination.ts";
 import {
+  type CitedFile,
+  changedFiles,
+  citedFiles,
+  INVESTIGATIONS,
+  questionKey,
+} from "./investigations.ts";
+import {
+  advanceKnowledgeUse,
+  decodeKnowledgeUse,
   KNOWLEDGE_SCOPE,
   KNOWLEDGE_STORE,
+  type KnowledgeLint,
   lintKnowledge,
 } from "./knowledge-store.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
@@ -248,6 +259,10 @@ interface Live {
   };
   /** Write paths each running assignment owns, by its working tree. */
   owned?: Map<string, string[]>;
+  /** Route targets this delivery's workers were given, for the usage record. */
+  routed?: Set<string>;
+  /** What workers proposed as worth knowing next time; unverified. */
+  lessons?: { from: string; text: string }[];
   /** This delivery maintains the project's knowledge store. */
   managed?: boolean;
   knowledgeDone?: boolean;
@@ -283,7 +298,9 @@ function clipBytes(value: string, maximum: number): string {
     .toString("utf8")
     .replace(/�+$/u, "");
 }
-const IMPLEMENTATION_REPORT = `After all tools, call cadence_report with status completed or blocked and a concrete summary of actual work and remaining gaps. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
+/** Proposed lessons one delivery keeps for its curator. */
+const LESSONS = 32;
+const IMPLEMENTATION_REPORT = `After all tools, call cadence_report with status completed or blocked and a concrete summary of actual work and remaining gaps. Its optional lessons are for what this work taught that the code does not show and a later worker here would have to rediscover; usually there is none. Then give a short final answer. The report is not passing check evidence; the owner verifies and reviews independently. Never claim completion just because a tool exited zero.`;
 
 export class Workflows {
   private readonly historyScanner: WorkflowHistoryScanner;
@@ -1381,6 +1398,10 @@ Write paths are relative to the checkout root.`
       Math.max(0, Math.min(16 * 1024, 32000 - Buffer.byteLength(baseContext))),
       reader.named,
     );
+    if (live.proposal) {
+      live.routed ??= new Set();
+      for (const label of knowledge.routed) live.routed.add(label);
+    }
     const request = decodeWorkerPublicRequest({
       protocol: 2,
       taskId: live.run.id,
@@ -2017,6 +2038,12 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       kind,
     );
     this.attemptResult(live, result, step);
+    // A blocked attempt may have learned as much as a completed one.
+    for (const lesson of report?.lessons ?? []) {
+      live.lessons ??= [];
+      if (live.lessons.length < LESSONS)
+        live.lessons.push({ from: id, text: lesson });
+    }
     if (!report || report.status === "blocked") {
       step.status = "failed";
       step.text = diagnosticText(
@@ -2065,7 +2092,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     const extra: NonNullable<KnowledgeNamed["extra"]>[number][] = [];
     for (const reading of reads)
       if ("research" in reading) {
-        const found = await this.investigation(reading.research);
+        const found = await this.investigation(reading.research, cwd);
         if (found)
           extra.push({
             label: `investigation ${reading.research}`,
@@ -2083,18 +2110,24 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
   private investigationPath(id: string): string {
     return join(this.root, "investigations", `${decodeId(id)}.json`);
   }
-  /** A recorded investigation's answer, with a caution when the checkout has
-   * moved since it was made. Absent or unreadable ones are simply not there. */
-  private async investigation(id: string): Promise<string | null> {
+  private recordedInvestigation(id: string): {
+    question: string;
+    answer: string;
+    commit: string | null;
+    at: number;
+    files: CitedFile[];
+  } | null {
     try {
       const index = this.files.read(this.investigationPath(id), RECORD_BYTES);
       if (!index) return null;
-      const record = closed(parseWireJson(index.bytes.toString("utf8")), [
+      const raw = parseWireJson(index.bytes.toString("utf8"));
+      const record = closed(raw, [
         "run",
         "step",
         "question",
         "commit",
         "at",
+        ...(Object.hasOwn((raw ?? {}) as object, "files") ? ["files"] : []),
       ]);
       const result = this.files.read(
         this.path(
@@ -2114,19 +2147,100 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
         this.o.secrets(),
       );
       if (!answer) return null;
-      let head: string | null = null;
-      try {
-        head = await gitHead(this.cwd);
-      } catch {
-        /* Not a Git checkout: nothing to compare with. */
-      }
-      const moved =
-        typeof record.commit === "string" && head && record.commit !== head
-          ? `Recorded at commit ${record.commit.slice(0, 12)}; the checkout has changed since. Verify before relying on it.\n`
-          : "";
-      return `Question: ${diagnosticText(text(record.question, 8192), 512, this.o.secrets())}\n${moved}${answer}`;
+      return {
+        question: diagnosticText(
+          text(record.question, 8192),
+          512,
+          this.o.secrets(),
+        ),
+        answer,
+        commit: typeof record.commit === "string" ? record.commit : null,
+        at: typeof record.at === "number" ? record.at : 0,
+        files:
+          record.files === undefined
+            ? []
+            : list(record.files, INVESTIGATIONS.cited, (value) => {
+                const file = closed(value, ["path", "digest"]);
+                return {
+                  path: text(file.path, 512, true),
+                  digest: text(file.digest, 64, true),
+                };
+              }),
+      };
     } catch {
       return null;
+    }
+  }
+  /** A recorded investigation's answer for a worker in `cwd`. When a file it
+   * cites no longer reads as it did, only a pointer saying so is given; one
+   * that cites no file carries a caution once the checkout has moved. Absent
+   * or unreadable ones are simply not there. */
+  private async investigation(id: string, cwd: string): Promise<string | null> {
+    const record = this.recordedInvestigation(id);
+    if (!record) return null;
+    const changed = changedFiles(cwd, record.files);
+    if (changed.length)
+      return `Question: ${record.question}\nThis recorded investigation is out of date: ${changed.slice(0, 8).join(", ")}${changed.length > 8 ? ` and ${changed.length - 8} more` : ""} changed since it was made, so its answer is not given here. Read the code as it is now.`;
+    let head: string | null = null;
+    try {
+      head = await gitHead(cwd);
+    } catch {
+      /* Not a Git checkout: nothing to compare with. */
+    }
+    const moved =
+      !record.files.length && record.commit && head && record.commit !== head
+        ? `Recorded at commit ${record.commit.slice(0, 12)}; the checkout has changed since. Verify before relying on it.\n`
+        : "";
+    return `Question: ${record.question}\n${moved}${record.answer}`;
+  }
+  private questionPath(question: string, roots: string[] | undefined) {
+    return join(
+      this.root,
+      "investigations",
+      "questions",
+      `${questionKey(question, roots)}.json`,
+    );
+  }
+  /** The recorded answer to this same question, when it is recent and every
+   * file it cites still reads as it did: the investigation need not run again. */
+  private answered(
+    question: string,
+    roots: string[] | undefined,
+  ): { id: string; at: number; answer: string } | null {
+    try {
+      const index = this.files.read(
+        this.questionPath(question, roots),
+        RECORD_BYTES,
+      );
+      if (!index) return null;
+      const id = decodeId(
+        closed(parseWireJson(index.bytes.toString("utf8")), ["id"]).id,
+      );
+      const record = this.recordedInvestigation(id);
+      if (
+        !record?.files.length ||
+        Date.now() - record.at > INVESTIGATIONS.reuseMs ||
+        changedFiles(this.cwd, record.files).length
+      )
+        return null;
+      return { id, at: record.at, answer: record.answer };
+    } catch {
+      return null;
+    }
+  }
+  /** Advisory private records (which question an investigation answered, how
+   * the knowledge store was used): losing one costs a repeated read, so a
+   * failure to keep it never fails the work or the owner. */
+  private keep(path: string, value: unknown): boolean {
+    try {
+      this.o.owner.lease.assert();
+      const body = canonicalJson(value, RECORD_BYTES);
+      const existing = this.files.read(path, RECORD_BYTES);
+      if (existing) this.files.replace(path, existing, body, RECORD_BYTES);
+      else this.files.create(path, body, RECORD_BYTES);
+      return true;
+    } catch {
+      return false;
     }
   }
   /** Recorded deviations, for the worker that must honour or judge them. */
@@ -2683,6 +2797,43 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     }
     return diagnosticText(lines.join("\n"), 6144, this.o.secrets());
   }
+  /** Advances the store's usage record by this delivery and says what the
+   * curator should look at because of it: the topic that has gone longest
+   * without a look and the routes no worker has needed for a long time. The
+   * record is advisory: when it cannot be read or kept its bytes are left as
+   * they are and this delivery picks a topic without it. */
+  private knowledgeTurn(
+    live: Live,
+    lint: KnowledgeLint,
+  ): { rotation: string | null; idle: string[] } {
+    const topics = lint.usage.topics.map((t) => t.path);
+    const path = join(this.root, "knowledge-use.json");
+    try {
+      const file = this.files.read(path, RECORD_BYTES);
+      const next = advanceKnowledgeUse(
+        file
+          ? decodeKnowledgeUse(
+              parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES),
+            )
+          : null,
+        { routes: lint.routes, topics },
+        live.routed ?? [],
+      );
+      if (this.keep(path, next.use))
+        return { rotation: next.rotation, idle: next.idle };
+    } catch {
+      /* Unreadable: handled below, bytes untouched. */
+    }
+    live.notes.push(
+      "The knowledge store's usage record could not be read or kept; it was left as it is, and this delivery chose the topic to look over without it.",
+    );
+    return {
+      rotation: topics.length
+        ? topics[Number.parseInt(live.run.id.slice(0, 8), 16) % topics.length]
+        : null,
+      idle: [],
+    };
+  }
   /** After the implementation passed its checks and review, one assignment
    * maintains project knowledge: the managed store, inside its budget, and
    * any existing documents the agreement named. The store must pass its
@@ -2693,11 +2844,14 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     if (!documents.length && !managed) return;
     live.managed = managed;
     const paths = [...(managed ? KNOWLEDGE_SCOPE : []), ...documents];
+    // Counted once per delivery, however often the step below is repeated.
+    const turn = managed
+      ? this.knowledgeTurn(live, lintKnowledge(cwd, [...live.delivered]))
+      : { rotation: null, idle: [] };
     await this.recoverStage(live, cwd, p, "project knowledge", async () => {
       live.run.phase = "learning";
       this.save(live);
       const before = lintKnowledge(cwd, [...live.delivered]);
-      const topics = before.usage.topics.map((t) => t.path);
       const facts = (live.run.verification?.steps ?? [])
         .map((id) => this.findStep(live.run, id))
         .filter((s): s is WorkflowStep => !!s);
@@ -2712,12 +2866,15 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           usage: before.usage,
           revalidate: before.revalidate,
           notes: before.findings.map((f) => `${f.path}: ${f.detail}`),
-          // Stateless rotation: over many deliveries every topic gets a look.
-          rotation: topics.length
-            ? topics[
-                Number.parseInt(live.run.id.slice(0, 8), 16) % topics.length
-              ]
-            : null,
+          rotation: turn.rotation,
+          idle: turn.idle,
+          lessons: diagnosticText(
+            (live.lessons ?? [])
+              .map((lesson) => `- (${lesson.from}) ${lesson.text}`)
+              .join("\n"),
+            6144,
+            this.o.secrets(),
+          ),
           history: this.revisionHistory(live),
           deviations: this.deviationBrief(live, "work").trim(),
         })}\nLatest retained verification evidence (historical until the combined candidate is verified):\n${this.evidence(live, facts)}`,
@@ -3383,9 +3540,10 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       if (request.action === "research") {
         const answers = await settleLimited(
           this.o.parallel ?? PARALLEL.default,
-          request.questions.map(
-            (q, i) => () =>
-              this.worker(
+          request.questions.map((q, i) => async () => {
+            const known = this.answered(q, request.roots);
+            if (!known)
+              return this.worker(
                 live,
                 this.cwd,
                 `research-${i + 1}`,
@@ -3394,8 +3552,22 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
                 request.model,
                 request.roots,
                 "research",
-              ),
-          ),
+              );
+            // Asked before, and nothing it rests on has changed: no worker.
+            const step = this.step(live, `research-${i + 1}`, "research");
+            const result: RunResult = {
+              outcome: "completed",
+              closed: true,
+              exitCode: 0,
+              signal: null,
+              durationMs: 0,
+              truncated: false,
+              output: "",
+              text: `Reused recorded investigation ${known.id} of ${new Date(known.at).toISOString().slice(0, 10)}: the question is the same and the files it cites have not changed.\n${known.answer}`,
+            };
+            this.finishStep(live, step, result);
+            return { result, step };
+          }),
         );
         let commit: string | null = null;
         try {
@@ -3408,14 +3580,18 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           this.success(a.value.result);
           // An agreement can name this answer as something to read first.
           const { childRunId, id } = a.value.step;
-          if (childRunId)
-            this.write(this.investigationPath(childRunId), {
-              run: live.run.id,
-              step: id,
-              question: request.questions[i],
-              commit,
-              at: Date.now(),
-            });
+          if (!childRunId) continue;
+          this.write(this.investigationPath(childRunId), {
+            run: live.run.id,
+            step: id,
+            question: request.questions[i],
+            commit,
+            at: Date.now(),
+            files: citedFiles(this.cwd, a.value.result.text),
+          });
+          this.keep(this.questionPath(request.questions[i], request.roots), {
+            id: childRunId,
+          });
         }
       } else if (live.proposal) await this.implement(live, live.proposal);
       else throw new ContractError("invalid");

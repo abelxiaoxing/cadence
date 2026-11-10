@@ -234,6 +234,42 @@ it("only admitted editing workers get structured reporting; it grants no executi
     status: "blocked",
     summary: "Partial work; [redacted] was withheld",
   });
+  // Proposed lessons are optional, bounded and sanitized like the summary.
+  const taught = await report.execute("report", {
+    status: "completed",
+    summary: "Done",
+    lessons: ["The fixture-secret header is read by auth.ts before routing"],
+  });
+  expect(JSON.parse(taught.content[0].text)).toEqual({
+    status: "completed",
+    summary: "Done",
+    lessons: ["The [redacted] header is read by auth.ts before routing"],
+  });
+  expect(
+    JSON.parse(
+      (
+        await report.execute("report", {
+          status: "completed",
+          summary: "Done",
+          lessons: [],
+        })
+      ).content[0].text,
+    ),
+  ).toEqual({ status: "completed", summary: "Done" });
+  for (const lessons of [
+    "one",
+    [1],
+    [" "],
+    ["a", "b", "c", "d", "e", "f"],
+    ["x".repeat(401)],
+  ])
+    await expect(
+      report.execute("report", {
+        status: "completed",
+        summary: "Done",
+        lessons,
+      }),
+    ).rejects.toThrow("Invalid assignment report");
   await expect(
     report.execute("report", { status: "completed", summary: "" }),
   ).rejects.toThrow();

@@ -105,6 +105,8 @@ it("the curator is told to keep a bounded store from evidence: what to admit, wh
     ],
     notes: [".cadence/project.md: docs/old.md does not resolve"],
     rotation: ".cadence/knowledge/search.md",
+    idle: [".cadence/knowledge/legacy.md#Import"],
+    lessons: "- (a) The segmenter caches by locale; reset it in tests",
     history:
       "- Revision 1 (assignment a, replan): tokenizer split CJK runs. Cause: wrong boundary. Then: reuse the shared segmenter",
     deviations: "",
@@ -124,6 +126,12 @@ it("the curator is told to keep a bounded store from evidence: what to admit, wh
     "guaranteed by a test or a type",
     'search.md "Tokens keep user data"',
     "which has gone longest without a check",
+    // Usage decides what is looked at, never what is kept: nothing is pinned.
+    "No worker of the last 8 deliveries was routed to these",
+    ".cadence/knowledge/legacy.md#Import",
+    "routes nothing has needed for a long time",
+    "unverified proposals",
+    "The segmenter caches by locale",
     "docs/old.md does not resolve",
     "tokenizer split CJK runs",
     "Preserving human text".toLowerCase(),
