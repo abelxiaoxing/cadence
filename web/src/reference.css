@@ -1,6 +1,8 @@
 /* Direct selected rule families from pi-web-ui web/src/styles.css
  * e8bab487af208bc9a1ab60a821652323f598127f; MIT (c) 2026 xing-shuyin.
- * Workspace/transcript/tools/rich/preview/SCM/search/plan/responsive families only. */
+ * Workspace/transcript/tools/rich/preview/SCM/search/plan/responsive families only.
+ * From b627452c: the msg-actions, file-diff/diff and lp-filter families, and
+ * the tokens' light values (themes/white.css, the violet accent kept). */
 :root {
   --bg: light-dark(#ffffff, #0d0e12);
   --bg-elev: light-dark(#ffffff, #14161c);

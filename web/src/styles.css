@@ -2,7 +2,8 @@
 /* Cadence task-workspace chrome restyled from pi-web-ui web/src/styles.css
  * e8bab487af208bc9a1ab60a821652323f598127f (base, topbar/chip/tb-tab/panel-toggle,
  * data-tip, panel/lp-section/session-item, resize handle, statusbar, msg-meta/body,
- * empty-state, scroll-bottom and scrollbar families). MIT (c) 2026 xing-shuyin;
+ * empty-state, scroll-bottom and scrollbar families) and, from b627452c, the
+ * notices and img-lightbox families. MIT (c) 2026 xing-shuyin;
  * source-family lineage in provenance/webui-reuse.json. Tokens come from reference.css. */
 :root {
   /* Every colour token is one light-dark() pair: the light value is pi-web-ui's
