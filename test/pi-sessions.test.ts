@@ -32,6 +32,7 @@ import {
   sessionDirectory,
   turnItems,
   turnSpans,
+  USAGE_WALK,
 } from "../src/service/pi-sessions.ts";
 import {
   BROWSER_COMMAND_ENTRY,
@@ -643,6 +644,118 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
   ]);
   expect(stable).toBe(2);
   expect(written[2].text).toBe("");
+});
+
+it("a branch's context size is its last valid model response's, unknown after a compaction and bounded", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const reply = (
+    parentId: string,
+    usage: Record<string, unknown> | undefined,
+    stopReason = "stop",
+    model = "fixed",
+  ) =>
+    entry("message", parentId, {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "reply" }],
+        provider: "fixture",
+        model,
+        ...(usage ? { usage } : {}),
+        stopReason,
+      },
+    });
+  const total = (totalTokens: number) => ({
+    input: 1,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+  });
+  const u1 = user(null, "first");
+  const a1 = reply(u1.id, total(1200));
+  const u2 = user(a1.id, "second");
+  // None of these is a valid usage as Pi counts one.
+  const failed = reply(u2.id, total(5000), "error");
+  const aborted = reply(failed.id, total(6000), "aborted");
+  const empty = reply(aborted.id, { ...total(0), input: 0, output: 0 });
+  const partial = reply(empty.id, { totalTokens: 0, input: 9 });
+  const unreported = reply(partial.id, undefined);
+  const result = entry("message", unreported.id, {
+    message: { role: "toolResult", toolCallId: "c", content: [] },
+  });
+  // Without a provider total the four parts are summed.
+  const parts = reply(
+    result.id,
+    { input: 10, output: 5, cacheRead: 100, cacheWrite: 7, totalTokens: 0 },
+    "toolUse",
+    "other",
+  );
+  const compaction = entry("compaction", parts.id, { summary: "Earlier" });
+  const kept = user(compaction.id, "third");
+  const after = reply(kept.id, total(300));
+  const tail: Entry[] = [];
+  let parent = after.id;
+  for (let n = 0; n < USAGE_WALK; n++) {
+    const next = entry("custom", parent, { customType: "note", data: {} });
+    tail.push(next);
+    parent = next.id;
+  }
+  // A second branch from the first reply holds no response of its own.
+  const side = user(a1.id, "side");
+  const { id, path } = write(dir, cwd, [
+    u1,
+    a1,
+    u2,
+    failed,
+    aborted,
+    empty,
+    partial,
+    unreported,
+    result,
+    parts,
+    compaction,
+    kept,
+    after,
+    ...tail,
+    side,
+  ]);
+  const sessions = new PiSessions(dir, cwd);
+  const session = sessions.session(id);
+  if (!session) throw Error("session");
+  const first = { tokens: 1200, provider: "fixture", model: "fixed" };
+  expect(session.usage(null)).toBeNull();
+  expect(session.usage(u1.id)).toBeNull();
+  expect(session.usage(a1.id)).toEqual(first);
+  expect(session.usage(result.id)).toEqual(first);
+  expect(session.usage(side.id)).toEqual(first);
+  expect(session.usage(parts.id)).toEqual({
+    tokens: 122,
+    provider: "fixture",
+    model: "other",
+  });
+  // The response before a compaction no longer measures the context.
+  const unknown = { tokens: null, provider: "fixture", model: "other" };
+  expect(session.usage(compaction.id)).toEqual(unknown);
+  expect(session.usage(kept.id)).toEqual(unknown);
+  expect(session.usage(kept.id)).toBe(session.usage(kept.id));
+  expect(session.usage(after.id)).toMatchObject({ tokens: 300 });
+  // The walk visits USAGE_WALK entries from the branch end and no more.
+  expect(session.usage(tail[USAGE_WALK - 2].id)).toMatchObject({ tokens: 300 });
+  expect(session.usage(tail[USAGE_WALK - 1].id)).toBeNull();
+  // A replaced file is measured again, never answered from the old one.
+  const replacement = `${path}.new`;
+  writeFileSync(
+    replacement,
+    line({ type: "session", version: 3, id, timestamp: "", cwd }) +
+      line({ ...u1, parentId: null }) +
+      line({
+        ...a1,
+        message: { ...(a1.message as object), usage: total(77) },
+      }),
+  );
+  renameSync(replacement, path);
+  expect(sessions.session(id)?.usage(a1.id)).toMatchObject({ tokens: 77 });
 });
 
 it("written thinking never shifts the live preview's count of written messages", () => {

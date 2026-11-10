@@ -17,9 +17,11 @@ import { decodeExecutionContext } from "./contracts/models.ts";
 import type { WorkbenchRead } from "./contracts/workbench.ts";
 import {
   type ChatAttempt,
+  type ChatContext,
   type ChatCursor,
   type ChatStatus,
   type ChatSummary,
+  clipText,
   decodeEntryId,
   decodeSessionId,
   decodeWorkbenchCommand,
@@ -423,6 +425,36 @@ export class ConversationRecords {
       notice: sanitizeText(state.notice, this.readSecrets()),
     };
   }
+  /** The branch's context size; a live turn counts what Pi wrote for it so
+   * far, so the figure follows each model response. */
+  private context(
+    view: ReturnType<ConversationRecords["branch"]>,
+  ): ChatContext | undefined {
+    if (!view.session) return undefined;
+    let leaf = view.leaf;
+    if (view.live) {
+      const { accepted, commandId } = view.live;
+      try {
+        leaf =
+          view.session
+            .commandEntries(commandId, accepted.parent, accepted.offset)
+            .at(-1)?.id ?? leaf;
+      } catch (error) {
+        // The turn read reports an unusable command chain; the head stays
+        // readable and claims no figure for it.
+        if (error instanceof ContractError) return undefined;
+        throw error;
+      }
+    }
+    const usage = view.session.usage(leaf);
+    if (!usage) return undefined;
+    const secrets = this.readSecrets();
+    return {
+      tokens: usage.tokens,
+      provider: clipText(sanitizeText(usage.provider, secrets), 128),
+      model: clipText(sanitizeText(usage.model, secrets), 256),
+    };
+  }
   conversation(
     id: string,
     leaf: string | null,
@@ -432,9 +464,11 @@ export class ConversationRecords {
     const view = this.branch(id, leaf, false);
     const summary = this.summary(id, view.live ?? this.liveFor(id));
     const listed = this.sessions.find(id);
+    const context = this.context(view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
+      ...(context ? { context } : {}),
       summary,
       leaf: view.leaf,
       continues:

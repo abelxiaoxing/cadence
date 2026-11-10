@@ -94,6 +94,7 @@ The reader caches eight parsed sessions and 64 built turns; neither bounds what 
 History pages hold 50 summaries; the tree read returns the newest `TREE_NODES` (1000) user messages and says when more exist.
 A step-detail part holds at most 200KiB of encoded text and 48KiB of encoded arguments, so every part fits one 512KiB reply.
 Conversation reads have no turn-count or byte page: the head carries a summary and a count, and each read covers one turn or one part of one step.
+The head's context size looks back at most `USAGE_WALK` (256) entries from the branch end, reading message bodies only, and an opened session remembers 64 such results (`src/service/pi-sessions.ts`).
 A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_BYTES` (16KiB) of encoded text and a 1KiB tool target (arguments over 1MiB name none), which always fits one 512KiB reply; the client reads further ranges itself (`src/service/contracts/workbench.ts`).
 The WebUI keeps four reads in flight per conversation.
 Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
