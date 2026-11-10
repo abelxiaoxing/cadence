@@ -259,6 +259,49 @@ export class Workbench implements WorkbenchPort {
       throw error;
     }
   }
+  /** A message for the reply in progress. It binds that run, so in Cadence
+   * mode the run is the coordinator turn the mode names. */
+  private input(
+    request: Extract<WorkbenchCommand, { kind: "conversation-input" }>,
+  ): WorkbenchResult {
+    let mayHaveEffects = true;
+    try {
+      const state = this.cadence.records.state(request.conversationId);
+      mayHaveEffects =
+        this.o.owner.state !== "idle" ||
+        this.conversations.attempted(request.conversationId, request.commandId);
+      // A lost reply observes its original acceptance before mode checks.
+      const receipt = this.conversations.receipt(request);
+      if (receipt) return receipt;
+      if (state.notice) throw new ContractError("corrupt-selected");
+      if (state.enabled && state.head !== request.turnId)
+        throw new ContractError("stale");
+      return this.conversations.input(request, state.enabled, () => {
+        mayHaveEffects = true;
+      });
+    } catch (error) {
+      if (!mayHaveEffects && error instanceof ContractError)
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
+    }
+  }
+  /** Withdraws a waiting message. A refusal changes nothing; only a failed
+   * record write, which quarantines the owner, leaves the outcome uncertain. */
+  private withdraw(
+    request: Extract<WorkbenchCommand, { kind: "conversation-input-cancel" }>,
+  ): WorkbenchResult | Promise<WorkbenchResult> {
+    const unaccepted = (error: unknown): never => {
+      if (error instanceof ContractError && this.o.owner.state === "idle")
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
+    };
+    try {
+      const result = this.conversations.cancelInput(request);
+      return result instanceof Promise ? result.catch(unaccepted) : result;
+    } catch (error) {
+      return unaccepted(error);
+    }
+  }
   private projects(): WorkbenchResult {
     const secrets = this.o.secrets();
     if (sanitizeText(this.o.cwd, secrets) !== this.o.cwd)
@@ -369,6 +412,9 @@ export class Workbench implements WorkbenchPort {
         request.request,
         { definite: true },
       );
+    if (request.kind === "conversation-input") return this.input(request);
+    if (request.kind === "conversation-input-cancel")
+      return this.withdraw(request);
     if (request.kind === "interrupt") {
       this.conversations.interrupt(
         request.conversationId,

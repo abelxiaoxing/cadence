@@ -79,8 +79,9 @@ export function createCoordinatorTools() {
   };
   process.on("disconnect", closed);
   const receive = (reply) => {
-    // Credential replies share the private transport, never the tool channel.
-    if (reply?.kind === "auth") return;
+    // Credential replies and messages for the running reply share the private
+    // transport, never the tool channel.
+    if (["auth", "input", "input-cancel"].includes(reply?.kind)) return;
     if (
       !reply ||
       typeof reply !== "object" ||

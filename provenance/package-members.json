@@ -93,6 +93,7 @@
   "package/src/startup-card.ts",
   "package/src/verification-diagnostics.ts",
   "package/src/worker-capture.mjs",
+  "package/src/worker-inputs.mjs",
   "package/src/worker-model.mjs",
   "package/src/worker-public.mjs",
   "package/src/worker-redaction.mjs",

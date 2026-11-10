@@ -101,7 +101,10 @@ A turn read lists at most `STEP_READ` (24) steps, each with at most `STEP_TEXT_B
 The WebUI keeps four reads in flight per conversation.
 Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
 A live browser turn's preview keeps at most 64KiB per streamed message or tool output (labelled when clipped), for its eight most recent messages and eight most recent tools, and 64 open details; the rest is read from the session once Pi writes it (`src/service/conversations.ts`).
-A session's index names its last 64 browser messages; the owner caches 512 message states and admits eight browser turns at a time, one per session.
+A session's index names its last 64 browser messages; the owner caches 512 message states and admits eight browser runs at a time, one per session.
+A running reply takes at most `RUN_INPUTS` (32) further messages, withdrawn ones included, so a run with its own message stays within that index, and at most `WAITING_INPUTS` (8) of them may be undelivered at a time; each has the Send text bound and passes the free-space floor (`src/service/contracts/workbench.ts`, `src/service/conversations.ts`).
+A head read states at most `PENDING_TEXT_BYTES` (256) encoded bytes of a waiting message and `UNDELIVERED_TEXT_BYTES` (32KiB) of an undelivered one, at most eight of each.
+One owner-to-worker message is at most `workerRequestBytes` (128KiB) and the worker holds what it is handed in memory only (`src/subagent-process.ts`, `src/worker-inputs.mjs`).
 A conversation name is one trimmed line of at most `CONVERSATION_NAME_CHARS` (100) code points (`src/service/contracts/workbench.ts`).
 A rename child may run for `SESSION_RENAME_MS` (60s, `src/subagent-process.ts`); an owner runs four at once, one per session, and keeps the outcome of its last 64 rename commands for a repeated command (`src/service/conversations.ts`).
 Archive records are one small file per archived session, without a count limit.
