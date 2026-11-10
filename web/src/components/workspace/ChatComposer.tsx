@@ -222,9 +222,15 @@ export function ChatComposer({
   // ---- `@` popup: a path reference from the folder's bounded listing. ----
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(-1);
+  // Completion is offered for what was typed here: a path the Files pane
+  // inserted, a recalled prompt or a message put back to be rewritten opens
+  // nothing until it is typed in.
+  const [typed, setTyped] = useState<string | null>(null);
   const { location } = files;
   const token =
-    location && focused && !locked ? matchAtToken(draft, caret) : null;
+    location && focused && !locked && typed === draft
+      ? matchAtToken(draft, caret)
+      : null;
   const query = mentionQuery(token?.query ?? "");
   const open =
     token !== null &&
@@ -254,6 +260,7 @@ export function ChatComposer({
     if (!token) return;
     const next = applyMention(draft, token, caret, entry);
     caretTo.current = next.cursor;
+    setTyped(next.text);
     onDraft(next.text);
   };
 
@@ -493,6 +500,7 @@ export function ChatComposer({
         rows={2}
         onChange={(event) => {
           setCaret(event.target.selectionStart);
+          setTyped(event.target.value);
           onDraft(event.target.value);
         }}
         onSelect={(event) => {
