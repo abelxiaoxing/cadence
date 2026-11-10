@@ -77,7 +77,7 @@ it("old canonical duplicated admission rows retain raw checksums and conflicting
   const legacy = `${canonicalJson(row, RECORD_BYTES)}\n`;
   const marker = JSON.parse(lines[1]);
   marker.sha256 = hash(legacy);
-  const raw = legacy + canonicalJson(marker, RECORD_BYTES) + "\n";
+  const raw = `${legacy + canonicalJson(marker, RECORD_BYTES)}\n`;
   writeFileSync(path, raw);
   expect(decodeJournalText(legacy)).toEqual(row);
   expect([...f.files.scan()][0].rows[0]).toEqual(row);
@@ -97,6 +97,6 @@ it("old canonical duplicated admission rows retain raw checksums and conflicting
   ).toThrow();
   // A compact checksum is NOT a checksum of the historical raw duplicated row.
   marker.sha256 = hash(`${lines[0]}\n`);
-  writeFileSync(path, legacy + canonicalJson(marker, RECORD_BYTES) + "\n");
+  writeFileSync(path, `${legacy + canonicalJson(marker, RECORD_BYTES)}\n`);
   expect(() => [...f.files.scan()]).toThrow();
 });

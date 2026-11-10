@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -147,6 +148,11 @@ if (process.argv[2] === "--produce") {
   // for unknown/dirty/partial bytes. Check again after both builds, before rename.
   const prior = publishedWebIdentity(target);
   const run = mkdtempSync(join(temp, "web-build-"));
+  // Successful checks leave no build temp; failures retain referenced evidence.
+  if (process.argv[2] === "--check")
+    process.on("exit", (code) => {
+      if (code === 0) rmSync(run, { recursive: true, force: true });
+    });
   const commands = [];
   for (const name of ["first", "second"]) {
     const env = Object.fromEntries(
