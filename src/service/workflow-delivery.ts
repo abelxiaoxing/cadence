@@ -69,14 +69,20 @@ export function acceptanceRecord(
   checks: WorkflowStep[],
   review: WorkflowStep,
   expectedChecks: number,
+  /** Check steps a recorded deviation set aside: they ran and settled as failed. */
+  waived: ReadonlySet<string> = new Set(),
 ): AcceptanceRecord {
   if (
     checks.length !== expectedChecks ||
     !checks.length ||
     new Set(checks.map((s) => s.id)).size !== checks.length ||
-    checks.some(
-      (s) => s.kind !== "check" || s.status !== "completed" || s.exitCode !== 0,
+    checks.some((s) =>
+      s.kind !== "check" || waived.has(s.id)
+        ? s.kind !== "check" || s.status !== "failed"
+        : s.status !== "completed" || s.exitCode !== 0,
     ) ||
+    // Never a delivery whose every check was set aside.
+    checks.every((s) => waived.has(s.id)) ||
     review.kind !== "review" ||
     review.status !== "completed" ||
     review.exitCode !== 0
@@ -89,6 +95,9 @@ export function acceptanceRecord(
     contextDigest: hash(canonicalJson(execution)),
     checks: checks.map((s) => s.id),
     review: review.id,
+    ...(waived.size
+      ? { waived: checks.filter((s) => waived.has(s.id)).map((s) => s.id) }
+      : {}),
   };
 }
 export class WorkflowDelivery {

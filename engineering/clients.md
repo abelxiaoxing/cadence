@@ -138,7 +138,8 @@ Prepare is a fresh confirmation operation, not a background read; a second tab, 
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
 Both surfaces display the owner-bound target/ref/base and named stable-worktree policy before approval, then recorded candidate acceptance, actual integration, post-checks and retention.
 The conversation cwd/session stays unchanged; observing a managed worktree never starts another owner.
-Version-2 agreement approval covers the immutable goal, explicit decisions, acceptance and declared paths/commands, plus service-owned adaptive routes, recovery and verified project-knowledge maintenance.
+Version-3 agreement approval covers the goal, explicit decisions, acceptance and the coordinator's listed assumptions, the declared commands and installation policy, and the owner finishing on its own: revising the route and the write scope inside the repository, recovery, recorded deviations confirmed by the automatic review, and verified project-knowledge maintenance.
+Both surfaces show that statement with the plan before approval.
 It covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
 An accepted plan is consumed at the conversation boundary before dispatch; command loss or an uncertain attempt is observed, never replayed.
 Full plan cards and retained run/step details replace daily task/Save/Start/Checks/Review management; automatic review is never human review.

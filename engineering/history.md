@@ -97,7 +97,7 @@ The terminal's workflows are found from its `cadence-conversation-mode/1` entrie
 
 The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
 It stores immutable versioned agreements/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and bounded process results with explicit diagnostic truncation.
-Version-2 runs additionally retain route revisions, launch knowledge manifests and immutable earlier-step pages with exact step membership.
+Runs of adaptive agreements (version 2 and later) additionally retain route revisions, launch knowledge manifests and immutable earlier-step pages with exact step membership; a version-3 revision record also carries its level, added scope and deviation.
 Snapshot step bounds are view bounds, not lifetime attempt quotas; native/Web history can select earlier pages without rebasing live execution.
 All original results remain retained.
 New snapshots also retain the immutable target binding, named branch/worktree, exact candidate acceptance, independent integration/post-checks and cleanup outcomes.

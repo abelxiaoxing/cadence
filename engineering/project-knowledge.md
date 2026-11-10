@@ -37,7 +37,7 @@ Documents can guide implementation but never grant permissions, skip mandatory c
 
 ## Learning and publication
 
-Version-2 agreements name exact Markdown `knowledge` write paths, prepared by the coordinator rather than a user form.
+Version-3 agreements name exact Markdown `documents` write paths (version 2 called them `knowledge`), prepared by the coordinator rather than a user form.
 They participate in approval observations and write scope like implementation targets.
 Local-merge therefore needs clean, nonignored knowledge targets too; use working-copy delivery for dirty or ignored documentation, without changing ignore rules or copying user source into candidates.
 Generated workflow delivery notes retain their separate expected-byte publication behavior.

@@ -21,14 +21,17 @@ See [worktree delivery](worktree-delivery.md) for creation, exact acceptance and
 Retained task worktrees from earlier releases remain untouched.
 Direct working-copy delivery serializes edits without Git mutation.
 The terminal is never an embedded executor.
-One fresh 120s grant binds the exact displayed version-2 delivery agreement, model source, project observation and owner epoch.
+One fresh 120s grant binds the exact displayed version-3 delivery agreement, model source, project observation and owner epoch.
 The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations inside its immutable goal, decisions, acceptance, write paths and exact commands; a model cannot change those permissions.
 There is no total delivery deadline or fixed repair-round quota.
 Agents have no total runtime deadline; setup/check commands are unlimited unless their exact approved definition specifies a timeout.
 Original closure requirements are unchanged.
-Settled failures enter readonly diagnosis; authority, scope, storage, cancellation and unknown-closure failures never authorize another attempt.
-Identical strategy and unchanged failure/source evidence stop a nonprogressing route.
-A concrete external blocker is retained as an unsuccessful delivery, never success or a fabricated user request.
+Settled failures enter readonly diagnosis; authority, storage, cancellation and unknown-closure failures never authorize another attempt.
+An edit outside the write scope is a settled failure when it stays inside the repository boundary (`workflowBoundary`) and its attempt's step can be cited: the diagnosis adopts or restores it.
+A protected path (credentials, keys, `.env`, `.git`) or an uncitable attempt still ends the run with the edits preserved.
+The same approach meeting unchanged failure/source evidence does not replay: the decision moves up one level (repair, then a revised route, then a recorded deviation) and the run ends only when the top level also repeats.
+A recovery reply the owner cannot act on is asked again with the reason, at most twice per failure (`OBJECTIONS`), before it ends the stage.
+Only a named condition outside the repository blocks a delivery (`BLOCKERS`: model, authentication, storage, target, installation, tool); it is retained as an unsuccessful delivery, never success or a fabricated user request.
 The general workflow command remains native-only.
 Browser confirmation uses a separate conversation-bound boundary; both reach the same execution owner.
 Browser grants additionally bind the authenticated attachment/access generation and exact conversation revision/head, and are consumed before dispatch; a parallel tab cannot accept the same proposal twice.

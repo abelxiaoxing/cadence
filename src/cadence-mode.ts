@@ -234,13 +234,44 @@ const CHECK = Type.Object({
   command: Type.String(),
   timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 2147483647 })),
 });
+const READING = Type.Union([
+  Type.Object({
+    path: Type.String({ description: "Project document to read first." }),
+    section: Type.Optional(
+      Type.String({ description: "One heading of that document." }),
+    ),
+    reason: Type.String(),
+  }),
+  Type.Object({
+    research: Type.String({
+      description: "Identity of a recorded investigation to reuse.",
+    }),
+    reason: Type.String(),
+  }),
+]);
 const PLAN = Type.Object({
   goal: Type.String(),
   design: Type.String(),
   decisions: Type.String(),
   acceptance: Type.String(),
-  version: Type.Literal(2),
-  knowledge: Type.Array(Type.String(), { maxItems: 16 }),
+  version: Type.Literal(3),
+  assumptions: Type.String({
+    description:
+      "What you decided on the user's behalf without asking; approval confirms it. Empty when there is none.",
+  }),
+  documents: Type.Array(
+    Type.String({
+      description: "Existing project Markdown this delivery may update.",
+    }),
+    { maxItems: 16 },
+  ),
+  reviewReads: Type.Array(READING, { maxItems: 16 }),
+  policy: Type.Object({
+    installs: Type.Boolean({
+      description:
+        "Whether a later revision may add dependency-installation commands. False unless the user agreed.",
+    }),
+  }),
   tasks: Type.Array(
     Type.Object({
       id: Type.String(),
@@ -248,6 +279,7 @@ const PLAN = Type.Object({
       instructions: Type.String(),
       writes: Type.Array(Type.String()),
       after: Type.Array(Type.String()),
+      reads: Type.Array(READING, { maxItems: 16 }),
     }),
     { minItems: 1, maxItems: 16 },
   ),
@@ -1069,7 +1101,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_plan",
     label: "Propose implementation plan",
     description:
-      "Publish a readable delivery agreement: goal, acceptance, explicit boundaries, initial route, checks, setup, knowledge paths and delivery policy. Internal implementation routes may adapt after one approval. Does not execute.",
+      "Publish a readable delivery agreement: goal, acceptance, explicit decisions, your assumptions, initial route and assignments, what each reads first, checks, setup, documents to update and delivery policy. After one approval the service revises the route on its own and finishes without further confirmation. Does not execute.",
     parameters: PLAN,
     async execute(_id, input, _signal, _update, ctx) {
       return changing(ctx, async (claim) => {

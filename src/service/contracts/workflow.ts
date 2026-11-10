@@ -36,17 +36,40 @@ export interface WorkflowCheck {
   command: string;
   timeoutMs?: number;
 }
+/** Something a worker should read before it starts: a project document (and
+ * optionally one section of it) or a recorded investigation, with the reason. */
+export type WorkflowReading =
+  | { path: string; section?: string; reason: string }
+  | { research: string; reason: string };
 export interface WorkflowTask {
   id: string;
   title: string;
   instructions: string;
   writes: string[];
   after: string[];
+  /** Version 3: what this assignment reads first. */
+  reads?: WorkflowReading[];
+}
+/** Version 3: what the owner may do on its own after approval, beyond revising
+ * the route, the assignments and their write scope. */
+export interface WorkflowPolicy {
+  /** Whether a revision may add dependency-installation setup commands. */
+  installs: boolean;
 }
 export interface WorkflowPlan {
-  /** Version 2 admits adaptive delivery; absent versions are retained, readonly plans. */
-  version?: 2;
+  /** Version 3 admits self-revising delivery. Version 2 (adaptive delivery in a
+   * fixed write scope) and unversioned plans are retained and readonly. */
+  version?: 2 | 3;
+  /** Version 2 only: approved documentation write paths. */
   knowledge?: string[];
+  /** Version 3: what the coordinator decided on the user's behalf; approval
+   * confirms these with the goal, decisions and acceptance. */
+  assumptions?: string;
+  /** Version 3: existing project documents this delivery may update. */
+  documents?: string[];
+  /** Version 3: what the independent review reads first. */
+  reviewReads?: WorkflowReading[];
+  policy?: WorkflowPolicy;
   goal: string;
   design: string;
   decisions: string;
@@ -80,6 +103,8 @@ export interface AcceptanceRecord {
   contextDigest: string;
   checks: string[];
   review: string;
+  /** Among `checks`, those a recorded deviation set aside; they failed. */
+  waived?: string[];
 }
 export interface DeliveryObservation {
   binding: DeliveryBinding;
@@ -167,10 +192,26 @@ export interface WorkflowStep {
   exitCode: number | null;
   truncated: boolean;
 }
+/** An acceptance item or decision the delivery could not meet as written, and
+ * what it delivered instead. The independent review confirms each one. */
+export interface WorkflowDeviation {
+  revision: number;
+  item: string;
+  reason: string;
+  delivered: string;
+  /** Declared acceptance checks set aside because of it. */
+  waives: string[];
+}
+/** Deviations one run may record. */
+export const WORKFLOW_DEVIATIONS = 16;
 export interface WorkflowRun {
   /** New runs retain older step pages separately; this is a view offset, not eviction. */
   stepsBefore?: number;
   revision?: number;
+  /** Repository paths that revisions brought into the write scope after approval. */
+  scope?: string[];
+  /** Where this delivery departs from the agreement, in recorded order. */
+  deviations?: WorkflowDeviation[];
   verification?: { id: string; source: string; steps: string[] };
   delivery?: DeliveryObservation;
   execution?: ExecutionContext;
@@ -325,24 +366,46 @@ export function decodeWorkflowPlan(
       "Publish a new delivery agreement; retained fixed-pipeline plans are readonly",
     );
   canonicalJson(v, WORKFLOW_LIMITS.bytes);
-  if (modern && (v as { version?: unknown }).version !== 2)
+  const version = modern ? (v as { version?: unknown }).version : undefined;
+  if (modern && version !== 2 && version !== 3)
     throw new Error("Unsupported delivery agreement version");
+  const current = version === 3;
+  if (strict && !current)
+    throw new Error(
+      "Publish a new delivery agreement; earlier agreements are readonly",
+    );
   const o = closed(v, [
     "goal",
     "design",
     "decisions",
     "acceptance",
-    ...(modern
-      ? ["version", "knowledge"]
-      : ["projectContext", "repairAttempts"]),
+    ...(current
+      ? ["version", "assumptions", "documents", "reviewReads", "policy"]
+      : modern
+        ? ["version", "knowledge"]
+        : ["projectContext", "repairAttempts"]),
     "tasks",
     "checks",
     "setup",
     "baselineChecks",
     "delivery",
   ]);
+  const documentation = (value: unknown) =>
+    list(value, 16, (entry) => {
+      const path = workflowPath(entry, strict);
+      if (!path.endsWith(".md"))
+        throw new Error("Documentation targets must be Markdown files");
+      return path;
+    });
   const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
-    const t = closed(value, ["id", "title", "instructions", "writes", "after"]);
+    const t = closed(value, [
+      "id",
+      "title",
+      "instructions",
+      "writes",
+      "after",
+      ...(current ? ["reads"] : []),
+    ]);
     return {
       id: taskId(t.id, strict),
       title: text(t.title, 256, true),
@@ -351,6 +414,7 @@ export function decodeWorkflowPlan(
       after: list(t.after, WORKFLOW_LIMITS.tasks, (id: unknown) =>
         taskId(id, strict),
       ),
+      ...(current ? { reads: decodeWorkflowReadings(t.reads, strict) } : {}),
     };
   });
   if (
@@ -390,20 +454,22 @@ export function decodeWorkflowPlan(
     design: text(o.design, 32768, true),
     decisions: text(o.decisions, 16384),
     acceptance: text(o.acceptance, 16384, true),
-    ...(modern
+    ...(current
       ? {
-          version: 2 as const,
-          knowledge: list(o.knowledge, 16, (v) => {
-            const path = workflowPath(v, strict);
-            if (!path.endsWith(".md"))
-              throw new Error("Knowledge targets must be Markdown files");
-            return path;
-          }),
+          version: 3 as const,
+          assumptions: text(o.assumptions, 16384),
+          documents: documentation(o.documents),
+          reviewReads: decodeWorkflowReadings(o.reviewReads, strict),
+          policy: {
+            installs: bool(closed(o.policy, ["installs"]).installs),
+          },
         }
-      : {
-          projectContext: text(o.projectContext, 16384),
-          repairAttempts: integer(o.repairAttempts, 0, 2),
-        }),
+      : modern
+        ? { version: 2 as const, knowledge: documentation(o.knowledge) }
+        : {
+            projectContext: text(o.projectContext, 16384),
+            repairAttempts: integer(o.repairAttempts, 0, 2),
+          }),
     tasks,
     checks,
     setup: list(o.setup, 4, decodeWorkflowCheck),
@@ -421,7 +487,12 @@ export function decodeWorkflowPlan(
     result.design,
     result.decisions,
     result.acceptance,
+    result.assumptions ?? "",
     result.projectContext ?? "",
+    ...[
+      ...(result.reviewReads ?? []),
+      ...result.tasks.flatMap((t) => t.reads ?? []),
+    ].flatMap((r) => [r.reason, "section" in r ? (r.section ?? "") : ""]),
     ...result.tasks.flatMap((t) => [t.title, t.instructions]),
     ...[...result.checks, ...result.setup, ...result.baselineChecks].flatMap(
       (c) => [c.name, c.command],
@@ -438,15 +509,64 @@ export function decodeWorkflowPlan(
       throw new Error("Plan contains invisible terminal controls");
   return result;
 }
-/** The immutable permission/verification boundary, independent of internal route revisions. */
+/** Existing project documents the agreement allows this delivery to update. */
+export function workflowDocuments(p: WorkflowPlan): string[] {
+  return p.documents ?? p.knowledge ?? [];
+}
+/** The write scope the agreement starts from. A version-3 run may extend it
+ * inside the repository boundary (`workflowBoundary`); earlier versions never. */
 export function workflowWrites(p: WorkflowPlan): string[] {
   return [
-    ...new Set([...p.tasks.flatMap((t) => t.writes), ...(p.knowledge ?? [])]),
+    ...new Set([...p.tasks.flatMap((t) => t.writes), ...workflowDocuments(p)]),
   ];
+}
+/** Whether a revision may bring this path into a run's write scope: a plain
+ * repository path that names no credential, key or private-state file. */
+export function workflowBoundary(path: string): boolean {
+  try {
+    if (workflowPath(path, true) !== path) return false;
+  } catch {
+    return false;
+  }
+  return !path
+    .split("/")
+    .some(
+      (name) =>
+        /^\.(?:ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc|pi)$/iu.test(name) ||
+        /^(?:auth|models|credentials|service-account)\.json$/iu.test(name) ||
+        /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/iu.test(name) ||
+        /\.(?:pem|key|p12|pfx)$/iu.test(name),
+    );
+}
+function decodeWorkflowReadings(
+  value: unknown,
+  strict: boolean,
+): WorkflowReading[] {
+  return list(value, 16, (entry): WorkflowReading => {
+    if (Object.hasOwn((entry ?? {}) as object, "research")) {
+      const r = closed(entry, ["research", "reason"]);
+      return {
+        research: decodeId(r.research),
+        reason: text(r.reason, 512, true),
+      };
+    }
+    const r = closed(entry, [
+      "path",
+      ...(Object.hasOwn((entry ?? {}) as object, "section") ? ["section"] : []),
+      "reason",
+    ]);
+    return {
+      path: workflowPath(r.path, strict),
+      ...(r.section === undefined
+        ? {}
+        : { section: text(r.section, 256, true) }),
+      reason: text(r.reason, 512, true),
+    };
+  });
 }
 export function workflowContext(p: WorkflowPlan): string {
   return text(
-    `# ${p.goal}\n\nInitial route (adapt within the approved boundary): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}\n\nImmutable acceptance: ${p.acceptance}`,
+    `# ${p.goal}\n\nInitial route (${p.version === 3 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`,
     32768,
     true,
   );
@@ -525,6 +645,7 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
       "contextDigest",
       "checks",
       "review",
+      ...(Object.hasOwn((v ?? {}) as object, "waived") ? ["waived"] : []),
     ]);
     const checks = list(a.checks, WORKFLOW_LIMITS.checks, step);
     if (!checks.length || new Set(checks).size !== checks.length)
@@ -536,6 +657,13 @@ export function decodeDeliveryObservation(value: unknown): DeliveryObservation {
       contextDigest: decodeHash(a.contextDigest),
       checks,
       review: step(a.review),
+      ...(a.waived === undefined
+        ? {}
+        : {
+            waived: list(a.waived, WORKFLOW_LIMITS.checks, step).filter((id) =>
+              checks.includes(id),
+            ),
+          }),
     };
   });
   const candidate = nullable(d.candidate, gitOid);
@@ -715,6 +843,8 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     "humanReviewed",
     ...(Object.hasOwn(v ?? {}, "stepsBefore") ? ["stepsBefore"] : []),
     ...(Object.hasOwn(v ?? {}, "revision") ? ["revision"] : []),
+    ...(Object.hasOwn(v ?? {}, "scope") ? ["scope"] : []),
+    ...(Object.hasOwn(v ?? {}, "deviations") ? ["deviations"] : []),
     ...(Object.hasOwn(v ?? {}, "verification") ? ["verification"] : []),
     ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
     ...(Object.hasOwn(v ?? {}, "execution") ? ["execution"] : []),
@@ -748,6 +878,29 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
       ? {}
       : { stepsBefore: integer(o.stepsBefore, 0) }),
     ...(o.revision === undefined ? {} : { revision: integer(o.revision, 0) }),
+    ...(o.scope === undefined
+      ? {}
+      : { scope: list(o.scope, 1024, (path) => workflowPath(path)) }),
+    ...(o.deviations === undefined
+      ? {}
+      : {
+          deviations: list(o.deviations, WORKFLOW_DEVIATIONS, (value) => {
+            const d = closed(value, [
+              "revision",
+              "item",
+              "reason",
+              "delivered",
+              "waives",
+            ]);
+            return {
+              revision: integer(d.revision, 0),
+              item: text(d.item, 2048, true),
+              reason: text(d.reason, 4096, true),
+              delivered: text(d.delivered, 4096, true),
+              waives: list(d.waives, 16, (name) => text(name, 128, true)),
+            };
+          }),
+        }),
     ...(o.delivery === undefined
       ? {}
       : { delivery: decodeDeliveryObservation(o.delivery) }),
@@ -845,17 +998,43 @@ export function decodeWorkflowResponse(v: unknown): WorkflowResponse {
     expiresAt: integer(o.expiresAt, 0),
   };
 }
+const readableCheck = (c: WorkflowCheck) =>
+  `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`;
+const readableReading = (r: WorkflowReading) =>
+  "research" in r
+    ? `investigation ${r.research} — ${r.reason}`
+    : `${r.path}${r.section ? ` § ${r.section}` : ""} — ${r.reason}`;
+/** What approval of each agreement version lets the owner do on its own. */
+function readableAutomation(p: WorkflowPlan): string {
+  if (p.version === 3)
+    return `After approval the service works to completion without further confirmation. It may on its own: retry and repair a failed assignment; revise the route, the assignments and their order; and bring further repository files into the write scope (never credentials, keys, .env, .git or files outside the repository). When an acceptance item or decision proves impossible it delivers the closest achievable result as a recorded deviation, which names the item, the evidence and what was delivered instead, must be confirmed necessary and minimal by the independent Agent review, and leads the final report. Declared checks always run; a check is set aside only through such a deviation, never silently. It stops only for a condition outside the repository: an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, or a required installation this agreement does not allow. ${p.policy?.installs ? "Revisions may add dependency-installation commands with the project's own package manager." : "No dependency installation beyond the setup commands listed here."}`;
+  if (p.version === 2)
+    return "Retained agreement (readonly): diagnosis, partial-work continuation, task splitting and alternative implementations within these goals, decisions, write paths and exact setup/check commands.";
+  return `Historical fixed pipeline: at most ${p.repairAttempts} repair rounds.`;
+}
 export function readableWorkflowPlan(p: WorkflowPlan): string {
-  return `# ${p.goal}\n\n## Initial route (automatically adjustable)\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}\n\n## Tasks\n${workflowOrder(
-    p.tasks,
-  )
+  const documents = workflowDocuments(p);
+  return `# ${p.goal}\n\n## Initial route (the service may revise it)\n${p.design}\n\n## Decisions\n${p.decisions}\n\n## Acceptance\n${p.acceptance}${
+    p.version === 3
+      ? `\n\n## Assumptions (confirmed by approval)\n${p.assumptions || "None beyond the decisions above."}`
+      : ""
+  }\n\n## Tasks\n${workflowOrder(p.tasks)
     .map(
       (t) =>
-        `### ${t.id}: ${t.title}\nDepends on: ${t.after.join(", ") || "none"}\nWrites: ${t.writes.join(", ")}\n${t.instructions}`,
+        `### ${t.id}: ${t.title}\nDepends on: ${t.after.join(", ") || "none"}\nWrites: ${t.writes.join(", ")}${t.reads?.length ? `\nReads first: ${t.reads.map(readableReading).join("; ")}` : ""}\n${t.instructions}`,
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs === undefined ? "no timeout" : `${c.timeoutMs}ms`})`).join("\n")}\n\n## Automation boundary\n${p.version === 2 ? "Authorize diagnosis, partial-work continuation, task splitting and alternative implementations within these goals, decisions, write paths and exact setup/check commands. No fixed repair-round or delivery-duration quota. Only actual verification and independent Agent review permit delivery." : `Historical fixed pipeline: at most ${p.repairAttempts} repair rounds.`} ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project knowledge\n${p.version === 2 ? p.knowledge?.join("\n") || "No documentation edits authorized; existing knowledge is still read." : p.projectContext}\n`;
+    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map(readableCheck).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map(readableCheck).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map(readableCheck).join("\n")}${
+    p.reviewReads?.length
+      ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
+      : ""
+  }\n\n## Automation boundary\n${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project documents\n${
+    p.version === undefined
+      ? p.projectContext
+      : documents.join("\n") ||
+        "No existing document is named for update; project knowledge is still read."
+  }\n`;
 }
 
 const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);

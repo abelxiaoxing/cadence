@@ -240,7 +240,7 @@ it("only complete selected reports authorize continuation; diagnostic clipping a
       "unused",
       {},
     ),
-  ).resolves.toBeUndefined();
+  ).resolves.toBe(step);
   expect(step).toMatchObject({ status: "completed", truncated: true });
   // An unavailable or clipped selected message cannot fall back to the valid
   // looking native preview, regardless of the diagnostic flag.

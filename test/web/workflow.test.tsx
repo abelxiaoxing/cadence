@@ -416,7 +416,9 @@ it("automatic recovery and knowledge progress remain live and do not request ano
   );
   expect(html).toContain("Complete delivery agreement");
   expect(html).toContain("<details>");
-  expect(html).toContain("adaptive implementation");
+  // The statement of what one approval covers stands beside the plan.
+  expect(html).toContain("The service then finishes on its own");
+  expect(html).toContain("Assumptions (confirmed by approval)");
   expect(html).not.toContain("At most 2 repair rounds");
 });
 it("delivery UI distinguishes an accepted candidate from an applied merge and names retained workspaces", () => {

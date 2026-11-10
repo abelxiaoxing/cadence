@@ -247,7 +247,7 @@ export function PlanCard({
       )}
       <p>
         {t(
-          "Approval covers this goal and boundary: adaptive implementation, checks, recovery, project knowledge and the displayed local delivery. No push, publication or deployment.",
+          "Approval covers this goal, its decisions, acceptance and assumptions. The service then finishes on its own: it may revise the route and write scope inside the repository, and records any deviation from the acceptance for the automatic review and the final report. No push, publication or deployment.",
         )}
       </p>
       <Markdown

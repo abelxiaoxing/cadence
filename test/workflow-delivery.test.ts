@@ -21,7 +21,7 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
   const definition = plan();
   definition.delivery = "working-copy";
   definition.tasks = [definition.tasks[0]];
-  definition.knowledge = ["knowledge.md"];
+  definition.documents = ["knowledge.md"];
   const records = new Map<string, unknown>();
   const phases: string[] = [];
   let implementations = 0,
