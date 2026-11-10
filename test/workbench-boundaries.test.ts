@@ -14,12 +14,15 @@ import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
   CONVERSATION_NAME_CHARS,
+  CONVERSATION_SEND_BYTES,
   decodeChatItem,
   decodeChatSummary,
   decodeChatTurn,
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
+  PENDING_TEXT_BYTES,
+  WAITING_INPUTS,
 } from "../src/service/contracts/workbench.ts";
 import { TurnCapture } from "../src/service/turn-capture.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
@@ -590,4 +593,93 @@ it("the archived listing and flag are optional keys that can only say true", () 
     archived: true,
   });
   expect(() => decodeChatSummary({ ...summary, archived: false })).toThrow();
+});
+it("a message for a running reply and its withdrawal are closed commands that name the run, never a head, model or image", () => {
+  const input = {
+    kind: "conversation-input",
+    commandId: randomUUID(),
+    conversationId: randomUUID(),
+    turnId: randomUUID(),
+    epoch: randomUUID(),
+    mode: "steer",
+    text: "Look at the tests first 先看测试",
+  };
+  expect(decodeWorkbenchCommand(input)).toEqual(input);
+  expect(decodeWorkbenchCommand({ ...input, mode: "queue" })).toMatchObject({
+    mode: "queue",
+  });
+  expect(
+    decodeWorkbenchCommand({
+      ...input,
+      text: "x".repeat(CONVERSATION_SEND_BYTES),
+    }),
+  ).toMatchObject({ kind: "conversation-input" });
+  for (const refused of [
+    { ...input, mode: "followUp" },
+    { ...input, text: "" },
+    { ...input, text: " \n" },
+    { ...input, text: "x".repeat(CONVERSATION_SEND_BYTES + 1) },
+    { ...input, turnId: "latest" },
+    { ...input, head: null },
+    { ...input, images: [randomUUID()] },
+    { ...input, model: {} },
+    { ...input, epoch: undefined },
+  ])
+    expect(() => decodeWorkbenchCommand(refused)).toThrow();
+  const { mode: _mode, text: _text, ...run } = input;
+  const withdrawal = {
+    ...run,
+    kind: "conversation-input-cancel",
+    inputId: randomUUID(),
+  };
+  expect(decodeWorkbenchCommand(withdrawal)).toEqual(withdrawal);
+  for (const refused of [
+    { ...withdrawal, inputId: "newest" },
+    { ...withdrawal, text: "x" },
+    run,
+  ])
+    expect(() => decodeWorkbenchCommand(refused)).toThrow();
+  // Stop still names only the run.
+  expect(() =>
+    decodeWorkbenchCommand({
+      ...run,
+      kind: "interrupt",
+      inputId: randomUUID(),
+    }),
+  ).toThrow();
+});
+it("waiting and undelivered messages are optional closed keys of the conversation head", () => {
+  const head = {
+    kind: "conversation",
+    summary: null,
+    leaf: null,
+    continues: true,
+    turns: 0,
+    branches: 0,
+    runs: [],
+    attempt: null,
+  };
+  const decoded = decodeWorkbenchResult(head);
+  expect(decoded).not.toHaveProperty("pending");
+  expect(decoded).not.toHaveProperty("undelivered");
+  const waiting = { commandId: randomUUID(), mode: "queue", text: "Later" };
+  const lost = {
+    commandId: randomUUID(),
+    text: "Never delivered",
+    status: "canceled",
+    notice: "Not delivered",
+  };
+  const full = { ...head, pending: [waiting], undelivered: [lost] };
+  expect(decodeWorkbenchResult(full)).toEqual(full);
+  for (const refused of [
+    { pending: [{ ...waiting, mode: "followUp" }] },
+    { pending: [{ ...waiting, text: "x".repeat(PENDING_TEXT_BYTES + 1) }] },
+    { pending: [{ ...waiting, status: "queued" }] },
+    { pending: Array.from({ length: WAITING_INPUTS + 1 }, () => waiting) },
+    { pending: null },
+    { undelivered: [{ ...lost, mode: "queue" }] },
+    { undelivered: [{ ...lost, status: "withdrawn" }] },
+    { undelivered: Array.from({ length: WAITING_INPUTS + 1 }, () => lost) },
+  ])
+    expect(() => decodeWorkbenchResult({ ...head, ...refused })).toThrow();
 });

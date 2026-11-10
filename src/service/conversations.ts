@@ -2,7 +2,9 @@
  * the terminal and the browser read and continue the same session files.
  * Pi (the browser turn's SDK worker, or the rename child) writes the content;
  * this owner keeps only each browser message's admission record and its
- * archive records, and reads the sessions back. */
+ * archive records, and reads the sessions back. One admitted run may be sent
+ * further messages while its reply runs; they share its worker and end with
+ * it. */
 import { randomUUID } from "node:crypto";
 import { opendirSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,6 +13,7 @@ import {
   launchConversation,
   type ProcessSpec,
   renameSession,
+  type WorkerInput,
 } from "../subagent-process.ts";
 import { describeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
 import {
@@ -31,6 +34,8 @@ import {
   type ChatStatus,
   type ChatTurn,
   decodeSessionId,
+  RUN_INPUTS,
+  WAITING_INPUTS,
   type WorkbenchCommand,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
@@ -38,12 +43,15 @@ import { ConversationContexts } from "./conversation-contexts.ts";
 import {
   ConversationRecords,
   INDEXED_COMMANDS,
+  NOT_DELIVERED,
+  UNOBSERVED,
+  WITHDRAWN,
 } from "./conversation-records.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
-import { summaryTitle } from "./pi-sessions.ts";
+import { replyStatus, type SessionEntry, summaryTitle } from "./pi-sessions.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
 
 const META_BYTES = 64 * 1024;
@@ -68,6 +76,11 @@ const RENAMES = 4;
 const RENAME_RECEIPTS = 64;
 
 type Send = Extract<WorkbenchCommand, { kind: "send" }>;
+type Input = Extract<WorkbenchCommand, { kind: "conversation-input" }>;
+type InputCancel = Extract<
+  WorkbenchCommand,
+  { kind: "conversation-input-cancel" }
+>;
 type Rename = Extract<WorkbenchCommand, { kind: "conversation-rename" }>;
 type Archive = Extract<WorkbenchCommand, { kind: "conversation-archive" }>;
 interface Options {
@@ -90,15 +103,18 @@ export interface ConversationControl {
   onTool: NonNullable<ProcessSpec["onCoordinator"]>;
   settle(): Promise<void>;
 }
-/** A browser message's durable admission: what was sent, where from. */
+/** A browser message's durable admission: what was sent, where from. A
+ * message sent into a running reply names that reply's command, copies its
+ * execution context and continues whatever the reply has written by then. */
 export interface Accepted {
   execution?: ExecutionContext;
   directory?: string;
   file?: string | null;
-  command: Send;
+  command: Send | Input;
   at: number;
   session: string;
-  /** The entry it continues (null: a new session or a new root). */
+  /** The entry a Send continues (null: a new session or a new root, and
+   * always for a message sent into a running reply). */
   parent: string | null;
   /** The session file's size when it was accepted; Pi appends after it. */
   offset: number;
@@ -113,6 +129,19 @@ export interface CommandState {
   /** The user message entry Pi wrote for it, null when none was written. */
   user: string | null;
 }
+/** A message admitted into a live run, until that run settles. */
+export interface LiveInput {
+  commandId: string;
+  accepted: Accepted & { command: Input };
+  state: CommandState;
+  stateFile: FileSnapshot;
+  /** Handed to the worker; until then only this owner holds it. */
+  sent: boolean;
+  /** Withdrawn before Pi was given it. */
+  withdrawn: boolean;
+  /** A withdrawal waiting for the worker to say whether it still held it. */
+  withdrawal?: { result: Promise<void>; answer(removed: boolean): void };
+}
 export interface LiveTurn {
   runtime?: WorkerRuntime;
   images?: InputImage[];
@@ -126,14 +155,27 @@ export interface LiveTurn {
   capture: LiveCapture | null;
   abort: AbortController;
   original: Promise<AcceptedWorkResult>;
+  /** A Cadence coordinator turn, admitted through the conversation's mode. */
+  coordinator: boolean;
+  /** Messages admitted into this run, oldest first. */
+  inputs: LiveInput[];
+  /** Hands the run's worker a message; null without a connected worker. */
+  worker: ((message: WorkerInput) => boolean) | null;
+  /** The worker listens: nothing is handed over before. */
+  ready: boolean;
+  /** The reply takes no further message: it has ended or never had a worker. */
+  ended: boolean;
 }
 
 /** What a browser turn's worker streams that Pi has not written yet: the
  * message being generated and the tool running, as bounded previews. */
 export class LiveCapture {
   retry: ChatTurn["retry"];
-  readonly omitted = { thinking: false, media: false, other: false };
   notice = "";
+  /** What was observed and not kept, for the run's own message and then for
+   * each message delivered into it, in the order Pi was given them. */
+  private readonly unkept = [{ thinking: false, media: false, other: false }];
+  private users = 0;
   private readonly assistants: { id: string; text: string; error: boolean }[] =
     [];
   private readonly tools: {
@@ -156,6 +198,16 @@ export class LiveCapture {
     private readonly secrets: () => readonly string[],
     private readonly inputImages = false,
   ) {}
+  /** The flags of the message whose reply is being captured. */
+  get omitted(): ChatTurn["omitted"] {
+    return this.unkept[this.unkept.length - 1];
+  }
+  /** The flags of the run's `index`th delivered message, its own being 0. */
+  omittedFor(index: number): ChatTurn["omitted"] {
+    return (
+      this.unkept[index] ?? { thinking: false, media: false, other: false }
+    );
+  }
   private bounded(value: string): string {
     return Buffer.byteLength(value) <= PREVIEW_BYTES
       ? value
@@ -174,8 +226,12 @@ export class LiveCapture {
   }
   accept(frame: CaptureFrame): void {
     const e = frame.event;
-    if (e.kind === "message-start" && e.role === "user" && this.inputImages) {
-      this.imageUser = e.messageId;
+    if (e.kind === "message-start" && e.role === "user") {
+      // Only the run's own message carries the admitted images; each later
+      // user message was sent into the run and starts its own flags.
+      if (this.users++)
+        this.unkept.push({ thinking: false, media: false, other: false });
+      else if (this.inputImages) this.imageUser = e.messageId;
     } else if (e.kind === "message-start" && e.role === "assistant") {
       if (!this.assistants.some((a) => a.id === e.messageId)) {
         this.assistants.push({ id: e.messageId, text: "", error: false });
@@ -255,9 +311,13 @@ export class LiveCapture {
    * message when it ends, in the order the worker streamed them, so the
    * written assistant messages and tool results are counted, not matched.
    * Thinking is not streamed here: a block that splits one message's text
-   * leaves that text counted once. */
-  extend(items: ChatItem[]): { items: ChatItem[]; stable: number } {
-    const out = items.map((item) => ({ ...item }));
+   * leaves that text counted once. The capture covers the whole run, so the
+   * items of its `earlier` turns are counted too and left out of the result. */
+  extend(
+    items: ChatItem[],
+    earlier: readonly ChatItem[] = [],
+  ): { items: ChatItem[]; stable: number } {
+    const out = [...earlier, ...items].map((item) => ({ ...item }));
     let written = 0,
       counted: string | undefined;
     for (const item of out) {
@@ -304,7 +364,10 @@ export class LiveCapture {
         error: message.error,
       });
     });
-    return { items: out, stable };
+    return {
+      items: out.slice(earlier.length),
+      stable: Math.max(0, stable - earlier.length),
+    };
   }
 }
 
@@ -312,6 +375,8 @@ export class Conversations {
   readonly records: ConversationRecords;
   readonly contexts: ConversationContexts;
   private readonly active = new Map<string, LiveTurn>();
+  /** The messages of every live run, by their own command. */
+  private readonly inputs = new Map<string, LiveInput>();
   /** Sessions a rename child is appending to: no second rename, no Send. */
   private readonly renaming = new Set<string>();
   private readonly renames = new Map<
@@ -352,6 +417,7 @@ export class Conversations {
       ...o,
       assertCurrent: () => o.owner.lease.assert(),
       active: this.active,
+      inputs: this.inputs,
     });
     this.contexts =
       o.contexts ??
@@ -394,7 +460,8 @@ export class Conversations {
    * its worker may still write to the session. A message the previous owner's
    * death interrupted (still recorded queued or running) does not refuse: host
    * startup has already stopped that owner's workers by exact identity, and the
-   * reader reports the reply as interrupted. */
+   * reader reports the reply as interrupted. A session's newest command may be
+   * a message sent into a reply: that reply's closure counts for it. */
   assertSettled(): void {
     this.o.owner.lease.assert();
     const sessions = join(this.records.root, "sessions");
@@ -424,7 +491,7 @@ export class Conversations {
       this.records.index(conversationId).commands.includes(commandId)
     );
   }
-  private command(input: Send, reply: boolean): Send {
+  private command<C extends Send | Input>(input: C, reply = false): C {
     return {
       ...input,
       text: reply ? "exit cadence" : sanitizeText(input.text, this.o.secrets()),
@@ -432,7 +499,7 @@ export class Conversations {
   }
   /** A lost reply observes its original acceptance; it never admits again.
    * Any caller-side freshness check must come after this lookup. */
-  receipt(input: Send, reply = false): WorkbenchResult | undefined {
+  receipt(input: Send | Input, reply = false): WorkbenchResult | undefined {
     this.o.owner.lease.assert();
     const prior = this.records.accepted(input.commandId);
     if (!prior) return undefined;
@@ -529,6 +596,12 @@ export class Conversations {
       begin = resolve;
     });
     const live: LiveTurn = {
+      coordinator: !!control,
+      inputs: [],
+      worker: null,
+      ready: false,
+      // A control reply has no worker to take a message.
+      ended: !!control?.reply,
       runtime,
       images: claimImages?.() ?? [],
       execution,
@@ -587,6 +660,184 @@ export class Conversations {
     }
     begin();
     return { kind: "accepted", commandId: input.commandId };
+  }
+  /** The live run a command names, for the owner epoch it was observed in. */
+  private running(request: Input | InputCancel): LiveTurn {
+    const live = this.active.get(request.turnId);
+    if (!live)
+      throw new ContractError(
+        this.records.hasCommand(request.conversationId, request.turnId)
+          ? "stale"
+          : "invalid",
+      );
+    if (
+      live.accepted.session !== request.conversationId ||
+      live.epoch !== request.epoch
+    )
+      throw new ContractError("stale");
+    return live;
+  }
+  /** Hands the worker every admitted message it has not been given. */
+  private dispatch(live: LiveTurn): void {
+    if (!live.ready || !live.worker) return;
+    for (const input of live.inputs)
+      if (!input.sent && !input.withdrawn)
+        input.sent = live.worker({
+          kind: "input",
+          id: input.commandId,
+          mode: input.accepted.command.mode,
+          text: input.accepted.command.text,
+        });
+  }
+  /** Admits a message into a reply that is running. It is recorded like a
+   * Send before the run's worker is told; that worker alone gives it to Pi,
+   * and nothing about it outlives the worker, so nothing can be replayed.
+   * `coordinator` is whether the conversation is in Cadence mode: a message
+   * joins only the kind of run that mode admits. */
+  input(
+    request: Input,
+    coordinator: boolean,
+    beforeAccept?: () => void,
+  ): WorkbenchResult {
+    this.o.owner.lease.assert();
+    const command = this.command(request);
+    const receipt = this.receipt(request);
+    if (receipt) return receipt;
+    if (
+      this.files.directory(
+        dirname(this.records.path(request.commandId, "state.json")),
+      )
+    )
+      throw new ContractError("corrupt-selected");
+    if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
+    const live = this.running(request);
+    // A reply that is being stopped or has ended takes nothing further.
+    if (live.abort.signal.aborted || live.ended)
+      throw new ContractError("stale");
+    if (live.coordinator !== coordinator) throw new ContractError("conflict");
+    if (!command.text.trim()) throw new ContractError("invalid");
+    const session = this.records.sessions.session(request.conversationId);
+    if (
+      live.inputs.length >= RUN_INPUTS ||
+      live.inputs.filter(
+        (input) => !input.withdrawn && !session?.delivered(input.commandId),
+      ).length >= WAITING_INPUTS
+    )
+      throw new ContractError("capacity");
+    const space = statfsSync(this.o.coordination.directory);
+    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
+      throw new ContractError("capacity");
+    const index = this.records.index(request.conversationId);
+    const accepted = {
+      execution: live.accepted.execution,
+      directory: live.accepted.directory,
+      file: live.accepted.file,
+      command,
+      at: Date.now(),
+      session: request.conversationId,
+      parent: null,
+      offset: session?.read?.size ?? 0,
+    };
+    const state: CommandState = {
+      status: "queued",
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      user: null,
+    };
+    // Beyond this point even a failed write is uncertain.
+    beforeAccept?.();
+    this.write(this.records.path(request.commandId, "accepted.json"), accepted);
+    const input: LiveInput = {
+      commandId: request.commandId,
+      accepted,
+      state,
+      stateFile: this.write(
+        this.records.path(request.commandId, "state.json"),
+        state,
+      ),
+      sent: false,
+      withdrawn: false,
+    };
+    this.write(
+      this.records.indexPath(request.conversationId),
+      {
+        schema: "cadence-session-commands/1",
+        id: request.conversationId,
+        commands: [...index.commands, request.commandId].slice(
+          -INDEXED_COMMANDS,
+        ),
+      },
+      META_BYTES,
+      index.file,
+    );
+    // Durably accepted: only now may the worker learn of it.
+    live.inputs.push(input);
+    this.inputs.set(input.commandId, input);
+    this.dispatch(live);
+    return { kind: "accepted", commandId: request.commandId };
+  }
+  /** Records that a message was withdrawn before Pi was given it. */
+  private withdraw(input: LiveInput): void {
+    const state: CommandState = {
+      ...input.state,
+      status: "canceled",
+      notice: WITHDRAWN,
+    };
+    input.stateFile = this.write(
+      this.records.path(input.commandId, "state.json"),
+      state,
+      META_BYTES,
+      input.stateFile,
+    );
+    input.state = state;
+    input.withdrawn = true;
+  }
+  /** Withdraws a message Pi has not been given. One the worker already holds
+   * is withdrawn only when the worker confirms it was still waiting; one Pi
+   * has, or a reply that has ended, refuses without changing anything. */
+  cancelInput(
+    request: InputCancel,
+  ): WorkbenchResult | Promise<WorkbenchResult> {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
+    const live = this.running(request);
+    const input = live.inputs.find((i) => i.commandId === request.inputId);
+    if (!input) throw new ContractError("invalid");
+    const accepted: WorkbenchResult = {
+      kind: "accepted",
+      commandId: request.commandId,
+    };
+    if (input.withdrawn) return accepted;
+    if (!input.sent) {
+      this.withdraw(input);
+      return accepted;
+    }
+    // One question to the worker, however many requests wait for its answer.
+    let waiting = input.withdrawal;
+    if (!waiting) {
+      let answer!: (removed: boolean) => void;
+      const result = new Promise<void>((resolve, reject) => {
+        answer = (removed) => {
+          input.withdrawal = undefined;
+          try {
+            if (!removed) throw new ContractError("conflict");
+            this.withdraw(input);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+      // A lost reply leaves this unobserved.
+      result.catch(() => {});
+      waiting = input.withdrawal = { result, answer };
+      if (
+        live.ended ||
+        !live.worker?.({ kind: "input-cancel", id: input.commandId })
+      )
+        answer(false);
+    }
+    return waiting.result.then(() => accepted);
   }
   /** Records a session's name as the terminal's `/name` does: a child lets
    * Pi append one `session_info` entry, and the command is acknowledged only
@@ -702,6 +953,8 @@ export class Conversations {
     }
     return { kind: "accepted", commandId: request.commandId };
   }
+  /** Stops a run. It is named by its own command: a message sent into it has
+   * no worker of its own to stop. */
   interrupt(id: string, turnId: string, epoch: string): void {
     this.o.owner.lease.assert();
     const live = this.active.get(turnId);
@@ -738,15 +991,6 @@ export class Conversations {
         redacted: false,
         omissions: ["gap"],
       },
-    };
-    const save = () => {
-      if (!live.stateFile) throw new ContractError("corrupt-selected");
-      live.stateFile = this.write(
-        this.records.path(commandId, "state.json"),
-        state,
-        META_BYTES,
-        live.stateFile,
-      );
     };
     const current = () =>
       !abort.signal.aborted &&
@@ -822,7 +1066,7 @@ export class Conversations {
       if (prepared.status !== "prepared" || !current())
         throw new ContractError("auth-unavailable");
       state.status = "running";
-      save();
+      this.save(live);
       this.write(this.records.path(commandId, "launch.json"), {
         epoch: live.epoch,
         childRunId: request.childRunId,
@@ -855,6 +1099,15 @@ export class Conversations {
             images: live.images,
             ownerSecrets: this.o.secrets,
             onCoordinator: control?.onTool,
+            inputs: {
+              open: (send) => {
+                live.worker = send;
+              },
+              withdrawn: (id, removed) =>
+                live.inputs
+                  .find((input) => input.commandId === id)
+                  ?.withdrawal?.answer(removed),
+            },
             maySignal: this.maySignal,
             onNative: (value) => {
               native = value;
@@ -862,6 +1115,12 @@ export class Conversations {
             onFrame: (frame, secrets) => {
               credentials = secrets;
               capture.accept(frame);
+              // The worker listens from its ready frame and takes nothing
+              // after its final one.
+              if (frame.event.kind === "ready") {
+                live.ready = true;
+                this.dispatch(live);
+              } else if (frame.event.kind === "final") live.ended = true;
             },
           },
         ),
@@ -871,6 +1130,7 @@ export class Conversations {
         abort.abort({ source: "service", reason: "stop", target: commandId }),
       );
       const result = await running;
+      live.ended = true;
       capture.retry = undefined;
       uncertain = !result.closed;
       state.status = result.outcome;
@@ -886,6 +1146,10 @@ export class Conversations {
       state.notice ||=
         error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
+      // No worker is left to take a message or to answer a withdrawal.
+      live.ended = true;
+      live.worker = null;
+      for (const input of live.inputs) input.withdrawal?.answer(false);
       await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
@@ -899,26 +1163,78 @@ export class Conversations {
           live.capture.retry = undefined;
           if (state.status !== "completed")
             state.notice ||= live.capture.notice;
-          state.omitted = { ...live.capture.omitted };
         }
-        try {
-          state.user =
-            this.records.sessions
-              .session(accepted.session)
-              ?.commandEntries(commandId, accepted.parent, accepted.offset)[0]
-              ?.id ?? null;
-        } catch {
-          // An unreadable session leaves the message's entry unknown, not lost.
-          state.user = null;
-        }
-        save();
+        this.settle(live, uncertain);
       } catch {
         uncertain = true;
       }
       if (uncertain) this.o.owner.quarantine();
       else if (this.o.owner.state === "idle") barrier?.release();
+      for (const input of live.inputs) this.inputs.delete(input.commandId);
       this.active.delete(commandId);
     }
     return { status: uncertain ? "uncertain" : "settled" };
+  }
+  private save(live: LiveTurn): void {
+    if (!live.stateFile) throw new ContractError("corrupt-selected");
+    live.stateFile = this.write(
+      this.records.path(live.commandId, "state.json"),
+      live.state,
+      META_BYTES,
+      live.stateFile,
+    );
+  }
+  /** Records how a run's messages ended, once its worker has. What Pi wrote
+   * says which of them it was given: each has its user entry, the newest
+   * takes the run's outcome and the earlier ones end as Pi recorded their
+   * replies. A message Pi was never given is recorded as not delivered, and
+   * an unknown closure leaves every one of them unknown. */
+  private settle(live: LiveTurn, uncertain: boolean): void {
+    const { accepted, commandId } = live;
+    const inputs = live.inputs.filter((input) => !input.withdrawn);
+    let parts: { commandId: string; entries: SessionEntry[] }[] | undefined;
+    try {
+      parts =
+        this.records.sessions.session(accepted.session)?.runEntries(
+          { commandId, parent: accepted.parent, offset: accepted.offset },
+          inputs.map((input) => ({
+            commandId: input.commandId,
+            offset: input.accepted.offset,
+          })),
+        ) ?? [];
+    } catch {
+      // An unreadable session leaves the messages' entries unknown, not lost.
+    }
+    const outcome = { status: live.state.status, notice: live.state.notice };
+    const newest = parts?.at(-1)?.commandId ?? commandId;
+    for (const message of [live, ...inputs]) {
+      const at =
+        parts?.findIndex((part) => part.commandId === message.commandId) ?? -1;
+      const part = parts?.[at];
+      const ended: Pick<CommandState, "status" | "notice"> = uncertain
+        ? { status: "unknown", notice: outcome.notice }
+        : message.commandId === newest
+          ? outcome
+          : part
+            ? { status: replyStatus(part.entries), notice: "" }
+            : parts
+              ? { status: "canceled", notice: NOT_DELIVERED }
+              : { status: "failed", notice: UNOBSERVED };
+      Object.assign(message.state, ended, {
+        user: part?.entries[0]?.id ?? null,
+      });
+      // The capture numbers its flags as Pi was given the messages.
+      const given = message === live ? 0 : at;
+      if (live.capture && given >= 0)
+        message.state.omitted = { ...live.capture.omittedFor(given) };
+    }
+    for (const input of inputs)
+      input.stateFile = this.write(
+        this.records.path(input.commandId, "state.json"),
+        input.state,
+        META_BYTES,
+        input.stateFile,
+      );
+    this.save(live);
   }
 }

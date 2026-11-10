@@ -159,32 +159,9 @@ it("an unwritten live Send preserves read redaction and recovery across readonly
   const f = fixture(),
     id = randomUUID(),
     secret = "new-live-credential";
-  const commandId = f.command(id, "queued", null, `Question ${secret}`),
-    accepted = f.records.accepted(commandId);
-  if (!accepted) throw Error("admission");
+  const commandId = f.command(id, "queued", null, `Question ${secret}`);
   const capture = new LiveCapture(() => [secret]);
-  f.active.set(commandId, {
-    commandId,
-    accepted,
-    epoch: randomUUID(),
-    title: `Question ${secret}`,
-    execution: {
-      cwd: f.cwd,
-      checkoutRoot: f.cwd,
-      model: null,
-      version: accepted.command.model,
-    },
-    state: {
-      status: "queued",
-      notice: "",
-      user: null,
-      omitted: { thinking: false, media: false, other: false },
-    },
-    stateFile: null,
-    capture,
-    abort: new AbortController(),
-    original: new Promise(() => {}),
-  });
+  goLive(f, commandId, capture, "queued");
   f.secrets([secret]);
   const head = f.records.conversation(id, null, null),
     turn = f.records.turnSteps(id, null, 0, null);
@@ -250,10 +227,16 @@ function goLive(
   f: ReturnType<typeof fixture>,
   commandId: string,
   capture: LiveCapture | null = null,
+  status: "queued" | "running" = "running",
 ) {
   const accepted = f.records.accepted(commandId);
-  if (!accepted) throw Error("admission");
-  f.active.set(commandId, {
+  if (accepted?.command.kind !== "send") throw Error("admission");
+  const live: LiveTurn = {
+    coordinator: false,
+    inputs: [],
+    worker: null,
+    ready: false,
+    ended: false,
     commandId,
     accepted,
     epoch: randomUUID(),
@@ -265,7 +248,7 @@ function goLive(
       version: accepted.command.model,
     },
     state: {
-      status: "running",
+      status,
       notice: "",
       user: null,
       omitted: { thinking: false, media: false, other: false },
@@ -274,7 +257,9 @@ function goLive(
     capture,
     abort: new AbortController(),
     original: new Promise(() => {}),
-  });
+  };
+  f.active.set(commandId, live);
+  return live;
 }
 it("thinking Pi wrote is a lazily read step; the capture's recorded thinking flag is not reported beside it", () => {
   const f = fixture(),

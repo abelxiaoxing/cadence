@@ -129,11 +129,13 @@ Mode/plan/run links belong to the owner-private versioned conversation-control s
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
+While that turn runs it takes further messages like an ordinary reply (see [Ordinary conversations](#ordinary-conversations)): they join the turn the mode names, change no mode or plan state and are never read as approval, exit or mode entry.
 A plan card persists across later messages until a new plan replaces it, the user exits or execution is admitted; a refused approval keeps the card.
 Plans may be published while other workflows run; research is refused with an explanation only behind an approved implementation, and its run ID is recorded only once accepted.
 An unreadable or incomplete control record degrades only its own conversation: the read carries a notice, every Cadence command there refuses, and nothing is repaired; other conversations and owner startup are unaffected.
 Lost replies to Send or approval return the original receipt or run on a retry with the same command ID.
-One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last message to that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
+One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last run in that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
+That run is the coordinator turn the mode names together with every message sent into it: all of them must have ended with a known closure, and the branch must end in the turn of the newest one Pi was given.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
 Both surfaces display the owner-bound target/ref/base and named stable-worktree policy before approval, then recorded candidate acceptance, actual integration, post-checks and retention.
@@ -252,7 +254,7 @@ There are no image-specific count, byte or dimension quotas, including for incom
 No consumer file is cleaned.
 At admission the exact selected model must support images and the live turn takes the bytes independently of viewer departure.
 Only image count enters the public worker request; the owner-only fd 3 payload is bound by its exact byte length/SHA-256 in the private envelope.
-The coordinator retains IPC fd 4.
+IPC stays on fd 4: credential replies, a coordinator's tool calls and the messages sent into a running reply, which carry no images.
 The worker verifies the payload, declared count, format/dimensions and pinned model capability, then supplies Pi's public `prompt` image option.
 Pi alone writes the durable content.
 Preview Blob URLs are created only after the shared format/header and nonzero-dimension check.
@@ -273,10 +275,12 @@ A terminal holding the session keeps its old name until `/resume`; its next mess
 The session directory follows Pi's precedence: `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in the project's `.pi/settings.json` or the agent directory's `settings.json`, then `<agentDir>/sessions/--<cwd>--`; session headers bind their own cwd within the owning checkout.
 Same-checkout subdirectories share the owner's readonly session cache, not one execution cwd; another account's agent directory is never adopted.
 Each browser turn records `cadence-browser-command/1` after each finalized Pi message, naming its actual user entry and owned prefix through the worker's public SessionManager; command identity and parent/offset checks, never prompt text, associate its entries.
+A message sent into a running reply is recorded the same way under its own command, from the user entry Pi writes for it, and also names the reply's command (`run`); the reader splits the run's entries where each such message began.
 A browser-created session carries a `cadence-webui/1` custom entry, which Pi keeps out of the model context; the terminal resumes it with `/resume` or `pi --session <id>` like any other session.
 Pi writes each message when it ends, raw: thinking, signatures and tool output are stored as the terminal stores them, and the owner redacts its credentials from everything it returns instead.
 Read redaction uses the owner's current literals, or the last ones observed while the model configuration is reloaded or edited; without any, reads refuse rather than return unredacted content.
 The owner never rewrites, repairs or deletes a session file; its own private `service-v1/conversation-commands-v1` records each browser message's admission (command, the entry it continues, the file size then, status, auth journal and native closure), never content.
+A message sent into a running reply has the same record with that reply's command in place of an entry to continue; the auth journal and native closure are the reply's.
 Archiving is the owner's own record too: `conversation-archive` writes or removes `service-v1/conversations-v1/archive/<session>.json`, whose presence is the whole fact, and never moves, rewrites or deletes the session file, so `pi -r` still lists the session.
 The record covers the checkout: one owner lists every same-checkout session, and other checkouts are unaffected.
 Their tools operate on the host, not in a sandbox.
@@ -288,13 +292,22 @@ File views follow the retained conversation cwd, and directory navigation does n
 The UI labels recorded context as fixed at admission, not as proof that tools ran.
 Older records without a snapshot stay readable without invented model/directory evidence.
 A Send names the entry it continues: the end of the branch the browser shows, or none for an empty session.
-The owner admits one browser message per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
-A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on.
+The owner admits one browser run per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
+While a run's reply is in progress, `conversation-input` sends it a further message, bound to that run and owner epoch and without a head, model or image: `steer` is handed to Pi at once and reaches the model at Pi's next opportunity (after the tool calls in progress, before its next request), and `queue` waits in the worker and becomes its next prompt once the reply has ended normally.
+The owner records such a message durably before its worker hears of it and hands it over only once the worker's ready frame shows it listening; the worker tells Pi's deliveries apart by the order it handed the messages over, never by their text.
+It is no admission of its own: the run keeps its checkout gate, admitted directory and model, one worker and one native settlement across every message, and Cancel or Stop name the run and end all of it.
+Nothing about a waiting message outlives that worker.
+A reply that fails for good or is stopped delivers nothing further (the worker takes back what Pi still holds before Pi can continue into it), a reply ending just as a message arrives may leave it behind, and each such message is recorded as not delivered: nothing sends it again.
+`conversation-input-cancel` withdraws a message Pi has not been given, at once while only the owner holds it and otherwise when the worker confirms it was still waiting; one Pi holds or has delivered refuses as a `conflict` that changes nothing.
+The bounds are in [limits](limits.md).
+The WebUI composer offers neither kind of message yet; its transcript shows a delivered one as the ordinary turn it is.
+A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on, and so is each message its reply ended without delivering (`undelivered`), with its reason.
 A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
 The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking, and the session holds what Pi wrote.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns.
 A turn the previous owner's death cut short (still recorded queued or running) is reported as interrupted and does not keep the next owner from starting, because host startup has already stopped that owner's workers by exact identity; a turn whose closure an owner itself recorded as unknown keeps fences and refuses startup.
+A message sent into a reply shares that reply's worker and follows it in both cases: left queued by a dead owner it is interrupted, and an unknown closure of the reply leaves it unknown too and refuses startup even when the session's newest record is such a message.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader or prompt composer.
 SDK-native automatic compaction is enabled, and terminal `/compact` entries are honoured when continued; original history is retained.
 The service-owned SDK session retries transient model-request errors with the bounded policy in `src/worker-model.mjs`; native Pi's main dialogue retains its own settings, which Cadence neither changes nor copies.
@@ -308,17 +321,20 @@ History lists the project's sessions that are not archived by last modification,
 An archived conversation stays in that roster while a reply runs and still reads by link, where its summary says it is archived; the stopped-owner reader applies the same records.
 Listing reads each file once and then only what Pi appends, ignoring a torn final line; a replaced or shortened file is read again from its start.
 A conversation reads one branch, named by its last entry, as one continuous transcript: the head read gives the summary, the branch end, whether it still continues the one shown before, the branch and leaf counts, the terminal's workflows and the branch's context size; each turn (a user message and what followed it) is read by position as listed steps, and a step's full item is read separately in parts that each fit one reply.
+While a reply runs the head also lists the messages sent into it that Pi has not written (`pending`: command, mode and a short prefix of the text), oldest first, so a client can show them beside the reply and withdraw one.
 The context size is what the branch's last completed model response reported: its token total by Pi's rule for a valid usage (a reply neither failed nor aborted, above zero), with that reply's provider and model, both redacted like other session text.
 It leaves out Pi's own estimate of the messages after that response, is unknown (`null`) once a compaction follows it, and is absent when no such response lies within the reader's walk of the branch end; a live browser turn counts the entries Pi has written for it, so the figure follows each model call.
 The reader has no model registry, so it never states a window or a percentage: the model catalog and the gateway preview give a model's context window when its source states a positive one, and matching that to the reply's provider and model is left to the browser.
 A turn read names the turn's last entry and the entry its user message continues (the parent Pi recorded, which may be an entry that is not shown, or the admitted head while Pi has not written the message): a Send from the former continues after the turn, and one from the latter starts a branch beside it.
-Without a chosen branch the WebUI follows Pi's current leaf, the entry appended last; a live browser turn ends the branch it was sent from until it settles.
+Without a chosen branch the WebUI follows Pi's current leaf, the entry appended last; a live browser run ends the branch where its newest message began until it settles: the entry it was sent from, then, each time Pi writes a message sent into it, the entry that message continues.
+The run's earlier messages are by then ordinary turns of that branch, each ended as Pi recorded its reply, and its newest is the one live turn.
+A head read that names an earlier end of the live run follows it to the current one, so a client that chose the branch it sent from keeps the run in view; turn, step and image reads name their branch exactly.
 A listing never carries a tool's arguments or output or a thinking block's text, and keeps at most 16KiB of message text; the WebUI reads a tool's detail when its step is opened and a clipped message's rest when it is shown.
 Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps.
 A readable thinking block is a step of its own role in its recorded place, read in full through the step-detail read like a tool's output; its signature is never returned.
 Thinking Pi stored unreadable (redacted, or a signature without text) and unsupported media are flagged as omitted.
 Supported user images are small entry/index/MIME descriptors on their exact branch.
-A live turn extends that view only with its verified command-owned prefix; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
+A live turn extends that view only with its verified command-owned prefix, the entries of the run's newest message; before Pi flushes a new session, explicitly marked live-command descriptors read only that admitted turn's in-memory input, not arbitrary descendants or another durable store.
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
 A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.

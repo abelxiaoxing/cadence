@@ -569,6 +569,92 @@ it("finds a browser turn's own entries, not a terminal message sent from the sam
   ).toEqual([browser.id, marker.id, reply.id, final.id]);
 });
 
+it("a run's entries are split where each message sent into it began, in the order Pi wrote them", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const u1 = user(null, "start");
+  const a1 = assistant(u1.id, [{ type: "text", text: "ok" }]);
+  const { id, path } = write(dir, cwd, [u1, a1]);
+  const sessions = new PiSessions(dir, cwd);
+  const read = () => {
+    const session = sessions.session(id);
+    if (!session) throw Error("session");
+    return session;
+  };
+  const offset = read().read?.size ?? 0;
+  const run = randomUUID(),
+    steer = randomUUID(),
+    queued = randomUUID(),
+    waiting = randomUUID();
+  let leaf = a1.id;
+  const add = (...entries: Entry[]) => {
+    appendFileSync(path, entries.map(line).join(""));
+    leaf = entries.at(-1)?.id ?? leaf;
+    return entries;
+  };
+  /** Pi writes a message and its reply; the worker marks each. */
+  const turn = (commandId: string, text: string, of?: string) => {
+    const mark = (userId: string, parentId: string) =>
+      entry("custom", parentId, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId, userId, ...(of ? { run: of } : {}) },
+      });
+    const message = user(leaf, text);
+    const first = mark(message.id, message.id);
+    const reply = assistant(first.id, [{ type: "text", text: `re: ${text}` }]);
+    return add(message, first, reply, mark(message.id, reply.id)).map(
+      (e) => e.id,
+    );
+  };
+  const own = turn(run, "Start");
+  const parts = (inputs: string[], from = offset) =>
+    read()
+      .runEntries(
+        { commandId: run, parent: a1.id, offset },
+        inputs.map((commandId) => ({ commandId, offset: from })),
+      )
+      .map((part) => [part.commandId, part.entries.map((e) => e.id)]);
+  // Admitted in another order than Pi was given them; one never delivered.
+  const sent = [queued, waiting, steer];
+  expect(parts(sent)).toEqual([[run, own]]);
+  expect(read().delivered(steer)).toBe(false);
+  // Pi compacts between two messages: that entry stays with the earlier one.
+  const compaction = add(entry("compaction", leaf, { summary: "so far" }))[0];
+  const steered = turn(steer, "Steer", run);
+  // The terminal sends from inside the run meanwhile: a branch of its own.
+  appendFileSync(path, line(user(own[1], "from the terminal")));
+  const later = turn(queued, "Queued", run);
+  expect(parts(sent)).toEqual([
+    [run, [...own, compaction.id]],
+    [steer, steered],
+    [queued, later],
+  ]);
+  expect(sent.map((commandId) => read().delivered(commandId))).toEqual([
+    true,
+    false,
+    true,
+  ]);
+  // Read alone, the run's own entries end at its newest boundary.
+  expect(
+    read()
+      .commandEntries(run, a1.id, offset)
+      .map((e) => e.id),
+  ).toEqual(own);
+  // A boundary cannot claim a message Pi wrote before its command existed,
+  // nor one of another run, nor stand without the run's own message.
+  expect(() => parts(sent, read().read?.size ?? 0)).toThrow("corrupt-selected");
+  turn(waiting, "Another run's", randomUUID());
+  expect(() => parts(sent)).toThrow("corrupt-selected");
+  expect(() =>
+    read().runEntries({ commandId: randomUUID(), parent: a1.id, offset }, [
+      { commandId: steer, offset },
+    ]),
+  ).toThrow("corrupt-selected");
+  expect(() =>
+    read().runEntries({ commandId: run, parent: u1.id, offset }, []),
+  ).toThrow("stale");
+});
+
 it("keeps the newest tree nodes when a session has more than one read holds", () => {
   const cwd = project();
   const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
@@ -690,6 +776,64 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
   ]);
   expect(stable).toBe(2);
   expect(written[2].text).toBe("");
+  // The capture covers the whole run: once a message sent into it begins a
+  // new turn, the items of the earlier turns are counted and left out.
+  const earlier = [written[0], written[1], { ...written[2], text: "done" }];
+  const next = {
+    id: "u2",
+    role: "user" as const,
+    text: "steer",
+    name: "",
+    args: "",
+    error: false,
+  };
+  expect(capture.extend([next], earlier)).toEqual({
+    items: [next, { ...next, id: "a2", role: "assistant", text: "" }],
+    stable: 1,
+  });
+});
+
+it("a capture keeps what it did not keep apart for each message of the run, and admitted images belong to the first", () => {
+  const capture = new LiveCapture(() => [], true);
+  let seq = 0;
+  const frame = (event: Record<string, unknown>) =>
+    capture.accept({
+      protocol: 2,
+      childRunId: "c",
+      workerSeq: ++seq,
+      observedMs: 0,
+      event,
+    } as unknown as CaptureFrame);
+  const start = (messageId: string) =>
+    frame({ kind: "message-start", messageId, role: "user" });
+  const omitted = (messageId: string, sourceType: string, reason: string) =>
+    frame({
+      kind: "omitted-block",
+      block: {
+        owner: { kind: "message", messageId, blockId: "b", index: 0 },
+        sourceType,
+        mimeType: null,
+        reason,
+      },
+    });
+  start("u1");
+  // The admitted images are shown from the Send itself, not flagged.
+  omitted("u1", "image", "binary");
+  omitted("a1", "unsupported", "unsupported");
+  start("u2");
+  expect(capture.omitted).toEqual({
+    thinking: false,
+    media: false,
+    other: false,
+  });
+  // A later user message carries no admitted image: its media is omitted.
+  omitted("u2", "image", "binary");
+  expect([0, 1, 2].map((index) => capture.omittedFor(index))).toEqual([
+    { thinking: false, media: false, other: true },
+    { thinking: false, media: true, other: false },
+    { thinking: false, media: false, other: false },
+  ]);
+  expect(capture.omitted).toBe(capture.omittedFor(1));
 });
 
 it("a branch's context size is its last valid model response's, unknown after a compaction and bounded", () => {

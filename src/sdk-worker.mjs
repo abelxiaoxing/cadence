@@ -28,6 +28,7 @@ import {
 } from "./session-entries.mjs";
 import { terminateLastLine } from "./session-file.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
+import { conversationInputs } from "./worker-inputs.mjs";
 import {
   decodeWorkerRuntime,
   defaultWorkerTools,
@@ -69,6 +70,8 @@ let ownsChannel = false;
 let ownedAgent;
 let unsubscribe;
 let unsubscribeRetry;
+let unsubscribeInputs;
+let inputs;
 let modelState;
 let emitter;
 let capture;
@@ -133,17 +136,24 @@ const refuse = (where, category) => {
   fail(where, category);
   throw new Error("Worker refused");
 };
+const abortSession = async () => {
+  try {
+    await session.abort();
+  } catch {
+    cleanupFailures |= 2;
+    fail("cleanup", "cleanup-failure");
+  }
+};
 const abortForFailure = () => {
+  // A stopped or failed turn delivers no further message.
+  try {
+    inputs?.stop();
+  } catch {
+    fail("cleanup", "cleanup-failure");
+  }
   // Attach a rejection handler immediately, including synchronous SDK throws.
   // Do not let fire-and-forget abort print a secret-bearing unhandled rejection.
-  pendingAbort ??= (async () => {
-    try {
-      await session.abort();
-    } catch {
-      cleanupFailures |= 2;
-      fail("cleanup", "cleanup-failure");
-    }
-  })();
+  pendingAbort ??= abortSession();
 };
 /** The project's Pi session a browser turn writes, as the terminal shares it:
  * continued from the entry the browser showed, so a session that moved on
@@ -608,11 +618,24 @@ try {
   session.agent.state.tools = ingress.wrap(
     toolkit.wrap(session.agent.state.tools),
   );
-  const initialLeaf = conversation ? manager.getLeafId() : null;
+  if (conversation && process.send) {
+    inputs = conversationInputs(process, session, (category) => {
+      fail("events", category);
+      abortForFailure();
+    });
+    unsubscribeInputs = session.subscribe((event) => inputs.event(event));
+  }
+  // The browser message whose entries Pi is writing: this run's own, then
+  // each one sent into it, from the moment Pi writes that message.
+  let command = publicRequest.runId;
+  let initialLeaf = conversation ? manager.getLeafId() : null;
   let recordedUser = null;
   unsubscribe = session.agent.subscribe(async (event) => {
     try {
       sdkEvents++;
+      // A stop requested before this run existed found nothing to abort.
+      if (pendingAbort && own(event, "type") === "agent_start")
+        void abortSession();
       if (own(event, "type") === "message_update") {
         const update = own(event, "assistantMessageEvent");
         const type = own(update, "type");
@@ -640,15 +663,23 @@ try {
           )
             refuse("events", "event-projection-failed");
           if (own(message, "role") === "user") {
-            if (recordedUser !== null)
-              refuse("events", "event-projection-failed");
+            if (recordedUser !== null) {
+              // Within a reply Pi delivers only the steers it was handed, in
+              // that order: this message is the oldest one outstanding.
+              const steered = inputs?.delivered();
+              if (!steered) refuse("events", "event-projection-failed");
+              command = steered.id;
+            }
             recordedUser = entry.id;
           }
           if (recordedUser === null)
             refuse("events", "event-projection-failed");
           manager.appendCustomEntry(BROWSER_COMMAND_ENTRY, {
-            commandId: publicRequest.runId,
+            commandId: command,
             userId: recordedUser,
+            ...(command === publicRequest.runId
+              ? {}
+              : { run: publicRequest.runId }),
           });
         }
         if (own(message, "role") === "assistant") {
@@ -756,17 +787,36 @@ try {
       if (!accepted) fail("preflight", "preflight-rejected");
     },
   });
-  stage = "assistant-final";
-  if (!failure && terminalStopReason === "error")
-    refuse("assistant-final", "model-request-failed");
-  if (failure || terminalStopReason !== "stop" || ingress.frames !== 0)
-    refuse("assistant-final", "terminal-incomplete");
+  for (;;) {
+    stage = "assistant-final";
+    if (!failure && terminalStopReason === "error")
+      refuse("assistant-final", "model-request-failed");
+    if (
+      failure ||
+      pendingAbort ||
+      terminalStopReason !== "stop" ||
+      ingress.frames !== 0
+    )
+      refuse("assistant-final", "terminal-incomplete");
+    // Only a reply that ended normally is followed by a waiting message: it
+    // is this worker's next prompt, never one Pi continues into by itself.
+    const next = inputs?.next();
+    if (!next) break;
+    stage = "prompt";
+    command = next.id;
+    recordedUser = null;
+    initialLeaf = manager.getLeafId();
+    terminalStopReason = "UNKNOWN";
+    await session.prompt(next.text, { expandPromptTemplates: false });
+  }
   await capture.final();
   await emitter.drain();
 } catch {
   // The stage is a location, not a complete diagnosis of an SDK/provider cause.
   fail(stage, stage === "parse" ? "parse-failed" : "sdk-failure");
 } finally {
+  // No message arriving from here on is delivered.
+  inputs?.close();
   try {
     capture?.dispose();
   } catch {
@@ -784,24 +834,18 @@ try {
     }
   })();
   const unsubscribing = Promise.all(
-    [unsubscribeRetry, unsubscribe].map(async (stopListening) => {
-      try {
-        await stopListening?.();
-      } catch {
-        cleanupFailures |= 1;
-        fail("cleanup", "cleanup-failure");
-      }
-    }),
+    [unsubscribeRetry, unsubscribeInputs, unsubscribe].map(
+      async (stopListening) => {
+        try {
+          await stopListening?.();
+        } catch {
+          cleanupFailures |= 1;
+          fail("cleanup", "cleanup-failure");
+        }
+      },
+    ),
   );
-  const aborting = (async () => {
-    if (!session) return;
-    try {
-      await session.abort();
-    } catch {
-      cleanupFailures |= 2;
-      fail("cleanup", "cleanup-failure");
-    }
-  })();
+  const aborting = session ? abortSession() : undefined;
   const disposing = (async () => {
     if (!session) return;
     try {

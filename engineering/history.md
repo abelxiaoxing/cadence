@@ -123,7 +123,7 @@ Explicit activation binds an existing/new conversation without rewriting its ses
 Control revision, accepted proposal and run-attempt identities are retained separately from the session.
 Approval evidence records the exact proposal/revision and authenticated caller, never a reusable grant or browser cookie.
 Ordinary and coordinator live previews still use the existing capture sanitizer; their content is written by Pi to the session.
-A separate bounded IPC channel admits only named research/plan/status requests; it cannot carry a browser/native execution capability.
+A separate bounded IPC channel carries a coordinator's named research/plan/status requests, the owner's credential replies and the messages a browser sends into a running reply, with the worker's answer to a withdrawal; it cannot carry a browser/native execution capability.
 
 ## Readonly diagnostics
 

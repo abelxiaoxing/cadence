@@ -19,6 +19,7 @@ import {
   type ChatAttempt,
   type ChatContext,
   type ChatCursor,
+  type ChatPending,
   type ChatStatus,
   type ChatSummary,
   CONVERSATION_NAME_CHARS,
@@ -26,10 +27,18 @@ import {
   decodeEntryId,
   decodeSessionId,
   decodeWorkbenchCommand,
+  PENDING_TEXT_BYTES,
   STEP_READ,
+  UNDELIVERED_TEXT_BYTES,
+  WAITING_INPUTS,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
-import type { Accepted, CommandState, LiveTurn } from "./conversations.ts";
+import type {
+  Accepted,
+  CommandState,
+  LiveInput,
+  LiveTurn,
+} from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import {
   type BuiltTurn,
@@ -53,6 +62,16 @@ export const INDEXED_COMMANDS = 64;
 const COMMAND_STATES = 512;
 const INTERRUPTED =
   "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
+/** How a message sent into a running reply is recorded when that reply's
+ * worker ended without giving it to Pi. */
+export const NOT_DELIVERED =
+  "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.";
+/** The same when the session could not be read as the reply ended. */
+export const UNOBSERVED =
+  "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
+/** A message its sender withdrew before Pi was given it; it is not reported
+ * as undelivered. */
+export const WITHDRAWN = "Withdrawn before it was delivered.";
 const LIVE: ChatStatus[] = ["queued", "running"];
 /** Cheap no-follow identity of a retained file ("absent" when missing). It
  * selects cached projections only; every miss re-reads through PrivateFiles. */
@@ -108,7 +127,8 @@ function decodeAccepted(value: unknown): Accepted {
       : []),
   ]);
   const command = decodeWorkbenchCommand(o.command);
-  if (command.kind !== "send") throw new ContractError("corrupt-selected");
+  if (command.kind !== "send" && command.kind !== "conversation-input")
+    throw new ContractError("corrupt-selected");
   return {
     command,
     ...(o.execution === undefined
@@ -148,11 +168,16 @@ function decodeState(value: unknown): CommandState {
   };
 }
 
+/** A live run's entries, one part for each message Pi was given. */
+type Parts = ReturnType<ParsedSession["runEntries"]>;
+
 export class ConversationRecords {
   readonly root: string;
   private readonly bindings: string;
   readonly sessions: PiSessions;
   private readonly active: ReadonlyMap<string, LiveTurn>;
+  /** The messages sent into the live runs, by their own command. */
+  private readonly inputs: ReadonlyMap<string, LiveInput>;
   private knownSecrets: readonly string[] | undefined;
   private readonly states = new Map<
     string,
@@ -167,11 +192,13 @@ export class ConversationRecords {
       secrets(): readonly string[];
       assertCurrent(): void;
       active?: ReadonlyMap<string, LiveTurn>;
+      inputs?: ReadonlyMap<string, LiveInput>;
     },
   ) {
     this.root = join(o.coordination.directory, "conversation-commands-v1");
     this.bindings = join(o.coordination.directory, "conversations-v1");
     this.active = o.active ?? new Map();
+    this.inputs = o.inputs ?? new Map();
     this.sessions = checkoutSessions(
       o.coordination.store.root,
       o.cwd,
@@ -224,7 +251,7 @@ export class ConversationRecords {
     return value === undefined ? undefined : decodeAccepted(value);
   }
   state(commandId: string): CommandState {
-    const live = this.active.get(commandId);
+    const live = this.active.get(commandId) ?? this.inputs.get(commandId);
     if (live) return live.state;
     const path = this.path(commandId, "state.json");
     const key = observedFile(path);
@@ -245,11 +272,18 @@ export class ConversationRecords {
   /** Whether the owner that ran this command recorded that it could not
    * establish its worker's closure. A command merely left queued or running was
    * cut short by that owner's death; startup healing has stopped its workers
-   * before any reader exists, so that one is interrupted, not unknown. */
+   * before any reader exists, so that one is interrupted, not unknown. A
+   * message sent into a reply shares that reply's worker, so its closure is
+   * the reply's as well as its own. */
   closureUnknown(commandId: string): boolean {
-    const value = this.read(this.path(commandId, "state.json"));
-    if (value === undefined) throw new ContractError("corrupt-selected");
-    return decodeState(value).status === "unknown";
+    const recorded = (id: string) => {
+      const value = this.read(this.path(id, "state.json"));
+      if (value === undefined) throw new ContractError("corrupt-selected");
+      return decodeState(value).status === "unknown";
+    };
+    if (recorded(commandId)) return true;
+    const command = this.accepted(commandId)?.command;
+    return command?.kind === "conversation-input" && recorded(command.turnId);
   }
   liveFor(id: string): LiveTurn | undefined {
     for (const live of this.active.values())
@@ -308,31 +342,107 @@ export class ConversationRecords {
     }
     return ids;
   }
+  /** Whether a conversation has this run, live or settled. A message sent
+   * into a reply is not one: it has no worker or turn of its own to name. */
   hasCommand(id: string, commandId: string): boolean {
-    return this.accepted(commandId)?.session === id;
+    const accepted = this.accepted(commandId);
+    return accepted?.session === id && accepted.command.kind === "send";
   }
-  /** A grant binds the current Pi branch, including external terminal appends.
-   * A later browser command without a written user entry still binds its exact parent. */
+  /** The run a command belongs to: its own, or that of the reply it was sent
+   * into. */
+  private runOf(
+    commandId: string,
+  ): { commandId: string; accepted: Accepted } | undefined {
+    const accepted = this.accepted(commandId);
+    if (accepted?.command.kind !== "conversation-input")
+      return accepted && { commandId, accepted };
+    const run = this.accepted(accepted.command.turnId);
+    if (run?.command.kind !== "send" || run.session !== accepted.session)
+      throw new ContractError("corrupt-selected");
+    return { commandId: accepted.command.turnId, accepted: run };
+  }
+  /** The newest run a conversation records, with the messages sent into it,
+   * oldest first. Nothing else is admitted to a session while a run lives, so
+   * every command its index names after the run's own is one of them. */
+  private recordedRun(id: string) {
+    const commands = this.index(id).commands;
+    const latest = commands.at(-1);
+    const run = latest === undefined ? undefined : this.runOf(latest);
+    if (!run) return undefined;
+    const at = commands.lastIndexOf(run.commandId);
+    const inputs = (at < 0 ? [] : commands.slice(at + 1)).map((commandId) => {
+      const accepted = this.accepted(commandId);
+      if (
+        accepted?.command.kind !== "conversation-input" ||
+        accepted.command.turnId !== run.commandId
+      )
+        throw new ContractError("corrupt-selected");
+      return { commandId, accepted };
+    });
+    return { ...run, inputs };
+  }
+  /** What Pi wrote for a run: a part for each of its messages Pi was given. */
+  private written(
+    session: ParsedSession,
+    run: {
+      commandId: string;
+      accepted: Accepted;
+      inputs: readonly { commandId: string; accepted: Accepted }[];
+    },
+  ): Parts {
+    return session.runEntries(
+      {
+        commandId: run.commandId,
+        parent: run.accepted.parent,
+        offset: run.accepted.offset,
+      },
+      run.inputs.map((input) => ({
+        commandId: input.commandId,
+        offset: input.accepted.offset,
+      })),
+    );
+  }
+  /** A grant binds the current Pi branch, including external terminal appends:
+   * it must end in the turn of the newest message Pi was given in the run. A
+   * run that wrote no user entry still binds the exact entry it was sent from. */
   approvalHead(id: string, commandId: string): string | null {
     this.o.assertCurrent();
-    const accepted = this.accepted(commandId);
-    if (!accepted || accepted.session !== id) throw new ContractError("stale");
-    const state = this.state(commandId);
+    const run = this.recordedRun(id);
+    if (!run || run.commandId !== commandId || run.accepted.session !== id)
+      throw new ContractError("stale");
     const session = this.sessions.session(id);
     const head = session?.current() ?? null;
+    // Each user entry was recorded at settlement; Pi wrote the newest last.
+    let newest: SessionEntry | undefined;
+    for (const message of [run, ...run.inputs]) {
+      const user = this.state(message.commandId).user;
+      if (user === null) continue;
+      const entry = session?.byId.get(user);
+      if (!entry) throw new ContractError("stale");
+      if (!newest || entry.pos > newest.pos) newest = entry;
+    }
     if (
-      state.user === null
-        ? head !== accepted.parent
-        : turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== state.user
+      newest
+        ? turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== newest.id
+        : head !== run.accepted.parent
     )
       throw new ContractError("stale");
     return head;
   }
-  latestCommand(id: string): { commandId: string; status: ChatStatus } | null {
+  /** The newest run a conversation records. It is settled once its own
+   * message and every message sent into it has ended with a known closure. */
+  latestRun(id: string): { commandId: string; settled: boolean } | null {
     this.o.assertCurrent();
-    const commandId = this.index(id).commands.at(-1);
-    return commandId
-      ? { commandId, status: this.state(commandId).status }
+    const run = this.recordedRun(id);
+    return run
+      ? {
+          commandId: run.commandId,
+          settled: ![run, ...run.inputs].some((message) =>
+            ["queued", "running", "unknown"].includes(
+              this.state(message.commandId).status,
+            ),
+          ),
+        }
       : null;
   }
   summary(
@@ -437,6 +547,11 @@ export class ConversationRecords {
       }),
     };
   }
+  /** A branch as read. A live run sent from it follows as one more turn, its
+   * newest message's: `parts` holds what the run has written, and each of
+   * its earlier messages is by then an ordinary turn of the branch, which
+   * ends at the entry the newest one continues. A read that names an earlier
+   * end of the live run follows the run there, unless it is `exact`. */
   branch(
     id: string,
     leaf: string | null,
@@ -446,29 +561,142 @@ export class ConversationRecords {
     leaf: string | null;
     turns: SessionEntry[][];
     live: LiveTurn | undefined;
+    /** Undefined without a live run, or while the session's record of it is
+     * unusable: the head stays readable and reading the run's turn says why. */
+    parts: Parts | undefined;
   } {
     this.assertSupported(id);
     const session = this.sessions.session(id);
     const running = this.liveFor(id);
-    let view: string | null;
-    if (exact || leaf !== null) {
-      if (leaf !== null && !session?.byId.has(leaf))
-        throw new ContractError("stale");
-      view = leaf;
-    } else
-      view = running ? running.accepted.parent : (session?.current() ?? null);
+    let parts: Parts | undefined;
+    try {
+      parts = running && this.liveParts(session, running);
+    } catch (error) {
+      if (!(error instanceof ContractError)) throw error;
+    }
+    // Where the live run's branch has ended so far: the entry the run was
+    // sent from, then the one each message delivered into it continued.
+    const ends = running
+      ? [
+          running.accepted.parent,
+          ...(parts ?? []).slice(1).map((part) => part.entries[0].parentId),
+        ]
+      : [];
+    const end = ends.at(-1) ?? null;
+    if (leaf !== null && !session?.byId.has(leaf))
+      throw new ContractError("stale");
+    const view = exact
+      ? leaf
+      : leaf === null
+        ? running
+          ? end
+          : (session?.current() ?? null)
+        : ends.includes(leaf)
+          ? end
+          : leaf;
     const turns = session ? turnSpans(session.branch(view)) : [];
-    const live =
-      running && running.accepted.parent === view ? running : undefined;
-    return { session, leaf: view, turns, live };
+    const live = running && end === view ? running : undefined;
+    return { session, leaf: view, turns, live, parts: live && parts };
   }
+  /** What a live run has written, a part for each message Pi was given. */
+  private liveParts(session: ParsedSession | undefined, live: LiveTurn): Parts {
+    return session ? this.written(session, live) : [];
+  }
+  /** The user entry Pi wrote for a command whose record names none. */
+  private userEntry(
+    session: ParsedSession,
+    commandId: string,
+    accepted: Accepted,
+  ): string | null {
+    if (accepted.command.kind !== "conversation-input")
+      return (
+        session.commandEntries(commandId, accepted.parent, accepted.offset)[0]
+          ?.id ?? null
+      );
+    const run = this.runOf(commandId);
+    return (
+      (run &&
+        this.written(session, {
+          ...run,
+          inputs: [{ commandId, accepted }],
+        }).find((part) => part.commandId === commandId)?.entries[0].id) ??
+      null
+    );
+  }
+  /** The messages sent into a live run that Pi has not been seen to write. */
+  private pending(
+    live: LiveTurn,
+    session: ParsedSession | undefined,
+  ): ChatPending[] {
+    const secrets = this.readSecrets();
+    return live.inputs
+      .filter(
+        (input) => !input.withdrawn && !session?.delivered(input.commandId),
+      )
+      .slice(0, WAITING_INPUTS)
+      .map((input) => ({
+        commandId: input.commandId,
+        mode: input.accepted.command.mode,
+        text: clipText(
+          sanitizeText(input.accepted.command.text, secrets),
+          PENDING_TEXT_BYTES,
+        ),
+      }));
+  }
+  /** The messages sent into the newest run that it ended without giving to
+   * Pi, while the branch read still ends in that run. */
+  private undelivered(
+    id: string,
+    view: ReturnType<ConversationRecords["branch"]>,
+  ): ChatAttempt[] {
+    const run = this.recordedRun(id);
+    if (!run?.inputs.length || this.active.has(run.commandId)) return [];
+    let parts: Parts;
+    try {
+      parts = view.session ? this.written(view.session, run) : [];
+    } catch (error) {
+      // An unusable record of the run claims nothing about its messages.
+      if (error instanceof ContractError) return [];
+      throw error;
+    }
+    const newest = parts.at(-1)?.entries[0].id;
+    if (
+      newest === undefined
+        ? view.leaf !== run.accepted.parent
+        : view.turns.at(-1)?.[0]?.id !== newest
+    )
+      return [];
+    const secrets = this.readSecrets();
+    return run.inputs
+      .flatMap(({ commandId, accepted }) => {
+        const state = this.state(commandId);
+        return state.user !== null ||
+          state.notice === WITHDRAWN ||
+          parts.some((part) => part.commandId === commandId)
+          ? []
+          : [
+              {
+                commandId,
+                text: clipText(
+                  sanitizeText(accepted.command.text, secrets),
+                  UNDELIVERED_TEXT_BYTES,
+                ),
+                status: state.status,
+                notice: sanitizeText(state.notice, secrets),
+              },
+            ];
+      })
+      .slice(0, WAITING_INPUTS);
+  }
+  /** The newest run's own message when it left nothing in the session. A
+   * message sent into that run is reported as undelivered instead. */
   attempt(id: string, leaf: string | null): ChatAttempt | null {
-    const commandId = this.index(id).commands.at(-1);
-    if (!commandId || this.active.has(commandId)) return null;
-    const accepted = this.accepted(commandId);
+    const latest = this.index(id).commands.at(-1);
+    const run = latest === undefined ? undefined : this.runOf(latest);
+    if (!run || this.active.has(run.commandId)) return null;
+    const { commandId, accepted } = run;
     const state = this.state(commandId);
-    if (!accepted || state.user !== null || accepted.parent !== leaf)
-      return null;
+    if (state.user !== null || accepted.parent !== leaf) return null;
     if (state.status === "unknown") {
       // An interrupted message may still have reached the session.
       const session = this.sessions.session(id);
@@ -491,21 +719,10 @@ export class ConversationRecords {
     view: ReturnType<ConversationRecords["branch"]>,
   ): ChatContext | undefined {
     if (!view.session) return undefined;
-    let leaf = view.leaf;
-    if (view.live) {
-      const { accepted, commandId } = view.live;
-      try {
-        leaf =
-          view.session
-            .commandEntries(commandId, accepted.parent, accepted.offset)
-            .at(-1)?.id ?? leaf;
-      } catch (error) {
-        // The turn read reports an unusable command chain; the head stays
-        // readable and claims no figure for it.
-        if (error instanceof ContractError) return undefined;
-        throw error;
-      }
-    }
+    // The turn read reports an unusable record of a live run; the head
+    // claims no figure for it.
+    if (view.live && !view.parts) return undefined;
+    const leaf = view.parts?.at(-1)?.entries.at(-1)?.id ?? view.leaf;
     const usage = view.session.usage(leaf);
     if (!usage) return undefined;
     const secrets = this.readSecrets();
@@ -522,13 +739,18 @@ export class ConversationRecords {
   ): WorkbenchResult {
     this.o.assertCurrent();
     const view = this.branch(id, leaf, false);
-    const summary = this.summary(id, view.live ?? this.liveFor(id));
+    const running = view.live ?? this.liveFor(id);
+    const summary = this.summary(id, running);
     const listed = this.sessions.find(id);
     const context = this.context(view);
+    const pending = running ? this.pending(running, view.session) : [];
+    const undelivered = running ? [] : this.undelivered(id, view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
       ...(context ? { context } : {}),
+      ...(pending.length ? { pending } : {}),
+      ...(undelivered.length ? { undelivered } : {}),
       summary,
       leaf: view.leaf,
       continues:
@@ -559,14 +781,11 @@ export class ConversationRecords {
     if (!view.session) throw new ContractError("stale");
     let imageLeaf = view.leaf;
     if (view.live && !view.session.contains(imageLeaf, request.entry)) {
-      // A running turn is shown after its parent leaf. Only its worker-recorded
+      // A running turn is shown after the branch end. Only its worker-recorded
       // command prefix, never an arbitrary descendant, extends that read view.
-      const accepted = view.live.accepted;
-      const chain = view.session.commandEntries(
-        view.live.commandId,
-        accepted.parent,
-        accepted.offset,
-      );
+      const chain =
+        (view.parts ?? this.liveParts(view.session, view.live)).at(-1)
+          ?.entries ?? [];
       if (!chain.some((entry) => entry.id === request.entry))
         throw new ContractError("stale");
       imageLeaf = chain.at(-1)?.id ?? imageLeaf;
@@ -599,19 +818,13 @@ export class ConversationRecords {
       CommandState & { execution?: ExecutionContext }
     >();
     for (const commandId of this.index(id).commands) {
-      if (this.active.has(commandId)) continue;
+      if (this.active.has(commandId) || this.inputs.has(commandId)) continue;
       const state = this.state(commandId);
 
       let user = state.user;
       if (user === null && state.status === "unknown" && session) {
         const accepted = this.accepted(commandId);
-        user = accepted
-          ? (session.commandEntries(
-              commandId,
-              accepted.parent,
-              accepted.offset,
-            )[0]?.id ?? null)
-          : null;
+        user = accepted ? this.userEntry(session, commandId, accepted) : null;
       }
       if (user !== null)
         out.set(user, {
@@ -635,6 +848,11 @@ export class ConversationRecords {
         secrets,
       );
       const recorded = this.overlay(id, view.session).get(turn.id);
+      // An earlier message of the live run: its reply has ended as Pi wrote
+      // it, and its record waits for the run to settle.
+      const running = view.parts
+        ?.slice(0, -1)
+        .some((part) => part.entries[0].id === turn.id);
       return {
         turn: recorded
           ? {
@@ -650,19 +868,26 @@ export class ConversationRecords {
                 other: turn.omitted.other || recorded.omitted.other,
               },
             }
-          : turn,
+          : running && view.live
+            ? { ...turn, execution: view.live.execution }
+            : turn,
         stable: turn.steps.length,
       };
     }
     const live = view.live;
     if (!live || ordinal !== view.turns.length)
       throw new ContractError("stale");
-    const chain = view.session
-      ? view.session.commandEntries(
-          live.commandId,
-          live.accepted.parent,
-          live.accepted.offset,
-        )
+    // An unusable record of the run is reported here, by its turn.
+    const parts = view.parts ?? this.liveParts(view.session, live);
+    const chain = parts.at(-1)?.entries ?? [];
+    // The capture counts the whole run, so its earlier turns' items are too.
+    const session = view.session;
+    const earlier = session
+      ? parts
+          .slice(0, -1)
+          .flatMap(
+            (part) => this.sessions.turn(session, part.entries, secrets).items,
+          )
       : [];
     const written = turnItems(chain, secrets);
     const items = chain.length
@@ -687,7 +912,7 @@ export class ConversationRecords {
             error: false,
           },
         ];
-    const extended = live.capture?.extend(items) ?? {
+    const extended = live.capture?.extend(items, earlier) ?? {
       items,
       stable: items.length,
     };
@@ -697,7 +922,8 @@ export class ConversationRecords {
       entry: null,
       // Pi may record a model change between the admitted head and the message.
       parent: chain.length ? chain[0].parentId : live.accepted.parent,
-      at: live.accepted.at,
+      // A message sent into the run began when Pi wrote it.
+      at: parts.length > 1 ? written.at : live.accepted.at,
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
       ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
