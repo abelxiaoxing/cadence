@@ -14459,6 +14459,18 @@ class ConversationContextRecords {
     return { context, file };
   }
 }
+function assertConversationDirectory(root, cwd, secrets) {
+  let actual;
+  try {
+    actual = resolveWorkspace(cwd);
+  } catch {
+    throw new ContractError("stale");
+  }
+  if (actual.cwd !== cwd || actual.root !== root)
+    throw new ContractError("stale");
+  if (secrets && sanitizeText(cwd, secrets) !== cwd)
+    throw new ContractError("forbidden");
+}
 
 class ConversationContexts {
   o;
@@ -14472,16 +14484,7 @@ class ConversationContexts {
     this.o.owner.lease.assert();
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
-    let actual;
-    try {
-      actual = resolveWorkspace(cwd);
-    } catch {
-      throw new ContractError("stale");
-    }
-    if (actual.cwd !== cwd || actual.root !== this.o.coordination.store.root)
-      throw new ContractError("stale");
-    if (checkSecrets && sanitizeText(cwd, this.o.secrets()) !== cwd)
-      throw new ContractError("forbidden");
+    assertConversationDirectory(this.o.coordination.store.root, cwd, checkSecrets ? this.o.secrets() : undefined);
   }
   directory(location) {
     const cwd = location ? this.records.read(location).context.cwd : this.o.cwd;
@@ -14589,7 +14592,7 @@ class ConversationContexts {
 }
 
 // src/service/gateway-conversations.ts
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 
 // src/service/conversation-controls.ts
 import { dirname as dirname15, join as join26 } from "node:path";
@@ -14705,9 +14708,156 @@ class ConversationControls {
   }
 }
 
+// src/service/workbench-files.ts
+import {
+  closeSync as closeSync7,
+  constants as constants7,
+  fstatSync as fstatSync6,
+  lstatSync as lstatSync16,
+  opendirSync as opendirSync8,
+  openSync as openSync7,
+  readSync as readSync5,
+  realpathSync as realpathSync9
+} from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname16, isAbsolute as isAbsolute11, join as join27, relative as relative5, resolve as resolve11, sep as sep5 } from "node:path";
+function inside(root, path) {
+  const r = relative5(root, path);
+  return r === "" || !isAbsolute11(r) && r !== ".." && !r.startsWith(`..${sep5}`);
+}
+var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
+
+class WorkbenchFiles {
+  secrets;
+  root;
+  excluded;
+  constructor(root, excluded, secrets) {
+    this.secrets = secrets;
+    this.root = realpathSync9(root);
+    this.excluded = excluded.flatMap((path) => [
+      resolve11(path),
+      canonicalAmbientRoot(path)
+    ]);
+  }
+  allowed(path) {
+    if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
+      throw new ContractError("forbidden");
+    const stat = lstatSync16(path);
+    if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
+      throw new ContractError("forbidden");
+  }
+  directory(path) {
+    if (!isAbsolute11(path) || !safeDirectory(path))
+      throw new ContractError("invalid");
+    const canonical = realpathSync9(path);
+    this.allowed(canonical);
+    return canonical;
+  }
+  selected(path) {
+    if (isAbsolute11(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
+      throw new ContractError("forbidden");
+    const target = resolve11(this.root, path);
+    if (!inside(this.root, target) || !safeDirectory(dirname16(target)))
+      throw new ContractError("forbidden");
+    this.allowed(target);
+    if (lstatSync16(target).isSymbolicLink())
+      throw new ContractError("forbidden");
+    return target;
+  }
+  browsed(path) {
+    const full = /^~(?:[\\/]|$)/.test(path) ? join27(homedir6(), path.slice(1)) : path || this.root;
+    try {
+      return this.directory(full);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Unsafe directory")
+        throw new ContractError("forbidden");
+      throw error;
+    }
+  }
+  list(path, directories = false) {
+    const selected2 = directories ? this.browsed(path) : this.selected(path);
+    if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
+      throw new ContractError("forbidden");
+    const entries2 = [], dir = opendirSync8(selected2);
+    let limited = false, scanned = 0;
+    try {
+      for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+        if (++scanned > 2000) {
+          limited = true;
+          break;
+        }
+        if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
+          continue;
+        const absolute2 = join27(selected2, entry.name);
+        try {
+          this.allowed(absolute2);
+        } catch {
+          continue;
+        }
+        const wire = directories ? absolute2 : relative5(this.root, absolute2).split(sep5).join("/");
+        if (sanitizeText(wire, this.secrets()) !== wire)
+          continue;
+        if (entries2.length >= 200) {
+          limited = true;
+          break;
+        }
+        entries2.push({
+          name: entry.name,
+          path: wire,
+          directory: entry.isDirectory()
+        });
+      }
+    } finally {
+      dir.closeSync();
+    }
+    entries2.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
+    const parent = dirname16(selected2);
+    return {
+      kind: directories ? "directories" : "files",
+      path: directories ? selected2 : path,
+      parent: directories ? parent === selected2 ? null : parent : selected2 === this.root ? null : relative5(this.root, parent).split(sep5).join("/"),
+      entries: entries2,
+      limited
+    };
+  }
+  read(path) {
+    const selected2 = this.selected(path), before = lstatSync16(selected2);
+    if (!before.isFile())
+      throw new ContractError("forbidden");
+    const fd = openSync7(selected2, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
+    try {
+      const opened = fstatSync6(fd);
+      if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
+        throw new ContractError("stale");
+      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
+      let at = 0;
+      while (at < buffer.length) {
+        const n = readSync5(fd, buffer, at, buffer.length - at, at);
+        if (!n)
+          break;
+        at += n;
+      }
+      const after = fstatSync6(fd), current = lstatSync16(selected2);
+      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
+        throw new ContractError("stale");
+      const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
+      if (decoded2.includes("\x00"))
+        throw new ContractError("unsupported-context");
+      return {
+        kind: "file",
+        path,
+        text: new TextSanitizer(this.secrets()).write(decoded2, at === opened.size),
+        limited: at < opened.size
+      };
+    } finally {
+      closeSync7(fd);
+    }
+  }
+}
+
 // src/service/gateway-conversations.ts
 var READERS2 = 16;
-function retainedConversationRead(request2) {
+function retainedRead(request2) {
   return [
     "conversations",
     "conversation",
@@ -14716,7 +14866,9 @@ function retainedConversationRead(request2) {
     "conversation-image",
     "cadence-conversation",
     "conversation-context",
-    "conversation-tree"
+    "conversation-tree",
+    "files",
+    "file"
   ].includes(request2.kind);
 }
 function unpreparedDirectory(c, project) {
@@ -14743,7 +14895,7 @@ class GatewayConversations {
       this.forget(id);
   }
   read(project, request2) {
-    if (!retainedConversationRead(request2))
+    if (!retainedRead(request2))
       return;
     const c = new ServiceCoordination(project.path, this.stateHome);
     if (c.store.root !== project.path)
@@ -14774,7 +14926,7 @@ class GatewayConversations {
       };
       const readSecrets = () => {
         const environment2 = captureEnvironment(process.env);
-        const snapshot = readPiSnapshot(piSource(agentDir, homedir6(), c.store.root, environment2));
+        const snapshot = readPiSnapshot(piSource(agentDir, homedir7(), c.store.root, environment2));
         let access = [];
         if (config) {
           const source = config.tokenSource === "file" && config.tokenFile ? { tokenFile: config.tokenFile } : config.tokenSource === "config" && config.tokenFile ? {
@@ -14790,7 +14942,7 @@ class GatewayConversations {
         ];
       };
       assertCurrent();
-      const records = new ConversationRecords({
+      const records2 = new ConversationRecords({
         coordination: c,
         cwd: project.cwd,
         agentDir,
@@ -14799,12 +14951,12 @@ class GatewayConversations {
       });
       view = {
         key,
-        records,
+        records: records2,
         assertCurrent,
         controls: new ConversationControls({
           directory: c.directory,
           files: c.files,
-          conversations: records,
+          conversations: records2,
           assertCurrent
         })
       };
@@ -14813,6 +14965,7 @@ class GatewayConversations {
       this.views.set(project.id, view);
     }
     view.assertCurrent();
+    const { records } = view;
     let result;
     switch (request2.kind) {
       case "conversation-context":
@@ -14851,6 +15004,15 @@ class GatewayConversations {
       case "cadence-conversation":
         result = { kind: request2.kind, state: view.controls.state(request2.id) };
         break;
+      case "files":
+      case "file": {
+        const secrets = records.readSecrets();
+        const cwd = request2.location ? new ConversationContextRecords(c, records.sessions).read(request2.location).context.cwd : project.cwd;
+        assertConversationDirectory(c.store.root, cwd, secrets);
+        const files = new WorkbenchFiles(cwd, [c.files.namespace, agentDir], () => records.readSecrets());
+        result = request2.kind === "files" ? files.list(request2.path) : files.read(request2.path);
+        break;
+      }
       default:
         throw new ContractError("invalid");
     }
@@ -14860,7 +15022,7 @@ class GatewayConversations {
 }
 
 // src/service/gateway-models.ts
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir8 } from "node:os";
 async function readGatewayModels(project, input, secrets, read) {
   const c = project ? new ServiceCoordination(project.path, input.stateHome) : undefined;
   if (c && c.store.root !== project?.path)
@@ -14872,7 +15034,7 @@ async function readGatewayModels(project, input, secrets, read) {
   const agentDir = config?.agentDir ?? input.agentDir;
   if (!agentDir)
     throw new ContractError("unavailable");
-  const home = homedir7(), cwd = project?.path ?? home, environment2 = captureEnvironment(process.env);
+  const home = homedir8(), cwd = project?.path ?? home, environment2 = captureEnvironment(process.env);
   const source = piSource(agentDir, home, cwd, environment2);
   const before = readPiSnapshot(source);
   const catalog = await read({
@@ -15072,14 +15234,14 @@ Content-Length: 0\r
   async listen() {
     if (this.origin || this.stopped)
       throw new ContractError("conflict");
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       const failed = () => {
         this.server.off("listening", ready);
         reject(new ContractError("unavailable"));
       };
       const ready = () => {
         this.server.off("error", failed);
-        resolve11();
+        resolve12();
       };
       this.server.once("error", failed);
       this.server.once("listening", ready);
@@ -15109,13 +15271,13 @@ Content-Length: 0\r
   close() {
     if (this.closePromise)
       return this.closePromise;
-    let resolve11;
+    let resolve12;
     let reject;
     this.closePromise = new Promise((yes, no) => {
-      resolve11 = yes;
+      resolve12 = yes;
       reject = no;
     });
-    this.closeTransport().then(resolve11, () => reject(new ContractError("unavailable")));
+    this.closeTransport().then(resolve12, () => reject(new ContractError("unavailable")));
     return this.closePromise;
   }
   async closeTransport() {
@@ -15127,18 +15289,18 @@ Content-Length: 0\r
       request2.abort();
     for (const attachment of [...this.attachments.values()])
       this.detach(attachment);
-    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve11) => {
+    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve12) => {
       if (socket.closed)
-        resolve11();
+        resolve12();
       else {
-        socket.once("close", () => resolve11());
+        socket.once("close", () => resolve12());
         socket.destroy();
       }
     }));
-    const listener = new Promise((resolve11, reject) => {
-      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve11());
+    const listener = new Promise((resolve12, reject) => {
+      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve12());
     });
-    const upgrades = new Promise((resolve11) => this.wss.close(() => resolve11()));
+    const upgrades = new Promise((resolve12) => this.wss.close(() => resolve12()));
     await Promise.all([listener, upgrades, ...closedSockets]);
   }
   attachment(caller) {
@@ -15550,7 +15712,7 @@ Content-Length: 0\r
           if (signal.aborted || res.destroyed)
             unavailable();
           const chunk = data2.subarray(offset, offset + LIMITS.detailPageBytes);
-          await new Promise((resolve11, reject) => {
+          await new Promise((resolve12, reject) => {
             const stop = () => {
               res.destroy();
               reject(new ContractError("unavailable"));
@@ -15558,7 +15720,7 @@ Content-Length: 0\r
             signal.addEventListener("abort", stop, { once: true });
             res.write(chunk, (error) => {
               signal.removeEventListener("abort", stop);
-              error ? reject(new ContractError("unavailable")) : resolve11();
+              error ? reject(new ContractError("unavailable")) : resolve12();
             });
           });
           activity2();
@@ -15783,7 +15945,7 @@ import { createHash as createHash12 } from "node:crypto";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/service/model-preview-protocol.ts
-import { isAbsolute as isAbsolute11 } from "node:path";
+import { isAbsolute as isAbsolute12 } from "node:path";
 var PREVIEW_INPUT_BYTES = 1024 * 1024;
 var PREVIEW_TIMEOUT_MS = 15000;
 var PREVIEW_PROCESSES = 2;
@@ -15792,7 +15954,7 @@ function decodeModelPreviewInput(value) {
   const o = closed(value, ["kind", "agentDir", "home", "cwd", "secrets"]);
   const path = (v) => {
     const p = text(v, 4096, true);
-    if (!isAbsolute11(p))
+    if (!isAbsolute12(p))
       throw new ContractError("invalid");
     return p;
   };
@@ -15856,12 +16018,12 @@ class ModelPreviewProcesses {
   launch(body, env, key, cwd) {
     let resolveResult, rejectResult;
     let resolveSettlement, rejectSettlement;
-    const result = new Promise((resolve11, reject) => {
-      resolveResult = resolve11;
+    const result = new Promise((resolve12, reject) => {
+      resolveResult = resolve12;
       rejectResult = reject;
     });
-    const settlement = new Promise((resolve11, reject) => {
-      resolveSettlement = resolve11;
+    const settlement = new Promise((resolve12, reject) => {
+      resolveSettlement = resolve12;
       rejectSettlement = reject;
     });
     result.catch(() => {});
@@ -15955,153 +16117,6 @@ class ModelPreviewProcesses {
     }
     child2.stdin?.end(body);
     return { result, settlement, stop: () => stop() };
-  }
-}
-
-// src/service/workbench-files.ts
-import {
-  closeSync as closeSync7,
-  constants as constants7,
-  fstatSync as fstatSync6,
-  lstatSync as lstatSync16,
-  opendirSync as opendirSync8,
-  openSync as openSync7,
-  readSync as readSync5,
-  realpathSync as realpathSync9
-} from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { dirname as dirname16, isAbsolute as isAbsolute12, join as join27, relative as relative5, resolve as resolve11, sep as sep5 } from "node:path";
-function inside(root, path) {
-  const r = relative5(root, path);
-  return r === "" || !isAbsolute12(r) && r !== ".." && !r.startsWith(`..${sep5}`);
-}
-var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
-
-class WorkbenchFiles {
-  secrets;
-  root;
-  excluded;
-  constructor(root, excluded, secrets) {
-    this.secrets = secrets;
-    this.root = realpathSync9(root);
-    this.excluded = excluded.flatMap((path) => [
-      resolve11(path),
-      canonicalAmbientRoot(path)
-    ]);
-  }
-  allowed(path) {
-    if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
-      throw new ContractError("forbidden");
-    const stat = lstatSync16(path);
-    if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
-      throw new ContractError("forbidden");
-  }
-  directory(path) {
-    if (!isAbsolute12(path) || !safeDirectory(path))
-      throw new ContractError("invalid");
-    const canonical = realpathSync9(path);
-    this.allowed(canonical);
-    return canonical;
-  }
-  selected(path) {
-    if (isAbsolute12(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
-      throw new ContractError("forbidden");
-    const target = resolve11(this.root, path);
-    if (!inside(this.root, target) || !safeDirectory(dirname16(target)))
-      throw new ContractError("forbidden");
-    this.allowed(target);
-    if (lstatSync16(target).isSymbolicLink())
-      throw new ContractError("forbidden");
-    return target;
-  }
-  browsed(path) {
-    const full = /^~(?:[\\/]|$)/.test(path) ? join27(homedir8(), path.slice(1)) : path || this.root;
-    try {
-      return this.directory(full);
-    } catch (error) {
-      if (error instanceof Error && error.message === "Unsafe directory")
-        throw new ContractError("forbidden");
-      throw error;
-    }
-  }
-  list(path, directories = false) {
-    const selected2 = directories ? this.browsed(path) : this.selected(path);
-    if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
-      throw new ContractError("forbidden");
-    const entries2 = [], dir = opendirSync8(selected2);
-    let limited = false, scanned = 0;
-    try {
-      for (let entry = dir.readSync();entry; entry = dir.readSync()) {
-        if (++scanned > 2000) {
-          limited = true;
-          break;
-        }
-        if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
-          continue;
-        const absolute2 = join27(selected2, entry.name);
-        try {
-          this.allowed(absolute2);
-        } catch {
-          continue;
-        }
-        const wire = directories ? absolute2 : relative5(this.root, absolute2).split(sep5).join("/");
-        if (sanitizeText(wire, this.secrets()) !== wire)
-          continue;
-        if (entries2.length >= 200) {
-          limited = true;
-          break;
-        }
-        entries2.push({
-          name: entry.name,
-          path: wire,
-          directory: entry.isDirectory()
-        });
-      }
-    } finally {
-      dir.closeSync();
-    }
-    entries2.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
-    const parent = dirname16(selected2);
-    return {
-      kind: directories ? "directories" : "files",
-      path: directories ? selected2 : path,
-      parent: directories ? parent === selected2 ? null : parent : selected2 === this.root ? null : relative5(this.root, parent).split(sep5).join("/"),
-      entries: entries2,
-      limited
-    };
-  }
-  read(path) {
-    const selected2 = this.selected(path), before = lstatSync16(selected2);
-    if (!before.isFile())
-      throw new ContractError("forbidden");
-    const fd = openSync7(selected2, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
-    try {
-      const opened = fstatSync6(fd);
-      if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
-        throw new ContractError("stale");
-      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
-      let at = 0;
-      while (at < buffer.length) {
-        const n = readSync5(fd, buffer, at, buffer.length - at, at);
-        if (!n)
-          break;
-        at += n;
-      }
-      const after = fstatSync6(fd), current = lstatSync16(selected2);
-      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
-        throw new ContractError("stale");
-      const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
-      if (decoded2.includes("\x00"))
-        throw new ContractError("unsupported-context");
-      return {
-        kind: "file",
-        path,
-        text: new TextSanitizer(this.secrets()).write(decoded2, at === opened.size),
-        limited: at < opened.size
-      };
-    } finally {
-      closeSync7(fd);
-    }
   }
 }
 
@@ -32003,7 +32018,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "4f9f6f3122a608f20c9ff55505dd7fb726d86c9f4cbc2017f4362e810b0fc9a0",
+  build: "fc37227c151d8ca1da24f1f9217a13cebb5f7651ea90038761e461ea317fd018",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

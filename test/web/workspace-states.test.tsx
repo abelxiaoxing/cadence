@@ -73,9 +73,9 @@ it("files name the conversation directory rather than claiming the host root, an
   const stopped = renderFiles(false, { id: "chat", cwd: "/project/subdir" });
   expect(stopped).toContain("Conversation folder:");
   expect(stopped).toContain("/project/subdir");
-  expect(stopped).toContain(
-    "Files are unavailable until the execution state is ready.",
-  );
+  // Execution state is not the reason: a stopped owner's folder is readable.
+  expect(stopped).toContain("Files appear once this folder has been observed.");
+  expect(stopped).not.toContain("execution state");
   expect(stopped).not.toContain("No visible files");
   expect(renderFiles(true)).toContain("Reading files…");
 });

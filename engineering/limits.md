@@ -102,7 +102,7 @@ A session's index names its last 64 browser messages; the owner caches 512 messa
 Admission retains the 256MiB free-space floor for the owner's records; Pi's own writes are bounded only by the disk, as in the terminal.
 Instantaneous protocol/memory and concurrency protections remain; cumulative bytes and SDK events are diagnostics, not worker lifetime quotas.
 
-Stopped-owner conversation views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the bounded Pi session and command caches.
+Stopped-owner conversation and file views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the bounded Pi session and command caches; file reads keep the owner's 200-entry listing and 128KiB preview bounds.
 Replacement, access rotation and workbench Stop discard their read caches; eviction affects only reads, never retained data or execution.
 Conversation-control projections (`src/service/conversation-controls.ts`) cache at most 512 records; they retain the existing 384KiB record bound and never cache transient I/O failures.
 

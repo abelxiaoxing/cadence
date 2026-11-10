@@ -47,7 +47,7 @@ A readonly identity-presence guard refuses reuse and preserves the old files; cu
 `src/service/turn-capture.ts` retains workflow subagent turns from capture frames; `src/session-sharing.ts` is the extension's readonly notice when the browser continued the session a terminal holds.
 
 `src/service/{conversation-records,conversation-controls}.ts` owns readonly conversation, transcript and mode/plan decoding; it has no execution owner, SDK or write path.
-The live owner supplies its original turn map and lease assertion; `gateway-conversations.ts` supplies an exact stopped-owner observation instead, checked before and after each read.
+The live owner supplies its original turn map and lease assertion; `gateway-conversations.ts` supplies an exact stopped-owner observation instead, checked before and after each read; it answers the readonly `files`/`file` reads the same way, through the shared `WorkbenchFiles`.
 The gateway reads only associated stopped owners through these shared readers; a live, starting, quarantined or unresponsive owner is never replaced by an empty live map.
 A never-prepared selection can read its existing Pi sessions without preparing an execution owner; it projects an empty conversation only when none exists.
 Retained conversation reads and browser draft identity no longer depend on an execution attachment; legacy task/workflow detail still uses its owner.

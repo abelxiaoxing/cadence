@@ -310,6 +310,8 @@ Older versions read neither the shared sessions nor messages sent since; going b
 Task history retains its existing independent bounds.
 File browsing lists at most 200 entries from 2000 directory entries and previews at most 128KiB of UTF-8 text.
 It refuses symlinks, hard-linked files, private state, Pi's agent directory (including its configured alias target), `.git`, `.env` variants, common credential directories such as `.ssh`/`.aws`, and credential/config filenames; limitations remain visible.
+A live owner answers these reads; while it is stopped, or before the folder was ever prepared, the gateway's stopped-owner reader answers them with the same directory rule (`assertConversationDirectory`), bounds, refusals and redaction, writing nothing and starting nothing.
+Without readable Pi sources to redact with, it refuses rather than return unredacted bytes.
 This is not a filesystem sandbox for model tools.
 
 ## WebUI contracts
@@ -339,7 +341,8 @@ An unselected first entry returns to the last selected project, remembered only 
 A never-prepared directory with no owner state may also restore into its empty conversation shell.
 An unknown established history identity leaves a read-failure notice; any navigation or folder choice during the check wins.
 The gateway observes execution readiness independently of conversation identity.
-Stopped-owner ordinary/coordinator history, full stored steps and Cadence mode/plan cards remain readable without an execution attachment, model runtime or implicit Open.
+Stopped-owner ordinary/coordinator history, full stored steps, Cadence mode/plan cards and the conversation folder's files remain readable without an execution attachment, model runtime or implicit Open.
+The Files pane is enabled once the selected folder has been observed, whatever its execution state, and reads again when execution starts, stops or is replaced.
 The conversation shell keeps its selected directory/connection identity separate from the conversation cwd.
 New drafts use a stable checkout/conversation key, never the owner epoch or the particular same-checkout directory entry used to open that conversation.
 Known older history/directory draft namespaces remain usable in place; they are not copied or deleted, and an intentionally emptied primary draft stays empty.
