@@ -123,7 +123,8 @@ Preference revision and encoded-byte checks precede source installation or persi
 Checkout session discovery considers at most 256 directory sources and remembers 128 explicitly observed cwd-to-session-directory resolutions in memory (`src/service/pi-sessions.ts`).
 The one shared reader retains its existing eight parsed-session and 64 built-turn bounds across those sources, not one cache per directory; no checkout tree is scanned and no session directory is created by discovery.
 
-Project knowledge observations use `KNOWLEDGE_LIMITS` in `src/service/project-knowledge.ts`: 160 candidate documents, depth 3, 64KiB observed per file and at most 12KiB of selected context (less when the existing 32KiB worker context needs the room).
+Project knowledge observations use `KNOWLEDGE_LIMITS` in `src/service/project-knowledge.ts`: 160 candidate documents, depth 3, 64KiB observed per file, 8KiB per named source and 4KiB per discovered one, and at most 16KiB of selected context (less when the existing 32KiB worker context needs the room).
+The managed store's budget is `KNOWLEDGE_STORE` in `src/service/knowledge-store.ts`: a 4KiB route table, 8KiB per topic, 1KiB per entry, 200KiB in all and 64 topic files; a delivery that leaves it over budget does not pass.
 Selected excerpts and omitted sources are labelled.
 These are per-observation bounds, not delivery budgets.
 

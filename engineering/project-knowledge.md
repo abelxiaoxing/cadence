@@ -1,57 +1,84 @@
-# Project knowledge and adaptive delivery context
+# Project knowledge: a bounded store, named reading and curation
 
-`src/service/project-knowledge.ts` owns readonly selection and materialization of project knowledge, plus the knowledge-maintenance assignment policy.
-It does not own execution, approvals, sessions, plugins or another task store.
+`src/service/knowledge-store.ts` owns the managed store's format, budget and deterministic checks; `src/service/project-knowledge.ts` owns what each worker is given to read and the curator's brief.
+Neither owns execution, approvals, sessions, plugins or another task store.
 
 ## Sources and ownership
 
-Existing `AGENTS.md`, `engineering/`, `docs/` and `.trellis/spec/` remain the owners of their facts.
-`.cadence/project.md` is a compact project map and knowledge index; `.cadence/knowledge/` is an optional home for topics without an existing owner, never a mandatory template tree.
-Markdown references can identify additional topic owners.
+Existing `AGENTS.md`, `engineering/`, `docs/` and `.trellis/spec/` remain the owners of their facts and are never rewritten automatically.
+The managed store is `.cadence/project.md`, a route table, and topic cards under `.cadence/knowledge/`.
+It is a bounded cache of what cannot be cheaply re-derived from the code, not a growing document: new knowledge has to displace or compress old knowledge.
 Discovery does not initialize directories, install Trellis hooks, copy profiles or import sessions.
-Trellis's context-manifest and evidence-based spec-update ideas informed the design; no Trellis implementation or templates are incorporated.
+Trellis's ideas of a curated per-reader reading list, research kept for later readers and evidence-based updates informed the design; no Trellis implementation, template or text is incorporated (it is AGPL-licensed).
 
 Project facts, the current delivery's handoff and raw history are separate:
 
 - Shared source-backed knowledge lives in project Markdown.
-- Attempts, revised routes and current check evidence live in the owner's existing private workflow records.
+- Attempts, revised routes, recorded investigations and current check evidence live in the owner's private workflow records.
 - Pi still owns conversations.
   Cadence neither rewrites them nor copies their transcripts into project knowledge.
 
-## Worker context
+## The store
 
-Each worker launch observes the relevant documents afresh, before launching the pinned worker under the checkout gate.
-The context combines the approved goal/decisions/acceptance, the current assignment, relevant instructions and selected topic excerpts.
-The launch journal retains the source paths, selection reasons, observed content digests and coverage notices, independently of transcript previews.
-Source digests describe the materialized bytes; a bounded file excerpt is explicitly partial, not a digest of unseen bytes.
-Implementation, readonly diagnosis and review share the selector; their assignment prompts retain their different capabilities and evidence.
+The route table's `## Routes` section maps code areas to what to read first, one line each: a list item naming one or more backquoted code paths, an arrow (`->`), a backquoted Markdown target with an optional `#Heading`, then a dash and what that settles.
+A route's target is a topic card or a section of an existing project document.
+A topic card is sections (`##`) of entries; an entry is a `###` heading stating one rule or fact, followed by short `Kind:`, `Why:`, `Anchors:` and `Source:` lines.
+An anchor is `` `path` `` or `` `path#text` ``, where the text is a symbol or test name that occurs in the file; line numbers are never anchors.
 
-Selection prioritizes project and ancestor instructions, approved documentation targets, indexes and path/keyword matches.
-Limits live beside `KNOWLEDGE_LIMITS`: shallow discovery, total directory entries (including irrelevant files), candidates, keywords and file bytes are per-observation resource controls, not delivery quotas.
-The context byte bound includes headings, full paths, selection reasons, separators and omission notices, including an empty allowance.
-Omitted or truncated material stays visible in the launch record and selected excerpts name the full source for on-demand reads.
+The budget lives in `KNOWLEDGE_STORE`: 4KiB for the route table, 8KiB per topic, 1KiB per entry, 200KiB for the whole store and at most 64 topic files.
+`lintKnowledge` checks a tree against it and against its own references.
+A budget violation always fails the delivery, so the store is inside its budget after every delivery.
+A route or anchor that does not resolve, a duplicate entry title and an entry without an anchor fail the delivery only where that delivery wrote the entry or changed the referenced file; elsewhere they are notes handed to the curator and the review.
+Entries anchored to a file the delivery changed are listed for the curator to check again.
+Nothing is pinned: every entry competes for its place.
+
+## What a worker reads first
+
+Each worker launch observes the documents afresh, before launching the pinned worker under the checkout gate, and `projectKnowledge` composes them in this order:
+
+1. the route table, whole;
+2. what the version-3 agreement names for this reader (`WorkflowTask.reads` for an assignment, `reviewReads` for the review): a document, or one section of it, each with its reason;
+3. recorded investigations the agreement names (`{research}`), resolved from the owner's private record with a caution when the checkout has moved since;
+4. the targets of the routes that the assignment's own write paths match;
+5. discovered documents ranked by instruction priority and path/keyword matches, which only fill what is left.
+
+A named source gets up to 8KiB and a discovered one 4KiB of an allowance of at most 16KiB, less when the agreement itself is long.
+A long discovered document contributes the sections that mention the reader's terms, in document order, instead of its beginning.
+Terms take the write paths first, and a long run of Han characters is also offered as its two-character pieces so a Chinese goal matches Chinese documents.
+A named source that does not fit keeps its reason as a one-line pointer; a named document that is missing is said to be missing.
+The launch journal retains the source labels, reasons, observed content digests and coverage notices, independently of transcript previews.
 Files and ancestors must be ordinary project paths; symlinks, hardlinks, private/session trees and unsafe paths are not traversed.
 Known-secret sanitation happens before injection.
 It is not universal business-secret detection or a sandbox.
 Documents can guide implementation but never grant permissions, skip mandatory checks or authorize a new remote action.
 
-## Learning and publication
+The coordinator keeps its own conversation small: it starts from the route table and asks investigations to read what a route points at.
+Every completed investigation is recorded under `workflows-v1/investigations/` by its step's child run identity, with the commit it was made at, so a later agreement can name it instead of having each worker explore again.
 
-Version-3 agreements name exact Markdown `documents` write paths (version 2 called them `knowledge`), prepared by the coordinator rather than a user form.
-They participate in approval observations and write scope like implementation targets.
-Local-merge therefore needs clean, nonignored knowledge targets too; use working-copy delivery for dirty or ignored documentation, without changing ignore rules or copying user source into candidates.
-Generated workflow delivery notes retain their separate expected-byte publication behavior.
+## Curation
 
-After implementation and passing checks/review, a dedicated editing assignment inspects the actual candidate and current native evidence, then updates only those approved documentation paths.
-It preserves human text, updates existing topic owners, avoids duplicate conventions, and records concrete interfaces, validated failure lessons and test/source references.
-No reusable discovery is a valid no-change result; a generic summary is not a reason to manufacture a new rule.
-Knowledge changes are followed by checks and independent readonly Agent review of the combined candidate.
+After implementation and passing checks/review, one editing assignment per delivery maintains knowledge (`Workflows.learn`).
+For a version-3 agreement it maintains the managed store, whose paths then belong to the run's write scope, plus any existing documents the agreement names in `documents`.
+A fast-forward cannot carry ignored paths or ones the target checkout has its own changes to; then the store is skipped with a note in the run, and only named documents are maintained.
+Direct working-copy delivery always maintains it.
+
+The curator is given, prepared by the owner rather than recalled by a model: the budget and current usage, the entries to check again, open findings, one topic chosen by rotation, what the run failed at and how it revised its route (`revisions/`), recorded deviations and the latest verification evidence.
+It merges, adds or drops each lesson; finding nothing reusable is a valid no-change result.
+When space is needed it removes, in order: entries whose anchors no longer resolve, duplicates and superseded entries, entries now guaranteed by a test or type, entries about code that no longer matters, and only then shortens wording without dropping a condition.
+With no route table yet, the first delivery creates one that routes the areas it touched to the existing documents that own them.
+Parallel assignments never edit knowledge; only this one assignment does, in the candidate.
+
+The store must pass `lintKnowledge` before the step ends; a failure is a settled failure of that step and goes through recovery like any other.
+Knowledge changes are then covered by the checks and the independent readonly Agent review of the combined candidate, which is told to judge them: additions short, specific and anchored; removals stale, duplicated, guaranteed by a test or compressed without losing a condition.
 Failed or unintegrated candidate notes remain candidate material, not silently published project truth.
-The old `projectContext` proposal field is retained only for reading historical proposals; its planned prose is never used to generate new project facts.
+Removed entries stay in Git history.
+The old `projectContext` proposal field and version 2's `knowledge` paths are retained only for reading historical proposals.
 
 ## Regression owners
 
-- `test/project-knowledge.test.ts`: fresh source observation, existing topic selection, Trellis-spec reading without activation/import, privacy, partial coverage and maintenance policy.
+- `test/knowledge-store.test.ts`: route and entry parsing, section addressing, the budget, blocking versus noted findings, the reading order, section-aware excerpts and Chinese goals.
+- `test/project-knowledge.test.ts`, `test/project-knowledge-bounds.test.ts`: fresh source observation, discovery, Trellis-spec reading without activation/import, privacy, partial coverage and the curator's brief.
+- `test/workflow-knowledge.test.ts`: the curating step, its failing store check, undeliverable stores, failure history and what each worker is named.
 - `test/workflow-delivery.test.ts`: implementation failure, autonomous continuation, real-result handoff, knowledge maintenance and fresh combined-candidate verification in one owner loop.
-- `test/workflow-contract.test.ts`: versioned agreement and explicit documentation write boundary.
+- `test/workflow-contract.test.ts`: versioned agreement, reading lists and the documentation write boundary.
 - Existing workflow scope/Git and lifecycle tests retain process closure, unexpected edits and original user-data outcomes.

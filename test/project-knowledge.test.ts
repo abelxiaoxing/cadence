@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import {
-  knowledgeInstructions,
+  type CurationBrief,
+  curationInstructions,
   projectKnowledge,
 } from "../src/service/project-knowledge.ts";
 
@@ -88,13 +89,60 @@ it("labels excerpts and omitted sources, redacts known secrets, and refuses syml
   const small = projectKnowledge(root, "search", [], [], 500);
   expect(small.omitted.some((s) => s.includes("load on demand"))).toBe(true);
 });
-it("knowledge maintenance calls for evidence and existing topic owners, not guessed planning prose", () => {
-  const text = knowledgeInstructions(["engineering/search.md"]);
-  expect(text).toContain("actual implemented files");
-  expect(text).toContain("existing topic owner");
-  expect(text).toContain("Preserve human text");
-  expect(text).toContain("not the initial plan");
-  expect(text).toContain("Do not modify implementation code");
+it("the curator is told to keep a bounded store from evidence: what to admit, what to remove first, and what this delivery went through", () => {
+  const brief: CurationBrief = {
+    documents: ["engineering/search.md"],
+    managed: true,
+    usage: {
+      indexBytes: 900,
+      totalBytes: 5200,
+      topics: [
+        { path: ".cadence/knowledge/search.md", bytes: 4300, entries: 9 },
+      ],
+    },
+    revalidate: [
+      { topic: ".cadence/knowledge/search.md", title: "Tokens keep user data" },
+    ],
+    notes: [".cadence/project.md: docs/old.md does not resolve"],
+    rotation: ".cadence/knowledge/search.md",
+    history:
+      "- Revision 1 (assignment a, replan): tokenizer split CJK runs. Cause: wrong boundary. Then: reuse the shared segmenter",
+    deviations: "",
+  };
+  const text = curationInstructions(brief);
+  for (const expected of [
+    "actual implemented files",
+    "not from the initial plan",
+    // A bounded cache with a budget that is enforced, not a growing document.
+    "new knowledge must displace or compress old knowledge",
+    "the whole store 204800 bytes",
+    "store 5200 bytes",
+    ".cadence/knowledge/search.md 4300 bytes/9 entries",
+    "Anchor to a symbol or test name that occurs in the file, never to a line number",
+    "Finding nothing reusable is a valid result",
+    "entries whose anchors no longer resolve",
+    "guaranteed by a test or a type",
+    'search.md "Tokens keep user data"',
+    "which has gone longest without a check",
+    "docs/old.md does not resolve",
+    "tokenizer split CJK runs",
+    "Preserving human text".toLowerCase(),
+    "Do not modify implementation code",
+  ])
+    expect(text.toLowerCase()).toContain(expected.toLowerCase());
+  // With no route table yet, the first delivery creates one from existing owners.
+  expect(text).not.toContain("There is no route table yet");
+  expect(
+    curationInstructions({
+      ...brief,
+      usage: { indexBytes: 0, totalBytes: 0, topics: [] },
+    }),
+  ).toContain("There is no route table yet: create .cadence/project.md");
+  // A delivery that cannot carry the store still maintains named documents.
+  const unmanaged = curationInstructions({ ...brief, managed: false });
+  expect(unmanaged).toContain("not maintained in this delivery");
+  expect(unmanaged).toContain("engineering/search.md");
+  expect(unmanaged).not.toContain("Budget, enforced");
 });
 
 it("known secrets in document filenames do not leak through manifests or omission notices", () => {
