@@ -390,8 +390,11 @@ export class Conversations {
         conversationId: id,
       });
   }
-  /** Startup refuses while a browser message's closure is unknown: its worker
-   * may still write to the session. Interrupted ones are reported as such. */
+  /** Startup refuses while a browser message's closure was recorded as unknown:
+   * its worker may still write to the session. A message the previous owner's
+   * death interrupted (still recorded queued or running) does not refuse: host
+   * startup has already stopped that owner's workers by exact identity, and the
+   * reader reports the reply as interrupted. */
   assertSettled(): void {
     this.o.owner.lease.assert();
     const sessions = join(this.records.root, "sessions");
@@ -404,7 +407,7 @@ export class Conversations {
         const latest = this.records
           .index(decodeSessionId(e.name.slice(0, -5)))
           .commands.at(-1);
-        if (latest && this.records.state(latest).status === "unknown")
+        if (latest && this.records.closureUnknown(latest))
           throw new ContractError("quarantine");
       }
     } finally {

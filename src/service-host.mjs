@@ -14339,6 +14339,12 @@ class ConversationRecords {
     this.states.set(commandId, { key, state });
     return state;
   }
+  closureUnknown(commandId) {
+    const value = this.read(this.path(commandId, "state.json"));
+    if (value === undefined)
+      throw new ContractError("corrupt-selected");
+    return decodeState(value).status === "unknown";
+  }
   liveFor(id) {
     for (const live2 of this.active.values())
       if (live2.accepted.session === id)
@@ -30206,7 +30212,7 @@ class Conversations {
         if (!e.isFile() || !e.name.endsWith(".json"))
           throw new ContractError("corrupt-selected");
         const latest = this.records.index(decodeSessionId(e.name.slice(0, -5))).commands.at(-1);
-        if (latest && this.records.state(latest).status === "unknown")
+        if (latest && this.records.closureUnknown(latest))
           throw new ContractError("quarantine");
       }
     } finally {
@@ -32671,7 +32677,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "31b57d115892c392bb794ebea68edba157c8904ec9dfe20e2296611d91a499f5",
+  build: "de5cf570353019c66b9f3b8495009e36fc824ab2c9abba43f139a629174bc25b",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
