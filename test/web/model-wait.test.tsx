@@ -6,7 +6,10 @@ import type {
   ModelSelector,
 } from "../../src/service-contract.ts";
 import type { ModelAvailability } from "../../web/src/client/use-model-catalog";
-import { ModelPicker } from "../../web/src/components/actions/ModelPicker";
+import {
+  ChatComposer,
+  type ChatComposerProps,
+} from "../../web/src/components/workspace/ChatComposer";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 
 const hooks = vi.hoisted(() => ({
@@ -138,7 +141,13 @@ vi.mock("../../web/src/components/workspace/AgentDock", () => ({
 }));
 vi.mock("../../web/src/components/workspace/ChatImages", () => ({
   DraftImage: () => null,
-  useImageDraft: () => ({ files: [], remove: facts.no, add: facts.no }),
+  useImageDraft: () => ({
+    files: [],
+    remove: facts.no,
+    add: facts.no,
+    replace: facts.no,
+    key: facts.no,
+  }),
 }));
 const choice: ModelSelector = {
   provider: "fixture",
@@ -255,12 +264,11 @@ function fixture() {
       onChanged: facts.no,
       onReferenceUsed: facts.no,
     });
-    const picker = find(tree, ModelPicker) as Parameters<typeof ModelPicker>[0];
-    const submit = find(tree, "form")?.onSubmit as (event: {
-      preventDefault(): void;
-    }) => void;
+    // The composer is its own component: the conversation hands it the model
+    // picker's props and the one Send, which is all these transitions drive.
+    const composer = find(tree, ChatComposer) as unknown as ChatComposerProps;
     effects();
-    return { tree, picker, submit: () => submit({ preventDefault: facts.no }) };
+    return { tree, picker: composer.model, submit: composer.onSend };
   };
   return { client, render, prepareForSend };
 }
@@ -288,6 +296,47 @@ it("a preview choice while Send waits resumes that exact intent once the same ow
     conversationId: "chat",
     head: null,
   });
+});
+it("a rewritten message is sent from its anchor, which the accepted Send uses up, giving the earlier draft back", async () => {
+  const anchorKey = "cadence:draft:workspace:chat:anchor";
+  storage.set(
+    anchorKey,
+    JSON.stringify({
+      kind: "edit",
+      entry: "abcdef12",
+      turnId: "turn",
+      from: 0,
+      label: "original message",
+      media: false,
+      stash: "an earlier draft",
+    }),
+  );
+  const f = fixture();
+  // The anchor is part of what Send captures before any wait: the model
+  // choice that follows completes that same intent.
+  f.render().submit();
+  await settle();
+  const preview = f.render({ status: "connecting" }).picker;
+  preview.onPreviewChoice?.(choice);
+  preview.onOpenChange(false, "chosen");
+  f.render({ status: "connecting" });
+  await settle();
+  // Waiting has sent nothing and keeps the anchor.
+  expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+  expect(storage.has(anchorKey)).toBe(true);
+  f.render();
+  await settle();
+  f.render();
+  f.render();
+  expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
+  expect(f.client.workbenchCommand.mock.calls[0][0]).toMatchObject({
+    kind: "send",
+    text: "original message",
+    conversationId: "chat",
+    head: "abcdef12",
+  });
+  expect(storage.has(anchorKey)).toBe(false);
+  expect(storage.get("cadence:draft:workspace:chat")).toBe("an earlier draft");
 });
 it.each(["stopped", "replacement", "dismissed"])(
   "%s retires the unsent model wait without a surprise restart or send",

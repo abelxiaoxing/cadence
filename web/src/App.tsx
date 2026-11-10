@@ -30,7 +30,11 @@ import { type BrowserClient, browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
 import type { FolderDraft } from "./client/folder-draft";
 import type { PreviewModels } from "./client/model-preview";
-import { activityRoute, chatFromLocation } from "./client/project-route";
+import {
+  activityRoute,
+  branchHash,
+  chatFromLocation,
+} from "./client/project-route";
 import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
@@ -58,6 +62,10 @@ import {
   AgentDock,
   type WorkflowAgent,
 } from "./components/workspace/AgentDock";
+import {
+  BranchesPanel,
+  type BranchesView,
+} from "./components/workspace/BranchesPanel";
 import {
   ChatWorkspace,
   type ConversationActivity,
@@ -141,9 +149,12 @@ export function App({
   const [agent, setAgent] = useState<WorkflowAgent | null>(null);
   const [chatRuns, setChatRuns] = useState<string[]>([]);
   const [projectOpen, setProjectOpen] = useState<string | null>(null);
-  const [rightTab, setRightTab] = useState<"files" | "task">(
+  const [rightTab, setRightTab] = useState<"files" | "branches" | "task">(
     initial ? "task" : "files",
   );
+  // The open conversation's session tree, for the Branches tab; another
+  // conversation's is never shown for this one.
+  const [branchView, setBranchView] = useState<BranchesView>();
   const [reference, setReference] = useState<string>();
   const [chatLocation, setChatLocation] = useState<ConversationLocation>();
   // What the open conversation reports for the statusbar; another
@@ -302,6 +313,16 @@ export function App({
       : undefined;
   const panels = usePanelLayout();
   const { closeDrawer } = panels;
+  // One inspector tab at a time: Branches belongs to an open conversation,
+  // History details to a task; Files is there for both.
+  const branchesTab = rightTab === "branches" && !!chatId;
+  const filesTab = !branchesTab && (rightTab !== "task" || !scope);
+  // The conversation header's branch count opens the tab; a display choice.
+  const openBranches = () => {
+    setRightTab("branches");
+    if (panels.mobile) panels.setDrawer("right");
+    else if (!panels.inspector) panels.toggle("right");
+  };
   const [selectedSnapshot, setSelectedSnapshot] = useState<string | undefined>(
     initial?.snapshotSeq,
   );
@@ -366,12 +387,15 @@ export function App({
     setDetail(undefined);
     setSelectedSnapshot(undefined);
     setTab("messages");
-    setRightTab("files");
+    // The History details tab belongs to a task; the others stay as chosen.
+    setRightTab((tab) => (tab === "task" ? "files" : tab));
     closeDrawer();
+    // Selecting the conversation already open keeps the branch it shows.
+    const leaf = id === chatId ? activityRoute(location.hash, id).leaf : null;
     history.replaceState(
       { cadenceCwd: workingFolder ?? initialCwd, cadenceConversationId: id },
       "",
-      `${location.pathname}${location.search}#chat=${id}`,
+      `${location.pathname}${location.search}${branchHash(`#chat=${id}`, leaf)}`,
     );
   };
   useEffect(() => {
@@ -414,7 +438,7 @@ export function App({
           setChatId(chat);
           setTaskId(null);
           setScope(null);
-          setRightTab("files");
+          setRightTab((tab) => (tab === "task" ? "files" : tab));
           lifetime.current.depart();
           closeDrawer();
         }
@@ -634,7 +658,11 @@ export function App({
           setDetached(true);
         }}
         inspectorLabel={
-          scope && rightTab === "task" ? t("History details") : t("Files")
+          scope && rightTab === "task"
+            ? t("History details")
+            : branchesTab
+              ? t("Branches")
+              : t("Files")
         }
         toolbar={
           scope && (
@@ -955,6 +983,8 @@ export function App({
                 hidden={!!agent}
                 onOpenAgent={setAgent}
                 onWorkflowRuns={setChatRuns}
+                onBranches={setBranchView}
+                onOpenBranches={openBranches}
                 workspaceId={
                   project
                     ? `checkout:${project.path}`
@@ -1174,12 +1204,23 @@ export function App({
             <button
               type="button"
               className="rp-tab"
-              aria-pressed={rightTab === "files" || !scope}
+              aria-pressed={filesTab}
               onClick={() => setRightTab("files")}
             >
               <FiFolder aria-hidden="true" />
               {t("Files")}
             </button>
+            {chatId && (
+              <button
+                type="button"
+                className="rp-tab"
+                aria-pressed={branchesTab}
+                onClick={() => setRightTab("branches")}
+              >
+                <FiGitBranch aria-hidden="true" />
+                {t("Branches")}
+              </button>
+            )}
             {scope && (
               <button
                 type="button"
@@ -1195,7 +1236,12 @@ export function App({
           </>
         }
         inspector={
-          rightTab === "files" || !scope ? (
+          branchesTab ? (
+            <BranchesPanel
+              view={branchView?.id === chatId ? branchView : undefined}
+              onChosen={closeDrawer}
+            />
+          ) : filesTab ? (
             <FilesPanel
               key={fileLocation?.cwd ?? "owner"}
               location={fileLocation}

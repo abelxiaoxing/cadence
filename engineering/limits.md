@@ -115,6 +115,7 @@ Conversation-control projections (`src/service/conversation-controls.ts`) cache 
 Browser explicit-Send preparation uses `SEND_PREPARATION_MS` in `web/src/client/conversation-send.ts`, separate from model/worker execution.
 Its deadline abandons only an unsent client continuation; it never kills the owner or releases accepted work.
 Message bytes share `CONVERSATION_SEND_BYTES` with the owner decoder.
+The composer's browser-local bounds sit beside their code: `PROMPT_HISTORY_MAX` recalled prompts per checkout in `web/src/composer/prompt-history.ts` (halved when sessionStorage is full), `MENTION_ROWS` rows of one `@` listing in `web/src/composer/at-mention.ts`, and the text area's `COMPOSER_MIN_HEIGHT`/`COMPOSER_MAX_HEIGHT` in `web/src/components/workspace/ChatComposer.tsx`.
 
 Conversation context records use `BYTES` in `src/service/conversation-contexts.ts` (16KiB); there is no aggregate conversation-settings eviction/quota.
 Their model selections reuse the existing `OwnerModelContext` cache bounded by `LIMITS.maxPageEntries`, sharing one source per exact selector rather than one per conversation.

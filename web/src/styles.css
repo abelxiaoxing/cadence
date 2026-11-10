@@ -2977,6 +2977,7 @@ summary:focus-visible,
  * last control is the round Send or Stop. */
 .chat-composer {
   flex: none;
+  position: relative;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -2986,19 +2987,235 @@ summary:focus-visible,
 .chat-composer:focus-within {
   border-color: var(--accent);
 }
+/* The text area grows with its text (ChatComposer sets its height); the
+ * handle on the card's top edge sets a fixed height instead of a native
+ * resize corner. */
 .chat-composer textarea {
   display: block;
   width: 100%;
   border: 0;
   outline: none;
   box-shadow: none;
-  resize: vertical;
+  resize: none;
   min-height: 64px;
-  max-height: 240px;
+  max-height: 320px;
   padding: 14px 16px 8px;
   background: transparent;
   font-size: 14px;
   line-height: 1.6;
+}
+/* The height handle (pi .composer-resize), as a keyboard-operable range input
+ * like the pane sashes: a short bar on the top edge, shown on hover or focus
+ * and always on touch screens. */
+.composer-resize {
+  -webkit-appearance: none;
+  appearance: none;
+  position: absolute;
+  top: -7px;
+  left: 24px;
+  right: 24px;
+  z-index: 1;
+  width: auto;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(var(--border), var(--border)) center / 48px 4px no-repeat;
+  cursor: ns-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-composer:hover > .composer-resize,
+.composer-resize:focus-visible,
+.composer-resize:active {
+  opacity: 1;
+}
+.composer-resize:hover,
+.composer-resize:focus-visible,
+.composer-resize:active {
+  background-image: linear-gradient(var(--accent), var(--accent));
+  background-size: 56px 4px;
+  outline: none;
+  box-shadow: none;
+}
+/* A fixed height is said by the bar's shape too, not only its colour. */
+.composer-resize.is-manual {
+  background-size:
+    48px 4px,
+    8px 8px;
+  background-image:
+    linear-gradient(var(--border), var(--border)),
+    radial-gradient(circle, var(--accent) 60%, transparent 62%);
+}
+.composer-resize::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+  border: 0;
+}
+.composer-resize::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+  border: 0;
+}
+.composer-resize::-moz-range-track {
+  height: 100%;
+  background: transparent;
+  border: 0;
+}
+.composer-resize::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  background: transparent;
+  border: 0;
+}
+.composer-resize::-moz-range-progress {
+  background: transparent;
+}
+/* Where the next message continues, when that is not simply the end of the
+ * latest branch: what is being rewritten or continued, and Cancel. */
+.composer-anchor {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 8px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.composer-anchor > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent-text);
+}
+.composer-anchor-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-dim);
+}
+.composer-anchor-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.composer-anchor-quote {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-anchor-quote::before {
+  content: "“";
+}
+.composer-anchor-quote::after {
+  content: "”";
+}
+.composer-anchor > button {
+  flex: none;
+  font-size: 12px;
+}
+.composer-anchor.quiet {
+  border-color: var(--border-soft);
+  background: transparent;
+}
+.composer-anchor.quiet > svg {
+  color: var(--text-faint);
+}
+/* The `@` popup (pi .slash-menu): the folder's listing above the composer,
+ * so it never covers the text being typed. */
+.mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  max-height: min(320px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev2);
+  box-shadow: 0 -6px 24px var(--shadow-2);
+}
+.mention-menu-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin-bottom: 6px;
+  padding: 4px 10px 8px;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.mention-menu-folder {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+}
+.mention-menu-note {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.mention-item > svg {
+  flex: none;
+  color: var(--text-faint);
+}
+/* The picked row is marked by its rule as well as its tint. */
+.mention-item.active {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+.mention-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--accent-text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .composer-toolbar {
   display: flex;
@@ -3050,6 +3267,102 @@ summary:focus-visible,
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
 .chat-messages-wrap > .scroll-bottom {
   bottom: 10px;
+}
+/* A jump to a turn not shown yet reads back to it first. */
+.chat-jump-status {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 16;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  box-shadow: 0 4px 14px var(--shadow-2);
+  color: var(--text-dim);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+/* The question rail (pi .qn-rail, reference.css) sits in the transcript's
+ * right inset, clear of the reading column; phones have no room for it. */
+.chat-messages-wrap > .qn-rail {
+  top: 12px;
+  bottom: 12px;
+  right: 8px;
+  width: 16px;
+}
+@media (max-width: 900px) {
+  .chat-messages-wrap > .qn-rail {
+    display: none;
+  }
+}
+/* A message's versions where the session forks: always shown, since it says
+ * which of several branches is being read. */
+.msg-versions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.msg-version-count {
+  min-width: 26px;
+  text-align: center;
+}
+.msg-version-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-height: 0;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+}
+.msg-version-step:hover:not(:disabled) {
+  background: var(--bg-elev3);
+  color: var(--text);
+}
+.msg-version-step:disabled {
+  opacity: 0.35;
+}
+/* Turns the message being composed will not have in its context: still
+ * readable, set back behind a dashed rule, under a divider that says so. */
+.chat-anchor-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 920px;
+  margin: 4px auto 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.chat-anchor-divider::before,
+.chat-anchor-divider::after {
+  content: "";
+  flex: 1 1 12px;
+  border-top: 1px dashed var(--border);
+}
+.chat-anchor-divider > svg {
+  flex: none;
+  color: var(--accent-text);
+}
+.chat-turn.off-branch {
+  padding-left: 12px;
+  border-left: 2px dashed var(--border);
+  opacity: 0.6;
+}
+.chat-turn.off-branch:hover,
+.chat-turn.off-branch:focus-within {
+  opacity: 1;
 }
 /* Files (pi .panel-crumbs / .crumb / .file-item / .file-attach): a crumb
  * toolbar and path trail over quiet rows whose actions appear on hover. */
@@ -3646,8 +3959,8 @@ button.file-item:hover:not(:disabled),
   margin: 0 auto;
 }
 
-/* ---- Shared Pi session branches: header controls, the tree panel, the
- * per-turn "continue from here" action and a message that left no entry ---- */
+/* ---- Shared Pi session branches: header controls, the inspector's Branches
+ * tab and a message that left no entry ---- */
 .conversation-branch {
   display: flex;
   align-items: center;
@@ -3701,42 +4014,95 @@ button.file-item:hover:not(:disabled),
   gap: 4px;
   font-size: 11px;
 }
-.branch-tree {
-  flex: none;
-  max-height: 45%;
-  overflow: auto;
-  padding: 8px var(--chat-inset);
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-elev);
-}
-.branch-tree > header {
+/* The Branches tab: user messages as a tree. A fork's branches sit behind one
+ * rail per level; the branch shown is marked by a filled dot and weight as
+ * well as its tint. Row actions appear on hover or focus, as in Files. */
+.branches-panel {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
-.branch-tree h3 {
+.branches-panel > .panel-crumbs > .lp-filter {
+  flex: 1;
+  min-width: 0;
   margin: 0;
+}
+.branches-pinned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 2px 12px 8px;
+  color: var(--text-dim);
   font-size: 12px;
+}
+.branches-pinned > span {
+  flex: 1 1 140px;
 }
 .branch-rows {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 6px 10px;
+  overflow: auto;
   list-style: none;
-  margin: 6px 0 0;
-  padding: 0;
+}
+.branch-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 6px;
+}
+.branch-item:hover,
+.branch-item:focus-within {
+  background: var(--bg-elev2);
+}
+.branch-rail {
+  flex: none;
+  width: 14px;
+  margin-left: 9px;
+  border-left: 1px solid var(--border);
 }
 .branch-row {
+  flex: 1;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: 100%;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
+  min-height: 26px;
   padding: 3px 6px;
-  border-radius: 5px;
-  text-align: start;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
   font-size: 12px;
+  text-align: start;
 }
-.branch-row.current {
-  background: var(--accent-soft);
-  color: var(--accent-text);
+.branch-row:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+.branch-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--text-faint);
+  border-radius: 50%;
+}
+.branch-item.current > .branch-row {
+  color: var(--text);
+  font-weight: 600;
+}
+.branch-item.current > .branch-row > .branch-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.branch-item.current > .branch-rail {
+  border-left-color: var(--accent);
 }
 .branch-text {
   flex: 1;
@@ -3749,6 +4115,65 @@ button.file-item:hover:not(:disabled),
   flex: none;
   color: var(--text-faint);
   font-size: 10.5px;
+  font-weight: 400;
+}
+.branch-act {
+  flex: none;
+  align-self: center;
+  width: 22px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+}
+.branch-item:hover > .branch-act,
+.branch-item:focus-within > .branch-act {
+  opacity: 1;
+}
+.branch-act:hover:not(:disabled) {
+  background: var(--bg-elev3);
+  color: var(--text);
+}
+.branch-act:disabled {
+  opacity: 0;
+}
+.branch-item:hover > .branch-act:disabled,
+.branch-item:focus-within > .branch-act:disabled {
+  opacity: 0.35;
+}
+@media (hover: none) {
+  .branch-act {
+    opacity: 1;
+  }
+  .branch-act:disabled {
+    opacity: 0.35;
+  }
+  .composer-resize {
+    opacity: 1;
+  }
+  /* Room for a finger; the date gives way to the message. */
+  .branch-row time {
+    display: none;
+  }
+}
+/* Finger-sized targets for the controls above and in the transcript. */
+@media (pointer: coarse) {
+  .branch-act,
+  .msg-version-step {
+    width: 32px;
+    min-height: 32px;
+    height: 32px;
+  }
+  .branch-row {
+    min-height: 36px;
+  }
+  .mention-item {
+    min-height: 40px;
+  }
 }
 .chat-attempt {
   margin: 8px 0;

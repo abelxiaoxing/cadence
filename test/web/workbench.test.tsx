@@ -340,26 +340,31 @@ it("each message carries an action bar: copy on both, a branch point only where 
   // each reply text keeps its own.
   expect(plain.match(/class="msg-text-copy"/g)).toHaveLength(3);
   expect(plain).not.toContain("Continue from here");
-  // Offered: one named action under the user's message, which hands back the
-  // turn's end and nothing else.
+  expect(plain).not.toContain("Edit and resend");
+  expect(plain).not.toContain("msg-versions");
+  // Offered: "continue" means after this turn, so it is one named action on
+  // the turn's last message, the reply. Rendering it chooses nothing.
   const chosen: string[] = [];
   const settled = { ...turn, header: { ...turn.header, entry: "entry-9" } };
   const offered = renderToStaticMarkup(
-    <ChatTurnView turn={settled} onContinue={(entry) => chosen.push(entry)} />,
+    <ChatTurnView turn={settled} onContinue={(id) => chosen.push(id)} />,
   );
   expect(offered.match(/aria-label="Continue from here"/g)).toHaveLength(1);
   expect(offered).toMatch(
-    /<article class="msg msg-user">.*class="msg-action labelled"[^>]*aria-label="Continue from here".*<\/article><article class="msg msg-assistant">/,
+    /<article class="msg msg-assistant">.*class="msg-action labelled"[^>]*aria-label="Continue from here"/,
+  );
+  expect(offered).not.toMatch(
+    /<article class="msg msg-user">.*Continue from here.*<article class="msg msg-assistant">/,
   );
   expect(offered).toContain(
-    'title="Show the conversation up to the end of this turn. The next message starts a new branch there; nothing is deleted."',
+    'title="Send the next message from the end of this turn. It starts a new branch there; the later turns stay on theirs and nothing is deleted."',
   );
   expect(chosen).toEqual([]);
-  // A turn that Pi has not ended (no entry) offers no branch point.
+  // A turn that Pi has not ended (no entry) offers no place to continue from.
   expect(
     renderToStaticMarkup(<ChatTurnView turn={turn} onContinue={() => {}} />),
   ).not.toContain("Continue from here");
-  // Without a user message the reply's bar offers it instead.
+  // Without a user message the reply's bar still offers it.
   const replyOnly = sourceOf({ items: items.slice(2) });
   const headless = renderToStaticMarkup(
     <ChatTurnView
@@ -369,6 +374,25 @@ it("each message carries an action bar: copy on both, a branch point only where 
   );
   expect(headless).not.toContain("msg-user");
   expect(headless.match(/aria-label="Continue from here"/g)).toHaveLength(1);
+  // Without a reply the user's message is the turn's last and carries it.
+  const unanswered = sourceOf({ items: items.slice(0, 1) });
+  const alone = renderToStaticMarkup(
+    <ChatTurnView
+      turn={{ ...unanswered, header: { ...unanswered.header, entry: "e" } }}
+      onContinue={() => {}}
+    />,
+  );
+  expect(alone).not.toContain("msg-assistant");
+  expect(alone.match(/aria-label="Continue from here"/g)).toHaveLength(1);
+  // Edit and resend sits on the user's message, before its copy action.
+  const editable = renderToStaticMarkup(
+    <ChatTurnView turn={settled} onEdit={(id) => chosen.push(id)} />,
+  );
+  expect(editable).toMatch(
+    /<article class="msg msg-user">.*aria-label="Message actions"><button type="button" class="msg-action" title="Put this message back in the composer\. Sending it starts a new branch beside this one; nothing is deleted\." aria-label="Edit and resend">.*aria-label="Copy message".*<\/article><article class="msg msg-assistant">/,
+  );
+  expect(editable.match(/aria-label="Edit and resend"/g)).toHaveLength(1);
+  expect(chosen).toEqual([]);
   // A reply still being written has no bar; its message keeps one.
   const live = renderTurn({ status: "running", items });
   expect(live.match(/class="msg-actions"/g)).toHaveLength(1);
@@ -413,6 +437,55 @@ it("each message carries an action bar: copy on both, a branch point only where 
     "Looking.\n\n**Final** answer",
   );
   expect(reads).toEqual([4, 2]);
+});
+
+it("a forked message says which version is shown and steps between them; a turn outside the new context says so", () => {
+  const items = [
+    chatItem("user", "user", { text: "Second attempt" }),
+    chatItem("a", "assistant", { text: "Answer" }),
+  ];
+  const turn = sourceOf({ items });
+  const steps: [string, number][] = [];
+  const paged = (version: number) =>
+    renderToStaticMarkup(
+      <ChatTurnView
+        turn={turn}
+        version={version}
+        versions={3}
+        onVersion={(id, step) => steps.push([id, step])}
+      />,
+    );
+  const middle = paged(2);
+  // Position and count are words for assistive technology and digits on screen.
+  expect(middle).toMatch(
+    /class="msg-versions" role="group" aria-label="Version 2 of 3">/,
+  );
+  expect(middle).toContain(
+    '<span class="msg-version-count" aria-hidden="true">2/3</span>',
+  );
+  expect(middle).not.toMatch(/class="msg-version-step"[^>]*disabled/);
+  // The ends cannot step past themselves.
+  expect(paged(1)).toMatch(
+    /aria-label="Previous version" title="Previous version" disabled=""/,
+  );
+  expect(paged(3)).toMatch(
+    /aria-label="Next version" title="Next version" disabled=""/,
+  );
+  expect(steps).toEqual([]);
+  // One version is no pager, whatever position is passed.
+  expect(
+    renderToStaticMarkup(<ChatTurnView turn={turn} version={1} versions={1} />),
+  ).not.toContain("msg-versions");
+  // A turn the message being written will not hold says so in its name and
+  // class; its content stays.
+  const off = renderToStaticMarkup(<ChatTurnView turn={turn} off />);
+  expect(off).toMatch(
+    /^<section class="chat-turn off-branch" aria-label="Conversation turn, not in the new message&#x27;s context">/,
+  );
+  expect(off).toContain("Second attempt");
+  expect(renderTurn({ items })).toMatch(
+    /^<section class="chat-turn" aria-label="Conversation turn">/,
+  );
 });
 
 it("folder setup uses the conversation shell, keeps input editable and cannot send or start work", () => {

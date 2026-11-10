@@ -6,7 +6,11 @@ import type {
   ActivityDiscovery,
 } from "../../src/service/contracts/activity.ts";
 import { observeActivity, staleActivity } from "../../web/src/client/activity";
-import { activityRoute } from "../../web/src/client/project-route";
+import {
+  activityRoute,
+  branchHash,
+  rememberBranch,
+} from "../../web/src/client/project-route";
 import {
   ActivityList,
   activityKey,
@@ -160,6 +164,52 @@ it("activity links select exact Pi branch identities, not file paths", () => {
   expect(activityRoute("#chat=pi-session&activity=1&leaf=/etc/passwd")).toEqual(
     { selected: false, leaf: null },
   );
+});
+
+it("the address keeps the branch shown: only the leaf is written, and only a valid entry id", () => {
+  expect(branchHash("#chat=pi-session", "abcdef12")).toBe(
+    "#chat=pi-session&leaf=abcdef12",
+  );
+  // What was written reads back as that branch of that conversation.
+  expect(
+    activityRoute(branchHash("#chat=pi-session", "abcdef12"), "pi-session"),
+  ).toEqual({ selected: false, leaf: "abcdef12" });
+  // Following the latest again removes the leaf and keeps the rest.
+  expect(branchHash("#chat=pi-session&activity=1&leaf=abcdef12", null)).toBe(
+    "#chat=pi-session&activity=1",
+  );
+  expect(branchHash("#chat=pi-session&leaf=abcdef12", "0011aabb")).toBe(
+    "#chat=pi-session&leaf=0011aabb",
+  );
+  expect(() => branchHash("#chat=pi-session", "/etc/passwd")).toThrow();
+});
+
+it("the branch shown is replaced into its own conversation's address, without a navigation", () => {
+  const location = {
+    hash: "#chat=pi-session",
+    pathname: "/app",
+    search: "?project=fixture",
+  };
+  const replaceState = vi.fn((_state: unknown, _title: string, url: string) => {
+    location.hash = url.slice(url.indexOf("#"));
+  });
+  vi.stubGlobal("window", { location });
+  vi.stubGlobal("location", location);
+  vi.stubGlobal("history", { state: { cadenceCwd: "/p" }, replaceState });
+  rememberBranch("pi-session", "abcdef12");
+  // The entry is replaced with its state kept: no pushed entry, no hashchange.
+  expect(replaceState).toHaveBeenCalledWith(
+    { cadenceCwd: "/p" },
+    "",
+    "/app?project=fixture#chat=pi-session&leaf=abcdef12",
+  );
+  rememberBranch("pi-session", "abcdef12");
+  expect(replaceState).toHaveBeenCalledTimes(1);
+  // Another conversation's address is never rewritten.
+  rememberBranch("other-session", "0011aabb");
+  expect(replaceState).toHaveBeenCalledTimes(1);
+  rememberBranch("pi-session", null);
+  expect(location.hash).toBe("#chat=pi-session");
 });
 
 it("R3: an activity branch never applies to another conversation after navigation", () => {
