@@ -720,9 +720,11 @@ export interface BuiltTurn {
   parts: ChatItem[][];
 }
 const clip = (value: string, bytes: number) => clipText(value, bytes);
-/** Pi's entries of one turn as chat items: user and assistant text, tool calls
- * paired with their results, terminal `!` commands, summaries and extension
- * messages shown in the terminal. Thinking and images are flagged, not shown. */
+/** Pi's entries of one turn as chat items: user and assistant text, readable
+ * thinking, tool calls paired with their results, terminal `!` commands,
+ * summaries and extension messages shown in the terminal. Thinking Pi stored
+ * unreadable (redacted, or a signature without text) and unsupported media are
+ * flagged, not shown; a thinking signature is never returned. */
 export function turnItems(
   entries: SessionEntry[],
   secrets: readonly string[],
@@ -811,9 +813,24 @@ export function turnItems(
               args,
             );
             if (typeof id === "string") tools.set(id, call);
-          } else if (type === "thinking" || type === "redactedThinking")
-            omitted.thinking = true;
-          else if (type === "image") omitted.media = true;
+          } else if (type === "thinking" || type === "redactedThinking") {
+            const value = own(b, "thinking");
+            if (
+              type === "thinking" &&
+              typeof value === "string" &&
+              value.trim() &&
+              own(b, "redacted") !== true
+            )
+              add({
+                id: `${entry.id}:${items.length}`,
+                role: "thinking",
+                text: value,
+                name: "",
+                args: "",
+                error: false,
+              });
+            else omitted.thinking = true;
+          } else if (type === "image") omitted.media = true;
           else omitted.other = true;
         }
         ({ status, notice } = stopStatus(m));
@@ -940,7 +957,9 @@ export function listTurn(turn: Omit<BuiltTurn, "steps" | "parts">): BuiltTurn {
       0,
     );
     const more =
-      listed.clipped || (item.role === "tool" && !!(item.args || item.text));
+      listed.clipped ||
+      ((item.role === "tool" || item.role === "thinking") &&
+        !!(item.args || item.text));
     return { ...listed, parts: more ? parts[index].length : 0 };
   });
   return { ...turn, steps, parts };

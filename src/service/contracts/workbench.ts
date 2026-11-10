@@ -250,7 +250,9 @@ export interface ChatImage {
 export interface ChatItem {
   images?: ChatImage[];
   id: string;
-  role: "user" | "assistant" | "tool";
+  /** `thinking` is one readable thinking block of an assistant message, in its
+   * recorded place; its signature is never returned. */
+  role: "user" | "assistant" | "tool" | "thinking";
   text: string;
   name: string;
   args: string;
@@ -267,18 +269,23 @@ export interface ChatTurn {
   notice: string;
   /** Immutable full-transcript pages; items above are only the latest preview. */
   transcript?: { pages: number };
-  /** Content kinds observed and not retained; never written into `notice`.
+  /** Content kinds observed and not shown; never written into `notice`.
+   * `thinking` in a conversation turn is thinking Pi stored unreadable
+   * (redacted or without text), since readable thinking is an item; in a
+   * workflow transcript it is thinking the capture did not retain.
    * `other` is a block of a type Cadence does not recognize. */
   omitted: { thinking: boolean; media: boolean; other: boolean };
 }
 /** One recorded item of a turn as listed. A listing never carries a tool's
- * arguments or output and keeps at most `STEP_TEXT_BYTES` of message text;
- * the full item is read per step with `conversation-step`, one part at a time. */
+ * arguments or output or a thinking block's text, and keeps at most
+ * `STEP_TEXT_BYTES` of message text; the full item is read per step with
+ * `conversation-step`, one part at a time. */
 export interface ChatStep {
   images?: ChatImage[];
   id: string;
   role: ChatItem["role"];
-  /** User or assistant text, a prefix of it when `clipped`; empty for tools. */
+  /** User or assistant text, a prefix of it when `clipped`; empty for tools
+   * and thinking. */
   text: string;
   clipped: boolean;
   name: string;
@@ -376,13 +383,15 @@ export function chatStep(
   more = false,
 ): ChatStep {
   const tool = item.role === "tool";
-  const text = tool ? "" : clipText(item.text, STEP_TEXT_BYTES);
+  // Read on demand: neither a tool's output nor thinking is in a listing.
+  const lazy = tool || item.role === "thinking";
+  const text = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
     role: item.role,
     text,
     ...(item.images?.length ? { images: item.images } : {}),
-    clipped: !tool && (more || text !== item.text),
+    clipped: !lazy && (more || text !== item.text),
     name: item.name,
     target: tool ? clipText(toolTarget(item.args), TARGET_BYTES) : "",
     error: item.error,
@@ -914,6 +923,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     items: list(o.items, 256, decodeChatItem),
   };
 }
+const ITEM_ROLES = ["user", "assistant", "tool", "thinking"] as const;
 function decodeChatImages(v: unknown): ChatImage[] {
   return list(v, Number.MAX_SAFE_INTEGER, (value) => {
     const o = closed(value, [
@@ -945,7 +955,7 @@ export function decodeChatItem(v: unknown): ChatItem {
   return {
     ...(i.images === undefined ? {} : { images: decodeChatImages(i.images) }),
     id: text(i.id, 160, true),
-    role: oneOf(i.role, ["user", "assistant", "tool"]),
+    role: oneOf(i.role, ITEM_ROLES),
     text: text(i.text, 256 * 1024),
     name: text(i.name, 128),
     args: text(i.args, 64 * 1024),
@@ -967,7 +977,7 @@ function decodeChatStep(v: unknown): ChatStep {
   const step = {
     ...(o.images === undefined ? {} : { images: decodeChatImages(o.images) }),
     id: text(o.id, 160, true),
-    role: oneOf(o.role, ["user", "assistant", "tool"]),
+    role: oneOf(o.role, ITEM_ROLES),
     text: text(o.text, STEP_TEXT_BYTES),
     clipped: bool(o.clipped),
     name: text(o.name, 128),
@@ -975,7 +985,13 @@ function decodeChatStep(v: unknown): ChatStep {
     error: bool(o.error),
     parts: integer(o.parts, 0),
   };
-  if (step.role === "tool" && (step.text || step.clipped))
+  if (
+    (step.role === "tool" || step.role === "thinking") &&
+    (step.text || step.clipped)
+  )
+    throw new ContractError("invalid");
+  // A thinking block is listed only when it has text to read.
+  if (step.role === "thinking" && !step.parts)
     throw new ContractError("invalid");
   return step;
 }

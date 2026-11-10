@@ -548,8 +548,10 @@ export class ConversationRecords {
               ...(recorded.execution ? { execution: recorded.execution } : {}),
               status: recorded.status,
               notice: turn.notice || sanitizeText(recorded.notice, secrets),
+              // The recorded thinking flag says the live capture kept none; the
+              // session holds it, so only what Pi stored unreadable is omitted.
               omitted: {
-                thinking: turn.omitted.thinking || recorded.omitted.thinking,
+                thinking: turn.omitted.thinking,
                 media: turn.omitted.media || recorded.omitted.media,
                 other: turn.omitted.other || recorded.omitted.other,
               },
@@ -604,7 +606,7 @@ export class ConversationRecords {
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
       ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
       omitted: {
-        thinking: written.omitted.thinking || !!omitted?.thinking,
+        thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
         other: written.omitted.other || !!omitted?.other,
       },

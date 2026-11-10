@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -41,6 +41,7 @@ function fixture() {
     text = "Question",
     notice = "",
     parent: string | null = null,
+    omitted = { thinking: false, media: false, other: false },
   ) => {
     const commandId = randomUUID();
     write(records.path(commandId, "accepted.json"), {
@@ -66,7 +67,7 @@ function fixture() {
       status,
       notice,
       user,
-      omitted: { thinking: false, media: false, other: false },
+      omitted,
     });
     write(records.indexPath(id), {
       schema: "cadence-session-commands/1",
@@ -208,4 +209,150 @@ it("an unwritten live Send preserves read redaction and recovery across readonly
   expect(f.records.turnSteps(id, null, 0, null)).not.toHaveProperty(
     "turn.retry",
   );
+});
+
+/** One session as Pi writes it: a header, then entries chained in order. */
+function writeSession(f: ReturnType<typeof fixture>, messages: unknown[]) {
+  const id = randomUUID(),
+    directory = sessionDirectory(f.cwd, f.agentDir);
+  mkdirSync(directory, { recursive: true });
+  const at = new Date(1_800_000_000_000).toISOString();
+  const entries = messages.map((message, index) => ({
+    type: "message",
+    id: (index + 1).toString(16).padStart(8, "0"),
+    parentId: index ? index.toString(16).padStart(8, "0") : null,
+    timestamp: at,
+    message,
+  }));
+  writeFileSync(
+    join(directory, `2026-11-02T00-00-00-000Z_${id}.jsonl`),
+    [{ type: "session", version: 3, id, timestamp: at, cwd: f.cwd }, ...entries]
+      .map((line) => `${JSON.stringify(line)}\n`)
+      .join(""),
+  );
+  return { id, entries: entries.map((entry) => entry.id) };
+}
+it("thinking Pi wrote is a lazily read step; the capture's recorded thinking flag is not reported beside it", () => {
+  const f = fixture(),
+    secret = "fabricated-thinking-credential";
+  const session = writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Why?" }] },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "thinking",
+          thinking: `Consider ${secret} carefully`,
+          thinkingSignature: "opaque-signature",
+        },
+        { type: "text", text: "Because." },
+      ],
+      stopReason: "stop",
+    },
+  ]);
+  // The live capture never carries thinking, so every thinking turn records it.
+  f.command(session.id, "completed", session.entries[0], "Why?", "", null, {
+    thinking: true,
+    media: true,
+    other: false,
+  });
+  f.secrets([secret]);
+  const listed = decodeWorkbenchResult(
+    f.records.turnSteps(session.id, session.entries[1], 0, null),
+  );
+  expect(listed).toMatchObject({
+    turn: {
+      status: "completed",
+      // The recorded media flag still applies; shown thinking is not omitted.
+      omitted: { thinking: false, media: true, other: false },
+      steps: 3,
+    },
+    steps: [
+      { role: "user", text: "Why?" },
+      { role: "thinking", text: "", clipped: false, parts: 1 },
+      { role: "assistant", text: "Because." },
+    ],
+  });
+  expect(JSON.stringify(listed)).not.toContain("Consider");
+  const step = decodeWorkbenchResult(
+    f.records.step(session.id, session.entries[1], session.entries[0], 1, 0),
+  );
+  expect(step).toMatchObject({
+    item: { role: "thinking", text: "Consider [redacted] carefully" },
+  });
+  expect(JSON.stringify(step)).not.toContain("signature");
+});
+it("a live turn reports thinking as omitted only when Pi stored it unreadable", () => {
+  const f = fixture();
+  const session = writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Earlier" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Reply" }],
+      stopReason: "stop",
+    },
+  ]);
+  const commandId = f.command(
+      session.id,
+      "running",
+      null,
+      "Next",
+      "",
+      session.entries[1],
+    ),
+    accepted = f.records.accepted(commandId);
+  if (!accepted) throw Error("admission");
+  const capture = new LiveCapture(() => []);
+  capture.accept({
+    protocol: 2,
+    childRunId: randomUUID(),
+    workerSeq: 1,
+    observedMs: 0,
+    event: {
+      kind: "omitted-block",
+      block: {
+        owner: {
+          kind: "message",
+          messageId: "m",
+          blockId: "b",
+          index: 0,
+          stage: "final",
+        },
+        sourceType: "hidden-thinking",
+        mimeType: null,
+        reason: "hidden-thinking",
+      },
+    },
+  });
+  expect(capture.omitted.thinking).toBe(true);
+  f.active.set(commandId, {
+    commandId,
+    accepted,
+    epoch: randomUUID(),
+    title: "Next",
+    execution: {
+      cwd: f.cwd,
+      checkoutRoot: f.cwd,
+      model: null,
+      version: accepted.command.model,
+    },
+    state: {
+      status: "running",
+      notice: "",
+      user: null,
+      omitted: { thinking: false, media: false, other: false },
+    },
+    stateFile: null,
+    capture,
+    abort: new AbortController(),
+    original: new Promise(() => {}),
+  });
+  expect(
+    f.records.turnSteps(session.id, session.entries[1], 1, null),
+  ).toMatchObject({
+    turn: {
+      status: "running",
+      omitted: { thinking: false, media: false, other: false },
+    },
+  });
 });
