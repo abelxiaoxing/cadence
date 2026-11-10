@@ -844,6 +844,63 @@ summary:focus-visible,
   font-size: 10.5px;
   color: var(--text-faint);
 }
+/* A conversation row is slim: title and time on one line. A state line is
+ * added only when there is something to say, in words as well as colour. */
+.session-time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.session-state {
+  font-family: inherit;
+}
+.session-state.running,
+.session-state.queued {
+  color: var(--accent-text);
+}
+.session-state.failed {
+  color: var(--red-text);
+}
+.session-state.unknown,
+.session-state.canceled,
+.session-state.timeout {
+  color: var(--amber-text);
+}
+/* The history filter (pi .lp-filter) and its day groups. */
+.lp-filter {
+  margin: 2px 2px 6px;
+  /* A label, not a column of fields: the generic label rule stacks children. */
+  flex-direction: row;
+}
+.lp-filter input {
+  padding: 0;
+}
+.lp-filter input:focus {
+  box-shadow: none;
+}
+.lp-filter input::-webkit-search-cancel-button {
+  display: none;
+}
+.lp-filter-clear {
+  min-height: 0;
+  border-radius: 4px;
+}
+.lp-filter-clear:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+.lp-time-label {
+  margin: 0;
+  padding: 7px 10px 3px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  -webkit-user-select: none;
+  user-select: none;
+}
 /* A collapsed episode's failure/unknown summary is an outcome statement:
  * it wraps instead of being ellipsized. */
 .session-sub.session-outcome {

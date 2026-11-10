@@ -254,7 +254,6 @@ export const zh = {
     "工具和检查直接在服务主机运行，不是安全沙箱。",
   Discussing: "对话中",
   "Awaiting plan approval": "等待批准计划",
-  "Ready for conversation": "可以继续对话",
   "Cadence conversation": "Cadence 对话",
   "Cadence on": "Cadence 已开启",
   "Exit Cadence": "退出 Cadence",
@@ -861,6 +860,13 @@ export const zh = {
   " / failed child": " / 有失败的子运行",
   " / unknown child": " / 有未知的子运行",
   "No active or recent episode observed.": "未观察到活动或近期的执行轮次。",
+  "Filter conversations…": "筛选对话…",
+  "Clear filter": "清除筛选",
+  "No listed conversation matches. Pages not loaded are not searched.":
+    "已列出的对话中没有匹配项。尚未加载的分页不在筛选范围内。",
+  Today: "今天",
+  Yesterday: "昨天",
+  Earlier: "更早",
   "All retained episodes for task": "此任务的全部保留执行轮次",
 
   // Timeline
@@ -1122,7 +1128,6 @@ export const zh = {
   "Continue from here": "从这里继续",
   "You are viewing an earlier point of this conversation. A message sent now starts a new branch here; the rest stays in the session.":
     "你正在查看这段对话较早的位置。现在发送的消息会从这里开始一个新分支，其余内容仍保留在会话中。",
-  Terminal: "终端",
   "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).":
     "此版本不再支持这类旧 Cadence 会话。请新建会话；原有文件会保留（{code}）。",
 } satisfies Record<string, string>;

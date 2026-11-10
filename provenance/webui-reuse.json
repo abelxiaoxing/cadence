@@ -383,7 +383,8 @@
     "web/src/components/workspace/FileChangeCard.tsx",
     "web/src/components/workspace/ImageLightbox.tsx",
     "test/web/file-diff.test.tsx",
-    "test/web/preview.test.tsx"
+    "test/web/preview.test.tsx",
+    "web/src/navigation/time-groups.ts"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -423,7 +424,7 @@
     "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
     "web/src/components/workspace/InspectorPanel.tsx": "db3cda7ec9944a892c4b4ef9c9b7f812bdab436ab260aaa8b42ea3be05a10902",
     "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
-    "web/src/components/workspace/TaskSidebar.tsx": "33ba6707aec343d98a18efc4712f122a198077420b6d0a1396658ec2e8806e6f",
+    "web/src/components/workspace/TaskSidebar.tsx": "61a9b079ad9eab8238385caa3492504eac45918b085e20980dcccfa329308276",
     "web/src/history/download-export.ts": "ab531872d83acf06733e3ede1b374730e83bafc21c41d48dcffc3e2f30d31528",
     "web/src/history/history-url.ts": "0d2a586ff60d4a4c10473485e210e0b788c4411988fd45bafdebdc07f80cf6af",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
@@ -435,13 +436,13 @@
     "web/src/layout/use-swipe-drawer.ts": "3eb0b5ad000dfb36e4fc78b7d8690c714c7ad8bc16b8dd55262667e0035d740a",
     "web/src/main.tsx": "71f52298dd89aa25b24a2c4ddde3d04cbd333eec350b4152c3bcd230b3f0114f",
     "web/src/navigation/assignment-rows.ts": "366ee712340945865fdb4745f378a33750b5ca1a92d1875728e81f8ced63f439",
-    "web/src/reference.css": "35bf6b21e39dcd17be5556a8d71755e9844fb6942977c33e4a54e70d8752043d",
+    "web/src/reference.css": "d4d1cb213fd0843cbe05f0b37d1eee6886de5e89c6b49bed7ce0087b1ebcecf8",
     "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
     "web/src/rich/code-lines.ts": "d0b58279669bfe675df638b10735211ff175ef4e8fb1a6a8ff1279f41e79081e",
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "85ac6e70b3d72c89ed74728e2a7cb3c14bbe5b29ad4aff17bfef7dd0684af85b",
+    "web/src/styles.css": "4ba67f40db7831bb676084de26462b78a69de8f0160b1b5df2bc38da9d82bbdd",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -472,7 +473,7 @@
     "web/tsconfig.config.json": "77397920106be47090fbfc49a32e15a8542fe7e912e7cccb2f69b4b9d8eac9dc",
     "test/cleanup-temp.ts": "4331cccee7078c549b9751d1f2320fe6bc1c811f819635b50ea0d05abe01e57b",
     "web/vitest.config.ts": "f01dacc799c02c04941c875004414c2ed59f2c1594bb0b010b81ba44ee3b015b",
-    "test/web/conversations.test.tsx": "98c127ab07bae0bf69f2e209393759bdf70ec8328e85f4aa510469fb96e097a1",
+    "test/web/conversations.test.tsx": "8b8bba78bddf55dd6d131e285e627a96d174f6aba0a942ac6f6e08de69e20f73",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
     "src/service/contracts/workbench.ts": "6c32daa78e29e13c0effa7721d7cb00cf82fb7407d0eea2ae15683f5e373e488",
     "src/service/conversations.ts": "c37f749f23d29e95cf5f9d606997c6728cce5cc95b30b91159f31eecd0677b6f",
@@ -571,7 +572,7 @@
     "web/src/layout/use-panel-layout.ts": "dcd206b5c3980971fe9259d78fe8b75c45c4bc80ab9066d94ce3a55887300f6c",
     "test/web/workspace-layout.test.tsx": "02e70a4ad0feb7cc1fdb9323543083ed36bb964b5962be783149cbe767543195",
     "test/web/workspace-states.test.tsx": "ed0af96b1cce7f04a454b51d6edf8def5c266e2bd4334a012a06e1edf24c46ad",
-    "web/src/i18n/zh.ts": "9c6120e58f481e3d96ea5325ad0ba300f5f94bb28bdace93d333d06d0ad0282f",
+    "web/src/i18n/zh.ts": "b800940ae1b0f020da2bf29d7604a790c095e9bed966ffee11495a30f30aed24",
     "test/web/model-picker.test.tsx": "f870707a183cab872f6f26824598acf301c849c0eab383fa8c5207012de93506",
     "web/src/client/use-model-catalog.ts": "a15d9b4162b1cef224f4ec9329364e586b3e529cc724a8445f0fe748ba2d32a8",
     "test/web/model-catalog.test.tsx": "1e30b1533181fa51016126152bd3a750bf90b8417aa0d6bbec107a2ae4eb6675",
@@ -601,7 +602,8 @@
     "web/src/components/workspace/FileChangeCard.tsx": "84f37aee8a7bc8d8a5ea8e8fe49b9bac5c1eaa1ea9c398c8b12271d8f3bf4f3f",
     "web/src/components/workspace/ImageLightbox.tsx": "21c5fa4f764439c9648cd16ba8ea58217b9357b28e35127a17913001d0b00ca2",
     "test/web/file-diff.test.tsx": "946ab85e4b8b3ccd61130923634adba342a37db7db556f33922c5934c9ec73f3",
-    "test/web/preview.test.tsx": "b8286fdeb76673fd2f4c7076bab5b71ebf09c9e21333453a8b85c6d4c7b2699b"
+    "test/web/preview.test.tsx": "b8286fdeb76673fd2f4c7076bab5b71ebf09c9e21333453a8b85c6d4c7b2699b",
+    "web/src/navigation/time-groups.ts": "34642616cba3a0780f0ae0cd02f8d2a69d4fd6d92afb7a6481d7082c0ee00093"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -1012,7 +1014,8 @@
       "web/src/file-diff.ts": "0d217634a8413e04ba9b48a467741d3847cd42eae0e16a496cf9b69d1592ffe1",
       "web/src/components/FileChangeCard.tsx": "e257ea23509332b6c90e4c6d145c5cdf02c154260146d417c6665706638b5eca",
       "web/src/components/ImageLightbox.tsx": "3586317dabb606a377bc17c037747b70590a564710a1dc60289da4f03c90218d",
-      "tests/unit/file-diff.test.ts": "a441608a872642718b90f20cee6a645be9f3af2ffb16c40f69390dfb5f56ff30"
+      "tests/unit/file-diff.test.ts": "a441608a872642718b90f20cee6a645be9f3af2ffb16c40f69390dfb5f56ff30",
+      "web/src/components/LeftPanel.tsx": "e2f4940101c672a0ee52d36c307a2e5a991eb872a7452b3bc162d6f6e7283f90"
     },
     "note": "Statusbar item, Files pane and ordinary-turn card presentation reference. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, token/cost/host statistic, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
   }
