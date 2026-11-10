@@ -78,6 +78,17 @@ export const zh = {
     "会话状态尚未更新。页面可能显示之前读取的内容，这不表示工作已停止。",
   "Not observed": "未读取",
   "Turns in this conversation: {count}": "本会话轮次：{count}",
+  "Context {used} / {window} · {percent}%":
+    "上下文 {used} / {window} · {percent}%",
+  "Context {used} tokens": "上下文 {used} tokens",
+  "Context unknown after compaction": "压缩后上下文大小未知",
+  "Context window in use": "上下文窗口占用",
+  "Context size as of the last completed model response ({model}). Messages after that response are not counted.":
+    "上下文大小以最近一次完成的模型回复（{model}）为准，不包含那次回复之后的消息。",
+  "A compaction followed that response, so the size is unknown until the next one.":
+    "那次回复之后做过压缩，下一次模型回复完成前无法得知大小。",
+  "The model list states no context window for this model, so no percentage is shown.":
+    "模型列表没有给出这个模型的上下文窗口，因此不显示占比。",
   Working: "工作中",
   "Collapse panel": "收起面板",
   "About this panel": "面板说明",
@@ -137,6 +148,37 @@ export const zh = {
   "Candidate commit": "候选提交",
   "Candidate acceptance": "候选验收",
   "Checks and automatic Agent review passed": "检查和自动 Agent review 已通过",
+  "Accepted with {count} of {total} checks set aside by a recorded deviation; the others and the automatic Agent review passed":
+    "已验收：{total} 项检查中有 {count} 项被已记录的偏离搁置，其余检查和自动 Agent review 已通过",
+  "set aside by a recorded deviation": "已被记录的偏离搁置",
+  Assignments: "子任务",
+  "Assignment: {state}": "子任务：{state}",
+  "{count} running": "{count} 个运行中",
+  "{count} queued": "{count} 个排队中",
+  "{count} done": "{count} 个已完成",
+  "{count} failed": "{count} 个失败",
+  "after {ids}": "在 {ids} 之后",
+  "own worktree": "独立工作区",
+  integrated: "已合回",
+  "kept for inspection": "保留待查看",
+  "Only the steps on this page are grouped below; other pages hold more.":
+    "下面只归类了本页的步骤，其他分页还有更多步骤。",
+  "Route revisions": "路线修订",
+  "Paths added to the write scope after approval:":
+    "批准之后加入写入范围的路径：",
+  "delivered with 1 deviation": "交付时有 1 处偏离",
+  "delivered with {count} deviations": "交付时有 {count} 处偏离",
+  "Deviations from the agreement": "与约定的偏离",
+  "Deviations from the agreement: {count}": "与约定的偏离：{count} 处",
+  "Each is an acceptance item or decision that could not be met as written, with what was delivered instead. The automatic Agent review is asked to confirm each one; it is not human review.":
+    "每一处都是无法按原文满足的验收项或决定，以及实际交付的替代结果。自动 Agent review 会被要求逐条确认；这不是人工审阅。",
+  "Could not be met": "无法满足",
+  Why: "原因",
+  "Delivered instead": "实际交付",
+  "Checks set aside": "搁置的检查",
+  None: "无",
+  "Recorded at": "记录于",
+  "route revision {revision}": "第 {revision} 次路线修订",
   "Local integration": "本地合回",
   "Post-merge checks": "合回后检查",
   "Worktree cleanup": "工作区清理",
@@ -442,7 +484,10 @@ export const zh = {
   Thought: "已思考",
   "Media not retained": "媒体内容未保留",
   "Content not retained": "内容未保留",
-  "Thinking is not retained.": "思考过程不保留。",
+  "Thinking that could not be read is not shown.": "无法读取的思考内容不显示。",
+  "Show thinking": "展开思考内容",
+  "Thinking still being recorded": "思考内容仍在记录中",
+  "No thinking text is recorded for this block.": "这段思考没有记录文本。",
   "Media is not retained.": "媒体内容不保留。",
   "Other content is not retained.": "其他类型的内容不保留。",
   "Read 1 file": "读取 1 个文件",
@@ -867,6 +912,44 @@ export const zh = {
   Today: "今天",
   Yesterday: "昨天",
   Earlier: "更早",
+  Rename: "重命名",
+  "Rename {title}": "重命名“{title}”",
+  Archive: "归档",
+  "Archive {title}": "归档“{title}”",
+  Unarchive: "取消归档",
+  "Unarchive {title}": "取消归档“{title}”",
+  "Conversation name": "对话名称",
+  "Empty: titled by its first message": "留空则以第一条消息作标题",
+  "Save name": "保存名称",
+  "Keep the current name": "保留现有名称",
+  "A name can have at most {count} characters.": "名称最多 {count} 个字符。",
+  "Renaming…": "正在重命名…",
+  "Archiving…": "正在归档…",
+  "Unarchiving…": "正在取消归档…",
+  "The conversation was not renamed ({code}). Its name is unchanged.":
+    "对话没有重命名（{code}），名称保持不变。",
+  "The conversation was not archived ({code}). It stays in the history.":
+    "对话没有归档（{code}），仍在历史对话中。",
+  "The conversation was not unarchived ({code}). It stays archived.":
+    "对话没有取消归档（{code}），仍处于归档状态。",
+  "Rename outcome is unknown ({code}). The list shows the recorded name when it is read again; nothing is retried.":
+    "重命名的结果未知（{code}）。重新读取列表后会显示已记录的名称；不会自动重试。",
+  "Archive outcome is unknown ({code}). The lists show the recorded state when they are read again; nothing is retried.":
+    "归档操作的结果未知（{code}）。重新读取列表后会显示已记录的状态；不会自动重试。",
+  "Rename and archive need the execution service; it starts with your next Send.":
+    "重命名和归档需要执行服务在运行；下次发送消息时会启动它。",
+  "Rename and archive are unavailable until the execution service is observed.":
+    "读取到执行服务的状态后，才能重命名和归档。",
+  "Archived conversations": "已归档的对话",
+  "Show archived": "查看已归档的对话",
+  "Back to history": "返回历史对话",
+  "Archiving only leaves a conversation out of the history. Its session file is not moved or deleted.":
+    "归档只是不再把对话列在历史对话里，会话文件不会被移动或删除。",
+  "Archived conversations could not be read. This is not an empty list.":
+    "无法读取已归档的对话，这不代表列表为空。",
+  "Reading archived conversations…": "正在读取已归档的对话…",
+  "No archived conversations.": "没有已归档的对话。",
+  Archived: "已归档",
   "All retained episodes for task": "此任务的全部保留执行轮次",
 
   // Timeline

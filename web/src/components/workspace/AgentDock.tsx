@@ -2,8 +2,17 @@
  * MIT (c) 2026 xing-shuyin. This observer never launches or cancels an agent. */
 import { useEffect, useRef, useState } from "react";
 import { FiChevronDown, FiCpu } from "react-icons/fi";
-import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
+import type {
+  WorkflowRun,
+  WorkflowStep,
+} from "../../../../src/service/contracts/workflow.ts";
 import { useT } from "../../i18n/locale";
+import {
+  assignmentCounts,
+  describeCounts,
+  dockGroups,
+  workflowAgentLabel,
+} from "../../navigation/workflow-assignments";
 import type { ActiveRuns, RunProjection, ServiceClient } from "../../types";
 
 interface Row {
@@ -18,14 +27,6 @@ export interface WorkflowAgent {
   label: string;
 }
 const LIVE = ["queued", "running"];
-/** A workflow step ID is `<assignment>-<uuid>`, and a review assignment is
- * itself `review-<uuid>`; the assignment without its suffixes is the readable part. */
-export function workflowAgentLabel(stepId: string) {
-  return stepId.replace(
-    /(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})+$/i,
-    "",
-  );
-}
 /** Reads in flight at once, newest first, so current work shows soonest. */
 const READS = 4;
 /** An ID never read successfully (a terminal attempt the owner refused leaves
@@ -121,6 +122,68 @@ export function useWorkflowRuns(
   }, [client, key, interval]);
   return observation;
 }
+/** One run's subagents in the dock. Its head names the run and where its
+ * assignments stand (the queued ones have no agent row yet) and opens the
+ * run's own view; each row is one subagent with its step's status, and under
+ * it the state of the assignment it works on. */
+export function WorkflowAgentGroup({
+  run,
+  steps,
+  selected,
+  onOpen,
+}: {
+  run: WorkflowRun;
+  steps: readonly WorkflowStep[];
+  selected?: WorkflowAgent | null;
+  onOpen?(agent: WorkflowAgent): void;
+}) {
+  const { t, tx } = useT();
+  const counts = assignmentCounts(run);
+  const chosen = selected?.runId === run.id ? selected.stepId : undefined;
+  return (
+    <section className="agent-dock-run" aria-label={run.goal}>
+      <button
+        type="button"
+        className={`agent-dock-run-head${chosen === null ? " active" : ""}`}
+        title={run.goal}
+        onClick={() =>
+          onOpen?.({ runId: run.id, stepId: null, label: run.goal })
+        }
+      >
+        <span className="agent-dock-run-goal">{run.goal}</span>
+        {counts && (
+          <span className="agent-dock-run-state">
+            {describeCounts(counts, t)}
+          </span>
+        )}
+      </button>
+      {steps.map((step) => {
+        const label = workflowAgentLabel(step.id);
+        const task = run.tasks?.find((entry) => entry.id === label);
+        return (
+          <button
+            type="button"
+            className={`agent-dock-row${chosen === step.id ? " active" : ""}`}
+            key={step.childRunId}
+            title={task ? `${task.title} · ${run.goal}` : run.goal}
+            onClick={() => onOpen?.({ runId: run.id, stepId: step.id, label })}
+          >
+            <span className={`agent-dot ${step.status}`} />
+            <span className="agent-dock-label">
+              <strong>{`${tx(step.kind)} · ${label}`}</strong>
+              {task && (
+                <small>
+                  {t("Assignment: {state}", { state: tx(task.state) })}
+                </small>
+              )}
+            </span>
+            <span className={`ep-state ${step.status}`}>{tx(step.status)}</span>
+          </button>
+        );
+      })}
+    </section>
+  );
+}
 export function AgentDock({
   client,
   active,
@@ -210,25 +273,11 @@ export function AgentDock({
       Number(a.run.lifecycle === "settled") -
       Number(b.run.lifecycle === "settled"),
   );
-  // Newest first; live agents above settled ones.
-  const agents = [...new Set(workflowRuns)]
-    .flatMap((id) => {
-      const run = workflows.runs.get(id);
-      return run
-        ? run.steps
-            .filter((step) => step.childRunId)
-            .map((step) => ({ run, step }))
-        : [];
-    })
-    .reverse()
-    .sort(
-      (a, b) =>
-        Number(!LIVE.includes(a.step.status)) -
-        Number(!LIVE.includes(b.step.status)),
-    );
+  const groups = dockGroups(workflowRuns, workflows.runs);
+  const agents = groups.flatMap((group) => group.steps);
   const count = merged.length + agents.length;
   const live =
-    agents.filter(({ step }) => LIVE.includes(step.status)).length +
+    agents.filter((step) => LIVE.includes(step.status)).length +
     merged.filter((row) => row.run.lifecycle !== "settled").length;
   const open = opened ?? (count > 0 || !!error);
   return (
@@ -263,31 +312,15 @@ export function AgentDock({
               )}
             </p>
           )}
-          {agents.map(({ run, step }) => {
-            const label = workflowAgentLabel(step.id);
-            return (
-              <button
-                type="button"
-                className={`agent-dock-row${selected?.runId === run.id && selected.stepId === step.id ? " active" : ""}`}
-                key={step.childRunId}
-                title={run.goal}
-                onClick={() =>
-                  onOpenWorkflow?.({ runId: run.id, stepId: step.id, label })
-                }
-              >
-                <span className={`agent-dot ${step.status}`} />
-                <span className="agent-dock-label">
-                  <strong>
-                    {tx(step.kind)} · {label}
-                  </strong>
-                  <small>{run.goal}</small>
-                </span>
-                <span className={`ep-state ${step.status}`}>
-                  {tx(step.status)}
-                </span>
-              </button>
-            );
-          })}
+          {groups.map(({ run, steps }) => (
+            <WorkflowAgentGroup
+              key={run.id}
+              run={run}
+              steps={steps}
+              selected={selected}
+              onOpen={onOpenWorkflow}
+            />
+          ))}
           {merged.map((row) => (
             <button
               type="button"
