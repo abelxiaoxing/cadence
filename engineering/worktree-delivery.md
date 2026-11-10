@@ -1,6 +1,6 @@
 # Named branches and adaptive worktree delivery
 
-One approved local delivery has one named branch and one stable candidate worktree.
+One approved local delivery has one named branch and one stable candidate worktree; assignments that run side by side each use a temporary child worktree beside it.
 `Workflows` remains the execution owner; `DeliveryController` keeps evidence-led recovery and `project-knowledge.ts` keeps verified learning.
 This is not a second executor, fixed task pipeline, Git daemon, sandbox or transactional application system.
 
@@ -34,7 +34,15 @@ Git mutations still run through the workflow's recorded native runner, including
 The branch is `refs/heads/cadence/<sanitized-goal>-<full-run-id>`.
 The goal is a readable label; the unique run ID is the identity, and existing refs/paths are never adopted or overwritten.
 The stable candidate lives at `<stateHome>/cadence-worktrees-v1/<project-hash>/<run-id>/integration`.
-All implementation, diagnosis, recovery and knowledge assignments use that candidate; there are no new per-subtask worktrees or cherry-pick handoffs.
+The candidate collects all work, and checks, review, knowledge maintenance and recovery of the combined result use it.
+`Workflows.assignments` schedules the agreement's assignments: one whose dependencies are integrated and whose write paths no running assignment owns is ready; up to the execution limit (`parallelLimit`) run at once and the rest wait.
+With nothing running and exactly one ready assignment, it runs in the candidate itself, so a serial plan never creates another worktree and keeps predecessor and partial-attempt outputs in place.
+When several are ready, what the candidate holds is committed first and each gets a child worktree at `<run-id>/tasks/<assignment-id>`, detached at the candidate's commit (it never owns or moves a branch) and recorded as a `DeliveryArtifact`.
+The setup commands run in each child; its worker and its own recovery are confined to the paths it owns (its declared writes plus what its revisions add, never a path a running sibling owns).
+On success the owner commits that scope in the child, cherry-picks the commit onto the candidate (still one parent per candidate commit) and removes the child with plain `git worktree remove` only when nothing at all is left in it.
+Because assignments that run together never own the same path a pick cannot conflict; whether their results fit together is decided by the combined checks and review, and repaired in the candidate.
+After one assignment fails for good, nothing further starts or is integrated, every started one is joined, and unintegrated work stays in its retained child worktree.
+Direct working-copy delivery has no worktrees and always runs one assignment at a time.
 Earlier detached task worktrees stay untouched.
 `worker-workspace.mjs` still only maps the pinned conversation-relative cwd into the selected tree.
 The Pi conversation, its cwd/model and the user's original branch are not moved or copied.

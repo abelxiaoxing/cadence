@@ -325,3 +325,86 @@ it("a later delivery creates its own branch without adopting the previous retain
   expect(f.git("symbolic-ref", "HEAD")).toBe(f.binding.target.branch);
   next.finish();
 });
+it("an assignment's own worktree starts at the candidate's commit, its commit is picked onto the candidate, and only a spotless one is removed", async () => {
+  const f = deliveryFixture(),
+    cwd = await f.create();
+  // What an earlier assignment left is committed in the candidate first.
+  writeFileSync(join(cwd, "a.txt"), "earlier assignment\n");
+  f.gitAt(cwd, "commit", "-qam", "assignments so far");
+  f.delivery.update(f.head(cwd));
+  const mutate = <T>(body: () => Promise<T>) =>
+    f.resources.mutate(
+      f.binding.target.repository,
+      new AbortController().signal,
+      body,
+      () => true,
+    );
+  const child = await mutate(() =>
+    f.delivery.createChild("docs", async (args) => f.git(...args)),
+  );
+  expect(child).toBe(f.delivery.childPath("docs"));
+  expect(child.startsWith(dirname(cwd))).toBe(true);
+  // It sees the earlier work and never owns or moves a branch.
+  expect(readFileSync(join(child, "a.txt"), "utf8")).toBe(
+    "earlier assignment\n",
+  );
+  expect(() => f.gitAt(child, "symbolic-ref", "-q", "HEAD")).toThrow();
+  expect(await f.delivery.assertTip(child)).toBe(f.head(cwd));
+  expect(f.view.artifacts).toMatchObject([
+    { id: "docs", path: child, state: "ready", applied: null },
+  ]);
+  expect(decodeDeliveryObservation(f.view)).toEqual(f.view);
+  // The same assignment cannot get a second worktree in this run.
+  await expect(
+    mutate(() => f.delivery.createChild("docs", async (a) => f.git(...a))),
+  ).rejects.toThrow();
+
+  writeFileSync(join(child, "guide.md"), "# Guide\n");
+  f.gitAt(child, "add", "--", "guide.md");
+  f.gitAt(child, "commit", "-qm", "assignment docs");
+  // A commit the owner did not record is not the tip it will integrate.
+  await expect(f.delivery.assertTip(child)).rejects.toThrow();
+  const commit = f.head(child);
+  f.delivery.update(commit, child);
+  expect(await f.delivery.assertTip(child)).toBe(commit);
+  // The candidate's own record is untouched by a child's commit.
+  expect(await f.delivery.assertTip()).toBe(f.head(cwd));
+
+  const before = f.head(cwd);
+  f.gitAt(cwd, "cherry-pick", "--no-edit", commit);
+  const picked = f.head(cwd);
+  expect(f.gitAt(cwd, "show", "-s", "--format=%P", picked)).toBe(before);
+  f.delivery.update(picked);
+  f.delivery.applied(child, picked);
+  expect(readFileSync(join(cwd, "guide.md"), "utf8")).toBe("# Guide\n");
+
+  // Ignored residue retains the worktree; nothing is forced.
+  mkdirSync(join(child, "ignored"));
+  writeFileSync(join(child, "ignored", "cache.bin"), "x");
+  const remove = async (path: string, check: () => Promise<void>) => {
+    await check();
+    f.git("worktree", "remove", path);
+  };
+  await f.delivery.removeChild(child, remove);
+  expect(existsSync(child)).toBe(true);
+  expect(f.view.artifacts?.[0]).toMatchObject({
+    state: "retained",
+    applied: picked,
+  });
+  // A retained worktree takes no further work.
+  await expect(f.delivery.assertTip(child)).rejects.toThrow();
+
+  const tidy = await mutate(() =>
+    f.delivery.createChild("tests", async (args) => f.git(...args)),
+  );
+  f.delivery.applied(tidy, picked);
+  await f.delivery.removeChild(tidy, remove);
+  expect(existsSync(tidy)).toBe(false);
+  expect(f.view.artifacts?.[1]).toMatchObject({
+    id: "tests",
+    state: "removed",
+  });
+  // The candidate and its named branch are as they were.
+  expect(f.gitAt(cwd, "symbolic-ref", "HEAD")).toBe(f.view.taskBranch);
+  expect(await f.delivery.assertTip()).toBe(picked);
+});

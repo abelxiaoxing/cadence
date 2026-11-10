@@ -7,6 +7,7 @@ import { ContractError, canonicalJson, decodeId } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
 import type {
   AcceptanceRecord,
+  DeliveryArtifact,
   DeliveryBinding,
   DeliveryObservation,
   WorkflowStep,
@@ -102,6 +103,8 @@ export function acceptanceRecord(
 }
 export class WorkflowDelivery {
   private token: string | undefined;
+  /** Reservation of each live child worktree, by its path. */
+  private readonly children = new Map<string, string>();
   readonly home: string;
   constructor(
     readonly view: DeliveryObservation,
@@ -166,34 +169,142 @@ export class WorkflowDelivery {
     this.save();
     return path;
   }
+  /** Where the assignment's own worktree lives, beside the candidate. */
+  childPath(id: string): string {
+    return join(this.home, "tasks", id);
+  }
+  /** The live child worktree at `path`, if this run owns one there. */
+  private child(path: string): DeliveryArtifact | undefined {
+    return this.view.artifacts?.find(
+      (a) => a.path === path && this.children.has(path),
+    );
+  }
+  /** A worktree for one assignment that runs beside others, detached at the
+   * candidate's current commit so it starts from everything already integrated.
+   * Caller holds the short repository mutation lease across creation. */
+  async createChild(
+    id: string,
+    git: (args: string[]) => Promise<unknown>,
+  ): Promise<string> {
+    const path = this.childPath(id);
+    const base = await this.assertTip();
+    if (
+      this.view.artifacts?.some((a) => a.path === path) ||
+      safeDirectory(path)
+    )
+      throw new ContractError("conflict");
+    if (!safeDirectory(dirname(path), true))
+      throw new ContractError("forbidden");
+    const token = this.resources.reserveWorkspace(path);
+    this.children.set(path, token);
+    const artifact: DeliveryArtifact = {
+      id,
+      path,
+      base,
+      head: base,
+      applied: null,
+      state: "preparing",
+    };
+    this.view.artifacts = [...(this.view.artifacts ?? []), artifact];
+    this.save();
+    await git(["worktree", "add", "--detach", path, base]);
+    await assertWorktree(this.view.binding.target.checkoutRoot, path);
+    if ((await gitHead(path)) !== base) throw new ContractError("stale");
+    this.resources.confirmWorkspace(token);
+    artifact.state = "ready";
+    this.save();
+    return path;
+  }
   assertWorkspace(path: string): void {
-    if (path !== this.view.worktreeRoot) throw new ContractError("stale");
-    this.resources.assertWorkspace(this.token ?? "");
+    if (path === this.view.worktreeRoot) {
+      this.resources.assertWorkspace(this.token ?? "");
+      return;
+    }
+    const token = this.children.get(path);
+    if (!token || !this.child(path)) throw new ContractError("stale");
+    this.resources.assertWorkspace(token);
   }
   async assertBinding(path: string): Promise<void> {
     this.assertWorkspace(path);
-    if (
-      this.view.workspace?.state !== "ready" ||
-      (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !==
-        this.view.taskBranch
+    if (path === this.view.worktreeRoot) {
+      if (
+        this.view.workspace?.state !== "ready" ||
+        (await gitText(path, ["symbolic-ref", "HEAD"])).trim() !==
+          this.view.taskBranch
+      )
+        throw new ContractError("stale");
+    } else if (
+      this.child(path)?.state !== "ready" ||
+      // A child works on a detached HEAD; it never owns or moves a branch.
+      (await gitRun(path, ["symbolic-ref", "-q", "HEAD"])).code === 0
     )
       throw new ContractError("stale");
     await assertWorktree(this.view.binding.target.checkoutRoot, path);
   }
-  /** Working bytes may be partial work. HEAD must still be the owner's last commit. */
-  async assertTip(): Promise<string> {
-    await this.assertBinding(this.view.worktreeRoot);
-    const head = this.view.workspace?.head;
-    if (!head || (await gitHead(this.view.worktreeRoot)) !== head)
+  /** Working bytes may be partial work. HEAD must still be the owner's last
+   * commit, in the candidate (the default) or in one of its child worktrees. */
+  async assertTip(path = this.view.worktreeRoot): Promise<string> {
+    await this.assertBinding(path);
+    const head =
+      path === this.view.worktreeRoot
+        ? this.view.workspace?.head
+        : this.child(path)?.head;
+    if (!head || (await gitHead(path)) !== head)
       throw new ContractError("stale");
     return head;
   }
-  update(head: string): void {
+  update(head: string, path = this.view.worktreeRoot): void {
+    if (path !== this.view.worktreeRoot) {
+      const child = this.child(path);
+      if (child?.state !== "ready") throw new ContractError("stale");
+      child.head = head;
+      this.save();
+      return;
+    }
     if (this.view.workspace?.state !== "ready")
       throw new ContractError("stale");
     this.view.workspace.head = head;
     this.view.acceptance = null;
     this.save();
+  }
+  /** The candidate commit a child's work became. */
+  applied(path: string, commit: string): void {
+    const child = this.child(path);
+    if (!child) throw new ContractError("stale");
+    child.applied = commit;
+    this.save();
+  }
+  /** Removes an integrated child's worktree when nothing at all is left in it;
+   * any residue, or an unconfirmed removal, retains it. */
+  async removeChild(
+    path: string,
+    remove: (path: string, check: () => Promise<void>) => Promise<void>,
+  ): Promise<void> {
+    const child = this.child(path);
+    if (!child) throw new ContractError("stale");
+    try {
+      await remove(path, async () => {
+        if (!child.applied || (await this.assertTip(path)) !== child.head)
+          throw new ContractError("stale");
+        if ((await worktreeResidue(path)).length)
+          throw new Error(
+            "Uncommitted, untracked, ignored or index-hidden files retained",
+          );
+      });
+      if (safeDirectory(path))
+        throw new Error("Worktree removal was not confirmed");
+      this.resources.release(this.children.get(path) ?? "");
+      this.children.delete(path);
+      child.state = "removed";
+    } catch {
+      child.state = "retained";
+    }
+    this.save();
+    try {
+      rmdirSync(dirname(path));
+    } catch {
+      /* Only remove an already empty directory. */
+    }
   }
   /** Only a confirmed merge by THIS run advances the delivery baseline. The
    * immutable approved target stays intact, and unknown effects never replay. */
@@ -321,6 +432,8 @@ export class WorkflowDelivery {
     this.resources.finish();
     if (this.view.workspace && this.view.workspace.state !== "removed")
       this.view.workspace.state = "retained";
+    for (const child of this.view.artifacts ?? [])
+      if (child.state !== "removed") child.state = "retained";
     if (this.view.preparation === "pending") this.view.preparation = "unknown";
     if (this.view.cleanup.status === "pending")
       this.view.cleanup = {

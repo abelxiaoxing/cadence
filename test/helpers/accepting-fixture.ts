@@ -203,6 +203,8 @@ export async function acceptingFixture(
         res,
         JSON.stringify({
           action: continuing ? "continue" : "blocked",
+          // Blocked is only for a named condition outside the repository.
+          ...(continuing ? {} : { blocker: "tool" }),
           cause: "Fixture diagnosed the recorded failure",
           evidence: [stepId],
           strategy: continuing

@@ -124,6 +124,7 @@ The plan chooses one delivery policy:
 
 - **Local merge:** requires an existing Git branch and configured commit identity.
   After approval, each delivery creates its own `cadence/<goal>-<run-id>` branch and one stable worktree; mode entry and research create neither.
+  Assignments that neither depend on one another nor write the same file run side by side, each in a temporary worktree beside it, as many at once as `CADENCE_PARALLEL` allows.
   Assignments, diagnosis, recovery and knowledge updates reuse that candidate, preserving partial work.
   The target is the current local branch displayed in the agreement, not necessarily `main`; the conversation stays in its original directory.
   The owner commits only declared file changes, runs independent readonly Agent review and real checks, then fast-forwards the unchanged target branch.
