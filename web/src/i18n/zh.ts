@@ -83,6 +83,18 @@ export const zh = {
   "Context {used} tokens": "上下文 {used} tokens",
   "Context unknown after compaction": "压缩后上下文大小未知",
   "Context window in use": "上下文窗口占用",
+  "Context size not observed yet": "尚未读取到上下文大小",
+  "No completed model response is within reach of this branch's end, so no context size is stated.":
+    "这条分支末尾附近还没有完成的模型回复，因此没有上下文大小。",
+  "Network latency: {ms}ms (the fastest request to the service in the last minute, from sending to the first byte of its reply).":
+    "网络延迟：{ms}ms（最近一分钟内到服务最快的一次请求，从发出到收到回复首字节）。",
+  "Cache hit": "缓存命中",
+  "Cache hit: {rate} · read {read} · write {write} · miss {miss} (of {input} input tokens)":
+    "缓存命中：{rate} · 缓存读取 {read} · 缓存写入 {write} · 未命中 {miss}（共 {input} 输入 token）",
+  "Summed over every usage record of this session, on every branch.":
+    "按本会话全部用量记录累计，包含所有分支。",
+  "Cache hit: this session's usage records state no input tokens yet.":
+    "缓存命中：本会话的用量记录里还没有输入 token。",
   "Context size as of the last completed model response ({model}). Messages after that response are not counted.":
     "上下文大小以最近一次完成的模型回复（{model}）为准，不包含那次回复之后的消息。",
   "A compaction followed that response, so the size is unknown until the next one.":

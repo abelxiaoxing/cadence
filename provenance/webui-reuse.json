@@ -420,7 +420,11 @@
     "test/web/build-identity.test.tsx",
     "web/src/components/workspace/BuildReloadNotice.tsx",
     "web/src/client/file-download.ts",
-    "test/web/file-download.test.tsx"
+    "test/web/file-download.test.tsx",
+    "web/src/client/cache-usage.ts",
+    "web/src/client/latency.ts",
+    "web/src/layout/CacheStatus.tsx",
+    "test/web/statusbar.test.tsx"
   ],
   "destinations": {
     "src/abort-scope.ts": "ebc1c88f8708de857664ca8f64635c618ff645965267738b2090419f0db4695f",
@@ -429,7 +433,7 @@
     "test/web/project-entry.test.tsx": "7f02cbb12076b1a015d2674ab7d479afb8dc2cb084f4c93f43ca0723a6c86773",
     "test/web/project-resume.test.tsx": "e1aa7ac1f16944c7eea6fd38bf5b7e2428ece4c3d57b069f872cad57c31a6141",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "21474b415dcf511b54d69143776525d00ff7e12c55a9c62f84995c814dd59f72",
+    "web/src/App.tsx": "647410193abdc94ac4628e218f2c44a435586b232acd1461f3f56eb97e00fef8",
     "web/src/layout/AppShell.tsx": "3ff9582b33f0732218fbad0f411340178692c61b9b380ede5d1740141e727c91",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -478,7 +482,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "8f876aa36e44a1cdccb0264cb169eea72f974d2b2c76df091fcee2a60b992abc",
+    "web/src/styles.css": "b097499569245dcb5df38428fdf873852dd5d4b7745da98b25eaca6eafde75d5",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -518,7 +522,7 @@
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "9b4e512ba5ce6b7f07fa3ad91f1e9874a1f5c09ec1cd6b1d61ec2ed1f1e58e5b",
     "test/web/workbench.test.tsx": "4af660c8b7c6257d337ddf37c9db2a5951fce4f259375ca38d3d0ec857eb575d",
-    "web/src/components/workspace/ChatWorkspace.tsx": "b55b0ed62801a4be75d42c34ffcc0356740fd71cd877913395e86c759520318f",
+    "web/src/components/workspace/ChatWorkspace.tsx": "38ae42e77dad1bfa183dd5d64537901bd50256ec01cf3ce0e3f802646256637c",
     "web/src/components/workspace/ChatSteps.tsx": "3544086fd3c575fcdfd329eb07c8fb79cf1c40d7c09a3cf42af10dacf66edb3f",
     "web/src/components/workspace/AgentDock.tsx": "c7701ebeb1d2123d742fbe294cfdd456513be86f3e6d7696321e7e3f8b5e0c83",
     "web/src/components/workspace/FilesPanel.tsx": "5334ecd1a6dead88c1bcd9504c6b69e2ab0f700ea07674076054312f4b7ba0b1",
@@ -557,7 +561,7 @@
     "test/service-conversation-retention.test.ts": "8591df76b3fca9b299701f2be13228a4ecbd48f312a1ea0d46268aacd1783489",
     "test/helpers/retained-conversations.ts": "6896df443bda5a6da0734aef49a4d4abe549c047b9572e2ffa837802ee43034d",
     "test/workbench-cadence-control.test.ts": "5971210de2837e2177f7d83c13278d51ae56b70cf07e532afef5eb5ff4a951ac",
-    "web/src/client/conversation-reader.ts": "2519cc8397e2f1de11139829dc7c1ec68118c661ecc3b933be56ada9dab73bf3",
+    "web/src/client/conversation-reader.ts": "1ccd78f6ba1946b63280d1d03ca7c7223decdf0bf4ea3751ee66b1ede8936ea5",
     "web/src/client/turn-source.ts": "fc81955da94b9095b3e220b95c15cee223ac814f77e9fc2674ec9383bf8eae67",
     "web/src/client/use-conversation.ts": "c2018bcb038475a8fd9b11f8cec33d8328ac33444b6a2efec70d48d54c4c18d8",
     "web/src/transcript/use-lazy-window.ts": "f0882a816bec282a62d500e8f0df2660b20491cb8ecf1ae1b501658420e3afff",
@@ -607,7 +611,7 @@
     "web/src/layout/use-panel-layout.ts": "dcd206b5c3980971fe9259d78fe8b75c45c4bc80ab9066d94ce3a55887300f6c",
     "test/web/workspace-layout.test.tsx": "02e70a4ad0feb7cc1fdb9323543083ed36bb964b5962be783149cbe767543195",
     "test/web/workspace-states.test.tsx": "c1458432d5f77dcd1fadcbe42199220aa577a74d18bc0ae321d3deb70c2dbc4e",
-    "web/src/i18n/zh.ts": "65a992187bfa8125568aafc99ef491440b23838fed33cb2a948f6d20e26fc036",
+    "web/src/i18n/zh.ts": "d3f46b0167d8269c158c1509c75283cd18862f31dcb5664a6336ce888a13813a",
     "test/web/model-picker.test.tsx": "f870707a183cab872f6f26824598acf301c849c0eab383fa8c5207012de93506",
     "web/src/client/use-model-catalog.ts": "a15d9b4162b1cef224f4ec9329364e586b3e529cc724a8445f0fe748ba2d32a8",
     "test/web/model-catalog.test.tsx": "1e30b1533181fa51016126152bd3a750bf90b8417aa0d6bbec107a2ae4eb6675",
@@ -625,7 +629,7 @@
     "test/model-preview-process.test.ts": "3dd670bc539b3ed567839d9ddff7a66f0b17c291c2a9d493eae6ea42c1d24026",
     "test/model-preview-recovery.test.ts": "1654c8d51ecdfa683bd3a89fb764d87b36757673838a906d842cbc8e2d83bc8b",
     "test/web/model-wait.test.tsx": "827b4b8f119d9e8e7e627f51aa2c098d1bad240e45a6170986f4a51f28942784",
-    "web/src/layout/StatusItem.tsx": "0fd0b7677f4ef0148027d9d8ee738cfde86888c7e29f3ad19d865add87e380f2",
+    "web/src/layout/StatusItem.tsx": "bf32b9b1e4aca9d9cc26eb4817e2419da2a21d151b9f9c64544f0d92a87b278d",
     "src/session-file.mjs": "1609585df8c0a95df4b31cbb030a28749fbf4b334aaf1a4b146277c9c1fc6305",
     "src/session-rename.mjs": "1feafef55bdc1fba26331cecce20186af002618f4ed28b2f9b2dcabc54616c2c",
     "test/conversation-rename.test.ts": "8b7593da7a769412db8c77de51b0696e15202d5ecbf11786c79b21633ac268df",
@@ -646,11 +650,11 @@
     "web/src/navigation/time-groups.ts": "34642616cba3a0780f0ae0cd02f8d2a69d4fd6d92afb7a6481d7082c0ee00093",
     "web/src/components/workspace/ThinkingStep.tsx": "1575bae4d5ba9006acf0072304edbf9c4f44b7d254556d06c3b04826901239d6",
     "web/src/client/context-usage.ts": "ef344b9895158f3fb2660b1c542f47b85edc682fdd605b16ea2bd3690636cd30",
-    "web/src/layout/ContextStatus.tsx": "ba9405d36034b3c3b8d45507cdd977d89b084dccbbc16288712ac8573e4bc456",
+    "web/src/layout/ContextStatus.tsx": "f3ab26fbba3910ef63bd73b9edc00c0d5b37b8885e7b2f299fa023858bb3ad55",
     "web/src/client/conversation-admin.ts": "7ff5a2af4144171ce8057edc02c5ebc94f5b67138dfb15bb620f31ab3f609f26",
     "web/src/components/workspace/ConversationRow.tsx": "7b203c2c358e8109289f2b1a1e834b1976a27491b248620ee19ee15f0b813960",
     "web/src/navigation/workflow-assignments.ts": "450697610c5a03d73c7e59894245b901b2bde53404ca7594e29daa189ae1dc33",
-    "test/web/context-usage.test.tsx": "061cd22920a908936a975461be1a81d9e4298ca4ab81b9e42e01888935b4c160",
+    "test/web/context-usage.test.tsx": "191c780277472aebb3d30b283133f53bfd54475c624e8c9324a72559fdef700d",
     "test/web/conversation-rows.test.tsx": "4d16c8f532405053a89a0f4254e10f4850af8c20acb6de8230970591e972c744",
     "web/src/client/conversation-tree.ts": "ccf4268d604d632995fafbfd33ea4c146b62ef15a961a2c7fc18dd3686d63dfd",
     "web/src/client/conversation-anchor.ts": "2281a7cc34db603b95903b1a1b6d2d211410e3c9a06ddf7eeac649309b53ebe8",
@@ -675,7 +679,11 @@
     "test/web/build-identity.test.tsx": "a6ceb341485d6ab6c596d7f913325169efb2ebdb8a6a63b573f4b7fdcd546c20",
     "web/src/components/workspace/BuildReloadNotice.tsx": "65b63a3c01c5c3b5f256ac3bd406cf4a8b35e76c2b1a98ba6f61e72e3dc2408b",
     "web/src/client/file-download.ts": "f17f5cb2c8cced5c983c8596f94887a04de6b608c89b2e4977cbf1544c609a6d",
-    "test/web/file-download.test.tsx": "a8148aca9c2d0f605bac3a39001bbd485c79b7763eb869e07f3adac191f0b445"
+    "test/web/file-download.test.tsx": "a8148aca9c2d0f605bac3a39001bbd485c79b7763eb869e07f3adac191f0b445",
+    "web/src/client/cache-usage.ts": "902eaffb13d342914d79c2dfd3d66fab8d1c30dc3fe6df9042185e05521537fa",
+    "web/src/client/latency.ts": "ad8ab548d492b7ddcae92014ede3ae507ec095f14059d32c4aa8c5d799391f86",
+    "web/src/layout/CacheStatus.tsx": "fd8f4a371bc340ffb87a4ebc2dadef30c6a196a3c08e4444ba70d3b7032c5ab4",
+    "test/web/statusbar.test.tsx": "4dabd3b30e44ed5b888a5fa5947c258305fbb1c8a22802cc941d9b524bfcb07f"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -1038,6 +1046,11 @@
       "id": "webui-steer-queue-controls",
       "originalSourcePinPreserved": true,
       "note": "Client-only pass against pi-web-ui b627452c for messages into a running reply; no service contract, read, command, consent boundary or admission gate changes. ChatComposer.tsx gains the reference's split control (ChatInput.tsx split-send) beside Stop, which Cadence keeps visible, with Enter to steer and Alt+Enter to queue; WaitingMessages.tsx adapts MessageList.tsx's QueuedMessage row for the head's pending list and adds undelivered messages with their reason. Cadence differences: rows are only what the head read states, never optimistic; withdrawing is a command the service may refuse; a message is put back into the message box only when its whole text is known; an unknown outcome never sends a second command."
+    },
+    {
+      "id": "webui-file-actions-statusbar",
+      "originalSourcePinPreserved": true,
+      "note": "File actions and statusbar pass against pi-web-ui 29bd28df. Unlike the earlier presentation passes this one adds to the service contract: a readonly file-part workbench read (192KiB parts of a file of at most 64MiB, the preview's path refusals and stale checks, exact unredacted bytes) answered by the owner and the stopped-owner reader, and an optional cache on the conversation head (the session's input tokens sent uncached, read from and written to the provider's cache, summed over every usage record of the session file as Pi's session statistics sum them, folded while lines are indexed). RightPanel's file rows give FilesPanel its four actions: download (files only), reference path only, copy name and copy path, which now copies the entry's full path on the service host. download.ts's save picker with an anchor fallback and Windows-safe names becomes file-download.ts, whose bytes come from file-part reads of one file version instead of a URL, one download at a time, with a toast on refusal and no claim of a completed save. BarItem's host:conn latency, host:ctx ring and host:cache items become ConnectionStatus (in StatusItem.tsx), a rewritten ContextStatus and CacheStatus with pi's tones (latency 100/300ms, context 50/80%, cache hit 70/40%) and its is-zero quieting; cache-stats.ts's cacheMetrics becomes cache-usage.ts without the stream-rate estimate. The latency is Cadence-owned (latency.ts): the fastest of the last minute's requests to this origin's service API, from sending to the first reply byte, read from the browser's resource timing, because an ordinary conversation holds no socket to time; it sends and polls nothing. Not carried: cost, generation rate, host metrics, layout editing, context menus, custom labels, plugin footer slots, file mutation, compress-download and remote transfer. Interface text follows pi's zh/en wording for the four file actions, network latency and cache hit."
     }
   ],
   "testAdaptations": [
@@ -1158,5 +1171,20 @@
       "tests/unit/at-mention.test.ts": "0b834e5de88080f42ff9845a3e0ddf45d6f9a1937c3994061d01fc8886605b30"
     },
     "note": "Statusbar item, Files pane and ordinary-turn card presentation reference; also the toast queue, white theme palette, message action bar, edit/write change card, image lightbox, conversation filter and day groups of revision webui-stage-a-local, with their ported unit tests; and the thinking block, the statusbar context item with its token formatting and the row rename field of revision webui-stage-b-service-data. Markup/CSS rule families are adapted to data Cadence already observes; no upstream runtime, layout editor, plugin slot, cost/host statistic, context breakdown or estimate, file mutation or transport is imported. Existing source pins and historic evidence remain unchanged."
+  },
+  "fileActionsStatusbarReference": {
+    "repository": "https://github.com/xing-shuyin/pi-web-ui",
+    "commit": "29bd28dfbdd62ef33cb7a28a0d913c678e7771d8",
+    "sources": {
+      "web/src/download.ts": "510782269ae5974784bcb2aa7c8c0930dec313f8362237e1f86fc6aa6600e826",
+      "web/src/cache-stats.ts": "6371dc69b44eb0c63b981ef1aa0dccf5f91899a289704761e63d74ff024bc3e9",
+      "web/src/components/BarItem.tsx": "49020f57226b46fa968da634ade019f24e7fd471dcc65078c4e4aaebe6ced829",
+      "web/src/components/RightPanel.tsx": "28e24df550589a5ab2b2ebdd1ac05b8fc6a3df797a94d9b0271227bc2267d37f",
+      "web/src/components/FooterBar.tsx": "518c177be3635edf5193810f7915cdc77058d36447e99732ddb4ee09ddafe903",
+      "web/src/styles.css": "09c6fe4326bc941f7f347ad125deb43f5605575edf89c1995b3541deef3471c4",
+      "web/src/i18n/messages/core/en.json": "4ef293fae430b104817de08730312c1367ad4e8f0f257fd120c0a6c799f60095",
+      "web/src/i18n/messages/core/zh.json": "233f5921c0a8e7e9ccffd8f19bd2b73c930f56e707f1622a87f5eaf402eb0e63"
+    },
+    "note": "Files pane row actions, file download and the statusbar's connection latency, context ring and cache-hit items. Earlier source pins and historic evidence remain unchanged; no upstream runtime, transport or plugin slot is imported."
   }
 }

@@ -111,7 +111,7 @@ Archive records are one small file per archived session, without a count limit.
 Admission retains the 256MiB free-space floor for the owner's records; Pi's own writes are bounded only by the disk, as in the terminal.
 Instantaneous protocol/memory and concurrency protections remain; cumulative bytes and SDK events are diagnostics, not worker lifetime quotas.
 
-Stopped-owner conversation and file views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the bounded Pi session and command caches; file reads keep the owner's 200-entry listing and 128KiB preview bounds.
+Stopped-owner conversation and file views (`src/service/gateway-conversations.ts`) cache at most 16 reader instances, each using the bounded Pi session and command caches; file reads keep the owner's 200-entry listing, 128KiB preview and download bounds (192KiB parts of a file of at most 64MiB: `FILE_PART_BYTES` and `FILE_DOWNLOAD_BYTES` in `src/service/contracts/workbench.ts`).
 Replacement, access rotation and workbench Stop discard their read caches; eviction affects only reads, never retained data or execution.
 Conversation-control projections (`src/service/conversation-controls.ts`) cache at most 512 records; they retain the existing 384KiB record bound and never cache transient I/O failures.
 

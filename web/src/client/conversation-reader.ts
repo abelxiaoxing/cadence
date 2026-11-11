@@ -5,6 +5,7 @@
 import { abortScope } from "../../../src/abort-scope.ts";
 import type {
   ChatAttempt,
+  ChatCache,
   ChatContext,
   ChatImage,
   ChatPending,
@@ -55,6 +56,9 @@ export interface ConversationView {
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
   context?: ChatContext;
+  /** The whole session's input tokens by cache use; absent when the head
+   * read states none. The same for every branch of the session. */
+  cache?: ChatCache;
   /** Turns the branch has. */
   count: number;
   /** Shown turns, oldest first: the most recent ones without gaps. */
@@ -87,6 +91,7 @@ export class ConversationReader {
   private undelivered: ChatAttempt[] = [];
   private commands: string[] = [];
   private context: ChatContext | undefined;
+  private cache: ChatCache | undefined;
   private count = 0;
   private first: number | null = null;
   /** The oldest turn a chosen branch opens at, until its head is read. */
@@ -214,6 +219,7 @@ export class ConversationReader {
       undelivered: this.undelivered,
       commands: this.commands,
       ...(this.context ? { context: this.context } : {}),
+      ...(this.cache ? { cache: this.cache } : {}),
       count: this.count,
       turns,
       earlier: (turns[0]?.ordinal ?? this.count) > 0,
@@ -280,6 +286,7 @@ export class ConversationReader {
     this.undelivered = head.undelivered ?? [];
     this.commands = head.commands ?? [];
     this.context = head.context;
+    this.cache = head.cache;
     this.summary = head.summary;
     this.count = head.turns;
     // Never fewer than the newest turns, however late the named one is.

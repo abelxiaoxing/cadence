@@ -1,9 +1,12 @@
-/* Adapted from pi-web-ui components/BarItem.tsx bottom-bar items (connection,
- * message count, working timer) and FooterBar.tsx. MIT (c) 2026 xing-shuyin.
+/* Adapted from pi-web-ui components/BarItem.tsx bottom-bar items (connection
+ * with its latency, message count, working timer) and FooterBar.tsx.
+ * MIT (c) 2026 xing-shuyin.
  * Presentation only: every value is an observation its caller already holds.
  * No layout editing, plugin slots, cost statistics or host metrics; the open
- * conversation's context size is its own item (`ContextStatus.tsx`). */
+ * conversation's context size and cache hit are their own items
+ * (`ContextStatus.tsx`, `CacheStatus.tsx`). */
 import { type ReactNode, useEffect, useState } from "react";
+import { useT } from "../i18n/locale";
 
 export function StatusItem({
   icon,
@@ -36,6 +39,45 @@ export function StatusItem({
         </span>
       )}
       <span className="bar-item-text">{children}</span>
+    </span>
+  );
+}
+
+/** The connection item: its state dot and statement, then the round trip to
+ * the service in milliseconds when recent requests have shown one. */
+export function ConnectionStatus({
+  dot,
+  tip,
+  latency,
+  children,
+}: {
+  dot: string;
+  tip: string;
+  /** Whole milliseconds, or null while none is known or the state is not one
+   * a round trip describes. */
+  latency: number | null;
+  children: ReactNode;
+}) {
+  const { t } = useT();
+  const title =
+    latency === null
+      ? tip
+      : `${t("Network latency: {ms}ms (the fastest request to the service in the last minute, from sending to the first byte of its reply).", { ms: latency })} ${tip}`;
+  return (
+    <span className="status-item status-conn" title={title}>
+      <span className={`status-dot ${dot}`} aria-hidden="true" />
+      {/* Only the statement is announced when it changes, not every new
+          latency figure beside it. */}
+      <span className="bar-item-text" role="status">
+        {children}
+      </span>
+      {latency !== null && (
+        <span
+          className={`status-latency ${latency < 100 ? "ok" : latency < 300 ? "mid" : "warn"}`}
+        >
+          {latency}ms
+        </span>
+      )}
     </span>
   );
 }
