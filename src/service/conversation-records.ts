@@ -743,12 +743,16 @@ export class ConversationRecords {
     const summary = this.summary(id, running);
     const listed = this.sessions.find(id);
     const context = this.context(view);
+    const cache = view.session?.cache;
     const pending = running ? this.pending(running, view.session) : [];
     const undelivered = running ? [] : this.undelivered(id, view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
       ...(context ? { context } : {}),
+      ...(cache && cache.input + cache.read + cache.write > 0
+        ? { cache: { ...cache } }
+        : {}),
       ...(pending.length ? { pending } : {}),
       ...(undelivered.length ? { undelivered } : {}),
       summary,

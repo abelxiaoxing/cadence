@@ -389,11 +389,13 @@ it("the head carries the branch's context size, redacted, and a live turn's foll
     decodeWorkbenchResult(f.records.conversation(session.id, null, null)),
   ).toMatchObject({
     context: { tokens: 1200, provider: "gateway-[redacted]", model: "fixed" },
+    cache: { input: 1, read: 0, write: 0 },
   });
-  // A branch end no model response precedes claims no figure.
-  expect(f.records.conversation(session.id, question, null)).not.toHaveProperty(
-    "context",
-  );
+  // A branch end no model response precedes claims no figure; the cache
+  // totals are the whole session's, whichever branch is read.
+  const earlier = f.records.conversation(session.id, question, null);
+  expect(earlier).not.toHaveProperty("context");
+  expect(earlier).toMatchObject({ cache: { input: 1, read: 0, write: 0 } });
   // A live turn sent from the reply measures that branch until Pi writes more.
   const commandId = f.command(session.id, "running", null, "Next", "", reply);
   goLive(f, commandId);
@@ -431,7 +433,15 @@ it("the head carries the branch's context size, redacted, and a live turn's foll
   expect(f.records.conversation(session.id, null, null)).toMatchObject({
     leaf: reply,
     context: { tokens: 2500, provider: "fixture", model: "next" },
+    cache: { input: 2, read: 0, write: 0 },
   });
+  // A session whose file records no usage states no totals.
+  const silent = writeSession(f, [
+    { role: "user", content: [{ type: "text", text: "Unanswered" }] },
+  ]);
+  expect(f.records.conversation(silent.id, null, null)).not.toHaveProperty(
+    "cache",
+  );
 });
 it("a turn names the entry its user message continues; a live one its admitted head until Pi writes the message", () => {
   const f = fixture();
