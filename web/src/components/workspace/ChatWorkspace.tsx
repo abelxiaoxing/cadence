@@ -22,6 +22,7 @@ import {
 } from "react-icons/fi";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type {
+  ChatCache,
   ChatPending,
   ChatSummary,
   ChatTreeNode,
@@ -134,6 +135,9 @@ export interface ConversationActivity {
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
   context?: ContextUsage;
+  /** The whole session's input tokens by cache use; absent when the head
+   * read states none. */
+  cache?: ChatCache;
 }
 function stored(key: string, fallback = "") {
   try {
@@ -464,6 +468,21 @@ export function ChatWorkspace({
           ),
     [usedTokens, usedProvider, usedModel, modelEntries],
   );
+  // Each head read is a new object; the totals themselves change rarely.
+  const {
+    input: cacheInput,
+    read: cacheRead,
+    write: cacheWrite,
+  } = conversation.cache ?? {};
+  const cache = useMemo(
+    () =>
+      cacheInput === undefined ||
+      cacheRead === undefined ||
+      cacheWrite === undefined
+        ? undefined
+        : { input: cacheInput, read: cacheRead, write: cacheWrite },
+    [cacheInput, cacheRead, cacheWrite],
+  );
   const observeConversation = conversation.refresh;
   useEffect(() => {
     // Readonly: the header shows a new name once the head read states it.
@@ -477,8 +496,9 @@ export function ChatWorkspace({
       turns: conversation.count,
       runningSince,
       ...(usage ? { context: usage } : {}),
+      ...(cache ? { cache } : {}),
     });
-  }, [id, conversation.count, runningSince, usage]);
+  }, [id, conversation.count, runningSince, usage, cache]);
   const newest = turns.at(-1);
   const unsettled =
     !!newest && ["queued", "running"].includes(newest.header.status);

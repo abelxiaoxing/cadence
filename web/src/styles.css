@@ -1888,27 +1888,96 @@ summary:focus-visible,
 .bar-item-duration {
   white-space: nowrap;
 }
-/* The context item (pi .status-ctx / .context-usage-bar). Its words state the
- * figures; the small meter only repeats them and leaves on narrow screens. */
-.ctx-meter {
-  flex: none;
-  width: 36px;
-  height: 4px;
+/* Read by assistive technology where the visible item is a figure alone. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  border-radius: 2px;
-  background: var(--border);
-  @media (max-width: 900px) {
-    display: none;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* An item with no figure yet (pi .is-zero): present, but quiet. */
+.statusbar .status-item.is-zero {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+.statusbar .status-item.is-zero:hover {
+  opacity: 1;
+}
+/* The connection's round trip (pi .status-latency). */
+.status-latency {
+  font-size: 10.5px;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.status-latency.mid {
+  color: var(--amber-text);
+}
+.status-latency.warn {
+  color: var(--red-text);
+}
+/* The context item (pi .status-ctx / .ctx-ring): a ring filled to the share
+ * of the window in use, then the figures. The item's title states both. */
+.ctx-meter {
+  display: inline-flex;
+  flex: none;
+}
+.ctx-ring {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  transform: rotate(-90deg);
+}
+.ctx-ring-bg {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+.ctx-ring-fill {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  @media (prefers-reduced-motion: no-preference) {
+    transition:
+      stroke-dashoffset 0.3s ease,
+      stroke 0.3s ease;
   }
 }
-.ctx-meter > span {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent);
+.ctx-ring.ok .ctx-ring-fill {
+  stroke: var(--green);
 }
-.status-ctx.warn .ctx-meter > span {
-  background: var(--amber);
+.ctx-ring.mid .ctx-ring-fill {
+  stroke: var(--amber);
+}
+.ctx-ring.warn .ctx-ring-fill {
+  stroke: var(--red);
+}
+.statusbar .ctx-val {
+  color: var(--text);
+  font-weight: 500;
+}
+.statusbar .ctx-max {
+  color: var(--text-faint);
+}
+.status-sep {
+  margin: 0 2px;
+  color: var(--text-faint);
+  opacity: 0.6;
+  font-weight: 300;
+}
+/* The cache-hit share (pi .cache-pct). */
+.cache-pct {
+  font-weight: 700;
+}
+.cache-pct.ok {
+  color: var(--green);
+}
+.cache-pct.mid {
+  color: var(--amber-text);
+}
+.cache-pct.warn {
+  color: var(--red-text);
 }
 .status-dot {
   display: inline-block;

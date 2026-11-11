@@ -29,6 +29,7 @@ import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
 import type { FolderDraft } from "./client/folder-draft";
+import { useLatency } from "./client/latency";
 import type { PreviewModels } from "./client/model-preview";
 import {
   activityRoute,
@@ -83,8 +84,13 @@ import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
+import { CacheStatus } from "./layout/CacheStatus";
 import { ContextStatus } from "./layout/ContextStatus";
-import { StatusItem, WorkingStatus } from "./layout/StatusItem";
+import {
+  ConnectionStatus,
+  StatusItem,
+  WorkingStatus,
+} from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
@@ -284,6 +290,7 @@ export function App({
   const currentChatLocation =
     chatLocation?.id === chatId ? chatLocation : undefined;
   const activity = reported?.id === chatId ? reported : undefined;
+  const latency = useLatency();
   useEffect(() => {
     if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
       history.replaceState(
@@ -661,6 +668,17 @@ export function App({
                   ? "Viewer observation unavailable"
                   : (observation.state?.connection ??
                     (taskId ? "Task snapshot not observed yet" : "Chat ready"));
+  const connectionDot = connecting
+    ? "busy"
+    : executionStopped
+      ? ""
+      : !observationFresh || !workspace.workspace
+        ? "error"
+        : observation.transportStatus !== "current"
+          ? "busy"
+          : !observation.state || observation.state.connection === "current"
+            ? "ok"
+            : "busy";
   return (
     <>
       <AppShell
@@ -1316,26 +1334,17 @@ export function App({
         }
         status={
           <>
-            <StatusItem
-              role="status"
+            <ConnectionStatus
               tip={t("Connection freshness is not execution outcome.")}
-              dot={
-                connecting
-                  ? "busy"
-                  : executionStopped
-                    ? ""
-                    : !observationFresh || !workspace.workspace
-                      ? "error"
-                      : observation.transportStatus !== "current"
-                        ? "busy"
-                        : !observation.state ||
-                            observation.state.connection === "current"
-                          ? "ok"
-                          : "busy"
+              dot={connectionDot}
+              // A round trip describes a reachable service, not a connection
+              // still being made or one whose observation has gone stale.
+              latency={
+                connectionDot === "ok" || connectionDot === "" ? latency : null
               }
             >
               {tx(connection)}
-            </StatusItem>
+            </ConnectionStatus>
             {project && (
               <StatusItem tone="faint" icon={<FiServer />}>
                 {t("Execution service: {status}", {
@@ -1343,6 +1352,8 @@ export function App({
                 })}
               </StatusItem>
             )}
+            {activity && <ContextStatus usage={activity.context} />}
+            {activity && <CacheStatus cache={activity.cache} />}
             {activity && activity.turns > 0 && (
               <StatusItem
                 icon={<FiMessageSquare />}
@@ -1353,7 +1364,6 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
-            {activity?.context && <ContextStatus usage={activity.context} />}
             {activity && activity.runningSince !== null && (
               <WorkingStatus
                 since={activity.runningSince}

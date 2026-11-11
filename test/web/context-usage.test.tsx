@@ -92,39 +92,47 @@ it("the statusbar item states tokens, the window and percentage when known, and 
     provider: "local",
     model: "qwen",
   });
+  // The figures as pi shows them: the tokens used, then the window.
   expect(known).toContain(
-    '<span class="bar-item-text">Context 12.3K / 200K · 6%</span>',
+    '<span class="ctx-val">12.3K</span><span class="status-sep">/</span><span class="ctx-max">200K</span>',
   );
-  // The meter repeats the words for assistive technology, never replaces them.
+  // The ring repeats the figures for assistive technology, never replaces them.
   expect(known).toContain(
     'role="meter" aria-label="Context window in use" aria-valuemin="0" aria-valuemax="200000" aria-valuenow="12345" aria-valuetext="Context 12.3K / 200K · 6%"',
   );
-  expect(known).toContain('style="width:6%"');
+  expect(known).toContain('class="ctx-ring ok"');
+  expect(known).toContain('stroke-dashoffset="29.53"');
   expect(known).toContain(
-    'title="Context size as of the last completed model response (local/qwen). Messages after that response are not counted."',
+    'title="Context 12.3K / 200K · 6%. Context size as of the last completed model response (local/qwen). Messages after that response are not counted."',
   );
-  expect(known).not.toContain("status-ctx warn");
-  // More than the window is said, and the bar only fills.
-  const over = status({
-    tokens: 210_000,
-    window: 200_000,
-    provider: "local",
-    model: "qwen",
-  });
+  expect(known).not.toContain("is-zero");
+  // The ring's tone follows the share in use: half, then four fifths.
+  const share = (tokens: number) =>
+    status({ tokens, window: 200_000, provider: "local", model: "qwen" });
+  // (of the rounded percentage the title states).
+  expect(share(98_000)).toContain('class="ctx-ring ok"');
+  expect(share(100_000)).toContain('class="ctx-ring mid"');
+  expect(share(158_000)).toContain('class="ctx-ring mid"');
+  expect(share(160_000)).toContain('class="ctx-ring warn"');
+  // More than the window is said, and the ring only fills.
+  const over = share(210_000);
   expect(over).toContain("Context 210K / 200K · 105%");
+  expect(over).toContain('<span class="ctx-val">210K</span>');
   expect(over).toContain('aria-valuenow="200000"');
-  expect(over).toContain('style="width:100%"');
-  expect(over).toContain("status-item status-ctx warn");
-  // Without a window: tokens only, no meter, and the reason in the tooltip.
+  expect(over).toContain('stroke-dashoffset="0"');
+  expect(over).toContain('class="ctx-ring warn"');
+  // Without a window: tokens only, an empty ring, and the reason in the tooltip.
   const bare = status({
     tokens: 12_345,
     window: null,
     provider: "local",
     model: "qwen",
   });
-  expect(bare).toContain('<span class="bar-item-text">Context 12.3K tokens');
+  expect(bare).toContain('<span class="ctx-val">12.3K</span></span>');
+  expect(bare).toContain("Context 12.3K tokens");
   expect(bare).not.toContain("%");
   expect(bare).not.toContain("meter");
+  expect(bare).not.toContain("ctx-ring-fill");
   expect(bare).toContain("states no context window for this model");
   // After a compaction the size is unknown: never zero, never the old figure.
   const compacted = status({
@@ -134,9 +142,16 @@ it("the statusbar item states tokens, the window and percentage when known, and 
     model: "qwen",
   });
   expect(compacted).toContain("Context unknown after compaction");
+  expect(compacted).toContain('<span aria-hidden="true">—</span>');
+  expect(compacted).toContain("status-ctx is-zero");
   expect(compacted).not.toContain("meter");
   expect(compacted).not.toMatch(/\d+K/);
   expect(compacted).toContain("A compaction followed that response");
+  // No observation at all is a dash that says so, not a figure.
+  const absent = status(undefined);
+  expect(absent).toContain("Context size not observed yet");
+  expect(absent).toContain("status-ctx is-zero");
+  expect(absent).not.toMatch(/ctx-val|ctx-ring-fill|meter|%/);
   const zh = status(
     { tokens: 12_345, window: 200_000, provider: "local", model: "qwen" },
     "zh",
@@ -149,6 +164,7 @@ it("the statusbar item states tokens, the window and percentage when known, and 
       "zh",
     ),
   ).toContain("压缩后上下文大小未知");
+  expect(status(undefined, "zh")).toContain("尚未读取到上下文大小");
 });
 it("the reader carries the head read's context and drops it when the head states none", async () => {
   vi.useFakeTimers();
