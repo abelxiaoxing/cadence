@@ -120,6 +120,7 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: running-only lists, stale keyboard/mouse selection, stable open reading snapshots, bounded abandoned-run observation and final reads after transient failures, conversation-scoped admission attribution (not cwd or copied fork history), no settled-child rereads, and readonly owner observation that never starts, cancels or replays work; departure fences late reads and only detaches.
 - `test/web/`: fast pure/SSR tests for presentation, client state, scoped Send/approval, retained history/images, built-asset serving, auth and content policy; no browser launch, real DOM interaction or viewport qualification.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
+  The import closure is read from the real archive by the gate's pack stage (`scripts/pack-check.mjs`); `package-audit` holds its fabricated-archive cases.
 - `npm-release`: parsed workflow triggers/permissions/pins, real tiny-Git tag ancestry and drift, strict candidate/registry identities, exact archive auditing, bounded readonly publication observation and downloaded-byte confirmation.
   Fake-clock/stream fixtures cover delayed version/tarball/latest visibility, the shared deadline and unchanged request ceiling, original-read settlement, immediate mismatch refusal and independent publish receipts without extending test timeouts.
   Fixtures are local or controlled-fetch only; a passing gate does not qualify a GitHub-hosted run, npm OIDC exchange or real publication.
@@ -141,6 +142,7 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 Publish `web/dist` from Node: Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
+The pack stage also parses every module the archive ships and refuses a relative runtime import the archive does not contain: the source tree resolves such an import, so only the archive shows a file left out of `files`.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
@@ -180,6 +182,7 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Power loss or shutdown while an owner runs (idle or busy)      | Next start proves the holder dead (boot ID, PID, start identity) and recovers; no typed confirmation  |
 | Systemd unit pointing at a removed project directory           | Readable refusal, exit78 (no restart loop); its dead reservation is released account-wide             |
 | A steer still in Pi's queue when its reply fails for good      | Take it back as `agent_end` is reported or Pi continues into it; record it undelivered, never resend  |
+| Shipped module importing a file left out of `files` (2.1.0)    | Pack stage resolves every shipped import inside the real archive; a `slow` test is never the gate     |
 
 Good: current context → exact plan approval → durable acceptance → genuine original native/auth/storage settlement → real checks → automatic Agent review.
 Archived human Review is not a new workflow approval.

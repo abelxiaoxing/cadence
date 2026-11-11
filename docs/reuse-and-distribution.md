@@ -20,6 +20,7 @@ The retired shell-local controller is not a shipped competing executor.
 
 `provenance/package-members.json` is a reviewed source/import/asset policy, not generated from the archive being tested.
 The real pack audit rejects missing/extra/duplicate/linked/special/unsafe members, altered bodies, pin/notice/font drift and linked extraction roots/ancestors.
+The pack gate also parses each shipped module and rejects a relative runtime import the archive does not contain, so a module left out of `files` cannot reach an installed Pi.
 Extracted tests use tar-only package bodies and explicitly linked existing fixture peers; they never fill missing package files from source.
 No version bump, dependency install or publication is implied by this redesign.
 

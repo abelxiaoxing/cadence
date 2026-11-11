@@ -97,7 +97,10 @@
     "src/service/liveness.ts",
     "src/agent-browser",
     "src/activity.ts",
-    "src/service/activity-files.ts"
+    "src/service/activity-files.ts",
+    "src/service/project-knowledge.ts",
+    "src/service/knowledge-store.ts",
+    "src/service/workflow-git.ts"
   ],
   "pi": {
     "extensions": [
