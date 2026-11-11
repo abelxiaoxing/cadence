@@ -2,141 +2,123 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
-Cadence は [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) を永続的なタスクワークスペースに変えます。
-コードタスクを計画し、サブエージェントに作業させ、チェックを実行し、結果を Pi ターミナル（`/cadence`）やブラウザの WebUI からレビューします。
-両方とも同じバックグラウンドサービスに接続します。
+Cadence は [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) を会話駆動のエンジニアリングワークフローにします。
+`/cadence [目標]` を入力し、成果を一度合意すれば、常駐 owner が実装・復旧・検証を進めます。
+ターミナルでも、任意の WebUI でも使えます。
 
-## なぜ Cadence か
+## 仕組み
 
-- **作業はウィンドウを超えて残る。**
-  タスクはバックグラウンドサービスで実行されます。
-  ターミナルを閉じても、Pi を終了しても、ブラウザのタブを離れても、それらはデタッチするだけで、どちらのクライアントも同じ実行に再接続できます。
-- **承認するまで何も編集されない。**
-  タスクはまず読み取り専用で分析し、読みやすい計画を提案します。
-  ファイルが変更されるのは、あなたがその正確な計画を確認した後のみです。
-- **信頼できる結果。**
-  サブエージェントの出力、実際のチェック実行、あなた自身のレビューは別々に保たれます。
-  モデルの文章や「Done」はチェック通過としては数えず、失敗・キャンセル・不明の結果は区別されたままです。
-- **完全な履歴。**
-  各実行はメッセージ、ツール呼び出し、出力を保持し、正確な検索と完全な Markdown/NDJSON エクスポートをサポートします。
-  既知のシークレットはマスクされます。
-- **ターミナルと共有される履歴。**
-  ブラウザーの会話はプロジェクトの Pi セッションそのものです。
-  ターミナルのセッションをブラウザーで続けることも、ブラウザーのセッションを `/resume` で続けることもでき、Pi のブランチはどちらからでも読めます。
-- **すべてに一つのリンク。**
-  WebUI（デスクトップとスマホ、英語と簡体字中国語）は通常の Pi 会話もホストし、プロジェクト間で切り替えられます。
-  各プロジェクトには独自の owner と履歴があります。
+```mermaid
+flowchart TD
+    A["/cadence 目標"] --> B["読み取り専用で調査"]
+    B --> C["合意して一度だけ承認"]
+    C --> D["独立したタスクを並列 worktree で実行"]
+    D --> E["実際のチェック + 自動 Agent レビュー"]
+    E -->|"合格"| F["あなたのブランチへローカル統合"]
+    E -->|"不合格"| G["自己修正"]
+    G --> D
+    F --> H["知識を整理（固定予算）"]
+    H -.-> B
+```
 
-Cadence は信頼できるアシスタントであり、**サンドボックスではありません**。
-そのエージェントはホストツールであなたの作業コピーを直接編集するため、レビューと復旧が可能なコードで使うください。
+```mermaid
+flowchart LR
+    A["チェック不合格"] --> B["修復"] --> C["経路の再計画"] --> D["偏差を記録"] --> E["外部要因でのみ停止"]
+```
+
+```mermaid
+flowchart LR
+    T["Pi ターミナル"] <-->|"接続 / 切断"| O[("常駐 owner")]
+    W["WebUI<br/>ボード · ブランチ · 割り込み"] <-->|"接続 / 切断"| O
+    O --> X["worktree 内の worker"] --> Y["あなたのブランチ"]
+    O -.-> K[".cadence/ 知識"]
+```
+
+## Cadence を使う理由
+
+|                                    |                                                                                             |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| **ウィンドウを閉じても作業は続く** | クライアントは接続と切断だけ。owner は動き続けます。                                        |
+| **承認前は何も変更しない**         | 読み取り専用の調査の後、読める合意を一つ確認します。                                        |
+| **信頼できる結果**                 | 実際のチェックと独立レビュー。モデルの文面は合格になりません。                              |
+| **自力で完了**                     | 承認後は修復・再計画・偏差の記録を自動で行い、リポジトリ外の要因でのみ停止します。          |
+| **設計から高速**                   | 独立したタスクは各 worktree で並列に動きます。                                              |
+| **知識が積み上がる**               | ルーティング表と固定予算。worker は該当部分だけを読み、新しい知見が古いものを置き換えます。 |
+| **見えて操作できる WebUI**         | タスクボード、経路の改訂、偏差、ブランチ、思考。返信中に割り込みや後送りも可能。            |
+| **一つの履歴**                     | ブラウザの会話はプロジェクトの Pi セッション。どちらでも続けられます。                      |
+
+> Cadence は信頼されたアシスタントであり、**サンドボックスではありません**。
+> エージェントは承認された checkout / worktree でホストのツールを使います。
+> 確認と復旧ができるコードで使ってください。
 
 ## インストール
 
-npm を備えた Node `>=22.19.0`、モデルプロバイダーにログイン済みでインストールされた Pi が必要です。
-Cadence は Pi のログインとモデル設定を再利用します。
+Node `>=22.19.0` と、モデルプロバイダーにログイン済みの Pi が必要です。
+Cadence は Pi のログインを再利用します。
 
 ```sh
 npm install -g @abelxiaoxing/cadence
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
+cadence server install   # 任意の WebUI と起動時サービス
 ```
 
-`cadence server install` はバックグラウンドサービスを登録して起動し（Linux では systemd、macOS では LaunchAgent、Windows ではログイン項目）、プライベートリンク `http://127.0.0.1:17423/?token=…` を表示します。
-最後のコマンドは Pi に同じコピーを `/cadence` で読み込ませるため、npm でのアップグレード 1 回で両方が更新されます。
-ポートとトークンは `~/.pi/agent/cadence/.env` にあります。
-トークンを所持する者はあなたのワークスペースを使えるため、リンクは秘密にしてください。
+`cadence server install` はプライベートリンク（`http://127.0.0.1:17423/?token=…`）を表示します。
+トークンはワークスペースへのアクセスを許すため、リンクは公開しないでください。
 
 ## 使い方
 
-### ブラウザで
+### ブラウザ
 
-1. 表示されたリンクを一度開く。
-   その後ブラウザはあなたを覚えておく。
-   リンクを紛失した場合は `cadence token-link --reveal` で再度表示できます。
-2. プロジェクトフォルダを選びます。
-   送信時に保存済みのモデル設定を再利用します。
-   設定がない場合だけモデルを選んでください。
-3. 一度だけ `/cadence [目標]` を送信します。
-   この会話は Cadence モードを維持し、その後は通常のメッセージで要件を明確にできます。
-4. 完全な計画を確認し、**Implement this plan** を押します。
-   実装、検証、障害からの自動復旧、合意したローカル納品が自動で進みます。
-5. 同じ会話で進捗を確認し、サブエージェントの記録は左下の **Subagents** パネルから開きます。
-   再読み込みや目標完了でもモードは維持されます。
-   **Exit Cadence** はモード終了のみ、**Cancel workflow — request stop** は作業のキャンセル要求です。
+1. 表示されたリンクを一度開きます（`cadence token-link --reveal` で再表示）。
+2. 右下のボタンで作業フォルダを選びます。
+3. `/cadence [目標]` を送り、確認の質問に答えます。
+4. **Implement this plan** を押し、ボードと **Subagents** ドックで進捗を追います。
+   画像は貼り付けやドロップで追加できます（[詳細](docs/conversation-mode.md#images-in-the-webui)）。
 
-No live Pi terminal is required for the browser conversation workflow.
+### ターミナル
 
-### ターミナルで
-
-`/cadence <目標>` を一度入力した後は、通常の会話を続けます。
-Cadence がプロジェクトを調査し、必要な判断を確認して計画を作ります。
-計画への明示的な承認後は、実装・検証・自動復旧・合意したローカル統合を自動で進めます。
-
-目標が完了しても、この会話では Cadence モードを維持します。
-終了するには `exit cadence` と入力します。
-終了は実行中の作業をキャンセルしません。
-モデル設定は `~/.pi/agent/cadence/settings.json` に保存され、プロジェクト間で再利用されます。
-
-ローカル owner は必要時に起動します。
-システムサービスのインストールは WebUI・自動起動を使う場合のみ必要です。
-
-`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
-See [History and diagnostics](docs/history.md).
-[Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
-Browser authentication is not execution consent.
-
-### その他のプロジェクト
+信頼するプロジェクトの Pi 会話で `/cadence <目標>` を一度入力します。
+目標が完了してもモードは維持されます。
+`exit cadence` または `退出 Cadence` で終了しますが、承認済みの作業は取り消されません。
+`/cadence-history [run-id]` は読み取り専用です。
+`CADENCE_PARALLEL`（既定 4）で同時 worker 数を設定します。
+詳細：[会話モード](docs/conversation-mode.md)、[履歴](docs/history.md)。
 
 ```sh
-cadence project open /absolute/project
-cadence project open /absolute/new-project --create
+cadence project open /absolute/project   # プロジェクトごとに独立した owner・ポート・履歴
 ```
 
-各プロジェクトには独自の owner、ポート、履歴があり、コマンドはそのプライベートリンクを表示する。
-WebUI のフォルダピッカーも同じ方法でプロジェクトを開く。
-別のプロジェクトを開いても、前のプロジェクトでの作業は止まらない。
-
-### チェック
-
-チェックコマンドは、明示的に承認する計画に記載します。
-開始前のチェックと受け入れチェックの実際の結果は、自動 Agent レビューとは別に記録されます。
-
-## サービスの管理
+## サービス管理
 
 ```sh
 cadence server status
 cadence server restart     # アップグレードや .env / models.json の変更後
-cadence server upgrade
-cadence server stop        # 登録は保持され、次の起動またはログイン時に再び起動する
-cadence server uninstall   # npm uninstall -g の前に実行
+cadence server upgrade     # 取得・インストール・再起動。新版が起動しなければ戻す
+cadence server stop
+cadence server uninstall   # npm uninstall -g の前に
+cadence doctor             # 残骸と最近の復旧。--fix で残りを処理
 ```
 
-`cadence server upgrade` または WebUI の Cadence サービスダイアログでアップグレードします。
-Cadence の実行中に新しいバージョンを取得し、新しいバージョンが起動しない場合は以前のバージョンに戻します。
-restart、stop、uninstall はデタッチしたままにせずに、実行中の作業を順番に停止する。
-uninstall はサービス定義のみを削除する。
-プロジェクト、履歴、Pi の設定は残る。
-Linux ルートおよび名前付きサービス、リモート HTTPS アクセス、回復は[サービス管理](docs/service-management.md)と[リモートアクセス](docs/remote-access.md)を参照。
+クラッシュや停電の後始末は不要です。
+次回起動時に自動復旧し、何をしたか表示します。
+[サービス管理](docs/service-management.md)、[リモートアクセス](docs/remote-access.md)を参照。
 
 ## 開発
 
-Pi はローカル checkout やパックされた tarball も読み込める。
-その絶対または相対パスを Pi の `packages` に追加するか、`pi -e ./cadence` を試す。
-Cadence には Pi 1.5.0 または互換性のある 1.x ホストが必要。
-開発用のピンとテスト済みのランタイムは、普遍的な互換性の約束ではない。
+Pi はローカル checkout やパック済み tarball も読み込めます。
+絶対パスまたは相対パスを Pi の `packages` に追加するか、`pi -e ./cadence` を試してください。
+Cadence は Pi 1.5.0 または互換の 1.x ホストを必要とします。
+開発用のピンとテスト済みランタイムは、普遍的な互換性の約束ではありません。
 
 ```sh
 bun install
 bun run verify
 ```
 
-エンジニアリングのガイダンスは [engineering/](engineering/) 下に領域ごとに分割されている。
-[AGENTS.md](AGENTS.md) のプロジェクト索引がどのファイルがどのコードをカバーするかを示す。
-`verify` には公式 Node ビルドとプライベートな一時ディレクトリが必要。
-`verify` は開発とリリース共通の唯一の検証コマンドで、高速なチェックのみを実行し、ブラウザは不要。
-[検証](engineering/verification.md)を参照。
+領域別のガイドは [engineering/](engineering/) と [AGENTS.md](AGENTS.md)。
+`verify` が唯一の高速ゲートで、公式 Node ビルドと専用の一時ディレクトリが必要です（[検証](engineering/verification.md)）。
 
 ## ライセンス
 
-Cadence は MIT です。
-バンドルされた適応コード、フォント、ベンダーはそれぞれのライセンスを保持。
-[再利用と配布](docs/reuse-and-distribution.md)と[サードパーティ通知](THIRD_PARTY_NOTICES.md)を参照。
+MIT。
+同梱の改変、フォント、ベンダー部品は各ライセンスを保持します：[再利用と配布](docs/reuse-and-distribution.md)、[サードパーティ通知](THIRD_PARTY_NOTICES.md)。
