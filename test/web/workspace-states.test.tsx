@@ -94,3 +94,56 @@ it("only a successful empty file observation says there are no visible files", (
   expect(html).toContain("The context changed (stale)");
   expect(html).not.toContain("has been read again");
 });
+it.each(["en", "zh"] as const)(
+  "%s: a file row offers download, path-only reference, copy name and copy path; a folder row has no download",
+  (locale) => {
+    files.value = {
+      kind: "files",
+      path: "",
+      entries: [
+        { name: "src", path: "src", directory: true },
+        { name: "notes.md", path: "notes.md", directory: false },
+      ],
+      parent: null,
+      limited: false,
+    };
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <FilesPanel
+          client={new ServiceClient(transport())}
+          enabled
+          location={{ id: "chat", cwd: "/project" }}
+          onReference={() => {}}
+        />
+      </LocaleProvider>,
+    );
+    const actions = (name: string) =>
+      [...html.matchAll(/class="file-attach[^"]*"[^>]*aria-label="([^"]+)"/g)]
+        .map((match) => match[1])
+        .filter((label) => label.includes(name));
+    expect(actions("notes.md")).toEqual(
+      locale === "zh"
+        ? [
+            "下载文件 notes.md",
+            "仅引用路径 notes.md（AI 按需读取）",
+            "复制名称 notes.md",
+            "复制路径 notes.md",
+          ]
+        : [
+            "Download file notes.md",
+            "Reference path only: notes.md (the agent reads it on demand)",
+            "Copy name notes.md",
+            "Copy path notes.md",
+          ],
+    );
+    expect(actions("src")).toEqual(
+      locale === "zh"
+        ? ["链接文件夹路径 src 到对话", "复制名称 src", "复制路径 src"]
+        : [
+            "Link folder path src to the chat",
+            "Copy name src",
+            "Copy path src",
+          ],
+    );
+  },
+);

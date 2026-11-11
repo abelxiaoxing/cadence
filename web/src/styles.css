@@ -3728,6 +3728,14 @@ button.file-item:hover:not(:disabled),
 .file-attach.copied {
   color: var(--green);
 }
+/* A download in progress keeps its button shown, like a focused one. */
+.file-attach.busy {
+  opacity: 1;
+  color: var(--accent-text);
+  @media (prefers-reduced-motion: no-preference) {
+    animation: live-pulse 1.2s ease-in-out infinite;
+  }
+}
 .file-preview {
   flex: 0 1 55%;
   display: flex;

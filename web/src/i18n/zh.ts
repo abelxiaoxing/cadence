@@ -508,16 +508,23 @@ export const zh = {
   "Cadence subagents appear here when a task runs.":
     "Cadence 任务运行时，子代理会显示在这里。",
   "Refresh files": "刷新文件",
-  "Reference {path}": "引用 {path}",
+  "Download file {path}": "下载文件 {path}",
+  "Reference path only: {path} (the agent reads it on demand)":
+    "仅引用路径 {path}（AI 按需读取）",
+  "Link folder path {path} to the chat": "链接文件夹路径 {path} 到对话",
+  "Copy name {path}": "复制名称 {path}",
   "Copy path {path}": "复制路径 {path}",
+  "Download of {path} failed: {error}": "{path} 下载失败：{error}",
+  "the file is larger than the 64 MiB download limit":
+    "文件超过 64 MiB 的下载上限",
   "No visible files": "没有可显示的文件",
   "Close preview": "关闭预览",
   "Bounded listing; narrow the directory to see more.":
     "列表已达到显示上限，请进入更具体的目录查看。",
   "File preview is limited; this is not the complete file.":
     "文件预览已截断，并非完整内容。",
-  "Readonly preview · references send paths, not file contents":
-    "只读预览 · 引用只发送路径，不自动注入文件内容",
+  "Readonly preview · references send paths, not file contents · a download is the file's own bytes, unredacted":
+    "只读预览 · 引用只发送路径，不自动注入文件内容 · 下载的是文件原始字节，不做脱敏",
   // Turn steps
   "Working steps": "工作过程",
   "Working…": "处理中…",
