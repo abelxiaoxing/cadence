@@ -948,6 +948,75 @@ it("a branch's context size is its last valid model response's, unknown after a 
   expect(sessions.session(id)?.usage(a1.id)).toMatchObject({ tokens: 77 });
 });
 
+it("a session's cache totals sum every usage record of the file as Pi's statistics do, on every branch", () => {
+  const cwd = project();
+  const dir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
+  const used = (input: unknown, cacheRead: unknown, cacheWrite: unknown) => ({
+    input,
+    output: 5,
+    cacheRead,
+    cacheWrite,
+    totalTokens: 0,
+  });
+  const reply = (parentId: string, usage: object, stopReason = "stop") =>
+    entry("message", parentId, {
+      message: { role: "assistant", content: [], usage, stopReason },
+    });
+  const u1 = user(null, "first");
+  const a1 = reply(u1.id, used(100, 0, 900));
+  // Pi's statistics count a failed or aborted reply's usage too.
+  const failed = reply(a1.id, used(20, 1000, 0), "error");
+  const result = entry("message", failed.id, {
+    message: { role: "toolResult", content: [], usage: used(3, 30, 300) },
+  });
+  const compaction = entry("compaction", result.id, {
+    summary: "Earlier",
+    usage: used(40, 0, 0),
+  });
+  const recorded = entry("usage", compaction.id, { usage: used(1, 2, 3) });
+  // Nothing Pi could have recorded as a count adds anything.
+  const malformed = reply(recorded.id, used("7", -4, Number.NaN));
+  const said = entry("message", malformed.id, {
+    message: { role: "user", content: [], usage: used(9000, 9000, 9000) },
+  });
+  // Another branch's records belong to the same session file.
+  const side = reply(u1.id, used(5, 5000, 0));
+  const { id, path } = write(dir, cwd, [
+    u1,
+    a1,
+    failed,
+    result,
+    compaction,
+    recorded,
+    malformed,
+    said,
+    side,
+  ]);
+  const sessions = new PiSessions(dir, cwd);
+  expect(sessions.session(id)?.cache).toEqual({
+    input: 169,
+    read: 6032,
+    write: 1203,
+  });
+  // Appended lines are added once; a later read counts nothing twice.
+  appendFileSync(path, line(reply(side.id, used(1, 8, 0))));
+  expect(sessions.session(id)?.cache).toEqual({
+    input: 170,
+    read: 6040,
+    write: 1203,
+  });
+  expect(sessions.session(id)?.cache.read).toBe(6040);
+  // A replaced file is summed again from its start.
+  const replacement = `${path}.new`;
+  writeFileSync(
+    replacement,
+    line({ type: "session", version: 3, id, timestamp: "", cwd }) +
+      line({ ...u1, parentId: null }),
+  );
+  renameSync(replacement, path);
+  expect(sessions.session(id)?.cache).toEqual({ input: 0, read: 0, write: 0 });
+});
+
 it("written thinking never shifts the live preview's count of written messages", () => {
   const capture = new LiveCapture(() => []);
   for (const [workerSeq, messageId] of ["a1", "a2"].entries())

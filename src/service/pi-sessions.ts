@@ -421,6 +421,28 @@ function reportedUsage(entry: SessionEntry): BranchUsage | undefined {
   };
 }
 
+/** A session's input tokens by how the provider's prompt cache took them,
+ * summed as Pi's own session statistics sum them: over every usage record in
+ * the session file, whichever branch it is on. */
+export interface SessionCache {
+  /** Sent uncached. */
+  input: number;
+  read: number;
+  write: number;
+}
+/** The usage record an entry carries where Pi's session statistics look for
+ * one: a usage entry, a compaction or branch summary, an assistant message or
+ * a tool result. */
+function recordedUsage(entry: SessionEntry): unknown {
+  if (["usage", "compaction", "branch_summary"].includes(entry.type))
+    return own(entry.raw, "usage");
+  const m = message(entry);
+  const from = m && own(m, "role");
+  return m && (from === "assistant" || from === "toolResult")
+    ? own(m, "usage")
+    : undefined;
+}
+
 /** What a listing needs, folded line by line so a long session is read once. */
 export interface SessionSummary {
   id: string;
@@ -517,6 +539,8 @@ export class ParsedSession {
   >();
   private bodyBytes = 0;
   private readonly usages = new Map<string, BranchUsage | null>();
+  /** Folded as the file's lines are indexed, so no body is read for it. */
+  readonly cache: SessionCache = { input: 0, read: 0, write: 0 };
   /** Each browser command's boundaries in the order Pi appended them. */
   private readonly boundaries = new Map<string, Boundary[]>();
   constructor(readonly path: string) {}
@@ -564,6 +588,22 @@ export class ParsedSession {
     }
     return value;
   }
+  private count(entry: SessionEntry): void {
+    const usage = recordedUsage(entry);
+    if (!usage || typeof usage !== "object" || Array.isArray(usage)) return;
+    const add = (key: keyof SessionCache, name: string) => {
+      const value = own(usage as Record<string, unknown>, name);
+      // A count Pi could not have recorded adds nothing, never NaN.
+      if (typeof value === "number" && Number.isFinite(value) && value > 0)
+        this.cache[key] = Math.min(
+          this.cache[key] + Math.ceil(value),
+          Number.MAX_SAFE_INTEGER,
+        );
+    };
+    add("input", "input");
+    add("read", "cacheRead");
+    add("write", "cacheWrite");
+  }
   refresh(): this {
     const ino = lstatSync(this.path).ino;
     const next = readLines(
@@ -599,6 +639,7 @@ export class ParsedSession {
             else this.boundaries.set(commandId, [boundary]);
           }
         }
+        this.count(entry);
         const bytes = Buffer.byteLength(text);
         // The descriptor retains only its offset/length, not the parsed body or
         // the callback's source text. No original history is rewritten or copied.
@@ -621,6 +662,7 @@ export class ParsedSession {
         this.bodies.clear();
         this.bodyBytes = 0;
         this.usages.clear();
+        this.cache.input = this.cache.read = this.cache.write = 0;
         this.boundaries.clear();
         this.header = null;
       },

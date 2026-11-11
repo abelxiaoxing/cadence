@@ -6718,6 +6718,14 @@ function decodeChatContext(v) {
     model: text(o.model, 256)
   };
 }
+function decodeChatCache(v) {
+  const o = closed(v, ["input", "read", "write"]);
+  return {
+    input: integer(o.input, 0),
+    read: integer(o.read, 0),
+    write: integer(o.write, 0)
+  };
+}
 function decodeChatTreeNode(v) {
   const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
   return {
@@ -6867,6 +6875,7 @@ function decodeWorkbenchResult(v) {
       "attempt",
       ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : [],
       ...Object.hasOwn(v ?? {}, "context") ? ["context"] : [],
+      ...Object.hasOwn(v ?? {}, "cache") ? ["cache"] : [],
       ...Object.hasOwn(v ?? {}, "pending") ? ["pending"] : [],
       ...Object.hasOwn(v ?? {}, "undelivered") ? ["undelivered"] : []
     ]);
@@ -6877,6 +6886,7 @@ function decodeWorkbenchResult(v) {
       kind,
       ...o2.commands === undefined ? {} : { commands: list(o2.commands, 64, decodeId) },
       ...o2.context === undefined ? {} : { context: decodeChatContext(o2.context) },
+      ...o2.cache === undefined ? {} : { cache: decodeChatCache(o2.cache) },
       ...o2.pending === undefined ? {} : { pending: list(o2.pending, WAITING_INPUTS, decodeChatPending) },
       ...o2.undelivered === undefined ? {} : {
         undelivered: list(o2.undelivered, WAITING_INPUTS, decodeChatAttempt)
@@ -9019,6 +9029,13 @@ function reportedUsage(entry) {
     model: typeof model === "string" ? model : ""
   };
 }
+function recordedUsage(entry) {
+  if (["usage", "compaction", "branch_summary"].includes(entry.type))
+    return own2(entry.raw, "usage");
+  const m = message(entry);
+  const from = m && own2(m, "role");
+  return m && (from === "assistant" || from === "toolResult") ? own2(m, "usage") : undefined;
+}
 function emptySummary() {
   return {
     id: "",
@@ -9082,6 +9099,7 @@ class ParsedSession {
   bodies = new Map;
   bodyBytes = 0;
   usages = new Map;
+  cache = { input: 0, read: 0, write: 0 };
   boundaries = new Map;
   constructor(path) {
     this.path = path;
@@ -9125,6 +9143,19 @@ class ParsedSession {
     }
     return value;
   }
+  count(entry) {
+    const usage = recordedUsage(entry);
+    if (!usage || typeof usage !== "object" || Array.isArray(usage))
+      return;
+    const add = (key, name) => {
+      const value = own2(usage, name);
+      if (typeof value === "number" && Number.isFinite(value) && value > 0)
+        this.cache[key] = Math.min(this.cache[key] + Math.ceil(value), Number.MAX_SAFE_INTEGER);
+    };
+    add("input", "input");
+    add("read", "cacheRead");
+    add("write", "cacheWrite");
+  }
   refresh() {
     const ino = lstatSync7(this.path).ino;
     const next = readLines(this.path, this.read, (text2, pos) => {
@@ -9155,6 +9186,7 @@ class ParsedSession {
             this.boundaries.set(commandId, [boundary]);
         }
       }
+      this.count(entry);
       const bytes = Buffer.byteLength(text2);
       Object.defineProperty(entry, "raw", {
         enumerable: true,
@@ -9176,6 +9208,7 @@ class ParsedSession {
       this.bodies.clear();
       this.bodyBytes = 0;
       this.usages.clear();
+      this.cache.input = this.cache.read = this.cache.write = 0;
       this.boundaries.clear();
       this.header = null;
     });
@@ -14785,12 +14818,14 @@ class ConversationRecords {
     const summary = this.summary(id, running);
     const listed = this.sessions.find(id);
     const context = this.context(view);
+    const cache = view.session?.cache;
     const pending = running ? this.pending(running, view.session) : [];
     const undelivered = running ? [] : this.undelivered(id, view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
       ...context ? { context } : {},
+      ...cache && cache.input + cache.read + cache.write > 0 ? { cache: { ...cache } } : {},
       ...pending.length ? { pending } : {},
       ...undelivered.length ? { undelivered } : {},
       summary,
@@ -16748,7 +16783,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "50f5a937e3241bed650bd1eab084c4dcc178b2413b1162109a85ea2f72e39b10",
+    contractHash: "46e67668411af8fc9cdc99bb5dcee56ea093a33d18fce3545d5c9bbb5847948b",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -33776,7 +33811,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.1",
-  build: "0d1fb2a03bc5f01c7723f192c239aa8b295552ed600eaf156f59ab02a2a9b65d",
+  build: "4f23f702e5853bcb2a5e9bb73d871d4446346fc117cf88abddaafb481a1d0376",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -36470,7 +36505,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "50f5a937e3241bed650bd1eab084c4dcc178b2413b1162109a85ea2f72e39b10";
+  const embedded = "46e67668411af8fc9cdc99bb5dcee56ea093a33d18fce3545d5c9bbb5847948b";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

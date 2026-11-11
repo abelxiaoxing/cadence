@@ -396,6 +396,15 @@ export interface ChatContext {
   provider: string;
   model: string;
 }
+/** A session's input tokens by how the provider's prompt cache took them:
+ * sent uncached, read from the cache and written to it. They are summed as
+ * Pi's own session statistics sum them, over every usage record in the
+ * session file, whichever branch it is on. */
+export interface ChatCache {
+  input: number;
+  read: number;
+  write: number;
+}
 /** A browser message that left nothing in the session, shown after the branch
  * it was sent from: a refusal before any model call, a Cadence control reply,
  * or a message sent into a reply that ended before delivering it. */
@@ -579,6 +588,9 @@ export type WorkbenchResult =
        * when no model response is within the reader's walk of the branch end,
        * or the service predates it. */
       context?: ChatContext;
+      /** The whole session's input tokens by cache use. Absent when its file
+       * records none, or the service predates it. */
+      cache?: ChatCache;
       /** Messages sent into the reply in progress that have not been
        * delivered, oldest first; one Pi does not hold yet can be withdrawn.
        * Absent when there are none. */
@@ -1284,6 +1296,14 @@ function decodeChatContext(v: unknown): ChatContext {
     model: text(o.model, 256),
   };
 }
+function decodeChatCache(v: unknown): ChatCache {
+  const o = closed(v, ["input", "read", "write"]);
+  return {
+    input: integer(o.input, 0),
+    read: integer(o.read, 0),
+    write: integer(o.write, 0),
+  };
+}
 function decodeChatTreeNode(v: unknown): ChatTreeNode {
   const o = closed(v, ["id", "parent", "text", "at", "leaf", "current"]);
   return {
@@ -1444,6 +1464,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       "attempt",
       ...(Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []),
       ...(Object.hasOwn(v ?? {}, "context") ? ["context"] : []),
+      ...(Object.hasOwn(v ?? {}, "cache") ? ["cache"] : []),
       ...(Object.hasOwn(v ?? {}, "pending") ? ["pending"] : []),
       ...(Object.hasOwn(v ?? {}, "undelivered") ? ["undelivered"] : []),
     ]);
@@ -1458,6 +1479,7 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       ...(o.context === undefined
         ? {}
         : { context: decodeChatContext(o.context) }),
+      ...(o.cache === undefined ? {} : { cache: decodeChatCache(o.cache) }),
       ...(o.pending === undefined
         ? {}
         : { pending: list(o.pending, WAITING_INPUTS, decodeChatPending) }),
