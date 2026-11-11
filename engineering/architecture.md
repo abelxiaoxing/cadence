@@ -39,6 +39,7 @@ Folder setup has local text/model drafts but no project client or unbound chat e
 `src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission and live preview), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
 `src/service/conversation-images.ts` owns ephemeral upload staging; `src/image-content.mjs` owns portable format/header validation.
 The conversation launcher delivers admitted bytes on its private image pipe, not through the public control envelope.
+It hands the messages a browser sends into a running reply to the worker on the private IPC channel; `src/worker-inputs.mjs` is the worker's side, which steers Pi or keeps a message for its next prompt.
 `src/service/pi-sessions.ts` reads the project's Pi session files, the shared conversation store, and never writes them; a browser turn's SDK worker writes through Pi's `SessionManager`, as does the fixed-purpose `src/session-rename.mjs` child that records a session's name (launched by `renameSession` in `src/subagent-process.ts`); `src/session-entries.mjs` names the custom entries Cadence adds and `src/session-file.mjs` holds the one preparation both children make, ending a torn last line.
 Pre-Pi Cadence conversations are unsupported: no migration endpoint, old checkpoint codec or transcript reader remains.
 A readonly identity-presence guard refuses reuse and preserves the old files; current context/binding/link metadata retains its existing paths.

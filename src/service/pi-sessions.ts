@@ -373,6 +373,15 @@ function stopStatus(m: Record<string, unknown>): {
   if (reason === "aborted") return { status: "canceled", notice: "" };
   return { status: "completed", notice: "" };
 }
+/** How the reply among a turn's entries ended: its last assistant message's
+ * status, as a built turn states it. */
+export function replyStatus(entries: readonly SessionEntry[]): ChatStatus {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const m = message(entries[i]);
+    if (m && own(m, "role") === "assistant") return stopStatus(m).status;
+  }
+  return "completed";
+}
 
 /** Context size as of the last completed model response on a branch. */
 export interface BranchUsage {
@@ -486,6 +495,13 @@ function fold(summary: SessionSummary, line: Line): void {
   }
 }
 
+/** One `cadence-browser-command/1` entry: the user entry it names and, for a
+ * message sent into a running reply, that reply's command. */
+interface Boundary {
+  entry: SessionEntry;
+  user: unknown;
+  run: unknown;
+}
 /** Incremental entry/branch index; bodies are read on demand in a bounded LRU.
  * Metadata still scales with entry count (as does the installed SDK manager). */
 export class ParsedSession {
@@ -501,6 +517,8 @@ export class ParsedSession {
   >();
   private bodyBytes = 0;
   private readonly usages = new Map<string, BranchUsage | null>();
+  /** Each browser command's boundaries in the order Pi appended them. */
+  private readonly boundaries = new Map<string, Boundary[]>();
   constructor(readonly path: string) {}
   private body(
     pos: number,
@@ -560,6 +578,27 @@ export class ParsedSession {
         }
         const entry = line.entry;
         if (this.byId.has(entry.id)) return;
+        if (
+          entry.type === "custom" &&
+          own(entry.raw, "customType") === BROWSER_COMMAND_ENTRY
+        ) {
+          const data = own(entry.raw, "data");
+          const d =
+            data && typeof data === "object" && !Array.isArray(data)
+              ? (data as Record<string, unknown>)
+              : {};
+          const commandId = own(d, "commandId");
+          if (typeof commandId === "string") {
+            const boundary = {
+              entry,
+              user: own(d, "userId"),
+              run: own(d, "run"),
+            };
+            const known = this.boundaries.get(commandId);
+            if (known) known.push(boundary);
+            else this.boundaries.set(commandId, [boundary]);
+          }
+        }
         const bytes = Buffer.byteLength(text);
         // The descriptor retains only its offset/length, not the parsed body or
         // the callback's source text. No original history is rewritten or copied.
@@ -582,6 +621,7 @@ export class ParsedSession {
         this.bodies.clear();
         this.bodyBytes = 0;
         this.usages.clear();
+        this.boundaries.clear();
         this.header = null;
       },
     );
@@ -673,6 +713,49 @@ export class ParsedSession {
     }
     return count;
   }
+  /** Whether Pi has written the message of a browser command. */
+  delivered(commandId: string): boolean {
+    return this.boundaries.has(commandId);
+  }
+  /** A command's user entry and boundaries: the first boundary follows the
+   * entry it names, which was written at or after `offset`. */
+  private owned(
+    commandId: string,
+    offset: number,
+  ): { user: SessionEntry; boundaries: Boundary[] } | undefined {
+    const boundaries = this.boundaries.get(commandId);
+    if (!boundaries) return undefined;
+    const first = boundaries[0];
+    const user =
+      typeof first.user === "string" ? this.byId.get(first.user) : undefined;
+    if (
+      !user ||
+      !isUser(user) ||
+      first.entry.parentId !== user.id ||
+      user.pos < offset ||
+      first.entry.pos <= user.pos
+    )
+      throw new ContractError("corrupt-selected");
+    return { user, boundaries };
+  }
+  /** Whether `entry` continues `parent` through entries written at or after
+   * `offset`. */
+  private follows(
+    entry: SessionEntry | undefined,
+    parent: string | null,
+    offset: number,
+  ): boolean {
+    for (
+      let n = 0;
+      entry && n <= this.entries.length && entry.pos >= offset;
+      n++
+    ) {
+      if (entry.parentId === parent) return true;
+      entry =
+        entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    }
+    return false;
+  }
   /** Exact browser ownership, recorded by the worker through Pi's public
    * manager after each finalized message. Equal text is never identity. */
   commandEntries(
@@ -680,54 +763,66 @@ export class ParsedSession {
     parent: string | null,
     offset: number,
   ): SessionEntry[] {
-    const markers = this.entries.filter(
-      (entry) =>
-        entry.type === "custom" &&
-        entry.raw.customType === BROWSER_COMMAND_ENTRY &&
-        (entry.raw.data as Record<string, unknown> | undefined)?.commandId ===
-          commandId,
-    );
-    if (!markers.length) return [];
-    const marker = markers[0],
-      data = marker.raw.data as Record<string, unknown>;
-    const user =
-      typeof data.userId === "string" ? this.byId.get(data.userId) : undefined;
-    if (
-      !user ||
-      !isUser(user) ||
-      marker.parentId !== user.id ||
-      user.pos < offset ||
-      marker.pos <= user.pos
-    )
-      throw new ContractError("corrupt-selected");
-    let entry: SessionEntry | undefined = user;
-    let reaches = false;
-    for (
-      let n = 0;
-      entry && n <= this.entries.length && entry.pos >= offset;
-      n++
-    ) {
-      if (entry.parentId === parent) {
-        reaches = true;
-        break;
-      }
-      entry =
-        entry.parentId === null ? undefined : this.byId.get(entry.parentId);
+    return this.runEntries({ commandId, parent, offset }, [])[0]?.entries ?? [];
+  }
+  /** One admitted run as its worker recorded it, a part for each message Pi
+   * was given: the run's own, then every message sent into it that has a
+   * boundary, in the order Pi wrote them. A part reaches from its user entry
+   * to the entry before the next part's, the last to the run's newest
+   * boundary. A message without a boundary was not delivered and has none. */
+  runEntries(
+    run: { commandId: string; parent: string | null; offset: number },
+    inputs: readonly { commandId: string; offset: number }[],
+  ): { commandId: string; entries: SessionEntry[] }[] {
+    const first = this.owned(run.commandId, run.offset);
+    const sent = inputs.flatMap((input) => {
+      const owned = this.owned(input.commandId, input.offset);
+      return owned ? [{ commandId: input.commandId, ...owned }] : [];
+    });
+    if (!first) {
+      // Pi writes a run's own message before any sent into it.
+      if (sent.length) throw new ContractError("corrupt-selected");
+      return [];
     }
-    if (!reaches) throw new ContractError("stale");
-    const branch = this.branch(markers[markers.length - 1].id);
-    const start = branch.findIndex((entry) => entry.id === user.id);
-    const entries = new Set(branch.slice(start).map((entry) => entry.id));
+    if (!this.follows(first.user, run.parent, run.offset))
+      throw new ContractError("stale");
     if (
-      start < 0 ||
-      markers.some(
-        (boundary) =>
-          !entries.has(boundary.id) ||
-          (boundary.raw.data as Record<string, unknown>).userId !== user.id,
+      sent.some((part) =>
+        part.boundaries.some((boundary) => boundary.run !== run.commandId),
       )
     )
       throw new ContractError("corrupt-selected");
-    return branch.slice(start);
+    const parts = [
+      { commandId: run.commandId, ...first },
+      ...sent.sort((a, b) => a.user.pos - b.user.pos),
+    ];
+    let newest = first.boundaries[0].entry;
+    for (const part of parts)
+      for (const boundary of part.boundaries)
+        if (boundary.entry.pos > newest.pos) newest = boundary.entry;
+    const chain = this.branch(newest.id);
+    const at = new Map(chain.map((entry, index) => [entry.id, index]));
+    const starts = parts.map((part) => at.get(part.user.id) ?? -1);
+    return parts.map((part, index) => {
+      const start = starts[index],
+        end = starts[index + 1] ?? chain.length;
+      // Every boundary lies on the one chain, inside its own part, and names
+      // that part's user entry.
+      if (
+        start < 0 ||
+        end <= start ||
+        part.boundaries.some((boundary) => {
+          const position = at.get(boundary.entry.id) ?? -1;
+          return (
+            position <= start ||
+            position >= end ||
+            boundary.user !== part.user.id
+          );
+        })
+      )
+        throw new ContractError("corrupt-selected");
+      return { commandId: part.commandId, entries: chain.slice(start, end) };
+    });
   }
 
   /** User messages as a tree, each naming the newest entry below it and

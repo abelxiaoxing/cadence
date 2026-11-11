@@ -508,6 +508,11 @@ export async function acceptingFixture(
     release() {
       for (const response of held.splice(0)) finish(response);
     },
+    /** Answers each held request with one readonly tool call instead. */
+    releaseToolCall() {
+      for (const response of held.splice(0))
+        callTool(response, "ordinary-read", "read", { path: "existing.txt" });
+    },
     held: () => held.length,
     contacts: () => contacts,
     maxActive: () => maxActive,

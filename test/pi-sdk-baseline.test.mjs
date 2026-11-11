@@ -38,7 +38,20 @@ it("pins one current Pi release for the host contract, development and standalon
   expect(pkg.devDependencies["@earendil-works/pi-tui"]).toBe(version);
 });
 
-it("uses the current public SDK with literal parent auth and no resource discovery or provider request", async () => {
+const model = {
+  id: "fixture",
+  name: "Fixture",
+  provider: "cadence-fixture",
+  api: "openai-completions",
+  baseUrl: "http://127.0.0.1:1",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 32000,
+  maxTokens: 1024,
+};
+/** The worker's kind of session: literal auth, no discovery, no retry. */
+async function fixtureSession() {
   const cwd = mkdtempSync(path.join(tmpdir(), "cadence-sdk-baseline-"));
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -47,18 +60,6 @@ it("uses the current public SDK with literal parent auth and no resource discove
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
-  const model = {
-    id: "fixture",
-    name: "Fixture",
-    provider: "cadence-fixture",
-    api: "openai-completions",
-    baseUrl: "http://127.0.0.1:1",
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32000,
-    maxTokens: 1024,
-  };
   runtime.registerNativeProvider(
     createProvider({
       id: model.provider,
@@ -77,17 +78,12 @@ it("uses the current public SDK with literal parent auth and no resource discove
       },
     }),
   );
-  expect(runtime.getModel(model.provider, model.id)?.id).toBe(model.id);
-  expect((await runtime.getAuth(model)).auth).toMatchObject({
-    apiKey: "!literal-$NO_INTERPOLATION",
-    headers: { "x-fixture": "$LITERAL" },
-  });
   const extensions = {
     extensions: [],
     errors: [],
     runtime: createExtensionRuntime(),
   };
-  const { session, modelFallbackMessage } = await createAgentSession({
+  const created = await createAgentSession({
     cwd,
     agentDir: cwd,
     model,
@@ -116,6 +112,17 @@ it("uses the current public SDK with literal parent auth and no resource discove
       },
     },
   });
+  return { cwd, runtime, ...created };
+}
+
+it("uses the current public SDK with literal parent auth and no resource discovery or provider request", async () => {
+  const { cwd, runtime, session, modelFallbackMessage } =
+    await fixtureSession();
+  expect(runtime.getModel(model.provider, model.id)?.id).toBe(model.id);
+  expect((await runtime.getAuth(model)).auth).toMatchObject({
+    apiKey: "!literal-$NO_INTERPOLATION",
+    headers: { "x-fixture": "$LITERAL" },
+  });
   try {
     expect(modelFallbackMessage).toBeUndefined();
     expect(session.model).toMatchObject({
@@ -129,6 +136,87 @@ it("uses the current public SDK with literal parent auth and no resource discove
   } finally {
     await session.abort();
     session.dispose();
+  }
+});
+
+it("Pi queues a steer only into a running reply, and continues a failed reply into it unless the queue is cleared as that reply ends", async () => {
+  const completion = (text) =>
+    new Response(
+      `${[
+        { delta: { role: "assistant", content: text }, finish_reason: null },
+        { delta: {}, finish_reason: "stop" },
+      ]
+        .map(
+          (choice) =>
+            `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: model.id, choices: [{ index: 0, ...choice }] })}\n\n`,
+        )
+        .join("")}data: [DONE]\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  for (const cleared of [false, true]) {
+    const { session } = await fixtureSession();
+    const requests = [],
+      ends = [],
+      dispositions = [];
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const stream = session.agent.streamFunction;
+    session.agent.streamFunction = (selected, context, options) =>
+      stream(selected, context, {
+        ...options,
+        maxRetries: 0,
+        fetch: async (_url, init) => {
+          requests.push(JSON.parse(init.body));
+          if (requests.length > 1) return completion("Continued");
+          await held;
+          return new Response('{"error":{"message":"fabricated failure"}}', {
+            status: 400,
+          });
+        },
+      });
+    // The worker's listener: told that the reply will not be retried, it runs
+    // before Pi looks at its queue again.
+    session.subscribe((event) => {
+      if (event.type !== "agent_end") return;
+      ends.push(event.willRetry);
+      if (cleared && ends.length === 1)
+        expect(session.clearQueue()).toEqual({
+          steering: ["Steer"],
+          followUp: [],
+        });
+    });
+    try {
+      expect(session.isStreaming).toBe(false);
+      const options = {
+        expandPromptTemplates: false,
+        preflightResult: (disposition) => dispositions.push(disposition),
+      };
+      const running = session.prompt("Start", options);
+      for (let n = 0; n < 2000 && !requests.length; n++)
+        await new Promise((resolve) => setImmediate(resolve));
+      expect(session.isStreaming).toBe(true);
+      await session.prompt("Steer", { ...options, streamingBehavior: "steer" });
+      // Queued into the running reply, never a run of its own.
+      expect(dispositions).toEqual(["started", "queued"]);
+      expect(session.pendingMessageCount).toBe(1);
+      expect(requests).toHaveLength(1);
+      release();
+      await running;
+      expect(session.isStreaming).toBe(false);
+      expect(ends[0]).toBe(false);
+      expect(session.pendingMessageCount).toBe(0);
+      expect(requests).toHaveLength(cleared ? 1 : 2);
+      expect(
+        session.messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.content[0].text),
+      ).toEqual(cleared ? ["Start"] : ["Start", "Steer"]);
+    } finally {
+      await session.abort();
+      session.dispose();
+    }
   }
 });
 

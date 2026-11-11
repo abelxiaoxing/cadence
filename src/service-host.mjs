@@ -6092,6 +6092,10 @@ function decodeEntryId(v) {
 }
 var CONVERSATION_SEND_BYTES = 16 * 1024;
 var CONVERSATION_NAME_CHARS = 100;
+var RUN_INPUTS = 32;
+var WAITING_INPUTS = 8;
+var PENDING_TEXT_BYTES = 256;
+var UNDELIVERED_TEXT_BYTES = 2 * CONVERSATION_SEND_BYTES;
 var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
@@ -6455,21 +6459,29 @@ function decodeWorkbenchCommand(v) {
       model: decodeChoiceVersion(o2.model)
     };
   }
-  if (kind === "interrupt") {
+  if (kind === "interrupt" || kind === "conversation-input" || kind === "conversation-input-cancel") {
     const o2 = closed(v, [
       "kind",
       "commandId",
       "conversationId",
       "turnId",
-      "epoch"
+      "epoch",
+      ...kind === "conversation-input" ? ["mode", "text"] : kind === "conversation-input-cancel" ? ["inputId"] : []
     ]);
-    return {
-      kind,
+    const run = {
       commandId: decodeId(o2.commandId),
       conversationId: decodeSessionId(o2.conversationId),
       turnId: decodeId(o2.turnId),
       epoch: decodeId(o2.epoch)
     };
+    if (kind === "conversation-input")
+      return {
+        kind,
+        ...run,
+        mode: oneOf(o2.mode, ["steer", "queue"]),
+        text: text(o2.text, CONVERSATION_SEND_BYTES, true)
+      };
+    return kind === "interrupt" ? { kind, ...run } : { kind, ...run, inputId: decodeId(o2.inputId) };
   }
   if (kind === "conversation-rename") {
     const o2 = closed(v, ["kind", "commandId", "conversationId", "name"]);
@@ -6670,6 +6682,14 @@ function decodeChatAttempt(v) {
     notice: text(o.notice, 1024)
   };
 }
+function decodeChatPending(v) {
+  const o = closed(v, ["commandId", "mode", "text"]);
+  return {
+    commandId: decodeId(o.commandId),
+    mode: oneOf(o.mode, ["steer", "queue"]),
+    text: text(o.text, PENDING_TEXT_BYTES)
+  };
+}
 function decodeChatContext(v) {
   const o = closed(v, ["tokens", "provider", "model"]);
   return {
@@ -6826,7 +6846,9 @@ function decodeWorkbenchResult(v) {
       "runs",
       "attempt",
       ...Object.hasOwn(v ?? {}, "commands") ? ["commands"] : [],
-      ...Object.hasOwn(v ?? {}, "context") ? ["context"] : []
+      ...Object.hasOwn(v ?? {}, "context") ? ["context"] : [],
+      ...Object.hasOwn(v ?? {}, "pending") ? ["pending"] : [],
+      ...Object.hasOwn(v ?? {}, "undelivered") ? ["undelivered"] : []
     ]);
     const summary = nullable(o2.summary, decodeChatSummary), turns = integer(o2.turns, 0);
     if (!summary && turns)
@@ -6835,6 +6857,10 @@ function decodeWorkbenchResult(v) {
       kind,
       ...o2.commands === undefined ? {} : { commands: list(o2.commands, 64, decodeId) },
       ...o2.context === undefined ? {} : { context: decodeChatContext(o2.context) },
+      ...o2.pending === undefined ? {} : { pending: list(o2.pending, WAITING_INPUTS, decodeChatPending) },
+      ...o2.undelivered === undefined ? {} : {
+        undelivered: list(o2.undelivered, WAITING_INPUTS, decodeChatAttempt)
+      },
       summary,
       leaf: nullable(o2.leaf, decodeEntryId),
       continues: bool(o2.continues),
@@ -8937,6 +8963,14 @@ function stopStatus(m) {
     return { status: "canceled", notice: "" };
   return { status: "completed", notice: "" };
 }
+function replyStatus(entries) {
+  for (let i = entries.length - 1;i >= 0; i--) {
+    const m = message(entries[i]);
+    if (m && own2(m, "role") === "assistant")
+      return stopStatus(m).status;
+  }
+  return "completed";
+}
 function reportedUsage(entry) {
   const m = message(entry);
   if (!m || own2(m, "role") !== "assistant")
@@ -9021,6 +9055,7 @@ class ParsedSession {
   bodies = new Map;
   bodyBytes = 0;
   usages = new Map;
+  boundaries = new Map;
   constructor(path) {
     this.path = path;
   }
@@ -9076,6 +9111,23 @@ class ParsedSession {
       const entry = line.entry;
       if (this.byId.has(entry.id))
         return;
+      if (entry.type === "custom" && own2(entry.raw, "customType") === BROWSER_COMMAND_ENTRY) {
+        const data = own2(entry.raw, "data");
+        const d = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+        const commandId = own2(d, "commandId");
+        if (typeof commandId === "string") {
+          const boundary = {
+            entry,
+            user: own2(d, "userId"),
+            run: own2(d, "run")
+          };
+          const known = this.boundaries.get(commandId);
+          if (known)
+            known.push(boundary);
+          else
+            this.boundaries.set(commandId, [boundary]);
+        }
+      }
       const bytes = Buffer.byteLength(text2);
       Object.defineProperty(entry, "raw", {
         enumerable: true,
@@ -9097,6 +9149,7 @@ class ParsedSession {
       this.bodies.clear();
       this.bodyBytes = 0;
       this.usages.clear();
+      this.boundaries.clear();
       this.header = null;
     });
     this.read = next;
@@ -9167,31 +9220,66 @@ class ParsedSession {
     }
     return count;
   }
-  commandEntries(commandId, parent, offset) {
-    const markers = this.entries.filter((entry2) => entry2.type === "custom" && entry2.raw.customType === BROWSER_COMMAND_ENTRY && entry2.raw.data?.commandId === commandId);
-    if (!markers.length)
-      return [];
-    const marker2 = markers[0], data = marker2.raw.data;
-    const user = typeof data.userId === "string" ? this.byId.get(data.userId) : undefined;
-    if (!user || !isUser(user) || marker2.parentId !== user.id || user.pos < offset || marker2.pos <= user.pos)
+  delivered(commandId) {
+    return this.boundaries.has(commandId);
+  }
+  owned(commandId, offset) {
+    const boundaries = this.boundaries.get(commandId);
+    if (!boundaries)
+      return;
+    const first = boundaries[0];
+    const user = typeof first.user === "string" ? this.byId.get(first.user) : undefined;
+    if (!user || !isUser(user) || first.entry.parentId !== user.id || user.pos < offset || first.entry.pos <= user.pos)
       throw new ContractError("corrupt-selected");
-    let entry = user;
-    let reaches = false;
+    return { user, boundaries };
+  }
+  follows(entry, parent, offset) {
     for (let n = 0;entry && n <= this.entries.length && entry.pos >= offset; n++) {
-      if (entry.parentId === parent) {
-        reaches = true;
-        break;
-      }
+      if (entry.parentId === parent)
+        return true;
       entry = entry.parentId === null ? undefined : this.byId.get(entry.parentId);
     }
-    if (!reaches)
+    return false;
+  }
+  commandEntries(commandId, parent, offset) {
+    return this.runEntries({ commandId, parent, offset }, [])[0]?.entries ?? [];
+  }
+  runEntries(run, inputs) {
+    const first = this.owned(run.commandId, run.offset);
+    const sent = inputs.flatMap((input) => {
+      const owned = this.owned(input.commandId, input.offset);
+      return owned ? [{ commandId: input.commandId, ...owned }] : [];
+    });
+    if (!first) {
+      if (sent.length)
+        throw new ContractError("corrupt-selected");
+      return [];
+    }
+    if (!this.follows(first.user, run.parent, run.offset))
       throw new ContractError("stale");
-    const branch = this.branch(markers[markers.length - 1].id);
-    const start = branch.findIndex((entry2) => entry2.id === user.id);
-    const entries = new Set(branch.slice(start).map((entry2) => entry2.id));
-    if (start < 0 || markers.some((boundary) => !entries.has(boundary.id) || boundary.raw.data.userId !== user.id))
+    if (sent.some((part) => part.boundaries.some((boundary) => boundary.run !== run.commandId)))
       throw new ContractError("corrupt-selected");
-    return branch.slice(start);
+    const parts = [
+      { commandId: run.commandId, ...first },
+      ...sent.sort((a, b) => a.user.pos - b.user.pos)
+    ];
+    let newest = first.boundaries[0].entry;
+    for (const part of parts)
+      for (const boundary of part.boundaries)
+        if (boundary.entry.pos > newest.pos)
+          newest = boundary.entry;
+    const chain = this.branch(newest.id);
+    const at = new Map(chain.map((entry, index) => [entry.id, index]));
+    const starts = parts.map((part) => at.get(part.user.id) ?? -1);
+    return parts.map((part, index) => {
+      const start = starts[index], end = starts[index + 1] ?? chain.length;
+      if (start < 0 || end <= start || part.boundaries.some((boundary) => {
+        const position = at.get(boundary.entry.id) ?? -1;
+        return position <= start || position >= end || boundary.user !== part.user.id;
+      }))
+        throw new ContractError("corrupt-selected");
+      return { commandId: part.commandId, entries: chain.slice(start, end) };
+    });
   }
   tree(leaf, secrets) {
     const newest = new Map;
@@ -14202,6 +14290,9 @@ var PAGE = 50;
 var INDEXED_COMMANDS = 64;
 var COMMAND_STATES = 512;
 var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Nothing was replayed; send the message again to retry.";
+var NOT_DELIVERED = "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.";
+var UNOBSERVED = "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
+var WITHDRAWN = "Withdrawn before it was delivered.";
 var LIVE = ["queued", "running"];
 function observedFile(path) {
   try {
@@ -14234,7 +14325,7 @@ function decodeAccepted(value) {
     ...Object.hasOwn(value ?? {}, "execution") ? ["execution", "directory", "file"] : []
   ]);
   const command = decodeWorkbenchCommand(o.command);
-  if (command.kind !== "send")
+  if (command.kind !== "send" && command.kind !== "conversation-input")
     throw new ContractError("corrupt-selected");
   return {
     command,
@@ -14279,6 +14370,7 @@ class ConversationRecords {
   bindings;
   sessions;
   active;
+  inputs;
   knownSecrets;
   states = new Map;
   constructor(o) {
@@ -14286,6 +14378,7 @@ class ConversationRecords {
     this.root = join24(o.coordination.directory, "conversation-commands-v1");
     this.bindings = join24(o.coordination.directory, "conversations-v1");
     this.active = o.active ?? new Map;
+    this.inputs = o.inputs ?? new Map;
     this.sessions = checkoutSessions(o.coordination.store.root, o.cwd, o.agentDir, o.sessionDir);
   }
   get files() {
@@ -14332,7 +14425,7 @@ class ConversationRecords {
     return value === undefined ? undefined : decodeAccepted(value);
   }
   state(commandId) {
-    const live2 = this.active.get(commandId);
+    const live2 = this.active.get(commandId) ?? this.inputs.get(commandId);
     if (live2)
       return live2.state;
     const path = this.path(commandId, "state.json");
@@ -14351,10 +14444,16 @@ class ConversationRecords {
     return state;
   }
   closureUnknown(commandId) {
-    const value = this.read(this.path(commandId, "state.json"));
-    if (value === undefined)
-      throw new ContractError("corrupt-selected");
-    return decodeState(value).status === "unknown";
+    const recorded = (id) => {
+      const value = this.read(this.path(id, "state.json"));
+      if (value === undefined)
+        throw new ContractError("corrupt-selected");
+      return decodeState(value).status === "unknown";
+    };
+    if (recorded(commandId))
+      return true;
+    const command = this.accepted(commandId)?.command;
+    return command?.kind === "conversation-input" && recorded(command.turnId);
   }
   liveFor(id) {
     for (const live2 of this.active.values())
@@ -14407,24 +14506,72 @@ class ConversationRecords {
     return ids;
   }
   hasCommand(id, commandId) {
-    return this.accepted(commandId)?.session === id;
+    const accepted = this.accepted(commandId);
+    return accepted?.session === id && accepted.command.kind === "send";
+  }
+  runOf(commandId) {
+    const accepted = this.accepted(commandId);
+    if (accepted?.command.kind !== "conversation-input")
+      return accepted && { commandId, accepted };
+    const run = this.accepted(accepted.command.turnId);
+    if (run?.command.kind !== "send" || run.session !== accepted.session)
+      throw new ContractError("corrupt-selected");
+    return { commandId: accepted.command.turnId, accepted: run };
+  }
+  recordedRun(id) {
+    const commands = this.index(id).commands;
+    const latest = commands.at(-1);
+    const run = latest === undefined ? undefined : this.runOf(latest);
+    if (!run)
+      return;
+    const at = commands.lastIndexOf(run.commandId);
+    const inputs = (at < 0 ? [] : commands.slice(at + 1)).map((commandId) => {
+      const accepted = this.accepted(commandId);
+      if (accepted?.command.kind !== "conversation-input" || accepted.command.turnId !== run.commandId)
+        throw new ContractError("corrupt-selected");
+      return { commandId, accepted };
+    });
+    return { ...run, inputs };
+  }
+  written(session, run) {
+    return session.runEntries({
+      commandId: run.commandId,
+      parent: run.accepted.parent,
+      offset: run.accepted.offset
+    }, run.inputs.map((input) => ({
+      commandId: input.commandId,
+      offset: input.accepted.offset
+    })));
   }
   approvalHead(id, commandId) {
     this.o.assertCurrent();
-    const accepted = this.accepted(commandId);
-    if (!accepted || accepted.session !== id)
+    const run = this.recordedRun(id);
+    if (!run || run.commandId !== commandId || run.accepted.session !== id)
       throw new ContractError("stale");
-    const state = this.state(commandId);
     const session = this.sessions.session(id);
     const head = session?.current() ?? null;
-    if (state.user === null ? head !== accepted.parent : turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== state.user)
+    let newest;
+    for (const message2 of [run, ...run.inputs]) {
+      const user = this.state(message2.commandId).user;
+      if (user === null)
+        continue;
+      const entry = session?.byId.get(user);
+      if (!entry)
+        throw new ContractError("stale");
+      if (!newest || entry.pos > newest.pos)
+        newest = entry;
+    }
+    if (newest ? turnSpans(session?.branch(head) ?? []).at(-1)?.[0]?.id !== newest.id : head !== run.accepted.parent)
       throw new ContractError("stale");
     return head;
   }
-  latestCommand(id) {
+  latestRun(id) {
     this.o.assertCurrent();
-    const commandId = this.index(id).commands.at(-1);
-    return commandId ? { commandId, status: this.state(commandId).status } : null;
+    const run = this.recordedRun(id);
+    return run ? {
+      commandId: run.commandId,
+      settled: ![run, ...run.inputs].some((message2) => ["queued", "running", "unknown"].includes(this.state(message2.commandId).status))
+    } : null;
   }
   summary(id, live2, archived = this.archived(id)) {
     this.assertSupported(id);
@@ -14500,24 +14647,81 @@ class ConversationRecords {
     this.assertSupported(id);
     const session = this.sessions.session(id);
     const running = this.liveFor(id);
-    let view;
-    if (exact || leaf !== null) {
-      if (leaf !== null && !session?.byId.has(leaf))
-        throw new ContractError("stale");
-      view = leaf;
-    } else
-      view = running ? running.accepted.parent : session?.current() ?? null;
+    let parts;
+    try {
+      parts = running && this.liveParts(session, running);
+    } catch (error) {
+      if (!(error instanceof ContractError))
+        throw error;
+    }
+    const ends = running ? [
+      running.accepted.parent,
+      ...(parts ?? []).slice(1).map((part) => part.entries[0].parentId)
+    ] : [];
+    const end = ends.at(-1) ?? null;
+    if (leaf !== null && !session?.byId.has(leaf))
+      throw new ContractError("stale");
+    const view = exact ? leaf : leaf === null ? running ? end : session?.current() ?? null : ends.includes(leaf) ? end : leaf;
     const turns = session ? turnSpans(session.branch(view)) : [];
-    const live2 = running && running.accepted.parent === view ? running : undefined;
-    return { session, leaf: view, turns, live: live2 };
+    const live2 = running && end === view ? running : undefined;
+    return { session, leaf: view, turns, live: live2, parts: live2 && parts };
+  }
+  liveParts(session, live2) {
+    return session ? this.written(session, live2) : [];
+  }
+  userEntry(session, commandId, accepted) {
+    if (accepted.command.kind !== "conversation-input")
+      return session.commandEntries(commandId, accepted.parent, accepted.offset)[0]?.id ?? null;
+    const run = this.runOf(commandId);
+    return (run && this.written(session, {
+      ...run,
+      inputs: [{ commandId, accepted }]
+    }).find((part) => part.commandId === commandId)?.entries[0].id) ?? null;
+  }
+  pending(live2, session) {
+    const secrets = this.readSecrets();
+    return live2.inputs.filter((input) => !input.withdrawn && !session?.delivered(input.commandId)).slice(0, WAITING_INPUTS).map((input) => ({
+      commandId: input.commandId,
+      mode: input.accepted.command.mode,
+      text: clipText(sanitizeText(input.accepted.command.text, secrets), PENDING_TEXT_BYTES)
+    }));
+  }
+  undelivered(id, view) {
+    const run = this.recordedRun(id);
+    if (!run?.inputs.length || this.active.has(run.commandId))
+      return [];
+    let parts;
+    try {
+      parts = view.session ? this.written(view.session, run) : [];
+    } catch (error) {
+      if (error instanceof ContractError)
+        return [];
+      throw error;
+    }
+    const newest = parts.at(-1)?.entries[0].id;
+    if (newest === undefined ? view.leaf !== run.accepted.parent : view.turns.at(-1)?.[0]?.id !== newest)
+      return [];
+    const secrets = this.readSecrets();
+    return run.inputs.flatMap(({ commandId, accepted }) => {
+      const state = this.state(commandId);
+      return state.user !== null || state.notice === WITHDRAWN || parts.some((part) => part.commandId === commandId) ? [] : [
+        {
+          commandId,
+          text: clipText(sanitizeText(accepted.command.text, secrets), UNDELIVERED_TEXT_BYTES),
+          status: state.status,
+          notice: sanitizeText(state.notice, secrets)
+        }
+      ];
+    }).slice(0, WAITING_INPUTS);
   }
   attempt(id, leaf) {
-    const commandId = this.index(id).commands.at(-1);
-    if (!commandId || this.active.has(commandId))
+    const latest = this.index(id).commands.at(-1);
+    const run = latest === undefined ? undefined : this.runOf(latest);
+    if (!run || this.active.has(run.commandId))
       return null;
-    const accepted = this.accepted(commandId);
+    const { commandId, accepted } = run;
     const state = this.state(commandId);
-    if (!accepted || state.user !== null || accepted.parent !== leaf)
+    if (state.user !== null || accepted.parent !== leaf)
       return null;
     if (state.status === "unknown") {
       const session = this.sessions.session(id);
@@ -14534,17 +14738,9 @@ class ConversationRecords {
   context(view) {
     if (!view.session)
       return;
-    let leaf = view.leaf;
-    if (view.live) {
-      const { accepted, commandId } = view.live;
-      try {
-        leaf = view.session.commandEntries(commandId, accepted.parent, accepted.offset).at(-1)?.id ?? leaf;
-      } catch (error) {
-        if (error instanceof ContractError)
-          return;
-        throw error;
-      }
-    }
+    if (view.live && !view.parts)
+      return;
+    const leaf = view.parts?.at(-1)?.entries.at(-1)?.id ?? view.leaf;
     const usage = view.session.usage(leaf);
     if (!usage)
       return;
@@ -14558,13 +14754,18 @@ class ConversationRecords {
   conversation(id, leaf, known) {
     this.o.assertCurrent();
     const view = this.branch(id, leaf, false);
-    const summary = this.summary(id, view.live ?? this.liveFor(id));
+    const running = view.live ?? this.liveFor(id);
+    const summary = this.summary(id, running);
     const listed = this.sessions.find(id);
     const context = this.context(view);
+    const pending = running ? this.pending(running, view.session) : [];
+    const undelivered = running ? [] : this.undelivered(id, view);
     return {
       kind: "conversation",
       commands: this.index(id).commands,
       ...context ? { context } : {},
+      ...pending.length ? { pending } : {},
+      ...undelivered.length ? { undelivered } : {},
       summary,
       leaf: view.leaf,
       continues: known === null || known === view.leaf || !!view.session?.contains(view.leaf, known),
@@ -14590,8 +14791,7 @@ class ConversationRecords {
       throw new ContractError("stale");
     let imageLeaf = view.leaf;
     if (view.live && !view.session.contains(imageLeaf, request2.entry)) {
-      const accepted = view.live.accepted;
-      const chain = view.session.commandEntries(view.live.commandId, accepted.parent, accepted.offset);
+      const chain = (view.parts ?? this.liveParts(view.session, view.live)).at(-1)?.entries ?? [];
       if (!chain.some((entry) => entry.id === request2.entry))
         throw new ContractError("stale");
       imageLeaf = chain.at(-1)?.id ?? imageLeaf;
@@ -14615,13 +14815,13 @@ class ConversationRecords {
   overlay(id, session) {
     const out = new Map;
     for (const commandId of this.index(id).commands) {
-      if (this.active.has(commandId))
+      if (this.active.has(commandId) || this.inputs.has(commandId))
         continue;
       const state = this.state(commandId);
       let user = state.user;
       if (user === null && state.status === "unknown" && session) {
         const accepted = this.accepted(commandId);
-        user = accepted ? session.commandEntries(commandId, accepted.parent, accepted.offset)[0]?.id ?? null : null;
+        user = accepted ? this.userEntry(session, commandId, accepted) : null;
       }
       if (user !== null)
         out.set(user, {
@@ -14637,6 +14837,7 @@ class ConversationRecords {
     if (ordinal < view.turns.length && view.session) {
       const turn2 = this.sessions.turn(view.session, view.turns[ordinal], secrets);
       const recorded = this.overlay(id, view.session).get(turn2.id);
+      const running = view.parts?.slice(0, -1).some((part) => part.entries[0].id === turn2.id);
       return {
         turn: recorded ? {
           ...turn2,
@@ -14648,14 +14849,17 @@ class ConversationRecords {
             media: turn2.omitted.media || recorded.omitted.media,
             other: turn2.omitted.other || recorded.omitted.other
           }
-        } : turn2,
+        } : running && view.live ? { ...turn2, execution: view.live.execution } : turn2,
         stable: turn2.steps.length
       };
     }
     const live2 = view.live;
     if (!live2 || ordinal !== view.turns.length)
       throw new ContractError("stale");
-    const chain = view.session ? view.session.commandEntries(live2.commandId, live2.accepted.parent, live2.accepted.offset) : [];
+    const parts = view.parts ?? this.liveParts(view.session, live2);
+    const chain = parts.at(-1)?.entries ?? [];
+    const session = view.session;
+    const earlier = session ? parts.slice(0, -1).flatMap((part) => this.sessions.turn(session, part.entries, secrets).items) : [];
     const written = turnItems(chain, secrets);
     const items = chain.length ? written.items : [
       {
@@ -14675,7 +14879,7 @@ class ConversationRecords {
         error: false
       }
     ];
-    const extended = live2.capture?.extend(items) ?? {
+    const extended = live2.capture?.extend(items, earlier) ?? {
       items,
       stable: items.length
     };
@@ -14684,7 +14888,7 @@ class ConversationRecords {
       id: chain[0]?.id ?? live2.commandId,
       entry: null,
       parent: chain.length ? chain[0].parentId : live2.accepted.parent,
-      at: live2.accepted.at,
+      at: parts.length > 1 ? written.at : live2.accepted.at,
       status: live2.state.status,
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
       ...live2.capture?.retry ? { retry: live2.capture.retry } : {},
@@ -16491,7 +16695,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "a821f8c7eb620c7c15fb33d7b4e8caafcd056f2e02a2f4dda546886a1e321642",
+    contractHash: "0b8623caaab7eb70f0bc49eeeb7b688a2aeafc2eef6aaaab4e961bb2a1e069e0",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -27447,6 +27651,7 @@ function runProcess(spec) {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
+  const ipc = !!(spec.onCoordinator || spec.onAuth || spec.inputs);
   return new Promise((resolve12) => {
     const child2 = spawn5(spec.command, spec.args, {
       cwd: spec.cwd,
@@ -27458,10 +27663,10 @@ function runProcess(spec) {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...spec.imageInput !== undefined || spec.onCoordinator || spec.onAuth ? [
+        ...spec.imageInput !== undefined || ipc ? [
           spec.imageInput !== undefined ? "pipe" : "ignore"
         ] : [],
-        ...spec.onCoordinator || spec.onAuth ? ["ipc"] : []
+        ...ipc ? ["ipc"] : []
       ]
     });
     let settled = false;
@@ -27666,10 +27871,37 @@ function runProcess(spec) {
         authOriginals.add(original);
         original.then(() => authOriginals.delete(original));
       });
+    if (spec.inputs) {
+      const inputs = spec.inputs;
+      child2.on("message", (message2) => {
+        if (!message2 || typeof message2 !== "object" || message2.kind !== "input-cancel")
+          return;
+        if (settled || stopping)
+          return;
+        try {
+          const row = closed(message2, ["kind", "id", "removed"]);
+          if (typeof row.id !== "string" || typeof row.removed !== "boolean")
+            throw new Error("Invalid withdrawal answer");
+          inputs.withdrawn(row.id, row.removed);
+        } catch {
+          stop("failed");
+        }
+      });
+      inputs.open((message2) => {
+        if (settled || stopping || !child2.connected || Buffer.byteLength(JSON.stringify(message2)) > LIMITS.workerRequestBytes)
+          return false;
+        try {
+          child2.send(message2, () => {});
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child2.on("message", (message2) => {
-        if (message2 && typeof message2 === "object" && message2.kind === "auth")
+        if (message2 && typeof message2 === "object" && ["auth", "input-cancel"].includes(message2.kind))
           return;
         if (settled || stopping)
           return;
@@ -27969,6 +28201,7 @@ function launchConversation(prepared, conversation, signal, options) {
       maySignal: options.maySignal,
       onNative: options.onNative,
       onCoordinator: options.onCoordinator,
+      inputs: options.inputs,
       imageInput,
       onFrame: (frame) => options.onFrame(frame, secrets)
     });
@@ -31122,8 +31355,8 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file } = this.records.usable(c.conversationId);
-    const latest = this.o.conversations.records.latestCommand(c.conversationId);
-    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || ["queued", "running", "unknown"].includes(latest.status) || this.active.has(c.conversationId))
+    const latest = this.o.conversations.records.latestRun(c.conversationId);
+    if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || !latest.settled || this.active.has(c.conversationId))
       throw new ContractError("stale");
     const head = this.o.conversations.records.approvalHead(c.conversationId, latest.commandId);
     const epoch = this.o.owner.lease.registration.epoch;
@@ -31226,8 +31459,9 @@ class LiveCapture {
   secrets;
   inputImages;
   retry;
-  omitted = { thinking: false, media: false, other: false };
   notice = "";
+  unkept = [{ thinking: false, media: false, other: false }];
+  users = 0;
   assistants = [];
   tools = [];
   details = new Map;
@@ -31236,6 +31470,12 @@ class LiveCapture {
   constructor(secrets, inputImages = false) {
     this.secrets = secrets;
     this.inputImages = inputImages;
+  }
+  get omitted() {
+    return this.unkept[this.unkept.length - 1];
+  }
+  omittedFor(index) {
+    return this.unkept[index] ?? { thinking: false, media: false, other: false };
   }
   bounded(value) {
     return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
@@ -31253,8 +31493,11 @@ class LiveCapture {
   }
   accept(frame) {
     const e = frame.event;
-    if (e.kind === "message-start" && e.role === "user" && this.inputImages) {
-      this.imageUser = e.messageId;
+    if (e.kind === "message-start" && e.role === "user") {
+      if (this.users++)
+        this.unkept.push({ thinking: false, media: false, other: false });
+      else if (this.inputImages)
+        this.imageUser = e.messageId;
     } else if (e.kind === "message-start" && e.role === "assistant") {
       if (!this.assistants.some((a) => a.id === e.messageId)) {
         this.assistants.push({ id: e.messageId, text: "", error: false });
@@ -31319,8 +31562,8 @@ class LiveCapture {
     } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff" && !(this.inputImages && e.block.sourceType === "image" && e.block.owner.kind === "message" && e.block.owner.messageId === this.imageUser))
       this.omitted[OMITTED_FLAG[e.block.reason]] = true;
   }
-  extend(items) {
-    const out = items.map((item) => ({ ...item }));
+  extend(items, earlier = []) {
+    const out = [...earlier, ...items].map((item) => ({ ...item }));
     let written = 0, counted;
     for (const item of out) {
       if (item.role === "assistant") {
@@ -31365,7 +31608,10 @@ class LiveCapture {
         error: message2.error
       });
     });
-    return { items: out, stable };
+    return {
+      items: out.slice(earlier.length),
+      stable: Math.max(0, stable - earlier.length)
+    };
   }
 }
 
@@ -31374,6 +31620,7 @@ class Conversations {
   records;
   contexts;
   active = new Map;
+  inputs = new Map;
   renaming = new Set;
   renames = new Map;
   maySignal = () => {
@@ -31401,7 +31648,8 @@ class Conversations {
     this.records = new ConversationRecords({
       ...o,
       assertCurrent: () => o.owner.lease.assert(),
-      active: this.active
+      active: this.active,
+      inputs: this.inputs
     });
     this.contexts = o.contexts ?? new ConversationContexts({ ...o, sessions: this.records.sessions });
   }
@@ -31451,7 +31699,7 @@ class Conversations {
     this.o.owner.lease.assert();
     return this.active.has(commandId) || this.files.directory(dirname24(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
   }
-  command(input, reply) {
+  command(input, reply = false) {
     return {
       ...input,
       text: reply ? "exit cadence" : sanitizeText(input.text, this.o.secrets())
@@ -31523,6 +31771,11 @@ class Conversations {
       begin = resolve13;
     });
     const live2 = {
+      coordinator: !!control,
+      inputs: [],
+      worker: null,
+      ready: false,
+      ended: !!control?.reply,
       runtime,
       images: claimImages?.() ?? [],
       execution,
@@ -31564,6 +31817,137 @@ class Conversations {
     }
     begin();
     return { kind: "accepted", commandId: input.commandId };
+  }
+  running(request3) {
+    const live2 = this.active.get(request3.turnId);
+    if (!live2)
+      throw new ContractError(this.records.hasCommand(request3.conversationId, request3.turnId) ? "stale" : "invalid");
+    if (live2.accepted.session !== request3.conversationId || live2.epoch !== request3.epoch)
+      throw new ContractError("stale");
+    return live2;
+  }
+  dispatch(live2) {
+    if (!live2.ready || !live2.worker)
+      return;
+    for (const input of live2.inputs)
+      if (!input.sent && !input.withdrawn)
+        input.sent = live2.worker({
+          kind: "input",
+          id: input.commandId,
+          mode: input.accepted.command.mode,
+          text: input.accepted.command.text
+        });
+  }
+  input(request3, coordinator, beforeAccept) {
+    this.o.owner.lease.assert();
+    const command = this.command(request3);
+    const receipt = this.receipt(request3);
+    if (receipt)
+      return receipt;
+    if (this.files.directory(dirname24(this.records.path(request3.commandId, "state.json"))))
+      throw new ContractError("corrupt-selected");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const live2 = this.running(request3);
+    if (live2.abort.signal.aborted || live2.ended)
+      throw new ContractError("stale");
+    if (live2.coordinator !== coordinator)
+      throw new ContractError("conflict");
+    if (!command.text.trim())
+      throw new ContractError("invalid");
+    const session = this.records.sessions.session(request3.conversationId);
+    if (live2.inputs.length >= RUN_INPUTS || live2.inputs.filter((input2) => !input2.withdrawn && !session?.delivered(input2.commandId)).length >= WAITING_INPUTS)
+      throw new ContractError("capacity");
+    const space = statfsSync2(this.o.coordination.directory);
+    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
+      throw new ContractError("capacity");
+    const index = this.records.index(request3.conversationId);
+    const accepted2 = {
+      execution: live2.accepted.execution,
+      directory: live2.accepted.directory,
+      file: live2.accepted.file,
+      command,
+      at: Date.now(),
+      session: request3.conversationId,
+      parent: null,
+      offset: session?.read?.size ?? 0
+    };
+    const state = {
+      status: "queued",
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      user: null
+    };
+    beforeAccept?.();
+    this.write(this.records.path(request3.commandId, "accepted.json"), accepted2);
+    const input = {
+      commandId: request3.commandId,
+      accepted: accepted2,
+      state,
+      stateFile: this.write(this.records.path(request3.commandId, "state.json"), state),
+      sent: false,
+      withdrawn: false
+    };
+    this.write(this.records.indexPath(request3.conversationId), {
+      schema: "cadence-session-commands/1",
+      id: request3.conversationId,
+      commands: [...index.commands, request3.commandId].slice(-INDEXED_COMMANDS)
+    }, META_BYTES2, index.file);
+    live2.inputs.push(input);
+    this.inputs.set(input.commandId, input);
+    this.dispatch(live2);
+    return { kind: "accepted", commandId: request3.commandId };
+  }
+  withdraw(input) {
+    const state = {
+      ...input.state,
+      status: "canceled",
+      notice: WITHDRAWN
+    };
+    input.stateFile = this.write(this.records.path(input.commandId, "state.json"), state, META_BYTES2, input.stateFile);
+    input.state = state;
+    input.withdrawn = true;
+  }
+  cancelInput(request3) {
+    this.o.owner.lease.assert();
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const live2 = this.running(request3);
+    const input = live2.inputs.find((i) => i.commandId === request3.inputId);
+    if (!input)
+      throw new ContractError("invalid");
+    const accepted2 = {
+      kind: "accepted",
+      commandId: request3.commandId
+    };
+    if (input.withdrawn)
+      return accepted2;
+    if (!input.sent) {
+      this.withdraw(input);
+      return accepted2;
+    }
+    let waiting = input.withdrawal;
+    if (!waiting) {
+      let answer;
+      const result = new Promise((resolve13, reject) => {
+        answer = (removed) => {
+          input.withdrawal = undefined;
+          try {
+            if (!removed)
+              throw new ContractError("conflict");
+            this.withdraw(input);
+            resolve13();
+          } catch (error) {
+            reject(error);
+          }
+        };
+      });
+      result.catch(() => {});
+      waiting = input.withdrawal = { result, answer };
+      if (live2.ended || !live2.worker?.({ kind: "input-cancel", id: input.commandId }))
+        answer(false);
+    }
+    return waiting.result.then(() => accepted2);
   }
   rename(request3) {
     this.o.owner.lease.assert();
@@ -31690,11 +32074,6 @@ class Conversations {
         omissions: ["gap"]
       }
     };
-    const save = () => {
-      if (!live2.stateFile)
-        throw new ContractError("corrupt-selected");
-      live2.stateFile = this.write(this.records.path(commandId, "state.json"), state, META_BYTES2, live2.stateFile);
-    };
     const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
     try {
       if (!current2())
@@ -31753,7 +32132,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       if (prepared.status !== "prepared" || !current2())
         throw new ContractError("auth-unavailable");
       state.status = "running";
-      save();
+      this.save(live2);
       this.write(this.records.path(commandId, "launch.json"), {
         epoch: live2.epoch,
         childRunId: request3.childRunId,
@@ -31778,6 +32157,12 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         images: live2.images,
         ownerSecrets: this.o.secrets,
         onCoordinator: control?.onTool,
+        inputs: {
+          open: (send2) => {
+            live2.worker = send2;
+          },
+          withdrawn: (id, removed) => live2.inputs.find((input) => input.commandId === id)?.withdrawal?.answer(removed)
+        },
         maySignal: this.maySignal,
         onNative: (value) => {
           native = value;
@@ -31785,11 +32170,17 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         onFrame: (frame, secrets) => {
           credentials = secrets;
           capture.accept(frame);
+          if (frame.event.kind === "ready") {
+            live2.ready = true;
+            this.dispatch(live2);
+          } else if (frame.event.kind === "final")
+            live2.ended = true;
         }
       }));
       const tracked2 = running.then(() => native);
       this.o.owner.trackConversationProcess(tracked2, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
       const result = await running;
+      live2.ended = true;
       capture.retry = undefined;
       uncertain = !result.closed;
       state.status = result.outcome;
@@ -31800,6 +32191,10 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       state.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
       state.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
+      live2.ended = true;
+      live2.worker = null;
+      for (const input of live2.inputs)
+        input.withdrawal?.answer(false);
       await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
@@ -31813,14 +32208,8 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
           live2.capture.retry = undefined;
           if (state.status !== "completed")
             state.notice ||= live2.capture.notice;
-          state.omitted = { ...live2.capture.omitted };
         }
-        try {
-          state.user = this.records.sessions.session(accepted2.session)?.commandEntries(commandId, accepted2.parent, accepted2.offset)[0]?.id ?? null;
-        } catch {
-          state.user = null;
-        }
-        save();
+        this.settle(live2, uncertain);
       } catch {
         uncertain = true;
       }
@@ -31828,9 +32217,43 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         this.o.owner.quarantine();
       else if (this.o.owner.state === "idle")
         barrier?.release();
+      for (const input of live2.inputs)
+        this.inputs.delete(input.commandId);
       this.active.delete(commandId);
     }
     return { status: uncertain ? "uncertain" : "settled" };
+  }
+  save(live2) {
+    if (!live2.stateFile)
+      throw new ContractError("corrupt-selected");
+    live2.stateFile = this.write(this.records.path(live2.commandId, "state.json"), live2.state, META_BYTES2, live2.stateFile);
+  }
+  settle(live2, uncertain) {
+    const { accepted: accepted2, commandId } = live2;
+    const inputs = live2.inputs.filter((input) => !input.withdrawn);
+    let parts;
+    try {
+      parts = this.records.sessions.session(accepted2.session)?.runEntries({ commandId, parent: accepted2.parent, offset: accepted2.offset }, inputs.map((input) => ({
+        commandId: input.commandId,
+        offset: input.accepted.offset
+      }))) ?? [];
+    } catch {}
+    const outcome = { status: live2.state.status, notice: live2.state.notice };
+    const newest = parts?.at(-1)?.commandId ?? commandId;
+    for (const message2 of [live2, ...inputs]) {
+      const at = parts?.findIndex((part2) => part2.commandId === message2.commandId) ?? -1;
+      const part = parts?.[at];
+      const ended = uncertain ? { status: "unknown", notice: outcome.notice } : message2.commandId === newest ? outcome : part ? { status: replyStatus(part.entries), notice: "" } : parts ? { status: "canceled", notice: NOT_DELIVERED } : { status: "failed", notice: UNOBSERVED };
+      Object.assign(message2.state, ended, {
+        user: part?.entries[0]?.id ?? null
+      });
+      const given = message2 === live2 ? 0 : at;
+      if (live2.capture && given >= 0)
+        message2.state.omitted = { ...live2.capture.omittedFor(given) };
+    }
+    for (const input of inputs)
+      input.stateFile = this.write(this.records.path(input.commandId, "state.json"), input.state, META_BYTES2, input.stateFile);
+    this.save(live2);
   }
 }
 
@@ -33299,7 +33722,7 @@ function workflowResultDetail(value, secrets) {
 // src/service/workflows.ts
 var OWNER_RUNTIME = Object.freeze({
   version: "2.0.50",
-  build: "094ca28d1734b036fe2a6a6bfd71e99ec8341c0b7b248c0da914c789cae6268a",
+  build: "eeaa9a82003ea4224f614c93c866b46c11e9c4d6484a988f5bdd2f79de939ec6",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -35710,6 +36133,40 @@ class Workbench {
       throw error;
     }
   }
+  input(request3) {
+    let mayHaveEffects = true;
+    try {
+      const state = this.cadence.records.state(request3.conversationId);
+      mayHaveEffects = this.o.owner.state !== "idle" || this.conversations.attempted(request3.conversationId, request3.commandId);
+      const receipt = this.conversations.receipt(request3);
+      if (receipt)
+        return receipt;
+      if (state.notice)
+        throw new ContractError("corrupt-selected");
+      if (state.enabled && state.head !== request3.turnId)
+        throw new ContractError("stale");
+      return this.conversations.input(request3, state.enabled, () => {
+        mayHaveEffects = true;
+      });
+    } catch (error) {
+      if (!mayHaveEffects && error instanceof ContractError)
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
+    }
+  }
+  withdraw(request3) {
+    const unaccepted = (error) => {
+      if (error instanceof ContractError && this.o.owner.state === "idle")
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
+    };
+    try {
+      const result = this.conversations.cancelInput(request3);
+      return result instanceof Promise ? result.catch(unaccepted) : result;
+    } catch (error) {
+      return unaccepted(error);
+    }
+  }
   projects() {
     const secrets = this.o.secrets();
     if (sanitizeText(this.o.cwd, secrets) !== this.o.cwd)
@@ -35790,6 +36247,10 @@ class Workbench {
     }
     if (request3.kind === "workflow")
       return this.workflows.command(request3.commandId, request3.epoch, request3.request, { definite: true });
+    if (request3.kind === "conversation-input")
+      return this.input(request3);
+    if (request3.kind === "conversation-input-cancel")
+      return this.withdraw(request3);
     if (request3.kind === "interrupt") {
       this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
       return { kind: "accepted", commandId: request3.commandId };
@@ -35954,7 +36415,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "a821f8c7eb620c7c15fb33d7b4e8caafcd056f2e02a2f4dda546886a1e321642";
+  const embedded = "0b8623caaab7eb70f0bc49eeeb7b688a2aeafc2eef6aaaab4e961bb2a1e069e0";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

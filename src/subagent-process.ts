@@ -59,6 +59,19 @@ export interface WorkerRequest {
   instructions: string;
   thinkingLevel?: string;
 }
+/** What an owner tells a running conversation worker: a message for its
+ * reply, or the withdrawal of one the worker still holds. */
+export type WorkerInput =
+  | { kind: "input"; id: string; mode: "steer" | "queue"; text: string }
+  | { kind: "input-cancel"; id: string };
+export interface WorkerInputs {
+  /** Called once with the sender, which returns false when the worker can no
+   * longer receive. The caller sends nothing before the worker is ready: an
+   * earlier message would find no listener. */
+  open(send: (message: WorkerInput) => boolean): void;
+  /** The worker's answer to a withdrawal: whether it still held the message. */
+  withdrawn(id: string, removed: boolean): void;
+}
 export type ProcessObservation = {
   kind: "spawned" | "stop-requested" | "closed";
   at: number;
@@ -106,6 +119,8 @@ export interface ProcessSpec {
     args: unknown,
     signal: AbortSignal,
   ) => Promise<unknown>;
+  /** Owner-initiated messages for a conversation worker, on its IPC channel. */
+  inputs?: WorkerInputs;
   /** Never signalled by this runner: no timeout, cancellation or output-bound
    * stop. For an operation that must not be interrupted mid-update (the
    * fast-forward of a user's checkout); excess output is dropped, not fatal. */
@@ -171,6 +186,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
+  const ipc = !!(spec.onCoordinator || spec.onAuth || spec.inputs);
   return new Promise((resolve) => {
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
@@ -184,15 +200,16 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        // Image bytes use fd 3; coordinator IPC retains fd 4.
-        ...(spec.imageInput !== undefined || spec.onCoordinator || spec.onAuth
+        // Image bytes use fd 3; owner IPC (auth, coordinator calls and
+        // messages for a running reply) retains fd 4.
+        ...(spec.imageInput !== undefined || ipc
           ? [
               spec.imageInput !== undefined
                 ? ("pipe" as const)
                 : ("ignore" as const),
             ]
           : []),
-        ...(spec.onCoordinator || spec.onAuth ? ["ipc" as const] : []),
+        ...(ipc ? ["ipc" as const] : []),
       ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     let settled = false;
@@ -471,13 +488,51 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         authOriginals.add(original);
         void original.then(() => authOriginals.delete(original));
       });
+    if (spec.inputs) {
+      const inputs = spec.inputs;
+      child.on("message", (message) => {
+        if (
+          !message ||
+          typeof message !== "object" ||
+          (message as { kind?: string }).kind !== "input-cancel"
+        )
+          return;
+        if (settled || stopping) return;
+        try {
+          const row = closed(message, ["kind", "id", "removed"]);
+          if (typeof row.id !== "string" || typeof row.removed !== "boolean")
+            throw new Error("Invalid withdrawal answer");
+          inputs.withdrawn(row.id, row.removed);
+        } catch {
+          stop("failed");
+        }
+      });
+      inputs.open((message) => {
+        if (
+          settled ||
+          stopping ||
+          !child.connected ||
+          Buffer.byteLength(JSON.stringify(message)) > LIMITS.workerRequestBytes
+        )
+          return false;
+        try {
+          child.send(message, () => {});
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
     let bridgeBusy = false;
     if (spec.onCoordinator)
       child.on("message", (message) => {
+        // Credential and withdrawal frames have their own listeners.
         if (
           message &&
           typeof message === "object" &&
-          (message as { kind?: string }).kind === "auth"
+          ["auth", "input-cancel"].includes(
+            (message as { kind?: string }).kind as string,
+          )
         )
           return;
         if (settled || stopping) return;
@@ -831,6 +886,7 @@ function launchEncoded(
     | "onFrame"
     | "onCoordinator"
     | "onAuth"
+    | "inputs"
     | "imageInput"
     | "secrets"
   > = {},
@@ -1012,8 +1068,10 @@ export interface ConversationSession {
   head: string | null;
 }
 /** Same isolated native launcher, auth projection and closure rules as tasks.
- * The caller durably accepts a chat turn before this one-use launch. The
- * worker's Pi session writes the turn; nothing returns through a side channel. */
+ * The caller durably accepts a chat turn before this one-use launch, and each
+ * message it hands the running worker through `inputs` before handing it
+ * over. The worker's Pi session writes the turn; no content returns through
+ * a side channel. */
 export function launchConversation(
   prepared: PreparedModelContext,
   conversation: {
@@ -1029,6 +1087,7 @@ export function launchConversation(
     images?: InputImage[];
     ownerSecrets(): readonly string[];
     onCoordinator?: ProcessSpec["onCoordinator"];
+    inputs?: WorkerInputs;
   },
 ): Promise<RunResult> {
   let encoded: ReturnType<typeof encodeEnvelope> | undefined;
@@ -1068,6 +1127,7 @@ export function launchConversation(
         maySignal: options.maySignal,
         onNative: options.onNative,
         onCoordinator: options.onCoordinator,
+        inputs: options.inputs,
         imageInput,
         onFrame: (frame) => options.onFrame(frame, secrets),
       });

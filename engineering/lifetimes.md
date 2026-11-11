@@ -105,6 +105,10 @@ The remaining historical writer and transport coupling is documented in [archite
   Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
   Unknown process/auth/storage settlement quarantines the running owner; late completion never retroactively repairs an unknown result.
   A quarantined owner lets original work settle (bounded), stops its own ledger-recorded workers and exits; the replacement (a successor it spawns, or its systemd unit) recovers it at startup.
+- A message sent into a running reply (`conversation-input`) is no admission of its own: it joins the admitted run, which keeps its checkout gate, context snapshot, worker and native settlement, and adds no accepted work for Stop to join.
+  Durable acceptance still precedes the hand-over, and the worker is told only once it listens.
+  The worker holds such a message in memory and gives it to Pi itself, so it ends with that worker: after a failed reply, Cancel, Stop or a restart nothing is delivered, resumed or replayed, and each undelivered message is recorded as such.
+  Its closure is the run's: an unknown one leaves it unknown and refuses the next start, while one the owner's death cut short is interrupted like the run.
 - Return, navigation, browser disconnect and Pi quit detach accepted work.
   Reconnect does not resend mutations; a refused Cancel permits only another explicit click, not automatic retry.
 
