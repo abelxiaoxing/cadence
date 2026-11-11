@@ -13,8 +13,9 @@ const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const stableVersion = (value) =>
   typeof value === "string" && versionPattern.exec(value)?.[0] === value;
 // Only readonly publication observations are retried, never npm publish.
-// One monotonic deadline includes metadata, tarball bodies and polling delays.
-const observationTimeoutMs = 5 * 60_000;
+// One monotonic window bounds metadata reads and polling delays; npm may still
+// be processing the version when it ends, which is pending, not a failure.
+const observationWindowMs = 5 * 60_000;
 const observationDelayMs = 5000;
 const requestTimeoutMs = 30_000;
 const refuse = (reason) => {
@@ -98,16 +99,14 @@ export function assertUnpublished(version, latest, existing) {
     refuse("version-not-newer-than-latest");
 }
 
-const confirmationTimeout = () =>
-  new Error(
-    "npm-release-confirmation-timeout: registry visibility, latest and exact package bytes remain unconfirmed at the observation deadline",
-  );
+// The observation window ended before npm finished processing the version.
+class ObservationExpired extends Error {}
 
 // Await the original fetch/body operation, not a Promise.race that abandons it.
 // The request timer stays owned through body consumption and is always cleared.
 async function request(url, fetcher, consume, deadline = Infinity) {
   const remaining = deadline - performance.now();
-  if (remaining <= 0) throw confirmationTimeout();
+  if (remaining <= 0) throw new ObservationExpired();
   const controller = new AbortController();
   const timer = setTimeout(
     () =>
@@ -125,7 +124,7 @@ async function request(url, fetcher, consume, deadline = Infinity) {
     try {
       const value = await consume(response);
       controller.signal.throwIfAborted();
-      if (performance.now() >= deadline) throw confirmationTimeout();
+      if (performance.now() >= deadline) throw new ObservationExpired();
       return value;
     } finally {
       if (response.body && !response.bodyUsed) await response.body.cancel();
@@ -136,7 +135,7 @@ async function request(url, fetcher, consume, deadline = Infinity) {
       performance.now() >= deadline &&
       (error === controller.signal.reason || error?.name === "AbortError")
     )
-      throw confirmationTimeout();
+      throw new ObservationExpired();
     throw error;
   } finally {
     clearTimeout(timer);
@@ -170,109 +169,182 @@ export async function registryVersion(
   );
 }
 
-/** Reuse the independently enumerated member/body/pin/notice audit, on both jobs. */
-export function releaseArchive(root, directory, version, expectedSha256) {
-  const name = `abelxiaoxing-cadence-${version}.tgz`;
+const archiveName = (version) => `abelxiaoxing-cadence-${version}.tgz`;
+
+/** The one release tarball in `directory` and the digests npm records for it. */
+function readArchive(directory, name, expectedSha256) {
   const entries = readdirSync(directory);
-  if (entries.length !== 1 || entries[0] !== name) refuse("archive-file-set");
-  const archive = join(directory, name);
+  if (entries.length !== 1 || (name ?? entries[0]) !== entries[0])
+    refuse("archive-file-set");
+  const archive = join(directory, entries[0]);
   const stat = lstatSync(archive);
   if (!stat.isFile() || stat.nlink !== 1) refuse("archive-not-regular");
-  const audit = auditPackage(
-    archive,
-    root,
-    json(join(root, "provenance/package-members.json")),
-  );
+  const bytes = readFileSync(archive);
+  const sha256 = hash("sha256", bytes);
   if (
     expectedSha256 !== undefined &&
     (expectedSha256.length !== 64 ||
       !/^[0-9a-f]{64}$/.test(expectedSha256) ||
-      expectedSha256 !== audit.archiveSha256)
+      expectedSha256 !== sha256)
   )
     refuse("transport-digest-mismatch");
-  const bytes = readFileSync(archive);
   return {
     archive,
-    sha256: audit.archiveSha256,
+    sha256,
     shasum: hash("sha1", bytes),
     integrity: `sha512-${hash("sha512", bytes, "base64")}`,
-    bytes,
   };
 }
 
-export async function confirmPublished(version, artifact, fetcher = fetch) {
-  const deadline = performance.now() + observationTimeoutMs;
-  const url = `${registry}/${packageName}/-/cadence-${version}.tgz`;
-  while (performance.now() < deadline) {
-    const published = await registryVersion(version, true, fetcher, deadline);
-    // Reject definite corruption before a stale/stalled latest can hide it.
-    if (published) {
-      if (
-        published.dist?.shasum !== artifact.shasum ||
-        published.dist?.integrity !== artifact.integrity
-      )
-        refuse("published-digest-mismatch");
-      if (published.dist.tarball !== url) refuse("published-tarball-url");
-    }
-    const latest = await registryVersion("latest", false, fetcher, deadline);
-    if (newerThan(latest.version, version)) refuse("latest-moved-ahead");
-    if (published && latest.version === version) {
-      const confirmed = await request(
-        url,
-        fetcher,
-        async (response) => {
-          // Metadata and tarball visibility can propagate independently.
-          if (response.status === 404) return false;
-          if (!response.ok) refuse(`tarball-http-${response.status}`);
-          let size = 0;
-          for await (const chunk of response.body) {
-            const end = size + chunk.byteLength;
-            if (
-              end > artifact.bytes.length ||
-              !artifact.bytes.subarray(size, end).equals(chunk)
-            )
-              refuse("published-byte-mismatch");
-            size = end;
-          }
-          if (size !== artifact.bytes.length) refuse("published-byte-mismatch");
-          return true;
-        },
-        deadline,
-      );
-      if (confirmed) return;
-    }
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) break;
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.min(observationDelayMs, remaining)),
-    );
-  }
-  throw confirmationTimeout();
+/** Reuse the independently enumerated member/body/pin/notice audit, on both jobs. */
+export function releaseArchive(root, directory, version, expectedSha256) {
+  const artifact = readArchive(directory, archiveName(version), expectedSha256);
+  auditPackage(
+    artifact.archive,
+    root,
+    json(join(root, "provenance/package-members.json")),
+  );
+  return artifact;
 }
 
-export function confirmationFailure(outcome, error) {
-  const receipt =
-    outcome === "success"
-      ? "npm publish succeeded, but registry confirmation failed."
-      : outcome === "failure"
-        ? "npm publish failed; registry publication remains unconfirmed."
-        : "The npm publish outcome is unknown; registry publication remains unconfirmed.";
-  return `${receipt}\n${error.message}\nKeep the original audited CI artifact and digest. Recheck registry metadata, latest and downloaded bytes with readonly requests. Do not rerun npm publish or the publish job, move/delete the tag, or repair dist-tags automatically.`;
+/** An already audited release tarball, named by its version, for confirmation. */
+export function auditedArchive(directory, expectedSha256) {
+  const [entry] = readdirSync(directory);
+  const version = /^abelxiaoxing-cadence-(.+)\.tgz$/.exec(entry ?? "")?.[1];
+  if (!stableVersion(version)) refuse("archive-file-set");
+  return { version, ...readArchive(directory, entry, expectedSha256) };
+}
+
+/** One readonly look at the registry: true once the version is public with the
+ * audited digests and is `latest`, false while npm is still processing it.
+ * npm clients verify every downloaded tarball against `dist.integrity`, so a
+ * matching integrity binds what users install to the audited bytes. */
+export async function observePublished(
+  version,
+  artifact,
+  fetcher = fetch,
+  deadline = Infinity,
+) {
+  const published = await registryVersion(version, true, fetcher, deadline);
+  // Reject definite corruption before a stale/stalled latest can hide it.
+  if (published) {
+    if (
+      published.dist?.shasum !== artifact.shasum ||
+      published.dist?.integrity !== artifact.integrity
+    )
+      refuse("published-digest-mismatch");
+    if (
+      published.dist.tarball !==
+      `${registry}/${packageName}/-/cadence-${version}.tgz`
+    )
+      refuse("published-tarball-url");
+  }
+  const latest = await registryVersion("latest", false, fetcher, deadline);
+  if (newerThan(latest.version, version)) refuse("latest-moved-ahead");
+  return published !== null && latest.version === version;
+}
+
+/** Poll for one fixed window. The end of the window is `pending`, not a
+ * failure: npm acknowledges a publish and then processes it asynchronously,
+ * sometimes for longer than this job should wait. */
+export async function confirmPublished(version, artifact, fetcher = fetch) {
+  const deadline = performance.now() + observationWindowMs;
+  try {
+    for (;;) {
+      if (await observePublished(version, artifact, fetcher, deadline))
+        return "confirmed";
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return "pending";
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(observationDelayMs, remaining)),
+      );
+    }
+  } catch (error) {
+    if (error instanceof ObservationExpired) return "pending";
+    throw error;
+  }
+}
+
+const receipt = (outcome) =>
+  outcome === "success"
+    ? "npm publish succeeded"
+    : outcome === "failure"
+      ? "npm publish failed"
+      : "The npm publish outcome is unknown";
+const recovery = (sha256) =>
+  `Recheck later with one readonly observation of this run's audited artifact: download it (gh run download <run-id> -n npm-package -D <empty directory>), then run node scripts/npm-release.mjs check <that directory> ${sha256}. Do not rerun npm publish or the publish job, move/delete the tag, or repair dist-tags automatically.`;
+
+/** What the confirmation step reports, and whether it fails the job. Only a
+ * successful publish may end pending without failing. */
+export function confirmationReport(outcome, version, sha256, result) {
+  const id = `${packageName}@${version}`;
+  if (result instanceof Error)
+    return {
+      failed: true,
+      text: `${receipt(outcome)}; registry confirmation failed.\n${result.message}\n${recovery(sha256)}`,
+    };
+  if (result === "confirmed")
+    return {
+      failed: false,
+      text:
+        outcome === "success"
+          ? `Registry confirmed ${id} as latest with the audited integrity; SHA-256 ${sha256}.`
+          : `${receipt(outcome)}, yet the registry shows ${id} as latest with the audited integrity; SHA-256 ${sha256}.`,
+    };
+  return {
+    failed: outcome !== "success",
+    text: `${receipt(outcome)}; npm is still processing ${id}, so registry visibility and latest are pending.\n${recovery(sha256)}`,
+  };
 }
 
 async function main() {
   const [command, directory, expectedSha256, ...extra] = process.argv.slice(2);
   if (
     extra.length ||
-    !["preflight", "audit", "confirm"].includes(command) ||
+    !["preflight", "audit", "confirm", "check"].includes(command) ||
     (command === "preflight" && directory !== undefined) ||
-    (command !== "preflight" && !directory)
+    (command !== "preflight" && !directory) ||
+    (command === "confirm" && !expectedSha256)
   )
     throw new Error(
-      "Usage: npm-release.mjs preflight | audit|confirm <directory> [sha256]",
+      "Usage: npm-release.mjs preflight | audit <directory> [sha256] | confirm <directory> <sha256> | check <directory> [sha256]",
     );
-  const root = resolve(import.meta.dirname, "..");
   const env = process.env;
+  if (command === "check") {
+    const artifact = auditedArchive(directory, expectedSha256);
+    const id = `${packageName}@${artifact.version}`;
+    if (await observePublished(artifact.version, artifact))
+      console.log(`Registry shows ${id} as latest with the audited integrity.`);
+    else {
+      console.log(`${id} is not yet public as latest; no mismatch observed.`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (command === "confirm") {
+    const artifact = auditedArchive(directory, expectedSha256);
+    const result = await confirmPublished(artifact.version, artifact).catch(
+      (error) => error,
+    );
+    const outcome = env.RELEASE_PUBLISH_OUTCOME;
+    const report = confirmationReport(
+      outcome,
+      artifact.version,
+      artifact.sha256,
+      result,
+    );
+    if (report.failed) console.error(report.text);
+    else if (result === "pending")
+      console.log(
+        `::warning title=npm publication pending::${report.text.replaceAll("\n", "%0A")}`,
+      );
+    else console.log(report.text);
+    if (env.GITHUB_STEP_SUMMARY)
+      appendFileSync(env.GITHUB_STEP_SUMMARY, `${report.text}\n`);
+    if (report.failed) process.exitCode = 1;
+    return;
+  }
+  const root = resolve(import.meta.dirname, "..");
   const version = releaseVersion(
     json(join(root, "package.json")),
     env,
@@ -291,28 +363,12 @@ async function main() {
     return;
   }
   const artifact = releaseArchive(root, directory, version, expectedSha256);
-  if (command === "audit") {
-    if (env.GITHUB_OUTPUT)
-      appendFileSync(
-        env.GITHUB_OUTPUT,
-        `archive=${artifact.archive}\nsha256=${artifact.sha256}\n`,
-      );
-    console.log(`Audited ${packageName}@${version}: sha256 ${artifact.sha256}`);
-    return;
-  }
-  try {
-    await confirmPublished(version, artifact);
-  } catch (error) {
-    const message = confirmationFailure(env.RELEASE_PUBLISH_OUTCOME, error);
-    console.error(message);
-    if (env.GITHUB_STEP_SUMMARY)
-      appendFileSync(env.GITHUB_STEP_SUMMARY, `${message}\n`);
-    throw error;
-  }
-  const message = `Registry confirmed ${packageName}@${version}, latest, and exact tarball bytes; SHA-256 ${artifact.sha256}.`;
-  console.log(message);
-  if (env.GITHUB_STEP_SUMMARY)
-    appendFileSync(env.GITHUB_STEP_SUMMARY, `${message}\n`);
+  if (env.GITHUB_OUTPUT)
+    appendFileSync(
+      env.GITHUB_OUTPUT,
+      `archive=${artifact.archive}\nsha256=${artifact.sha256}\n`,
+    );
+  console.log(`Audited ${packageName}@${version}: sha256 ${artifact.sha256}`);
 }
 
 if (
