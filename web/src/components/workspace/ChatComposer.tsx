@@ -6,7 +6,9 @@
  * and nothing here sends except the Send control and Enter. The height handle
  * is a keyboard-operable range input, the `@` popup completes a path from the
  * bounded `files` listing one folder at a time, and recalled prompts end with
- * the tab. No slash commands, queue, plugin providers or server draft sync. */
+ * the tab. While a reply runs, the split control beside Stop (pi-web-ui's
+ * split-send) offers the text typed to that reply: steer, or queue behind it.
+ * No slash commands, plugin providers or server draft sync. */
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -17,7 +19,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { FiArrowUp, FiFile, FiFolder, FiImage, FiSquare } from "react-icons/fi";
+import {
+  FiArrowUp,
+  FiFile,
+  FiFolder,
+  FiImage,
+  FiList,
+  FiSquare,
+} from "react-icons/fi";
 import { IMAGE_TYPES } from "../../../../src/image-content.mjs";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type { FileEntry } from "../../../../src/service/contracts/workbench.ts";
@@ -91,6 +100,10 @@ export interface ChatComposerProps {
   onStop(): void;
   canSend: boolean;
   onSend(): void;
+  /** While a reply runs: whether the text typed can be sent into it, and how.
+   * `steer` reaches the model at its next step; `queue` waits for the reply
+   * to end. Absent when the service offers neither. */
+  input?: { enabled: boolean; onInput(mode: "steer" | "queue"): void };
   /** Prompts are recalled per checkout. */
   historyScope: string;
   /** The conversation folder's listing; readable once its context (the
@@ -123,6 +136,7 @@ export function ChatComposer({
   onStop,
   canSend,
   onSend,
+  input,
   historyScope,
   files,
   onResized,
@@ -318,7 +332,10 @@ export function ChatComposer({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      onSend();
+      // Into the running reply: Enter steers, Alt+Enter queues behind it.
+      if (running && input) {
+        if (input.enabled) input.onInput(event.altKey ? "queue" : "steer");
+      } else onSend();
     }
   };
 
@@ -344,7 +361,7 @@ export function ChatComposer({
       }}
       onSubmit={(event) => {
         event.preventDefault();
-        onSend();
+        if (!running) onSend();
       }}
     >
       <input
@@ -533,6 +550,28 @@ export function ChatComposer({
         <CadenceModeButton {...cadence} />
         <ModelPicker {...model} />
         <span className="composer-hint">{hint}</span>
+        {running && input?.enabled && (
+          <span className="composer-split">
+            <button
+              type="button"
+              className="composer-queue"
+              aria-label={t("Queue behind this reply")}
+              title={t("Queue: sent when this reply ends (Alt+Enter)")}
+              onClick={() => input.onInput("queue")}
+            >
+              <FiList aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="composer-steer"
+              aria-label={t("Steer this reply")}
+              title={t("Steer: read at the model's next step (Enter)")}
+              onClick={() => input.onInput("steer")}
+            >
+              <FiArrowUp aria-hidden="true" />
+            </button>
+          </span>
+        )}
         {running ? (
           <button
             type="button"

@@ -4,7 +4,13 @@
 // the worker's boundaries would. The real worker and owner are
 // `worker-inputs` and `service-conversation-inputs`.
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -17,6 +23,7 @@ import {
 } from "../src/service/contracts/workbench.ts";
 import {
   NOT_DELIVERED,
+  UNOBSERVED,
   WITHDRAWN,
 } from "../src/service/conversation-records.ts";
 import {
@@ -872,4 +879,15 @@ it("a head read stays one bounded reply with eight long undelivered messages", a
   plain.worker.end("failed");
   await f.settled[1];
   expect(f.head(plain.conversationId).undelivered?.[0].text).toBe(whole);
+});
+
+it("the reasons recorded for an undelivered message are words the browser can say in its reader's language", () => {
+  // The WebUI translates a notice by its exact text; a reworded reason would
+  // silently fall back to English there.
+  const translations = readFileSync(
+    new URL("../web/src/i18n/zh.ts", import.meta.url),
+    "utf8",
+  );
+  for (const notice of [NOT_DELIVERED, UNOBSERVED])
+    expect(translations).toContain(`"${notice}":`);
 });

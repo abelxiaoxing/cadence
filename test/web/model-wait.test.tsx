@@ -116,6 +116,8 @@ vi.mock("../../web/src/client/use-conversation", () => ({
     leaf: null,
     turns: [],
     commands: facts.commands,
+    pending: [],
+    undelivered: [],
     runs: [],
     count: 0,
     branches: 1,

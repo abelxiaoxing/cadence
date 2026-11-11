@@ -313,7 +313,12 @@ Nothing about a waiting message outlives that worker.
 A reply that fails for good or is stopped delivers nothing further (the worker takes back what Pi still holds before Pi can continue into it), a reply ending just as a message arrives may leave it behind, and each such message is recorded as not delivered: nothing sends it again.
 `conversation-input-cancel` withdraws a message Pi has not been given, at once while only the owner holds it and otherwise when the worker confirms it was still waiting; one Pi holds or has delivered refuses as a `conflict` that changes nothing.
 The bounds are in [limits](limits.md).
-The WebUI composer offers neither kind of message yet; its transcript shows a delivered one as the ordinary turn it is.
+The WebUI offers both from the composer while a reply of this conversation runs (`ChatComposer.tsx`, `conversation-inputs.ts`): with text typed, a split control beside Stop queues it behind the reply or steers the reply, and Enter steers while Alt+Enter queues; Stop stays.
+The text is offered only when it has no image, would not turn Cadence mode on or off, no send anchor is set and fewer than eight messages wait; otherwise the composer says which of these holds and the draft stays.
+Only an accepted command clears the draft; a refusal that changed nothing is a toast with the draft kept, and an unknown outcome keeps the draft and leaves it to the next head read, never a second command.
+Waiting messages (`pending`) are listed after the transcript as the user's own dashed rows with how each was sent (`WaitingMessages.tsx`): each can be withdrawn, or withdrawn and put back into an empty message box when its whole text is known (this tab sent it, or the head's 256 bytes are clearly all of it); a withdrawal refused because Pi already holds the message says so.
+A message its reply ended without delivering (`undelivered`) is shown with its reason and a control that puts its text back into the message box; nothing sends it again.
+The transcript shows a delivered message as the ordinary turn it is.
 A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on, and so is each message its reply ended without delivering (`undelivered`), with its reason.
 A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
 The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking, and the session holds what Pi wrote.

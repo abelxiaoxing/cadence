@@ -446,6 +446,38 @@ export const zh = {
   Message: "消息",
   Send: "发送",
   "Stop response": "停止回复",
+  "Waiting messages": "等待中的消息",
+  "Steering: read at the model's next step": "插队：模型下一步就会读到",
+  "Queued: sent when this reply ends": "排队：这条回复结束后发送",
+  Withdraw: "撤回",
+  "Withdraw and put back in the message box": "撤回并放回输入框",
+  "Not delivered.": "未送达。",
+  "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.":
+    "未送达：回复在这条消息到达模型之前就结束了。没有任何内容被重放；需要的话请重新发送。",
+  "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.":
+    "未观察到：回复结束时会话无法读取，因此没有记录这条消息是否送达。没有任何内容被重放。",
+  "Put back in the message box": "放回输入框",
+  "Queue behind this reply": "排在这条回复之后",
+  "Queue: sent when this reply ends (Alt+Enter)":
+    "排队：这条回复结束后发送（Alt+Enter）",
+  "Steer this reply": "插队到这条回复",
+  "Steer: read at the model's next step (Enter)":
+    "插队：模型下一步就会读到（Enter）",
+  "Enter steers this reply · Alt+Enter queues behind it":
+    "Enter 插队 · Alt+Enter 排队",
+  "The running reply did not take the message ({reason}). Your text stays here.":
+    "进行中的回复没有接收这条消息（{reason}）。你的文字仍在输入框里。",
+  "That message has already been handed to the model and can no longer be withdrawn.":
+    "这条消息已经交给模型，无法再撤回。",
+  "The message was not withdrawn ({reason}).": "消息没有撤回（{reason}）。",
+  "A message into a running reply carries no images. Remove them, or send after the reply ends.":
+    "发给进行中回复的消息不能带图片。请移除图片，或等回复结束后再发送。",
+  "Cadence mode is not changed by a message into a running reply. Send this after the reply ends.":
+    "发给进行中回复的消息不会切换 Cadence 模式。请等回复结束后再发送。",
+  "Eight messages already wait for this reply. Withdraw one, or wait.":
+    "已有 8 条消息在等这条回复。请撤回一条，或稍等。",
+  "A message into a running reply continues that reply, not another entry.":
+    "发给进行中回复的消息只能接在这条回复上，不能接到别的位置。",
   "Prepare task": "准备任务",
   "Analyzing task…": "正在分析任务…",
   "Send to begin analysis. You will confirm the plan before any edits.":

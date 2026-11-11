@@ -39,6 +39,8 @@ interface Turn {
 }
 function owner(turns: Turn[]) {
   const reads: WorkbenchRead[] = [];
+  /** Optional head fields a test sets: what an older service never states. */
+  const extra: Partial<Extract<WorkbenchResult, { kind: "conversation" }>> = {};
   let hold: Promise<void> | undefined;
   const value = async (request: WorkbenchRead): Promise<WorkbenchResult> => {
     if (request.kind === "conversation") {
@@ -61,6 +63,7 @@ function owner(turns: Turn[]) {
         branches: turns.length ? 1 : 0,
         runs: [],
         attempt: null,
+        ...extra,
       };
     }
     if (request.kind === "conversation-turn") {
@@ -108,6 +111,7 @@ function owner(turns: Turn[]) {
   };
   return {
     reads,
+    extra,
     hold(until: Promise<void> | undefined) {
       hold = until;
     },
@@ -594,5 +598,46 @@ it("a branch chosen at one of its messages opens there, never with fewer than th
   await vi.advanceTimersByTimeAsync(0);
   expect(reader.view()).toMatchObject({ pinned: false });
   expect(reader.view().turns.map((t) => t.ordinal)).toEqual([4, 5]);
+  reader.close();
+});
+
+it("messages waiting for the running reply and ones it ended without delivering are carried as the head states them", async () => {
+  vi.useFakeTimers();
+  const o = owner([settled()]);
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  // A head that states neither has none: nothing is invented.
+  expect(reader.view()).toMatchObject({ pending: [], undelivered: [] });
+  const pending = [
+    { commandId: crypto.randomUUID(), mode: "steer" as const, text: "first" },
+    { commandId: crypto.randomUUID(), mode: "queue" as const, text: "then" },
+  ];
+  const undelivered = [
+    {
+      commandId: crypto.randomUUID(),
+      text: "left behind",
+      status: "failed" as const,
+      notice: "not delivered",
+    },
+  ];
+  Object.assign(o.extra, { pending, undelivered });
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view()).toMatchObject({ pending, undelivered });
+  // Delivered or withdrawn: the next head no longer lists them.
+  delete o.extra.pending;
+  delete o.extra.undelivered;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view()).toMatchObject({ pending: [], undelivered: [] });
+  // Another branch is observed afresh, never with this one's waiting rows.
+  Object.assign(o.extra, { pending });
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().pending).toHaveLength(2);
+  delete o.extra.pending;
+  reader.choose("another-leaf");
+  expect(reader.view()).toMatchObject({ pending: [], undelivered: [] });
   reader.close();
 });

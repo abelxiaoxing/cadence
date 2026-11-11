@@ -4581,6 +4581,79 @@ button.file-item:hover:not(:disabled),
   margin: 0 0 4px;
   white-space: pre-wrap;
 }
+/* Messages waiting for the running reply (pi-web-ui's queued message row):
+ * the user's own row, dashed until delivered, with how it was sent. */
+.chat-waiting-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+.chat-waiting {
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.chat-waiting > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.chat-waiting-tag {
+  flex: 1;
+  min-width: 0;
+  color: var(--accent-text);
+  font-size: 12px;
+}
+.chat-waiting-tag.queue {
+  color: var(--text-faint);
+}
+.chat-waiting-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+.chat-waiting .chat-attempt-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.chat-undelivered > button {
+  margin-top: 4px;
+}
+/* Beside Stop while a reply runs: queue behind it, or steer it. */
+.composer-split {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  border: 1px solid var(--accent);
+  border-radius: 17px;
+  overflow: hidden;
+}
+.composer-split > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-text);
+}
+.composer-split > .composer-steer {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.composer-split > button > svg {
+  width: 16px;
+  height: 16px;
+}
+.composer-split + .danger {
+  margin-left: 0;
+}
 .legacy-migration {
   margin: 6px 0;
 }

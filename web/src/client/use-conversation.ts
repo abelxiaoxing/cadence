@@ -38,6 +38,8 @@ export function useConversation(
       branches: 0,
       runs: [],
       attempt: null,
+      pending: [],
+      undelivered: [],
       commands: [],
       count: 0,
       turns: [],
