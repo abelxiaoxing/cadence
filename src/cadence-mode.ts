@@ -426,6 +426,15 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   const summarize = (run: WorkflowRun) =>
     `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\n${run.steps.map((s) => `${s.kind} ${s.id}${s.kind === "research" && s.childRunId ? ` · investigation ${s.childRunId}` : ""}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
+  /** The project's route table for this turn's system prompt. A turn never
+   * fails because the table, or the workspace it is in, cannot be read. */
+  const routeTable = (ctx: ExtensionContext) => {
+    try {
+      return routeTableBrief(resolveWorkspace(ctx.cwd).cwd, []);
+    } catch {
+      return "";
+    }
+  };
   const conversation = (ctx: ExtensionContext) => {
     const cwd = resolveWorkspace(ctx.cwd).cwd;
     return {
@@ -912,7 +921,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) =>
     engaged(ctx)
       ? {
-          systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTableBrief(resolveWorkspace(ctx.cwd).cwd, [])}`,
+          systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTable(ctx)}`,
           message: {
             customType: CONTEXT,
             content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}.`,

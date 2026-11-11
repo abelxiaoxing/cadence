@@ -39,7 +39,10 @@ const caller = {
   authority: "browser" as const,
   accessGeneration: 1,
 };
-function fixture(joinResearch: () => Promise<void> = async () => {}) {
+function fixture(
+  joinResearch: () => Promise<void> = async () => {},
+  project: { cwd?: string; secrets?: () => readonly string[] } = {},
+) {
   const namespace = mkdtempSync(join(tmpdir(), "cadence-control-"));
   const directory = join(namespace, "service-v1");
   const files = new PrivateFiles(namespace);
@@ -187,7 +190,8 @@ function fixture(joinResearch: () => Promise<void> = async () => {}) {
       },
     },
     workflows,
-    secrets: () => [],
+    secrets: project.secrets ?? (() => []),
+    ...(project.cwd ? { cwd: project.cwd } : {}),
   } as unknown as ConstructorParameters<typeof ConversationWorkflow>[0]);
   const root = join(directory, "conversation-workflows-v1");
   const send = (
@@ -229,6 +233,7 @@ function fixture(joinResearch: () => Promise<void> = async () => {}) {
     send,
     tool,
     settle,
+    instructions: (turn: string) => controls.get(turn)?.instructions ?? "",
     hasTurnCalls: () => hasTurnCalls,
     ioFault(code?: string) {
       ioFault = code;
@@ -725,4 +730,40 @@ it("a transient read failure is reported as unavailable and never remembered", a
   expect(f.cw.records.observe(id).notice).toBeUndefined();
   expect(f.cw.records.state(id).notice).toBeUndefined();
   expect(f.cw.records.state(id).runs).toContain(runId);
+});
+
+it("a turn that reaches the coordinator carries the project's route table; leaving reads neither it nor the owner's secrets", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-route-table-"));
+  mkdirSync(join(cwd, ".cadence"), { recursive: true });
+  writeFileSync(
+    join(cwd, ".cadence/project.md"),
+    "# Project knowledge\n\n## Routes\n\n- `src/search` -> `engineering/search.md#Tokens` — how text is split\n",
+  );
+  let available = true,
+    asked = 0;
+  const f = fixture(undefined, {
+    cwd,
+    // What the owner knows as secret comes from its model context, which may
+    // be unusable when the user only wants to leave.
+    secrets: () => {
+      asked++;
+      if (!available) throw new ContractError("stale");
+      return [];
+    },
+  });
+  const id = randomUUID();
+  const entered = f.send(id, "enter", "/cadence");
+  expect(f.instructions(entered)).toContain(
+    "PROJECT ROUTE TABLE (.cadence/project.md",
+  );
+  expect(f.instructions(entered)).toContain(
+    "`src/search` -> `engineering/search.md#Tokens`",
+  );
+  available = false;
+  asked = 0;
+  const left = f.send(id, "exit", "exit cadence");
+  expect(f.cw.records.state(id).enabled).toBe(false);
+  expect(asked).toBe(0);
+  // The shared policy still names the table; the table itself is not read.
+  expect(f.instructions(left)).not.toContain("engineering/search.md#Tokens");
 });
