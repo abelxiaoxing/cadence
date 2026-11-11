@@ -658,8 +658,8 @@
     "test/web/composer.test.tsx": "6c8ea467a2f16c9a26977e411cd6bdeb0b477d0b1bdb43943b51ad17678265d7",
     "test/web/question-rail.test.tsx": "fbd144399c69df700db58241cefdbd491a44edfc6fd5e1939345ed434195f422",
     "web/src/components/workspace/use-send-anchor.ts": "0b2cf497b259153d6c96a05a723c0b3c4783b0f5f150cdc10dfafdf8d4d6f2c4",
-    "src/worker-inputs.mjs": "78da505c919e1e1763fbf0a919e683cd10659ef22bd93ca4d56724a7ae343e00",
-    "test/worker-inputs.test.mjs": "9d8005800653700cf2246c874e4e7c3ef493b032a7a22c66d8ef2cc170c3ca0a",
+    "src/worker-inputs.mjs": "a68205a12751f8cd94adf324711487c67f81de80e9ac0a2717706f0fa70c0cac",
+    "test/worker-inputs.test.mjs": "58dc3779c1898f85b341f31701bb12e89655361d0d39a8ae51cf496409a2fa68",
     "test/conversation-input.test.ts": "79e7d3ba80d09e4fa6562c5d9f47994c766e907b5aff001ba93f01db30dc88fa",
     "test/service-conversation-inputs.test.ts": "d0a9f4866365833af257bda08dc3f49e95ebaa074980ddbb812bbf0b7f4d0779"
   },
