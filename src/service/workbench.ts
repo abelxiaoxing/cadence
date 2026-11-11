@@ -190,7 +190,8 @@ export class Workbench implements WorkbenchPort {
       case "conversation-tree":
         return this.conversations.records.tree(request.id, request.leaf);
       case "files":
-      case "file": {
+      case "file":
+      case "file-part": {
         const cwd = this.contexts.directory(request.location);
         const files = new WorkbenchFiles(
           cwd,
@@ -199,7 +200,9 @@ export class Workbench implements WorkbenchPort {
         );
         return request.kind === "files"
           ? files.list(request.path)
-          : files.read(request.path);
+          : request.kind === "file"
+            ? files.read(request.path)
+            : files.part(request.path, request.offset);
       }
       case "directories":
         return this.files.list(request.path, true);

@@ -46,6 +46,7 @@ function retainedRead(request: WorkbenchRead): boolean {
     "conversation-tree",
     "files",
     "file",
+    "file-part",
   ].includes(request.kind);
 }
 /** A never-prepared selection can show an initial conversation even while the
@@ -222,7 +223,8 @@ export class GatewayConversations {
         result = { kind: request.kind, state: view.controls.state(request.id) };
         break;
       case "files":
-      case "file": {
+      case "file":
+      case "file-part": {
         // The owner's own rule for a conversation directory, minus its lease:
         // same refusals, limits and redaction, and nothing is written.
         const secrets = records.readSecrets();
@@ -240,7 +242,9 @@ export class GatewayConversations {
         result =
           request.kind === "files"
             ? files.list(request.path)
-            : files.read(request.path);
+            : request.kind === "file"
+              ? files.read(request.path)
+              : files.part(request.path, request.offset);
         break;
       }
       default:

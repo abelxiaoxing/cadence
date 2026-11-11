@@ -66,6 +66,24 @@ it("a selected folder's files are readable before any owner exists, with the own
   expect(s.reader.read(s.project, { kind: "file", path: "notes.txt" })).toEqual(
     { kind: "file", path: "notes.txt", text: "plain notes\n", limited: false },
   );
+  // A download part is the same file's exact bytes, under the same refusals.
+  expect(
+    s.reader.read(s.project, {
+      kind: "file-part",
+      path: "notes.txt",
+      offset: 0,
+    }),
+  ).toMatchObject({
+    kind: "file-part",
+    size: 12,
+    data: Buffer.from("plain notes\n").toString("base64"),
+    next: null,
+  });
+  expect(
+    code(() =>
+      s.reader.read(s.project, { kind: "file-part", path: ".env", offset: 0 }),
+    ),
+  ).toBe("forbidden");
   // A conversation in a subdirectory of the same checkout reads from there.
   const location = { id: randomUUID(), cwd: join(s.path, "sub") };
   const nested = s.reader.read(s.project, {
