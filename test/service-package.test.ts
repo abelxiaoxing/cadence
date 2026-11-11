@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import ts from "typescript";
+import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
 import { auditNotices } from "../scripts/audit-notices.mjs";
 
@@ -9,70 +8,8 @@ const root = resolve(import.meta.dirname, "..");
 const members: string[] = JSON.parse(
   readFileSync(join(root, "provenance/package-members.json"), "utf8"),
 );
-it("reviewed package closes native and maintained worker imports without a terminal executor or bundled SDK", {
-  tags: ["slow"],
-}, () => {
-  const visited = new Set<string>();
-  function visit(name: string) {
-    if (visited.has(name)) return;
-    visited.add(name);
-    expect(members).toContain(`package/${name}`);
-    const source = ts.createSourceFile(
-      name,
-      readFileSync(join(root, name), "utf8"),
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    const next = (specifier: string) => {
-      if (!specifier.startsWith(".")) return;
-      // Reviewed members use "/"; Windows resolves with "\\".
-      const path = relative(root, resolve(root, dirname(name), specifier));
-      expect(path && !path.startsWith("..") && !isAbsolute(path)).toBe(true);
-      visit(path.split(sep).join("/"));
-    };
-    source.forEachChild((node) => {
-      if (
-        ts.isImportDeclaration(node) &&
-        ts.isStringLiteral(node.moduleSpecifier)
-      ) {
-        if (node.importClause?.isTypeOnly) return;
-        const bindings = node.importClause?.namedBindings;
-        if (
-          bindings &&
-          ts.isNamedImports(bindings) &&
-          !node.importClause?.name &&
-          bindings.elements.every((e) => e.isTypeOnly)
-        )
-          return;
-        next(node.moduleSpecifier.text);
-      } else if (
-        ts.isExportDeclaration(node) &&
-        !node.isTypeOnly &&
-        node.moduleSpecifier &&
-        ts.isStringLiteral(node.moduleSpecifier)
-      )
-        next(node.moduleSpecifier.text);
-    });
-    function walk(node: ts.Node) {
-      if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        node.arguments[0] &&
-        ts.isStringLiteral(node.arguments[0])
-      )
-        next(node.arguments[0].text);
-      ts.forEachChild(node, walk);
-    }
-    walk(source);
-  }
-  for (const entry of [
-    "src/index.ts",
-    "src/sdk-worker.mjs",
-    "src/session-rename.mjs",
-    "src/cadence-service.mjs",
-  ])
-    visit(entry);
-  expect(visited.has("src/task-controller.ts")).toBe(false);
+// `scripts/pack-check.mjs` owns the import closure, read from the real archive.
+it("reviewed package ships no terminal executor, bundled SDK or TypeScript import in an executable", () => {
   expect(members).not.toContain("package/src/task-controller.ts");
   expect(members.some((p) => p.includes("node_modules"))).toBe(false);
   for (const executable of ["operator-cli", "service-cli", "service-host"]) {

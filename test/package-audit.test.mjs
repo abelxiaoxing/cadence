@@ -11,6 +11,10 @@ import path from "node:path";
 import { gzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
 import {
+  assertImportClosure,
+  runtimeImports,
+} from "../scripts/import-closure.mjs";
+import {
   archiveBodies,
   auditPackage,
   sha256,
@@ -166,5 +170,55 @@ it("rejects linked source ancestors rather than following matching bodies", () =
   );
   expect(() => auditPackage(f.file, linked, f.expected, f.root)).toThrow(
     "source-link",
+  );
+});
+
+// 2.1.0 shipped `src/cadence-mode.ts` without the module it imports: the source
+// tree resolved it, the installed package stopped Pi at startup.
+const shipped = {
+  "src/index.ts": [
+    'import { mode } from "./mode.ts";',
+    'import type { Contract } from "./unshipped-types.ts";',
+    'import { type Reading } from "./unshipped-types.ts";',
+    'export type { Wire } from "./unshipped-types.ts";',
+    'export * from "../lib/shared.mjs";',
+    'export const lazy = () => import("./lazy.mjs");',
+    'import "node:fs";',
+  ].join("\n"),
+  "src/mode.ts": 'import { store } from "./service/store.ts";',
+  "src/service/store.ts": "export const store = 1;",
+  "src/lazy.mjs": 'import "./service/store.ts";',
+  "lib/shared.mjs": "export const shared = 1;",
+  // Neither is loaded by Node from the installed package.
+  "src/lazy.d.mts": 'import "./absent.mjs";',
+  "web/dist/assets/app.js": 'import "./absent.js";',
+};
+const packed = (files) =>
+  archiveBodies(
+    archive(
+      Object.entries(files).map(([name, body]) =>
+        header(`package/${name}`, 48, body),
+      ),
+    ),
+  );
+it("reads runtime specifiers and leaves erased type-only imports out", () => {
+  expect(runtimeImports("src/index.ts", shipped["src/index.ts"])).toEqual([
+    "./mode.ts",
+    "../lib/shared.mjs",
+    "./lazy.mjs",
+  ]);
+});
+it("accepts an archive whose shipped modules import only its own members", () => {
+  expect(() => assertImportClosure(packed(shipped))).not.toThrow();
+});
+it.each([
+  ["src/mode.ts", "src/index.ts -> ./mode.ts"],
+  ["src/service/store.ts", "src/mode.ts -> ./service/store.ts"],
+  ["src/lazy.mjs", "src/index.ts -> ./lazy.mjs"],
+  ["lib/shared.mjs", "src/index.ts -> ../lib/shared.mjs"],
+])("refuses an archive without imported member %s", (absent, edge) => {
+  const { [absent]: _, ...rest } = shipped;
+  expect(() => assertImportClosure(packed(rest))).toThrow(
+    `package-import-missing:\n  ${edge}`,
   );
 });

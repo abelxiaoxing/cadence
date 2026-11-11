@@ -1,4 +1,5 @@
-// Build and audit the real exact regular tarball, every body and Agent pin.
+// Build and audit the real exact regular tarball: every body, Agent pin and
+// relative import of the modules it ships.
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
@@ -10,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { auditPackage } from "./package-audit.mjs";
+import { assertImportClosure } from "./import-closure.mjs";
+import { archiveBodies, auditPackage } from "./package-audit.mjs";
 
 const packageDir = path.resolve(import.meta.dirname, "..");
 
@@ -40,13 +42,11 @@ try {
   run("bun", ["pm", "pack", "--destination", packDir], { cwd: packageDir });
   const archives = readdirSync(packDir).filter((f) => f.endsWith(".tgz"));
   if (archives.length !== 1) throw new Error("expected exactly one tarball");
-  const audit = auditPackage(
-    path.join(packDir, archives[0]),
-    packageDir,
-    expectedMembers,
-  );
+  const archive = path.join(packDir, archives[0]);
+  const audit = auditPackage(archive, packageDir, expectedMembers);
+  assertImportClosure(archiveBodies(archive));
   console.log(
-    `pack-check: ${audit.members.length} unique regular members and every body/pin match the approved set`,
+    `pack-check: ${audit.members.length} unique regular members and every body/pin match the approved set; shipped imports resolve inside the archive`,
   );
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
