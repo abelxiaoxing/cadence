@@ -2,119 +2,115 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
-O Cadence transforma o [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) em um espaço de trabalho de tarefas persistente.
-Planeje uma tarefa de código, deixe os subagentes trabalharem nela, execute suas verificações e revise o resultado no terminal do Pi (`/cadence`) ou na interface web do navegador; ambos se conectam ao mesmo serviço em segundo plano.
+O Cadence transforma o [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) em um fluxo de engenharia guiado por conversa: digite `/cadence [objetivo]`, combine o resultado uma vez e um owner persistente implementa, se recupera e verifica.
+No terminal ou na WebUI opcional.
+
+## Como funciona
+
+```mermaid
+flowchart TD
+    A["/cadence objetivo"] --> B["Investigar somente leitura"]
+    B --> C["Alinhar e aprovar uma vez"]
+    C --> D["Tarefas independentes em worktrees paralelos"]
+    D --> E["Verificações reais + revisão automática de Agent"]
+    E -->|"passa"| F["Merge local na sua branch"]
+    E -->|"falha"| G["Autocorreção"]
+    G --> D
+    F --> H["Curar conhecimento (orçamento fixo)"]
+    H -.-> B
+```
+
+```mermaid
+flowchart LR
+    A["Verificação falha"] --> B["Reparar"] --> C["Replanejar a rota"] --> D["Desvio registrado"] --> E["Parar só por condições externas"]
+```
+
+```mermaid
+flowchart LR
+    T["Terminal do Pi"] <-->|"conectar / desconectar"| O[("Owner persistente")]
+    W["WebUI<br/>quadro · branches · intervir"] <-->|"conectar / desconectar"| O
+    O --> X["Workers em worktrees"] --> Y["Sua branch"]
+    O -.-> K["Conhecimento .cadence/"]
+```
 
 ## Por que o Cadence
 
-- **O trabalho sobrevive à janela.**
-  As tarefas rodam em um serviço em segundo plano: fechar o terminal, sair do Pi ou deixar a aba do navegador apenas desconecta, e qualquer cliente pode se reconectar à mesma execução.
-- **Nada é editado antes de você aprovar.**
-  Uma tarefa primeiro analisa em somente leitura e propõe um plano legível; os arquivos mudam apenas depois que você confirma esse plano exato.
-- **Resultados nos quais você pode confiar.**
-  A saída dos subagentes, as execuções reais de verificação e a sua própria revisão permanecem separadas: a prosa do modelo ou um "Done" nunca contam como verificação aprovada, e resultados com falha, cancelados e desconhecidos permanecem distintos.
-- **Histórico completo.**
-  Cada execução mantém suas mensagens, chamadas de ferramentas e saídas, com busca exata e exportação completa em Markdown/NDJSON; segredos conhecidos são redigidos.
-- **Um histórico compartilhado com o terminal.**
-  As conversas do navegador são as sessões do Pi do projeto: continue uma sessão do terminal no navegador ou uma do navegador com `/resume`, e leia os ramos do Pi em qualquer um dos dois.
-- **Um link para tudo.**
-  A interface web (desktop e celular, inglês e chinês simplificado) também hospeda conversas comuns do Pi e alterna entre projetos, cada um com seu próprio owner e histórico.
+|                                   |                                                                                                                 |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **O trabalho sobrevive à janela** | Os clientes só conectam e desconectam; o owner continua.                                                        |
+| **Nada muda antes da aprovação**  | Investigação somente leitura e um acordo legível que você confirma.                                             |
+| **Resultados confiáveis**         | Verificações reais e revisão independente; texto do modelo nunca conta como aprovado.                           |
+| **Termina sozinho**               | Após aprovar, repara, replaneja ou registra um desvio, e só para por condições fora do repositório.             |
+| **Mais rápido por desenho**       | Tarefas independentes rodam lado a lado em worktrees próprios.                                                  |
+| **O conhecimento se acumula**     | Tabela de rotas e orçamento fixo: workers leem o que corresponde e lições novas substituem as obsoletas.        |
+| **WebUI que mostra e conduz**     | Quadro de tarefas, revisões, desvios, branches, raciocínio; intervir ou enfileirar mensagem durante a resposta. |
+| **Um só histórico**               | As conversas do navegador são as sessões do Pi do projeto; continue em qualquer lugar.                          |
 
-O Cadence é um assistente confiável, **não uma caixa de areia**: seus agentes editam sua cópia de trabalho diretamente com as ferramentas do host, então use-o apenas em código que você possa revisar e recuperar.
+> O Cadence é um assistente confiável, **não um sandbox**: seus agentes usam ferramentas do host no checkout ou worktree aprovado.
+> Use em código que você possa revisar e recuperar.
 
 ## Instalação
 
-Você precisa de Node `>=22.19.0` com npm, e do Pi instalado e conectado a um provedor de modelos; o Cadence reutiliza o login e as configurações de modelos do Pi.
+Requer Node `>=22.19.0` e o Pi com login em um provedor de modelos; o Cadence reutiliza o login do Pi.
 
 ```sh
 npm install -g @abelxiaoxing/cadence
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
+cadence server install   # WebUI e serviço de inicialização opcionais
 ```
 
-`cadence server install` registra e inicia um serviço em segundo plano (systemd no Linux, um LaunchAgent no macOS, uma entrada de login no Windows) e imprime um link privado, `http://127.0.0.1:17423/?token=…`.
-O último comando permite que o Pi carregue a mesma cópia para o `/cadence`, então um único upgrade do npm atualiza ambos.
-A porta e o token ficam em `~/.pi/agent/cadence/.env`; qualquer pessoa com o token pode usar seu espaço de trabalho, então mantenha o link privado.
+`cadence server install` mostra um link privado (`http://127.0.0.1:17423/?token=…`).
+O token dá acesso ao seu workspace: mantenha o link privado.
 
 ## Uso
 
-### No navegador
+### Navegador
 
-1. Abra o link impresso uma vez; o navegador então se lembra de você.
-   Se você o perder, `cadence token-link --reveal` o imprime de novo.
-2. Escolha uma pasta de projeto.
-   A preferência de modelo salva é reutilizada ao enviar; escolha uma vez se ela não existir.
-3. Envie `/cadence [objetivo]` uma vez.
-   Esta conversa permanece no modo Cadence; esclareça os requisitos com mensagens normais.
-4. Revise o plano completo e clique em **Implement this plan**.
-   Implementação, verificações, recuperação automática e entrega local acordada são automáticos.
-5. Acompanhe o progresso na conversa; abra os registros dos subagentes no painel **Subagents**, no canto inferior esquerdo.
-   Atualizar a página ou concluir um objetivo não desativa o modo.
-   **Exit Cadence** sai do modo; **Cancel workflow — request stop** solicita o cancelamento.
+1. Abra o link exibido uma vez (`cadence token-link --reveal` mostra de novo).
+2. Escolha uma pasta de trabalho no botão inferior direito.
+3. Envie `/cadence [objetivo]` e responda às perguntas.
+4. Clique em **Implement this plan** e acompanhe o quadro e o dock **Subagents**.
+   Imagens por colar ou arrastar ([detalhes](docs/conversation-mode.md#images-in-the-webui)).
 
-No live Pi terminal is required for the browser conversation workflow.
+### Terminal
 
-### No terminal
-
-Digite `/cadence <objetivo>` uma vez e continue conversando normalmente.
-O Cadence investiga o projeto, esclarece decisões e prepara um plano.
-Após aprovação explícita, executa a implementação, verificações, recuperação automática e integração local acordada.
-
-O modo permanece ativo durante toda a conversa, mesmo após concluir um objetivo.
-Digite `exit cadence` para sair; sair não cancela trabalho aceito.
-As preferências de modelo são mantidas entre projetos em `~/.pi/agent/cadence/settings.json`.
-
-O proprietário local inicia sob demanda; o serviço do sistema é opcional para WebUI/inicialização automática.
-
-`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
-See [History and diagnostics](docs/history.md).
-[Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
-Browser authentication is not execution consent.
-
-### Mais projetos
+Digite `/cadence <objetivo>` uma vez na conversa do Pi de um projeto confiável; o modo continua ativo após concluir.
+`exit cadence` ou `退出 Cadence` sai sem cancelar o trabalho aceito.
+`/cadence-history [run-id]` é somente leitura.
+`CADENCE_PARALLEL` (padrão 4) define os workers simultâneos.
+Detalhes: [modo conversa](docs/conversation-mode.md), [histórico](docs/history.md).
 
 ```sh
-cadence project open /absolute/project
-cadence project open /absolute/new-project --create
+cadence project open /absolute/project   # um owner, porta e histórico por projeto
 ```
-
-Cada projeto recebe seu próprio owner, porta e histórico, e o comando imprime seu link privado; o seletor de pastas da interface web abre projetos da mesma maneira.
-Abrir outro projeto nunca interrompe o trabalho no anterior.
-
-### Verificações
-
-Os comandos de verificação constam do plano aprovado, incluindo verificações iniciais e de aceitação.
-Os resultados reais permanecem separados da revisão automática do agente.
 
 ## Gerenciar o serviço
 
 ```sh
 cadence server status
-cadence server restart     # após um upgrade ou uma alteração de .env / models.json
-cadence server upgrade
-cadence server stop        # permanece registrado e inicia de novo no próximo boot ou login
-cadence server uninstall   # executar antes de npm uninstall -g
+cadence server restart     # após atualizar ou alterar .env / models.json
+cadence server upgrade     # baixar, instalar, reiniciar; volta atrás se a nova versão falhar
+cadence server stop
+cadence server uninstall   # antes de npm uninstall -g
+cadence doctor             # restos e recuperações recentes; --fix para o resto
 ```
 
-Faça upgrade com `cadence server upgrade` ou pela caixa de diálogo do serviço Cadence na WebUI: a versão é baixada enquanto o Cadence continua em execução, e a anterior volta se a nova não iniciar.
-Restart, stop e uninstall param o trabalho em execução em ordem, em vez de deixá-lo desconectado.
-Uninstall remove apenas a definição do serviço; projetos, histórico e configurações do Pi permanecem.
-Serviços root e nomeados do Linux, acesso HTTPS remoto e recuperação estão cobertos em [gerenciamento do serviço](docs/service-management.md) e [acesso remoto](docs/remote-access.md).
+Falha ou queda de energia não exige limpeza: a próxima inicialização se recupera e diz o que fez.
+Veja [gerenciamento do serviço](docs/service-management.md) e [acesso remoto](docs/remote-access.md).
 
 ## Desenvolvimento
 
-O Pi também pode carregar um checkout local ou um tarball empacotado: adicione seu caminho absoluto ou relativo aos `packages` do Pi, ou experimente `pi -e ./cadence`.
-O Cadence requer Pi 1.5.0 ou um host 1.x compatível; fixações de desenvolvimento e tempos de execução testados não são promessas universais de compatibilidade.
+O Pi também carrega um checkout local ou tarball empacotado: adicione o caminho absoluto ou relativo a `packages` do Pi, ou teste `pi -e ./cadence`.
+O Cadence requer o Pi 1.5.0 ou um host 1.x compatível; pins de desenvolvimento e runtimes testados não são promessas de compatibilidade universal.
 
 ```sh
 bun install
 bun run verify
 ```
 
-As orientações de engenharia são divididas por área sob [engineering/](engineering/); o índice do projeto em [AGENTS.md](AGENTS.md) diz qual arquivo cobre qual código.
-`verify` é a única verificação para desenvolvimento e publicação: apenas verificações rápidas, sem navegador.
-Exige um build oficial do Node e um diretório temporário privado; veja [verificação](engineering/verification.md).
+Guias por área em [engineering/](engineering/) e [AGENTS.md](AGENTS.md). `verify` é o único portão rápido; exige um build oficial do Node e um diretório temporário privado ([verificação](engineering/verification.md)).
 
 ## Licença
 
-O Cadence é MIT.
-Adaptações, fontes e vendors incluídos mantêm suas próprias licenças; veja [reutilização e distribuição](docs/reuse-and-distribution.md) e [avisos de terceiros](THIRD_PARTY_NOTICES.md).
+MIT.
+Adaptações, fontes e componentes de terceiros incluídos mantêm suas licenças: [reutilização e distribuição](docs/reuse-and-distribution.md), [avisos de terceiros](THIRD_PARTY_NOTICES.md).

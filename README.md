@@ -2,114 +2,101 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
-Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a conversation-driven engineering workflow.
-Enter `/cadence [goal]`, align the expected delivery through conversation, then let the persistent owner implement, recover and verify it.
-The optional WebUI supports the same persistent conversation workflow without a live Pi terminal, alongside ordinary chat and readonly retained history.
+Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a conversation-driven engineering workflow: enter `/cadence [goal]`, agree on the result once, and a persistent owner builds, recovers and verifies it.
+Use it from the terminal or the optional WebUI.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["/cadence goal"] --> B["Investigate (readonly)"]
+    B --> C["Align, then approve once"]
+    C --> D["Independent assignments run in parallel worktrees"]
+    D --> E["Real checks + automatic Agent review"]
+    E -->|"pass"| F["Local merge into your branch"]
+    E -->|"fail"| G["Self-revise"]
+    G --> D
+    F --> H["Curate knowledge (fixed budget)"]
+    H -.-> B
+```
+
+```mermaid
+flowchart LR
+    A["Check fails"] --> B["Repair"] --> C["Re-plan the route"] --> D["Recorded deviation"] --> E["Stop only for outside conditions"]
+```
+
+```mermaid
+flowchart LR
+    T["Pi terminal"] <-->|"attach / detach"| O[("Persistent owner")]
+    W["WebUI<br/>board · branches · steer"] <-->|"attach / detach"| O
+    O --> X["Workers in worktrees"] --> Y["Your branch"]
+    O -.-> K[".cadence/ knowledge"]
+```
 
 ## Why Cadence
 
-- **Work outlives the window.**
-  Tasks run in a background service: closing the terminal, quitting Pi or leaving the browser tab only detaches, and either client can reattach to the same run.
-- **Nothing is edited before you approve.**
-  Cadence first investigates readonly and proposes a readable delivery agreement; files change only after you confirm its goal, scope and permitted actions.
-- **Results you can trust.**
-  Subagent output, real check runs and independent Agent review stay separate: model prose or a "Done" never counts as a passed check, and failed, canceled and unknown outcomes stay distinct.
-- **Complete history.**
-  Conversation workflows retain sanitized transcripts and actual process results; legacy task history also provides exact search and Markdown/NDJSON export.
-- **One link for everything.**
-  The WebUI (desktop and phone, English and 简体中文) also hosts ordinary Pi conversations and switches between projects, each with its own owner and history.
-- **One history with the terminal.**
-  Browser conversations are the project's Pi sessions: continue a terminal session in the browser or a browser one with `/resume`, and read Pi's branches in either place.
+|                                     |                                                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Work outlives the window**        | Clients only attach and detach; the owner keeps running.                                                          |
+| **Nothing changes before approval** | Readonly investigation, then one readable agreement you confirm.                                                  |
+| **Results you can trust**           | Real checks and independent review; model prose never counts as a pass.                                           |
+| **Finishes on its own**             | After approval it repairs, re-plans or records a deviation, and stops only for conditions outside the repository. |
+| **Faster by design**                | Independent assignments run side by side in their own worktrees.                                                  |
+| **Knowledge compounds**             | A route table and a fixed budget: workers read what matches their code, new lessons replace stale ones.           |
+| **WebUI that shows and steers**     | Assignment board, revisions, deviations, branches, thinking, and steer or queue a message mid-reply.              |
+| **One history**                     | Browser conversations are the project's Pi sessions; continue in either place.                                    |
 
-Cadence is a trusted assistant, **not a sandbox**: its agents use host tools in the approved checkout or worktree, so use it on code you can review and recover.
+> Cadence is a trusted assistant, **not a sandbox**: its agents use host tools in the approved checkout or worktree.
+> Use it on code you can review and recover.
 
 ## Install
 
-You need Node `>=22.19.0` with npm, and Pi installed and logged in to a model provider; Cadence reuses Pi's login and model settings.
+Requires Node `>=22.19.0` and Pi logged in to a model provider; Cadence reuses Pi's login.
 
 ```sh
 npm install -g @abelxiaoxing/cadence
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
+cadence server install   # optional WebUI and boot service
 ```
 
-For the optional WebUI/boot service, explicitly run `cadence server install`.
-It registers and starts a background service (systemd on Linux, a LaunchAgent on macOS, a login entry on Windows) and prints a private link, `http://127.0.0.1:17423/?token=…`.
-The last command lets Pi load the same copy for `/cadence`, so one npm upgrade updates both.
-The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can use your workspace, so keep the link private.
+`cadence server install` prints a private link (`http://127.0.0.1:17423/?token=…`).
+The token grants access to your workspace: keep the link private.
 
 ## Use
 
-### In the browser
+### Browser
 
-1. Open the printed link once; the browser then remembers you.
-   If you lose it, `cadence token-link --reveal` prints it again.
-2. Choose a working folder with the lower-right button; recent folders are in the same picker.
-   First use offers this choice directly in the conversation; later visits restore your last available folder.
-   Saved model preferences are reused on Send; choose once if none is available.
-3. Send `/cadence [goal]` once to enter Cadence in this conversation; continue with normal messages to investigate and clarify requirements.
-4. Review the complete inline plan and click **Implement this plan** (or send `按计划实施`).
-   The owner implements, diagnoses failures, adjusts the route, updates approved project knowledge and verifies delivery without routine reconfirmation.
-5. Follow actual progress and local merge results in the conversation; open any subagent's full context from the lower-left **Subagents** dock.
-   Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
+1. Open the printed link once (`cadence token-link --reveal` prints it again).
+2. Pick a working folder with the lower-right button.
+3. Send `/cadence [goal]`, then answer the clarifying questions.
+4. Click **Implement this plan** and follow the board and the **Subagents** dock.
+   Images can be pasted or dropped ([details](docs/conversation-mode.md#images-in-the-webui)).
 
-The browser also accepts images by file selection, paste or drag-and-drop, with previews and retained history.
-Choose a vision-capable model; see [image input](docs/conversation-mode.md#images-in-the-webui).
+### Terminal
 
-### In the terminal
-
-Enter `/cadence <goal>` once in any trusted project's Pi conversation.
-Continue with normal messages: Cadence investigates, consolidates questions and develops a readable plan with you.
-After one explicit delivery approval it finishes without asking again: it implements, recovers, re-plans when the route does not work, reviews and verifies.
-The goal, decisions, acceptance and its listed assumptions stay as approved; if an acceptance item proves impossible it delivers the closest result and reports that deviation first.
-Each approved local delivery gets a named branch and one stable worktree that preserves partial work, runs independent assignments side by side in temporary worktrees beside it, then merges back into the displayed original branch.
-Mode entry/research create no Git resources; approved local commits/merge never imply a remote push.
-Workers are given the documents and sections that own the code they touch, and each delivery ends by curating a small knowledge store under `.cadence/` that stays inside a fixed budget: new lessons displace or compress old ones, without a separate knowledge-management command.
-`CADENCE_PARALLEL` (default 4) sets how many workers of one run are active at once.
-
-**Completing a goal leaves the conversation in Cadence mode.**
-No repeated command is needed.
-Type `exit cadence` or `退出 Cadence` to leave; departure does not cancel accepted work.
-Native use starts/reuses a local project owner on demand, without installing a system service.
-Model preferences are remembered in `~/.pi/agent/cadence/settings.json`; authentication stays with Pi.
-
-See [Conversation mode](docs/conversation-mode.md) for exact approval, worktree prerequisites and cancellation.
-`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
-See [History and diagnostics](docs/history.md).
-Browser approval is separately bound to the displayed plan and conversation; authentication alone never authorizes execution.
-
-### More projects
+Enter `/cadence <goal>` once in a trusted project's Pi conversation; the mode stays on after a goal completes.
+`exit cadence` or `退出 Cadence` leaves it and never cancels accepted work.
+`/cadence-history [run-id]` is readonly.
+`CADENCE_PARALLEL` (default 4) sets concurrent workers.
+Details: [conversation mode](docs/conversation-mode.md), [history](docs/history.md).
 
 ```sh
-cadence project open /absolute/project
-cadence project open /absolute/new-project --create
+cadence project open /absolute/project   # one owner, port and history per project
 ```
-
-Each project gets its own owner, port and history, and the command prints its private link.
-In the WebUI, selecting a folder only changes the conversation context; Send starts or reuses its owner when needed.
-Switching folders never stops work in the previous one.
-
-### Checks
-
-Checks are declared in the exact plan you approve, including baseline and acceptance commands.
-Their actual outcomes remain separate from automatic Agent review.
 
 ## Manage the service
 
 ```sh
 cadence server status
 cadence server restart     # after an upgrade or a .env / models.json change
-cadence server upgrade     # detected Pi/npm/Bun install: fetch, install and restart
-cadence server stop        # stays registered and starts again at the next boot or login
-cadence server uninstall   # run before npm uninstall -g
-cadence doctor             # what is left over or recently recovered; --fix for the rest
+cadence server upgrade     # fetch, install, restart; rolls back if the new version fails
+cadence server stop
+cadence server uninstall   # before npm uninstall -g
+cadence doctor             # leftovers and recent recoveries; --fix for the rest
 ```
 
-A power loss, shutdown or crash needs no cleanup: the next start recovers automatically, marks interrupted work as interrupted and says what it did.
-
-Upgrade with `cadence server upgrade` or from the WebUI's Cadence service dialog: it fetches the release while Cadence keeps running and puts the previous version back if the new one does not start.
-Restart, stop and uninstall stop running work in order rather than leaving it detached.
-Uninstall removes only the service definition; projects, history and Pi settings stay.
-Linux root and named services, remote HTTPS access and automatic recovery are covered in [service management](docs/service-management.md) and [remote access](docs/remote-access.md).
+A crash or power loss needs no cleanup: the next start recovers and says what it did.
+See [service management](docs/service-management.md) and [remote access](docs/remote-access.md).
 
 ## Development
 
@@ -121,11 +108,9 @@ bun install
 bun run verify
 ```
 
-Engineering guidance is split by area under [engineering/](engineering/); the project index in [AGENTS.md](AGENTS.md) says which file covers which code.
-`verify` is the single development and release gate: fast checks only, with no browser requirement.
-It needs an official Node build and a private temporary directory; see [verification](engineering/verification.md).
+Guidance by area is in [engineering/](engineering/) and [AGENTS.md](AGENTS.md). `verify` is the single fast gate; it needs an official Node build and a private temporary directory ([verification](engineering/verification.md)).
 
 ## License
 
-Cadence is MIT.
-Bundled adaptations, fonts and vendors keep their own licenses; see [reuse and distribution](docs/reuse-and-distribution.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
+MIT.
+Bundled adaptations, fonts and vendors keep their own licenses: [reuse and distribution](docs/reuse-and-distribution.md), [third-party notices](THIRD_PARTY_NOTICES.md).
