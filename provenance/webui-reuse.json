@@ -520,7 +520,7 @@
     "src/service/workbench-files.ts": "24f53e35a5dd0b290d090cb6ab6145913087976b8f759a3beb8242f2997c3dc7",
     "src/service/workbench.ts": "dd8d66a7648b199fb354bd648d011aa42181bdf041864d8f868467ad2c928539",
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
-    "test/workbench-boundaries.test.ts": "9b4e512ba5ce6b7f07fa3ad91f1e9874a1f5c09ec1cd6b1d61ec2ed1f1e58e5b",
+    "test/workbench-boundaries.test.ts": "110a82b1ca37e472e3b400463bfc124ce26096031e48ab6e9ad85b46f5c68f05",
     "test/web/workbench.test.tsx": "4af660c8b7c6257d337ddf37c9db2a5951fce4f259375ca38d3d0ec857eb575d",
     "web/src/components/workspace/ChatWorkspace.tsx": "38ae42e77dad1bfa183dd5d64537901bd50256ec01cf3ce0e3f802646256637c",
     "web/src/components/workspace/ChatSteps.tsx": "3544086fd3c575fcdfd329eb07c8fb79cf1c40d7c09a3cf42af10dacf66edb3f",

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   linkSync,
   mkdirSync,
@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { ContractError } from "../src/service/contracts/core.ts";
+import { ContractError, LIMITS } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
   CONVERSATION_NAME_CHARS,
@@ -416,6 +416,65 @@ it("workbench reads are gzip-compressed only when accepted; session replies neve
     });
     expect(bootstrap.status).toBe(200);
     expect(bootstrap.headers.get("content-encoding")).toBeNull();
+  } finally {
+    await f.server.close();
+  }
+});
+
+it("a download's parts cross the HTTP read route whole: an incompressible full part fits one reply, and a refusal is a public error", async () => {
+  const f = await httpFixture();
+  const root = mkdtempSync(join(tmpdir(), "wb-file-http-"));
+  // Random bytes: neither gzip nor JSON escaping can shrink or grow a part.
+  const bytes = randomBytes(FILE_PART_BYTES + 4097);
+  writeFileSync(join(root, "blob.bin"), bytes);
+  writeFileSync(join(root, ".env"), "TOKEN=fabricated");
+  const files = new WorkbenchFiles(root, [], () => []);
+  f.adapters.workbench = {
+    read: (value) => {
+      if (value.kind !== "file-part") throw new ContractError("invalid");
+      return files.part(value.path, value.offset);
+    },
+    command: () => {
+      throw Error("no command");
+    },
+  };
+  try {
+    const bound = await session(f);
+    const part = async (path: string, offset: number, encoding: string) => {
+      const reply = await fetch(
+        `${f.origin}/api/v1/workbench/read?request=${encodeURIComponent(
+          JSON.stringify({ kind: "file-part", path, offset }),
+        )}`,
+        { headers: { ...bound.headers, "accept-encoding": encoding } },
+      );
+      return { status: reply.status, body: await reply.text() };
+    };
+    const parts: Buffer[] = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      // The first part travels gzip-compressed, the last one plain.
+      const reply = await part(
+        "blob.bin",
+        offset,
+        offset ? "identity" : "gzip",
+      );
+      expect(reply.status).toBe(200);
+      expect(Buffer.byteLength(reply.body)).toBeLessThan(LIMITS.pageBytes);
+      const value = decodeWorkbenchResult(JSON.parse(reply.body).value);
+      if (value.kind !== "file-part") throw new Error("Missing part");
+      parts.push(Buffer.from(value.data, "base64"));
+      offset = value.next;
+    }
+    expect(parts.map((data) => data.length)).toEqual([FILE_PART_BYTES, 4097]);
+    expect(Buffer.concat(parts).equals(bytes)).toBe(true);
+    const refused = await part(".env", 0, "identity");
+    expect(refused.status).not.toBe(200);
+    expect(JSON.parse(refused.body)).toMatchObject({
+      kind: "error",
+      error: { code: "forbidden" },
+    });
+    const misaligned = await part("blob.bin", 7, "identity");
+    expect(misaligned.status).not.toBe(200);
   } finally {
     await f.server.close();
   }
