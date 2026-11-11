@@ -79,12 +79,19 @@ afterEach(() => {
   retainedRefs.index = 0;
   retainedRefs.slots = [];
 });
-function render(locale: "en" | "zh", project = false) {
+function render(
+  locale: "en" | "zh",
+  project = false,
+  buildCompatible = true,
+  service = false,
+) {
   retainedRefs.index = 0;
   vi.stubGlobal("window", { location: new URL("http://127.0.0.1:43210/app") });
   return renderToStaticMarkup(
     <LocaleProvider initial={locale}>
       <App
+        buildCompatible={buildCompatible}
+        onOpenService={service ? () => {} : undefined}
         project={
           project
             ? {
@@ -200,6 +207,13 @@ it("a real compatibility failure remains distinct from stale and is never declar
     "unavailable / mismatch — reload built assets; normal actions disabled",
   );
   expect(html).not.toContain("Shared compatibility: compatible");
+});
+it("an incompatible browser build is not presented as prepare-on-send", () => {
+  const html = render("zh", true, false, true);
+  expect(html).toContain("不可用 / 不匹配——请重新加载构建产物；常规操作已禁用");
+  expect(html).not.toContain("重命名和归档需要执行服务；将在下次发送时启动。");
+  expect(html).not.toContain('aria-label="Cadence 服务"');
+  expect(render("zh", true, true, true)).toContain('aria-label="Cadence 服务"');
 });
 
 it.each([

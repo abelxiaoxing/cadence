@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  compatibleBuild,
+  type ServiceBuild,
+} from "../../src/service/contracts/build.ts";
 import type {
   ProjectEntry,
   WorkbenchEntry,
@@ -13,15 +17,29 @@ import {
 import {
   prepareDirectorySend,
   selectActivity,
+  selectDirectory,
 } from "../../web/src/client/project-entry";
 import { sourceBuild } from "../helpers/source-build.ts";
 
 const build = vi.hoisted(() => ({ available: true }));
-vi.mock("../../web/src/client/build-identity", async () => ({
-  get localBuild() {
-    return build.available ? sourceBuild.assets : undefined;
-  },
-}));
+vi.mock("../../web/src/client/build-identity", () => {
+  const compatible = (service: ServiceBuild) =>
+    compatibleBuild(
+      service,
+      build.available ? { kind: "browser", ...sourceBuild.assets } : null,
+    );
+  return {
+    RELOAD_REQUIRED: "reload-required",
+    get localBuild() {
+      return build.available ? sourceBuild.assets : undefined;
+    },
+    browserBuildCompatible: compatible,
+    assertBrowserBuildCompatible(service: ServiceBuild) {
+      if (!build.available) throw new Error("unsupported-context");
+      if (!compatible(service)) throw new Error("reload-required");
+    },
+  };
+});
 const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
 afterEach(() => {
   Object.defineProperties(AbortSignal, descriptors);
@@ -87,6 +105,70 @@ it.each(["entry", "identity", "build", "body", "pre-abort", "fetch-throw"])(
     );
   },
 );
+it("refuses a stale loaded browser before any selection or preparation POST", async () => {
+  const staleEntry = {
+    ...entry,
+    build: {
+      ...entry.build,
+      assets: { ...entry.build.assets, buildId: "0".repeat(64) },
+    },
+  };
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    if (init?.method === "POST") throw new Error("must not dispatch");
+    return Response.json(staleEntry);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const signal = new AbortController().signal;
+  for (const run of [
+    () => selectDirectory("/fixture/sub", signal),
+    () => prepareDirectorySend(selected, signal),
+  ])
+    await expect(run()).rejects.toMatchObject({ message: "reload-required" });
+  expect(
+    fetcher.mock.calls.filter(([, init]) => init?.method === "POST"),
+  ).toHaveLength(0);
+  expect(unsentMessage("not-dispatched", "reload-required")).toContain(
+    "No preparation request was sent",
+  );
+});
+
+it("preserves a reliable no-effect preparation refusal", async () => {
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    if (init?.method !== "POST") return Response.json(entry);
+    return Response.json(
+      {
+        kind: "error",
+        error: {
+          code: "unsupported-context",
+          effect: "none",
+          recovery: "refresh",
+        },
+      },
+      { status: 409 },
+    );
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const progress = vi.fn();
+  await expect(
+    prepareDirectorySend(
+      selected,
+      new AbortController().signal,
+      location,
+      progress,
+    ),
+  ).rejects.toMatchObject({
+    message: "unsupported-context",
+    effect: "none",
+  });
+  expect(progress.mock.calls).toEqual([["dispatched"]]);
+  expect(unsentMessage("dispatched", "unsupported-context", "none")).toContain(
+    "started no execution service",
+  );
+  expect(
+    unsentMessage("dispatched", "unsupported-context", "none"),
+  ).not.toContain("outcome is unknown");
+});
+
 it.each([
   "lost",
   "malformed",

@@ -47,6 +47,8 @@ const ERROR_TEXT: Readonly<Record<string, MessageKey>> = {
   "retired-conversation":
     "This Cadence conversation format is no longer supported. Start a new conversation; existing files are kept ({code}).",
   "unsupported-context": "This is not supported here ({code}).",
+  "reload-required":
+    "Cadence WebUI has updated. Reload this page before continuing; nothing was sent or started.",
   capacity: "A limit was reached ({code}).",
 };
 /** A bare public error code gets a readable sentence; the code itself stays

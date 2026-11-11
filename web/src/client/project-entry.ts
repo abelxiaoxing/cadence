@@ -7,9 +7,9 @@ import {
   type ProjectEntry,
 } from "../../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../../src/service/contracts/models.ts";
-import { localBuild } from "./build-identity";
+import { assertBrowserBuildCompatible, localBuild } from "./build-identity";
 import type { PreparationProgress } from "./conversation-send";
-import { errorCode, readJson } from "./service";
+import { errorCode, readJson, serviceError } from "./service";
 
 async function entry(signal?: AbortSignal) {
   const response = await fetch("/workbench/v1", {
@@ -29,7 +29,9 @@ async function command(
   signal?: AbortSignal,
   dispatched?: () => void,
 ) {
-  if (!localBuild) throw new Error("unsupported-context");
+  // The entry was read for this exact operation. Refuse an old loaded page
+  // before dispatch instead of turning a known build mismatch into uncertainty.
+  assertBrowserBuildCompatible(current.build);
   const init: RequestInit = {
     method: "POST",
     credentials: "same-origin",
@@ -48,8 +50,8 @@ async function command(
   dispatched?.();
   const response = await pending;
   const reply = await readJson(response);
+  if (!response.ok) throw serviceError(reply);
   if (
-    !response.ok ||
     !reply ||
     typeof reply !== "object" ||
     !("kind" in reply) ||
