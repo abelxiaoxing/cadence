@@ -121,18 +121,20 @@ export function conversationInputs(channel, session, fail) {
      * Pi never looked at again waits first. Without one the turn is over and
      * nothing further is taken. */
     next() {
+      if (!open) return undefined;
       recall();
       const input = waiting.shift();
       if (!input) open = false;
       return input;
     },
-    /** The turn failed or is being stopped: nothing further is delivered. */
+    /** The turn failed or is being stopped: nothing further is handed to Pi
+     * or prompted. A steer Pi had already taken from its queue may still be
+     * written before the reply aborts, so the steers keep their order here
+     * and that message is still marked as its own. */
     stop() {
       open = false;
       waiting.length = 0;
-      if (!steering.length) return;
-      steering.length = 0;
-      session.clearQueue();
+      if (steering.length) session.clearQueue();
     },
     close() {
       open = false;

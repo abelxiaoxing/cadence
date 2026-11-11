@@ -111,7 +111,7 @@ const until = async (condition) => {
   expect(condition()).toBe(true);
 };
 
-async function fixture(reply, effect = async () => {}) {
+async function fixture(reply, effect = async () => {}, observe = () => {}) {
   const cwd = mkdtempSync(join(tmpdir(), "worker-inputs-"));
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -220,6 +220,7 @@ async function fixture(reply, effect = async () => {}) {
   let command = run,
     recordedUser = null;
   session.agent.subscribe(async (event) => {
+    observe(event);
     if (
       event.type === "message_end" &&
       ["user", "assistant", "toolResult"].includes(event.message.role)
@@ -423,6 +424,45 @@ it("a reply that fails for good delivers nothing further: Pi's queue is emptied 
     f.send("queue", "After the failure");
     expect(f.inputs.next()).toBeUndefined();
     expect(f.failures).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
+it("a steer Pi had already taken when the turn is stopped is still marked as its own, and nothing follows it", async () => {
+  const tool = gate();
+  let stop = () => {};
+  const f = await fixture(
+    (n) => (n === 1 ? response(call) : response(said("never used"))),
+    () => tool.held,
+    (event) => {
+      // The stop lands after Pi took the steer from its queue and before
+      // its message is written.
+      if (event.type === "message_start" && event.message.role === "user")
+        stop();
+    },
+  );
+  try {
+    const running = f.prompt("Start");
+    await until(() => f.requests.length === 1 && f.session.isStreaming);
+    const taken = f.send("steer", "Taken"),
+      held = f.send("steer", "Held");
+    f.send("queue", "Queued");
+    stop = () => {
+      stop = () => {};
+      f.inputs.stop();
+      void f.session.abort();
+    };
+    tool.open();
+    await running;
+    expect(f.failures).toEqual([]);
+    expect(f.written()).toEqual([
+      { text: "Start", commands: [f.run] },
+      { text: "Taken", commands: [taken] },
+    ]);
+    expect(JSON.stringify(f.written())).not.toContain(held);
+    expect(f.inputs.next()).toBeUndefined();
+    expect(f.session.pendingMessageCount).toBe(0);
   } finally {
     await f.close();
   }
