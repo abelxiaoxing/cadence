@@ -97,9 +97,9 @@ function fixture(joinResearch: () => Promise<void> = async () => {}) {
       controls.set(input.commandId, control);
       return { kind: "accepted", commandId: input.commandId };
     },
-    latestCommand: (id: string) => {
+    latestRun: (id: string) => {
       const commandId = turns.get(id)?.at(-1);
-      return commandId ? { commandId, status: "completed" } : null;
+      return commandId ? { commandId, settled: true } : null;
     },
   };
   const runs = new Map<string, WorkflowRun>();
@@ -182,7 +182,7 @@ function fixture(joinResearch: () => Promise<void> = async () => {}) {
         controlBound: conversations.controlBound,
         controlKey: conversations.controlKey,
         hasCommand: conversations.hasCommand,
-        latestCommand: conversations.latestCommand,
+        latestRun: conversations.latestRun,
         approvalHead: () => null,
       },
     },

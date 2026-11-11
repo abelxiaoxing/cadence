@@ -510,7 +510,9 @@ export class ConversationWorkflow {
     recording: () => void,
   ): WorkbenchResult {
     const { state, file } = this.records.usable(c.conversationId);
-    const latest = this.o.conversations.records.latestCommand(c.conversationId);
+    // The browser's last message belongs to the newest run: the coordinator
+    // turn this mode names, with every message sent into it, all settled.
+    const latest = this.o.conversations.records.latestRun(c.conversationId);
     if (
       !state.enabled ||
       c.revision !== state.revision ||
@@ -519,7 +521,7 @@ export class ConversationWorkflow {
       state.proposal.digest !== c.digest ||
       !latest ||
       latest.commandId !== state.head ||
-      ["queued", "running", "unknown"].includes(latest.status) ||
+      !latest.settled ||
       this.active.has(c.conversationId)
     )
       throw new ContractError("stale");

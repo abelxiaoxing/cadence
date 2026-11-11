@@ -43,6 +43,17 @@ Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.
 When an observation reply is lost, ask for status; do not infer that the action was absent.
 
+## Messages while a reply is running
+
+The service accepts a further message for a reply that is still running, in one of two ways.
+A **steer** reaches the model at its next opportunity, after the tool calls in progress and before its next request, and continues the conversation as its own turn from there.
+A **queued** message waits and is sent once the reply has ended normally.
+Either one uses the running reply's directory and model, carries no images, and is never read as plan approval, mode entry or exit.
+A queued message that is still waiting can be withdrawn; a steer is in the model's queue as soon as it is accepted.
+If the reply fails, is stopped or the service restarts first, a waiting message is not delivered and nothing sends it later: the conversation says which messages were left, and you send one again if you still want it.
+Stopping the reply stops all of it, including what was sent into it.
+The WebUI composer does not offer these two controls yet.
+
 ## Resume a sent conversation on another device
 
 Open the same authenticated workbench on the other device with the **complete conversation link**: `/app?project=<project-key>#chat=<session-id>`.

@@ -80,6 +80,7 @@
     "src/session-entries.mjs",
     "src/session-file.mjs",
     "src/session-rename.mjs",
+    "src/worker-inputs.mjs",
     "src/image-content.mjs",
     "src/session-sharing.ts",
     "src/conversation-resources.mjs",

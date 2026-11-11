@@ -149,6 +149,16 @@ export type WorkbenchRead =
 export const CONVERSATION_SEND_BYTES = 16 * 1024;
 /** Code points of a conversation name: as many as a listed title shows. */
 export const CONVERSATION_NAME_CHARS = 100;
+/** Messages one running reply takes besides its own, withdrawn ones included;
+ * with that message they stay within a session's command index. */
+export const RUN_INPUTS = 32;
+/** Messages sent into one running reply that may be undelivered at a time. */
+export const WAITING_INPUTS = 8;
+/** Encoded bytes of a waiting message's text a conversation read states. */
+export const PENDING_TEXT_BYTES = 256;
+/** Encoded bytes of an undelivered message's text a conversation read states:
+ * a whole message unless most of it needs escaping. */
+export const UNDELIVERED_TEXT_BYTES = 2 * CONVERSATION_SEND_BYTES;
 export type ImageSend = Extract<
   WorkbenchCommand,
   { kind: "send" | "cadence-send" }
@@ -230,6 +240,30 @@ export type WorkbenchCommand =
       text: string;
       images?: string[];
       model: ChoiceVersion;
+    }
+  | {
+      /** A message for a reply that is running: `turnId` is that reply's
+       * command, as `summary.live` names it. `steer` reaches the model at
+       * Pi's next opportunity, after the tool calls in progress and before
+       * its next request; `queue` is sent once the reply has ended normally.
+       * It takes the reply's directory and model, and carries no images. */
+      kind: "conversation-input";
+      commandId: string;
+      conversationId: string;
+      turnId: string;
+      epoch: string;
+      mode: "steer" | "queue";
+      text: string;
+    }
+  | {
+      /** Withdraws a `conversation-input` that still waits: `inputId` is its
+       * command. One already handed to Pi or delivered refuses as `conflict`. */
+      kind: "conversation-input-cancel";
+      commandId: string;
+      conversationId: string;
+      turnId: string;
+      epoch: string;
+      inputId: string;
     }
   | {
       kind: "interrupt";
@@ -350,12 +384,21 @@ export interface ChatContext {
   model: string;
 }
 /** A browser message that left nothing in the session, shown after the branch
- * it was sent from: a refusal before any model call or a Cadence control reply. */
+ * it was sent from: a refusal before any model call, a Cadence control reply,
+ * or a message sent into a reply that ended before delivering it. */
 export interface ChatAttempt {
   commandId: string;
   text: string;
   status: ChatStatus;
   notice: string;
+}
+/** A message sent into a running reply that has not reached the model: shown
+ * beside the reply, never as a turn. */
+export interface ChatPending {
+  commandId: string;
+  mode: "steer" | "queue";
+  /** At most `PENDING_TEXT_BYTES` of it, encoded. */
+  text: string;
 }
 /** A user message in a session's tree, linked to the nearest earlier one. */
 export interface ChatTreeNode {
@@ -523,6 +566,15 @@ export type WorkbenchResult =
        * when no model response is within the reader's walk of the branch end,
        * or the service predates it. */
       context?: ChatContext;
+      /** Messages sent into the reply in progress that have not been
+       * delivered, oldest first; one Pi does not hold yet can be withdrawn.
+       * Absent when there are none. */
+      pending?: ChatPending[];
+      /** Messages sent into the branch's last reply that ended without their
+       * delivery, oldest first, each with its reason; nothing sends them
+       * again. Shown, like `attempt`, until the branch moves on. Absent when
+       * there are none. */
+      undelivered?: ChatAttempt[];
     }
   | {
       kind: "conversation-tree";
@@ -919,21 +971,39 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       model: decodeChoiceVersion(o.model),
     };
   }
-  if (kind === "interrupt") {
+  if (
+    kind === "interrupt" ||
+    kind === "conversation-input" ||
+    kind === "conversation-input-cancel"
+  ) {
     const o = closed(v, [
       "kind",
       "commandId",
       "conversationId",
       "turnId",
       "epoch",
+      ...(kind === "conversation-input"
+        ? ["mode", "text"]
+        : kind === "conversation-input-cancel"
+          ? ["inputId"]
+          : []),
     ]);
-    return {
-      kind,
+    const run = {
       commandId: decodeId(o.commandId),
       conversationId: decodeSessionId(o.conversationId),
       turnId: decodeId(o.turnId),
       epoch: decodeId(o.epoch),
     };
+    if (kind === "conversation-input")
+      return {
+        kind,
+        ...run,
+        mode: oneOf(o.mode, ["steer", "queue"]),
+        text: text(o.text, CONVERSATION_SEND_BYTES, true),
+      };
+    return kind === "interrupt"
+      ? { kind, ...run }
+      : { kind, ...run, inputId: decodeId(o.inputId) };
   }
   if (kind === "conversation-rename") {
     const o = closed(v, ["kind", "commandId", "conversationId", "name"]);
@@ -1155,6 +1225,14 @@ function decodeChatAttempt(v: unknown): ChatAttempt {
     notice: text(o.notice, 1024),
   };
 }
+function decodeChatPending(v: unknown): ChatPending {
+  const o = closed(v, ["commandId", "mode", "text"]);
+  return {
+    commandId: decodeId(o.commandId),
+    mode: oneOf(o.mode, ["steer", "queue"]),
+    text: text(o.text, PENDING_TEXT_BYTES),
+  };
+}
 function decodeChatContext(v: unknown): ChatContext {
   const o = closed(v, ["tokens", "provider", "model"]);
   return {
@@ -1323,6 +1401,8 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       "attempt",
       ...(Object.hasOwn(v ?? {}, "commands") ? ["commands"] : []),
       ...(Object.hasOwn(v ?? {}, "context") ? ["context"] : []),
+      ...(Object.hasOwn(v ?? {}, "pending") ? ["pending"] : []),
+      ...(Object.hasOwn(v ?? {}, "undelivered") ? ["undelivered"] : []),
     ]);
     const summary = nullable(o.summary, decodeChatSummary),
       turns = integer(o.turns, 0);
@@ -1335,6 +1415,14 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       ...(o.context === undefined
         ? {}
         : { context: decodeChatContext(o.context) }),
+      ...(o.pending === undefined
+        ? {}
+        : { pending: list(o.pending, WAITING_INPUTS, decodeChatPending) }),
+      ...(o.undelivered === undefined
+        ? {}
+        : {
+            undelivered: list(o.undelivered, WAITING_INPUTS, decodeChatAttempt),
+          }),
       summary,
       leaf: nullable(o.leaf, decodeEntryId),
       continues: bool(o.continues),
