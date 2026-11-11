@@ -143,8 +143,21 @@ export type WorkbenchRead =
   | { kind: "conversation-tree"; id: string; leaf: string | null }
   | { kind: "files"; path: string; location?: ConversationLocation }
   | { kind: "file"; path: string; location?: ConversationLocation }
+  | {
+      /** One part of a file's exact bytes, for a download; `offset` is a
+       * multiple of `FILE_PART_BYTES`. */
+      kind: "file-part";
+      path: string;
+      offset: number;
+      location?: ConversationLocation;
+    }
   | { kind: "directories"; path: string }
   | { kind: "projects" };
+/** Bytes of one `file-part` reply: their base64 is 256KiB, so a part always
+ * fits one read reply. */
+export const FILE_PART_BYTES = 192 * 1024;
+/** The largest file a download reads; a larger one is refused as oversize. */
+export const FILE_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 /** Maximum UTF-8 bytes of one explicit conversation Send. */
 export const CONVERSATION_SEND_BYTES = 16 * 1024;
 /** Code points of a conversation name: as many as a listed title shows. */
@@ -609,6 +622,18 @@ export type WorkbenchResult =
       limited: boolean;
     }
   | { kind: "file"; path: string; text: string; limited: boolean }
+  | {
+      kind: "file-part";
+      path: string;
+      /** The whole file's size and its identity as this part was read: parts
+       * that disagree on either are not parts of one file. */
+      size: number;
+      version: string;
+      /** Base64 of at most `FILE_PART_BYTES` bytes from the offset asked for. */
+      data: string;
+      /** Where the next part starts; null after the last one. */
+      next: number | null;
+    }
   | { kind: "projects"; entries: { path: string; current: boolean }[] }
   | { kind: "accepted"; commandId: string }
   | { kind: "project"; commandId: string; path: string; link: string };
@@ -754,6 +779,24 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
         id: decodeSessionId(o.id),
         leaf: nullable(o.leaf, decodeEntryId),
         known: nullable(o.known, decodeEntryId),
+      };
+    }
+    case "file-part": {
+      const scoped = Object.hasOwn(v ?? {}, "location");
+      const o = closed(v, [
+        "kind",
+        "path",
+        "offset",
+        ...(scoped ? ["location"] : []),
+      ]);
+      const offset = integer(o.offset, 0);
+      if (offset % FILE_PART_BYTES || offset >= FILE_DOWNLOAD_BYTES)
+        throw new ContractError("invalid");
+      return {
+        kind,
+        path: text(o.path, 4096),
+        offset,
+        ...(scoped ? { location: decodeConversationLocation(o.location) } : {}),
       };
     }
     default: {
@@ -1511,6 +1554,23 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
       text: text(o.text, 256 * 1024),
       limited: bool(o.limited),
     };
+  }
+  if (kind === "file-part") {
+    const o = closed(v, ["kind", "path", "size", "version", "data", "next"]);
+    const size = integer(o.size, 0),
+      data = text(o.data, (FILE_PART_BYTES / 3) * 4),
+      next = nullable(o.next, (n) => integer(n, 1)),
+      version = text(o.version, 32, true);
+    if (
+      size > FILE_DOWNLOAD_BYTES ||
+      !/^[a-f0-9]{32}$/.test(version) ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        data,
+      ) ||
+      (next !== null && (next % FILE_PART_BYTES !== 0 || next >= size))
+    )
+      throw new ContractError("invalid");
+    return { kind, path: text(o.path, 4096), size, version, data, next };
   }
   if (kind === "projects") {
     const o = closed(v, ["kind", "entries"]);

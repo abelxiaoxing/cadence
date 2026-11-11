@@ -1,4 +1,6 @@
-/** Bounded readonly files and directory discovery. No Git filters or shell route. */
+/** Bounded readonly files, downloads in parts and directory discovery. No Git
+ * filters or shell route. */
+import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -8,13 +10,19 @@ import {
   openSync,
   readSync,
   realpathSync,
+  type Stats,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { sanitizeText, TextSanitizer } from "../worker-redaction.mjs";
 import { canonicalAmbientRoot, safeDirectory } from "../workspace.ts";
 import { ContractError } from "./contracts/core.ts";
-import type { FileEntry, WorkbenchResult } from "./contracts/workbench.ts";
+import {
+  FILE_DOWNLOAD_BYTES,
+  FILE_PART_BYTES,
+  type FileEntry,
+  type WorkbenchResult,
+} from "./contracts/workbench.ts";
 
 export function inside(root: string, path: string): boolean {
   const r = relative(root, path);
@@ -162,7 +170,15 @@ export class WorkbenchFiles {
       limited,
     };
   }
-  read(path: string): WorkbenchResult {
+  /** One bounded read of a selected regular file: up to `limit` bytes from
+   * `offset`, with the file's state at open. A file replaced, linked or
+   * changed around the read is refused as stale, never returned in part. */
+  private bytes(
+    path: string,
+    offset: number,
+    limit: number,
+    maximum = Number.POSITIVE_INFINITY,
+  ): { buffer: Buffer; stat: Stats } {
     const selected = this.selected(path),
       before = lstatSync(selected);
     if (!before.isFile()) throw new ContractError("forbidden");
@@ -179,17 +195,22 @@ export class WorkbenchFiles {
         before.ino !== opened.ino
       )
         throw new ContractError("stale");
-      // Small files only. No unbounded allocation or raw binary/image download.
-      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
+      if (opened.size > maximum) throw new ContractError("oversize");
+      // A later part of a file that has since shrunk is not that file's.
+      if (offset > opened.size || (offset > 0 && offset === opened.size))
+        throw new ContractError("stale");
+      // Bounded parts only. No unbounded allocation.
+      const buffer = Buffer.alloc(Math.min(opened.size - offset, limit));
       let at = 0;
       while (at < buffer.length) {
-        const n = readSync(fd, buffer, at, buffer.length - at, at);
+        const n = readSync(fd, buffer, at, buffer.length - at, offset + at);
         if (!n) break;
         at += n;
       }
       const after = fstatSync(fd),
         current = lstatSync(selected);
       if (
+        at !== buffer.length ||
         after.size !== opened.size ||
         after.mtimeMs !== opened.mtimeMs ||
         after.nlink !== 1 ||
@@ -199,23 +220,47 @@ export class WorkbenchFiles {
         current.dev !== opened.dev
       )
         throw new ContractError("stale");
-      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
-        buffer.subarray(0, at),
-        { stream: at < opened.size },
-      );
-      if (decoded.includes("\0"))
-        throw new ContractError("unsupported-context");
-      return {
-        kind: "file",
-        path,
-        text: new TextSanitizer(this.secrets()).write(
-          decoded,
-          at === opened.size,
-        ),
-        limited: at < opened.size,
-      };
+      return { buffer, stat: opened };
     } finally {
       closeSync(fd);
     }
+  }
+  /** A redacted text preview of a small UTF-8 file's beginning. */
+  read(path: string): WorkbenchResult {
+    const { buffer, stat } = this.bytes(path, 0, 128 * 1024);
+    const whole = buffer.length === stat.size;
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(buffer, {
+      stream: !whole,
+    });
+    if (decoded.includes("\0")) throw new ContractError("unsupported-context");
+    return {
+      kind: "file",
+      path,
+      text: new TextSanitizer(this.secrets()).write(decoded, whole),
+      limited: !whole,
+    };
+  }
+  /** One part of a file's exact bytes, for a download. The path refusals are
+   * the preview's; the bytes are the file's own: nothing in them is redacted,
+   * decoded or scanned. */
+  part(path: string, offset: number): WorkbenchResult {
+    const { buffer, stat } = this.bytes(
+      path,
+      offset,
+      FILE_PART_BYTES,
+      FILE_DOWNLOAD_BYTES,
+    );
+    const end = offset + buffer.length;
+    return {
+      kind: "file-part",
+      path,
+      size: stat.size,
+      version: createHash("sha256")
+        .update(`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`)
+        .digest("hex")
+        .slice(0, 32),
+      data: buffer.toString("base64"),
+      next: end < stat.size ? end : null,
+    };
   }
 }

@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   realpathSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +22,8 @@ import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
+  FILE_DOWNLOAD_BYTES,
+  FILE_PART_BYTES,
   PENDING_TEXT_BYTES,
   WAITING_INPUTS,
 } from "../src/service/contracts/workbench.ts";
@@ -171,6 +174,113 @@ it("file previews refuse hard-linked private files and hide credential paths", (
   expect(listing.kind).toBe("files");
   if (listing.kind !== "files") throw new Error("Missing files");
   expect(listing.entries).toEqual([]);
+});
+
+it("a download reads a file's exact bytes in parts that each fit one reply, binary and unredacted", () => {
+  const root = mkdtempSync(join(tmpdir(), "wb-file-parts-"));
+  const files = new WorkbenchFiles(root, [], () => ["unique-secret-value"]);
+  // Not UTF-8, longer than two parts, and holding what a preview would redact.
+  const bytes = Buffer.alloc(FILE_PART_BYTES * 2 + 5);
+  for (let at = 0; at < bytes.length; at++) bytes[at] = (at * 31) % 256;
+  bytes.write("token=unique-secret-value", 16, "latin1");
+  writeFileSync(join(root, "blob.bin"), bytes);
+  writeFileSync(join(root, "empty.bin"), "");
+  expect(() => files.read("blob.bin")).toThrow();
+  const parts: Buffer[] = [];
+  let offset: number | null = 0,
+    version = "";
+  while (offset !== null) {
+    const part = decodeWorkbenchResult(files.part("blob.bin", offset));
+    if (part.kind !== "file-part") throw new Error("Missing part");
+    expect(part.size).toBe(bytes.length);
+    expect(part.data.length).toBeLessThanOrEqual((FILE_PART_BYTES / 3) * 4);
+    version ||= part.version;
+    expect(part.version).toBe(version);
+    parts.push(Buffer.from(part.data, "base64"));
+    offset = part.next;
+  }
+  expect(parts.map((part) => part.length)).toEqual([
+    FILE_PART_BYTES,
+    FILE_PART_BYTES,
+    5,
+  ]);
+  expect(Buffer.concat(parts).equals(bytes)).toBe(true);
+  expect(files.part("empty.bin", 0)).toMatchObject({
+    size: 0,
+    data: "",
+    next: null,
+  });
+  // A changed file is another version; a part past its end is not its part.
+  writeFileSync(join(root, "blob.bin"), bytes.subarray(0, FILE_PART_BYTES));
+  const changed = files.part("blob.bin", 0);
+  expect(changed.kind === "file-part" && changed.version).not.toBe(version);
+  expect(() => files.part("blob.bin", FILE_PART_BYTES)).toThrow(
+    expect.objectContaining({ code: "stale" }),
+  );
+  // Sparse, so no such file is written: only its size is over the bound.
+  writeFileSync(join(root, "huge.bin"), "");
+  truncateSync(join(root, "huge.bin"), FILE_DOWNLOAD_BYTES + 1);
+  expect(() => files.part("huge.bin", 0)).toThrow(
+    expect.objectContaining({ code: "oversize" }),
+  );
+});
+
+it("a download keeps the preview's path refusals and its codec is closed and bounded", () => {
+  const root = mkdtempSync(join(tmpdir(), "wb-file-part-paths-")),
+    project = join(root, "project"),
+    privateRoot = join(root, "private");
+  mkdirSync(project, { mode: 0o700 });
+  mkdirSync(privateRoot, { mode: 0o700 });
+  mkdirSync(join(project, "sub"), { mode: 0o700 });
+  writeFileSync(join(privateRoot, "secret.txt"), "fabricated-credential");
+  linkSync(join(privateRoot, "secret.txt"), join(project, "innocent.txt"));
+  symlinkSync(join(privateRoot, "secret.txt"), join(project, "linked.txt"));
+  writeFileSync(join(project, ".env"), "TOKEN=fabricated");
+  writeFileSync(join(project, "id_ed25519"), "fabricated-private-key");
+  const files = new WorkbenchFiles(project, [privateRoot], () => []);
+  for (const path of [
+    "innocent.txt",
+    "linked.txt",
+    ".env",
+    "id_ed25519",
+    "sub",
+    "../private/secret.txt",
+    join(privateRoot, "secret.txt"),
+  ])
+    expect(() => files.part(path, 0), path).toThrow(ContractError);
+  const read = { kind: "file-part", path: "a.bin", offset: 0 };
+  expect(decodeWorkbenchRead(read)).toEqual(read);
+  expect(
+    decodeWorkbenchRead({ ...read, offset: FILE_PART_BYTES * 3 }),
+  ).toMatchObject({ offset: FILE_PART_BYTES * 3 });
+  for (const bad of [
+    { ...read, offset: 1 },
+    { ...read, offset: -FILE_PART_BYTES },
+    { ...read, offset: FILE_DOWNLOAD_BYTES },
+    { ...read, version: "0".repeat(32) },
+    { kind: "file-part", path: "a.bin" },
+  ])
+    expect(() => decodeWorkbenchRead(bad)).toThrow();
+  const part = {
+    kind: "file-part",
+    path: "a.bin",
+    size: 3,
+    version: "0".repeat(32),
+    data: "AAEC",
+    next: null,
+  };
+  expect(decodeWorkbenchResult(part)).toEqual(part);
+  for (const bad of [
+    { ...part, data: "AAE" },
+    { ...part, data: "AA\nEC" },
+    { ...part, data: "A".repeat((FILE_PART_BYTES / 3) * 4 + 4) },
+    { ...part, version: "not-a-version" },
+    { ...part, size: FILE_DOWNLOAD_BYTES + 1 },
+    { ...part, next: 1 },
+    { ...part, next: FILE_PART_BYTES },
+    { ...part, text: "extra" },
+  ])
+    expect(() => decodeWorkbenchResult(bad)).toThrow();
 });
 
 it("folder browsing names the home with ~ and refuses files and links instead of calling them unreadable", () => {
