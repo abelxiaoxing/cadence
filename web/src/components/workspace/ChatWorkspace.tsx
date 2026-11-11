@@ -61,6 +61,7 @@ import {
   type PendingSend,
   type PreparationStage,
   type PrepareForSend,
+  preparationEffect,
   draftKey as selectDraftKey,
   selector,
   sendCommand,
@@ -1174,12 +1175,20 @@ export function ChatWorkspace({
       onChanged();
     } catch (error) {
       if (current()) {
+        const code = error instanceof Error ? error.message : "unavailable";
+        const effect = preparationEffect(error);
         const text = t(
-          dispatched ? sendFailureMessage() : unsentMessage(preparation),
-          { code: error instanceof Error ? error.message : "unavailable" },
+          dispatched
+            ? sendFailureMessage()
+            : unsentMessage(preparation, code, effect),
+          { code },
         );
-        // Unsent with no preparation dispatched: nothing reached the owner.
-        if (!dispatched && preparation === "not-dispatched") refuse(text);
+        // A pre-dispatch failure or reliable no-effect refusal changed nothing.
+        if (
+          !dispatched &&
+          (preparation === "not-dispatched" || effect === "none")
+        )
+          refuse(text);
         else setError(text);
       }
     } finally {

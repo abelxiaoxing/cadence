@@ -99,6 +99,7 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 ];
 export function App({
   api: provided,
+  buildCompatible = true,
   onOpenProject,
   homeFolder,
   projectEntries,
@@ -114,6 +115,8 @@ export function App({
   onDraftApplied,
 }: {
   api?: BrowserClient;
+  /** The loaded browser and its workbench gateway must match before mutations. */
+  buildCompatible?: boolean;
   previewModels?: PreviewModels;
   initialDraft?: FolderDraft & { conversationId: string };
   onDraftApplied?(conversationId: string): void;
@@ -208,7 +211,8 @@ export function App({
     workspace.observation ||
     workspace.error ||
     workspace.transportStatus === "stale" ||
-    workspace.compatible === false
+    workspace.compatible === false ||
+    !buildCompatible
   )
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
@@ -605,6 +609,7 @@ export function App({
   const observationFresh = executionReady && viewerFresh;
   // What an owner-side action needs: a live compatible owner, freshly observed.
   const actionsReady =
+    buildCompatible &&
     executionReady &&
     !!workspace.workspace &&
     !!workspace.compatible &&
@@ -618,46 +623,50 @@ export function App({
     (!project ||
       (!execution.value && execution.readiness === "unknown") ||
       execution.readiness === "running");
-  const modelAvailability: ModelAvailability = executionStopped
-    ? {
-        status:
-          execution.readiness === "not-started" ? "not-started" : "stopped",
-      }
-    : workspace.compatible === false
-      ? { status: "incompatible" }
-      : executionReady &&
-          viewerFresh &&
-          workspace.compatible &&
-          workspace.epoch &&
-          (!project || execution.value?.epoch === workspace.epoch)
-        ? {
-            status: "ready",
-            epoch: workspace.epoch,
-            attachmentVersion: workspace.attachmentVersion,
-          }
-        : { status: connecting ? "connecting" : "unavailable" };
+  const modelAvailability: ModelAvailability = !buildCompatible
+    ? { status: "incompatible" }
+    : executionStopped
+      ? {
+          status:
+            execution.readiness === "not-started" ? "not-started" : "stopped",
+        }
+      : workspace.compatible === false
+        ? { status: "incompatible" }
+        : executionReady &&
+            viewerFresh &&
+            workspace.compatible &&
+            workspace.epoch &&
+            (!project || execution.value?.epoch === workspace.epoch)
+          ? {
+              status: "ready",
+              epoch: workspace.epoch,
+              attachmentVersion: workspace.attachmentVersion,
+            }
+          : { status: connecting ? "connecting" : "unavailable" };
   const connection = detached
     ? "Viewer disconnected"
-    : connecting
-      ? "Connecting…"
-      : project && execution.readiness === "unknown"
-        ? "Project readiness unknown"
-        : project && execution.readiness === "stale"
-          ? "Project observation stale"
-          : executionStopped
-            ? "Ready to prepare on Send"
-            : !viewerFresh
-              ? "Viewer observation stale"
-              : !workspace.workspace
-                ? "Viewer observation unavailable"
-                : (observation.state?.connection ??
-                  (taskId ? "Task snapshot not observed yet" : "Chat ready"));
+    : !buildCompatible
+      ? "unavailable / mismatch — reload built assets; normal actions disabled"
+      : connecting
+        ? "Connecting…"
+        : project && execution.readiness === "unknown"
+          ? "Project readiness unknown"
+          : project && execution.readiness === "stale"
+            ? "Project observation stale"
+            : executionStopped
+              ? "Ready to prepare on Send"
+              : !viewerFresh
+                ? "Viewer observation stale"
+                : !workspace.workspace
+                  ? "Viewer observation unavailable"
+                  : (observation.state?.connection ??
+                    (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   return (
     <>
       <AppShell
         panels={panels}
-        compatible={workspace.compatible}
-        onOpenService={onOpenService}
+        compatible={buildCompatible ? workspace.compatible : false}
+        onOpenService={buildCompatible ? onOpenService : undefined}
         onRefresh={() => {
           workspace.refresh();
           execution.refresh();
@@ -909,13 +918,17 @@ export function App({
                 actionsUnavailable={
                   actionsReady
                     ? ""
-                    : executionStopped
+                    : !buildCompatible
                       ? t(
-                          "Rename and archive need the execution service; it starts with your next Send.",
+                          "unavailable / mismatch — reload built assets; normal actions disabled",
                         )
-                      : t(
-                          "Rename and archive are unavailable until the execution service is observed.",
-                        )
+                      : executionStopped
+                        ? t(
+                            "Rename and archive need the execution service; it starts with your next Send.",
+                          )
+                        : t(
+                            "Rename and archive are unavailable until the execution service is observed.",
+                          )
                 }
                 onConversationsChanged={(id) => {
                   // The lists and the open conversation's head say what is
@@ -1030,11 +1043,12 @@ export function App({
                 available={conversationAvailable}
                 canInterrupt={!!workspace.cancelCompatible}
                 enabled={
-                  prepareSend
+                  buildCompatible &&
+                  (prepareSend
                     ? conversationAvailable
                     : !!workspace.workspace &&
                       !!workspace.compatible &&
-                      !workspace.error
+                      !workspace.error)
                 }
                 modelAvailability={modelAvailability}
                 previewModels={previewModels}
@@ -1381,7 +1395,7 @@ export function App({
                 }
               />
             )}
-            {workspace.compatible === false && (
+            {(!buildCompatible || workspace.compatible === false) && (
               <StatusItem tone="warn">
                 {t(
                   "unavailable / mismatch — reload built assets; normal actions disabled",

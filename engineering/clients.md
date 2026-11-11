@@ -111,6 +111,9 @@ The target retires that initialization handoff after mounting, so returning to a
 Directory selection only remembers its canonical reference; it starts no service, creates no project-private state and requires no Pi login.
 The current explicit Send prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh compatible attachment.
+The loaded browser also compares its embedded build with every freshly read workbench entry before a directory/preparation POST.
+A mismatch shows an explicit reload notice and disables normal mutations without hiding readonly history; it never reloads or resends automatically, and the rejected command dispatches no POST.
+Text drafts remain in the tab, while the notice warns that unsent images do not survive reload.
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
@@ -118,6 +121,7 @@ Preparation is not message admission or execution consent.
 `project-entry.ts` reports `dispatched` only after local signal/build/body/identity preparation and the POST's handoff to fetch; that handoff is not proof of receipt.
 Only a decoded response matching the selected project/path/cwd and a non-null epoch reports `confirmed`, before the serialized viewer attachment wait.
 A request-before-dispatch failure cannot suggest owner startup; an unconfirmed dispatch is preparation-unknown with no message submitted, and an attachment failure cannot undo confirmation.
+A preparation response's reliable `effect:none` is preserved through the client and reported as a refusal with no owner startup, not as an unknown outcome.
 Final Send clears uncertainty only on a matched success or reliable `effect:none`; all other failures retain the original command ID for observation without replay.
 Failure keeps the draft; losing an accepted Send reply keeps its original command ID for observation only.
 Leaving the conversation or choosing another branch aborts its unsent continuation, never accepted startup or work.

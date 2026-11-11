@@ -243,6 +243,10 @@ export const zh = {
   "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
   "Preparation outcome is unknown ({code}); an execution service may have started. The message was not sent and its draft is kept.":
     "准备结果未知（{code}）；执行服务可能已启动。消息尚未发送，草稿已保留。",
+  "Execution preparation was refused with no effect ({code}). This attempt started no execution service; the message was not sent and its draft is kept.":
+    "执行服务准备被拒绝，未产生任何变更（{code}）。本次未启动执行服务；消息尚未发送，草稿已保留。",
+  "Cadence WebUI has updated. Reload this page before sending. No preparation request was sent, the message was not sent, and its draft is kept.":
+    "Cadence WebUI 已更新，请刷新页面后再发送。未发出准备请求，消息尚未发送，草稿已保留。",
   "Execution preparation was confirmed, but the message was not sent ({code}). Its draft is kept.":
     "执行服务准备已确认，但消息尚未发送（{code}）。草稿已保留。",
   "The message was not accepted ({code}). Its draft is kept.":
@@ -620,6 +624,11 @@ export const zh = {
     "活动运行列表不可用；没有记录不代表已结束。",
   "unbuilt source": "未构建的源码",
   "Local browser build: {build}.": "本地浏览器构建：{build}。",
+  "WebUI compatibility": "WebUI 兼容性",
+  "Reload the updated Cadence WebUI.": "请刷新已更新的 Cadence WebUI。",
+  "This page is no longer compatible with the service. Reload before sending or changing folders; text drafts stay in this tab, but unsent images do not.":
+    "当前页面与服务不再兼容。发送消息或切换目录前请刷新；文本草稿会保留在此标签页中，但未发送图片不会保留。",
+  "Reload WebUI": "刷新 WebUI",
   "Shared compatibility: {state}.": "共享兼容性：{state}。",
   compatible: "兼容",
   "unavailable / mismatch — reload built assets; normal actions disabled":
@@ -1140,6 +1149,8 @@ export const zh = {
   "A selected file was refused ({code}); nothing was changed. Run cadence doctor to see which file and field.":
     "所选文件被拒绝（{code}），未做任何修改。运行 cadence doctor 查看是哪个文件和字段。",
   "This is not supported here ({code}).": "此处不支持该操作（{code}）。",
+  "Cadence WebUI has updated. Reload this page before continuing; nothing was sent or started.":
+    "Cadence WebUI 已更新，请刷新页面后继续。未发送任何内容，也未启动任何服务。",
   "A limit was reached ({code}).": "已达到上限（{code}）。",
   More: "更多",
   "Refresh status": "刷新状态",

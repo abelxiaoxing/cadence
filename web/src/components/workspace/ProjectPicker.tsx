@@ -14,7 +14,7 @@ import {
 } from "react-icons/fi";
 import type { WorkbenchResult } from "../../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
-import { type MessageKey, useT } from "../../i18n/locale";
+import { describeError, type MessageKey, useT } from "../../i18n/locale";
 import { ActionDialog } from "../actions/ActionDialog";
 
 type Listing = Extract<WorkbenchResult, { kind: "files" | "directories" }>;
@@ -73,7 +73,7 @@ export function ProjectPicker({
   selectOnly?: boolean;
   onOpen?(path: string): Promise<void>;
 }) {
-  const { t, tx } = useT();
+  const { t } = useT();
   const [listing, setListing] = useState<Listing>();
   const [draft, setDraft] = useState(initial ?? current),
     [editing, setEditing] = useState(false),
@@ -223,7 +223,7 @@ export function ProjectPicker({
     problem &&
     (problem.step === "read" && readProblems[problem.code]
       ? t(readProblems[problem.code])
-      : tx(problem.code));
+      : describeError(t, problem.code));
   return (
     <ActionDialog
       title={t(selectOnly ? "Choose working folder" : "Open working folder")}

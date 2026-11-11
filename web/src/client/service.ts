@@ -30,6 +30,26 @@ export function errorCode(value: unknown): string {
     ? String(value.error.code)
     : "unavailable";
 }
+/** Preserve the server's outcome classification instead of reducing every
+ * refused preparation to an unknown outcome. */
+export function serviceError(value: unknown): Error {
+  const error = new Error(errorCode(value)) as Error & {
+    effect?: "none" | "accepted" | "uncertain";
+  };
+  if (
+    value &&
+    typeof value === "object" &&
+    "kind" in value &&
+    value.kind === "error" &&
+    "error" in value &&
+    value.error &&
+    typeof value.error === "object" &&
+    "effect" in value.error &&
+    ["none", "accepted", "uncertain"].includes(String(value.error.effect))
+  )
+    error.effect = value.error.effect as "none" | "accepted" | "uncertain";
+  return error;
+}
 async function get<T>(
   path: string,
   decode: (value: unknown) => T,
