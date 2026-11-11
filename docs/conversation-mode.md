@@ -52,7 +52,8 @@ Either one uses the running reply's directory and model, carries no images, and 
 A queued message that is still waiting can be withdrawn; a steer is in the model's queue as soon as it is accepted.
 If the reply fails, is stopped or the service restarts first, a waiting message is not delivered and nothing sends it later: the conversation says which messages were left, and you send one again if you still want it.
 Stopping the reply stops all of it, including what was sent into it.
-The WebUI composer does not offer these two controls yet.
+In the browser, type while the reply runs: **Enter** steers, **Alt+Enter** queues, and the two buttons beside Stop do the same.
+Waiting messages are listed under the conversation with a control to withdraw each one, or to withdraw it and put its text back into the message box; a message left undelivered offers its text back the same way.
 
 ## Resume a sent conversation on another device
 

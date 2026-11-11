@@ -358,6 +358,37 @@ it("the composer is one form: a height handle, the draft, and Send or Stop as th
     /<button type="button" class="danger"[^>]*aria-label="Stop response"/,
   );
   expect(live).not.toContain('type="submit"');
+  expect(live).not.toContain("composer-split");
+  // Text typed while it runs can go into that reply: queue behind it or
+  // steer it, beside Stop, which stays.
+  const offered = composer({
+    running: true,
+    canStop: true,
+    draft: "use the cursor API",
+    input: { enabled: true, onInput() {} },
+  });
+  expect(offered).toMatch(
+    /<span class="composer-split"><button type="button" class="composer-queue" aria-label="Queue behind this reply"[^>]*>.*?<\/button><button type="button" class="composer-steer" aria-label="Steer this reply"/,
+  );
+  expect(offered).toContain("Alt+Enter");
+  expect(offered).toMatch(/class="danger"[^>]*aria-label="Stop response"/);
+  expect(offered).not.toContain('type="submit"');
+  // Offered by the service but not for this text (empty, images, a mode change).
+  expect(
+    composer({
+      running: true,
+      canStop: true,
+      input: { enabled: false, onInput() {} },
+    }),
+  ).not.toContain("composer-split");
+  // Never beside Send: a settled conversation has only Send.
+  expect(
+    composer({
+      draft: "next",
+      canSend: true,
+      input: { enabled: true, onInput() {} },
+    }),
+  ).not.toContain("composer-split");
 });
 
 it("the composer states what the next message continues and why Send waits, above the draft", () => {

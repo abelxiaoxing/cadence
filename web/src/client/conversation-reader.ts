@@ -7,6 +7,7 @@ import type {
   ChatAttempt,
   ChatContext,
   ChatImage,
+  ChatPending,
   ChatStatus,
   ChatStep,
   ChatSummary,
@@ -46,6 +47,10 @@ export interface ConversationView {
   runs: string[];
   /** A browser message that left nothing in the session, after this branch. */
   attempt: ChatAttempt | null;
+  /** Messages sent into the reply in progress that wait for delivery. */
+  pending: ChatPending[];
+  /** Messages the branch's last reply ended without delivering. */
+  undelivered: ChatAttempt[];
   commands: string[];
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
@@ -78,6 +83,8 @@ export class ConversationReader {
   private branches = 0;
   private runs: string[] = [];
   private attempt: ChatAttempt | null = null;
+  private pending: ChatPending[] = [];
+  private undelivered: ChatAttempt[] = [];
   private commands: string[] = [];
   private context: ChatContext | undefined;
   private count = 0;
@@ -143,6 +150,8 @@ export class ConversationReader {
     this.pinned = leaf;
     this.summary = undefined;
     this.context = undefined;
+    this.pending = [];
+    this.undelivered = [];
     this.error = "";
     this.forget();
     this.opening = first === undefined ? null : Math.max(0, first);
@@ -201,6 +210,8 @@ export class ConversationReader {
       branches: this.branches,
       runs: this.runs,
       attempt: this.attempt,
+      pending: this.pending,
+      undelivered: this.undelivered,
       commands: this.commands,
       ...(this.context ? { context: this.context } : {}),
       count: this.count,
@@ -265,6 +276,8 @@ export class ConversationReader {
     this.branches = head.branches;
     this.runs = head.runs;
     this.attempt = head.attempt;
+    this.pending = head.pending ?? [];
+    this.undelivered = head.undelivered ?? [];
     this.commands = head.commands ?? [];
     this.context = head.context;
     this.summary = head.summary;

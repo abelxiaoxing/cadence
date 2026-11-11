@@ -22,6 +22,7 @@ import {
 } from "react-icons/fi";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type {
+  ChatPending,
   ChatSummary,
   ChatTreeNode,
 } from "../../../../src/service/contracts/workbench.ts";
@@ -40,6 +41,14 @@ import {
   offBranch,
   sendHead,
 } from "../../client/conversation-anchor";
+import {
+  type InputMode,
+  inputCommand,
+  inputOutcome,
+  inputRefusal,
+  wholePendingText,
+  withdrawCommand,
+} from "../../client/conversation-inputs";
 import type { LoadedTurn } from "../../client/conversation-reader";
 import {
   assertSendModel,
@@ -100,6 +109,7 @@ import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { QuestionRail } from "./QuestionRail";
 import { useSendAnchor } from "./use-send-anchor";
+import { WaitingMessages } from "./WaitingMessages";
 import {
   nextRunWindow,
   PlanCard,
@@ -1214,6 +1224,73 @@ export function ChatWorkspace({
     }, 10000);
     return () => clearTimeout(timer);
   }, [resume]);
+  // ---- Messages into the reply that is running ----
+  const liveRun = running ? summary?.live : undefined;
+  // The whole text of messages this tab sent, which the head read may clip.
+  const sentInputs = useRef(new Map<string, string>());
+  const inputBlock = inputRefusal({
+    images: imageDraft.files.length,
+    modeChange: cadence ? cadenceExit(draft) : input.mode === "cadence",
+    anchored: !!anchor,
+    waiting: conversation.pending.length,
+  });
+  const canInput = !!liveRun && canInterrupt && !busy && !attaching;
+  const sendInput = async (mode: InputMode) => {
+    if (!liveRun || !canInput || inputBlock || !draft.trim()) return;
+    clearError();
+    setBusy(true);
+    const text = draft;
+    const command = inputCommand(id, liveRun, mode, text);
+    const outcome = inputOutcome(await client.workbenchCommand(command));
+    if (!alive.current) return;
+    setBusy(false);
+    if (outcome.kind === "accepted") {
+      sentInputs.current.set(command.commandId, text);
+      pushPromptHistory(workspaceId, text);
+      setDraft("");
+    } else if (outcome.kind === "refused")
+      refuse(
+        t(
+          "The running reply did not take the message ({reason}). Your text stays here.",
+          { reason: describeError(t, outcome.code) },
+        ),
+      );
+    // Unknown: the text stays, and the next read shows whether it waits.
+    else setError(outcome.code);
+    conversation.refresh();
+  };
+  const withdrawInput = async (waiting: ChatPending, recall: boolean) => {
+    if (!liveRun || busy) return;
+    setBusy(true);
+    const outcome = inputOutcome(
+      await client.workbenchCommand(
+        withdrawCommand(id, liveRun, waiting.commandId),
+      ),
+    );
+    if (!alive.current) return;
+    setBusy(false);
+    if (outcome.kind === "accepted") {
+      const whole = sentInputs.current.get(waiting.commandId) ?? waiting.text;
+      sentInputs.current.delete(waiting.commandId);
+      // Never over text typed since.
+      if (recall) setDraft((current) => (current.trim() ? current : whole));
+    } else if (outcome.kind === "refused")
+      refuse(
+        outcome.code === "conflict"
+          ? t(
+              "That message has already been handed to the model and can no longer be withdrawn.",
+            )
+          : t("The message was not withdrawn ({reason}).", {
+              reason: describeError(t, outcome.code),
+            }),
+      );
+    else setError(outcome.code);
+    conversation.refresh();
+  };
+  const restoreUndelivered = (text: string) => {
+    setDraft((current) => (current.trim() ? `${current}\n${text}` : text));
+    textarea.current?.focus();
+  };
   const interrupt = async () => {
     const live = summary?.live;
     if (!live || busy) return;
@@ -1719,6 +1796,19 @@ export function ChatWorkspace({
               </p>
             </article>
           )}
+          <WaitingMessages
+            pending={conversation.pending}
+            undelivered={conversation.undelivered}
+            canWithdraw={!!liveRun && canInterrupt && !busy}
+            recallable={(waiting) =>
+              sentInputs.current.has(waiting.commandId) ||
+              wholePendingText(waiting.text)
+            }
+            onWithdraw={(waiting, recall) =>
+              void withdrawInput(waiting, recall)
+            }
+            onRestore={restoreUndelivered}
+          />
           {state?.enabled && state.proposal && (
             <PlanCard
               proposal={state.proposal}
@@ -1818,17 +1908,27 @@ export function ChatWorkspace({
         onRemoveImage={(file) => removeImages([file])}
         anchor={strip}
         status={
-          running || canPrepareOnly || canSend || preparing
-            ? undefined
-            : pending
-              ? t("The last Send is not yet confirmed. No message is resent.")
-              : awaitingModel
-                ? t("Choose a model; your message is sent right after.")
-                : busy
-                  ? t("Sending…")
-                  : t(
-                      "Sending is unavailable until the current context is observed. Your draft stays here.",
-                    )
+          liveRun && draft.trim() && inputBlock
+            ? t(
+                inputBlock === "images"
+                  ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
+                  : inputBlock === "mode"
+                    ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
+                    : inputBlock === "full"
+                      ? "Eight messages already wait for this reply. Withdraw one, or wait."
+                      : "A message into a running reply continues that reply, not another entry.",
+              )
+            : running || canPrepareOnly || canSend || preparing
+              ? undefined
+              : pending
+                ? t("The last Send is not yet confirmed. No message is resent.")
+                : awaitingModel
+                  ? t("Choose a model; your message is sent right after.")
+                  : busy
+                    ? t("Sending…")
+                    : t(
+                        "Sending is unavailable until the current context is observed. Your draft stays here.",
+                      )
         }
         cadence={{
           active: cadence,
@@ -1869,11 +1969,13 @@ export function ChatWorkspace({
           awaitingSend: awaitingModel,
         }}
         hint={
-          cadence
-            ? t("Cadence stays on. Confirm one plan before implementation.")
-            : input.mode === "cadence"
-              ? t("Your next message turns on Cadence mode.")
-              : ""
+          liveRun && canInput && !inputBlock && draft.trim()
+            ? t("Enter steers this reply · Alt+Enter queues behind it")
+            : cadence
+              ? t("Cadence stays on. Confirm one plan before implementation.")
+              : input.mode === "cadence"
+                ? t("Your next message turns on Cadence mode.")
+                : ""
         }
         running={!!running}
         canStop={!busy && canInterrupt}
@@ -1885,6 +1987,14 @@ export function ChatWorkspace({
           (!!draft.trim() || imageDraft.files.length > 0)
         }
         onSend={() => void send()}
+        input={
+          liveRun
+            ? {
+                enabled: canInput && !inputBlock && !!draft.trim(),
+                onInput: (mode) => void sendInput(mode),
+              }
+            : undefined
+        }
         historyScope={workspaceId}
         files={{
           client,
