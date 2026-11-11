@@ -106,7 +106,7 @@ Browser assets are prebuilt, not compiled by consumer postinstall.
 
 ## Repository release automation
 
-`.github/workflows/publish.yml` owns the explicitly pushed stable-tag release lane; `scripts/npm-release.mjs` owns exact source/tag/package/registry binding and post-publication byte confirmation.
+`.github/workflows/publish.yml` owns the explicitly pushed stable-tag release lane; `scripts/npm-release.mjs` owns exact source/tag/package/registry binding and post-publication digest/`latest` confirmation.
 The readonly preparation job uses the existing sole gate and `scripts/package-audit.mjs`; the separate OIDC job re-audits the immutable artifact against a clean checkout and publishes it without project dependencies or lifecycle scripts.
 Registry confirmation has one monotonic deadline spanning requests, response bodies and delays; original publish outcomes and later visibility remain separate facts.
 It can repeat readonly observations, never publication or registry repair.

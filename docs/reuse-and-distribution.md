@@ -93,7 +93,8 @@ From a clean `main` checkout on any authorized computer:
    Do not force-move or delete a release tag to repair a failed release.
 4. Follow **Actions → Publish npm**.
    A successful dispatch or artifact upload is not proof of npm publication.
-   The final step verifies registry version/integrity, the `latest` tag and the actual downloaded tarball bytes.
+   The final step checks that the registry records the audited artifact's `shasum` and `integrity` for the version and that `latest` names it.
+   Because npm clients verify every downloaded tarball against that `integrity`, the match binds what users install to the audited bytes.
 
 The tag must name the checked-out event commit, match `package.json`, and already belong to `main`.
 Pre-release/build-metadata tags, forks, moved/deleted tags, dirty checkouts, existing versions and versions behind the observed `latest` are refused.
@@ -110,19 +111,26 @@ Releases are serialized without cancelling an in-progress publish.
 GitHub can replace a pending run when another is queued, so push one release tag at a time and inspect each run's outcome.
 There is no automatic retry of `npm publish`, version bump, unpublish, dist-tag repair or staged-package approval.
 After a failed or interrupted publish, inspect npm before retrying: the registry may have accepted the request despite a lost client reply.
-Confirmation makes bounded readonly observations for propagation and does not convert a failed publish command into a successful command receipt.
+Confirmation makes bounded readonly metadata observations for propagation and does not convert a failed publish command into a successful command receipt.
 The live-ref/latest checks are not a transaction with other maintainers; an external publication can still race and must be investigated rather than overwritten.
 
-### Delayed or unconfirmed publication
+### Delayed or pending publication
 
-npm can accept `npm publish` and then process the package asynchronously before its version, `latest` and tarball become publicly visible.
-The confirmation helper uses one monotonic observation deadline for metadata requests, body reads and polling delays; its total window, interval and unchanged per-request ceiling live beside the constants in `scripts/npm-release.mjs`.
-Candidate-version or tarball 404s and a lagging `latest` are retried with readonly requests only.
-Digest, identity, tarball URL, streamed-byte mismatches and a newer `latest` refuse immediately; other HTTP, transport and malformed-response failures are not treated as propagation.
-Each request is limited by the remaining total time, aborted on expiry and awaited through settlement; successful or failed reads dispose their timers.
+npm acknowledges `npm publish` and then processes the package asynchronously, sometimes for longer than the confirmation window, before its version and `latest` become publicly visible.
+The confirmation step polls readonly metadata within one monotonic window; the window, interval and per-request ceiling live beside the constants in `scripts/npm-release.mjs`.
+A candidate-version 404 and a lagging `latest` mean npm is still processing.
+Digest, identity or tarball-URL mismatches and a newer `latest` refuse immediately; other HTTP, transport, per-request timeout and malformed-response failures are not treated as propagation.
+Each request is limited by the remaining window, aborted on expiry and awaited through settlement.
 
-The confirmation step records the original publish-step outcome separately in its failure log and job summary.
-A successful publish followed by an observation timeout means **publication is still unconfirmed**, not that the publish command failed or the version is safe to reuse.
-Keep that run's original audited artifact and digest, then independently recheck registry metadata, `latest` and downloaded bytes against that same artifact.
+If the window ends while npm is still processing, a successful publish ends the job with a **pending** warning rather than a failure: no mismatch was observed, but registry visibility is not yet confirmed and the version is not safe to reuse.
+After a failed or unknown publish outcome, pending still fails the job.
+Confirm a pending publication later with one readonly observation of that run's audited artifact while it is retained; the digest is the run's `RELEASE_SHA256`, printed in its summary:
+
+```sh
+gh run download <run-id> --repo abelxiaoxing/cadence -n npm-package -D <empty directory>
+node scripts/npm-release.mjs check <that directory> <sha256>
+```
+
+`check` exits 0 once the registry shows the version as `latest` with the audited digests, and 1 while it is still pending; mismatches refuse.
 Do not rerun the publish job or workflow, replay `npm publish`, move/delete its tag, or repair registry state automatically.
-A later matching readonly observation can confirm publication, but does not rewrite the earlier run's failed outcome; confirmation also cannot turn an originally failed publish command into a successful receipt.
+A later matching observation confirms publication, but does not rewrite the earlier run's outcome or turn an originally failed publish command into a successful receipt.

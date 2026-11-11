@@ -14,8 +14,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   assertReleaseCheckout,
   assertUnpublished,
-  confirmationFailure,
+  auditedArchive,
+  confirmationReport,
   confirmPublished,
+  observePublished,
   registryVersion,
   releaseArchive,
   releaseVersion,
@@ -289,8 +291,8 @@ function archiveFixture() {
 it("audits exact source bytes and the transport digest, not only a tarball filename", () => {
   const f = archiveFixture();
   const artifact = releaseArchive(f.root, f.directory, version);
-  expect(artifact.bytes).toEqual(f.bytes);
   expect(artifact.sha256).toBe(digest("sha256", f.bytes));
+  expect(artifact.shasum).toBe(digest("sha1", f.bytes));
   expect(
     releaseArchive(f.root, f.directory, version, artifact.sha256).integrity,
   ).toBe(`sha512-${digest("sha512", f.bytes, "base64")}`);
@@ -309,11 +311,31 @@ it("audits exact source bytes and the transport digest, not only a tarball filen
     "archive-file-set",
   );
 });
+it("confirmation reads the version and digests of one already audited tarball", () => {
+  const f = archiveFixture();
+  const sha256 = digest("sha256", f.bytes);
+  expect(auditedArchive(f.directory, sha256)).toMatchObject({
+    version,
+    sha256,
+    shasum: digest("sha1", f.bytes),
+    integrity: `sha512-${digest("sha512", f.bytes, "base64")}`,
+  });
+  expect(() => auditedArchive(f.directory, "0".repeat(64))).toThrow(
+    "transport-digest",
+  );
+  for (const file of [`abelxiaoxing-cadence-${version}-beta.1.tgz`, "x.tgz"]) {
+    const directory = temp();
+    writeFileSync(join(directory, file), f.bytes);
+    expect(() => auditedArchive(directory)).toThrow("archive-file-set");
+  }
+  expect(() => auditedArchive(temp())).toThrow("archive-file-set");
+  writeFileSync(join(f.directory, "extra.tgz"), "unreviewed");
+  expect(() => auditedArchive(f.directory)).toThrow("archive-file-set");
+});
 
 function registryFixture(overrides = {}) {
   const bytes = Buffer.from("audited release bytes");
   const artifact = {
-    bytes,
     shasum: digest("sha1", bytes),
     integrity: `sha512-${digest("sha512", bytes, "base64")}`,
   };
@@ -324,7 +346,7 @@ function registryFixture(overrides = {}) {
     dist: { shasum: artifact.shasum, integrity: artifact.integrity, tarball },
   };
   const fetcher = vi.fn(async (url) => {
-    if (url.endsWith(".tgz")) return new Response(overrides.bytes ?? bytes);
+    if (url.endsWith(".tgz")) throw new Error("tarball read");
     if (url.endsWith("/latest"))
       return Response.json({ name, version: overrides.latest ?? version });
     return overrides.missing
@@ -333,12 +355,31 @@ function registryFixture(overrides = {}) {
   });
   return { artifact, metadata, fetcher };
 }
-it("confirms both registry digests, latest and actually downloaded bytes without any write request", async () => {
+it("confirms both registry digests and latest from metadata alone, without any write request", async () => {
   const f = registryFixture();
-  await confirmPublished(version, f.artifact, f.fetcher);
-  expect(f.fetcher).toHaveBeenCalledTimes(3);
-  for (const [, options] of f.fetcher.mock.calls)
+  await expect(confirmPublished(version, f.artifact, f.fetcher)).resolves.toBe(
+    "confirmed",
+  );
+  expect(f.fetcher).toHaveBeenCalledTimes(2);
+  for (const [url, options] of f.fetcher.mock.calls) {
+    expect(url).not.toMatch(/\.tgz$/);
     expect(options.method).toBeUndefined();
+  }
+});
+it("one observation says whether the version is public as latest yet", async () => {
+  await expect(
+    observePublished(
+      version,
+      registryFixture().artifact,
+      registryFixture().fetcher,
+    ),
+  ).resolves.toBe(true);
+  for (const overrides of [{ missing: true }, { latest: "2.0.38" }]) {
+    const f = registryFixture(overrides);
+    await expect(
+      observePublished(version, f.artifact, f.fetcher),
+    ).resolves.toBe(false);
+  }
 });
 function fakeObservationClock() {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
@@ -360,7 +401,7 @@ it("readonly observation tolerates minutes of propagation without resetting the 
   expect(done).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   await operation;
-  expect(done).toHaveBeenCalledOnce();
+  expect(done).toHaveBeenCalledWith("confirmed");
   for (const [, options] of f.fetcher.mock.calls) {
     expect(options.method).toBeUndefined();
     expect(options.body).toBeUndefined();
@@ -368,46 +409,26 @@ it("readonly observation tolerates minutes of propagation without resetting the 
   }
   expect(vi.getTimerCount()).toBe(0);
 });
-it.each(["version", "latest", "tarball"])(
-  "%s never becoming visible consumes one fixed observation window",
+it.each(["version", "latest"])(
+  "%s still processing at the end of one fixed window is pending, not a failure",
   async (phase) => {
     fakeObservationClock();
     const f = registryFixture({
       missing: phase === "version",
-      latest: phase === "tarball" ? version : "2.0.38",
+      latest: "2.0.38",
     });
-    const fetcher = vi.fn((url, options) =>
-      phase === "tarball" && url.endsWith(".tgz")
-        ? Promise.resolve(new Response("not yet", { status: 404 }))
-        : f.fetcher(url, options),
-    );
-    const outcome = confirmPublished(version, f.artifact, fetcher).catch(
-      (error) => error,
-    );
+    const outcome = confirmPublished(version, f.artifact, f.fetcher);
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect((await outcome).message).toContain("confirmation-timeout");
+    await expect(outcome).resolves.toBe("pending");
     expect(performance.now()).toBe(5 * 60_000);
-    const calls = fetcher.mock.calls.length;
+    const calls = f.fetcher.mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(fetcher).toHaveBeenCalledTimes(calls);
+    expect(f.fetcher).toHaveBeenCalledTimes(calls);
     expect(vi.getTimerCount()).toBe(0);
   },
 );
-it("a tarball 404 after valid metadata is propagation, not proof of missing or corrupt bytes", async () => {
-  fakeObservationClock();
-  const f = registryFixture();
-  const fetcher = vi.fn((url, options) =>
-    url.endsWith(".tgz") && performance.now() < 120_000
-      ? Promise.resolve(new Response("not yet", { status: 404 }))
-      : f.fetcher(url, options),
-  );
-  const operation = confirmPublished(version, f.artifact, fetcher);
-  await vi.advanceTimersByTimeAsync(120_000);
-  await operation;
-  expect(vi.getTimerCount()).toBe(0);
-});
-it.each(["headers", "json-body", "tarball-body"])(
-  "the remaining deadline aborts a stalled %s and joins the original read",
+it.each(["headers", "json-body"])(
+  "the remaining deadline aborts a stalled %s, joins the original read and ends pending",
   async (phase) => {
     fakeObservationClock();
     const f = registryFixture({
@@ -419,17 +440,8 @@ it.each(["headers", "json-body", "tarball-body"])(
     let signal,
       aborted = false;
     const fetcher = vi.fn((url, options) => {
-      if (performance.now() < 290_000) return f.fetcher(url, options);
-      const stalled =
-        phase === "tarball-body"
-          ? url.endsWith(".tgz")
-          : !url.endsWith("/latest");
-      if (!stalled)
-        return Promise.resolve(
-          Response.json(
-            url.endsWith("/latest") ? { name, version } : f.metadata,
-          ),
-        );
+      if (performance.now() < 290_000 || url.endsWith("/latest"))
+        return f.fetcher(url, options);
       signal = options.signal;
       if (phase === "headers")
         return new Promise((_, reject) =>
@@ -459,14 +471,12 @@ it.each(["headers", "json-body", "tarball-body"])(
         ),
       );
     });
-    const outcome = confirmPublished(version, f.artifact, fetcher).catch(
-      (error) => error,
-    );
+    const outcome = confirmPublished(version, f.artifact, fetcher);
     await vi.advanceTimersByTimeAsync(299_999);
     expect(signal.aborted).toBe(false);
     expect(aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect((await outcome).message).toContain("confirmation-timeout");
+    await expect(outcome).resolves.toBe("pending");
     expect(aborted).toBe(true);
     expect(signal.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
@@ -500,11 +510,9 @@ it("network time consumes the total deadline and the final sleep is shortened", 
         setTimeout(() => resolve(f.fetcher(url, options)), 700);
       }),
   );
-  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
-    (error) => error,
-  );
+  const outcome = confirmPublished(version, f.artifact, fetcher);
   await vi.advanceTimersByTimeAsync(300_000);
-  expect((await outcome).message).toContain("confirmation-timeout");
+  await expect(outcome).resolves.toBe("pending");
   // 47 rounds use 1400ms network + 5000ms sleep; last sleep has only 4200ms.
   expect(fetcher).toHaveBeenCalledTimes(94);
   expect(vi.getTimerCount()).toBe(0);
@@ -543,28 +551,6 @@ it.each([401, 403, 429, 500])(
     expect(vi.getTimerCount()).toBe(0);
   },
 );
-it.each(["success", "failure", undefined])(
-  "confirmation failure preserves the %s publish receipt and gives readonly recovery guidance",
-  (outcome) => {
-    const text = confirmationFailure(
-      outcome,
-      new Error("npm-release-confirmation-timeout"),
-    );
-    expect(text).toContain("confirmation-timeout");
-    expect(text).toContain("readonly requests");
-    expect(text).toContain("Do not rerun npm publish or the publish job");
-    if (outcome === "success")
-      expect(text).toContain(
-        "npm publish succeeded, but registry confirmation failed",
-      );
-    else {
-      expect(text).not.toContain("npm publish succeeded");
-      expect(text).toContain(
-        outcome === "failure" ? "npm publish failed" : "outcome is unknown",
-      );
-    }
-  },
-);
 it("does not detach a request or accept its late response after abort", async () => {
   fakeObservationClock();
   const f = registryFixture();
@@ -596,92 +582,59 @@ it("does not detach a request or accept its late response after abort", async ()
   expect(fetcher).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });
-it("a mismatched streamed prefix fails without waiting for EOF and cancels the body", async () => {
-  fakeObservationClock();
-  const f = registryFixture(),
-    cancelled = vi.fn();
-  const fetcher = vi.fn((url, options) =>
-    url.endsWith(".tgz")
-      ? Promise.resolve(
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(Uint8Array.of(0));
-              },
-              cancel() {
-                cancelled();
-              },
-            }),
-          ),
-        )
-      : f.fetcher(url, options),
-  );
-  const outcome = confirmPublished(version, f.artifact, fetcher).catch(
-    (error) => error,
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  expect(cancelled).toHaveBeenCalledOnce();
-  expect((await outcome).message).toContain("published-byte-mismatch");
-  expect(fetcher).toHaveBeenCalledTimes(3);
-  expect(vi.getTimerCount()).toBe(0);
-});
-it("compares streamed bytes at their actual offsets across chunks", async () => {
-  fakeObservationClock();
-  const f = registryFixture();
-  const fetcher = vi.fn((url, options) =>
-    url.endsWith(".tgz")
-      ? Promise.resolve(
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(f.artifact.bytes.subarray(0, 3));
-                controller.enqueue(f.artifact.bytes.subarray(3, 9));
-                controller.enqueue(f.artifact.bytes.subarray(9));
-                controller.close();
-              },
-            }),
-          ),
-        )
-      : f.fetcher(url, options),
-  );
-  await confirmPublished(version, f.artifact, fetcher);
-  expect(vi.getTimerCount()).toBe(0);
-});
-it.each(["digest", "url", "short", "long", "same-size", "latest"])(
-  "refuses published %s mismatches without repairing the registry",
+it.each(["shasum", "integrity", "url", "latest"])(
+  "refuses a published %s mismatch without repairing the registry",
   async (kind) => {
     const f = registryFixture();
-    const options =
-      kind === "digest"
-        ? {
-            metadata: {
-              dist: { ...f.metadata.dist, integrity: "sha512-wrong" },
-            },
-          }
-        : kind === "url"
-          ? {
-              metadata: {
-                dist: {
-                  ...f.metadata.dist,
-                  tarball: "https://other.invalid/package.tgz",
-                },
-              },
-            }
-          : kind === "latest"
-            ? { latest: "2.0.40" }
-            : {
-                bytes:
-                  kind === "short"
-                    ? Buffer.from("short")
-                    : Buffer.alloc(
-                        f.artifact.bytes.length + (kind === "long" ? 1 : 0),
-                      ),
-              };
-    const bad = registryFixture(options);
+    const dist =
+      kind === "shasum"
+        ? { shasum: "0".repeat(40) }
+        : kind === "integrity"
+          ? { integrity: "sha512-wrong" }
+          : kind === "url"
+            ? { tarball: "https://other.invalid/package.tgz" }
+            : {};
+    const bad = registryFixture({
+      metadata: { dist: { ...f.metadata.dist, ...dist } },
+      ...(kind === "latest" ? { latest: "2.0.40" } : {}),
+    });
     await expect(
       confirmPublished(version, bad.artifact, bad.fetcher),
     ).rejects.toThrow("npm-release-");
-    expect(bad.fetcher.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(bad.fetcher.mock.calls.length).toBeLessThanOrEqual(2);
+  },
+);
+it.each(["success", "failure", undefined])(
+  "the report keeps the %s publish receipt and fails only on errors or an unsucceeded pending publish",
+  (outcome) => {
+    const sha = "a".repeat(64);
+    const confirmed = confirmationReport(outcome, version, sha, "confirmed");
+    expect(confirmed.failed).toBe(false);
+    expect(confirmed.text).toContain(`${name}@${version}`);
+    const pending = confirmationReport(outcome, version, sha, "pending");
+    expect(pending.failed).toBe(outcome !== "success");
+    expect(pending.text).toContain("still processing");
+    const failed = confirmationReport(
+      outcome,
+      version,
+      sha,
+      new Error("npm-release-published-digest-mismatch"),
+    );
+    expect(failed.failed).toBe(true);
+    expect(failed.text).toContain("published-digest-mismatch");
+    for (const { text } of [pending, failed]) {
+      expect(text).toContain(`npm-release.mjs check <that directory> ${sha}`);
+      expect(text).toContain("Do not rerun npm publish or the publish job");
+    }
+    if (outcome === "success")
+      expect(pending.text).toContain("npm publish succeeded");
+    else {
+      for (const { text } of [confirmed, pending, failed])
+        expect(text).not.toContain("npm publish succeeded");
+      expect(pending.text).toContain(
+        outcome === "failure" ? "npm publish failed" : "outcome is unknown",
+      );
+    }
   },
 );
 
