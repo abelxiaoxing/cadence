@@ -15,6 +15,8 @@ import {
   defaultWorkerTools,
   describeWorkerRuntime,
   resolveWorkerRuntime,
+  UNATTENDED_RETRY,
+  unattendedRuntime,
 } from "../src/worker-model.mjs";
 import { canonicalJson } from "../src/worker-public.mjs";
 
@@ -225,4 +227,44 @@ it("explicitly disabled HTTP idle and empty Pi tool selections remain explicit",
   expect(runtime.tools).toEqual({ edit: [], readonly: [] });
   expect(runtime.settings.httpIdleTimeoutMs).toBe(0);
   expect(runtime.settings.retry.enabled).toBe(false);
+});
+
+it("an unattended worker's retry budget has a floor under Pi's, and stays off when the user turned retries off", () => {
+  const inherited = fixture().read();
+  expect(inherited.settings.retry).toMatchObject({
+    enabled: true,
+    maxRetries: 3,
+    maxAgentDelayMs: 60000,
+  });
+  const patient = unattendedRuntime(inherited);
+  expect(patient.settings.retry).toEqual({
+    ...inherited.settings.retry,
+    ...UNATTENDED_RETRY,
+  });
+  // Half an hour of backoff at Pi's base delay, not fourteen seconds.
+  const waited = (retry: typeof patient.settings.retry) =>
+    Array.from({ length: retry.maxRetries }, (_, i) =>
+      Math.min(retry.baseDelayMs * 2 ** i, retry.maxAgentDelayMs),
+    ).reduce((sum, ms) => sum + ms, 0);
+  expect(waited(inherited.settings.retry)).toBe(14_000);
+  expect(waited(patient.settings.retry)).toBe(1_710_000);
+  // Nothing else of the snapshot changes, and the input is left as it was.
+  expect({
+    ...patient,
+    settings: { ...patient.settings, retry: null },
+  }).toEqual({
+    ...inherited,
+    settings: { ...inherited.settings, retry: null },
+  });
+  expect(inherited.settings.retry.maxRetries).toBe(3);
+  expect(describeWorkerRuntime(patient)).toContain("request retries 12");
+  // A larger budget of the user's own is kept; a disabled one stays disabled.
+  const larger = fixture({
+    retry: { maxRetries: 40, maxAgentDelayMs: 900000 },
+  }).read();
+  expect(unattendedRuntime(larger).settings.retry).toEqual(
+    larger.settings.retry,
+  );
+  const off = fixture({ retry: { enabled: false } }).read();
+  expect(unattendedRuntime(off)).toEqual(off);
 });

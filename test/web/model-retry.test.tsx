@@ -29,6 +29,26 @@ it("restored owner progress is visible in both locales without a client retry ac
   expect(render("zh")).toContain("第 2/6 次重试安排在 10 秒后");
   expect(render("en")).toContain('role="status"');
   expect(render("en")).not.toContain("<button");
+  expect(render("en")).not.toContain("The provider said");
+  // The provider's own words, as the worker kept them, explain the wait.
+  const explained = recordedTurn({
+    ...fixture(),
+    retry: {
+      phase: "waiting",
+      attempt: 2,
+      maxAttempts: 12,
+      delayMs: 4000,
+      reason: "429 Too Many Requests",
+    },
+  });
+  const said = (locale: "en" | "zh") =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <ChatTurnView turn={explained} />
+      </LocaleProvider>,
+    );
+  expect(said("en")).toContain("The provider said: 429 Too Many Requests");
+  expect(said("zh")).toContain("供应商返回：429 Too Many Requests");
 });
 it("partial failed replies are labeled as their own message, never concatenated into the final answer", () => {
   const value = fixture();

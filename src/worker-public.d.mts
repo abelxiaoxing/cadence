@@ -28,6 +28,7 @@ export declare const LIMITS: Readonly<{
   predecessorBytes: number;
   handoffBytes: number;
   frameBytes: number;
+  coordinatorBytes: number;
   chunkBytes: number;
   detailBytes: number;
   dataFrames: 100000;
@@ -575,11 +576,14 @@ export declare function decodeOmittedBlock(v: unknown): OmittedBlock;
  * W2's stateful producer correlates actual block/call occurrences; a nullable or
  * reused source value never supplies an inferred nearest-message association.
  */
+export declare const MODEL_FAILURE_BYTES: 256;
 export interface ModelRetry {
   phase: "waiting" | "requesting";
   attempt: number;
   maxAttempts: number;
   delayMs: number;
+  /** The provider's words for the failed request, redacted and bounded. */
+  reason?: string;
 }
 export declare function decodeModelRetry(v: unknown): ModelRetry;
 export type CaptureEvent =

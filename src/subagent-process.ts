@@ -24,6 +24,7 @@ import { diagnosticText } from "./verification-diagnostics.ts";
 import { CaptureState, parseCaptureLine } from "./worker-capture.mjs";
 import {
   type CaptureFrame,
+  ContractError,
   closed,
   decodeCaptureFrame,
   decodeRecordingLink,
@@ -553,15 +554,22 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
             return;
           }
           const id = row.id as number;
-          const refuse = () => {
+          // A fixed code is all a refusal carries: never exception text.
+          const refuse = (code?: string) => {
             if (child.connected && !settled && !stopping)
-              child.send({ id, ok: false }, () => {});
+              child.send(
+                { id, ok: false, ...(code ? { code } : {}) },
+                () => {},
+              );
           };
+          if (bridgeBusy) {
+            refuse("conflict");
+            return;
+          }
           if (
-            bridgeBusy ||
-            Buffer.byteLength(JSON.stringify(message)) > 65536
+            Buffer.byteLength(JSON.stringify(message)) > LIMITS.coordinatorBytes
           ) {
-            refuse();
+            refuse("oversize");
             return;
           }
           bridgeBusy = true;
@@ -583,12 +591,14 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
             );
             const text = sanitizeText(JSON.stringify(value), secrets);
             const reply = { id, ok: true, text };
-            if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
-              throw new Error("Coordinator result exceeds bound");
+            if (
+              Buffer.byteLength(JSON.stringify(reply)) > LIMITS.coordinatorBytes
+            )
+              throw new ContractError("oversize");
             if (!settled && !stopping && child.connected)
               child.send(reply, () => {});
-          } catch {
-            refuse();
+          } catch (error) {
+            refuse(error instanceof ContractError ? error.code : undefined);
           } finally {
             bridgeBusy = false;
           }

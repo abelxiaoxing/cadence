@@ -40,9 +40,10 @@ import {
   closed,
   decodeWorkerPublicRequest,
   LIMITS,
+  MODEL_FAILURE_BYTES,
   parseWireJson,
 } from "./worker-public.mjs";
-import { own } from "./worker-redaction.mjs";
+import { own, sanitizeText } from "./worker-redaction.mjs";
 import { createWorkerToolkit } from "./worker-toolkit.mjs";
 import { ToolIngress } from "./worker-tools.mjs";
 import { bindWorkerWorkspace } from "./worker-workspace.mjs";
@@ -84,6 +85,9 @@ let modelOutputBytes = 0;
 let stage = "guards";
 let failure;
 let terminalStopReason = "UNKNOWN";
+// The provider's words for the failed model request this worker ends on.
+let providerReason = "";
+let describeProvider = () => "";
 let preflight = "UNKNOWN";
 let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, session/tool dispose=4, owned close=8.
 let pendingAbort;
@@ -189,8 +193,10 @@ const openConversation = (target, cwd, model, thinkingLevel) => {
   return manager;
 };
 const emitFailure = () => {
-  // Construct from fixed labels/primitives only; never inspect exception text,
-  // provider diagnostics, response headers, payloads, usage or tool contents.
+  // Fixed labels and primitives, plus one piece of provider text: its reason
+  // for the failed model request, already redacted with this worker's
+  // credentials and bounded. Never exception text, response headers, payloads,
+  // usage or tool contents.
   const line = `${JSON.stringify({
     ...failure,
     outcome: "failed",
@@ -203,6 +209,10 @@ const emitFailure = () => {
     requestPrepared: modelState?.requestPrepared ?? false,
     actualResponseStatus: modelState?.actualResponseStatus ?? "UNKNOWN",
     retryAttempts: modelState?.retryAttempts ?? 0,
+    ...(failure?.class === "model-request-failed" &&
+    (providerReason || modelState?.reason)
+      ? { error: providerReason || modelState.reason }
+      : {}),
     cleanupFailures,
     cleanupSettled,
   })}\n`;
@@ -211,7 +221,7 @@ const emitFailure = () => {
     bytes += Buffer.byteLength(text);
     process.stderr.write(text);
   };
-  if (Buffer.byteLength(line) <= 512) write(line);
+  if (Buffer.byteLength(line) <= 1024) write(line);
   if (cleanupSettled)
     write("SDK worker failed or returned an incomplete result.\n");
 };
@@ -562,9 +572,28 @@ try {
     toolkit.sessionOptions.tools.some((name) => !activeTools.includes(name))
   )
     refuse("session", "tool-substitution");
+  // What a provider said about a failed request, as it may leave this worker:
+  // one line, without this worker's credentials, within its bound. Failing to
+  // keep it is never a failure of the worker.
+  const providerWords = (value) => {
+    if (typeof value !== "string") return "";
+    try {
+      const line = sanitizeText(value.slice(0, 4096), secrets)
+        .replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ")
+        .trim();
+      return Buffer.from(line)
+        .subarray(0, MODEL_FAILURE_BYTES)
+        .toString("utf8")
+        .replace(/\ufffd+$/u, "");
+    } catch {
+      return "";
+    }
+  };
+  describeProvider = providerWords;
   modelState = new WorkerModelState(
     (event) => emitter.emit(event),
     captureFailure,
+    providerWords,
   );
   unsubscribeRetry = session.subscribe((event) => modelState.event(event));
   // AgentSession alone retries a failed model response. No provider retries,
@@ -684,6 +713,10 @@ try {
         }
         if (own(message, "role") === "assistant") {
           const reason = own(message, "stopReason");
+          providerReason =
+            reason === "error"
+              ? describeProvider(own(message, "errorMessage"))
+              : "";
           terminalStopReason = [
             "pending",
             "stop",

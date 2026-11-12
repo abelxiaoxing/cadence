@@ -7,8 +7,12 @@ export const zh = {
     "上游响应中断，第 {attempt}/{maxAttempts} 次重试安排在 {seconds} 秒后；已完成的工具结果已保留。",
   "Retrying the model request ({attempt}/{maxAttempts}); completed tool results are kept.":
     "正在重试模型请求（{attempt}/{maxAttempts}）；已完成的工具结果已保留。",
+  "The provider said: {reason}": "供应商返回：{reason}",
   "The model request failed after automatic recovery or was not retryable. Partial work is preserved; no workflow step was replayed.":
     "模型请求在自动恢复后仍失败，或该错误不可重试。已有工作已保留，未重放工作流步骤。",
+  "The model request failed and automatic retries did not recover it.":
+    "模型请求失败，自动重试后仍未恢复。",
+  "Partial work is preserved.": "已有工作已保留。",
   "Refresh models": "刷新模型列表",
   "The connection changed. Your model choice and draft are kept; send again when ready.":
     "连接状态已变化，模型选择和草稿已保留，请就绪后重新发送。",

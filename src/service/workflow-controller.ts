@@ -523,6 +523,34 @@ export function modelRequestFailed(output: string): boolean {
   return false;
 }
 
+/** The fixed first line of a terminal model-request failure, which clients
+ * translate; the provider's own words follow on a line of their own. */
+export const MODEL_REQUEST_FAILED =
+  "The model request failed and automatic retries did not recover it.";
+/** Why a terminal model-request failure happened, as the worker's diagnostic
+ * line states it: how many automatic retries ran, the response status when one
+ * arrived, and the provider's own words (already redacted and bounded by the
+ * worker, then by the owner with the rest of the output). */
+export function modelFailureText(output: string): string {
+  let attempts = 0,
+    status: unknown,
+    reason = "";
+  for (const line of output.split("\n")) {
+    try {
+      const value = JSON.parse(line);
+      if (value?.outcome !== "failed" || typeof value.class !== "string")
+        continue;
+      if (Number.isSafeInteger(value.retryAttempts))
+        attempts = value.retryAttempts;
+      status = value.actualResponseStatus;
+      if (typeof value.error === "string") reason = value.error.trim();
+    } catch {
+      /* Only a complete diagnostic object is evidence. */
+    }
+  }
+  return `${MODEL_REQUEST_FAILED}\nProvider: ${reason || "no reason the worker could report"} (${attempts} automatic ${attempts === 1 ? "retry" : "retries"}${Number.isSafeInteger(status) ? `, HTTP ${status}` : ""})`;
+}
+
 /** Direct child close alone does not establish that its owned tools settled. */
 export function settledWorkerCleanup(output: string): boolean {
   for (const line of output.split("\n")) {

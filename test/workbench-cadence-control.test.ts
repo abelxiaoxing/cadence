@@ -40,7 +40,7 @@ const caller = {
   accessGeneration: 1,
 };
 function fixture(
-  joinResearch: () => Promise<void> = async () => {},
+  joinResearch: (run: WorkflowRun) => Promise<void> = async () => {},
   project: { cwd?: string; secrets?: () => readonly string[] } = {},
 ) {
   const namespace = mkdtempSync(join(tmpdir(), "cadence-control-"));
@@ -107,6 +107,8 @@ function fixture(
   };
   const runs = new Map<string, WorkflowRun>();
   const active: WorkflowRun[] = [];
+  /** Investigation identities the owner holds an answer under. */
+  const recorded = new Set<string>();
   let refuseExecute: ErrorCode | undefined;
   const run = (id: string, phase: WorkflowRun["phase"]): WorkflowRun => ({
     id,
@@ -130,7 +132,8 @@ function fixture(
       };
     },
     activeRuns: () => ({ kind: "workflow-active" as const, runs: active }),
-    join: joinResearch,
+    investigated: (id: string) => recorded.has(id),
+    join: (id: string) => joinResearch(runs.get(id) as WorkflowRun),
     command(commandId: string, _epoch: string, r: WorkflowRequest) {
       if (r.action === "propose") {
         const proposal: WorkflowProposal = {
@@ -229,6 +232,7 @@ function fixture(
     turns,
     runs,
     active,
+    recorded,
     run,
     send,
     tool,
@@ -349,6 +353,9 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
   expect(busy).toMatchObject({ refused: "checkout-busy" });
   const invalid = await f.tool(turn, "cadence_plan", { ...plan(), checks: [] });
   expect(invalid).toMatchObject({ refused: "invalid-plan" });
+  // The refusal names the field and asks for the same plan again, corrected.
+  expect(invalid.notice).toMatch(/^checks: needs at least one/u);
+  expect(invalid.notice).toContain("publish the same plan again in this turn");
   await f.settle(turn);
   const proposal = f.cw.records.state(id).proposal;
   expect(proposal?.id).toBe(published.proposalId);
@@ -360,7 +367,10 @@ it("a displayed plan survives discussion, exit retires it, and research is refus
     goal: "g",
     questions: ["q"],
   });
-  expect(research).toMatchObject({ phase: "research" });
+  expect(research).toMatchObject({
+    id: expect.any(String),
+    questions: [{ question: 1, status: "not-asked" }],
+  });
   expect(f.cw.records.state(id).runs).toHaveLength(1);
   await f.settle(turn);
   f.send(id, "exit", "exit cadence");
@@ -380,13 +390,226 @@ it("one browser Send can investigate more than two batches and still publish a p
         goal: "g",
         questions: [`question ${i}`],
       }),
-    ).toMatchObject({ phase: "research" });
+    ).toMatchObject({ questions: [{ question: 1 }] });
   expect(f.cw.records.state(id).runs).toHaveLength(4);
   expect(await f.tool(turn, "cadence_plan", plan())).toMatchObject({
     proposalId: expect.any(String),
   });
   await f.settle(turn);
   expect(() => f.send(id)).not.toThrow();
+});
+
+it("a refused plan names the field at fault and is never steered into a smaller plan", async () => {
+  const f = fixture();
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence plan");
+  const instructions = f.instructions(turn);
+  expect(instructions).toContain("correct exactly that and call again");
+  expect(instructions).toContain("There is one plan.");
+  expect(instructions).not.toContain("do not retry automatically");
+  const investigation = randomUUID(),
+    step = `research-2-${randomUUID()}`,
+    unrecorded = randomUUID();
+  f.recorded.add(investigation);
+  f.recorded.add(step.slice("research-2-".length));
+  const reading = (research: string) => ({
+    ...plan(),
+    reviewReads: [{ research, reason: "What the change must keep" }],
+  });
+  // The reported case: a research step's own id where an identity was wanted.
+  // It names the same answer, so the plan is published with its identity.
+  const byStep = await f.tool(turn, "cadence_plan", reading(step));
+  expect(byStep).toMatchObject({ proposalId: expect.any(String) });
+  expect(f.cw.records.state(id).proposal?.plan.reviewReads).toEqual([
+    {
+      research: step.slice("research-2-".length),
+      reason: "What the change must keep",
+    },
+  ]);
+  expect(
+    await f.tool(turn, "cadence_plan", reading(investigation)),
+  ).toMatchObject({ proposalId: expect.any(String) });
+  for (const [args, said] of [
+    [
+      reading("research-2"),
+      /^reviewReads\[0\]\.research: "research-2" is not an investigation/u,
+    ],
+    [
+      reading(unrecorded),
+      /^reviewReads\[0\]\.research: no answer is recorded under/u,
+    ],
+    [{ ...plan(), goal: "" }, /^goal: must not be empty/u],
+    [
+      { ...plan(), tasks: [{ ...plan().tasks[0], dependsOn: ["b"] }] },
+      /^tasks\[0\]: has no field "dependsOn"; its fields are id, title, instructions, writes, after, reads/u,
+    ],
+    [
+      {
+        ...plan(),
+        tasks: [{ ...plan().tasks[0], instructions: "指".repeat(2731) }],
+      },
+      /^tasks\[0\]\.instructions: is 8193 bytes; at most 8192/u,
+    ],
+    [
+      { ...plan(), design: "x".repeat(20000), acceptance: "y".repeat(13000) },
+      /^plan: goal, design, decisions, assumptions and acceptance are \d+ bytes together \(goal \d+, design 20000, decisions \d+, assumptions 0, acceptance 13000\); together at most 32768/u,
+    ],
+  ] as const) {
+    const refused = await f.tool(turn, "cadence_plan", args);
+    expect(refused, JSON.stringify(refused)).toMatchObject({
+      refused: "invalid-plan",
+    });
+    expect(refused.notice).toMatch(said);
+    expect(refused.notice).toContain(
+      "do not shorten, split or otherwise reduce it",
+    );
+    expect(refused.notice).not.toContain("oversize");
+  }
+  await f.settle(turn);
+});
+
+it("a plan may leave out what is empty, and an investigation takes what a model plausibly sends", async () => {
+  const f = fixture();
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence plan");
+  const full = plan();
+  const brief = {
+    goal: full.goal,
+    design: full.design,
+    acceptance: full.acceptance,
+    tasks: full.tasks.map(({ id, title, instructions, writes }) => ({
+      id,
+      title,
+      instructions,
+      writes,
+    })),
+    checks: full.checks,
+    delivery: full.delivery,
+    assumptions: null,
+  };
+  expect(await f.tool(turn, "cadence_plan", brief)).toMatchObject({
+    proposalId: expect.any(String),
+  });
+  expect(f.cw.records.state(id).proposal?.plan).toEqual({
+    ...full,
+    decisions: "",
+  });
+  // Blank and repeated questions are dropped, an unknown field is ignored and
+  // a lone question need not be a list.
+  for (const [args, count] of [
+    [{ goal: "g", questions: [" first ", "", "first", "second"] }, 2],
+    [{ goal: "g", questions: "only one", parallel: 4, roots: [] }, 1],
+    [
+      { goal: "g", questions: Array.from({ length: 32 }, (_, i) => `q${i}`) },
+      32,
+    ],
+  ] as const) {
+    const result = await f.tool(turn, "cadence_research", args);
+    expect(result.questions, JSON.stringify(result)).toHaveLength(count);
+  }
+  for (const [args, said] of [
+    [
+      { goal: "g", questions: Array.from({ length: 33 }, (_, i) => `q${i}`) },
+      /^questions: has 33 questions; one investigation takes at most 32/u,
+    ],
+    [{ goal: "g", questions: ["", "  "] }, /^questions: needs at least one/u],
+    [{ goal: "g", questions: [1] }, /^questions\[0\]: must be text/u],
+    [{ questions: ["q"] }, /^goal: is missing/u],
+  ] as const) {
+    const refused = await f.tool(turn, "cadence_research", args);
+    expect(refused).toMatchObject({ refused: "invalid" });
+    expect(refused.notice).toMatch(said);
+    expect(refused.notice).toContain("No investigation was started");
+  }
+  await f.settle(turn);
+});
+
+it("a research result has one entry per question: its last step, and the identity only of an answer", async () => {
+  const child = randomUUID(),
+    reusedStep = randomUUID();
+  const step = (
+    id: string,
+    status: WorkflowRun["steps"][number]["status"],
+    text: string,
+    childRunId?: string,
+  ): WorkflowRun["steps"][number] => ({
+    id,
+    ...(childRunId ? { childRunId } : {}),
+    kind: "research",
+    status,
+    text,
+    exitCode: status === "completed" ? 0 : 1,
+    truncated: false,
+  });
+  const f = fixture(async (run) => {
+    run.status = "completed";
+    run.notice =
+      "2 of 3 questions were answered; an unanswered one was asked a second time first.";
+    run.steps = [
+      step(
+        `research-1-${randomUUID()}`,
+        "failed",
+        "first attempt",
+        randomUUID(),
+      ),
+      step(
+        `research-2-${reusedStep}`,
+        "completed",
+        "Reused recorded investigation",
+      ),
+      step(
+        `research-3-${randomUUID()}`,
+        "failed",
+        "first attempt",
+        randomUUID(),
+      ),
+      // Asked again, alone, after the others.
+      step(`research-1-${randomUUID()}`, "completed", "A".repeat(5000), child),
+      step(
+        `research-3-${randomUUID()}`,
+        "failed",
+        "The model request failed and automatic retries did not recover it.\nProvider: 429 rate limit (12 automatic retries)",
+        randomUUID(),
+      ),
+    ];
+  });
+  const id = randomUUID();
+  const turn = f.send(id, "enter", "/cadence investigate");
+  const result = await f.tool(turn, "cadence_research", {
+    goal: "g",
+    questions: ["one", "two", "three"],
+  });
+  expect(result).toEqual({
+    id: expect.any(String),
+    status: "completed",
+    notice: expect.stringContaining("2 of 3 questions were answered"),
+    questions: [
+      {
+        question: 1,
+        status: "completed",
+        investigation: child,
+        text: expect.stringMatching(/^A{100}/u),
+        truncated: true,
+      },
+      {
+        question: 2,
+        status: "completed",
+        investigation: reusedStep,
+        text: "Reused recorded investigation",
+        truncated: false,
+      },
+      {
+        question: 3,
+        status: "failed",
+        text: expect.stringContaining("Provider: 429 rate limit"),
+        truncated: false,
+      },
+    ],
+  });
+  expect(
+    Buffer.byteLength((result.questions as { text: string }[])[0].text),
+  ).toBeLessThanOrEqual(4096);
+  await f.settle(turn);
 });
 
 it("settlement retains an in-flight investigation after earlier calls have completed", async () => {

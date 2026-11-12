@@ -37,7 +37,7 @@ function turn(): ChatTurn {
     omitted: { thinking: false, media: false, other: false },
   };
 }
-it("retry progress is closed, typed and has no provider text or control authority", () => {
+it("retry progress is closed and typed; its only provider text is a bounded reason, and it carries no control authority", () => {
   expect(decodeCaptureEvent({ kind: "model-retry", progress })).toEqual({
     kind: "model-retry",
     progress,
@@ -46,7 +46,16 @@ it("retry progress is closed, typed and has no provider text or control authorit
     kind: "model-retry",
     progress: null,
   });
+  // The worker redacts and bounds the provider's words before they get here.
+  const explained = { ...progress, reason: "429 Too Many Requests" };
+  expect(decodeModelRetry(explained)).toEqual(explained);
+  expect(decodeChatTurn({ ...turn(), retry: explained }).retry).toEqual(
+    explained,
+  );
   for (const invalid of [
+    { ...progress, reason: "" },
+    { ...progress, reason: 429 },
+    { ...progress, reason: "x".repeat(257) },
     { ...progress, errorMessage: "secret" },
     { ...progress, headers: {} },
     { ...progress, attempt: 7 },

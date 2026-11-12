@@ -286,6 +286,8 @@ export const ChatTurnView = memo(function ChatTurnView({
                   maxAttempts: header.retry.maxAttempts,
                 },
               )}
+          {header.retry.reason &&
+            ` ${t("The provider said: {reason}", { reason: header.retry.reason })}`}
         </p>
       )}
       {notice.length > 0 && (

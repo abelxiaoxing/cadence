@@ -36,7 +36,8 @@ Image input has no Cadence-specific count, byte, dimension or pixel quota; brows
 `src/image-content.mjs` (`IMAGE_LIMITS`) keeps upload/history chunks at 256KiB base64 characters and ephemeral staging valid for 10min idle; base64 adds about one third.
 The private worker image pipe is checked against the exact owner-declared byte length and SHA-256, not a fixed image payload ceiling; each active turn separately holds its admitted message bytes.
 
-Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters) and at most 48 listed by one run once revisions add and supersede some (`route`), eight questions per research run, 16 checks per set and four explicit setup commands.
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 initial assignments (IDs up to 48 characters) and at most 48 listed by one run once revisions add and supersede some (`route`), 32 questions per research run (the tool schema states no count, so only this bound refuses one, by name), 16 checks per set and four explicit setup commands.
+An agreement's goal, route, decisions, assumptions and acceptance share 32KiB (`context`, the worker context every assignment is given them in), an assignment's instructions are 8KiB and its title 256 bytes inside the 32KiB worker prompt, and a reading's reason is 1KiB (`reason`); a refusal states the field, its size and the bound.
 How many workflow workers of one run are in flight is an execution limit, not a plan bound: `PARALLEL` in `src/service/workflows.ts` (default 4, at most 16), set by `CADENCE_PARALLEL` in the owner's environment; a value that is not a whole number from 1 is the default.
 An owner lets 64 auth preparations wait their turn (`PREPARATIONS` in `src/service/model-context.ts`).
 Adaptive delivery and every Agent have no fixed repair-round count or total runtime deadline.
@@ -65,9 +66,9 @@ Only owned worktrees at their accepted, delivered commit and without any residue
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
 Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`).
-There is no per-Send bridge-call or investigation-batch quota; each investigation batch has at most two readonly workers.
+There is no per-Send bridge-call or investigation-batch quota; how many readonly workers of one investigation run at once is the execution limit above.
 Conversation-control records have no retained-directory admission cap; the bounded cache is not a storage quota.
-The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
+The bridge refuses requests/replies above 384KiB (`LIMITS.coordinatorBytes`: a plan at its 256KiB bound, or every answer of a full research run) with the fixed code `oversize`; an investigation returns 4KiB of each answer (`ANSWER_BYTES` in `conversation-workflow.ts`), and status and evidence previews label truncation and omitted steps.
 Control records are bounded at 384KiB and project the most recent 200 workflow links; links remain independently retained, without a lifetime attempt cap or history eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
 The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.

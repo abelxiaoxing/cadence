@@ -272,7 +272,8 @@ it("approval binds Pi preferences; a changed tool/settings snapshot needs fresh 
   if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
     throw Error("grant");
   const grant = prepared.response.grant;
-  f.setRuntime(fixtureRuntime({ retry: { maxRetries: 11 } }));
+  // Above the unattended floor, so the worker's effective settings change.
+  f.setRuntime(fixtureRuntime({ retry: { maxRetries: 40 } }));
   const id = randomUUID();
   expect(() =>
     f.workflows.command(

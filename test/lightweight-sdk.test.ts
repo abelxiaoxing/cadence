@@ -13,7 +13,10 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { modelRequestFailed } from "../src/service/workflow-controller.ts";
+import {
+  modelFailureText,
+  modelRequestFailed,
+} from "../src/service/workflow-controller.ts";
 import {
   legacyWorkerEnvelope,
   runProcess,
@@ -481,9 +484,18 @@ const diagnostic = (stderr: string) => {
   expect(lines.length).toBeGreaterThanOrEqual(1);
   expect(lines.length, stderr).toBeLessThanOrEqual(2);
   const values = lines.map((line) => {
-    expect(Buffer.byteLength(`${line}\n`)).toBeLessThanOrEqual(512);
+    expect(Buffer.byteLength(`${line}\n`)).toBeLessThanOrEqual(1024);
     const snapshot = JSON.parse(line);
-    expect(Object.keys(snapshot)).toEqual(diagnosticKeys);
+    // The provider's reason is the one optional field, and only where a model
+    // request failed for good: already redacted, one line, bounded.
+    expect(Object.keys(snapshot).filter((key) => key !== "error")).toEqual(
+      diagnosticKeys,
+    );
+    if (Object.hasOwn(snapshot, "error")) {
+      expect(snapshot.class).toBe("model-request-failed");
+      expect(snapshot.error).toMatch(/^[^\p{Cc}]+$/u);
+      expect(Buffer.byteLength(snapshot.error)).toBeLessThanOrEqual(256);
+    }
     expect(typeof snapshot.cleanupSettled).toBe("boolean");
     return snapshot;
   });
@@ -1141,7 +1153,15 @@ for (const lane of [
         expect(d.terminalStopReason).toBe("error");
       if (lane === "final-bound") expect(d.terminalStopReason).toBe("UNKNOWN");
       expect(d.sdkEvents).toBeGreaterThan(0);
-      expect(result.stderr).not.toContain("fabricated");
+      // Only the provider's own reason may repeat what the upstream said;
+      // response headers, payloads and this worker's credentials never do.
+      expect(
+        result.stderr.replaceAll(
+          JSON.stringify(d.error ?? "\u0000").slice(1, -1),
+          "",
+        ),
+      ).not.toContain("fabricated");
+      expect(result.stderr).not.toContain("fabricated-response-header");
       expect(result.stderr).not.toContain(request.auth.apiKey);
       expect(readdirSync(cwd)).toEqual([]);
     } finally {
@@ -1212,7 +1232,8 @@ const mockedWorker = async (scenario: string) => {
     ],
     role: "assistant",
     stopReason: stop,
-    errorMessage: secretFault.message,
+    // What a provider says about a refused request can echo the credential.
+    errorMessage: `429 rate limited\nkey ${request.auth.apiKey} `,
     usage: { secret: "fabricated-usage-secret" },
     diagnostics: [secretFault],
   };
@@ -1558,8 +1579,14 @@ it("terminal SDK model failure keeps settled evidence and cannot request workflo
     cleanupSettled: true,
     cleanupFailures: 0,
     retryAttempts: 0,
+    // The provider's words, without this worker's credential, on one line.
+    error: "429 rate limited key [redacted]",
   });
+  expect(result.stderr).not.toContain("fabricated");
   expect(modelRequestFailed(result.stderr)).toBe(true);
+  expect(modelFailureText(result.stderr)).toBe(
+    "The model request failed and automatic retries did not recover it.\nProvider: 429 rate limited key [redacted] (0 automatic retries, HTTP 201)",
+  );
 });
 
 for (const scenario of [

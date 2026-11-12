@@ -37,7 +37,7 @@ it("bridge loss only detaches; accepted investigations retain their original set
     },
     save: vi.fn(),
     run: () => run,
-    preview: (value) => value,
+    answers: (value) => value,
   });
   const bridge = new AbortController();
   const pending = Reflect.apply(

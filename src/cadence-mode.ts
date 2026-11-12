@@ -17,6 +17,7 @@ import {
 import { Type } from "typebox";
 import { CADENCE_INSTRUCTIONS as INSTRUCTIONS } from "./cadence-instructions.ts";
 import { CadencePreferences } from "./cadence-preferences.ts";
+import { PLAN_PARAMETERS, RESEARCH_PARAMETERS } from "./coordinator-tools.mjs";
 import {
   departure,
   NativeConnection,
@@ -25,15 +26,17 @@ import {
 import { decodeSessionId } from "./service/contracts/models.ts";
 import type { ChatTurn } from "./service/contracts/workbench.ts";
 import {
-  decodeWorkflowPlan,
+  investigationId,
   readableDelivery,
   readableDeliveryRun,
   readableWorkflowPlan,
+  researchInput,
   type WorkflowProposal,
   type WorkflowRequest,
   type WorkflowResponse,
   type WorkflowRun,
   workflowDiagnostics,
+  workflowPlanInput,
 } from "./service/contracts/workflow.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
 import { routeTableBrief } from "./service/project-knowledge.ts";
@@ -230,68 +233,6 @@ export function transcriptText(turn: ChatTurn | null): string {
   if (turn.notice) lines.push(turn.notice);
   return clip(lines.join("\n\n"), 48 * 1024);
 }
-const CHECK = Type.Object({
-  name: Type.String(),
-  command: Type.String(),
-  timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 2147483647 })),
-});
-const READING = Type.Union([
-  Type.Object({
-    path: Type.String({ description: "Project document to read first." }),
-    section: Type.Optional(
-      Type.String({ description: "One heading of that document." }),
-    ),
-    reason: Type.String(),
-  }),
-  Type.Object({
-    research: Type.String({
-      description: "Identity of a recorded investigation to reuse.",
-    }),
-    reason: Type.String(),
-  }),
-]);
-const PLAN = Type.Object({
-  goal: Type.String(),
-  design: Type.String(),
-  decisions: Type.String(),
-  acceptance: Type.String(),
-  version: Type.Literal(3),
-  assumptions: Type.String({
-    description:
-      "What you decided on the user's behalf without asking; approval confirms it. Empty when there is none.",
-  }),
-  documents: Type.Array(
-    Type.String({
-      description: "Existing project Markdown this delivery may update.",
-    }),
-    { maxItems: 16 },
-  ),
-  reviewReads: Type.Array(READING, { maxItems: 16 }),
-  policy: Type.Object({
-    installs: Type.Boolean({
-      description:
-        "Whether a later revision may add dependency-installation commands. False unless the user agreed.",
-    }),
-  }),
-  tasks: Type.Array(
-    Type.Object({
-      id: Type.String(),
-      title: Type.String(),
-      instructions: Type.String(),
-      writes: Type.Array(Type.String()),
-      after: Type.Array(Type.String()),
-      reads: Type.Array(READING, { maxItems: 16 }),
-    }),
-    { minItems: 1, maxItems: 16 },
-  ),
-  checks: Type.Array(CHECK, { minItems: 1, maxItems: 16 }),
-  setup: Type.Array(CHECK, { maxItems: 4 }),
-  baselineChecks: Type.Array(CHECK, { maxItems: 16 }),
-  delivery: Type.Union([
-    Type.Literal("local-merge"),
-    Type.Literal("working-copy"),
-  ]),
-});
 /** The exact plan text, shown in full whether or not tool output is expanded.
  * Markdown needs Pi's initialized theme; plain text is the fallback. */
 function planComponent(text: string): Component {
@@ -424,7 +365,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     context = ctx;
   };
   const summarize = (run: WorkflowRun) =>
-    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\n${run.steps.map((s) => `${s.kind} ${s.id}${s.kind === "research" && s.childRunId ? ` · investigation ${s.childRunId}` : ""}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
+    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\n${run.steps.map((s) => `${s.kind} ${s.id}${s.kind === "research" && s.status === "completed" ? ` · investigation ${s.childRunId ?? investigationId(s.id)}` : ""}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
   /** The project's route table for this turn's system prompt. A turn never
    * fails because the table, or the workspace it is in, cannot be read. */
@@ -1017,21 +958,11 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_research",
     label: "Investigate project",
     description:
-      "Delegate up to eight focused, independent readonly investigations; the service runs as many at once as this machine is configured for. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
-    parameters: Type.Object({
-      goal: Type.String(),
-      questions: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
-      roots: Type.Optional(
-        Type.Array(
-          Type.String({
-            description:
-              "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees.",
-          }),
-          { minItems: 1, maxItems: 8 },
-        ),
-      ),
-    }),
+      "Delegate focused, independent readonly investigations, as many as the goal needs; the service runs as many at once as this machine is configured for and queues the rest. Each answer is recorded under its investigation identity. Cite project evidence and consolidate questions in the main conversation. No code editing or task UI.",
+    parameters: RESEARCH_PARAMETERS,
     async execute(_id, input, signal, update, ctx) {
+      // Refused by field name before anything is asked of the service.
+      const asked = researchInput(input);
       return changing(ctx, async (claim) => {
         active(ctx);
         await connect(ctx);
@@ -1047,7 +978,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         try {
           response = await request(
             ctx,
-            { action: "research", ...input, model },
+            { action: "research", ...asked, model },
             commandId,
             () => {
               // Retain the attempted identity before transport: a lost reply is
@@ -1112,15 +1043,16 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     label: "Propose implementation plan",
     description:
       "Publish a readable delivery agreement: goal, acceptance, explicit decisions, your assumptions, initial route and assignments, what each reads first, checks, setup, documents to update and delivery policy. After one approval the service revises the route on its own and finishes without further confirmation. Does not execute.",
-    parameters: PLAN,
+    parameters: PLAN_PARAMETERS,
     async execute(_id, input, _signal, _update, ctx) {
+      // Refused by field name before anything is asked of the service.
+      const plan = workflowPlanInput(input);
       return changing(ctx, async (claim) => {
         active(ctx);
         await connect(ctx);
         claim.assertCurrent();
         permission = undefined;
         const notice = await requireSettledRun(ctx, claim);
-        const plan = decodeWorkflowPlan(input);
         const response = await request(
           ctx,
           {

@@ -9,11 +9,16 @@ Conversation workflows have their own versioned private journal under the existi
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
 Model-request recovery stays inside the original SDK session, without a total runtime deadline; its checkout gate remains held during abortable backoff.
 The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
+A workflow worker runs unattended, so its retry settings are Pi's with a floor (`UNATTENDED_RETRY` in `src/worker-model.mjs`: 12 retries, backoff capped at 5 min, about half an hour at Pi's base delay) unless the user turned retries off; a conversation turn, the coordinator's included, keeps Pi's own settings.
 A terminal model-request failure (recovery exhausted or nonretryable) ends delivery after actual cleanup, rather than starting a second network retry or provider-dependent diagnosis loop.
+Its step, the run's notice and the worker's transcript say why: a fixed first line, then the provider's own words as the worker kept them (redacted with its credentials, one line, `MODEL_FAILURE_BYTES`).
+A research run is the one exception to never repeating a step: a question whose worker settled as failed is asked once more by a new worker, alone, after the run's other questions; nothing was changed by the first attempt, and a provider that refuses concurrent requests answers a lone one.
+An unknown closure, a timeout or a cancellation is never asked again.
 Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
 Within that barrier the run's own workers may overlap: implementation assignments that are ready together run side by side in child worktrees of the stable candidate, up to the execution limit, and every started one is joined before the stage ends (see [worktree delivery](worktree-delivery.md)).
 Assignments may share write paths; those never run together.
 Readonly questions within a research run may overlap.
+Each answer is recorded the moment it settles, under its step's investigation identity and under the step's own id, whatever becomes of the other questions; the run completes when any question was answered and its notice names the ones that were not.
 A run's Git steps are serialized among themselves before they take the shared repository lease.
 A local-merge candidate lives under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/integration` (0700, outside the private service namespace and checkout).
 The candidate is on one named task branch created only after approval; mode entry, research and clarification create no Git resources.
@@ -169,7 +174,7 @@ A running owner that does not answer, a holder on another host and a PID that ca
 Stopping an unresponsive owner requires its recorded start identity; taking over a foreign or unidentifiable holder touches no process.
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
-Research runs share the exclusive checkout gate; one admitted run carries up to eight questions, runs as many at once as the owner's execution limit allows (`parallelLimit`, `CADENCE_PARALLEL`), starts no further question after one fails and joins every started one before release.
+Research runs share the exclusive checkout gate; one admitted run carries up to 32 questions, runs as many at once as the owner's execution limit allows (`parallelLimit`, `CADENCE_PARALLEL`), keeps asking the rest when a worker fails, starts no further question only after an error that is not a worker's settled failure (stale context, cancellation, unknown closure) and joins every started one before release.
 Queueing, repeated investigations and model/tool work have no total Agent deadline and need no renewal mechanism.
 Readonly investigations use Pi's standard file tools with explicit paths and default search roots (conversation cwd by default), never an arbitrary shell.
 Pi owns matching, ignore behavior and truncation; partial output is not exhaustive evidence or an atomic source snapshot.

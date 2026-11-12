@@ -18,6 +18,33 @@ export const WORKER_POLICY = Object.freeze({
   httpIdleTimeoutMs: 0,
 });
 export const WORKER_SETTINGS_BYTES = 32768;
+/** A worker the service runs unattended keeps asking a failing provider far
+ * longer than an interactive session would: nobody is there to press retry, and
+ * a rate limit or an outage of some minutes must not cost the work done so far.
+ * A floor under Pi's own retry settings (about half an hour of backoff at its
+ * default base delay), never applied when the user turned retries off. */
+export const UNATTENDED_RETRY = Object.freeze({
+  maxRetries: 12,
+  maxAgentDelayMs: 300_000,
+});
+export function unattendedRuntime(runtime) {
+  const retry = runtime.settings.retry;
+  if (!retry.enabled) return runtime;
+  return decodeWorkerRuntime({
+    ...runtime,
+    settings: {
+      ...runtime.settings,
+      retry: {
+        ...retry,
+        maxRetries: Math.max(retry.maxRetries, UNATTENDED_RETRY.maxRetries),
+        maxAgentDelayMs: Math.max(
+          retry.maxAgentDelayMs,
+          UNATTENDED_RETRY.maxAgentDelayMs,
+        ),
+      },
+    },
+  });
+}
 
 /** Public SDK factories are the source of built-in/default tool identities. */
 export function defaultWorkerTools(pi, cwd) {
@@ -220,9 +247,14 @@ export class WorkerModelState {
   actualResponseStatus = "UNKNOWN";
   retryAttempts = 0;
   progress = null;
-  constructor(emit, fail) {
+  /** The provider's words for the last failed request, as `describe` kept them. */
+  reason = "";
+  /** `describe` turns provider text into what may leave the worker (redacted,
+   * bounded), or "" for nothing; without it no provider text is kept. */
+  constructor(emit, fail, describe = () => "") {
     this.emit = emit;
     this.fail = fail;
+    this.describe = describe;
   }
   publish(progress) {
     this.progress = progress;
@@ -237,11 +269,13 @@ export class WorkerModelState {
       const type = own(event, "type");
       let pending;
       if (type === "auto_retry_start") {
+        this.reason = this.describe(own(event, "errorMessage"));
         const progress = decodeModelRetry({
           phase: "waiting",
           attempt: own(event, "attempt"),
           maxAttempts: own(event, "maxAttempts"),
           delayMs: own(event, "delayMs"),
+          ...(this.reason ? { reason: this.reason } : {}),
         });
         this.retryAttempts = progress.attempt;
         pending = this.publish(progress);

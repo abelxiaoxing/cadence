@@ -8,7 +8,11 @@ import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
 import { captureChanges } from "../task-diff.ts";
 import type { RunResult } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
-import { describeWorkerRuntime, type WorkerRuntime } from "../worker-model.mjs";
+import {
+  describeWorkerRuntime,
+  unattendedRuntime,
+  type WorkerRuntime,
+} from "../worker-model.mjs";
 import {
   type CheckNativeSettlement,
   decodeWorkerPublicRequest,
@@ -48,6 +52,7 @@ import {
   decodeWorkflowProposal,
   decodeWorkflowRequest,
   decodeWorkflowRun,
+  investigationId,
   readableWorkflowPlan,
   WORKFLOW_DEVIATIONS,
   WORKFLOW_LIMITS,
@@ -100,6 +105,7 @@ import {
   DeliveryController,
   decodeRecoveryDecision,
   InvalidDecision,
+  modelFailureText,
   modelRequestFailed,
   RECOVERY_BYTES,
   RECOVERY_INSTRUCTIONS,
@@ -277,6 +283,17 @@ export class UnacceptedWorkflowCommand extends UnacceptedConversationCommand {
     readonly detail?: string,
   ) {
     super(code);
+  }
+}
+/** A worker whose model request failed for good. Its step and native result
+ * are already recorded; a delivery ends on it, a research run asks again. */
+class ModelRequestFailure extends Error {
+  constructor(
+    readonly result: RunResult,
+    readonly step: WorkflowStep,
+    message: string,
+  ) {
+    super(message);
   }
 }
 class WorkflowFailure extends Error {
@@ -572,9 +589,11 @@ export class Workflows {
       );
     }
     const selected = this.model(p.model);
-    const runtime = this.o.models.workerSettings(
-      this.contexts.capture(p.model).cwd,
-      selected,
+    const runtime = unattendedRuntime(
+      this.o.models.workerSettings(
+        this.contexts.capture(p.model).cwd,
+        selected,
+      ),
     );
     const observed = this.observation(p.plan, runtime);
     if (p.plan.delivery === "local-merge" && !p.delivery)
@@ -926,9 +945,11 @@ export class Workflows {
         { strict: true },
       );
       const selected = this.model(r.model);
-      const runtime = this.o.models.workerSettings(
-        this.contexts.capture(r.model).cwd,
-        selected,
+      const runtime = unattendedRuntime(
+        this.o.models.workerSettings(
+          this.contexts.capture(r.model).cwd,
+          selected,
+        ),
       );
       const { source, digest, delivery } = this.observation(plan, runtime);
       const p: WorkflowProposal = {
@@ -1060,9 +1081,11 @@ export class Workflows {
       else declared = contentsIdentity(this.cwd, writes);
     } else if (request.action === "research") {
       const selected = this.model(request.model);
-      runtime = this.o.models.workerSettings(
-        this.contexts.capture(request.model).cwd,
-        selected,
+      runtime = unattendedRuntime(
+        this.o.models.workerSettings(
+          this.contexts.capture(request.model).cwd,
+          selected,
+        ),
       );
       this.capacity();
     } else throw new ContractError("invalid");
@@ -1643,21 +1666,28 @@ ${knowledge.text}`,
       }
       transcript.status = completed.outcome;
       delete transcript.retry;
+      // The provider's own words, where the worker reported them: a failed
+      // step says why, not only that its process closed.
+      const refused =
+        completed.closed &&
+        completed.outcome === "failed" &&
+        modelRequestFailed(completed.output)
+          ? modelFailureText(completed.output)
+          : undefined;
+      if (refused) transcript.notice = diagnosticText(refused, 512);
       saveTranscript();
       this.finishStep(
         live,
         step,
         completed,
-        undefined,
+        refused,
         readonly ? undefined : report,
       );
-      if (
-        completed.closed &&
-        completed.outcome === "failed" &&
-        modelRequestFailed(completed.output)
-      )
-        throw new Error(
-          "The model request failed after automatic recovery or was not retryable. Partial work is preserved; no workflow step was replayed.",
+      if (refused)
+        throw new ModelRequestFailure(
+          completed,
+          step,
+          `${refused}\nPartial work is preserved.`,
         );
       return { result: completed, step, report };
     } finally {
@@ -2093,12 +2123,14 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     for (const reading of reads)
       if ("research" in reading) {
         const found = await this.investigation(reading.research, cwd);
-        if (found)
-          extra.push({
-            label: `investigation ${reading.research}`,
-            reason: `Recorded investigation, named by the agreement: ${reading.reason}`,
-            body: found,
-          });
+        extra.push({
+          label: `investigation ${reading.research}`,
+          reason: `Recorded investigation, named by the agreement: ${reading.reason}`,
+          // Said, not skipped: the worker then knows to read the code itself.
+          body:
+            found ??
+            "No investigation is recorded under this identity, so there is no answer to give here. Read the code as it is now.",
+        });
       }
     return {
       writes: task
@@ -2106,6 +2138,10 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
         : this.scope(live, p),
       named: { reads, extra },
     };
+  }
+  /** Whether an answer is recorded under this investigation identity. */
+  investigated(id: string): boolean {
+    return this.recordedInvestigation(id) !== null;
   }
   private investigationPath(id: string): string {
     return join(this.root, "investigations", `${decodeId(id)}.json`);
@@ -3502,6 +3538,120 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         "Declared targets changed between approval and start; nothing was edited.",
       );
   }
+  /** One research run. Each question is asked by its own readonly worker (or
+   * answered from a record that still holds), and every answer is recorded the
+   * moment it settles, whatever becomes of the others. A question whose worker
+   * failed is asked once more, by itself, after the rest: nothing was changed
+   * by the first attempt, and providers that refuse concurrent requests answer
+   * a lone one. The run completes when any question was answered. */
+  private async investigate(
+    live: Live,
+    request: Extract<WorkflowRequest, { action: "research" }>,
+  ): Promise<void> {
+    type Answer = { result: RunResult; step: WorkflowStep };
+    const answered = ({ result }: Answer) =>
+      result.outcome === "completed" && result.closed && result.exitCode === 0;
+    let commit: string | null = null;
+    try {
+      commit = await gitHead(this.cwd);
+    } catch {
+      /* Not a Git checkout. */
+    }
+    const ask = async (i: number): Promise<Answer> => {
+      const question = request.questions[i];
+      const known = this.answered(question, request.roots);
+      let answer: Answer;
+      if (known) {
+        // Asked before, and nothing it rests on has changed: no worker.
+        const step = this.step(live, `research-${i + 1}`, "research");
+        const result: RunResult = {
+          outcome: "completed",
+          closed: true,
+          exitCode: 0,
+          signal: null,
+          durationMs: 0,
+          truncated: false,
+          output: "",
+          text: `Reused recorded investigation ${known.id} of ${new Date(known.at).toISOString().slice(0, 10)}: the question is the same and the files it cites have not changed.\n${known.answer}`,
+        };
+        this.finishStep(live, step, result);
+        answer = { result, step };
+      } else
+        try {
+          answer = await this.worker(
+            live,
+            this.cwd,
+            `research-${i + 1}`,
+            `Goal: ${request.goal}\nInvestigation: ${question}\nRead only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`,
+            true,
+            request.model,
+            request.roots,
+            "research",
+          );
+        } catch (error) {
+          if (!(error instanceof ModelRequestFailure)) throw error;
+          answer = { result: error.result, step: error.step };
+        }
+      if (!answered(answer)) return answer;
+      // An agreement can name this answer as something to read first, by the
+      // step's investigation identity or by the step's own id. A reused answer
+      // is this step's too; the question keeps pointing at the original.
+      const { childRunId, id } = answer.step;
+      for (const identity of [childRunId, investigationId(id)])
+        if (identity)
+          this.write(this.investigationPath(identity), {
+            run: live.run.id,
+            step: id,
+            question,
+            commit,
+            at: Date.now(),
+            files: citedFiles(this.cwd, answer.result.text),
+          });
+      if (childRunId)
+        this.keep(this.questionPath(question, request.roots), {
+          id: childRunId,
+        });
+      return answer;
+    };
+    const first = await settleLimited(
+      this.o.parallel ?? PARALLEL.default,
+      request.questions.map((_, i) => () => ask(i)),
+    );
+    const answers: Answer[] = [];
+    for (const a of first) {
+      if (a.status === "rejected") throw a.reason;
+      answers.push(a.value);
+    }
+    for (const [i, a] of answers.entries()) {
+      // Only a settled failure is asked again: an unknown closure, a timeout
+      // or a cancellation is never grounds for another worker.
+      if (answered(a) || a.result.outcome !== "failed" || !a.result.closed)
+        continue;
+      if (this.o.owner.state !== "idle") break;
+      this.assertRunning(live);
+      answers[i] = await ask(i);
+    }
+    const unanswered = answers.flatMap((a, i) =>
+      answered(a)
+        ? []
+        : [
+            `Question ${i + 1} was not answered: ${clipBytes(a.step.text.replace(/\s+/gu, " "), 384)}`,
+          ],
+    );
+    if (!unanswered.length) return;
+    if (unanswered.length === answers.length)
+      throw new WorkflowFailure(
+        answers[0].result.outcome === "completed"
+          ? "failed"
+          : answers[0].result.outcome,
+        unanswered.join("\n"),
+        answers[0].step.id,
+      );
+    live.notes.push(
+      `${answers.length - unanswered.length} of ${answers.length} questions were answered; an unanswered one was asked a second time first.`,
+      ...unanswered,
+    );
+  }
   private describe(error: unknown): string {
     return error instanceof WorkflowRefusal
       ? `${error.code}: ${error.detail}`
@@ -3538,61 +3688,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       live.run.status = "running";
       this.save(live);
       if (request.action === "research") {
-        const answers = await settleLimited(
-          this.o.parallel ?? PARALLEL.default,
-          request.questions.map((q, i) => async () => {
-            const known = this.answered(q, request.roots);
-            if (!known)
-              return this.worker(
-                live,
-                this.cwd,
-                `research-${i + 1}`,
-                `Goal: ${request.goal}\nInvestigation: ${q}\nRead only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`,
-                true,
-                request.model,
-                request.roots,
-                "research",
-              );
-            // Asked before, and nothing it rests on has changed: no worker.
-            const step = this.step(live, `research-${i + 1}`, "research");
-            const result: RunResult = {
-              outcome: "completed",
-              closed: true,
-              exitCode: 0,
-              signal: null,
-              durationMs: 0,
-              truncated: false,
-              output: "",
-              text: `Reused recorded investigation ${known.id} of ${new Date(known.at).toISOString().slice(0, 10)}: the question is the same and the files it cites have not changed.\n${known.answer}`,
-            };
-            this.finishStep(live, step, result);
-            return { result, step };
-          }),
-        );
-        let commit: string | null = null;
-        try {
-          commit = await gitHead(this.cwd);
-        } catch {
-          /* Not a Git checkout. */
-        }
-        for (const [i, a] of answers.entries()) {
-          if (a.status === "rejected") throw a.reason;
-          this.success(a.value.result);
-          // An agreement can name this answer as something to read first.
-          const { childRunId, id } = a.value.step;
-          if (!childRunId) continue;
-          this.write(this.investigationPath(childRunId), {
-            run: live.run.id,
-            step: id,
-            question: request.questions[i],
-            commit,
-            at: Date.now(),
-            files: citedFiles(this.cwd, a.value.result.text),
-          });
-          this.keep(this.questionPath(request.questions[i], request.roots), {
-            id: childRunId,
-          });
-        }
+        await this.investigate(live, request);
       } else if (live.proposal) await this.implement(live, live.proposal);
       else throw new ContractError("invalid");
       if (this.o.owner.state === "quarantined")

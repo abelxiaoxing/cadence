@@ -31,6 +31,9 @@ export const LIMITS = Object.freeze({
   predecessorBytes: 16 * 1024,
   handoffBytes: 32 * 1024,
   frameBytes: 64 * 1024,
+  // One coordinator tool call or its answer over the private bridge: a plan at
+  // its 256KiB bound, or every answer of a full research run, with its envelope.
+  coordinatorBytes: 384 * 1024,
   chunkBytes: 8 * 1024,
   detailBytes: 32 * 1024 * 1024,
   dataFrames: 100_000,
@@ -1235,15 +1238,28 @@ function sourceId(v) {
   if (!/^[a-zA-Z0-9_-]+$/.test(s)) invalid();
   return s;
 }
-/** Credential-free progress, not a successful response or permission to replay. */
+/** Bytes of a provider's own words about a failed request that are kept. */
+export const MODEL_FAILURE_BYTES = 256;
+/** Credential-free progress, not a successful response or permission to replay.
+ * `reason` is the provider's words for the failed request, redacted with the
+ * worker's credentials and bounded before it leaves the worker. */
 export function decodeModelRetry(v) {
-  const o = closed(v, ["phase", "attempt", "maxAttempts", "delayMs"]);
+  const o = closed(v, [
+    "phase",
+    "attempt",
+    "maxAttempts",
+    "delayMs",
+    ...(Object.hasOwn(v ?? {}, "reason") ? ["reason"] : []),
+  ]);
   const maxAttempts = integer(o.maxAttempts, 1);
   const progress = {
     phase: oneOf(o.phase, ["waiting", "requesting"]),
     attempt: integer(o.attempt, 1, maxAttempts),
     maxAttempts,
     delayMs: integer(o.delayMs, 0, 2147483647),
+    ...(o.reason === undefined
+      ? {}
+      : { reason: text(o.reason, MODEL_FAILURE_BYTES, true) }),
   };
   if (progress.phase === "requesting" && progress.delayMs !== 0)
     throw new ContractError("invalid");

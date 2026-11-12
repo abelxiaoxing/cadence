@@ -1,10 +1,20 @@
 /** Serialized private child/owner bridge. Never a browser API or shell executor. */
 import { Type } from "typebox";
+import { LIMITS } from "./worker-public.mjs";
 
+/** The parameters of the two tools a coordinator calls, declared once for the
+ * native extension and the browser coordinator. They state shape only: counts,
+ * sizes and references are checked by the service, which refuses naming the
+ * field (`workflowPlanInput`, `researchInput`), so a call is never rejected
+ * before the service has seen it for a bound the model could not know. */
 const CHECK = Type.Object({
   name: Type.String(),
   command: Type.String(),
-  timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 2147483647 })),
+  timeoutMs: Type.Optional(
+    Type.Integer({
+      description: "Milliseconds, from 100. Leave out for no timeout.",
+    }),
+  ),
 });
 const READING = Type.Union([
   Type.Object({
@@ -16,48 +26,99 @@ const READING = Type.Union([
   }),
   Type.Object({
     research: Type.String({
-      description: "Identity of a recorded investigation to reuse.",
+      description:
+        'A recorded investigation: the "investigation" value of a completed research step.',
     }),
     reason: Type.String(),
   }),
 ]);
-const PLAN = Type.Object({
+export const RESEARCH_PARAMETERS = Type.Object({
   goal: Type.String(),
-  design: Type.String(),
-  decisions: Type.String(),
-  acceptance: Type.String(),
-  version: Type.Literal(3),
-  assumptions: Type.String({
-    description:
-      "What you decided on the user's behalf without asking; approval confirms it. Empty when there is none.",
-  }),
-  documents: Type.Array(
+  questions: Type.Array(
     Type.String({
-      description: "Existing project Markdown this delivery may update.",
+      description: "One focused, independent question.",
     }),
-    { maxItems: 16 },
-  ),
-  reviewReads: Type.Array(READING, { maxItems: 16 }),
-  policy: Type.Object({
-    installs: Type.Boolean({
+    {
       description:
-        "Whether a later revision may add dependency-installation commands. False unless the user agreed.",
+        "Split independent questions freely; the service runs as many at once as this machine is configured for and queues the rest.",
+    },
+  ),
+  roots: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees.",
+      }),
+    ),
+  ),
+});
+export const PLAN_PARAMETERS = Type.Object({
+  goal: Type.String(),
+  design: Type.String({ description: "The initial technical route." }),
+  decisions: Type.Optional(
+    Type.String({ description: "Explicit decisions and non-goals." }),
+  ),
+  acceptance: Type.String(),
+  assumptions: Type.Optional(
+    Type.String({
+      description:
+        "What you decided on the user's behalf without asking; approval confirms it. Leave out when there is none.",
     }),
-  }),
+  ),
+  documents: Type.Optional(
+    Type.Array(
+      Type.String({
+        description: "Existing project Markdown this delivery may update.",
+      }),
+    ),
+  ),
+  reviewReads: Type.Optional(
+    Type.Array(READING, {
+      description: "What the independent review reads first.",
+    }),
+  ),
+  policy: Type.Optional(
+    Type.Object({
+      installs: Type.Optional(
+        Type.Boolean({
+          description:
+            "Whether a later revision may add dependency-installation commands. False unless the user agreed.",
+        }),
+      ),
+    }),
+  ),
   tasks: Type.Array(
     Type.Object({
-      id: Type.String(),
+      id: Type.String({
+        description:
+          "Lowercase letters, digits and hyphens, starting with a letter.",
+      }),
       title: Type.String(),
-      instructions: Type.String(),
+      instructions: Type.String({ description: "At most 8KiB." }),
       writes: Type.Array(Type.String()),
-      after: Type.Array(Type.String()),
-      reads: Type.Array(READING, { maxItems: 16 }),
+      after: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Ids of the assignments this one really depends on. Leave out when it depends on none.",
+        }),
+      ),
+      reads: Type.Optional(
+        Type.Array(READING, {
+          description: "The few things this assignment should read first.",
+        }),
+      ),
     }),
-    { minItems: 1, maxItems: 16 },
+    { description: "One to 16 assignments." },
   ),
-  checks: Type.Array(CHECK, { minItems: 1, maxItems: 16 }),
-  setup: Type.Array(CHECK, { maxItems: 4 }),
-  baselineChecks: Type.Array(CHECK, { maxItems: 16 }),
+  checks: Type.Array(CHECK, {
+    description: "The real acceptance commands: at least one, at most 16.",
+  }),
+  setup: Type.Optional(
+    Type.Array(CHECK, {
+      description: "One-time preparation commands, at most four.",
+    }),
+  ),
+  baselineChecks: Type.Optional(Type.Array(CHECK)),
   delivery: Type.Union([
     Type.Literal("local-merge"),
     Type.Literal("working-copy"),
@@ -85,7 +146,7 @@ export function createCoordinatorTools() {
     if (
       !reply ||
       typeof reply !== "object" ||
-      Buffer.byteLength(JSON.stringify(reply)) > 65536
+      Buffer.byteLength(JSON.stringify(reply)) > LIMITS.coordinatorBytes
     )
       return closed();
     const p = pending.get(reply.id);
@@ -96,34 +157,29 @@ export function createCoordinatorTools() {
         content: [{ type: "text", text: reply.text }],
         details: undefined,
       });
-    else p.reject(new Error("Coordinator refused this request"));
+    // The service did nothing; its fixed code says why it could not.
+    else
+      p.reject(
+        new Error(
+          typeof reply.code === "string" && /^[a-z-]{1,40}$/.test(reply.code)
+            ? `The service refused this call (${reply.code}); nothing was started or published.`
+            : "The service refused this call; nothing was started or published.",
+        ),
+      );
   };
   process.on("message", receive);
   const tools = [
     {
       name: "cadence_research",
       description:
-        "Investigate bounded project questions with readonly subagents; returns recorded evidence. Never edits.",
-      parameters: Type.Object({
-        goal: Type.String(),
-        // Split independent questions freely; the owner bounds how many run at once.
-        questions: Type.Array(Type.String(), { minItems: 1, maxItems: 8 }),
-        roots: Type.Optional(
-          Type.Array(
-            Type.String({
-              description:
-                "Specific investigation directories; defaults to project cwd. Avoid filesystem roots and broad parent trees.",
-            }),
-            { minItems: 1, maxItems: 8 },
-          ),
-        ),
-      }),
+        "Investigate focused, independent project questions with readonly subagents, as many as the goal needs; returns each question's recorded answer and its investigation identity. Never edits.",
+      parameters: RESEARCH_PARAMETERS,
     },
     {
       name: "cadence_plan",
       description:
-        "Publish a complete proposal after decisions are aligned. This never authorizes execution. The user sees an exact plan card.",
-      parameters: PLAN,
+        "Publish a complete proposal after decisions are aligned. This never authorizes execution. The user sees an exact plan card. goal, design, decisions, assumptions and acceptance together fit 32KiB, because every worker is given them.",
+      parameters: PLAN_PARAMETERS,
     },
     {
       name: "cadence_status",
@@ -138,8 +194,10 @@ export function createCoordinatorTools() {
       if (retiring) throw new Error("Coordinator closed");
       if (signal?.aborted) throw new Error("Coordinator canceled");
       const request = { id: ++counter, name: tool.name, args };
-      if (Buffer.byteLength(JSON.stringify(request)) > 65536)
-        throw new Error("Coordinator request exceeds bound");
+      if (Buffer.byteLength(JSON.stringify(request)) > LIMITS.coordinatorBytes)
+        throw new Error(
+          `This call is larger than ${LIMITS.coordinatorBytes} bytes and was not sent; nothing happened.`,
+        );
       const original = chain.then(
         () =>
           new Promise((resolve, reject) => {
