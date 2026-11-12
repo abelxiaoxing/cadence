@@ -14,32 +14,8 @@ import {
 import { Workflows } from "../src/service/workflows.ts";
 import { runProcess } from "../src/subagent-process.ts";
 import type { CaptureFrame } from "../src/worker-public.mjs";
+import { frame, message } from "./helpers/capture-frames.ts";
 
-const frame = (event: Record<string, unknown>) => ({ event }) as CaptureFrame;
-function message(messageId: string, chunks: string[]): CaptureFrame[] {
-  const detailId = randomUUID();
-  return [
-    frame({ kind: "message-start", messageId, role: "assistant" }),
-    frame({
-      kind: "detail-begin",
-      detailId,
-      descriptor: {
-        owner: {
-          kind: "message",
-          messageId,
-          blockId: randomUUID(),
-          index: 0,
-          stage: "stream",
-        },
-        field: "message",
-        encoding: "utf8",
-      },
-    }),
-    ...chunks.map((text) => frame({ kind: "detail-chunk", detailId, text })),
-    frame({ kind: "detail-end", detailId }),
-    frame({ kind: "message-end", messageId }),
-  ];
-}
 const turn = (): ChatTurn => ({
   id: randomUUID(),
   epoch: randomUUID(),
@@ -396,7 +372,7 @@ it("coordinator bridge refuses one call without stopping the coordinator and red
   const script = `
     const calls = [
       { id: 1, name: "cadence_plan", args: { design: "Add a token: string field; SECRET-LITERAL" } },
-      { id: 2, name: "cadence_plan", args: { design: "x".repeat(70000) } },
+      { id: 2, name: "cadence_plan", args: { design: "x".repeat(400000) } },
       ...Array.from({ length: 22 }, (_, i) => ({ id: i + 3, name: "cadence_status", args: {} })),
     ];
     const replies = [];
@@ -431,6 +407,8 @@ it("coordinator bridge refuses one call without stopping the coordinator and red
       ...Array.from({ length: 22 }, (_, i) => [i + 3, true]),
     ],
   );
+  // The refusal says why with a fixed code, never with exception text.
+  expect(replies[1]).toEqual({ id: 2, ok: false, code: "oversize" });
   expect(seen.map((s) => s.name)).toEqual([
     "cadence_plan",
     ...Array(22).fill("cadence_status"),

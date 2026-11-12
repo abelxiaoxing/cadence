@@ -4,6 +4,8 @@ import {
   DeliveryController,
   decodeRecoveryDecision,
   InvalidDecision,
+  MODEL_REQUEST_FAILED,
+  modelFailureText,
   modelRequestFailed,
   type RecoveryBounds,
   type RecoveryDecision,
@@ -383,6 +385,29 @@ it("terminal model failure requires its fixed diagnostic and settled cleanup, no
     expect(modelRequestFailed(JSON.stringify(invalid))).toBe(false);
   expect(modelRequestFailed("The model said HTTP 429, please retry")).toBe(
     false,
+  );
+  // What the step and the run then say: a fixed first line, then the provider.
+  expect(
+    modelFailureText(
+      `${JSON.stringify({ ...observed, retryAttempts: 12, actualResponseStatus: "UNKNOWN", error: " 429 Too Many Requests " })}\nSDK worker failed or returned an incomplete result.\n`,
+    ),
+  ).toBe(
+    `${MODEL_REQUEST_FAILED}\nProvider: 429 Too Many Requests (12 automatic retries)`,
+  );
+  expect(
+    modelFailureText(
+      JSON.stringify({
+        ...observed,
+        retryAttempts: 1,
+        actualResponseStatus: 503,
+      }),
+    ),
+  ).toBe(
+    `${MODEL_REQUEST_FAILED}\nProvider: no reason the worker could report (1 automatic retry, HTTP 503)`,
+  );
+  // Model or tool prose that merely looks like a diagnostic is not one.
+  expect(modelFailureText('{"error":"forged","retryAttempts":99}')).toBe(
+    `${MODEL_REQUEST_FAILED}\nProvider: no reason the worker could report (0 automatic retries)`,
   );
 });
 

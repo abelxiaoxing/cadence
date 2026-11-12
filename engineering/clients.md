@@ -16,6 +16,10 @@ Active-branch session entries retain mode and the last observed run, not a reusa
 Session replacement restores normal tools before rebinding the new branch; compaction does not disable the mode.
 Entry and typed exact plan approval require fresh trusted/idle raw-terminal evidence; paste, quoted commands, RPC and extension-origin input cannot provide it.
 Planning tools expose coordinated readonly subagents, proposals and observations rather than uncoordinated edits.
+Both surfaces declare `cadence_research` and `cadence_plan` from one schema (`RESEARCH_PARAMETERS`, `PLAN_PARAMETERS` in `src/coordinator-tools.mjs`) that states shape only: no counts or sizes, so Pi's own argument check never turns a call down for a bound the model could not know.
+The service completes and checks the call (`researchInput`, `workflowPlanInput` in `src/service/contracts/workflow.ts`): a plan field that may be empty may be left out, a question list loses its blank and repeated entries, and whatever cannot be accepted is refused as `<field>: <what it holds and what is accepted>`.
+The coordinator corrects that field and repeats the call in the same turn; nothing in the instructions or a notice lets it publish a reduced plan or ask the user to reply first.
+A reading names a recorded investigation by a completed research step's `investigation` value or by that step's own id; the browser checks that an answer is recorded under it before publishing, and a worker is told when one it was given is not.
 `cadence_plan` returns the complete plan in its own tool result; no message is injected while a tool call is open, and workflow results notify at once and are appended as a message once Pi is idle.
 An attempted run ID is restored on a definite refusal (and Start keeps its proposal); one the owner proves absent is forgotten on observation; an `unknown` run blocks new research or planning until one `cadence_status` has observed it.
 Start, Cancel and the model picker list the safe choice first and accept the acting choice only by a typed, non-paste Enter at least 250ms after the dialog opened; the approval grant is prepared after that confirmation.
@@ -131,6 +135,7 @@ Use `/cadence [goal]` at the beginning of an explicit Send, or select Cadence on
 Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
 Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts (with the anchor of a message being rewritten), the prompts this tab sent (sessionStorage, for recall), display preferences and uncertain attempt IDs.
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
+A research call returns one entry per question in the order asked (`status`, the first 4KiB of its text and, for an answered one, its `investigation`), not the run record; a bridge refusal carries the service's fixed error code.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
 While that turn runs it takes further messages like an ordinary reply (see [Ordinary conversations](#ordinary-conversations)): they join the turn the mode names, change no mode or plan state and are never read as approval, exit or mode entry.
@@ -339,6 +344,7 @@ There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugi
 SDK-native automatic compaction is enabled, and terminal `/compact` entries are honoured when continued; original history is retained.
 The service-owned SDK session retries transient model-request errors with the bounded policy in `src/worker-model.mjs`; native Pi's main dialogue retains its own settings, which Cadence neither changes nor copies.
 The owner projects credential-free waiting/requesting progress separately from error notices; refresh observes the same admitted turn and never resends it.
+That progress carries the provider's reason when the worker could keep one, and the retry line shows it.
 Pi keeps failed attempts in raw history and appends context edits to omit them from later model requests; completed tool results remain in context.
 Low-level `agent_end` and retry-end events do not establish turn completion: the original prompt, actual stop reason and native/auth/storage closure still decide the result.
 Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers, so a terminal extension's tools are shown in history but not offered to a browser turn.

@@ -205,6 +205,7 @@ var LIMITS = Object.freeze({
   predecessorBytes: 16 * 1024,
   handoffBytes: 32 * 1024,
   frameBytes: 64 * 1024,
+  coordinatorBytes: 384 * 1024,
   chunkBytes: 8 * 1024,
   detailBytes: 32 * 1024 * 1024,
   dataFrames: 1e5,
@@ -885,14 +886,22 @@ function sourceId(v) {
     invalid();
   return s;
 }
+var MODEL_FAILURE_BYTES = 256;
 function decodeModelRetry(v) {
-  const o = closed(v, ["phase", "attempt", "maxAttempts", "delayMs"]);
+  const o = closed(v, [
+    "phase",
+    "attempt",
+    "maxAttempts",
+    "delayMs",
+    ...Object.hasOwn(v ?? {}, "reason") ? ["reason"] : []
+  ]);
   const maxAttempts = integer(o.maxAttempts, 1);
   const progress = {
     phase: oneOf(o.phase, ["waiting", "requesting"]),
     attempt: integer(o.attempt, 1, maxAttempts),
     maxAttempts,
-    delayMs: integer(o.delayMs, 0, 2147483647)
+    delayMs: integer(o.delayMs, 0, 2147483647),
+    ...o.reason === undefined ? {} : { reason: text(o.reason, MODEL_FAILURE_BYTES, true) }
   };
   if (progress.phase === "requesting" && progress.delayMs !== 0)
     throw new ContractError("invalid");

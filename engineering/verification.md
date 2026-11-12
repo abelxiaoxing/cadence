@@ -73,6 +73,9 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 
 - `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
 - `service-conversation-workflow`, `test/web/workflow.test.tsx`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
+- `workflow-contract`, `workbench-cadence-control`, `workflow-research`: the coordinator's tool input and research outcomes.
+  `workflow-contract` holds the schema that states no bound, the completed plan input and one named refusal per field; `workbench-cadence-control` the browser's refusals (the reported step id in place of an investigation identity, never the word oversize), the unchanged-plan instruction and the per-question research result; `workflow-research` runs the owner against a stand-in worker launch for the single second asking, recording under both identities as each answer settles, the run that completes with what is missing and the one that fails with no answer.
+  The stand-in launch is not an SDK worker or a provider; `lightweight-sdk`'s mocked worker body covers the provider's reason on the failure diagnostic, redacted with the worker's credential.
 - `workflow-controller`, `workflow-delivery`, `workflow-verification`, `workflow-recovery-regressions`, `workflow-source-identity`, `workflow-step-pages`, `project-knowledge`, `project-knowledge-bounds`: service-owned recovery without user Send, no attempt quota, actual failed-step references, fixed permission boundaries, partial-work handoff, verified knowledge updates, fresh context and non-evicting step pages.
 - `task-worktree`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: approved-only named stable candidates, adaptive recovery/knowledge, exact acceptance and repeated owned fast-forwards, changed-target retention, original-operation leases, readonly evidence and recovery.
   The full real admission case remains slow; controlled runtime/recovery tests are not paid-provider or real-owner qualification.
@@ -183,6 +186,9 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Systemd unit pointing at a removed project directory           | Readable refusal, exit78 (no restart loop); its dead reservation is released account-wide             |
 | A steer still in Pi's queue when its reply fails for good      | Take it back as `agent_end` is reported or Pi continues into it; record it undelivered, never resend  |
 | Shipped module importing a file left out of `files` (2.1.0)    | Pack stage resolves every shipped import inside the real archive; a `slow` test is never the gate     |
+| A count or size bound in a tool schema (2 questions, 2.0.x)    | The schema states shape only; the service refuses by field, so the model can correct the call         |
+| A refusal naming the wrong cause (`oversize` for an identity)  | Name the field, what it holds and what is accepted; never a bare code the model will act on           |
+| A provider that fails one of several concurrent subagents      | Record each answer as it settles, ask the failed question once more alone, keep the provider's reason |
 
 Good: current context → exact plan approval → durable acceptance → genuine original native/auth/storage settlement → real checks → automatic Agent review.
 Archived human Review is not a new workflow approval.

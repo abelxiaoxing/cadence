@@ -5,20 +5,31 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { CadencePreferences } from "../src/cadence-preferences.ts";
 import {
+  PLAN_PARAMETERS,
+  RESEARCH_PARAMETERS,
+} from "../src/coordinator-tools.mjs";
+import {
   clipUnits,
   decodeWorkflowPlan,
   decodeWorkflowProposal,
   decodeWorkflowRequest,
   decodeWorkflowRun,
+  investigationId,
   readableWorkflowPlan,
+  researchInput,
   WORKFLOW_LIMITS,
+  WorkflowInputError,
   type WorkflowPlan,
   workflowAncestors,
   workflowCovers,
   workflowOrder,
+  workflowPlanInput,
 } from "../src/service/contracts/workflow.ts";
 
 import { plan } from "./helpers/workflow-plan.ts";
+
+/** A plan as a model may send it: any field present, absent or of any type. */
+type Draft = Record<string, unknown>;
 
 it("initial plans are finite DAGs and checks are mandatory; route revisions belong to the owner", () => {
   expect(
@@ -300,11 +311,192 @@ it("a research run carries as many independent questions as the plan needs, with
     },
   });
   // How many run at once is the owner's execution limit, not this bound.
-  expect(WORKFLOW_LIMITS.questions).toBe(8);
+  expect(WORKFLOW_LIMITS.questions).toBe(32);
   const full = decodeWorkflowRequest(request(WORKFLOW_LIMITS.questions));
-  expect(full.action === "research" && full.questions).toHaveLength(8);
+  expect(full.action === "research" && full.questions).toHaveLength(32);
   expect(() =>
     decodeWorkflowRequest(request(WORKFLOW_LIMITS.questions + 1)),
   ).toThrow();
   expect(() => decodeWorkflowRequest(request(0))).toThrow();
+});
+it("the tool schemas state no count, so only the service's named refusal turns a call down", () => {
+  // The reported failure: Pi refused four questions against a schema bound of
+  // two before the service saw the call. The schema now has no such bound.
+  const bounds = JSON.stringify([RESEARCH_PARAMETERS, PLAN_PARAMETERS]).match(
+    /"(?:maxItems|minItems|maxLength|minLength|maximum|minimum)"/gu,
+  );
+  expect(bounds).toBeNull();
+  expect(
+    researchInput({
+      goal: "Map the project",
+      questions: ["structure?", "flows?", "documents?", "dependencies?"],
+      roots: ["/project"],
+    }),
+  ).toEqual({
+    goal: "Map the project",
+    questions: ["structure?", "flows?", "documents?", "dependencies?"],
+    roots: ["/project"],
+  });
+  expect(() => researchInput(null)).toThrow(WorkflowInputError);
+  expect(() => researchInput({ goal: "g", questions: {} })).toThrow(
+    "questions: must be a list",
+  );
+  expect(() =>
+    researchInput({
+      goal: "g",
+      questions: ["q"],
+      roots: Array(9)
+        .fill(0)
+        .map((_, i) => `r${i}`),
+    }),
+  ).toThrow("roots: has 9 directories; at most 8");
+});
+it("a plan input is completed, and each refusal names its field and what is accepted there", () => {
+  const p = plan();
+  const { version: _version, setup: _setup, ...partial } = p;
+  expect(workflowPlanInput(partial)).toEqual(p);
+  expect(workflowPlanInput({ ...partial, policy: null })).toEqual(p);
+  expect(investigationId("0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10")).toBe(
+    "0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10",
+  );
+  expect(
+    investigationId("research-12-0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10"),
+  ).toBe("0f8b1a52-7a3c-4f0e-9d51-2f6c1e7a9b10");
+  expect(investigationId("research-2")).toBeNull();
+  for (const [mutate, said] of [
+    [
+      (q: Draft) => {
+        q.version = 2;
+      },
+      "earlier agreements are readonly",
+    ],
+    [
+      (q: Draft) => {
+        delete q.tasks;
+      },
+      "plan: is missing tasks",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [];
+      },
+      "tasks: needs at least one assignment",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = Array(17).fill(p.tasks[0]);
+      },
+      "tasks: has 17 entries; at most 16",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [p.tasks[0], { ...p.tasks[1], id: "a" }];
+      },
+      'tasks[1].id: "a" is already the id of tasks[0]',
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [{ ...p.tasks[0], after: ["z"] }];
+      },
+      'tasks[0].after: names "z", which is not the id of an assignment in tasks',
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [
+          { ...p.tasks[0], after: ["b"] },
+          { ...p.tasks[1], after: ["a"] },
+        ];
+      },
+      "tasks: the after lists name a missing assignment or form a cycle",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [{ ...p.tasks[0], writes: [] }];
+      },
+      "tasks[0].writes: needs at least one path",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [{ ...p.tasks[0], writes: ["/etc/x"] }];
+      },
+      "tasks[0].writes[0]: is not a plain path inside the repository",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [{ ...p.tasks[0], id: "Task One" }];
+      },
+      "tasks[0].id: is not an assignment id",
+    ],
+    [
+      (q: Draft) => {
+        q.tasks = [{ ...p.tasks[0], title: "题".repeat(86) }];
+      },
+      "tasks[0].title: is 258 bytes; at most 256",
+    ],
+    [
+      (q: Draft) => {
+        q.checks = [{ name: "c", command: "run", timeoutMs: 5 }];
+      },
+      "checks[0].timeoutMs: is a whole number of milliseconds from 100",
+    ],
+    [
+      (q: Draft) => {
+        q.checks = [{ name: "c" }];
+      },
+      "checks[0]: is missing command",
+    ],
+    [
+      (q: Draft) => {
+        q.setup = Array(5).fill(p.checks[0]);
+      },
+      "setup: has 5 entries; at most 4",
+    ],
+    [
+      (q: Draft) => {
+        q.documents = ["notes.txt"];
+      },
+      "documents[0]: must be a Markdown file (.md)",
+    ],
+    [
+      (q: Draft) => {
+        q.delivery = "push";
+      },
+      "delivery: is local-merge or working-copy",
+    ],
+    [
+      (q: Draft) => {
+        q.policy = { installs: "yes" };
+      },
+      "policy.installs: must be true or false",
+    ],
+    [
+      (q: Draft) => {
+        q.reviewReads = [{ path: "a.md" }];
+      },
+      "reviewReads[0]: is missing reason",
+    ],
+    [
+      (q: Draft) => {
+        q.reviewReads = [{ path: "a.md", reason: "因".repeat(342) }];
+      },
+      "reviewReads[0].reason: is 1026 bytes; at most 1024",
+    ],
+    [
+      (q: Draft) => {
+        q.acceptance = "ok\u001b[2J";
+      },
+      "acceptance: contains an invisible control character",
+    ],
+    [
+      (q: Draft) => {
+        q.extra = 1;
+      },
+      'plan: has no field "extra"',
+    ],
+  ] as const) {
+    const q: Draft = structuredClone(partial);
+    mutate(q);
+    expect(() => workflowPlanInput(q), said).toThrow(said);
+  }
+  expect(() => workflowPlanInput("plan")).toThrow("plan: must be an object");
 });

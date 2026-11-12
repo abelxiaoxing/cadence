@@ -37,13 +37,27 @@ export declare function resolveWorkerRuntime(
   defaults: { edit: string[]; readonly: string[]; available: string[] },
 ): WorkerRuntime;
 export declare function decodeWorkerRuntime(value: unknown): WorkerRuntime;
+export declare const UNATTENDED_RETRY: Readonly<{
+  maxRetries: 12;
+  maxAgentDelayMs: 300000;
+}>;
+/** The runtime of a worker the service runs unattended: Pi's settings with the
+ * patient retry floor, unless retries are off. */
+export declare function unattendedRuntime(
+  runtime: WorkerRuntime,
+): WorkerRuntime;
 export declare function describeWorkerRuntime(runtime: WorkerRuntime): string;
 export declare class WorkerModelState {
-  constructor(emit: (event: CaptureEvent) => unknown, fail: () => void);
+  constructor(
+    emit: (event: CaptureEvent) => unknown,
+    fail: () => void,
+    describe?: (providerText: unknown) => string,
+  );
   requestPrepared: boolean;
   actualResponseStatus: number | "UNKNOWN";
   retryAttempts: number;
   progress: ModelRetry | null;
+  reason: string;
   event(event: unknown): void;
   beginRequest(): Promise<void>;
 }

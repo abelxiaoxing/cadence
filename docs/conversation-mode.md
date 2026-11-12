@@ -175,7 +175,8 @@ Baseline checks are separate from acceptance checks that need newly implemented 
 Failed setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.
 Cadence can preserve partial outputs, split remaining work and choose alternative implementations within the approval; it never expands permissions or weakens acceptance.
 Transient model-request failures recover inside the original SDK worker, with visible, cancellable backoff; completed tool results and the checkout gate stay with that worker.
-An exhausted or nonretryable model request stops the delivery with partial work preserved, rather than rerunning the entire step or launching another model just to diagnose an unavailable provider.
+A subagent keeps retrying far longer than an interactive session does (12 retries, about half an hour of backoff, unless you turned Pi's retries off), and the retry line shows what the provider said.
+An exhausted or nonretryable model request stops the delivery with partial work preserved and the provider's reason on the failed step, rather than rerunning the entire step or launching another model just to diagnose an unavailable provider.
 An unchanged failure and identical recovery strategy cannot become an endless replay loop.
 A concrete external blocker is reported with preserved work, not a generic request to type “continue”.
 Final candidate checks must pass before merge.
@@ -232,8 +233,11 @@ Conversation response completion is distinct from workflow completion; read the 
 
 ### Research scope, timing and retained results
 
-Each research call accepts up to eight independent questions and optional specific `roots` (default: the conversation directory).
+Each research call accepts as many independent questions as the goal needs (up to 32) and optional specific `roots` (default: the conversation directory).
 The service runs as many of them at once as `CADENCE_PARALLEL` allows (default 4, at most 16) and queues the rest; set it in the service's environment to match what your model provider or local model server can serve.
+Every question has its own outcome.
+An answer is recorded as soon as it is given, whatever happens to the other questions; a question whose subagent failed is asked once more by itself after the others, and if it still has no answer the result says why in the provider's own words.
+The investigation is complete when any question was answered.
 Provide the actual investigation directory, especially for large mounted/backup trees; do not begin by enumerating `/` or broad parent directories.
 Research tools are readonly and bounded.
 Search limits and omitted coverage are reported explicitly; a partial search does not prove that no other matching file exists.

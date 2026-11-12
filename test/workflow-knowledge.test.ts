@@ -279,7 +279,12 @@ it("the curator is given what failed along the way, and each worker what the agr
   const worker = await f.owner.reader(f.live, f.cwd, "a", "implementation");
   expect(worker.writes).toEqual(["a.txt"]);
   expect(worker.named.reads).toHaveLength(3);
-  expect(worker.named.extra).toHaveLength(1);
+  expect(worker.named.extra).toHaveLength(2);
+  // Named but never recorded: the worker is told, not left guessing.
+  expect(worker.named.extra[1]).toMatchObject({
+    reason: "Recorded investigation, named by the agreement: Never recorded",
+    body: expect.stringContaining("No investigation is recorded"),
+  });
   expect(worker.named.extra[0]).toMatchObject({
     label: `investigation ${investigation}`,
     reason: "Recorded investigation, named by the agreement: Where to edit",

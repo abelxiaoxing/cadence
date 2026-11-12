@@ -425,6 +425,55 @@ it("request observations reset even when a retry never receives HTTP headers", a
   expect(fail).not.toHaveBeenCalled();
 });
 
+it("a provider's reason leaves the worker only as its describe function kept it", async () => {
+  const events = [],
+    fail = vi.fn();
+  const state = new WorkerModelState(
+    (e) => events.push(e),
+    fail,
+    (words) =>
+      typeof words === "string" ? words.replace("SECRET", "[redacted]") : "",
+  );
+  state.event({
+    type: "auto_retry_start",
+    attempt: 2,
+    maxAttempts: 12,
+    delayMs: 4000,
+    errorMessage: "429 rate limit for key SECRET",
+  });
+  expect(state.reason).toBe("429 rate limit for key [redacted]");
+  expect(events).toEqual([
+    {
+      kind: "model-retry",
+      progress: {
+        phase: "waiting",
+        attempt: 2,
+        maxAttempts: 12,
+        delayMs: 4000,
+        reason: "429 rate limit for key [redacted]",
+      },
+    },
+  ]);
+  // The reason stays with the attempt it explains.
+  await state.beginRequest();
+  expect(events[1].progress).toMatchObject({
+    phase: "requesting",
+    reason: "429 rate limit for key [redacted]",
+  });
+  // Nothing usable from the provider: no reason field at all.
+  state.event({
+    type: "auto_retry_start",
+    attempt: 3,
+    maxAttempts: 12,
+    delayMs: 8000,
+    errorMessage: { nested: "SECRET" },
+  });
+  expect(state.reason).toBe("");
+  expect(events[2].progress).not.toHaveProperty("reason");
+  expect(JSON.stringify(events)).not.toContain("SECRET");
+  expect(fail).not.toHaveBeenCalled();
+});
+
 it.each(["throw", "reject"])(
   "synchronous session progress %s failure is caught and aborts via its owner",
   async (mode) => {

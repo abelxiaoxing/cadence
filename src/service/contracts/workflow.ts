@@ -1,6 +1,7 @@
 /** Conversation workflow DTOs. Plans are data; only fresh user confirmation admits execution. */
 import {
   bool,
+  ContractError,
   canonicalJson,
   closed,
   decodeHash,
@@ -10,6 +11,7 @@ import {
   nullable,
   oneOf,
   text,
+  utf8Bytes,
 } from "./core.ts";
 import {
   type ChoiceVersion,
@@ -24,10 +26,16 @@ export const WORKFLOW_LIMITS = {
    * and those they superseded. */
   route: 48,
   /** Questions one research run may carry. How many run at once is the
-   * owner's execution limit (`parallelLimit`), not a property of the plan. */
-  questions: 8,
+   * owner's execution limit (`parallelLimit`), not a property of the plan;
+   * the tool schema states no count, so only this bound refuses one. */
+  questions: 32,
   checks: 16,
   bytes: 256 * 1024,
+  /** Goal, route, decisions, assumptions and acceptance together: every
+   * worker of the delivery is given them, inside its 32KiB context. */
+  context: 32768,
+  /** Why a worker should read something first. */
+  reason: 1024,
   // Read budgets, never a lifetime cap on retained runs.
   historyScanEntries: 200,
   historyPage: 20,
@@ -304,6 +312,94 @@ export type WorkflowResponse =
     }
   | { type: "run"; run: WorkflowRun };
 
+/** A plan or an investigation request that its author can correct: the message
+ * names the field, what it holds and what is accepted there. */
+export class WorkflowInputError extends Error {}
+function issue(path: string, problem: string): never {
+  throw new WorkflowInputError(`${path}: ${problem}`);
+}
+const quoted = (value: string) => JSON.stringify(clipUnits(value, 80));
+/** Reads one field; whatever refuses it is reported under the field's name. */
+function at<T>(path: string, read: () => T): T {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof WorkflowInputError) throw error;
+    return issue(
+      path,
+      error instanceof ContractError
+        ? error.code === "oversize"
+          ? "is too long"
+          : "is not valid"
+        : error instanceof Error
+          ? error.message
+          : "is not valid",
+    );
+  }
+}
+function words(
+  path: string,
+  v: unknown,
+  maximum: number,
+  nonempty = false,
+): string {
+  if (v === undefined) return issue(path, "is missing");
+  if (typeof v !== "string") return issue(path, "must be text");
+  if (nonempty && !v.trim()) return issue(path, "must not be empty");
+  const bytes = utf8Bytes(v);
+  if (bytes > maximum)
+    return issue(path, `is ${bytes} bytes; at most ${maximum}`);
+  return at(path, () => text(v, maximum, nonempty));
+}
+function entries<T>(
+  path: string,
+  v: unknown,
+  maximum: number,
+  read: (entry: unknown, path: string) => T,
+): T[] {
+  if (v === undefined) return issue(path, "is missing");
+  if (!Array.isArray(v)) return issue(path, "must be a list");
+  if (v.length > maximum)
+    return issue(path, `has ${v.length} entries; at most ${maximum}`);
+  return at(path, () => list(v, maximum, (entry) => entry)).map((entry, i) =>
+    read(entry, `${path}[${i}]`),
+  );
+}
+/** A closed object: every required field present, nothing unknown. */
+function fields(
+  path: string,
+  v: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): Record<string, unknown> {
+  if (v === undefined) return issue(path, "is missing");
+  if (v === null || typeof v !== "object" || Array.isArray(v))
+    return issue(path, "must be an object");
+  const names = Object.keys(v);
+  const known = [...required, ...optional];
+  const unknown = names.filter((name) => !known.includes(name));
+  if (unknown.length)
+    return issue(
+      path,
+      `has no field ${unknown.map(quoted).join(", ")}; its fields are ${known.join(", ")}`,
+    );
+  const missing = required.filter((name) => !names.includes(name));
+  if (missing.length) return issue(path, `is missing ${missing.join(", ")}`);
+  return at(path, () =>
+    closed(
+      v,
+      known.filter((name) => names.includes(name)),
+    ),
+  );
+}
+const INVESTIGATION =
+  /^(?:research-[0-9]{1,4}-)?([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u;
+/** The record a reading names: a research step's `investigation` value, or the
+ * step's own id (`research-<n>-<uuid>`), under whose uuid the same record is
+ * kept. Null when the text is neither. */
+export function investigationId(reference: string): string | null {
+  return INVESTIGATION.exec(reference)?.[1] ?? null;
+}
 /** Clip by UTF-16 units without leaving a lone surrogate (unencodable on the wire). */
 export function clipUnits(value: string, units: number): string {
   if (value.length <= units) return value;
@@ -337,7 +433,9 @@ export function workflowPath(v: unknown, strict = false): string {
       ) ||
     /(^|\/)\.env(?:\.|$)/iu.test(p)
   )
-    throw new Error("Invalid workflow file path");
+    throw new Error(
+      "is not a plain path inside the repository (relative, forward slashes, no . or .. segment, no colon, not .git or .env)",
+    );
   return p;
 }
 // Task IDs are worker assignment IDs and worktree names. New plans use the
@@ -345,35 +443,46 @@ export function workflowPath(v: unknown, strict = false): string {
 const taskId = (v: unknown, strict = false) => {
   const s = text(v, 64, true);
   if (!/^[a-z][a-z0-9-]*$/u.test(s) || (strict && s.length > 48))
-    throw new Error("Invalid task id");
+    throw new Error(
+      "is not an assignment id (lowercase letters, digits and hyphens, starting with a letter, at most 48 characters)",
+    );
   return s;
 };
 /** The identity a new assignment may take. */
 export const workflowTaskId = (v: unknown) => taskId(v, true);
-export function decodeWorkflowCheck(v: unknown): WorkflowCheck {
-  const o = closed(v, [
-    "name",
-    "command",
-    ...(Object.hasOwn(v ?? {}, "timeoutMs") ? ["timeoutMs"] : []),
-  ]);
+export function decodeWorkflowCheck(v: unknown, path = "check"): WorkflowCheck {
+  const o = fields(path, v, ["name", "command"], ["timeoutMs"]);
   return {
-    name: text(o.name, 128, true),
-    command: text(o.command, 4096, true),
+    name: words(`${path}.name`, o.name, 128, true),
+    command: words(`${path}.command`, o.command, 4096, true),
     ...(o.timeoutMs === undefined
       ? {}
-      : { timeoutMs: integer(o.timeoutMs, 100, 2_147_483_647) }),
+      : {
+          timeoutMs: at(`${path}.timeoutMs`, () => {
+            try {
+              return integer(o.timeoutMs, 100, 2_147_483_647);
+            } catch {
+              throw new Error(
+                "is a whole number of milliseconds from 100 to 2147483647, or left out for no timeout",
+              );
+            }
+          }),
+        }),
   };
 }
 export function workflowOrder(tasks: WorkflowTask[]): WorkflowTask[] {
   const done = new Set<string>(),
     ordered: WorkflowTask[] = [];
   if (new Set(tasks.map((t) => t.id)).size !== tasks.length)
-    throw new Error("Duplicate task id");
+    throw new Error("an assignment id is used twice");
   while (ordered.length < tasks.length) {
     const next = tasks.find(
       (t) => !done.has(t.id) && t.after.every((id) => done.has(id)),
     );
-    if (!next) throw new Error("Missing dependency or cyclic plan");
+    if (!next)
+      throw new Error(
+        "the after lists name a missing assignment or form a cycle",
+      );
     ordered.push(next);
     done.add(next.id);
   }
@@ -397,7 +506,9 @@ export function workflowAncestors(
   return workflowOrder(tasks).filter((t) => needed.has(t.id));
 }
 /** Retained plans decode with the rules they were accepted under; `strict` is
- * for validating a new plan before publication or execution. */
+ * for validating a new plan before publication or execution. Every refusal
+ * names the field (`WorkflowInputError`), so its author can correct that field
+ * and publish the same plan again. */
 export function decodeWorkflowPlan(
   v: unknown,
   options: { strict?: boolean } = {},
@@ -408,7 +519,16 @@ export function decodeWorkflowPlan(
     throw new Error(
       "Publish a new delivery agreement; retained fixed-pipeline plans are readonly",
     );
-  canonicalJson(v, WORKFLOW_LIMITS.bytes);
+  try {
+    canonicalJson(v, WORKFLOW_LIMITS.bytes);
+  } catch (error) {
+    issue(
+      "plan",
+      error instanceof ContractError && error.code === "oversize"
+        ? `is larger than ${WORKFLOW_LIMITS.bytes} bytes as a whole`
+        : "is not plain JSON data",
+    );
+  }
   const version = modern ? (v as { version?: unknown }).version : undefined;
   if (modern && version !== 2 && version !== 3)
     throw new Error("Unsupported delivery agreement version");
@@ -417,7 +537,7 @@ export function decodeWorkflowPlan(
     throw new Error(
       "Publish a new delivery agreement; earlier agreements are readonly",
     );
-  const o = closed(v, [
+  const o = fields("plan", v, [
     "goal",
     "design",
     "decisions",
@@ -433,44 +553,70 @@ export function decodeWorkflowPlan(
     "baselineChecks",
     "delivery",
   ]);
-  const documentation = (value: unknown) =>
-    list(value, 16, (entry) => {
-      const path = workflowPath(entry, strict);
-      if (!path.endsWith(".md"))
-        throw new Error("Documentation targets must be Markdown files");
-      return path;
-    });
-  const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
-    const t = closed(value, [
-      "id",
-      "title",
-      "instructions",
-      "writes",
-      "after",
-      ...(current ? ["reads"] : []),
-    ]);
-    return {
-      id: taskId(t.id, strict),
-      title: text(t.title, 256, true),
-      instructions: text(t.instructions, 8192, true),
-      writes: list(t.writes, 128, (p: unknown) => workflowPath(p, strict)),
-      after: list(t.after, WORKFLOW_LIMITS.tasks, (id: unknown) =>
-        taskId(id, strict),
-      ),
-      ...(current ? { reads: decodeWorkflowReadings(t.reads, strict) } : {}),
-    };
-  });
-  if (
-    !tasks.length ||
-    tasks.some(
-      (t) =>
-        !t.writes.length ||
-        new Set(t.writes).size !== t.writes.length ||
-        new Set(t.after).size !== t.after.length,
-    )
-  )
-    throw new Error("Empty or duplicate task scope");
-  workflowOrder(tasks);
+  const documentation = (value: unknown, name: string) =>
+    entries(name, value, 16, (entry, path) =>
+      at(path, () => {
+        const document = workflowPath(entry, strict);
+        if (!document.endsWith(".md"))
+          throw new Error("must be a Markdown file (.md)");
+        return document;
+      }),
+    );
+  const tasks = entries(
+    "tasks",
+    o.tasks,
+    WORKFLOW_LIMITS.tasks,
+    (value, path) => {
+      const t = fields(path, value, [
+        "id",
+        "title",
+        "instructions",
+        "writes",
+        "after",
+        ...(current ? ["reads"] : []),
+      ]);
+      return {
+        id: at(`${path}.id`, () => taskId(t.id, strict)),
+        title: words(`${path}.title`, t.title, 256, true),
+        instructions: words(`${path}.instructions`, t.instructions, 8192, true),
+        writes: entries(`${path}.writes`, t.writes, 128, (p, entry) =>
+          at(entry, () => workflowPath(p, strict)),
+        ),
+        after: entries(
+          `${path}.after`,
+          t.after,
+          WORKFLOW_LIMITS.tasks,
+          (id, entry) => at(entry, () => taskId(id, strict)),
+        ),
+        ...(current
+          ? { reads: decodeWorkflowReadings(t.reads, strict, `${path}.reads`) }
+          : {}),
+      };
+    },
+  );
+  if (!tasks.length) issue("tasks", "needs at least one assignment");
+  const ids = tasks.map((t) => t.id);
+  for (const [i, t] of tasks.entries()) {
+    const path = `tasks[${i}]`;
+    if (ids.indexOf(t.id) !== i)
+      issue(
+        `${path}.id`,
+        `${quoted(t.id)} is already the id of tasks[${ids.indexOf(t.id)}]`,
+      );
+    if (!t.writes.length)
+      issue(`${path}.writes`, "needs at least one path this assignment writes");
+    if (new Set(t.writes).size !== t.writes.length)
+      issue(`${path}.writes`, "lists a path twice");
+    if (new Set(t.after).size !== t.after.length)
+      issue(`${path}.after`, "lists an assignment twice");
+    const unknown = t.after.find((id) => !ids.includes(id));
+    if (unknown !== undefined)
+      issue(
+        `${path}.after`,
+        `names ${quoted(unknown)}, which is not the id of an assignment in tasks`,
+      );
+  }
+  at("tasks", () => workflowOrder(tasks));
   // Retained parallel plans keep their original validation. New delivery uses
   // a stable sequential candidate, so adjacent assignments may share files.
   for (const a of modern ? [] : tasks)
@@ -489,68 +635,196 @@ export function decodeWorkflowPlan(
           "Independent tasks share write paths; assign an owner and dependency",
         );
     }
-  const checks = list(o.checks, WORKFLOW_LIMITS.checks, decodeWorkflowCheck);
+  const commands = (value: unknown, name: string, maximum: number) =>
+    entries(name, value, maximum, decodeWorkflowCheck);
+  const checks = commands(o.checks, "checks", WORKFLOW_LIMITS.checks);
   if (!checks.length)
-    throw new Error("At least one real verification command is required");
+    issue("checks", "needs at least one real verification command");
   const result: WorkflowPlan = {
-    goal: text(o.goal, 8192, true),
-    design: text(o.design, 32768, true),
-    decisions: text(o.decisions, 16384),
-    acceptance: text(o.acceptance, 16384, true),
+    goal: words("goal", o.goal, 8192, true),
+    design: words("design", o.design, 32768, true),
+    decisions: words("decisions", o.decisions, 16384),
+    acceptance: words("acceptance", o.acceptance, 16384, true),
     ...(current
       ? {
           version: 3 as const,
-          assumptions: text(o.assumptions, 16384),
-          documents: documentation(o.documents),
-          reviewReads: decodeWorkflowReadings(o.reviewReads, strict),
+          assumptions: words("assumptions", o.assumptions, 16384),
+          documents: documentation(o.documents, "documents"),
+          reviewReads: decodeWorkflowReadings(
+            o.reviewReads,
+            strict,
+            "reviewReads",
+          ),
           policy: {
-            installs: bool(closed(o.policy, ["installs"]).installs),
+            installs: at("policy.installs", () => {
+              try {
+                return bool(fields("policy", o.policy, ["installs"]).installs);
+              } catch (error) {
+                if (error instanceof WorkflowInputError) throw error;
+                throw new Error("must be true or false");
+              }
+            }),
           },
         }
       : modern
-        ? { version: 2 as const, knowledge: documentation(o.knowledge) }
+        ? {
+            version: 2 as const,
+            knowledge: documentation(o.knowledge, "knowledge"),
+          }
         : {
-            projectContext: text(o.projectContext, 16384),
-            repairAttempts: integer(o.repairAttempts, 0, 2),
+            projectContext: words("projectContext", o.projectContext, 16384),
+            repairAttempts: at("repairAttempts", () =>
+              integer(o.repairAttempts, 0, 2),
+            ),
           }),
     tasks,
     checks,
-    setup: list(o.setup, 4, decodeWorkflowCheck),
-    baselineChecks: list(
+    setup: commands(o.setup, "setup", 4),
+    baselineChecks: commands(
       o.baselineChecks,
+      "baselineChecks",
       WORKFLOW_LIMITS.checks,
-      decodeWorkflowCheck,
     ),
-    delivery: oneOf(o.delivery, ["local-merge", "working-copy"]),
+    delivery: at("delivery", () => {
+      try {
+        return oneOf(o.delivery, ["local-merge", "working-copy"]);
+      } catch {
+        throw new Error("is local-merge or working-copy");
+      }
+    }),
   };
-  workflowContext(result);
-  text(workflowWrites(result).join(", "), 16384);
-  for (const value of [
-    result.goal,
-    result.design,
-    result.decisions,
-    result.acceptance,
-    result.assumptions ?? "",
-    result.projectContext ?? "",
-    ...[
-      ...(result.reviewReads ?? []),
-      ...result.tasks.flatMap((t) => t.reads ?? []),
-    ].flatMap((r) => [r.reason, "section" in r ? (r.section ?? "") : ""]),
-    ...result.tasks.flatMap((t) => [t.title, t.instructions]),
-    ...[...result.checks, ...result.setup, ...result.baselineChecks].flatMap(
-      (c) => [c.name, c.command],
+  // Every worker of the delivery is given these five together.
+  const agreement = utf8Bytes(agreementText(result));
+  if (agreement > WORKFLOW_LIMITS.context)
+    issue(
+      "plan",
+      `goal, design, decisions, assumptions and acceptance are ${agreement} bytes together (${(
+        ["goal", "design", "decisions", "assumptions", "acceptance"] as const
+      )
+        .map((name) => `${name} ${utf8Bytes(result[name] ?? "")}`)
+        .join(", ")}); together at most ${WORKFLOW_LIMITS.context}`,
+    );
+  const scope = utf8Bytes(workflowWrites(result).join(", "));
+  if (scope > 16384)
+    issue(
+      "tasks",
+      `the write paths of all assignments and documents are ${scope} bytes together; at most 16384`,
+    );
+  const readings = (list: WorkflowReading[] | undefined, name: string) =>
+    (list ?? []).flatMap((r, i): [string, string][] => [
+      [`${name}[${i}].reason`, r.reason],
+      [`${name}[${i}].section`, "section" in r ? (r.section ?? "") : ""],
+    ]);
+  for (const [path, value] of [
+    ["goal", result.goal],
+    ["design", result.design],
+    ["decisions", result.decisions],
+    ["acceptance", result.acceptance],
+    ["assumptions", result.assumptions ?? ""],
+    ["projectContext", result.projectContext ?? ""],
+    ...readings(result.reviewReads, "reviewReads"),
+    ...result.tasks.flatMap((t, i): [string, string][] => [
+      [`tasks[${i}].title`, t.title],
+      [`tasks[${i}].instructions`, t.instructions],
+      ...readings(t.reads, `tasks[${i}].reads`),
+    ]),
+    ...(["checks", "setup", "baselineChecks"] as const).flatMap((name) =>
+      result[name].flatMap((c, i): [string, string][] => [
+        [`${name}[${i}].name`, c.name],
+        [`${name}[${i}].command`, c.command],
+      ]),
     ),
-  ])
+  ] as [string, string][])
     if (
       [...value].some(
         (c) =>
           (c.charCodeAt(0) < 32 && c !== "\n" && c !== "\t") ||
           c.charCodeAt(0) === 127 ||
-          /[\u202a-\u202e\u2066-\u2069]/u.test(c),
+          /[‪-‮⁦-⁩]/u.test(c),
       )
     )
-      throw new Error("Plan contains invisible terminal controls");
+      issue(
+        path,
+        "contains an invisible control character (only newline and tab are accepted)",
+      );
   return result;
+}
+/** A plan as the coordinator gave it, made complete: a field that may be empty
+ * takes its empty value when left out, and the agreement is the current
+ * version. The result is decoded as a new agreement, so everything that cannot
+ * be accepted, an unknown field included, is refused by name. */
+export function workflowPlanInput(v: unknown): WorkflowPlan {
+  if (v === null || typeof v !== "object" || Array.isArray(v))
+    return issue("plan", "must be an object");
+  const completed = (
+    source: object,
+    defaults: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const result: Record<string, unknown> = { ...defaults };
+    // A model sends null for a field it means to leave out.
+    for (const [key, value] of Object.entries(source))
+      if (value !== null && value !== undefined) result[key] = value;
+    return result;
+  };
+  const plan = completed(v, {
+    version: 3,
+    decisions: "",
+    assumptions: "",
+    documents: [],
+    reviewReads: [],
+    policy: {},
+    setup: [],
+    baselineChecks: [],
+  });
+  if (plan.policy && typeof plan.policy === "object")
+    plan.policy = completed(plan.policy, { installs: false });
+  if (Array.isArray(plan.tasks))
+    plan.tasks = plan.tasks.map((task: unknown) =>
+      task && typeof task === "object" && !Array.isArray(task)
+        ? completed(task, { after: [], reads: [] })
+        : task,
+    );
+  return decodeWorkflowPlan(plan, { strict: true });
+}
+/** An investigation request as the coordinator gave it: questions trimmed,
+ * empty and repeated ones dropped, fields this contract does not know ignored.
+ * What is left is refused by name when it cannot be asked. */
+export function researchInput(v: unknown): {
+  goal: string;
+  questions: string[];
+  roots?: string[];
+} {
+  if (v === null || typeof v !== "object" || Array.isArray(v))
+    return issue("request", "must be an object with a goal and questions");
+  const given = (key: string): unknown =>
+    Object.getOwnPropertyDescriptor(v, key)?.value ?? undefined;
+  const distinct = (name: string, value: unknown, maximum: number) => [
+    ...new Set(
+      entries(
+        name,
+        typeof value === "string" ? [value] : value,
+        Number.MAX_SAFE_INTEGER,
+        (entry, path) => words(path, entry, maximum).trim(),
+      ).filter(Boolean),
+    ),
+  ];
+  const questions = distinct("questions", given("questions"), 8192);
+  if (!questions.length)
+    issue("questions", "needs at least one question that is not empty");
+  if (questions.length > WORKFLOW_LIMITS.questions)
+    issue(
+      "questions",
+      `has ${questions.length} questions; one investigation takes at most ${WORKFLOW_LIMITS.questions}, so ask the others in a further call`,
+    );
+  const roots =
+    given("roots") === undefined ? [] : distinct("roots", given("roots"), 4096);
+  if (roots.length > 8)
+    issue("roots", `has ${roots.length} directories; at most 8`);
+  return {
+    goal: words("goal", given("goal"), 8192, true),
+    questions,
+    ...(roots.length ? { roots } : {}),
+  };
 }
 /** Existing project documents the agreement allows this delivery to update. */
 export function workflowDocuments(p: WorkflowPlan): string[] {
@@ -584,35 +858,38 @@ export function workflowBoundary(path: string): boolean {
 function decodeWorkflowReadings(
   value: unknown,
   strict: boolean,
+  name: string,
 ): WorkflowReading[] {
-  return list(value, 16, (entry): WorkflowReading => {
+  return entries(name, value, 16, (entry, path): WorkflowReading => {
     if (Object.hasOwn((entry ?? {}) as object, "research")) {
-      const r = closed(entry, ["research", "reason"]);
+      const r = fields(path, entry, ["research", "reason"]);
+      // Either spelling of the record; the plan keeps its uuid.
+      const id =
+        typeof r.research === "string" ? investigationId(r.research) : null;
+      if (id === null)
+        issue(
+          `${path}.research`,
+          `${typeof r.research === "string" ? `${quoted(r.research)} ` : ""}is not an investigation; give the "investigation" value of a completed research step`,
+        );
       return {
-        research: decodeId(r.research),
-        reason: text(r.reason, 512, true),
+        research: id as string,
+        reason: words(`${path}.reason`, r.reason, WORKFLOW_LIMITS.reason, true),
       };
     }
-    const r = closed(entry, [
-      "path",
-      ...(Object.hasOwn((entry ?? {}) as object, "section") ? ["section"] : []),
-      "reason",
-    ]);
+    const r = fields(path, entry, ["path", "reason"], ["section"]);
     return {
-      path: workflowPath(r.path, strict),
+      path: at(`${path}.path`, () => workflowPath(r.path, strict)),
       ...(r.section === undefined
         ? {}
-        : { section: text(r.section, 256, true) }),
-      reason: text(r.reason, 512, true),
+        : { section: words(`${path}.section`, r.section, 256, true) }),
+      reason: words(`${path}.reason`, r.reason, WORKFLOW_LIMITS.reason, true),
     };
   });
 }
+const agreementText = (p: WorkflowPlan) =>
+  `# ${p.goal}\n\nInitial route (${p.version === 3 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`;
 export function workflowContext(p: WorkflowPlan): string {
-  return text(
-    `# ${p.goal}\n\nInitial route (${p.version === 3 ? "the owner may revise it" : "adapt within the approved boundary"}): ${p.design}\n\nExplicit decisions and non-goals: ${p.decisions}${p.assumptions ? `\n\nAssumptions confirmed with the agreement: ${p.assumptions}` : ""}\n\nAcceptance: ${p.acceptance}`,
-    32768,
-    true,
-  );
+  return text(agreementText(p), WORKFLOW_LIMITS.context, true);
 }
 export function gitOid(value: unknown): string {
   const oid = text(value, 64, true);
