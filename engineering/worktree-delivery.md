@@ -40,7 +40,7 @@ One whose dependencies are integrated and whose write paths no running assignmen
 A revision wakes the scheduler, so an added assignment can start beside the ones already running; a dropped one never starts and running siblings carry on.
 With nothing running and exactly one ready assignment, it runs in the candidate itself, so a serial plan never creates another worktree and keeps predecessor and partial-attempt outputs in place.
 When several are ready, what the candidate holds is committed first and each gets a child worktree at `<run-id>/tasks/<assignment-id>`, detached at the candidate's commit (it never owns or moves a branch) and recorded as a `DeliveryArtifact`.
-The setup commands run in each child; its worker and its own recovery are confined to the paths it owns (its declared writes plus what its revisions add, never a path a running sibling owns).
+Only setup commands placed at `worktree` run in each child (the placement contract is in [checks and review](checks-review.md)); its worker and its own recovery are confined to the paths it owns (its declared writes plus what its revisions add, never a path a running sibling owns).
 On success the owner commits that scope in the child, cherry-picks the commit onto the candidate (still one parent per candidate commit) and removes the child with plain `git worktree remove` only when nothing at all is left in it.
 Because assignments that run together never own the same path a pick cannot conflict; whether their results fit together is decided by the combined checks and review, and repaired in the candidate.
 After one assignment fails for good, nothing further starts or is integrated, every started one is joined, and unintegrated work stays in its retained child worktree.

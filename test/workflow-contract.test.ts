@@ -279,7 +279,7 @@ it("a current agreement states assumptions, an installation policy and what each
 
 it("new setup/check commands default to no timeout without rewriting approved explicit values", () => {
   const p = plan();
-  p.setup = [{ name: "setup", command: "prepare" }];
+  p.setup = [{ name: "setup", command: "prepare", placement: "worktree" }];
   p.baselineChecks = [{ name: "baseline", command: "inspect" }];
   p.checks = [{ name: "verify", command: "verify" }];
   const decoded = decodeWorkflowPlan(p, { strict: true });
@@ -499,4 +499,59 @@ it("a plan input is completed, and each refusal names its field and what is acce
     expect(() => workflowPlanInput(q), said).toThrow(said);
   }
   expect(() => workflowPlanInput("plan")).toThrow("plan: must be an object");
+});
+
+it("setup placement is explicit in new approvals; retained unplaced setup is never reinterpreted", () => {
+  const p = plan();
+  p.setup = [{ name: "branch", command: "git symbolic-ref -q HEAD" }];
+  expect(decodeWorkflowPlan(p).setup).toEqual(p.setup);
+  expect(() => decodeWorkflowPlan(p, { strict: true })).toThrow(
+    "setup[0]: is missing placement",
+  );
+  expect(() => workflowPlanInput(p)).toThrow("placement");
+  for (const placement of ["target", "candidate", "worktree"] as const) {
+    p.setup[0].placement = placement;
+    const approved = decodeWorkflowPlan(p, { strict: true });
+    expect(approved.setup[0].placement).toBe(placement);
+    expect(readableWorkflowPlan(approved)).toContain(
+      `[${placement}] branch: git symbolic-ref -q HEAD`,
+    );
+  }
+  expect(() =>
+    workflowPlanInput({
+      ...p,
+      setup: [{ ...p.setup[0], placement: "anywhere" }],
+    }),
+  ).toThrow("setup[0].placement");
+});
+it("partial and blocked are assignment reports, not check/review approval or run completion", () => {
+  const run = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    goal: "partial work",
+    status: "failed",
+    phase: "finished",
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+    steps: [
+      {
+        id: "a",
+        kind: "implementation",
+        status: "partial",
+        text: "",
+        exitCode: 0,
+        truncated: false,
+      },
+    ],
+  };
+  for (const status of ["partial", "blocked"]) {
+    run.steps[0].status = status;
+    expect(decodeWorkflowRun(run).steps[0].status).toBe(status);
+    expect(() => decodeWorkflowRun({ ...run, status })).toThrow();
+    for (const kind of ["check", "review", "research"])
+      expect(() =>
+        decodeWorkflowRun({ ...run, steps: [{ ...run.steps[0], kind }] }),
+      ).toThrow();
+  }
 });

@@ -534,6 +534,7 @@ it("explicit working-copy delivery works without Git and never initializes or co
     p.setup = [
       {
         name: "setup once",
+        placement: "candidate",
         command:
           "node -e \"require('fs').writeFileSync('setup-once','done',{flag:'wx'})\"",
         timeoutMs: 3000,

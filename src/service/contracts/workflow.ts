@@ -47,6 +47,11 @@ export interface WorkflowCheck {
   command: string;
   timeoutMs?: number;
 }
+/** Setup placement is part of approval. Missing only in retained agreements,
+ * where the original meaning (every worktree) is preserved. */
+export interface WorkflowSetup extends WorkflowCheck {
+  placement?: "target" | "candidate" | "worktree";
+}
 /** Something a worker should read before it starts: a project document (and
  * optionally one section of it) or a recorded investigation, with the reason. */
 export type WorkflowReading =
@@ -89,7 +94,7 @@ export interface WorkflowPlan {
   projectContext?: string;
   tasks: WorkflowTask[];
   checks: WorkflowCheck[];
-  setup: WorkflowCheck[];
+  setup: WorkflowSetup[];
   baselineChecks: WorkflowCheck[];
   /** Retained v1 evidence only. New plans have no repair quota. */
   repairAttempts?: number;
@@ -211,6 +216,8 @@ export interface WorkflowStep {
     | "running"
     | "completed"
     | "rejected"
+    | "partial"
+    | "blocked"
     | "failed"
     | "canceled"
     | "timeout"
@@ -679,7 +686,25 @@ export function decodeWorkflowPlan(
           }),
     tasks,
     checks,
-    setup: commands(o.setup, "setup", 4),
+    setup: entries("setup", o.setup, 4, (value, path): WorkflowSetup => {
+      const entry = fields(
+        path,
+        value,
+        ["name", "command", ...(strict ? ["placement"] : [])],
+        ["timeoutMs", ...(!strict ? ["placement"] : [])],
+      );
+      const { placement, ...check } = entry;
+      return {
+        ...decodeWorkflowCheck(check, path),
+        ...(placement === undefined
+          ? {}
+          : {
+              placement: at(`${path}.placement`, () =>
+                oneOf(placement, ["target", "candidate", "worktree"]),
+              ),
+            }),
+      };
+    }),
     baselineChecks: commands(
       o.baselineChecks,
       "baselineChecks",
@@ -1345,7 +1370,10 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
         status:
           s.kind === "review" && s.status === "rejected"
             ? "rejected"
-            : status(s.status),
+            : ["implementation", "knowledge"].includes(s.kind as string) &&
+                ["partial", "blocked"].includes(s.status as string)
+              ? oneOf(s.status, ["partial", "blocked"])
+              : status(s.status),
         text: text(s.text, 65536),
         exitCode: nullable(s.exitCode, (n) =>
           integer(n, -2147483648, 2147483647),
@@ -1400,7 +1428,7 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     )
     .join(
       "\n\n",
-    )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map(readableCheck).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map(readableCheck).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map(readableCheck).join("\n")}${
+    )}\n\n## Setup (explicitly authorized commands)\nExecution order: target once before worktree creation, candidate once, then worktree in the candidate and every detached child; listed order within each stage. Each command is a separate process; exports do not persist.\n${p.setup.map((c) => `[${c.placement ?? "worktree"}] ${readableCheck(c)}`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map(readableCheck).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map(readableCheck).join("\n")}${
     p.reviewReads?.length
       ? `\n\n## Review reads first\n${p.reviewReads.map(readableReading).join("\n")}`
       : ""

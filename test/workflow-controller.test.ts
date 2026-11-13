@@ -596,3 +596,74 @@ it("the same route with unchanged evidence is not a new approach", async () => {
   // The second identical replan was moved up instead of being replayed.
   expect(levels).toEqual(["repair", "repair", "deviate"]);
 });
+
+it("rephrased strategy and work cannot hide repeated failure with unchanged state", async () => {
+  let serial = 0;
+  const f = fixture({
+    diagnose: async (_failure, _previous, floor) => ({
+      ...decision(`Different words ${++serial}`),
+      level: floor,
+      work: [
+        {
+          title: `Try ${serial}`,
+          instructions: `Inspect again ${serial}`,
+          writes: ["src"],
+        },
+      ],
+      deviation:
+        floor === "deviate"
+          ? { item: "x", reason: "x", delivered: "y", waives: [] }
+          : null,
+    }),
+  });
+  await expect(
+    f.controller.complete("setup", async () => {
+      throw new AttemptFailure(
+        `New preview ${serial}`,
+        [`step-${serial}`],
+        "same-command-cwd-exit",
+      );
+    }),
+  ).rejects.toThrow("No new evidence or strategy");
+  expect(f.records.map((r) => r.decision.level)).toEqual([
+    "repair",
+    "replan",
+    "deviate",
+  ]);
+  expect(f.ports.execute).toHaveBeenCalledTimes(3);
+});
+it("failed repairs retain original operation evidence and supply it to the next repair", async () => {
+  const seen: string[][] = [];
+  let repairs = 0;
+  const f = fixture({
+    observe: async () => `state-${repairs}`,
+    diagnose: async (failure) => {
+      seen.push(failure.steps);
+      return {
+        ...decision(),
+        work: [
+          {
+            title: "fix",
+            instructions: "use original context",
+            writes: ["src"],
+          },
+        ],
+      };
+    },
+    execute: async (_work, _revision, failure) => {
+      expect(failure.steps).toContain("original-setup");
+      if (++repairs === 1)
+        throw new AttemptFailure("Missing input", ["repair-step"], "blocked");
+    },
+  });
+  let attempts = 0;
+  await f.controller.complete("setup", async () => {
+    if (++attempts === 1)
+      throw new AttemptFailure(
+        "Silent exit 1",
+        ["original-setup"],
+        "setup-command",
+      );
+  });
+  expect(seen).toEqual([["original-setup"], ["original-setup", "repair-step"]]);
+});

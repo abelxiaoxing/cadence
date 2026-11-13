@@ -49,15 +49,24 @@ Native/browser approval binds a version-3 delivery agreement: goal, explicit dec
 Goal, decisions, acceptance and assumptions stay as approved; the route, the assignments and the write scope are the owner's to revise after approval, without a repair budget and without asking again.
 Version-2 agreements (a fixed write scope) and unversioned ones stay readable and cannot be approved for execution.
 Setup never implicitly copies dependency trees, profiles or credentials.
+Each new setup command declares `placement`: `target` preflight runs once in the original checkout before worktree creation; `candidate` preparation runs once in the stable candidate; `worktree` preparation runs in the candidate and every detached child.
+Stages run in that order, retaining command order within each stage, with the conversation-relative cwd mapped into each checkout.
+Target preflight never dispatches a repair editor into the original checkout: its failure ends the attempt, and successful preflight is followed by a fresh target check.
+A target branch predicate does not belong in child preparation.
+Placement and exact commands are displayed and approval-bound; recovery cannot change them.
+Retained setup without placement keeps its original per-worktree meaning for reading, but cannot authorize a new run.
 Recovery retries the failed setup command, not preceding successful commands and their effects.
 Baseline checks cannot require future outputs.
 One stable candidate collects earlier outputs; each editing attempt is attributed against its own write scope, in the candidate or in its assignment's child worktree.
 Initial cleanliness preconditions are not rerun against the delivery's own work.
 Implementation and knowledge workers submit `cadence_report`, independently captured from successful tool-result content even after transcript preview overflow.
-A later tool invalidates the report.
+A later editing, shell or unknown tool invalidates the report; ordinary readonly inspection does not.
 The SDK still needs real final-message/native/auth/storage closure; a report alone cannot override any of those outcomes.
 A complete strict JSON final report remains an alternative structured report, never a prose inference.
-Blocked, malformed or missing reports fail that attempt, not the goal.
+Reports distinguish `completed`, `partial` (useful outputs with remaining assigned work) and `blocked` (a concrete unmet prerequisite).
+Partial/blocked steps keep those statuses separately from their successful native closure; neither releases dependencies or approves delivery.
+Malformed or missing reports remain failed attempts.
+All incomplete attempts enter recovery, not inferred success.
 The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further work.
 A revision has a level: `repair` stays inside the current write scope; `replan` may bring further repository paths into it (never credentials, keys, `.env`, `.git` or paths outside the repository, and for a fast-forward delivery never a path the target checkout has its own changes to); `deviate` records that an acceptance item or decision cannot be met as written, what is delivered instead, and which declared checks it sets aside.
 While assignments are still being scheduled, a `replan` or `deviate` decision may also revise the route itself (`RecoveryRoute`): drop an assignment that has not started, add one, or give one again under its own ID to rewrite it.
@@ -74,8 +83,14 @@ Every declared check runs in every round.
 A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.
 The review is given every recorded deviation and must find each necessary and minimal; rejecting one sends the delivery back to recovery.
 A completed run that deviated says so first in its notice.
-Repeated unchanged evidence and an identical approach escalate the decision's level instead of restarting the same attempt.
+Repeated operation/failure identity and unchanged source observation escalate the decision's level even when strategy or work instructions are rephrased.
+Observable progress still permits further repairs without a fixed quota.
 Current-round native exit/closure facts and labelled redacted result excerpts reach diagnosis, repair and review.
+Check results also retain their exact command, actual mapped cwd, checkout placement, target binding and only the named `TMPDIR`/`TEMP`/`TMP` launch values (null means unset), all sanitized before storage and again on reads.
+Diagnosis and repair receive this context even for silent failures; older results explicitly say when it was not recorded.
+Command-local environment does not persist into another process, and conditional project guidance cannot invent undeclared resources or markers.
+A failed repair retains the original failing step identities alongside the latest repair, rather than replacing the original cause with a clipped report.
+No worker needs permission to inspect private state or the owner process environment.
 Old failures are historical context, not current check evidence; baseline and post-merge rounds collect their own original check identities.
 Every relevant repair or knowledge edit triggers fresh checks/review on the combined candidate.
 Successful verification records bind the agreement, cwd, exact approved-source identity and original step IDs.

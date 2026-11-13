@@ -231,3 +231,187 @@ it("a stage failure is attributed to the step it settled, not the newest step of
     }),
   ).rejects.not.toBeInstanceOf(AttemptFailure);
 });
+
+it("target preflight, candidate preparation and detached-child setup have separate placements", async () => {
+  const { owner, live, proposal } = fixture();
+  const setup = (
+    Workflows.prototype as unknown as {
+      setup(...args: unknown[]): Promise<void>;
+    }
+  ).setup.bind(owner);
+  Object.assign(proposal.plan, {
+    setup: [
+      {
+        name: "branch",
+        command: "git symbolic-ref -q HEAD",
+        placement: "target",
+      },
+      { name: "once", command: "create run resource", placement: "candidate" },
+      { name: "deps", command: "link dependencies", placement: "worktree" },
+    ],
+  });
+  const calls: string[] = [];
+  owner.check = async (
+    _live: unknown,
+    cwd: string,
+    command: { name: string },
+  ) => {
+    calls.push(`${cwd}:${command.name}`);
+    if (command.name === "branch") expect(cwd).toBe("target");
+    return { result: success };
+  };
+  await setup(live, "target", proposal, "target");
+  await setup(live, "candidate", proposal, "candidate");
+  await setup(live, "candidate", proposal);
+  await setup(live, "detached-a", proposal);
+  await setup(live, "detached-b", proposal);
+  expect(calls).toEqual([
+    "target:branch",
+    "candidate:once",
+    "candidate:deps",
+    "detached-a:deps",
+    "detached-b:deps",
+  ]);
+});
+it("failed target preflight never dispatches an editor into the target or replays setup", async () => {
+  const { owner, live, proposal } = fixture();
+  const setup = (
+    Workflows.prototype as unknown as {
+      setup(...args: unknown[]): Promise<void>;
+    }
+  ).setup.bind(owner);
+  Object.assign(proposal.plan, {
+    setup: [{ name: "target", command: "false", placement: "target" }],
+  });
+  owner.recoverStage = vi.fn();
+  owner.check = vi.fn(async () => ({
+    result: { ...success, outcome: "failed", exitCode: 1 },
+  }));
+  await expect(setup(live, "target", proposal, "target")).rejects.toThrow(
+    "Operation failed",
+  );
+  expect(owner.check).toHaveBeenCalledTimes(1);
+  expect(owner.recoverStage).not.toHaveBeenCalled();
+});
+
+it("the owner passes original check context to both diagnosis and repair, without requiring private-record access", async () => {
+  const { owner, live, proposal } = fixture();
+  Object.assign(live.run, { revision: 0 });
+  Object.assign(proposal.plan, { tasks: plan().tasks });
+  const failed = owner.step(live, "setup: branch", "check");
+  owner.finishStep(
+    live,
+    failed,
+    { ...success, outcome: "failed", exitCode: 1, output: "" },
+    undefined,
+    undefined,
+    {
+      command: { name: "branch", command: "git symbolic-ref -q HEAD" },
+      cwd: "/child",
+      placement: "child",
+      environment: { TMPDIR: null, TEMP: null, TMP: null },
+    },
+  );
+  const prompts: string[] = [];
+  owner.worker = async (
+    _l: unknown,
+    _c: string,
+    _id: string,
+    prompt: string,
+  ) => {
+    prompts.push(prompt);
+    const step = owner.step(live, "diagnose", "diagnosis");
+    return {
+      step,
+      result: {
+        ...success,
+        text: JSON.stringify({
+          action: "continue",
+          cause: "wrong placement",
+          evidence: [failed.id],
+          strategy: "actionable repair",
+          work: [
+            {
+              title: "inspect",
+              instructions: "Preserve output",
+              writes: ["a.txt"],
+            },
+          ],
+        }),
+      },
+    };
+  };
+  owner.editAttempt = async (
+    _l: unknown,
+    _c: string,
+    _p: unknown,
+    _id: string,
+    prompt: string,
+  ) => {
+    prompts.push(prompt);
+  };
+  const controller = owner.controller(live, owner.cwd, proposal);
+  let attempt = 0;
+  await controller.complete("setup", async () => {
+    if (++attempt === 1)
+      throw new AttemptFailure("Silent failure", [failed.id], "branch");
+  });
+  expect(prompts).toHaveLength(2);
+  for (const prompt of prompts) {
+    expect(prompt).toContain("git symbolic-ref -q HEAD");
+    expect(prompt).toContain('"cwd":"/child"');
+    expect(prompt).toContain('"TMPDIR":null');
+  }
+  expect(prompts[1]).toContain("Original failure to resolve");
+});
+
+it("check context is captured before launch, contains only named environment values and is sanitized before retention", async () => {
+  const { owner, live } = fixture();
+  owner.o.checkEnvironment = {
+    TMPDIR: "/declared-temp",
+    TEMP: "/declared-temp",
+    TMP: "/declared-temp",
+    API_KEY: "not-for-workers",
+  };
+  owner.o.secrets = () => ["secret-fixture"];
+  let settled = false;
+  owner.executionCwd = () => {
+    expect(settled).toBe(false);
+    return "/candidate/subdir";
+  };
+  owner.run = async () => {
+    settled = true;
+    return { ...success, outcome: "failed", exitCode: 1, output: "" };
+  };
+  const writes: unknown[] = [];
+  owner.write = (_p: string, value: unknown) => {
+    writes.push(value);
+  };
+  const check = (
+    Workflows.prototype as unknown as {
+      check(...args: unknown[]): Promise<unknown>;
+    }
+  ).check.bind(owner);
+  await check(
+    live,
+    "/candidate",
+    { name: "inspect", command: "echo secret-fixture" },
+    "inspect",
+  );
+  const record = writes[0] as {
+    operation: {
+      command: { command: string };
+      cwd: string;
+      environment: unknown;
+    };
+  };
+  expect(record.operation.cwd).toBe("/candidate/subdir");
+  expect(record.operation.command.command).toContain("[redacted]");
+  expect(record.operation.environment).toEqual({
+    TMPDIR: "/declared-temp",
+    TEMP: "/declared-temp",
+    TMP: "/declared-temp",
+  });
+  expect(JSON.stringify(record)).not.toContain("not-for-workers");
+  expect(JSON.stringify(record)).not.toContain("secret-fixture");
+});

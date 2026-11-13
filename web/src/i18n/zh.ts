@@ -1053,6 +1053,10 @@ export const zh = {
   check: "检查",
   user: "用户",
   assistant: "助手",
+  "Attempts shown: {partial} partial · {blocked} blocked · {failed} failed":
+    "当前显示的尝试：{partial} 项部分完成 · {blocked} 项受阻 · {failed} 项失败",
+  "Partial or blocked assignments preserve work; they are not process failures or delivery approval.":
+    "部分完成或受阻的任务保留已有成果，不代表进程故障，也不代表交付通过。",
   partial: "部分",
   final: "最终",
   observed: "已观察",

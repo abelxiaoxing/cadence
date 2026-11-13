@@ -491,7 +491,7 @@ it("an uninterruptible process is never signalled by timeout, cancellation or ou
   });
   expect(bounded.outcome).toBe("timeout");
 });
-it("structured assignment reports survive transcript overflow and are invalidated by later tools", () => {
+it("structured assignment reports survive transcript overflow and inspection, but not later effects", () => {
   const retained = turn();
   retained.items = Array.from({ length: 256 }, () => ({
     id: randomUUID(),
@@ -536,6 +536,10 @@ it("structured assignment reports survive transcript overflow and are invalidate
   ])
     recorder.accept(frame(event));
   expect(implementationReport(recorder.assignmentReport()!)).toEqual(report);
+  for (const name of ["read", "find", "grep", "ls"]) {
+    recorder.accept(frame({ kind: "tool-start", callId: randomUUID(), name }));
+    expect(implementationReport(recorder.assignmentReport()!)).toEqual(report);
+  }
   recorder.accept(
     frame({ kind: "tool-start", callId: randomUUID(), name: "edit" }),
   );
@@ -587,3 +591,46 @@ it("large review fields are projected as valid JSON without changing their compl
   expect(approved.truncated).toBe(true);
   expect(reviewVerdict(approved.text)?.approved).toBe(true);
 });
+
+it.each(["partial", "blocked"] as const)(
+  "a settled %s report preserves progress but cannot satisfy an assignment",
+  async (status) => {
+    const report = implementationReport(
+      JSON.stringify({ status, summary: "Output preserved; setup unresolved" }),
+    );
+    expect(report?.status).toBe(status);
+    const result = {
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      text: "",
+      output: "",
+      durationMs: 1,
+      truncated: false,
+      signal: null,
+    };
+    const step = {
+      id: "repair-step",
+      kind: "implementation",
+      status: "running",
+      text: "",
+      truncated: false,
+    };
+    const owner = Object.assign(Object.create(Workflows.prototype), {
+      o: { secrets: () => [] },
+      save() {},
+      worker: async () => ({ result, step, report }),
+    });
+    await expect(
+      owner.implementation(
+        { abort: new AbortController() },
+        "unused",
+        "repair-1",
+        "unused",
+        {},
+      ),
+    ).rejects.toThrow(`Assignment ${status}`);
+    expect(step.status).toBe(status);
+    expect(result.outcome).toBe("completed");
+  },
+);

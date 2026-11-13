@@ -22,6 +22,8 @@ export type SubagentStatus =
   | "running"
   | "done"
   | "rejected"
+  | "partial"
+  | "blocked"
   | "error"
   | "cancelled";
 type Ended = Exclude<SubagentStatus, "running">;
@@ -56,7 +58,14 @@ export interface SubagentState {
 export const MAX_MESSAGES = 2000;
 /** Agents written into one card; more are counted, not listed. */
 export const MAX_CARD_AGENTS = 64;
-const ENDED = new Set(["done", "rejected", "error", "cancelled"]);
+const ENDED = new Set([
+  "done",
+  "rejected",
+  "partial",
+  "blocked",
+  "error",
+  "cancelled",
+]);
 
 const record = (v: unknown): Record<string, unknown> | undefined =>
   v && typeof v === "object" && !Array.isArray(v)
@@ -266,6 +275,8 @@ const SYMBOL: Record<Ended, [string, PaintRole]> = {
   done: ["✔", "success"],
   error: ["✘", "error"],
   rejected: ["⊘", "accent"],
+  partial: ["◐", "accent"],
+  blocked: ["⊘", "accent"],
   cancelled: ["○", "muted"],
 };
 export function statusSymbol(
@@ -446,6 +457,8 @@ export function cardLines(
     card.agents.filter((a) => a.status === status).length;
   const failed = tally("error"),
     rejected = tally("rejected"),
+    partial = tally("partial"),
+    blocked = tally("blocked"),
     cancelled = tally("cancelled");
   const [symbol, role] =
     SYMBOL[
@@ -453,14 +466,18 @@ export function cardLines(
         ? "error"
         : rejected
           ? "rejected"
-          : cancelled
-            ? "cancelled"
-            : "done"
+          : blocked
+            ? "blocked"
+            : partial
+              ? "partial"
+              : cancelled
+                ? "cancelled"
+                : "done"
     ];
   const kind = sharedKind(card.agents);
   const outcome =
-    failed || rejected || cancelled
-      ? ` · ${tally("done")} done${failed ? ` · ${failed} failed` : ""}${rejected ? ` · ${rejected} rejected` : ""}${
+    failed || rejected || partial || blocked || cancelled
+      ? ` · ${tally("done")} done${failed ? ` · ${failed} failed` : ""}${rejected ? ` · ${rejected} rejected` : ""}${partial ? ` · ${partial} partial` : ""}${blocked ? ` · ${blocked} blocked` : ""}${
           cancelled ? ` · ${cancelled} cancelled` : ""
         }`
       : "";
@@ -513,10 +530,12 @@ export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
   const done = tally("done"),
     failed = tally("error"),
     rejected = tally("rejected"),
+    partial = tally("partial"),
+    blocked = tally("blocked"),
     cancelled = tally("cancelled");
   const counts = `${done ? ` · ${done} done` : ""}${
     failed ? ` · ${failed} failed` : ""
-  }${rejected ? ` · ${rejected} rejected` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}`;
+  }${rejected ? ` · ${rejected} rejected` : ""}${partial ? ` · ${partial} partial` : ""}${blocked ? ` · ${blocked} blocked` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}`;
   const [spin, role] = statusSymbol(running[0], f.frame);
   const header = hinted(
     `${paint(role, spin)} ${running.length} ${noun(kind, running.length)} running${counts}`,

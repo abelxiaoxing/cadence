@@ -382,15 +382,19 @@ class Feed {
       status:
         outcome === "completed"
           ? "done"
-          : outcome === "rejected"
-            ? "rejected"
+          : outcome === "rejected" ||
+              outcome === "partial" ||
+              outcome === "blocked"
+            ? outcome
             : outcome === "canceled"
               ? "cancelled"
               : "error",
       endedAt: this.now(),
       ...(outcome === "completed" ||
       outcome === "canceled" ||
-      outcome === "rejected"
+      outcome === "rejected" ||
+      outcome === "partial" ||
+      outcome === "blocked"
         ? {}
         : { error: `${child.label} · ${outcome}` }),
     });

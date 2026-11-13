@@ -1055,7 +1055,8 @@ summary:focus-visible,
   color: var(--red-text);
 }
 .ep-state.unknown,
-.ep-state.rejected {
+.ep-state.rejected,
+.ep-state.blocked {
   color: var(--amber-text);
 }
 .ep-state.active {
@@ -2965,7 +2966,9 @@ summary:focus-visible,
 .agent-dot.completed {
   background: var(--green);
 }
-.agent-dot.rejected {
+.agent-dot.rejected,
+.agent-dot.partial,
+.agent-dot.blocked {
   background: var(--amber-text);
 }
 .agent-dot.failed,

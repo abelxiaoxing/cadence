@@ -27,6 +27,7 @@ import {
   nextRunWindow,
   PlanCard,
   placeWorkflows,
+  WorkflowAttemptSummary,
   WorkflowLine,
   WorkflowStepSummary,
 } from "../../web/src/components/workspace/WorkflowPanel";
@@ -979,3 +980,41 @@ it("a changed runtime observation is not approved even when plan ID and digest a
   ).rejects.toThrow("stale");
   expect(c.commands).toHaveLength(1);
 });
+
+it.each(["en", "zh"] as const)(
+  "%s distinguishes incomplete reports from failed attempts without inferring delivery",
+  (locale) => {
+    const steps: WorkflowStep[] = ["partial", "blocked", "failed"].map(
+      (status, i) => ({
+        id: `repair-${i}`,
+        childRunId: randomUUID(),
+        kind: "implementation",
+        status: status as WorkflowStep["status"],
+        text: "",
+        exitCode: status === "failed" ? 1 : 0,
+        truncated: false,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <WorkflowAttemptSummary steps={steps} />
+      </LocaleProvider>,
+    );
+    expect(html).toContain(locale === "en" ? "1 partial" : "1 项部分完成");
+    expect(html).toContain(locale === "en" ? "1 blocked" : "1 项受阻");
+    expect(html).toContain(locale === "en" ? "1 failed" : "1 项失败");
+    expect(html).toContain(
+      locale === "en"
+        ? "not process failures or delivery approval"
+        : "不代表进程故障",
+    );
+    const record = run();
+    const dock = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <WorkflowAgentGroup run={record} steps={steps} />
+      </LocaleProvider>,
+    );
+    expect(dock).toContain("agent-dot partial");
+    expect(dock).toContain("agent-dot blocked");
+  },
+);

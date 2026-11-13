@@ -222,6 +222,7 @@ function fixture(mode = "pass") {
         },
       },
     },
+    executionCwd: (_live: unknown, cwd: string) => cwd,
     assertRunning: () => {
       if (live.abort.signal.aborted) throw new Error("canceled");
     },
@@ -312,7 +313,9 @@ function fixture(mode = "pass") {
       events.push("diagnosis");
       const failed = [...run.steps]
         .reverse()
-        .find((s) => ["failed", "rejected"].includes(s.status))!;
+        .find((s) =>
+          ["failed", "rejected", "partial", "blocked"].includes(s.status),
+        )!;
       const blocked = mode === "post-blocked";
       text = JSON.stringify({
         action: blocked ? "blocked" : "continue",
@@ -444,7 +447,11 @@ it("post-merge failure repairs in the same candidate and merges again only over 
   expect(f.d.integration.after).toBe(f.d.acceptance?.candidate);
   expect(f.d.postChecks).toBe("passed");
   expect(
-    f.run.steps.some((s) => s.kind === "check" && s.status === "failed"),
+    f.run.steps.some(
+      (s) =>
+        s.kind === "check" &&
+        ["failed", "partial", "blocked"].includes(s.status),
+    ),
   ).toBe(true);
 });
 it("a no-change post-merge recovery revalidates acceptance without replaying the merge", async () => {

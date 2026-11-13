@@ -599,6 +599,8 @@ describe("conversation isolation and live-only observation", () => {
   it.each([
     ["canceled", "cancelled"],
     ["failed", "error"],
+    ["partial", "partial"],
+    ["blocked", "blocked"],
     ["running", "error"],
   ])(
     "preserves %s outcomes, not fabricated success",

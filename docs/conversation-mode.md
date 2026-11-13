@@ -169,10 +169,14 @@ Credential-looking text in plans and research questions is shown and approved re
 
 An isolated worktree does **not** inherit ignored `node_modules`, build output, credentials or profiles.
 Investigate prerequisites during planning.
-If dependencies/setup are needed, include the exact commands in the plan for explicit approval.
+If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
+Parallel children have detached HEADs; target branch checks must not run there.
+Each command is a separate process: bind any required temporary environment in that command rather than relying on an earlier export.
 No dependency/browser download or source-profile copying is implicit.
 Baseline checks are separate from acceptance checks that need newly implemented files.
-Failed setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.
+Failed candidate/worktree setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.
+A failed target preflight ends without dispatching an editor into the original checkout.
+Incomplete assignment reports show `partial` or `blocked`, not a process crash; their outputs remain available, but dependencies and final delivery still require completion and real verification.
 Cadence can preserve partial outputs, split remaining work and choose alternative implementations within the approval; it never expands permissions or weakens acceptance.
 Transient model-request failures recover inside the original SDK worker, with visible, cancellable backoff; completed tool results and the checkout gate stay with that worker.
 A subagent keeps retrying far longer than an interactive session does (12 retries, about half an hour of backoff, unless you turned Pi's retries off), and the retry line shows what the provider said.

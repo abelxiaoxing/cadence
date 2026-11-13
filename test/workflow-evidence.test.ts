@@ -6,7 +6,10 @@ import type { RunResult } from "../src/task-types.ts";
 
 // Unit boundary only: retained-record reads, not fabricated process success.
 function fixture() {
-  const records = new Map<string, { stepId: string; result: RunResult }>();
+  const records = new Map<
+    string,
+    { stepId: string; result: RunResult; operation?: unknown }
+  >();
   const reads: string[] = [];
   const secret = "fixture-private-literal";
   const live = { run: { id: randomUUID() } };
@@ -28,7 +31,11 @@ function fixture() {
       },
     },
   }) as {
-    evidence(context: typeof live, steps: WorkflowStep[]): string;
+    evidence(
+      context: typeof live,
+      steps: WorkflowStep[],
+      operations?: boolean,
+    ): string;
   };
   const step = (overrides: Partial<WorkflowStep> = {}): WorkflowStep => ({
     id: `check-${randomUUID()}`,
@@ -39,9 +46,14 @@ function fixture() {
     truncated: false,
     ...overrides,
   });
-  const record = (s: WorkflowStep, value: Partial<RunResult> = {}) => {
+  const record = (
+    s: WorkflowStep,
+    value: Partial<RunResult> = {},
+    operation?: unknown,
+  ) => {
     const body = {
       stepId: s.id,
+      ...(operation ? { operation } : {}),
       result: {
         outcome: "failed",
         exitCode: 1,
@@ -61,7 +73,8 @@ function fixture() {
     return body;
   };
   return {
-    evidence: (steps: WorkflowStep[]) => workflow.evidence(live, steps),
+    evidence: (steps: WorkflowStep[], operations = false) =>
+      workflow.evidence(live, steps, operations),
     reads,
     secret,
     step,
@@ -123,4 +136,42 @@ it("keeps every check identity within the prompt budget and refuses missing or m
   expect(() => f.evidence([missing])).toThrow("unavailable");
   f.record(missing).stepId = randomUUID();
   expect(() => f.evidence([missing])).toThrow("corrupt-selected");
+});
+
+it("silent setup failure carries its exact command, cwd and unset environment into diagnosis and repair", () => {
+  const f = fixture(),
+    step = f.step();
+  f.record(
+    step,
+    { output: "" },
+    {
+      command: {
+        name: "branch",
+        command: `git symbolic-ref -q HEAD; echo ${f.secret}`,
+      },
+      cwd: "/owned/child/subdir",
+      checkoutRoot: "/owned/child",
+      placement: "child",
+      target: { checkoutRoot: "/target", branch: "refs/heads/main" },
+      environment: { TMPDIR: null, TEMP: null, TMP: null },
+    },
+  );
+  const evidence = f.evidence([step], true);
+  expect(evidence).toContain("git symbolic-ref -q HEAD");
+  expect(evidence).toContain("/owned/child/subdir");
+  expect(evidence).toContain('"placement":"child"');
+  expect(evidence).toContain('"TMPDIR":null');
+  expect(evidence).toContain('"branch":"refs/heads/main"');
+  expect(evidence).not.toContain(f.secret);
+  expect(evidence).toContain("[redacted]");
+  expect(Buffer.byteLength(evidence)).toBeLessThanOrEqual(8192);
+  expect(f.evidence([step])).not.toContain("Recorded execution context");
+});
+it("retained results without context explicitly report it unrecorded instead of inventing a resource", () => {
+  const f = fixture(),
+    step = f.step();
+  f.record(step);
+  expect(f.evidence([step], true)).toContain(
+    "No permission to inspect private records or invent missing prerequisites",
+  );
 });
