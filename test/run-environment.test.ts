@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statfsSync,
@@ -15,16 +17,22 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   assertTemporaryDirectory,
+  RUN_TEMP_DIRECTORY,
   RunEnvironment,
 } from "../src/service/run-environment.ts";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
-  return { ...fs, statfsSync: vi.fn(fs.statfsSync) };
+  return {
+    ...fs,
+    statfsSync: vi.fn(fs.statfsSync),
+    lstatSync: vi.fn(fs.lstatSync),
+  };
 });
 beforeEach(async () => {
   const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
   vi.mocked(statfsSync).mockImplementation(fs.statfsSync);
+  vi.mocked(lstatSync).mockImplementation(fs.lstatSync);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -51,9 +59,11 @@ it("construction is inert; a command gets a fresh compliant environment without 
   writeFileSync(join(consumer, "keep"), "consumer data");
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, consumer);
   expect(f.records).toEqual([]);
+  expect(readdirSync(f.stateHome)).toEqual([]);
   f.record.mockImplementationOnce((entries: any) => {
     expect(entries[0].identity).toBeNull();
     expect(existsSync(entries[0].path)).toBe(false); // intent before effects
+    expect(existsSync(join(f.stateHome, RUN_TEMP_DIRECTORY))).toBe(false);
   });
   const env = f.environment.forWorkspace(f.cwd);
   expect(env).toEqual({
@@ -61,7 +71,9 @@ it("construction is inert; a command gets a fresh compliant environment without 
     TEMP: env.TMPDIR,
     TMP: env.TMPDIR,
   });
-  expect(dirname(env.TMPDIR)).toBe(f.stateHome);
+  expect(dirname(env.TMPDIR)).toBe(join(f.stateHome, RUN_TEMP_DIRECTORY));
+  expect(readdirSync(f.stateHome)).toEqual([RUN_TEMP_DIRECTORY]);
+  expect(readdirSync(f.root).sort()).toEqual(["consumer", "project", "state"]);
   expect(env.TMPDIR).not.toBe(consumer);
   expect(Object.isFrozen(env)).toBe(true);
   expect(() => assertTemporaryDirectory(f.cwd, env.TMPDIR)).not.toThrow();
@@ -70,6 +82,7 @@ it("construction is inert; a command gets a fresh compliant environment without 
   expect(process.env.TMPDIR).toBe(consumer);
   expect(await f.environment.finish(true)).toEqual([]);
   expect(existsSync(env.TMPDIR)).toBe(false);
+  expect(readdirSync(dirname(env.TMPDIR))).toEqual([]); // Keep the designated pool.
   expect(readFileSync(join(consumer, "keep"), "utf8")).toBe("consumer data");
 });
 it("workspaces and runs are isolated; sequential commands and recovery keep the same directory and evidence", async () => {
@@ -102,18 +115,32 @@ it("workspaces and runs are isolated; sequential commands and recovery keep the 
   expect(existsSync(first.TMPDIR)).toBe(true);
   await other.finish(true);
 });
-it("an unsuitable state filesystem uses the workspace's parent, never an implicit tmpfs", async () => {
-  const f = fixture();
-  const original = vi.mocked(statfsSync).getMockImplementation()!;
-  vi.mocked(statfsSync).mockImplementation(((path: any, options: any) => ({
-    ...original(path, options),
-    ...(path === f.stateHome ? { type: 0x01021994 } : {}),
-  })) as typeof statfsSync);
-  const env = f.environment.forWorkspace(f.cwd);
-  expect(dirname(env.TMPDIR)).toBe(f.root);
-  expect(() => assertTemporaryDirectory(f.cwd, env.TMPDIR)).not.toThrow();
-  await f.environment.finish(true);
-});
+it.each(["tmpfs", "other-disk"])(
+  "an unsuitable state filesystem (%s) refuses without scattering a fallback beside the workspace",
+  (kind) => {
+    const f = fixture();
+    if (kind === "tmpfs") {
+      const original = vi.mocked(statfsSync).getMockImplementation()!;
+      vi.mocked(statfsSync).mockImplementation(((path: any, options: any) => ({
+        ...original(path, options),
+        ...(path === f.stateHome ? { type: 0x01021994 } : {}),
+      })) as typeof statfsSync);
+    } else {
+      const original = vi.mocked(lstatSync).getMockImplementation()!;
+      vi.mocked(lstatSync).mockImplementation(((path: any, options: any) => {
+        const stat = original(path, options);
+        if (path === f.stateHome && stat) stat.dev = Number(stat.dev) + 1;
+        return stat;
+      }) as typeof lstatSync);
+    }
+    expect(() => f.environment.forWorkspace(f.cwd)).toThrow(
+      "no fallback location was created",
+    );
+    expect(f.record).not.toHaveBeenCalled();
+    expect(readdirSync(f.stateHome)).toEqual([]);
+    expect(readdirSync(f.root).sort()).toEqual(["project", "state"]);
+  },
+);
 it("no eligible filesystem is a concrete owner failure, not a model repair or an allocation", () => {
   const f = fixture();
   const original = vi.mocked(statfsSync).getMockImplementation()!;
@@ -122,16 +149,19 @@ it("no eligible filesystem is a concrete owner failure, not a model repair or an
     type: 0x01021994,
   })) as typeof statfsSync);
   expect(() => f.environment.forWorkspace(f.cwd)).toThrow(
-    "no writable, same-disk temporary location outside Git",
+    "centralized temporary directory",
   );
   expect(f.record).not.toHaveBeenCalled();
 });
-it("a candidate parent inside another Git working copy is not used", async () => {
+it("state home inside Git is refused without a workspace-parent fallback", () => {
   const f = fixture();
   execFileSync("git", ["init", "-q", f.stateHome]);
-  const env = f.environment.forWorkspace(f.cwd);
-  expect(dirname(env.TMPDIR)).toBe(f.root);
-  await f.environment.finish(true);
+  expect(() => f.environment.forWorkspace(f.cwd)).toThrow(
+    "no fallback location was created",
+  );
+  expect(f.record).not.toHaveBeenCalled();
+  expect(readdirSync(f.stateHome)).toEqual([".git"]);
+  expect(readdirSync(f.root).sort()).toEqual(["project", "state"]);
 });
 it("a failed creation journal creates nothing; a failed ready journal retains its actual directory", async () => {
   const f = fixture();
@@ -142,6 +172,7 @@ it("a failed creation journal creates nothing; a failed ready journal retains it
   });
   expect(() => f.environment.forWorkspace(f.cwd)).toThrow("record failed");
   expect(existsSync(intended)).toBe(false);
+  expect(readdirSync(f.stateHome)).toEqual([]); // No pool before durable intent.
   const other = new RunEnvironment(
     f.stateHome,
     f.cwd,
@@ -189,4 +220,77 @@ it("cleanup removes owned scratch, not a symlink target or an old run; lost auth
   expect(await f.environment.finish(true)).toEqual([]);
   expect(existsSync(env.TMPDIR)).toBe(false);
   expect(readFileSync(join(outside, "keep"), "utf8")).toBe("untouched");
+});
+
+for (const kind of ["file", "symlink", "permissions"]) {
+  it.skipIf(kind === "permissions" && process.platform === "win32")(
+    `an unsafe existing pool (${kind}) is not repaired or used, and creates no fallback`,
+    () => {
+      const f = fixture();
+      const pool = join(f.stateHome, RUN_TEMP_DIRECTORY);
+      const other = join(f.root, "unrelated");
+      mkdirSync(other, { mode: 0o700 });
+      writeFileSync(join(other, "keep"), "unrelated data");
+      if (kind === "file") writeFileSync(pool, "not a pool");
+      else if (kind === "symlink")
+        symlinkSync(
+          other,
+          pool,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      else {
+        mkdirSync(pool, { mode: 0o700 });
+        chmodSync(pool, 0o755);
+      }
+      expect(() => f.environment.forWorkspace(f.cwd)).toThrow(
+        "Execution environment unavailable",
+      );
+      expect(readdirSync(f.stateHome)).toEqual([RUN_TEMP_DIRECTORY]);
+      expect(readdirSync(f.root).sort()).toEqual([
+        "project",
+        "state",
+        "unrelated",
+      ]);
+      expect(readdirSync(other)).toEqual(["keep"]);
+      expect(readFileSync(join(other, "keep"), "utf8")).toBe("unrelated data");
+      if (kind === "file")
+        expect(readFileSync(pool, "utf8")).toBe("not a pool");
+      if (kind === "symlink")
+        expect(lstatSync(pool).isSymbolicLink()).toBe(true);
+      if (kind === "permissions")
+        expect(lstatSync(pool).mode & 0o777).toBe(0o755);
+    },
+  );
+}
+
+it("cleanup keeps the pool, older run directories and unrelated entries, including after a pool is replaced", async () => {
+  const f = fixture();
+  const pool = join(f.stateHome, RUN_TEMP_DIRECTORY);
+  mkdirSync(pool, { mode: 0o700 });
+  const old = join(pool, "cadence-run-older");
+  mkdirSync(old);
+  writeFileSync(join(old, "keep"), "retained failure");
+  writeFileSync(join(pool, "unrelated"), "unrelated data");
+  const first = f.environment.forWorkspace(f.cwd);
+  expect(await f.environment.finish(true)).toEqual([]);
+  expect(readdirSync(pool).sort()).toEqual(["cadence-run-older", "unrelated"]);
+  expect(existsSync(first.TMPDIR)).toBe(false);
+  const next = new RunEnvironment(
+    f.stateHome,
+    f.cwd,
+    () => {},
+    () => {},
+  );
+  const second = next.forWorkspace(f.cwd);
+  const moved = `${pool}-moved`;
+  renameSync(pool, moved);
+  mkdirSync(pool, { mode: 0o700 });
+  mkdirSync(second.TMPDIR, { mode: 0o700 });
+  writeFileSync(join(second.TMPDIR, "keep"), "replacement");
+  expect(await next.finish(true)).toEqual([second.TMPDIR]);
+  expect(readFileSync(join(second.TMPDIR, "keep"), "utf8")).toBe("replacement");
+  expect(readFileSync(join(moved, "cadence-run-older", "keep"), "utf8")).toBe(
+    "retained failure",
+  );
+  expect(readFileSync(join(moved, "unrelated"), "utf8")).toBe("unrelated data");
 });

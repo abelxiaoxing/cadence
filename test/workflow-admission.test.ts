@@ -329,6 +329,8 @@ it("the fixed runtime policy is displayed and approval-bound, without allocating
   expect(p.display?.runtime).toContain(
     "Cadence creates private temporary directories",
   );
+  expect(p.display?.runtime).toContain("cadence-tmp-v1");
+  expect(p.display?.runtime).toContain("never falls back");
   expect(
     f.workflows.command(randomUUID(), f.epoch, {
       action: "prepare",

@@ -27265,8 +27265,9 @@ import {
   statSync as statSync3
 } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname as dirname20, isAbsolute as isAbsolute14, join as join35, relative as relative8, resolve as resolve12, sep as sep7 } from "node:path";
-var RUN_ENVIRONMENT_POLICY = "Service runtime: after approval, Cadence creates private temporary directories outside Git working copies on each execution workspace's disk and supplies TMPDIR, TEMP and TMP to its checks and workers. Each workspace keeps its directory through recovery; parallel workspaces are isolated. Only these owned temporary directories may be removed after successful work and confirmed worker/check closure; the run stays active through cleanup, and cancellation retains remaining roots. No dependency installation, profile or credential copying, service restart or other external writes are authorized by this policy.";
+import { isAbsolute as isAbsolute14, join as join35, relative as relative8, resolve as resolve12, sep as sep7 } from "node:path";
+var RUN_TEMP_DIRECTORY = "cadence-tmp-v1";
+var RUN_ENVIRONMENT_POLICY = `Service runtime: after approval, Cadence creates private temporary directories only under the configured state home's ${RUN_TEMP_DIRECTORY}, outside Git working copies on each execution workspace's disk, and supplies TMPDIR, TEMP and TMP to its checks and workers. It never falls back to HOME or workspace siblings. Each workspace keeps its directory through recovery; parallel workspaces are isolated. Only these owned temporary directories may be removed after successful work and confirmed worker/check closure; the run stays active through cleanup, and cancellation retains remaining roots. No dependency installation, profile or credential copying, service restart or other external writes are authorized by this policy.`;
 function temporaryEnvironment(path) {
   return Object.freeze({ TMPDIR: path, TEMP: path, TMP: path });
 }
@@ -27329,23 +27330,16 @@ class RunEnvironment {
       assertTemporaryDirectory(cwd, previous.path);
       return temporaryEnvironment(previous.path);
     }
-    const candidates = [...new Set([resolve12(this.stateHome), dirname20(cwd)])];
-    const reasons = [];
-    let parent;
-    for (const candidate of candidates) {
-      try {
-        if (within(this.checkout, candidate) || within(join35(this.stateHome, "cadence-assistant-v1"), candidate))
-          throw new Error("location is in the checkout or private service state");
-        assertTemporaryDirectory(cwd, candidate, false);
-        accessSync2(candidate, constants9.W_OK | constants9.X_OK);
-        parent = candidate;
-        break;
-      } catch (error) {
-        reasons.push(`${candidate}: ${error instanceof Error ? error.message : "unavailable"}`);
-      }
+    const home = resolve12(this.stateHome);
+    const parent = join35(home, RUN_TEMP_DIRECTORY);
+    try {
+      if (within(this.checkout, home))
+        throw new Error("state home is inside the checkout");
+      assertTemporaryDirectory(cwd, home, false);
+      accessSync2(home, constants9.W_OK | constants9.X_OK);
+    } catch (error) {
+      throw new Error(`Execution environment unavailable: centralized temporary directory ${parent} is unavailable; no fallback location was created. ${error instanceof Error ? error.message : "unavailable"}`);
     }
-    if (!parent)
-      throw new Error(`Execution environment unavailable: no writable, same-disk temporary location outside Git. ${reasons.join("; ")}`);
     const directory2 = {
       workspace: cwd,
       path: join35(parent, `cadence-run-${randomUUID20()}`),
@@ -27356,6 +27350,13 @@ class RunEnvironment {
     this.save();
     this.assertCurrent();
     try {
+      try {
+        mkdirSync5(parent, { mode: 448 });
+      } catch (error) {
+        if (!(error instanceof Error && ("code" in error) && error.code === "EEXIST"))
+          throw error;
+      }
+      assertTemporaryDirectory(cwd, parent);
       mkdirSync5(directory2.path, { mode: 448 });
       const entry = lstatSync20(directory2.path);
       directory2.identity = {
@@ -29195,7 +29196,7 @@ function projectModelCatalog(runtime, supportedThinking, current2, literals, val
 
 // src/service/worker-settings.ts
 import { lstatSync as lstatSync21, realpathSync as realpathSync12 } from "node:fs";
-import { dirname as dirname21, join as join37 } from "node:path";
+import { dirname as dirname20, join as join37 } from "node:path";
 var SETTINGS_FILE_BYTES = 1024 * 1024;
 function observe(path) {
   let target2;
@@ -29213,7 +29214,7 @@ function observe(path) {
     }
     throw new ContractError("corrupt-selected");
   }
-  const file = new PrivateFiles(dirname21(target2), false).read(target2, SETTINGS_FILE_BYTES);
+  const file = new PrivateFiles(dirname20(target2), false).read(target2, SETTINGS_FILE_BYTES);
   if (!file)
     throw new ContractError("stale");
   return { target: target2, ...file };
@@ -30264,11 +30265,11 @@ import {
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
-import { dirname as dirname24, posix as posix2 } from "node:path";
+import { dirname as dirname23, posix as posix2 } from "node:path";
 
 // src/service/knowledge-store.ts
 import { lstatSync as lstatSync23, opendirSync as opendirSync12, readFileSync as readFileSync6 } from "node:fs";
-import { dirname as dirname23, posix } from "node:path";
+import { dirname as dirname22, posix } from "node:path";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
@@ -30286,7 +30287,7 @@ import {
   realpathSync as realpathSync13
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname22, isAbsolute as isAbsolute15, join as join38, relative as relative9, resolve as resolve13, sep as sep8 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute15, join as join38, relative as relative9, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -30381,7 +30382,7 @@ function safeWorkflowFile(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname22(p));
+  safeDirectory(dirname21(p));
   try {
     const st = lstatSync22(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
@@ -30397,7 +30398,7 @@ function declaredTarget(cwd, name) {
   const p = resolve13(cwd, name);
   if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname22(p));
+  safeDirectory(dirname21(p));
   try {
     const st = lstatSync22(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
@@ -30932,7 +30933,7 @@ function readKnowledgeStore(root) {
   let limited = false;
   let names3 = [];
   try {
-    const directory2 = dirname23(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
+    const directory2 = dirname22(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
     if (lstatSync23(directory2).isDirectory()) {
       const dir = opendirSync12(directory2);
       try {
@@ -31307,7 +31308,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync13(dirname24(probe2));
+        directory2 = opendirSync13(dirname23(probe2));
         while (entries3 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -31908,7 +31909,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 // src/service/conversations.ts
 import { randomUUID as randomUUID26 } from "node:crypto";
 import { opendirSync as opendirSync14, statfsSync as statfsSync3 } from "node:fs";
-import { dirname as dirname25, join as join40 } from "node:path";
+import { dirname as dirname24, join as join40 } from "node:path";
 var META_BYTES2 = 64 * 1024;
 var PREVIEW_BYTES = 64 * 1024;
 var RECENT_PREVIEWS = 8;
@@ -32164,7 +32165,7 @@ class Conversations {
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
-    return this.active.has(commandId) || this.files.directory(dirname25(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
+    return this.active.has(commandId) || this.files.directory(dirname24(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
   }
   command(input, reply = false) {
     return {
@@ -32187,7 +32188,7 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname25(this.records.path(input.commandId, "state.json"))))
+    if (this.files.directory(dirname24(this.records.path(input.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -32311,7 +32312,7 @@ class Conversations {
     const receipt = this.receipt(request3);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname25(this.records.path(request3.commandId, "state.json"))))
+    if (this.files.directory(dirname24(this.records.path(request3.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -32440,7 +32441,7 @@ class Conversations {
     const abort = new AbortController;
     const closed2 = Promise.resolve().then(() => renameSession({
       id,
-      dir: dirname25(listed.path),
+      dir: dirname24(listed.path),
       file: listed.path,
       cwd: listed.summary.cwd,
       name: request3.name
@@ -32727,7 +32728,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 // src/service/workflows.ts
 import { randomUUID as randomUUID28 } from "node:crypto";
 import { opendirSync as opendirSync16, realpathSync as realpathSync14, statfsSync as statfsSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { basename as basename5, dirname as dirname27, join as join43, relative as relative12, resolve as resolve15 } from "node:path";
+import { basename as basename5, dirname as dirname26, join as join43, relative as relative12, resolve as resolve15 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
@@ -33360,7 +33361,7 @@ function settledWorkerCleanup(output) {
 
 // src/service/workflow-delivery.ts
 import { lstatSync as lstatSync26, rmdirSync } from "node:fs";
-import { dirname as dirname26, join as join42 } from "node:path";
+import { dirname as dirname25, join as join42 } from "node:path";
 function taskBranch(goal, id) {
   const slug2 = goal.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 48).replace(/-$/u, "") || "task";
   return `refs/heads/cadence/${slug2}-${decodeId(id)}`;
@@ -33409,13 +33410,13 @@ class WorkflowDelivery {
     this.view = view;
     this.resources = resources;
     this.save = save;
-    this.home = dirname26(view.worktreeRoot);
+    this.home = dirname25(view.worktreeRoot);
   }
   prepareHome() {
     assertRepository(this.view.binding.target);
     if (nested(this.view.binding.target.checkoutRoot, this.home))
       throw new ContractError("unsupported-context");
-    for (const path of [dirname26(dirname26(this.home)), dirname26(this.home)]) {
+    for (const path of [dirname25(dirname25(this.home)), dirname25(this.home)]) {
       if (!safeDirectory(path, true))
         throw new ContractError("forbidden");
       const stat = lstatSync26(path);
@@ -33468,7 +33469,7 @@ class WorkflowDelivery {
     const base = await this.assertTip();
     if (this.view.artifacts?.some((a) => a.path === path) || safeDirectory(path))
       throw new ContractError("conflict");
-    if (!safeDirectory(dirname26(path), true))
+    if (!safeDirectory(dirname25(path), true))
       throw new ContractError("forbidden");
     const token = this.resources.reserveWorkspace(path);
     this.children.set(path, token);
@@ -33560,7 +33561,7 @@ class WorkflowDelivery {
     }
     this.save();
     try {
-      rmdirSync(dirname26(path));
+      rmdirSync(dirname25(path));
     } catch {}
   }
   targetHead() {
@@ -34217,8 +34218,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.4",
-  build: "57d718ba9e2d1879ec677ed294a71a83641de1fb983b96d079d73c3bcf8580b1",
+  version: "2.1.5",
+  build: "f394594500c6c18cd7ae0d307db53bbfbf13f988bfd92f5e3ca1bbc15b0d5e91",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34808,7 +34809,7 @@ class Workflows {
         throw new ContractError("conflict");
       return { ...this.view(commandId), commandId };
     }
-    if (this.files.directory(dirname27(acceptedPath)))
+    if (this.files.directory(dirname26(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal;
     let delivery;
@@ -36091,7 +36092,7 @@ ${changed.map((p) => `- ${p}`).join(`
     this.assertRunning(live2);
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
-      if (!safeDirectory(dirname27(file), true))
+      if (!safeDirectory(dirname26(file), true))
         throw new ContractError("forbidden");
       writeFileSync6(file, this.documentBody(live2, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
@@ -36391,7 +36392,7 @@ ${result.output}`}`);
         const file = safeWorkflowFile(this.cwd, name), before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
-        if (!safeDirectory(dirname27(file), true))
+        if (!safeDirectory(dirname26(file), true))
           throw new ContractError("unavailable");
         writeFileSync6(file, this.documentBody(live2, plan, name, [...live2.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }

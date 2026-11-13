@@ -26,11 +26,35 @@ Keep new gate checks short and deterministic.
 Slow process/SDK/PTY/service-manager tests are not release prerequisites or automatic follow-ups, including when those areas change.
 A green gate qualifies only those executed checks, not real-browser interaction, long-running process behavior, paid providers or native Windows/macOS/ConPTY operation.
 Older release receipts remain historical evidence, not requirements for future releases.
-No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
+No passing gate authorizes commit, push, publication, installation, deployment or cleanup of consumer data or retained work.
 
-Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, outside every Git working copy and on the checkout's disk filesystem rather than a nearly full tmpfs.
+Build/verification use the single private engineering session scope prescribed in `AGENTS.md`, with `TMPDIR`, `TEMP` and `TMP` set explicitly, outside every Git working copy and on the checkout's disk filesystem rather than a nearly full tmpfs.
+Do not use `$HOME/cadence-*.XXXXXX` or a new sibling of the checkout for each check, review or commit.
 `scripts/verification-temp.mjs` checks this before `verify` starts any stage using the shared readonly validator in `src/service/run-environment.ts`; it refuses invalid input without creating, redirecting or cleaning directories.
-Approved service deliveries already receive the [owner-prepared temporary environment](checks-review.md#automatic-conversation-workflow), so their plans simply name the project check commands; manual engineering still supplies its own private temp root.
+Approved service deliveries already receive the [owner-prepared temporary environment](checks-review.md#automatic-conversation-workflow), so their plans simply name the project check commands; manual engineering supplies its scope as follows on POSIX (Windows uses `%LOCALAPPDATA%/cadence/tmp/`):
+
+```sh
+# One scope for the whole engineering session, not one per tool call.
+set -eu
+umask 077
+base="${XDG_CACHE_HOME:-$HOME/.cache}/cadence/tmp"
+# Refuse a wrong-disk, Git or aliased cache before creating anything there.
+ancestor="$base"
+while [ ! -e "$ancestor" ]; do ancestor=$(dirname "$ancestor"); done
+node --input-type=module -e 'import { assertTemporaryDirectory } from "./src/service/run-environment.ts"; assertTemporaryDirectory(process.cwd(), process.argv[1], false)' "$ancestor"
+mkdir -p -- "$base"
+export TMPDIR="$(mktemp -d "$base/engineering.XXXXXXXX")"
+export TEMP="$TMPDIR" TMP="$TMPDIR"
+node --input-type=module -e 'import { assertVerificationTemp } from "./scripts/verification-temp.mjs"; assertVerificationTemp(process.cwd())'
+# Put any necessary logs/reports/packages below $TMPDIR; prefer stdout.
+bun run verify
+```
+
+Reuse that exact scope across subsequent commands; do not run the allocation block for every tool call.
+The scope's creator owns its cleanup, not `verify`: after the final result has been reported and all original commands/children have settled, remove only that exact, still-owned directory if no evidence or deliverable needs retaining.
+A verification failure does not authorize immediate deletion; preserve its evidence through diagnosis, then dispose of the session's scratch after resolution rather than accumulating successful-run logs indefinitely.
+If work is live, closure is uncertain or a report/package must be retained, leave the scope in the designated container and report its exact path and reason; never sweep old scopes or delete the shared container.
+No automatic migration or cleanup of previously scattered directories is implied.
 Unit runs point their workers at `cadence-test-run-<pid>` under that root and remove the whole subtree in the vitest globalSetup teardown, so a finished run leaves no fixtures behind; the caller's root is left as found.
 It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`), but no Chromium.
 
@@ -51,7 +75,8 @@ A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and t
 A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 Delivery workers and checks use the inherited owner-prepared temporary root; they do not create, relocate or clean it, invent owner markers or treat its expected existence as a conflict.
 Historical explicitly declared setup resources keep their original meaning, not a prerequisite for a new run.
-Keep prior evidence; each targeted Vitest JSON report uses a new filename.
+Keep prior evidence during diagnosis inside the same session scope; each targeted Vitest JSON report uses a new filename.
+Final session disposal follows the ownership rules above.
 A marker is required only when the approved setup actually created and declared one; per-command temporary directories are not evidence of a missing shared run resource.
 Before a targeted run, assert that every named test file exists; afterward require a matching `testResults` entry for every exact path and at least one `assertionResults` item with `status: "passed"` in each file, with no failed tests/files.
 Missing files, omitted files and files containing only skipped/todo cases fail coverage even if Vitest exits zero.
@@ -65,7 +90,7 @@ Production workers and checks retain the guard, including when they run verifica
 A test waits for the event it needs, not a wall-clock guess; fixed waits stay only where time is the contract.
 Outer command budgets must cover the selected tests; existing SDK20s/child15s and PTY90s/interaction15s fixture budgets are not increased to obtain green.
 
-Preserve failed attempts; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
+Preserve failed attempts until diagnosis is resolved; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
 Do not recreate the removed project workflow integration unless explicitly requested.
 Removing development tooling must never delete consumer `.cadence` data or private service state.
 
@@ -80,7 +105,7 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   `workflow-contract` holds the schema that states no bound, the completed plan input and one named refusal per field; `workbench-cadence-control` the browser's refusals (the reported step id in place of an investigation identity, never the word oversize), the unchanged-plan instruction and the per-question research result; `workflow-research` runs the owner against a stand-in worker launch for the single second asking, recording under both identities as each answer settles, the run that completes with what is missing and the one that fails with no answer.
   The stand-in launch is not an SDK worker or a provider; `lightweight-sdk`'s mocked worker body covers the provider's reason on the failure diagnostic, redacted with the worker's credential.
 - `workflow-controller`, `workflow-delivery`, `workflow-verification`, `workflow-recovery-regressions`, `workflow-source-identity`, `workflow-step-pages`, `project-knowledge`, `project-knowledge-bounds`: service-owned recovery without user Send, no attempt quota, actual failed-step references retained across repair failures, explicit target/candidate/worktree setup placement, rephrased no-progress detection, fixed permission boundaries, partial-work handoff, verified knowledge updates, fresh context and non-evicting step pages.
-- `run-environment`, `workflow-recovery-regressions`, `workflow-lifecycle`, `lightweight-process-diff`, `workflow-admission`: owned temporary roots, shared verification rules, no inherited-variable dependency, same-workspace reuse and cross-workspace isolation, intent-before-create, ownership-safe cleanup and retained uncertainty.
+- `run-environment`, `workflow-recovery-regressions`, `workflow-lifecycle`, `lightweight-process-diff`, `workflow-admission`: owned temporary roots in one designated pool, no HOME/workspace-parent fallback, shared verification rules, no inherited-variable dependency, same-workspace reuse and cross-workspace isolation, intent-before-create, ownership-safe cleanup and retained uncertainty.
   The owner tests join controlled original work and cleanup before releasing the gate, keep cleanup checkpoints nonterminal, handle Cancel/Stop/quarantine arriving during cleanup, preserve confirmed removals on restart and retain final deviation notices.
   Worker-boundary tests carry a complete context-limit agreement alongside long escaped placement metadata without enlarging either field; launcher tests observe the actual spawn environment with controlled handles, while a short real shell check covers an absent inherited `TMPDIR`.
   Proposal preparation and research allocate nothing; an old runtime policy cannot authorize new resources.
