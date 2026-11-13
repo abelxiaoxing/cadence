@@ -171,7 +171,12 @@ An isolated worktree does **not** inherit ignored `node_modules`, build output, 
 Investigate prerequisites during planning.
 If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
 Parallel children have detached HEADs; target branch checks must not run there.
-Each command is a separate process: bind any required temporary environment in that command rather than relying on an earlier export.
+The plan's displayed service runtime policy includes private temporary directories for this delivery: Cadence supplies `TMPDIR`, `TEMP` and `TMP` to checks and workers, including recovery, so the plan can simply name the project commands.
+These directories are outside Git and on each workspace's disk; concurrent workspaces are isolated, and no terminal export or extra setup confirmation is needed.
+Only the service's own scratch directories may be removed after successful work and confirmed worker/check closure; the run stays active until cleanup settles.
+Cancel/Stop retain the remaining directories, not undo a removal or delivery already completed; failures report retained resource paths.
+This permits no dependency installation, profile copying, service restart or unrelated external writes.
+Other command-local exports still do not persist into later processes.
 No dependency/browser download or source-profile copying is implicit.
 Baseline checks are separate from acceptance checks that need newly implemented files.
 Failed candidate/worktree setup, baseline, implementation, checks or review enter source-backed diagnosis when their actual operations have settled.

@@ -29,7 +29,8 @@ Older release receipts remain historical evidence, not requirements for future r
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
 
 Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, outside every Git working copy and on the checkout's disk filesystem rather than a nearly full tmpfs.
-`scripts/verification-temp.mjs` checks this before `verify` starts any stage; it refuses invalid input without creating, redirecting or cleaning directories.
+`scripts/verification-temp.mjs` checks this before `verify` starts any stage using the shared readonly validator in `src/service/run-environment.ts`; it refuses invalid input without creating, redirecting or cleaning directories.
+Approved service deliveries already receive the [owner-prepared temporary environment](checks-review.md#automatic-conversation-workflow), so their plans simply name the project check commands; manual engineering still supplies its own private temp root.
 Unit runs point their workers at `cadence-test-run-<pid>` under that root and remove the whole subtree in the vitest globalSetup teardown, so a finished run leaves no fixtures behind; the caller's root is left as found.
 It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`), but no Chromium.
 
@@ -48,7 +49,8 @@ Development may explicitly link already installed matching dependencies rather t
 This is not implicit dependency setup for consumer workflows.
 A checkout-local `.cache` root makes non-Git fixtures inherit the checkout and triggers `Private state home must be outside the working copy`; this is an invalid test environment, not evidence that unrelated features broke.
 A nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
-When a plan's one-time setup has already created and marked its private temp root, implementation/check/review/repair reuse that exact directory: validate its owner marker and `assertVerificationTemp`, never recreate it or treat its expected existence as a conflict.
+Delivery workers and checks use the inherited owner-prepared temporary root; they do not create, relocate or clean it, invent owner markers or treat its expected existence as a conflict.
+Historical explicitly declared setup resources keep their original meaning, not a prerequisite for a new run.
 Keep prior evidence; each targeted Vitest JSON report uses a new filename.
 A marker is required only when the approved setup actually created and declared one; per-command temporary directories are not evidence of a missing shared run resource.
 Before a targeted run, assert that every named test file exists; afterward require a matching `testResults` entry for every exact path and at least one `assertionResults` item with `status: "passed"` in each file, with no failed tests/files.
@@ -78,6 +80,11 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   `workflow-contract` holds the schema that states no bound, the completed plan input and one named refusal per field; `workbench-cadence-control` the browser's refusals (the reported step id in place of an investigation identity, never the word oversize), the unchanged-plan instruction and the per-question research result; `workflow-research` runs the owner against a stand-in worker launch for the single second asking, recording under both identities as each answer settles, the run that completes with what is missing and the one that fails with no answer.
   The stand-in launch is not an SDK worker or a provider; `lightweight-sdk`'s mocked worker body covers the provider's reason on the failure diagnostic, redacted with the worker's credential.
 - `workflow-controller`, `workflow-delivery`, `workflow-verification`, `workflow-recovery-regressions`, `workflow-source-identity`, `workflow-step-pages`, `project-knowledge`, `project-knowledge-bounds`: service-owned recovery without user Send, no attempt quota, actual failed-step references retained across repair failures, explicit target/candidate/worktree setup placement, rephrased no-progress detection, fixed permission boundaries, partial-work handoff, verified knowledge updates, fresh context and non-evicting step pages.
+- `run-environment`, `workflow-recovery-regressions`, `workflow-lifecycle`, `lightweight-process-diff`, `workflow-admission`: owned temporary roots, shared verification rules, no inherited-variable dependency, same-workspace reuse and cross-workspace isolation, intent-before-create, ownership-safe cleanup and retained uncertainty.
+  The owner tests join controlled original work and cleanup before releasing the gate, keep cleanup checkpoints nonterminal, handle Cancel/Stop/quarantine arriving during cleanup, preserve confirmed removals on restart and retain final deviation notices.
+  Worker-boundary tests carry a complete context-limit agreement alongside long escaped placement metadata without enlarging either field; launcher tests observe the actual spawn environment with controlled handles, while a short real shell check covers an absent inherited `TMPDIR`.
+  Proposal preparation and research allocate nothing; an old runtime policy cannot authorize new resources.
+  These are not real-provider or native Windows/macOS qualification.
 - `task-worktree`, `workflow-delivery-runtime`, `workflow-delivery-admission`, `repository-coordination`, `repository-recovery`, `change-tools`: approved-only named stable candidates, adaptive recovery/knowledge, exact acceptance and repeated owned fast-forwards, changed-target retention, original-operation leases, readonly evidence and recovery.
   The full real admission case remains slow; controlled runtime/recovery tests are not paid-provider or real-owner qualification.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.

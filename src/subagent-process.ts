@@ -18,6 +18,7 @@ export { safeChildEnv } from "./sdk-network.ts";
 import type { CheckRecording } from "./service/check-recording.ts";
 import type { PreparedModelContext } from "./service/model-context.ts";
 import type { CaptureReservation, CaptureSink } from "./service/ports.ts";
+import { temporaryEnvironment } from "./service/run-environment.ts";
 import type { CheckNativeSettlement } from "./service-contract.ts";
 import type { CheckDefinition, RunResult, TaskKind } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
@@ -900,6 +901,7 @@ function launchEncoded(
     | "imageInput"
     | "secrets"
   > = {},
+  temporaryDirectory?: string,
 ): Promise<RunResult> {
   if (
     !sameNetwork(encoded.ambient, networkSnapshot(process.env)) ||
@@ -912,7 +914,9 @@ function launchEncoded(
     args: [fileURLToPath(new URL("./sdk-worker.mjs", import.meta.url))],
     cwd: encoded.material.cwd,
     input: encoded.input,
-    env: encoded.selected.env,
+    env: temporaryDirectory
+      ? { ...encoded.selected.env, ...temporaryEnvironment(temporaryDirectory) }
+      : encoded.selected.env,
     protocol: true,
     childRunId: encoded.material.request.childRunId,
     expectedRequest: encoded.material.request,
@@ -1191,6 +1195,8 @@ export function launchWorkflowWorker(
   cwd: string,
   signal: AbortSignal,
   options: {
+    /** Owner-owned run resource; never browser/model/auth-supplied environment. */
+    temporaryDirectory?: string;
     roots?: string[];
     onLifecycle?: ProcessSpec["onLifecycle"];
     ownerSecrets: readonly string[];
@@ -1218,15 +1224,20 @@ export function launchWorkflowWorker(
       if (!encoded || encoded.input !== input)
         throw new Error("Invalid workflow launch");
       const secrets = [...encoded.secrets, ...options.ownerSecrets];
-      return launchEncoded(encoded, signal, {
-        secrets,
-        onAuth: () => prepared.refreshAuth(),
-        maySignal: options.maySignal,
-        onLifecycle: options.onLifecycle,
-        onNative: (native, capture) =>
-          options.onNative(native, capture?.selected?.messageId),
-        onFrame: (frame) => options.onFrame(frame, secrets),
-      });
+      return launchEncoded(
+        encoded,
+        signal,
+        {
+          secrets,
+          onAuth: () => prepared.refreshAuth(),
+          maySignal: options.maySignal,
+          onLifecycle: options.onLifecycle,
+          onNative: (native, capture) =>
+            options.onNative(native, capture?.selected?.messageId),
+          onFrame: (frame) => options.onFrame(frame, secrets),
+        },
+        options.temporaryDirectory,
+      );
     },
   );
 }

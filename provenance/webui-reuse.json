@@ -542,7 +542,7 @@
     "test/web/folder-draft.test.tsx": "57bec7437030a1b9ddcea2bd2783218d52d3ddf222e8d0f4614598e7704bf253",
     "web/src/components/workspace/WorkingFolderButton.tsx": "375a04cc39b8aac1356621a34ee4781784644a1ccc9b9092a2bb625f8f4f7849",
     "web/src/client/last-project.ts": "409bf18974d1f827adcfc6d49dbf0c74ca2c91639b4fbb60e70c8648c51bf9d6",
-    "src/cadence-instructions.ts": "28f52849bb3029a4a2fc579b47068124b448b187c7ccfcb55d62f47b72ab683a",
+    "src/cadence-instructions.ts": "eff8557822d13fb0551acb6dc1e0f4ae450eb85db17728a2b94405739d6b9087",
     "src/coordinator-tools.mjs": "540bc406491affab561602a3ab37d9febf3d6d4b3a4ffa86861218b4f1d396c8",
     "src/service/conversation-workflow.ts": "6887bb2122fd10ab8176e58012f34f311dfbe55a681fa2cf58f017ae1ec9b095",
     "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",

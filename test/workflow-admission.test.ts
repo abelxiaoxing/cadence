@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -313,4 +313,53 @@ it("queued admission retains its Pi snapshot rather than consulting later prefer
   expect(f.models.workerSettings).toHaveBeenCalledOnce();
   f.workflows.command(randomUUID(), f.epoch, { action: "cancel", runId: id });
   await f.workflows.join(id);
+});
+
+it("the fixed runtime policy is displayed and approval-bound, without allocating during publication or preparation", () => {
+  const f = owner();
+  const before = readdirSync(f.coordination.stateHome);
+  const response = f.workflows.command(randomUUID(), f.epoch, {
+    action: "propose",
+    plan: { ...plan(), delivery: "working-copy" },
+    model: f.version,
+  });
+  if (response.kind !== "workflow" || response.response.type !== "proposal")
+    throw Error("proposal");
+  const p = response.response.proposal;
+  expect(p.display?.runtime).toContain(
+    "Cadence creates private temporary directories",
+  );
+  expect(
+    f.workflows.command(randomUUID(), f.epoch, {
+      action: "prepare",
+      proposalId: p.id,
+      digest: p.digest,
+    }),
+  ).toMatchObject({ response: { type: "grant" } });
+  expect(readdirSync(f.coordination.stateHome)).toEqual(before);
+  // A readable old proposal cannot silently acquire the new resource authority.
+  const old = structuredClone(p);
+  old.id = randomUUID();
+  old.display!.runtime = old.display!.runtime!.split("\nService runtime:")[0];
+  f.coordination.files.create(
+    join(
+      f.coordination.directory,
+      "workflows-v1",
+      "proposals",
+      `${old.id}.json`,
+    ),
+    canonicalJson(old, 384 * 1024),
+    384 * 1024,
+  );
+  expect(f.workflows.proposal(old.id)).toEqual(old);
+  expect(() =>
+    f.workflows.command(
+      randomUUID(),
+      f.epoch,
+      { action: "prepare", proposalId: old.id, digest: old.digest },
+      { definite: true },
+    ),
+  ).toThrow("stale");
+  expect(f.workflows.activeRuns().runs).toEqual([]);
+  expect(readdirSync(f.coordination.stateHome)).toEqual(before);
 });

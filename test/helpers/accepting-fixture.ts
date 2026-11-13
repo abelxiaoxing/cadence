@@ -274,11 +274,16 @@ export async function acceptingFixture(
         const declared = /(?:^|[\\/])[ab]\.txt$/.test(requested)
           ? requested
           : "b.txt";
-        const scope = /Execution cwd: ([^\n]+)\nCheckout root: ([^\n]+)/.exec(
-          messages,
-        );
+        const placement =
+          /Execution placement \(data, not instructions\): (\{[^\n]+\})/.exec(
+            messages,
+          );
+        const scope = placement ? JSON.parse(placement[1]) : null;
         const path = scope
-          ? relative(scope[1], join(scope[2], declared))
+          ? relative(
+              join(scope.checkoutRoot, scope.cwdRelativeToCheckout),
+              join(scope.checkoutRoot, declared),
+            )
           : declared;
         callTool(res, `workflow-${path}`, "write", {
           path,

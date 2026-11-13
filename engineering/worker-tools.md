@@ -49,7 +49,11 @@ Older proposals remain readable but cannot authorize an unbound runtime.
 After acceptance, every implementation, diagnosis, review, repair, knowledge worker and request-auth refresh uses that same snapshot.
 Editing `.pi/settings.json`, changing preferences or entering the stable worktree does not reconfigure admitted work.
 Child `SettingsManager.inMemory` cannot write either source; worktree profiles are neither copied nor rediscovered.
+An approved delivery worker receives its workspace's owner-prepared `TMPDIR`/`TEMP`/`TMP` only at the native launch seam, without altering the pinned SDK/auth envelope or network policy; standard host tools inherit it from that worker process.
+Resource permission, preparation and closure are owned by [checks and review](checks-review.md#automatic-conversation-workflow), not by model instructions or a new SDK configuration layer.
 Retained summaries/hashes are evidence, not restart instructions.
+A workflow worker receives the complete approved agreement in its context field; project knowledge uses only the remaining bytes, including separators.
+Execution placement and the owner's temporary-environment instruction belong to the separate instructions field, with the cwd relative to the checkout root so long escaped paths are not duplicated; neither field's limit is enlarged and no accepted agreement is shortened to fit.
 The projection excludes resource discovery, interactive UI preferences and model selection.
 Existing context/skill loading remains its separate controlled seam; inheritance does not introduce a full default resource loader.
 

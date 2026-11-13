@@ -52,10 +52,26 @@ Setup never implicitly copies dependency trees, profiles or credentials.
 Each new setup command declares `placement`: `target` preflight runs once in the original checkout before worktree creation; `candidate` preparation runs once in the stable candidate; `worktree` preparation runs in the candidate and every detached child.
 Stages run in that order, retaining command order within each stage, with the conversation-relative cwd mapped into each checkout.
 Target preflight never dispatches a repair editor into the original checkout: its failure ends the attempt, and successful preflight is followed by a fresh target check.
+Its notice names the failed preflight and states that implementation and task-worktree creation have not begun, preserving the actual outcome and step evidence.
 A target branch predicate does not belong in child preparation.
 Placement and exact commands are displayed and approval-bound; recovery cannot change them.
 Retained setup without placement keeps its original per-worktree meaning for reading, but cannot authorize a new run.
 Recovery retries the failed setup command, not preceding successful commands and their effects.
+
+The owner supplies the delivery's temporary environment; it is not a model-written setup task or a command prerequisite declaration.
+The fixed policy from `run-environment.ts` is displayed in the proposal's runtime summary and bound into its observation; a retained proposal without that policy remains readable but cannot acquire it through approval.
+Only an admitted delivery behind the checkout gate creates resources, on first use of each execution workspace; planning and readonly research allocate none.
+`RunEnvironment` chooses an existing eligible parent from state-home and that workspace's parent, then exclusively creates a random 0700 directory outside Git and private service state, on the workspace's disk rather than tmpfs.
+It never adopts inherited temporary directories, scans the host for alternatives, changes existing permissions or installs anything; if neither parent is suitable, or creation fails, the owner reports the concrete environment failure without a model diagnosis/retry loop.
+The existing run journal records creation intent before effects and actual filesystem identity afterwards.
+Checks, Git operations and SDK workers receive the same workspace-specific `TMPDIR`/`TEMP`/`TMP` overlay; the owner environment, model credentials and network policy stay unchanged.
+Sequential commands and recovery reuse that directory, while candidate, parallel child and target workspaces have separate directories, including when their filesystems differ.
+Only successfully completed work, after its workers/checks/auth and a durable nonterminal outcome checkpoint have settled, may remove its identity-checked scratch roots; failure, cancellation, uncertain closure and lost ownership retain the remaining roots, never an automatic sweep.
+The live view and checkpoint remain nonterminal throughout cleanup, so a crash there is recovered as interrupted rather than completed.
+Each removal rechecks cancellation and ownership; an in-flight removal still joins its original result, while Cancel/Stop prevent further removals and finalization rechecks both cancellation and quarantine before publishing the terminal outcome.
+Cleanup and the final record are joined before releasing the checkout permit; actual merges and already-confirmed removals are never rolled back or relabelled as retained on restart.
+This is private scratch ownership, not a sandbox or permission to modify other external files.
+
 Baseline checks cannot require future outputs.
 One stable candidate collects earlier outputs; each editing attempt is attributed against its own write scope, in the candidate or in its assignment's child worktree.
 Initial cleanliness preconditions are not rerun against the delivery's own work.
@@ -82,11 +98,11 @@ Failed checks, rejected review, unparseable review and settled worker failures c
 Every declared check runs in every round.
 A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.
 The review is given every recorded deviation and must find each necessary and minimal; rejecting one sends the delivery back to recovery.
-A completed run that deviated says so first in its notice.
+A completed run that deviated says so first in its final notice, composed after settlement so cleanup and the final writer cannot overwrite it.
 Repeated operation/failure identity and unchanged source observation escalate the decision's level even when strategy or work instructions are rephrased.
 Observable progress still permits further repairs without a fixed quota.
 Current-round native exit/closure facts and labelled redacted result excerpts reach diagnosis, repair and review.
-Check results also retain their exact command, actual mapped cwd, checkout placement, target binding and only the named `TMPDIR`/`TEMP`/`TMP` launch values (null means unset), all sanitized before storage and again on reads.
+Check results also retain their exact command, actual mapped cwd, checkout placement, target binding and only the effective `TMPDIR`/`TEMP`/`TMP` launch values (null means unset in a retained launch), all sanitized before storage and again on reads.
 Diagnosis and repair receive this context even for silent failures; older results explicitly say when it was not recorded.
 Command-local environment does not persist into another process, and conditional project guidance cannot invent undeclared resources or markers.
 A failed repair retains the original failing step identities alongside the latest repair, rather than replacing the original cause with a clipped report.
