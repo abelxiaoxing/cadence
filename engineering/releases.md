@@ -1078,3 +1078,10 @@ Observed npm latest was 2.1.3 and v2.1.4 was unused when selected.
 Qualification used Linux, the system Node with type stripping, Bun and a fresh external 0700 disk-backed temporary directory.
 The fix is covered by targeted unit and server-rendered tests; no real model delivery, browser, live service upgrade or native Windows/macOS run was exercised, and the running 2.1.3 install was not restarted.
 This unshipped appendix records local evidence only; the CI artifact and npm metadata must still be confirmed.
+
+## Release 2.1.4 publication confirmation (2026-11-13)
+
+Tag `v2.1.4` was created on `main` at `7560c3b` and pushed; the tag-triggered [Publish npm run 43352571108](https://github.com/abelxiaoxing/cadence/actions/runs/43352571108) completed its prepare job and its publish job's `npm publish` step succeeded through OIDC, and its confirmation step passed, unlike 2.1.1 and 2.1.2's timeouts.
+The registry recorded `2.1.4` at 02:39:51 UTC, `dist.integrity` is `sha512-HeeT25j6dnXjAQQ7zFUH6sjF3Rdou9eOfQTcMyL2t6pjyDUFX9n5VXRn1sztNnnP4mmMU6Rb0pJ41/IA5SI5UA==` and `dist.shasum` is `2264173f30145f4d87755ac1bf367b5f653274d6`; `latest` now points to `2.1.4`.
+The registry tarball is **176 regular members** with SHA-256 `3620333dae8929e1c0ee8f683b90de252b6c61fcd68da45c8ba03682f22a6607`, byte for byte a local `bun pm pack` of the same commit (after restoring 0644 modes on locally rewritten files, which the previous local pack had at 0600).
+This confirms publication of the exact published bytes; it does not qualify a real model delivery, browser, live service upgrade or native Windows/macOS.
