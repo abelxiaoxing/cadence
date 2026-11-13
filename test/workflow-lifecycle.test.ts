@@ -10,6 +10,7 @@ import {
   workflowPlanInput,
 } from "../src/service/contracts/workflow.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
+import { RUN_TEMP_DIRECTORY } from "../src/service/run-environment.ts";
 import {
   reviewVerdict,
   WorkflowTranscript,
@@ -176,9 +177,7 @@ it.each([
       if (editing) expect(existsSync(temporaryDirectory!)).toBe(true);
       else
         expect(
-          readdirSync(coordination.stateHome).some((n) =>
-            n.startsWith("cadence-run-"),
-          ),
+          readdirSync(coordination.stateHome).includes(RUN_TEMP_DIRECTORY),
         ).toBe(false);
       const view = workflows.view(id);
       if (view.kind !== "workflow" || view.response.type !== "run")

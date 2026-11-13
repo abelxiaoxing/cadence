@@ -10,6 +10,9 @@ Workflow completion does not authorize a commit, Gate approval never authorizes 
 
 ## Safety audit
 
+Inspect Git output directly or in memory by default; a normal commit does not need persistent diff/hash snapshots or a separate audit directory.
+If temporary output is genuinely necessary, follow the repository's designated scratch-location and cleanup rules; never scatter it under HOME or project parents, and do not retain it after a successful audit without a stated reason.
+
 After an explicit request:
 
 1. Read the repository root and all relevant nested `AGENTS.md` files.

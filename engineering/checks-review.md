@@ -61,11 +61,14 @@ Recovery retries the failed setup command, not preceding successful commands and
 The owner supplies the delivery's temporary environment; it is not a model-written setup task or a command prerequisite declaration.
 The fixed policy from `run-environment.ts` is displayed in the proposal's runtime summary and bound into its observation; a retained proposal without that policy remains readable but cannot acquire it through approval.
 Only an admitted delivery behind the checkout gate creates resources, on first use of each execution workspace; planning and readonly research allocate none.
-`RunEnvironment` chooses an existing eligible parent from state-home and that workspace's parent, then exclusively creates a random 0700 directory outside Git and private service state, on the workspace's disk rather than tmpfs.
-It never adopts inherited temporary directories, scans the host for alternatives, changes existing permissions or installs anything; if neither parent is suitable, or creation fails, the owner reports the concrete environment failure without a model diagnosis/retry loop.
+`RunEnvironment` exclusively creates each random 0700 directory inside the single `<stateHome>/cadence-tmp-v1/` pool (`RUN_TEMP_DIRECTORY`), outside Git and private service state, on the workspace's disk rather than tmpfs.
+It never scatters directories directly in state-home, HOME or a workspace's parent, adopts inherited temporary directories, scans for alternatives, changes existing permissions or installs anything.
+If the configured state-home is on the wrong disk, inside Git or otherwise unsuitable, preparation fails concretely without a fallback, state relocation or model diagnosis/retry loop.
+The shared pool is created lazily after journaled intent, must itself be a canonical account-owned 0700 directory, and is retained even when empty; existing links or unsafe permissions are refused, not repaired.
+Only this run's identity-checked child directories can be deleted; older runs, unrelated files and the shared pool are never swept.
 The existing run journal records creation intent before effects and actual filesystem identity afterwards.
 Checks, Git operations and SDK workers receive the same workspace-specific `TMPDIR`/`TEMP`/`TMP` overlay; the owner environment, model credentials and network policy stay unchanged.
-Sequential commands and recovery reuse that directory, while candidate, parallel child and target workspaces have separate directories, including when their filesystems differ.
+Sequential commands and recovery reuse that directory, while candidate, parallel child and target workspaces have separate directories within the same designated pool.
 Only successfully completed work, after its workers/checks/auth and a durable nonterminal outcome checkpoint have settled, may remove its identity-checked scratch roots; failure, cancellation, uncertain closure and lost ownership retain the remaining roots, never an automatic sweep.
 The live view and checkpoint remain nonterminal throughout cleanup, so a crash there is recovered as interrupted rather than completed.
 Each removal rechecks cancellation and ownership; an in-flight removal still joins its original result, while Cancel/Stop prevent further removals and finalization rechecks both cancellation and quarantine before publishing the terminal outcome.

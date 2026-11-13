@@ -12,11 +12,11 @@ import {
   statSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gitArguments, gitEnvironment } from "../git-environment.mjs";
 
-export const RUN_ENVIRONMENT_POLICY =
-  "Service runtime: after approval, Cadence creates private temporary directories outside Git working copies on each execution workspace's disk and supplies TMPDIR, TEMP and TMP to its checks and workers. Each workspace keeps its directory through recovery; parallel workspaces are isolated. Only these owned temporary directories may be removed after successful work and confirmed worker/check closure; the run stays active through cleanup, and cancellation retains remaining roots. No dependency installation, profile or credential copying, service restart or other external writes are authorized by this policy.";
+export const RUN_TEMP_DIRECTORY = "cadence-tmp-v1";
+export const RUN_ENVIRONMENT_POLICY = `Service runtime: after approval, Cadence creates private temporary directories only under the configured state home's ${RUN_TEMP_DIRECTORY}, outside Git working copies on each execution workspace's disk, and supplies TMPDIR, TEMP and TMP to its checks and workers. It never falls back to HOME or workspace siblings. Each workspace keeps its directory through recovery; parallel workspaces are isolated. Only these owned temporary directories may be removed after successful work and confirmed worker/check closure; the run stays active through cleanup, and cancellation retains remaining roots. No dependency installation, profile or credential copying, service restart or other external writes are authorized by this policy.`;
 
 export type TemporaryEnvironment = Readonly<{
   TMPDIR: string;
@@ -134,9 +134,8 @@ export class RunEnvironment {
         "owned temporary directory changed; it was not recreated or adopted",
       );
   }
-  /** One directory per execution workspace, not per command or retry. No
-   * inherited TMPDIR is adopted. The two candidates are existing directories,
-   * not a host scan, and neither may be in the service's private namespace. */
+  /** One directory per workspace, not per command or retry, in one designated
+   * pool. No inherited TMPDIR adoption or fallback into ambient directories. */
   forWorkspace(workspace: string): TemporaryEnvironment {
     this.assertCurrent();
     const cwd = realpathSync(workspace);
@@ -146,32 +145,18 @@ export class RunEnvironment {
       assertTemporaryDirectory(cwd, previous.path);
       return temporaryEnvironment(previous.path);
     }
-    const candidates = [...new Set([resolve(this.stateHome), dirname(cwd)])];
-    const reasons: string[] = [];
-    let parent: string | undefined;
-    for (const candidate of candidates) {
-      try {
-        if (
-          within(this.checkout, candidate) ||
-          within(join(this.stateHome, "cadence-assistant-v1"), candidate)
-        )
-          throw new Error(
-            "location is in the checkout or private service state",
-          );
-        assertTemporaryDirectory(cwd, candidate, false);
-        accessSync(candidate, constants.W_OK | constants.X_OK);
-        parent = candidate;
-        break;
-      } catch (error) {
-        reasons.push(
-          `${candidate}: ${error instanceof Error ? error.message : "unavailable"}`,
-        );
-      }
-    }
-    if (!parent)
+    const home = resolve(this.stateHome);
+    const parent = join(home, RUN_TEMP_DIRECTORY);
+    try {
+      if (within(this.checkout, home))
+        throw new Error("state home is inside the checkout");
+      assertTemporaryDirectory(cwd, home, false);
+      accessSync(home, constants.W_OK | constants.X_OK);
+    } catch (error) {
       throw new Error(
-        `Execution environment unavailable: no writable, same-disk temporary location outside Git. ${reasons.join("; ")}`,
+        `Execution environment unavailable: centralized temporary directory ${parent} is unavailable; no fallback location was created. ${error instanceof Error ? error.message : "unavailable"}`,
       );
+    }
     const directory: Directory = {
       workspace: cwd,
       path: join(parent, `cadence-run-${randomUUID()}`),
@@ -182,6 +167,21 @@ export class RunEnvironment {
     this.save(); // Durable intent before effects; a failed record creates nothing.
     this.assertCurrent();
     try {
+      // The shared pool persists, even when empty. Never chmod, replace or delete an
+      // existing pool; only this run's exclusive children are cleanup targets.
+      try {
+        mkdirSync(parent, { mode: 0o700 });
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            "code" in error &&
+            error.code === "EEXIST"
+          )
+        )
+          throw error;
+      }
+      assertTemporaryDirectory(cwd, parent);
       mkdirSync(directory.path, { mode: 0o700 }); // Exclusive creation, never reuse.
       const entry = lstatSync(directory.path);
       directory.identity = {

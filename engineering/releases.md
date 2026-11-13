@@ -1085,3 +1085,16 @@ Tag `v2.1.4` was created on `main` at `7560c3b` and pushed; the tag-triggered [P
 The registry recorded `2.1.4` at 02:39:51 UTC, `dist.integrity` is `sha512-HeeT25j6dnXjAQQ7zFUH6sjF3Rdou9eOfQTcMyL2t6pjyDUFX9n5VXRn1sztNnnP4mmMU6Rb0pJ41/IA5SI5UA==` and `dist.shasum` is `2264173f30145f4d87755ac1bf367b5f653274d6`; `latest` now points to `2.1.4`.
 The registry tarball is **176 regular members** with SHA-256 `3620333dae8929e1c0ee8f683b90de252b6c61fcd68da45c8ba03682f22a6607`, byte for byte a local `bun pm pack` of the same commit (after restoring 0644 modes on locally rewritten files, which the previous local pack had at 0600).
 This confirms publication of the exact published bytes; it does not qualify a real model delivery, browser, live service upgrade or native Windows/macOS.
+
+## Release 2.1.5 qualification: owner-prepared scratch and truthful finalization (2026-11-13)
+
+The user explicitly authorized committing the current fixes, pushing to GitHub and publishing npm.
+This release includes owner-prepared, approval-bound workspace temporary environments, nonterminal cleanup checkpoints, late Cancel/Stop/quarantine handling, preserved delivery deviations and confirmed worktree removals, and complete agreement contexts within the existing worker request bounds.
+Service scratch is centralized under `<stateHome>/cadence-tmp-v1/`, without HOME/workspace-parent fallbacks; engineering guidance uses one account-cache scope and requires disposal of finished, unneeded scratch, while ordinary commit auditing stays in memory.
+Failed or uncertain service resources, unrelated files, old engineering directories and consumer state are not swept or migrated.
+
+After advancing to 2.1.5 and rebuilding through the canonical operator/service/Web builders, `bun run verify` passed in **16.3s**: **1977 fast root tests passed, 281 skipped** (130 passing files, two skipped), **460 Web unit/SSR tests passed** (44 files), plus syntax, root/Web types, lint, Agent pins, generated-byte checks and real-pack audit.
+Observed npm latest was 2.1.4, version 2.1.5 returned 404, and the remote v2.1.5 tag was absent when selected.
+Verification ran on Linux using the installed Node and Bun, with one private scope under the account's `cadence/tmp` cache container.
+No extra slow suite, paid-provider call, browser automation, native Windows/macOS qualification, local dependency installation or production-service update/restart was performed.
+This appendix records local qualification only; pushing the annotated tag will request the existing OIDC workflow, whose publish receipt and audited artifact must still be confirmed against npm before publication is reported as successful.

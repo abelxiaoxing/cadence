@@ -172,7 +172,8 @@ Investigate prerequisites during planning.
 If dependencies/setup are needed, include the exact commands and their execution placement in the plan for explicit approval: `target` for original-checkout preflight, `candidate` for preparation needed once in the stable candidate, or `worktree` for the candidate and each parallel child.
 Parallel children have detached HEADs; target branch checks must not run there.
 The plan's displayed service runtime policy includes private temporary directories for this delivery: Cadence supplies `TMPDIR`, `TEMP` and `TMP` to checks and workers, including recovery, so the plan can simply name the project commands.
-These directories are outside Git and on each workspace's disk; concurrent workspaces are isolated, and no terminal export or extra setup confirmation is needed.
+These directories are centralized under `<stateHome>/cadence-tmp-v1/`, outside Git and on each workspace's disk; concurrent workspaces are isolated, and no terminal export or extra setup confirmation is needed.
+If that configured location is unsuitable, execution reports the problem rather than scattering fallback directories in HOME or next to the checkout.
 Only the service's own scratch directories may be removed after successful work and confirmed worker/check closure; the run stays active until cleanup settles.
 Cancel/Stop retain the remaining directories, not undo a removal or delivery already completed; failures report retained resource paths.
 This permits no dependency installation, profile copying, service restart or unrelated external writes.
