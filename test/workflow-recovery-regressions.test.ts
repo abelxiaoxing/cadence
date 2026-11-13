@@ -1,10 +1,14 @@
-/** Owner control-flow regressions; no Git, service or provider subprocesses. */
+/** Owner control-flow regressions with controlled work; the temporary-environment
+ * case also runs one short real shell. No service or provider subprocesses. */
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
+import type { WorkflowRun } from "../src/service/contracts/workflow.ts";
+import { RunEnvironment } from "../src/service/run-environment.ts";
 import { AttemptFailure } from "../src/service/workflow-controller.ts";
+import { deliveryObservation } from "../src/service/workflow-delivery.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -187,7 +191,7 @@ it("cleanup quarantine cannot be overwritten by a completed workflow status", as
   owner.implement = async () => {
     owner.o.owner.state = "quarantined";
   };
-  owner.saveFinal = vi.fn();
+  owner.saveSettlement = vi.fn();
   const result = await owner.execute(live, { action: "execute" });
   expect(result.status).toBe("uncertain");
   expect(live.run.status).toBe("unknown");
@@ -415,3 +419,403 @@ it("check context is captured before launch, contains only named environment val
   expect(JSON.stringify(record)).not.toContain("not-for-workers");
   expect(JSON.stringify(record)).not.toContain("secret-fixture");
 });
+
+it("target prerequisite failure names preparation, retains the original outcome and never creates a candidate", async () => {
+  for (const outcome of ["failed", "timeout", "unknown", "canceled"] as const) {
+    const { owner, live, proposal } = fixture();
+    proposal.plan.setup = [
+      {
+        name: "temporary directory",
+        command: "check-temp",
+        placement: "target",
+      },
+    ] as never;
+    const native = {
+      ...success,
+      outcome,
+      exitCode: 1,
+      output: "TMPDIR: required",
+    };
+    const step = {
+      id: "target-check",
+      kind: "check",
+      text: "original command and output",
+    };
+    owner.check = vi.fn(async () => ({ result: native, step }));
+    owner.recoverStage = vi.fn();
+    const create = vi.fn(),
+      prepareHome = vi.fn();
+    Object.assign(live, {
+      target: { head: "base" },
+      delivery: { view: { worktreeRoot: "candidate" }, create, prepareHome },
+    });
+    proposal.plan.delivery = "local-merge";
+    await expect(owner.implement(live, proposal)).rejects.toMatchObject({
+      outcome,
+      step: "target-check",
+      message: expect.stringContaining(
+        "Implementation has not started; no task worktree was created",
+      ),
+    });
+    expect(owner.recoverStage).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(prepareHome).not.toHaveBeenCalled();
+    expect(owner.check).toHaveBeenCalledTimes(1);
+    expect(native).toEqual({
+      ...success,
+      outcome,
+      exitCode: 1,
+      output: "TMPDIR: required",
+    });
+  }
+});
+
+it("a real check gets a compliant owner temporary environment even when the service inherited none", {
+  skip: process.platform === "win32",
+}, async () => {
+  const { owner, live } = fixture();
+  const { RunEnvironment } = await import("../src/service/run-environment.ts");
+  const { dirname } = await import("node:path");
+  const { existsSync } = await import("node:fs");
+  const environment = new RunEnvironment(
+    dirname(owner.cwd),
+    owner.cwd,
+    () => {},
+    () => {},
+  );
+  Object.assign(live, { environment });
+  owner.executionCwd = () => owner.cwd;
+  owner.o.checkEnvironment = { PATH: process.env.PATH };
+  owner.o.owner.lease = { assert() {} };
+  const native: Promise<unknown>[] = [];
+  owner.o.owner.trackCheck = (p: Promise<unknown>) => native.push(p);
+  const check = (
+    Workflows.prototype as unknown as {
+      check(...args: unknown[]): Promise<{ result: typeof success }>;
+    }
+  ).check.bind(owner);
+  const command = `set -eu\n: "\${TMPDIR:?a compliant TMPDIR is required}"\ntest "$TMPDIR" = "$TEMP"\ntest "$TMPDIR" = "$TMP"\nprintf 'owner-temporary-environment-ready'`;
+  const result = await check(
+    live,
+    owner.cwd,
+    { name: "environment", command },
+    "environment",
+  );
+  expect(result.result).toMatchObject({
+    outcome: "completed",
+    exitCode: 0,
+    closed: true,
+    output: "owner-temporary-environment-ready",
+  });
+  await Promise.all(native);
+  const directory = environment.forWorkspace(owner.cwd).TMPDIR;
+  expect(existsSync(directory)).toBe(true);
+  expect(owner.o.checkEnvironment).not.toHaveProperty("TMPDIR");
+  expect(await environment.finish(true)).toEqual([]);
+});
+
+it.each(["completed", "failed", "canceled", "unknown", "storage"])(
+  "run scratch follows original settlement and retains evidence for %s",
+  async (outcome) => {
+    const { owner, live } = fixture();
+    const { dirname } = await import("node:path");
+    const { existsSync } = await import("node:fs");
+    const released = vi.fn();
+    owner.o.gate = {
+      acquire: async () => ({ assertHeld() {}, release: released }),
+    };
+    owner.o.owner.lease = { assert() {} };
+    owner.o.owner.quarantine = () => {
+      owner.o.owner.state = "quarantined";
+    };
+    owner.o.coordination.stateHome = dirname(owner.cwd);
+    owner.saveSettlement = vi.fn(() => {
+      if (outcome === "storage") throw new Error("final record failed");
+    });
+    let markReady!: () => void, markClosed!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const closed = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
+    let directory = "";
+    owner.implement = async (run: any) => {
+      directory = run.environment.forWorkspace(owner.cwd).TMPDIR;
+      markReady();
+      await closed; // Original, not a cancellation observer.
+      if (outcome === "unknown") owner.o.owner.quarantine();
+      if (outcome === "failed")
+        throw new Error("fixture implementation failure");
+    };
+    const original = owner.execute(live, { action: "execute" });
+    await ready;
+    expect(existsSync(directory)).toBe(true);
+    if (outcome === "canceled") live.abort.abort();
+    await Promise.resolve();
+    expect(existsSync(directory)).toBe(true);
+    expect(released).not.toHaveBeenCalled();
+    markClosed();
+    await original;
+    expect(existsSync(directory)).toBe(outcome !== "completed");
+    if (outcome === "unknown" || outcome === "storage")
+      expect(released).not.toHaveBeenCalled();
+    else expect(released).toHaveBeenCalledTimes(1);
+    expect(owner.saveSettlement).toHaveBeenCalled();
+  },
+);
+
+it("successful delivery does not release its checkout permit before temporary cleanup settles", async () => {
+  const { owner, live } = fixture();
+  const { RunEnvironment } = await import("../src/service/run-environment.ts");
+  const { dirname } = await import("node:path");
+  const release = vi.fn();
+  owner.o.gate = { acquire: async () => ({ assertHeld() {}, release }) };
+  owner.o.owner.lease = { assert() {} };
+  owner.o.owner.quarantine = () => {
+    owner.o.owner.state = "quarantined";
+  };
+  owner.o.coordination.stateHome = dirname(owner.cwd);
+  owner.saveSettlement = vi.fn();
+  owner.implement = async (run: any) => {
+    run.environment.forWorkspace(owner.cwd);
+  };
+  let entered!: () => void, close!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const wait = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const finish = RunEnvironment.prototype.finish;
+  const spy = vi
+    .spyOn(RunEnvironment.prototype, "finish")
+    .mockImplementation(async function (
+      this: InstanceType<typeof RunEnvironment>,
+      remove,
+    ) {
+      expect(owner.saveSettlement).toHaveBeenCalled();
+      expect(remove).toBe(true);
+      entered();
+      await wait;
+      return finish.call(this, remove);
+    });
+  try {
+    const original = owner.execute(live, { action: "execute" });
+    await ready;
+    expect(release).not.toHaveBeenCalled();
+    close();
+    await original;
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+/** Real finalization and restart projection, with controlled work/recording. */
+function settlementFixture() {
+  const f = fixture();
+  const run: WorkflowRun = {
+    id: f.live.run.id,
+    epoch: randomUUID(),
+    goal: "Fixture delivery",
+    status: "running",
+    phase: "implementing",
+    steps: [],
+    notice: "",
+    mergedCommit: null,
+    humanReviewed: false,
+  };
+  Object.assign(f.live, { run });
+  const snapshots: WorkflowRun[] = [];
+  const release = vi.fn();
+  f.owner.o.gate = { acquire: async () => ({ assertHeld() {}, release }) };
+  f.owner.o.owner.lease = { assert() {} };
+  f.owner.o.owner.quarantine = () => {
+    f.owner.o.owner.state = "quarantined";
+  };
+  f.owner.o.coordination.stateHome = dirname(f.owner.cwd);
+  f.owner.save = (live: { run: WorkflowRun }) => {
+    snapshots.push(structuredClone(live.run));
+  };
+  return { ...f, run, snapshots, release };
+}
+
+it("cleanup stays nonterminal in memory and on disk, so a crash during it is recovered as interrupted", async () => {
+  const f = settlementFixture();
+  f.owner.implement = async (live: any) => {
+    live.environment.forWorkspace(f.owner.cwd);
+  };
+  let entered!: () => void, close!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const wait = new Promise<void>((resolve) => {
+    close = resolve;
+  });
+  const finish = RunEnvironment.prototype.finish;
+  const spy = vi
+    .spyOn(RunEnvironment.prototype, "finish")
+    .mockImplementation(async function (this: RunEnvironment, remove) {
+      entered();
+      await wait;
+      return finish.call(this, remove);
+    });
+  const original = f.owner.execute(f.live, { action: "execute" });
+  try {
+    await ready;
+    const checkpoint = f.snapshots.at(-1)!;
+    expect(f.run.status).toBe("running");
+    expect(checkpoint.status).toBe("running");
+    expect(checkpoint.phase).not.toBe("finished");
+    expect(f.release).not.toHaveBeenCalled();
+    let recovered: WorkflowRun | undefined;
+    const successor = Object.assign(Object.create(Workflows.prototype), {
+      root: f.owner.root,
+      retained: () => ({ bytes: Buffer.from(JSON.stringify(checkpoint)) }),
+      write: (_path: string, value: WorkflowRun) => {
+        recovered = value;
+      },
+    });
+    successor.settleInterrupted(checkpoint.id);
+    expect(recovered).toMatchObject({ status: "unknown", phase: "finished" });
+    expect(recovered?.notice).toContain("Interrupted");
+  } finally {
+    close();
+    await original;
+    spy.mockRestore();
+  }
+  expect(f.run.status).toBe("completed");
+});
+
+it.each(["cancel", "stop", "quarantine"])(
+  "%s during cleanup retains later roots and updates the final outcome without erasing delivery",
+  async (action) => {
+    const f = settlementFixture();
+    const child = join(dirname(f.owner.cwd), `child-${randomUUID()}`);
+    mkdirSync(child);
+    let paths: string[] = [];
+    f.owner.implement = async (live: any) => {
+      paths = [
+        live.environment.forWorkspace(f.owner.cwd).TMPDIR,
+        live.environment.forWorkspace(child).TMPDIR,
+      ];
+      f.run.mergedCommit = "a".repeat(40);
+      f.live.delivered.add("delivered.txt");
+    };
+    const write = f.owner.write;
+    f.owner.write = (
+      path: string,
+      value: { directories?: { removed: boolean }[] },
+      ...args: unknown[]
+    ) => {
+      const result = write(path, value, ...args);
+      if (path.endsWith("environment.json") && value.directories?.[0].removed) {
+        if (action === "quarantine") f.owner.o.owner.quarantine();
+        else {
+          if (action === "stop") f.owner.o.owner.state = "stopping";
+          f.live.abort.abort({
+            source: action === "stop" ? "service" : "user",
+            reason: action,
+            target: f.run.id,
+          });
+        }
+      }
+      return result;
+    };
+    await f.owner.execute(f.live, { action: "execute" });
+    expect(paths).toHaveLength(2);
+    expect(existsSync(paths[0])).toBe(false); // A completed removal is not rolled back.
+    expect(existsSync(paths[1])).toBe(true);
+    const expected = action === "quarantine" ? "unknown" : "canceled";
+    expect(f.run.status).toBe(expected);
+    expect(f.snapshots.at(-1)?.status).toBe(expected);
+    expect(f.run.mergedCommit).toBe("a".repeat(40));
+    expect(f.run.notice).toContain("delivered.txt");
+    if (action !== "quarantine")
+      expect(f.run.notice).toContain(
+        `${action === "stop" ? "service" : "user"}: ${action}`,
+      );
+    else expect(f.release).not.toHaveBeenCalled();
+  },
+);
+
+it("the final successful notice leads with actual reviewed deviations instead of overwriting them", async () => {
+  const f = settlementFixture();
+  f.owner.implement = async () => {
+    f.run.deviations = [
+      {
+        revision: 1,
+        item: "original acceptance",
+        reason: "recorded evidence",
+        delivered: "reviewed alternative",
+        waives: [],
+      },
+    ];
+    f.live.delivered.add("delivered.txt");
+  };
+  await f.owner.execute(f.live, { action: "execute" });
+  expect(f.run.status).toBe("completed");
+  expect(f.run.notice).toMatch(/^Delivered with 1 recorded deviation/);
+  expect(f.run.notice).toContain("original acceptance → reviewed alternative");
+  expect(f.run.notice).toContain("delivered.txt");
+  expect(f.snapshots.at(-1)?.notice).toBe(f.run.notice);
+});
+
+it.each(["removed", "pending", "retained"] as const)(
+  "restart keeps actual worktree cleanup evidence (%s) while interrupting unfinished finalization",
+  (cleanup) => {
+    const f = settlementFixture();
+    const head = "a".repeat(40);
+    const delivery = deliveryObservation(
+      {
+        policy: "task-branch-v1",
+        target: {
+          checkoutRoot: f.owner.cwd,
+          repository: join(f.owner.cwd, ".git"),
+          repositoryIdentity: "b".repeat(64),
+          branch: "refs/heads/main",
+          head,
+        },
+      },
+      f.owner.cwd,
+      f.run.id,
+      "goal",
+    );
+    Object.assign(delivery, {
+      preparation: "ready",
+      workspace: { head, state: cleanup === "removed" ? "removed" : "ready" },
+      candidate: head,
+      integration: { status: "applied", before: head, after: head, reason: "" },
+      postChecks: "passed",
+      cleanup: {
+        status: cleanup,
+        reason: cleanup === "removed" ? "Confirmed worktree removal" : "",
+      },
+    });
+    Object.assign(f.run, {
+      delivery,
+      mergedCommit: head,
+      phase: "integrating",
+    });
+    const path = join(f.owner.root, "runs", f.run.id, "state.json");
+    f.owner.write(path, f.run);
+    f.owner.settleInterrupted(f.run.id);
+    const restored = JSON.parse(
+      f.owner.o.coordination.files.read(path).bytes.toString("utf8"),
+    );
+    expect(restored).toMatchObject({
+      status: "unknown",
+      mergedCommit: head,
+      delivery: {
+        integration: { status: "applied", after: head },
+        cleanup: { status: cleanup === "removed" ? "removed" : "retained" },
+        workspace: { state: cleanup === "removed" ? "removed" : "retained" },
+      },
+    });
+    if (cleanup === "removed")
+      expect(restored.delivery.cleanup.reason).toBe(
+        "Confirmed worktree removal",
+      );
+  },
+);

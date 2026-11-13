@@ -17844,8 +17844,8 @@ Content-Length: 0\r
 
 // src/service/host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { lstatSync as lstatSync27, opendirSync as opendirSync18 } from "node:fs";
-import { join as join44 } from "node:path";
+import { lstatSync as lstatSync28, opendirSync as opendirSync18 } from "node:fs";
+import { join as join45 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
@@ -27248,12 +27248,148 @@ async function healHistory(lease, log) {
 
 // src/subagent-process.ts
 import { spawn as spawn5 } from "node:child_process";
-import { createHash as createHash28, randomUUID as randomUUID21 } from "node:crypto";
-import { join as join35 } from "node:path";
+import { createHash as createHash28, randomUUID as randomUUID22 } from "node:crypto";
+import { join as join36 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
+// src/service/run-environment.ts
+import { spawnSync as spawnSync5 } from "node:child_process";
+import { randomUUID as randomUUID20 } from "node:crypto";
+import {
+  accessSync as accessSync2,
+  constants as constants9,
+  lstatSync as lstatSync20,
+  mkdirSync as mkdirSync5,
+  realpathSync as realpathSync11,
+  statfsSync as statfsSync2,
+  statSync as statSync3
+} from "node:fs";
+import { rm } from "node:fs/promises";
+import { dirname as dirname20, isAbsolute as isAbsolute14, join as join35, relative as relative8, resolve as resolve12, sep as sep7 } from "node:path";
+var RUN_ENVIRONMENT_POLICY = "Service runtime: after approval, Cadence creates private temporary directories outside Git working copies on each execution workspace's disk and supplies TMPDIR, TEMP and TMP to its checks and workers. Each workspace keeps its directory through recovery; parallel workspaces are isolated. Only these owned temporary directories may be removed after successful work and confirmed worker/check closure; the run stays active through cleanup, and cancellation retains remaining roots. No dependency installation, profile or credential copying, service restart or other external writes are authorized by this policy.";
+function temporaryEnvironment(path) {
+  return Object.freeze({ TMPDIR: path, TEMP: path, TMP: path });
+}
+var within = (root, path) => {
+  const tail = relative8(root, path);
+  return !tail || !isAbsolute14(tail) && tail !== ".." && !tail.startsWith(`..${sep7}`);
+};
+function outsideGit(path) {
+  const result = spawnSync5("git", gitArguments(["rev-parse", "--absolute-git-dir"]), {
+    cwd: path,
+    env: gitEnvironment(),
+    encoding: "utf8",
+    timeout: 5000,
+    maxBuffer: 4096,
+    windowsHide: true
+  });
+  if (result.error || result.signal || result.status !== 128 || !result.stderr.includes("not a git repository"))
+    throw new Error("location is inside Git or Git could not establish that it is outside");
+}
+function assertTemporaryDirectory(root, path, privateMode2 = true) {
+  const entry = lstatSync20(path);
+  if (!entry.isDirectory() || entry.isSymbolicLink() || realpathSync11(path) !== path)
+    throw new Error("temporary location must be a real canonical directory");
+  if (privateMode2 && process.platform !== "win32" && ((entry.mode & 511) !== 448 || entry.uid !== process.getuid?.()))
+    throw new Error("temporary directory must be private (0700) and owned by this account");
+  if (entry.dev !== statSync3(root).dev || statfsSync2(path).type === 16914836)
+    throw new Error("temporary location must be on the workspace's disk, not tmpfs");
+  if (within(realpathSync11(root), path))
+    throw new Error("temporary location must be outside the execution workspace");
+  outsideGit(path);
+}
+
+class RunEnvironment {
+  directories = new Map;
+  stateHome;
+  checkout;
+  record;
+  assertCurrent;
+  constructor(stateHome, checkout, record3, assertCurrent) {
+    this.stateHome = stateHome;
+    this.checkout = checkout;
+    this.record = record3;
+    this.assertCurrent = assertCurrent;
+  }
+  save() {
+    this.record([...this.directories.values()].map((d) => ({ ...d })));
+  }
+  assertOwned(d) {
+    this.assertCurrent();
+    const entry = lstatSync20(d.path);
+    if (!d.identity || d.removed || !entry.isDirectory() || entry.isSymbolicLink() || realpathSync11(d.path) !== d.path || entry.dev !== d.identity.dev || entry.ino !== d.identity.ino || entry.birthtimeMs !== d.identity.birthtimeMs || process.platform !== "win32" && (entry.uid !== process.getuid?.() || (entry.mode & 511) !== 448))
+      throw new Error("owned temporary directory changed; it was not recreated or adopted");
+  }
+  forWorkspace(workspace) {
+    this.assertCurrent();
+    const cwd = realpathSync11(workspace);
+    const previous = this.directories.get(cwd);
+    if (previous) {
+      this.assertOwned(previous);
+      assertTemporaryDirectory(cwd, previous.path);
+      return temporaryEnvironment(previous.path);
+    }
+    const candidates = [...new Set([resolve12(this.stateHome), dirname20(cwd)])];
+    const reasons = [];
+    let parent;
+    for (const candidate of candidates) {
+      try {
+        if (within(this.checkout, candidate) || within(join35(this.stateHome, "cadence-assistant-v1"), candidate))
+          throw new Error("location is in the checkout or private service state");
+        assertTemporaryDirectory(cwd, candidate, false);
+        accessSync2(candidate, constants9.W_OK | constants9.X_OK);
+        parent = candidate;
+        break;
+      } catch (error) {
+        reasons.push(`${candidate}: ${error instanceof Error ? error.message : "unavailable"}`);
+      }
+    }
+    if (!parent)
+      throw new Error(`Execution environment unavailable: no writable, same-disk temporary location outside Git. ${reasons.join("; ")}`);
+    const directory2 = {
+      workspace: cwd,
+      path: join35(parent, `cadence-run-${randomUUID20()}`),
+      identity: null,
+      removed: false
+    };
+    this.directories.set(cwd, directory2);
+    this.save();
+    this.assertCurrent();
+    try {
+      mkdirSync5(directory2.path, { mode: 448 });
+      const entry = lstatSync20(directory2.path);
+      directory2.identity = {
+        dev: entry.dev,
+        ino: entry.ino,
+        birthtimeMs: entry.birthtimeMs
+      };
+      this.assertOwned(directory2);
+      assertTemporaryDirectory(cwd, directory2.path);
+    } catch (error) {
+      throw new Error(`Execution environment unavailable: could not prepare ${directory2.path}; nothing was replayed. ${error instanceof Error ? error.message : "unavailable"}`);
+    }
+    this.save();
+    return temporaryEnvironment(directory2.path);
+  }
+  async finish(remove) {
+    for (const directory2 of this.directories.values()) {
+      if (!remove || directory2.removed || !directory2.identity)
+        continue;
+      try {
+        this.assertOwned(directory2);
+        await rm(directory2.path, { recursive: true, force: false });
+      } catch {
+        continue;
+      }
+      directory2.removed = true;
+      this.save();
+    }
+    return [...this.directories.values()].filter((d) => !d.removed).map((d) => d.path);
+  }
+}
+
 // src/worker-capture.mjs
-import { createHash as createHash27, randomUUID as randomUUID20 } from "node:crypto";
+import { createHash as createHash27, randomUUID as randomUUID21 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -27823,11 +27959,11 @@ class WorkerRecording {
       try {
         await Promise.race([
           ...this.pending,
-          new Promise((resolve12) => {
-            abort = resolve12;
+          new Promise((resolve13) => {
+            abort = resolve13;
             signal.addEventListener("abort", abort, { once: true });
             if (signal.aborted)
-              resolve12();
+              resolve13();
           })
         ]);
       } finally {
@@ -27878,7 +28014,7 @@ class WorkerRecording {
 // src/subagent-process.ts
 function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
-  const taskkill = spawn5(root ? join35(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  const taskkill = spawn5(root ? join36(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
   taskkill.once("close", (code2) => {
     if (code2 !== 0)
@@ -27917,7 +28053,7 @@ function runProcess(spec) {
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
   const ipc = !!(spec.onCoordinator || spec.onAuth || spec.inputs);
-  return new Promise((resolve12) => {
+  return new Promise((resolve13) => {
     const child2 = spawn5(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env ?? safeChildEnv(),
@@ -28034,7 +28170,7 @@ function runProcess(spec) {
       const safeText = clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: explicit command deadline ${spec.timeoutMs}ms reached` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, Number.MAX_SAFE_INTEGER);
       const safeOutput = clean(output, Number.MAX_SAFE_INTEGER);
       const outputBytes2 = spec.retainOutput ? 256 * 1024 : 65536;
-      resolve12({
+      resolve13({
         ...stopCause ? { stop: stopCause } : {},
         outcome,
         closed: closed2,
@@ -28422,7 +28558,7 @@ function encodeEnvelope(material, captured, roots = [material.cwd]) {
     throw new Error("network");
   return { material, investigation, ambient, scoped, selected: selected2, secrets, input };
 }
-function launchEncoded(encoded2, signal, extra = {}) {
+function launchEncoded(encoded2, signal, extra = {}, temporaryDirectory) {
   if (!sameNetwork(encoded2.ambient, networkSnapshot(process.env)) || !sameNetwork(encoded2.scoped, scopedNetwork(encoded2.material)))
     throw new Error("network");
   return runProcess({
@@ -28430,7 +28566,7 @@ function launchEncoded(encoded2, signal, extra = {}) {
     args: [fileURLToPath6(new URL("./sdk-worker.mjs", import.meta.url))],
     cwd: encoded2.material.cwd,
     input: encoded2.input,
-    env: encoded2.selected.env,
+    env: temporaryDirectory ? { ...encoded2.selected.env, ...temporaryEnvironment(temporaryDirectory) } : encoded2.selected.env,
     protocol: true,
     childRunId: encoded2.material.request.childRunId,
     expectedRequest: encoded2.material.request,
@@ -28515,7 +28651,7 @@ function launchWorkflowWorker(prepared, cwd, signal, options) {
       onLifecycle: options.onLifecycle,
       onNative: (native, capture) => options.onNative(native, capture?.selected?.messageId),
       onFrame: (frame) => options.onFrame(frame, secrets)
-    });
+    }, options.temporaryDirectory);
   });
 }
 
@@ -28620,7 +28756,7 @@ class CheckoutGate {
       throw new ContractError("conflict");
     if (this.waiting.length >= CHECKOUT_WAITERS)
       throw new ContractError("capacity");
-    const result = new Promise((resolve12, reject) => {
+    const result = new Promise((resolve13, reject) => {
       const abort = () => {
         const at2 = this.waiting.indexOf(waiter);
         if (at2 >= 0)
@@ -28630,7 +28766,7 @@ class CheckoutGate {
         id,
         resolve: (permit) => {
           signal.removeEventListener("abort", abort);
-          resolve12(permit);
+          resolve13(permit);
         },
         reject: (error) => {
           signal.removeEventListener("abort", abort);
@@ -28678,14 +28814,14 @@ class CheckoutGate {
 }
 
 // src/service/model-choice.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID22();
+  catalogId = randomUUID23();
   installing = false;
   constructor(options) {
     this.options = options;
@@ -28748,7 +28884,7 @@ class OwnerModelChoice {
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID22();
+        this.catalogId = randomUUID23();
         this.options.owner.configurationInstalled();
       }
       try {
@@ -28762,7 +28898,7 @@ class OwnerModelChoice {
 }
 
 // src/service/model-context.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
+import { randomUUID as randomUUID24 } from "node:crypto";
 
 // src/worker-model.mjs
 var WORKER_POLICY = Object.freeze({
@@ -29058,18 +29194,18 @@ function projectModelCatalog(runtime, supportedThinking, current2, literals, val
 }
 
 // src/service/worker-settings.ts
-import { lstatSync as lstatSync20, realpathSync as realpathSync11 } from "node:fs";
-import { dirname as dirname20, join as join36 } from "node:path";
+import { lstatSync as lstatSync21, realpathSync as realpathSync12 } from "node:fs";
+import { dirname as dirname21, join as join37 } from "node:path";
 var SETTINGS_FILE_BYTES = 1024 * 1024;
 function observe(path) {
   let target2;
   try {
-    target2 = realpathSync11(path);
+    target2 = realpathSync12(path);
   } catch (error) {
     if (error.code !== "ENOENT")
       throw error;
     try {
-      lstatSync20(path);
+      lstatSync21(path);
     } catch (missing2) {
       if (missing2.code === "ENOENT")
         return;
@@ -29077,7 +29213,7 @@ function observe(path) {
     }
     throw new ContractError("corrupt-selected");
   }
-  const file = new PrivateFiles(dirname20(target2), false).read(target2, SETTINGS_FILE_BYTES);
+  const file = new PrivateFiles(dirname21(target2), false).read(target2, SETTINGS_FILE_BYTES);
   if (!file)
     throw new ContractError("stale");
   return { target: target2, ...file };
@@ -29095,7 +29231,7 @@ function readWorkerRuntime(cwd, agentDir, model2, pi) {
         throw new ContractError("corrupt-selected");
       return body;
     };
-    const global = source(join36(agentDir, "settings.json"));
+    const global = source(join37(agentDir, "settings.json"));
     const storage = (project2) => ({
       withLock(scope, use) {
         if (use(scope === "global" ? global : project2) !== undefined)
@@ -29107,10 +29243,10 @@ function readWorkerRuntime(cwd, agentDir, model2, pi) {
     });
     if (user.drainErrors().length)
       throw new ContractError("corrupt-selected");
-    const trust = source(join36(agentDir, "trust.json"));
+    const trust = source(join37(agentDir, "trust.json"));
     const decision = trust === undefined ? null : new pi.ProjectTrustStore(agentDir).get(cwd);
     const projectTrusted = decision ?? user.getDefaultProjectTrust() === "always";
-    const project = projectTrusted ? source(join36(cwd, ".pi", "settings.json")) : undefined;
+    const project = projectTrusted ? source(join37(cwd, ".pi", "settings.json")) : undefined;
     const manager = pi.SettingsManager.fromStorage(storage(project), {
       projectTrusted
     });
@@ -29300,7 +29436,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID23(), ...selector };
+    const selection = { sourceSelectionId: randomUUID24(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -29411,7 +29547,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID23(), ...selector };
+    const selection = { sourceSelectionId: randomUUID24(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -29506,10 +29642,10 @@ class OwnerModelContext {
       closed2 = true;
     };
     let reportClosed;
-    const closedWait = new Promise((resolve12) => {
+    const closedWait = new Promise((resolve13) => {
       reportClosed = () => {
         close();
-        resolve12(refusal2(new ContractError("auth-unavailable"), effectStarted ? "uncertain" : "none"));
+        resolve13(refusal2(new ContractError("auth-unavailable"), effectStarted ? "uncertain" : "none"));
       };
     });
     input.signal.addEventListener("abort", reportClosed, { once: true });
@@ -29649,7 +29785,7 @@ class OwnerModelContext {
               const next = this.prepareTracked({
                 ...input,
                 runtime: workerRuntime,
-                operationId: randomUUID23()
+                operationId: randomUUID24()
               });
               const result = await next.result;
               await next.settled;
@@ -29962,8 +30098,8 @@ class ServiceOwner {
     if (!this.attempt) {
       this.reportingExpired = false;
       let complete;
-      this.attempt = new Promise((resolve12) => {
-        complete = resolve12;
+      this.attempt = new Promise((resolve13) => {
+        complete = resolve13;
       });
       const finish = () => {
         this.attempt = undefined;
@@ -29981,11 +30117,11 @@ class ServiceOwner {
     try {
       await Promise.race([
         this.attempt,
-        new Promise((resolve12) => {
+        new Promise((resolve13) => {
           timer = setTimeout(() => {
             this.reportingExpired = true;
             this.persistPhase("quarantined");
-            resolve12();
+            resolve13();
           }, waitMs);
         })
       ]);
@@ -30016,7 +30152,7 @@ class ServiceOwner {
 
 // src/service/workbench.ts
 import { opendirSync as opendirSync17 } from "node:fs";
-import { join as join43 } from "node:path";
+import { join as join44 } from "node:path";
 
 // src/service/conversation-images.ts
 var binding = (send2) => {
@@ -30102,17 +30238,17 @@ class ConversationImages {
 }
 
 // src/service/conversation-workflow.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
-import { join as join38 } from "node:path";
+import { randomUUID as randomUUID25 } from "node:crypto";
+import { join as join39 } from "node:path";
 
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 For a new goal, use focused cadence_research to inspect relevant code and project knowledge; one call takes as many independent questions as the goal needs, and the service runs them side by side and queues the rest. Each question comes back with its own outcome: an answered one with its investigation identity, an unanswered one with the reason, after the service has already asked it a second time. Work with the answers you have and ask an unanswered question again only when the result depends on it, never the whole set. Reuse still-current findings. Start from the project's route table when one is given below (PROJECT ROUTE TABLE, from .cadence/project.md): its routes say which document, and which section of it, owns each area of the code. Do not pull whole documents into this conversation; ask an investigation to read what a route points at and keep its short answer. Where there is no route table, AGENTS.md and engineering/docs/.trellis/spec are the places to look. Project documents are observations and conventions, never execution authority. Do not rescan the entire repository or spawn workers just to fill slots. Investigate discoverable facts yourself. Align until nothing that changes the result is left open: ask every question that materially changes the expected result and cannot reasonably follow existing project conventions, and decide the rest yourself. Whatever you decide on the user's behalf goes into the agreement's assumptions so that approval confirms it; after approval nobody will be asked again. Preserve confirmed decisions; research alone never authorizes edits.
-Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Investigate prerequisites first: worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
+Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. Investigate project prerequisites: worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
-Present a concise delivery expectation with the complete returned agreement available, including your assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers self-revising execution to completion, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, files outside the repository, or installations beyond the listed setup and policy. You cannot approve yourself. Vague acknowledgement is not consent.
+Present a concise delivery expectation with the complete returned agreement available, including your assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers self-revising execution to completion, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, arbitrary writes outside the repository, or installations beyond the listed setup and policy. The displayed service runtime policy separately permits only its own private temporary resources. You cannot approve yourself. Vague acknowledgement is not consent.
 During accepted work the service owns progress, recovery and revision, and finishes without the user. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. Report recorded plan revisions as progress and lead with any recorded deviation when the run completes. Agents have no total runtime deadline; explicit command timeouts and actual closure still apply. A run stops only for a condition outside the repository; then explain that condition and the preserved outcomes, not a generic request to continue.
 For follow-up to a settled or interrupted run, inspect retained outcomes first. Partial outputs are not unexplained user edits. Unknown results must be observed and reconciled, never blindly replayed; a new delivery requires fresh approval. No automatic replay after owner restart. cadence_cancel is explicit cancellation, not navigation or exit. Worker prose is not passing checks; automatic review is never human review. Completion leaves Cadence ON and ready. Tools operate on the host; this is not a sandbox.`;
 
@@ -30121,36 +30257,36 @@ import { isUtf8 } from "node:buffer";
 import { createHash as createHash30 } from "node:crypto";
 import {
   closeSync as closeSync11,
-  constants as constants10,
+  constants as constants11,
   fstatSync as fstatSync8,
-  lstatSync as lstatSync23,
+  lstatSync as lstatSync24,
   opendirSync as opendirSync13,
   openSync as openSync11,
   readSync as readSync7
 } from "node:fs";
-import { dirname as dirname23, posix as posix2 } from "node:path";
+import { dirname as dirname24, posix as posix2 } from "node:path";
 
 // src/service/knowledge-store.ts
-import { lstatSync as lstatSync22, opendirSync as opendirSync12, readFileSync as readFileSync6 } from "node:fs";
-import { dirname as dirname22, posix } from "node:path";
+import { lstatSync as lstatSync23, opendirSync as opendirSync12, readFileSync as readFileSync6 } from "node:fs";
+import { dirname as dirname23, posix } from "node:path";
 
 // src/service/workflow-git.ts
-import { spawn as spawn6, spawnSync as spawnSync5 } from "node:child_process";
+import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
 import { createHash as createHash29 } from "node:crypto";
 import {
   closeSync as closeSync10,
-  constants as constants9,
+  constants as constants10,
   existsSync as existsSync4,
   fstatSync as fstatSync7,
-  lstatSync as lstatSync21,
+  lstatSync as lstatSync22,
   openSync as openSync10,
   readdirSync as readdirSync4,
   readlinkSync,
   readSync as readSync6,
-  realpathSync as realpathSync12
+  realpathSync as realpathSync13
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname21, isAbsolute as isAbsolute14, join as join37, relative as relative8, resolve as resolve12, sep as sep7 } from "node:path";
+import { dirname as dirname22, isAbsolute as isAbsolute15, join as join38, relative as relative9, resolve as resolve13, sep as sep8 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -30165,7 +30301,7 @@ class WorkflowRefusal extends ContractError {
   }
 }
 function gitRead(cwd, args) {
-  const r = spawnSync5("git", gitArguments(args), {
+  const r = spawnSync6("git", gitArguments(args), {
     cwd,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -30178,7 +30314,7 @@ function gitRead(cwd, args) {
   return r.stdout;
 }
 function gitAnswer(cwd, args) {
-  const r = spawnSync5("git", gitArguments(args), {
+  const r = spawnSync6("git", gitArguments(args), {
     cwd,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -30234,20 +30370,20 @@ async function gitHead(cwd) {
   return (await gitText(cwd, ["rev-parse", "--verify", "HEAD"])).trim();
 }
 function contains2(root, path) {
-  const within = relative8(root, path);
-  return !within || !within.startsWith(`..${sep7}`) && within !== ".." && !isAbsolute14(within);
+  const within2 = relative9(root, path);
+  return !within2 || !within2.startsWith(`..${sep8}`) && within2 !== ".." && !isAbsolute15(within2);
 }
 function nested(a, b) {
   return contains2(a, b) || contains2(b, a);
 }
 function safeWorkflowFile(cwd, name) {
   workflowPath(name);
-  const p = resolve12(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync21(p);
+    const st = lstatSync22(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -30258,12 +30394,12 @@ function safeWorkflowFile(cwd, name) {
 }
 function declaredTarget(cwd, name) {
   workflowPath(name);
-  const p = resolve12(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname21(p));
+  safeDirectory(dirname22(p));
   try {
-    const st = lstatSync21(p);
+    const st = lstatSync22(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -30289,7 +30425,7 @@ function fileIdentity(p, st, hashBytes) {
     return quick;
   let fd;
   try {
-    fd = openSync10(p, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0));
+    fd = openSync10(p, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
@@ -30314,7 +30450,7 @@ async function fileIdentityAsync(p, st, hashBytes, signal) {
     return quick;
   let handle;
   try {
-    handle = await open2(p, constants9.O_RDONLY | (constants9.O_NOFOLLOW ?? 0) | (constants9.O_NONBLOCK ?? 0));
+    handle = await open2(p, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0) | (constants10.O_NONBLOCK ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
@@ -30353,13 +30489,13 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join37(directory2, entry), relative9 = `${prefix}${entry}`;
-      const st = lstatSync21(full);
+      const full = join38(directory2, entry), relative10 = `${prefix}${entry}`;
+      const st = lstatSync22(full);
       if (st.isDirectory()) {
-        rows.push(`${relative9}/`);
-        visit(full, `${relative9}/`);
+        rows.push(`${relative10}/`);
+        visit(full, `${relative10}/`);
       } else
-        rows.push(`${relative9}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
+        rows.push(`${relative10}\x00${fileIdentity(full, st, DIRECTORY_HASH_BYTES)}`);
     }
   };
   visit(root, "");
@@ -30377,13 +30513,13 @@ async function directoryIdentityAsync(root, name, contentOnly = false, signal) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join37(directory2, entry), relative9 = `${prefix}${entry}`;
+      const full = join38(directory2, entry), relative10 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
-        rows.push(`${relative9}/`);
-        await visit(full, `${relative9}/`);
+        rows.push(`${relative10}/`);
+        await visit(full, `${relative10}/`);
       } else
-        rows.push(`${relative9}\x00${await fileIdentityAsync(full, st, contentOnly ? Infinity : DIRECTORY_HASH_BYTES, signal)}`);
+        rows.push(`${relative10}\x00${await fileIdentityAsync(full, st, contentOnly ? Infinity : DIRECTORY_HASH_BYTES, signal)}`);
     }
   };
   await visit(root, "");
@@ -30391,12 +30527,12 @@ async function directoryIdentityAsync(root, name, contentOnly = false, signal) {
 `))}`;
 }
 function pathIdentity(cwd, name, walk = true) {
-  const p = resolve12(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
-    st = lstatSync21(p);
+    st = lstatSync22(p);
   } catch (e) {
     if (absent2(e))
       return null;
@@ -30409,8 +30545,8 @@ function pathIdentity(cwd, name, walk = true) {
 async function pathIdentityAsync(cwd, name, contentOnly = false, signal) {
   if (signal?.aborted)
     throw new ContractError("stale");
-  const p = resolve12(cwd, name);
-  if (relative8(cwd, p).startsWith(".."))
+  const p = resolve13(cwd, name);
+  if (relative9(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
   let st;
   try {
@@ -30518,8 +30654,8 @@ async function committedPaths(cwd, from, to) {
   ])).sort();
 }
 function repositoryIdentity(cwd) {
-  const repository = realpathSync12(resolve12(cwd, gitRead(cwd, ["rev-parse", "--git-common-dir"]).replace(/\r?\n$/u, "")));
-  const st = lstatSync21(repository);
+  const repository = realpathSync13(resolve13(cwd, gitRead(cwd, ["rev-parse", "--git-common-dir"]).replace(/\r?\n$/u, "")));
+  const st = lstatSync22(repository);
   if (!st.isDirectory())
     throw new ContractError("stale");
   return {
@@ -30540,12 +30676,12 @@ function deliveryTarget(cwd, source) {
     "index.lock",
     "HEAD.lock"
   ]) {
-    if (existsSync4(join37(gitDir, name)))
+    if (existsSync4(join38(gitDir, name)))
       throw new WorkflowRefusal("conflict", "Finish the existing Git operation before planning isolated delivery.");
   }
   return {
     ...repositoryIdentity(cwd),
-    checkoutRoot: realpathSync12(cwd),
+    checkoutRoot: realpathSync13(cwd),
     head: source.head,
     branch: source.branch
   };
@@ -30666,14 +30802,14 @@ function snapshotChanges(before, after) {
 async function assertWorktree(root, cwd) {
   if (!safeDirectory(cwd))
     throw new ContractError("stale");
-  const real = (p) => realpathSync12(resolve12(p));
+  const real = (p) => realpathSync13(resolve13(p));
   if (real((await gitText(cwd, ["rev-parse", "--show-toplevel"])).trim()) !== real(cwd))
     throw new ContractError("stale");
-  const common = async (p) => real(resolve12(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
+  const common = async (p) => real(resolve13(p, (await gitText(p, ["rev-parse", "--git-common-dir"])).trim()));
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
-  const marker2 = resolve12(cwd, ".git");
-  if (!lstatSync21(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
+  const marker2 = resolve13(cwd, ".git");
+  if (!lstatSync22(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
 }
 
@@ -30796,8 +30932,8 @@ function readKnowledgeStore(root) {
   let limited = false;
   let names3 = [];
   try {
-    const directory2 = dirname22(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
-    if (lstatSync22(directory2).isDirectory()) {
+    const directory2 = dirname23(safeWorkflowFile(root, `${KNOWLEDGE_STORE.topics}/index.md`));
+    if (lstatSync23(directory2).isDirectory()) {
       const dir = opendirSync12(directory2);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
@@ -30844,7 +30980,7 @@ function fileHas(root, path, symbol) {
     return !!file && (symbol === null || file.body.includes(symbol));
   }
   try {
-    const stat = lstatSync22(safeWorkflowFile(root, path));
+    const stat = lstatSync23(safeWorkflowFile(root, path));
     if (!stat.isFile() && !stat.isDirectory())
       return false;
     if (symbol === null)
@@ -31074,8 +31210,8 @@ function readKnowledgeFile(root, path) {
   let fd;
   try {
     const file = safeWorkflowFile(root, path);
-    const selected2 = lstatSync23(file);
-    fd = openSync11(file, constants10.O_RDONLY | (constants10.O_NOFOLLOW ?? 0) | (constants10.O_NONBLOCK ?? 0));
+    const selected2 = lstatSync24(file);
+    fd = openSync11(file, constants11.O_RDONLY | (constants11.O_NOFOLLOW ?? 0) | (constants11.O_NONBLOCK ?? 0));
     const before = fstatSync8(fd);
     if (selected2.dev !== before.dev || selected2.ino !== before.ino)
       return null;
@@ -31090,7 +31226,7 @@ function readKnowledgeFile(root, path) {
       bytes += n;
     }
     const after = fstatSync8(fd);
-    const located = lstatSync23(file);
+    const located = lstatSync24(file);
     if (located.dev !== before.dev || located.ino !== before.ino)
       return null;
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
@@ -31171,7 +31307,7 @@ function projectKnowledge(root, query, paths, secrets, maximum = KNOWLEDGE_LIMIT
       let directory2;
       try {
         const probe2 = safeWorkflowFile(root, `${path}/index.md`);
-        directory2 = opendirSync13(dirname23(probe2));
+        directory2 = opendirSync13(dirname24(probe2));
         while (entries3 < KNOWLEDGE_LIMITS.entries && candidates.size < KNOWLEDGE_LIMITS.candidates) {
           const entry = directory2.readSync();
           if (!entry)
@@ -31580,7 +31716,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
           return refusal3("invalid-plan", `${name}[${i}].research: no answer is recorded under "${r.research}" (a research step that failed records none); give the "investigation" value of a completed step, or leave this reading out. ${CORRECT_PLAN}`);
     let published;
     try {
-      published = this.o.workflows.command(randomUUID24(), epoch, {
+      published = this.o.workflows.command(randomUUID25(), epoch, {
         action: "propose",
         plan,
         model: model2
@@ -31616,7 +31752,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID24(), conversationId = current2.state.id;
+    const id = randomUUID25(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -31644,7 +31780,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
-    const evidence = join38(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
+    const evidence = join39(this.records.root, decodeSessionId(c.conversationId), "approvals", `${decodeId(c.commandId)}.json`);
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle";
@@ -31704,7 +31840,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID24();
+      const g = prepared.response, grant2 = randomUUID25();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -31770,9 +31906,9 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID25 } from "node:crypto";
-import { opendirSync as opendirSync14, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname24, join as join39 } from "node:path";
+import { randomUUID as randomUUID26 } from "node:crypto";
+import { opendirSync as opendirSync14, statfsSync as statfsSync3 } from "node:fs";
+import { dirname as dirname25, join as join40 } from "node:path";
 var META_BYTES2 = 64 * 1024;
 var PREVIEW_BYTES = 64 * 1024;
 var RECENT_PREVIEWS = 8;
@@ -32010,7 +32146,7 @@ class Conversations {
   }
   assertSettled() {
     this.o.owner.lease.assert();
-    const sessions = join39(this.records.root, "sessions");
+    const sessions = join40(this.records.root, "sessions");
     if (!this.files.directory(sessions))
       return;
     const dir = opendirSync14(sessions);
@@ -32028,7 +32164,7 @@ class Conversations {
   }
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
-    return this.active.has(commandId) || this.files.directory(dirname24(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
+    return this.active.has(commandId) || this.files.directory(dirname25(this.records.path(commandId, "accepted.json"))) || this.records.index(conversationId).commands.includes(commandId);
   }
   command(input, reply = false) {
     return {
@@ -32051,7 +32187,7 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname24(this.records.path(input.commandId, "state.json"))))
+    if (this.files.directory(dirname25(this.records.path(input.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -32081,7 +32217,7 @@ class Conversations {
       throw new ContractError("invalid");
     if (input.images?.length && !this.o.models.catalog().entries.some((m) => m.provider === execution.model?.provider && m.model === execution.model?.model && m.images))
       throw new ContractError("unsupported-context");
-    const space = statfsSync2(this.o.coordination.directory);
+    const space = statfsSync3(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
     const listed = session ? this.records.sessions.find(input.conversationId) : undefined;
@@ -32098,8 +32234,8 @@ class Conversations {
     const runtime = control?.reply || !execution.model ? undefined : this.o.models.workerSettings(execution.cwd, execution.model);
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve13) => {
-      begin = resolve13;
+    const ready2 = new Promise((resolve14) => {
+      begin = resolve14;
     });
     const live2 = {
       coordinator: !!control,
@@ -32175,7 +32311,7 @@ class Conversations {
     const receipt = this.receipt(request3);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname24(this.records.path(request3.commandId, "state.json"))))
+    if (this.files.directory(dirname25(this.records.path(request3.commandId, "state.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -32189,7 +32325,7 @@ class Conversations {
     const session = this.records.sessions.session(request3.conversationId);
     if (live2.inputs.length >= RUN_INPUTS || live2.inputs.filter((input2) => !input2.withdrawn && !session?.delivered(input2.commandId)).length >= WAITING_INPUTS)
       throw new ContractError("capacity");
-    const space = statfsSync2(this.o.coordination.directory);
+    const space = statfsSync3(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
     const index = this.records.index(request3.conversationId);
@@ -32260,14 +32396,14 @@ class Conversations {
     let waiting = input.withdrawal;
     if (!waiting) {
       let answer;
-      const result = new Promise((resolve13, reject) => {
+      const result = new Promise((resolve14, reject) => {
         answer = (removed) => {
           input.withdrawal = undefined;
           try {
             if (!removed)
               throw new ContractError("conflict");
             this.withdraw(input);
-            resolve13();
+            resolve14();
           } catch (error) {
             reject(error);
           }
@@ -32304,7 +32440,7 @@ class Conversations {
     const abort = new AbortController;
     const closed2 = Promise.resolve().then(() => renameSession({
       id,
-      dir: dirname24(listed.path),
+      dir: dirname25(listed.path),
       file: listed.path,
       cwd: listed.summary.cwd,
       name: request3.name
@@ -32428,10 +32564,10 @@ class Conversations {
 CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.execution.checkoutRoot}. Workflow writes are checkout-root-relative; tools, investigation roots and checks use this conversation cwd.` : "Ordinary conversation.";
       const request3 = decodeWorkerPublicRequest({
         protocol: 2,
-        taskId: randomUUID25(),
+        taskId: randomUUID26(),
         taskKind: control ? "research" : "code",
         runId: commandId,
-        childRunId: randomUUID25(),
+        childRunId: randomUUID26(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -32449,7 +32585,7 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
         runtime: live2.runtime,
         request: request3,
         cwd: live2.execution.cwd,
-        operationId: randomUUID25(),
+        operationId: randomUUID26(),
         epoch: live2.epoch,
         signal: abort.signal,
         current: current2,
@@ -32589,16 +32725,16 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID27 } from "node:crypto";
-import { opendirSync as opendirSync16, realpathSync as realpathSync13, statfsSync as statfsSync3, writeFileSync as writeFileSync6 } from "node:fs";
-import { basename as basename5, dirname as dirname26, join as join42, resolve as resolve14 } from "node:path";
+import { randomUUID as randomUUID28 } from "node:crypto";
+import { opendirSync as opendirSync16, realpathSync as realpathSync14, statfsSync as statfsSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { basename as basename5, dirname as dirname27, join as join43, relative as relative12, resolve as resolve15 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
-import { spawnSync as spawnSync6 } from "node:child_process";
+import { spawnSync as spawnSync7 } from "node:child_process";
 import { createHash as createHash31 } from "node:crypto";
-import { lstatSync as lstatSync24, readdirSync as readdirSync5, readlinkSync as readlinkSync2 } from "node:fs";
-import { join as join40, relative as relative9 } from "node:path";
+import { lstatSync as lstatSync25, readdirSync as readdirSync5, readlinkSync as readlinkSync2 } from "node:fs";
+import { join as join41, relative as relative10 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
@@ -32617,7 +32753,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
     if (Date.now() >= deadline)
       outcome = "time budget exhausted";
     else {
-      const result = spawnSync6("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
+      const result = spawnSync7("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
         cwd: root,
         encoding: "buffer",
         timeout: Math.max(1, deadline - Date.now()),
@@ -32641,8 +32777,8 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       return;
     }
     try {
-      const path = join40(root, name);
-      const st = lstatSync24(path);
+      const path = join41(root, name);
+      const st = lstatSync25(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync2(path));
@@ -32667,7 +32803,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       limits.push(`Unreadable/changing: ${name}`);
     }
   };
-  const probe2 = spawnSync6("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
+  const probe2 = spawnSync7("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
     cwd: root,
     env: gitEnvironment(),
     timeout: 3000,
@@ -32782,8 +32918,8 @@ ${data2.toString("utf8")}`);
         return;
       }
       for (const name of names3) {
-        const path = join40(dir, name);
-        const rel = relative9(root, path).split("\\").join("/");
+        const path = join41(dir, name);
+        const rel = relative10(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
         if (++fileCount > 2000 || Date.now() >= deadline) {
@@ -32791,7 +32927,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync24(path);
+          const st = lstatSync25(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -32817,15 +32953,15 @@ ${data2.toString("utf8")}`);
 }
 
 // src/worker-workspace.mjs
-import { isAbsolute as isAbsolute15, relative as relative10, resolve as resolve13, sep as sep8 } from "node:path";
+import { isAbsolute as isAbsolute16, relative as relative11, resolve as resolve14, sep as sep9 } from "node:path";
 function withinRoot(root, path) {
-  const part = relative10(root, path);
-  return part === "" || !isAbsolute15(part) && part !== ".." && !part.startsWith(`..${sep8}`);
+  const part = relative11(root, path);
+  return part === "" || !isAbsolute16(part) && part !== ".." && !part.startsWith(`..${sep9}`);
 }
 var absolute2 = (value) => {
-  if (typeof value !== "string" || !isAbsolute15(value) || value.includes("\x00"))
+  if (typeof value !== "string" || !isAbsolute16(value) || value.includes("\x00"))
     throw new Error("Invalid execution directory");
-  return resolve13(value);
+  return resolve14(value);
 };
 function executionDirectory(execution, tree) {
   const origin = absolute2(execution.checkoutRoot);
@@ -32833,12 +32969,12 @@ function executionDirectory(execution, tree) {
   tree = absolute2(tree);
   if (!withinRoot(origin, cwd))
     throw new Error("Execution cwd escaped its checkout");
-  return resolve13(tree, relative10(origin, cwd));
+  return resolve14(tree, relative11(origin, cwd));
 }
 
 // src/service/investigations.ts
 import { createHash as createHash32 } from "node:crypto";
-import { readFileSync as readFileSync7, statSync as statSync3 } from "node:fs";
+import { readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
 var INVESTIGATIONS = {
   cited: 32,
   examined: 256,
@@ -32850,7 +32986,7 @@ function fileDigest(root, path) {
     if (!workflowBoundary(path))
       return null;
     const file = safeWorkflowFile(root, path);
-    const st = statSync3(file);
+    const st = statSync4(file);
     if (!st.isFile() || st.size > INVESTIGATIONS.fileBytes)
       return null;
     return createHash32("sha256").update(readFileSync7(file)).digest("hex");
@@ -32996,7 +33132,7 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
     const route = has("route") ? nullable(o.route, (value) => {
       const given = (key2) => Object.hasOwn(value ?? {}, key2);
       const r = closed(value, ["drop", "add"].filter(given));
-      const within = [...bounds.route?.scope ?? bounds.scope, ...scope];
+      const within2 = [...bounds.route?.scope ?? bounds.scope, ...scope];
       return {
         drop: given("drop") ? list(r.drop, WORKFLOW_LIMITS.route, (v) => text(v, 64, true)) : [],
         add: given("add") ? list(r.add, WORKFLOW_LIMITS.tasks, (entry) => {
@@ -33008,7 +33144,7 @@ function decodeRecoveryDecision(reply, bounds, secrets = []) {
             "after"
           ]);
           const writes = list(t.writes, 128, (v) => workflowPath(v, true));
-          if (!writes.length || new Set(writes).size !== writes.length || writes.some((p) => !workflowCovers(within, p) || sanitizeText(p, secrets) !== p))
+          if (!writes.length || new Set(writes).size !== writes.length || writes.some((p) => !workflowCovers(within2, p) || sanitizeText(p, secrets) !== p))
             refuse3("An added assignment writes outside the run's write scope; list the additional paths in scope");
           const after = list(t.after, WORKFLOW_LIMITS.tasks, (v) => text(v, 64, true));
           if (new Set(after).size !== after.length)
@@ -33223,8 +33359,8 @@ function settledWorkerCleanup(output) {
 }
 
 // src/service/workflow-delivery.ts
-import { lstatSync as lstatSync25, rmdirSync } from "node:fs";
-import { dirname as dirname25, join as join41 } from "node:path";
+import { lstatSync as lstatSync26, rmdirSync } from "node:fs";
+import { dirname as dirname26, join as join42 } from "node:path";
 function taskBranch(goal, id) {
   const slug2 = goal.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 48).replace(/-$/u, "") || "task";
   return `refs/heads/cadence/${slug2}-${decodeId(id)}`;
@@ -33233,7 +33369,7 @@ function deliveryObservation(binding2, root, id, goal) {
   return {
     binding: binding2,
     taskBranch: taskBranch(goal, id),
-    worktreeRoot: join41(root, decodeId(id), "integration"),
+    worktreeRoot: join42(root, decodeId(id), "integration"),
     preparation: "pending",
     workspace: null,
     candidate: null,
@@ -33273,16 +33409,16 @@ class WorkflowDelivery {
     this.view = view;
     this.resources = resources;
     this.save = save;
-    this.home = dirname25(view.worktreeRoot);
+    this.home = dirname26(view.worktreeRoot);
   }
   prepareHome() {
     assertRepository(this.view.binding.target);
     if (nested(this.view.binding.target.checkoutRoot, this.home))
       throw new ContractError("unsupported-context");
-    for (const path of [dirname25(dirname25(this.home)), dirname25(this.home)]) {
+    for (const path of [dirname26(dirname26(this.home)), dirname26(this.home)]) {
       if (!safeDirectory(path, true))
         throw new ContractError("forbidden");
-      const stat = lstatSync25(path);
+      const stat = lstatSync26(path);
       if (process.platform !== "win32" && ((stat.mode & 63) !== 0 || process.getuid && stat.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
@@ -33322,7 +33458,7 @@ class WorkflowDelivery {
     return path;
   }
   childPath(id) {
-    return join41(this.home, "tasks", id);
+    return join42(this.home, "tasks", id);
   }
   child(path) {
     return this.view.artifacts?.find((a) => a.path === path && this.children.has(path));
@@ -33332,7 +33468,7 @@ class WorkflowDelivery {
     const base = await this.assertTip();
     if (this.view.artifacts?.some((a) => a.path === path) || safeDirectory(path))
       throw new ContractError("conflict");
-    if (!safeDirectory(dirname25(path), true))
+    if (!safeDirectory(dirname26(path), true))
       throw new ContractError("forbidden");
     const token = this.resources.reserveWorkspace(path);
     this.children.set(path, token);
@@ -33424,7 +33560,7 @@ class WorkflowDelivery {
     }
     this.save();
     try {
-      rmdirSync(dirname25(path));
+      rmdirSync(dirname26(path));
     } catch {}
   }
   targetHead() {
@@ -33517,8 +33653,8 @@ class WorkflowDelivery {
 }
 
 // src/service/workflow-history.ts
-import { randomUUID as randomUUID26 } from "node:crypto";
-import { lstatSync as lstatSync26, opendirSync as opendirSync15 } from "node:fs";
+import { randomUUID as randomUUID27 } from "node:crypto";
+import { lstatSync as lstatSync27, opendirSync as opendirSync15 } from "node:fs";
 class WorkflowHistoryScanner {
   path;
   directory;
@@ -33529,7 +33665,7 @@ class WorkflowHistoryScanner {
     this.directory = directory2;
   }
   incarnation() {
-    const st = lstatSync26(this.path, { bigint: true });
+    const st = lstatSync27(this.path, { bigint: true });
     if (!st.isDirectory() || st.isSymbolicLink())
       throw new ContractError("corrupt-selected");
     return `${st.dev}:${st.ino}`;
@@ -33581,7 +33717,7 @@ class WorkflowHistoryScanner {
         if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
           state.ids.pop();
       }
-      const scan = randomUUID26();
+      const scan = randomUUID27();
       state.timer = setTimeout(() => {
         this.scans.delete(scan);
         try {
@@ -34078,9 +34214,11 @@ function workflowResultDetail(value, secrets) {
 }
 
 // src/service/workflows.ts
+var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
+${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.4",
-  build: "b335d9eae2b7c1e2f864a55d263811ab93957a77385c3e230cfc289da0bce014",
+  build: "57d718ba9e2d1879ec677ed294a71a83641de1fb983b96d079d73c3bcf8580b1",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34170,12 +34308,12 @@ class Workflows {
   constructor(o) {
     this.o = o;
     this.contexts = o.contexts ?? new ConversationContexts(o);
-    this.root = join42(o.coordination.directory, "workflows-v1");
-    this.cwd = realpathSync13(o.coordination.store.root);
-    this.worktreeRoot = join42(o.coordination.stateHome, "cadence-worktrees-v1", basename5(o.coordination.store.privateRoot));
-    this.historyScanner = new WorkflowHistoryScanner(join42(this.root, "runs"), () => {
+    this.root = join43(o.coordination.directory, "workflows-v1");
+    this.cwd = realpathSync14(o.coordination.store.root);
+    this.worktreeRoot = join43(o.coordination.stateHome, "cadence-worktrees-v1", basename5(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join43(this.root, "runs"), () => {
       this.o.owner.lease.assert();
-      return this.files.directory(join42(this.root, "runs"));
+      return this.files.directory(join43(this.root, "runs"));
     });
     this.recover();
   }
@@ -34183,7 +34321,7 @@ class Workflows {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join42(this.root, "runs", decodeId(id), name);
+    return join43(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES3) {
     this.o.owner.lease.assert();
@@ -34200,7 +34338,7 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join42(this.root, "runs");
+    const runs = join43(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
@@ -34279,10 +34417,11 @@ class Workflows {
         run.delivery.integration.status = "unknown";
         run.delivery.integration.reason = "Owner restarted during integration; observe the target, never replay.";
       }
-      run.delivery.cleanup = {
-        status: "retained",
-        reason: "Owner restarted; artifacts retained without replay or cleanup."
-      };
+      if (run.delivery.cleanup.status !== "removed")
+        run.delivery.cleanup = {
+          status: "retained",
+          reason: "Owner restarted; artifacts retained without replay or cleanup."
+        };
       if (run.delivery.workspace && run.delivery.workspace.state !== "removed")
         run.delivery.workspace.state = "retained";
       for (const child2 of run.delivery.artifacts ?? [])
@@ -34309,7 +34448,7 @@ class Workflows {
       throw new ContractError("quarantine");
   }
   floor() {
-    const space = statfsSync3(this.o.coordination.directory);
+    const space = statfsSync4(this.o.coordination.directory);
     if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
       throw new ContractError("capacity");
   }
@@ -34335,7 +34474,7 @@ class Workflows {
         throw new ContractError("stale");
       safeDirectory(cwd, true);
     }
-    if (realpathSync13(cwd) !== cwd)
+    if (realpathSync14(cwd) !== cwd)
       throw new ContractError("stale");
     return cwd;
   }
@@ -34350,6 +34489,7 @@ class Workflows {
       delivery,
       digest: hash(canonicalJson({
         runtime,
+        environment: RUN_ENVIRONMENT_POLICY,
         source,
         delivery: delivery ?? null,
         working: plan.delivery === "working-copy" ? captureChanges(this.cwd).fingerprint : null
@@ -34357,7 +34497,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join42(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
+    const file = this.files.read(join43(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES3);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3));
@@ -34374,7 +34514,7 @@ class Workflows {
     const observed = this.observation(p.plan, runtime);
     if (p.plan.delivery === "local-merge" && !p.delivery)
       throw new WorkflowRefusal("invalid", "Publish a new delivery agreement with explicit named-branch placement before execution.");
-    if (p.epoch !== this.o.owner.lease.registration.epoch || p.digest !== digest2 || p.cwd !== this.contexts.capture(p.model).cwd || p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd || observed.digest !== p.observation || p.display?.runtime !== describeWorkerRuntime(runtime) || canonicalJson(observed.delivery ?? null) !== canonicalJson(p.delivery ?? null) || p.digest !== hash(canonicalJson(p.delivery ? { plan: p.plan, delivery: p.delivery } : p.plan)))
+    if (p.epoch !== this.o.owner.lease.registration.epoch || p.digest !== digest2 || p.cwd !== this.contexts.capture(p.model).cwd || p.checkoutRoot !== undefined && p.checkoutRoot !== this.cwd || observed.digest !== p.observation || p.display?.runtime !== runtimeSummary(runtime) || canonicalJson(observed.delivery ?? null) !== canonicalJson(p.delivery ?? null) || p.digest !== hash(canonicalJson(p.delivery ? { plan: p.plan, delivery: p.delivery } : p.plan)))
       throw new ContractError("stale");
     return { source: observed.source, runtime };
   }
@@ -34583,8 +34723,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join42(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
-    return this.files.directory(join42(this.root, "runs", id));
+      return !!this.files.read(join43(this.root, "proposals", `${id}.json`), RECORD_BYTES3);
+    return this.files.directory(join43(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -34608,7 +34748,7 @@ class Workflows {
         checkoutRoot: this.cwd,
         observation: digest2,
         display: {
-          runtime: describeWorkerRuntime(runtime2),
+          runtime: runtimeSummary(runtime2),
           model: `${selected2.provider}/${selected2.model} · ${selected2.thinking}`,
           branch: source.branch,
           baseCommit: source.head
@@ -34617,7 +34757,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join42(this.root, "proposals", `${commandId}.json`);
+      const target3 = join43(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES3);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -34640,7 +34780,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID27(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID28(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -34668,7 +34808,7 @@ class Workflows {
         throw new ContractError("conflict");
       return { ...this.view(commandId), commandId };
     }
-    if (this.files.directory(dirname26(acceptedPath)))
+    if (this.files.directory(dirname27(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal;
     let delivery;
@@ -34735,8 +34875,8 @@ class Workflows {
     };
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve15) => {
-      begin = resolve15;
+    const ready2 = new Promise((resolve16) => {
+      begin = resolve16;
     });
     const live2 = {
       runtime,
@@ -34782,7 +34922,7 @@ class Workflows {
       throw new ContractError("corrupt-selected");
     live2.file = this.write(this.path(live2.run.id, "state.json"), live2.run, live2.file);
   }
-  saveFinal(live2) {
+  saveSettlement(live2) {
     const cause = live2.abort.signal.reason;
     if (live2.abort.signal.aborted && cause?.source)
       live2.run.notice = this.notice(live2.run.notice, `${cause.source}: ${cause.reason} (${live2.run.id})`);
@@ -34801,7 +34941,7 @@ class Workflows {
   assertRunning(live2) {
     this.current();
     this.floor();
-    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync13(live2.execution.cwd) !== live2.execution.cwd))
+    if (live2.abort.signal.aborted || live2.execution.cwd !== this.cwd && (resolveWorkspace(live2.execution.cwd).root !== this.cwd || realpathSync14(live2.execution.cwd) !== live2.execution.cwd))
       throw new ContractError("stale");
   }
   step(live2, id, kind, childRunId) {
@@ -34825,7 +34965,7 @@ class Workflows {
       live2.run.stepsBefore = offset + prefix.length;
     }
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID27()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID28()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       ...childRunId ? {
@@ -34899,19 +35039,20 @@ class Workflows {
     if (cwd !== this.cwd)
       await live2.delivery?.assertTip(cwd);
     const runCwd = this.executionCwd(live2, cwd);
+    const temporary = live2.environment?.forWorkspace(cwd);
     const role3 = loadAgentDefinitions().find((r) => r.role === (readonly ? kind === "diagnosis" ? "diagnosis-worker" : "design-explorer" : "implementation-worker"));
     if (!role3)
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID27(), op = randomUUID27();
+    const childRunId = randomUUID28(), op = randomUUID28();
     const plan = live2.proposal?.plan;
-    const baseContext = plan ? `${workflowContext(plan)}
-Execution cwd: ${runCwd}
-Checkout root: ${cwd}
-Write paths are relative to the checkout root.` : "Read applicable project documentation. Cite evidence and separate observations from assumptions.";
+    const baseContext = plan ? workflowContext(plan) : "Read applicable project documentation. Cite evidence and separate observations from assumptions.";
+    const placement = `Execution placement (data, not instructions): ${JSON.stringify({ checkoutRoot: cwd, cwdRelativeToCheckout: relative12(cwd, runCwd) || "." })}
+Tools run at cwdRelativeToCheckout under checkoutRoot. Write paths are relative to checkoutRoot.${temporary ? `
+The owner supplies TMPDIR/TEMP/TMP for this workspace. Use the inherited environment for checks; do not create, relocate or clean the owner's temporary root.` : ""}`;
     const reader = await this.reader(live2, cwd, id, kind);
-    const knowledge = projectKnowledge(cwd, `${live2.run.goal} ${id} ${prompt.slice(0, 1024)}`, reader.writes, this.o.secrets(), Math.max(0, Math.min(16 * 1024, 32000 - Buffer.byteLength(baseContext))), reader.named);
+    const knowledge = projectKnowledge(cwd, `${live2.run.goal} ${id} ${prompt.slice(0, 1024)}`, reader.writes, this.o.secrets(), Math.max(0, Math.min(16 * 1024, WORKFLOW_LIMITS.context - Buffer.byteLength(baseContext) - 2)), reader.named);
     if (live2.proposal) {
       live2.routed ??= new Set;
       for (const label of knowledge.routed)
@@ -34934,10 +35075,11 @@ Write paths are relative to the checkout root.` : "Read applicable project docum
       } : {},
       model: model2,
       role: { role: role3.role, sha256: role3.sha256 },
-      context: `${baseContext}
+      context: knowledge.text ? `${baseContext}
 
-${knowledge.text}`,
+${knowledge.text}` : baseContext,
       instructions: `${role3.content}
+${placement}
 Read applicable AGENTS.md, existing project conventions and relevant tests before work. Do not delegate, restart the workflow, mutate Git, install dependencies, publish or deploy. The owner handles recovery; preserve partial work and report actionable remaining gaps. Report actual work and uncertainty. Do not weaken tests to manufacture success. Worker completion is not verification. There is no total runtime deadline. Continue naturally; report a blocked assignment only for a concrete missing condition, preserving completed outputs and actionable remaining work. Do not duplicate the entire acceptance pipeline inside one worker.`,
       prompt: text(prompt, 32768, true),
       handoff: { graphRevision: 1, inputs: [] }
@@ -34981,6 +35123,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       this.write(this.path(live2.run.id, `launches/${childRunId}.json`), {
         cwd: runCwd,
         runtime: live2.runtime ? describeWorkerRuntime(live2.runtime) : null,
+        environment: temporary ?? null,
         knowledge: {
           sources: knowledge.sources.map(({ excerpt: _excerpt, ...source }) => source),
           omitted: knowledge.omitted
@@ -35006,7 +35149,8 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       ]);
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, runCwd, live2.abort.signal, {
         ownerSecrets: this.o.secrets(),
-        roots: roots2?.length ? roots2.map((p) => resolve14(runCwd, p)) : [kind === "research" ? runCwd : cwd],
+        temporaryDirectory: live2.environment?.forWorkspace(cwd).TMPDIR,
+        roots: roots2?.length ? roots2.map((p) => resolve15(runCwd, p)) : [kind === "research" ? runCwd : cwd],
         onLifecycle: (event) => {
           if (!step.timing)
             return;
@@ -35126,14 +35270,16 @@ Partial work is preserved.`);
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
     const runCwd = shell ? this.executionCwd(live2, cwd) : cwd;
-    const id = randomUUID27();
+    const id = randomUUID28();
     this.write(this.path(live2.run.id, `operations/${id}-intent.json`), {
       cwd: runCwd,
       args: shell ? operation.check : operation.git
     });
     let native;
+    const temporary = options.temporary ?? live2.environment?.forWorkspace(cwd);
     const environment2 = {
       ...this.o.checkEnvironment ?? {},
+      ...temporary,
       CADENCE_SUBAGENT_CHILD: "1"
     };
     const running = Promise.resolve().then(() => runProcess({
@@ -35141,7 +35287,7 @@ Partial work is preserved.`);
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "--no-lazy-fetch",
         "-c",
-        `core.hooksPath=${join42(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join43(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -35152,7 +35298,7 @@ Partial work is preserved.`);
       ]),
       windowsVerbatimArguments: shell && process.platform === "win32" ? true : undefined,
       cwd: runCwd,
-      env: shell ? environment2 : gitEnvironment(),
+      env: shell ? environment2 : { ...gitEnvironment(), ...temporary },
       retainOutput: true,
       stopTarget: id,
       signal: options.uninterruptible ? new AbortController().signal : live2.abort.signal,
@@ -35193,7 +35339,8 @@ Partial work is preserved.`);
     const step = this.step(live2, title, "check");
     try {
       const runCwd = this.executionCwd(live2, cwd);
-      const result = await this.run(live2, cwd, { check: c });
+      const temporary = live2.environment?.forWorkspace(cwd);
+      const result = await this.run(live2, cwd, { check: c }, { temporary });
       this.finishStep(live2, step, result, result.outcome === "completed" ? undefined : `${c.name} in ${runCwd}
 Command: ${c.command}
 ${result.output || result.text}`, undefined, {
@@ -35204,9 +35351,9 @@ ${result.output || result.text}`, undefined, {
         target: live2.run.delivery?.binding.target ?? null,
         environment: Object.fromEntries(["TMPDIR", "TEMP", "TMP"].map((name) => [
           name,
-          this.o.checkEnvironment?.[name] ?? null
+          temporary?.[name] ?? this.o.checkEnvironment?.[name] ?? null
         ])),
-        environmentPolicy: "Frozen owner check environment; command-local exports do not persist. Null means unset at launch, not a failed prerequisite. Resources or markers not declared by the approved commands are not prerequisites. Never inspect private state or the owner's process environment to reconstruct context."
+        environmentPolicy: "Frozen owner check environment with the run's workspace-specific temporary directory. Command-local exports do not persist. Null means unset in a retained launch, not a failed prerequisite. The owner prepares and retains temporary roots; workers must not recreate, relocate or clean them or invent a marker requirement. Never inspect private state or the owner's process environment to reconstruct context."
       });
       return { result, step };
     } finally {
@@ -35273,7 +35420,14 @@ ${step.text}` : ""}`, step?.id);
     for (const c of p.plan.setup.filter((c2) => (c2.placement ?? "worktree") === placement)) {
       if (placement === "target") {
         const { result, step } = await this.check(live2, cwd, c, `setup: ${c.name}`);
-        this.success(result, step);
+        try {
+          this.success(result, step);
+        } catch (error) {
+          if (!(error instanceof WorkflowFailure))
+            throw error;
+          throw new WorkflowFailure(error.outcome, `Target preflight did not pass: ${c.name}. Implementation has not started; no task worktree was created. No repair was dispatched into the original checkout.
+${error.message}`, step?.id);
+        }
         continue;
       }
       await this.recoverStage(live2, cwd, p, `setup: ${c.name}`, async () => {
@@ -35439,7 +35593,7 @@ ${IMPLEMENTATION_REPORT}`, false, version, undefined, kind);
     return this.recordedInvestigation(id) !== null;
   }
   investigationPath(id) {
-    return join42(this.root, "investigations", `${decodeId(id)}.json`);
+    return join43(this.root, "investigations", `${decodeId(id)}.json`);
   }
   recordedInvestigation(id) {
     try {
@@ -35497,7 +35651,7 @@ This recorded investigation is out of date: ${changed.slice(0, 8).join(", ")}${c
 ${moved}${record3.answer}`;
   }
   questionPath(question, roots2) {
-    return join42(this.root, "investigations", "questions", `${questionKey(question, roots2)}.json`);
+    return join43(this.root, "investigations", "questions", `${questionKey(question, roots2)}.json`);
   }
   answered(question, roots2) {
     try {
@@ -35551,7 +35705,7 @@ ${diagnosticText(lines.join(`
   async review(live2, cwd, p, checks) {
     live2.run.phase = "reviewing";
     this.save(live2);
-    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID27()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result, step } = await this.worker(live2, cwd, `review-${randomUUID28()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. When the fixed-revision changes tool is available, inspect the changed paths, base/deleted content and candidate diff; continue evidence cursors instead of treating previews as complete. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Acceptance checks below ran on this candidate after implementation/repair and before this review. Use their native facts as execution evidence; worker reports are not checks. Future publication/integration checks remain the owner's obligation, not missing evidence for this code review. Failed or incomplete checks never count as passing.
 Files: ${this.scope(live2, p).join(", ")}${this.deviationBrief(live2, "review")}${live2.knowledgeDone && live2.managed ? `
 This candidate also maintains the project's knowledge store (${KNOWLEDGE_SCOPE.join(", ")}). Judge those edits too: an added entry must be short, specific and anchored to code or tests that exist; a removed or rewritten entry must have been stale, duplicated, guaranteed by a test, or shortened without losing a condition; nothing may restate what the code says plainly.` : ""}
@@ -35798,7 +35952,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       if (head)
         await assertCandidate(cwd, head);
       if (checked2 && verdict === "approved") {
-        const id = randomUUID27(), steps = [...checks.map((s) => s.id), review.id];
+        const id = randomUUID28(), steps = [...checks.map((s) => s.id), review.id];
         this.write(this.path(live2.run.id, `verification/${id}.json`), {
           id,
           agreement: p.digest,
@@ -35860,7 +36014,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
   }
   knowledgeTurn(live2, lint) {
     const topics = lint.usage.topics.map((t) => t.path);
-    const path = join42(this.root, "knowledge-use.json");
+    const path = join43(this.root, "knowledge-use.json");
     try {
       const file = this.files.read(path, RECORD_BYTES3);
       const next = advanceKnowledgeUse(file ? decodeKnowledgeUse(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3)) : null, { routes: lint.routes, topics }, live2.routed ?? []);
@@ -35937,7 +36091,7 @@ ${changed.map((p) => `- ${p}`).join(`
     this.assertRunning(live2);
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
-      if (!safeDirectory(dirname26(file), true))
+      if (!safeDirectory(dirname27(file), true))
         throw new ContractError("forbidden");
       writeFileSync6(file, this.documentBody(live2, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
@@ -36131,8 +36285,8 @@ ${result.output}`}`);
         break;
       await Promise.race([
         ...running.values(),
-        new Promise((resolve15) => {
-          revised = resolve15;
+        new Promise((resolve16) => {
+          revised = resolve16;
         })
       ]);
     }
@@ -36237,7 +36391,7 @@ ${result.output}`}`);
         const file = safeWorkflowFile(this.cwd, name), before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
-        if (!safeDirectory(dirname26(file), true))
+        if (!safeDirectory(dirname27(file), true))
           throw new ContractError("unavailable");
         writeFileSync6(file, this.documentBody(live2, plan, name, [...live2.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }
@@ -36385,14 +36539,24 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
   }
   async execute(live2, request3) {
     let failure2 = "";
+    let outcome = "unknown";
     try {
       this.assertRunning(live2);
       live2.barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal);
       live2.barrier.assertHeld();
       if (live2.run.diagnostics)
         live2.run.diagnostics.acquiredAt = Date.now();
-      if (live2.proposal)
+      if (live2.proposal) {
         await this.assertStartable(live2, live2.proposal);
+        let environmentFile;
+        live2.environment = new RunEnvironment(this.o.coordination.stateHome, this.cwd, (directories) => {
+          environmentFile = this.write(this.path(live2.run.id, "environment.json"), { directories }, environmentFile);
+        }, () => {
+          this.o.owner.lease.assert();
+          if (this.o.owner.state !== "idle" || live2.abort.signal.aborted)
+            throw new ContractError("unavailable");
+        });
+      }
       if (live2.run.delivery)
         live2.delivery = new WorkflowDelivery(live2.run.delivery, new RepositoryCoordination(this.o.coordination, this.cwd, live2.run.epoch, live2.run.id, () => this.o.owner.lease.assert(), () => this.o.owner.quarantine()), () => this.save(live2));
       live2.run.status = "running";
@@ -36407,32 +36571,60 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
         throw new WorkflowFailure("unknown", "Original operation or cleanup settlement is unknown; delivery is not reported as completed.");
       if (live2.abort.signal.aborted)
         throw new WorkflowFailure("canceled", "Cancellation requested before delivery settled.");
-      live2.run.status = "completed";
-      const deviations = live2.run.deviations ?? [];
-      if (deviations.length)
-        live2.run.notice = this.notice(`Delivered with ${deviations.length} recorded deviation${deviations.length === 1 ? "" : "s"} from the agreement, each confirmed by the automatic review:`, deviations.map((d) => `${d.item} → ${d.delivered}`).join(`
-`));
+      outcome = "completed";
     } catch (error) {
-      live2.run.status = this.o.owner.state === "quarantined" ? "unknown" : live2.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
+      outcome = this.o.owner.state === "quarantined" ? "unknown" : live2.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
       failure2 = this.describe(error);
     } finally {
-      live2.run.phase = "finished";
-      if (live2.run.diagnostics)
-        live2.run.diagnostics.settledAt = Date.now();
       if (live2.delivery && this.o.owner.state === "idle") {
         try {
           live2.delivery.finish();
         } catch {
           this.o.owner.quarantine();
-          live2.run.status = "unknown";
+          outcome = "unknown";
         }
       }
+      let resources = "";
+      if (live2.environment) {
+        live2.run.notice = this.notice("Finalizing the run's temporary resources; the outcome is not yet settled.", failure2);
+        try {
+          this.saveSettlement(live2);
+        } catch {
+          this.o.owner.quarantine();
+          outcome = "unknown";
+          failure2 = this.notice(failure2, "Workflow settlement could not be recorded; temporary resources are retained.");
+        }
+        try {
+          const retained = await live2.environment.finish(this.o.owner.state === "idle" && outcome === "completed" && !live2.abort.signal.aborted);
+          if (retained.length)
+            resources = `Temporary resource paths retained or unconfirmed: ${retained.join(", ")}`;
+        } catch {
+          this.o.owner.quarantine();
+          outcome = "unknown";
+          resources = "Temporary-resource recording did not settle; remaining directories are retained.";
+        }
+      }
+      if (this.o.owner.state === "quarantined") {
+        outcome = "unknown";
+        failure2 = this.notice(failure2, "Owner settlement is unconfirmed; delivery is not reported as completed.");
+      } else if (live2.abort.signal.aborted && outcome === "completed") {
+        outcome = "canceled";
+        failure2 = this.notice(failure2, "Cancellation requested before finalization settled; actual delivery is preserved.");
+      }
+      live2.run.status = outcome;
+      live2.run.phase = "finished";
+      if (live2.run.diagnostics)
+        live2.run.diagnostics.settledAt = Date.now();
+      const deviations = outcome === "completed" ? live2.run.deviations ?? [] : [];
       const delivered = [...live2.delivered].sort();
-      live2.run.notice = this.notice(failure2, delivered.length ? `${live2.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live2.notes);
+      live2.run.notice = this.notice(deviations.length ? `Delivered with ${deviations.length} recorded deviation${deviations.length === 1 ? "" : "s"} from the agreement, each confirmed by the automatic review:
+${deviations.map((d) => `${d.item} → ${d.delivered}`).join(`
+`)}` : "", failure2, delivered.length ? `${outcome === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live2.notes, resources);
       try {
-        this.saveFinal(live2);
+        this.saveSettlement(live2);
       } catch {
         this.o.owner.quarantine();
+        live2.run.status = "unknown";
       }
       if (this.o.owner.state === "idle")
         live2.barrier?.release();
@@ -36468,7 +36660,7 @@ class Workbench {
     });
     this.conversations.assertSettled();
     this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join43(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join44(o.coordination.files.namespace, "workbench-projects-v1");
   }
   activityReaderScope() {
     return activityReaderScope(this.o.agentDir, this.o.sessionDir);
@@ -36634,7 +36826,7 @@ class Workbench {
       for (let e = directory2.readSync();e; e = directory2.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries3.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join43(this.projectRoot, e.name));
+        const saved = files.read(join44(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -36730,7 +36922,7 @@ class Workbench {
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join43(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join44(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -36748,7 +36940,7 @@ class Workbench {
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join43(this.projectRoot, `${hash(root)}.json`);
+        const entry = join44(this.projectRoot, `${hash(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -36778,7 +36970,7 @@ async function predecessorExited() {
     } catch {
       return;
     }
-    await new Promise((resolve15) => setTimeout(resolve15, 100));
+    await new Promise((resolve16) => setTimeout(resolve16, 100));
   }
 }
 async function healBeforeStart(c) {
@@ -36816,8 +37008,8 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join44(store.tasks, entry.name, "task.json");
-      const size3 = lstatSync27(path).size;
+      const path = join45(store.tasks, entry.name, "task.json");
+      const size3 = lstatSync28(path).size;
       if (size3 > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size3);
@@ -36952,8 +37144,8 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         let timer;
         await Promise.race([
           owner?.idle(),
-          new Promise((resolve15) => {
-            timer = setTimeout(resolve15, FAULT_SETTLE_MS);
+          new Promise((resolve16) => {
+            timer = setTimeout(resolve16, FAULT_SETTLE_MS);
           })
         ]);
         clearTimeout(timer);

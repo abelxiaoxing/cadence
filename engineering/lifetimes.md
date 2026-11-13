@@ -7,6 +7,7 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
+Approved delivery also owns its workspace-specific temporary environments through actual cleanup settlement; failed or uncertain runs and owner restarts retain those resources, never reclaim them by age or replay their allocation (see [checks and review](checks-review.md#automatic-conversation-workflow)).
 Model-request recovery stays inside the original SDK session, without a total runtime deadline; its checkout gate remains held during abortable backoff.
 The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
 A workflow worker runs unattended, so its retry settings are Pi's with a floor (`UNATTENDED_RETRY` in `src/worker-model.mjs`: 12 retries, backoff capped at 5 min, about half an hour at Pi's base delay) unless the user turned retries off; a conversation turn, the coordinator's included, keeps Pi's own settings.

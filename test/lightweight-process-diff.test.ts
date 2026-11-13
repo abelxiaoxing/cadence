@@ -1755,3 +1755,57 @@ it("explicit cancellation keeps its source and waits for actual close", async ()
     vi.useRealTimers();
   }
 });
+
+it("a delivery worker receives only the owner's temporary overlay without changing the owner or its pinned auth/network", async () => {
+  const inherited = {
+    TMPDIR: process.env.TMPDIR,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+  };
+  const child = lifecycleChild("");
+  const material = legacyWorkerEnvelope({
+    cwd: "/fixture",
+    model: { id: "fixed", provider: "fixture", api: "openai-completions" },
+    auth: { ok: true, apiKey: "fixture", env: { TMPDIR: "/provider-literal" } },
+    kind: "code",
+    prompt: "Work",
+    instructions: "Fixture",
+  });
+  const prepared = {
+    refreshAuth: async () => material.auth,
+    consume<T>(encode: (value: any) => string, use: (wire: string) => T): T {
+      return use(encode(material));
+    },
+  };
+  const running = launchWorkflowWorker(
+    prepared,
+    material.cwd,
+    new AbortController().signal,
+    {
+      temporaryDirectory: "/owner/run/temporary",
+      ownerSecrets: [],
+      maySignal: () => true,
+      onNative() {},
+      onFrame() {},
+    },
+  );
+  expect(launchCall()[2]?.env).toMatchObject({
+    TMPDIR: "/owner/run/temporary",
+    TEMP: "/owner/run/temporary",
+    TMP: "/owner/run/temporary",
+    PI_OFFLINE: "1",
+    CADENCE_SUBAGENT_CHILD: "1",
+  });
+  expect(launchCall()[2]?.env).not.toHaveProperty("apiKey");
+  expect(JSON.parse(child.stdin!.end.mock.calls[0][0]).auth.env).toEqual({
+    TMPDIR: "/provider-literal",
+  });
+  expect({
+    TMPDIR: process.env.TMPDIR,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+  }).toEqual(inherited);
+  child.stdout.emit("data", workerFrames(child));
+  child.emit("close", 0, null);
+  expect(await running).toMatchObject({ outcome: "completed", closed: true });
+});

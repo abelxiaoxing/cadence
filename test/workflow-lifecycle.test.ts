@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { CheckoutGate } from "../src/service/checkout-gate.ts";
+import {
+  WORKFLOW_LIMITS,
+  workflowContext,
+  workflowPlanInput,
+} from "../src/service/contracts/workflow.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import {
   reviewVerdict,
@@ -83,7 +88,11 @@ it.each([
     } as unknown as ConstructorParameters<typeof Workflows>[0]);
     const replace = vi.spyOn(coordination.files, "replace");
     let observed = false;
+    let temporaryDirectory: string | undefined;
     worker.mockImplementationOnce(async (_prepared, _cwd, _signal, options) => {
+      temporaryDirectory = options.temporaryDirectory;
+      expect(!!temporaryDirectory).toBe(editing);
+      if (temporaryDirectory) expect(existsSync(temporaryDirectory)).toBe(true);
       const writes = replace.mock.calls.length;
       const at = Date.now();
       for (const kind of ["spawned", "stop-requested", "closed"] as const) {
@@ -164,6 +173,13 @@ it.each([
         });
       await workflows.join(id);
       expect(observed).toBe(true);
+      if (editing) expect(existsSync(temporaryDirectory!)).toBe(true);
+      else
+        expect(
+          readdirSync(coordination.stateHome).some((n) =>
+            n.startsWith("cadence-run-"),
+          ),
+        ).toBe(false);
       const view = workflows.view(id);
       if (view.kind !== "workflow" || view.response.type !== "run")
         throw Error("run");
@@ -191,9 +207,16 @@ it.each([
   },
 );
 
-it.each(["implementation", "diagnosis", "review"])(
-  "%s preserves completion boundaries independently of diagnostic truncation",
-  async (kind) => {
+it.each([
+  ["implementation", false],
+  ["diagnosis", false],
+  ["review", false],
+  ["implementation", true],
+  ["diagnosis", true],
+  ["review", true],
+] as const)(
+  "%s preserves completion boundaries independently of diagnostic truncation (full agreement: %s)",
+  async (kind, fullAgreement) => {
     const cwd = mkdtempSync(join(tmpdir(), "workflow-report-projection-"));
     const epoch = randomUUID();
     const version = {
@@ -246,11 +269,41 @@ it.each(["implementation", "diagnosis", "review"])(
         steps: [],
       },
     };
+    let agreement: string | undefined;
+    if (fullAgreement) {
+      const definition = plan();
+      definition.design += "x".repeat(
+        WORKFLOW_LIMITS.context -
+          Buffer.byteLength(workflowContext(definition)),
+      );
+      const approved = workflowPlanInput(definition);
+      agreement = workflowContext(approved);
+      expect(Buffer.byteLength(agreement)).toBe(WORKFLOW_LIMITS.context);
+      Object.assign(live, {
+        proposal: { plan: approved },
+        environment: {
+          forWorkspace: () => ({
+            TMPDIR: "/owned-temporary",
+            TEMP: "/owned-temporary",
+            TMP: "/owned-temporary",
+          }),
+        },
+      });
+    }
+    // Escaped, long placement metadata must not overflow the separate
+    // instructions field either. Filesystem operations remain controlled here.
+    const executionRoot = fullAgreement
+      ? `/${Array(16).fill('"'.repeat(240)).join("/")}`
+      : cwd;
+    const executionCwd = fullAgreement ? `${executionRoot}/scoped` : cwd;
+    const requests: { request: { context: string; instructions: string } }[] =
+      [];
     const owner = Object.assign(Object.create(Workflows.prototype), {
-      cwd,
+      cwd: executionRoot,
       root: cwd,
       assertRunning() {},
-      executionCwd: () => cwd,
+      executionCwd: () => executionCwd,
+      reader: async () => ({ writes: [], named: {} }),
       save() {},
       write: () => ({}),
       o: {
@@ -264,10 +317,15 @@ it.each(["implementation", "diagnosis", "review"])(
         models: {
           workerSettings: () => fixtureRuntime(),
           assertCurrent() {},
-          prepareTracked: () => ({
-            result: Promise.resolve({ status: "prepared", prepared: {} }),
-            settled: Promise.resolve(),
-          }),
+          prepareTracked: (input: {
+            request: { context: string; instructions: string };
+          }) => {
+            requests.push(input);
+            return {
+              result: Promise.resolve({ status: "prepared", prepared: {} }),
+              settled: Promise.resolve(),
+            };
+          },
         },
       },
     });
@@ -302,7 +360,7 @@ it.each(["implementation", "diagnosis", "review"])(
     try {
       const { result, step } = await owner.worker(
         live,
-        cwd,
+        executionRoot,
         "assignment",
         "Inspect fixture",
         kind !== "implementation",
@@ -310,6 +368,19 @@ it.each(["implementation", "diagnosis", "review"])(
         undefined,
         kind,
       );
+      if (agreement) {
+        expect(requests[0].request.context).toBe(agreement);
+        expect(requests[0].request.instructions).toContain(
+          JSON.stringify(executionRoot),
+        );
+        expect(requests[0].request.instructions).toContain(
+          '"cwdRelativeToCheckout":"scoped"',
+        );
+        expect(
+          Buffer.byteLength(requests[0].request.instructions),
+        ).toBeLessThanOrEqual(16 * 1024);
+        expect(requests[0].request.instructions).toContain("TMPDIR");
+      }
       if (kind === "review") {
         expect(reviewVerdict(result.text)).toBeNull();
         expect(step.status).toBe("failed");
