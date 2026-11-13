@@ -37,7 +37,7 @@ Settled failures enter readonly diagnosis; authority, storage, cancellation and 
 An edit outside the write scope is a settled failure when it stays inside the repository boundary (`workflowBoundary`) and its attempt's step can be cited: the diagnosis adopts or restores it.
 Changes found outside the scope when a candidate is about to be committed are recorded as their own failed `write-scope` step and decided the same way.
 A protected path (credentials, keys, `.env`, `.git`) or an uncitable attempt still ends the run with the edits preserved.
-The same approach meeting unchanged failure/source evidence does not replay: the decision moves up one level (repair, then a revised route, then a recorded deviation) and the run ends only when the top level also repeats.
+The same operation meeting unchanged failure/source evidence does not replay merely because the model rephrased its strategy or repair instructions: the decision moves up one level (repair, then a revised route, then a recorded deviation) and the run ends only when the top level also repeats.
 A recovery reply the owner cannot act on is asked again with the reason, at most twice per failure (`OBJECTIONS`), before it ends the stage.
 Only a named condition outside the repository blocks a delivery (`BLOCKERS`: model, authentication, storage, target, installation, tool); it is retained as an unsuccessful delivery, never success or a fabricated user request.
 The general workflow command remains native-only.

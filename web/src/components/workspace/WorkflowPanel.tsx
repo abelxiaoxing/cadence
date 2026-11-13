@@ -508,6 +508,7 @@ function WorkflowCardView({
           )}
         </nav>
       )}
+      {shown && <WorkflowAttemptSummary steps={shown.steps} />}
       {shown?.steps.map((step) => (
         <details key={step.id} className="chat-tool">
           <summary>
@@ -584,6 +585,33 @@ function WorkflowCardView({
         {t("Observe current state")}
       </button>
     </article>
+  );
+}
+
+/** Counts only the selected retained page; incomplete assignments are not
+ * native crashes, nor successful delivery. */
+export function WorkflowAttemptSummary({
+  steps,
+}: {
+  steps: readonly WorkflowStep[];
+}) {
+  const { t } = useT();
+  const count = (status: WorkflowStep["status"]) =>
+    steps.filter((s) => s.status === status).length;
+  const partial = count("partial"),
+    blocked = count("blocked");
+  if (!partial && !blocked) return null;
+  return (
+    <p className="inspector-note">
+      {t(
+        "Attempts shown: {partial} partial · {blocked} blocked · {failed} failed",
+        { partial, blocked, failed: count("failed") },
+      )}
+      {" · "}
+      {t(
+        "Partial or blocked assignments preserve work; they are not process failures or delivery approval.",
+      )}
+    </p>
   );
 }
 

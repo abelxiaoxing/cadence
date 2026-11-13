@@ -678,3 +678,23 @@ it("keeps the fake-agent demo's two settled cards without executing work", async
   expect(h.live()).toEqual([]);
   h.emit("session_shutdown");
 });
+
+it("partial and blocked workers form neutral retained cards, never failure or success counts", () => {
+  const store = new SubagentStore(() => 1000);
+  for (const status of ["partial", "blocked"]) {
+    store.apply(E.start, {
+      id: status,
+      label: status,
+      kind: "Implementation",
+      startedAt: 100,
+    });
+    store.apply(E.end, { id: status, status, endedAt: 1000 });
+  }
+  const card = cardOf(store.ordered());
+  expect(decodeCard(card)).toEqual(card);
+  const lines = cardLines(card, false, 150, paint).join("\n");
+  expect(lines).toContain("1 partial");
+  expect(lines).toContain("1 blocked");
+  expect(lines).not.toContain("failed");
+  expect(lines).not.toContain("2 done");
+});

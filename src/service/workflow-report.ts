@@ -135,7 +135,7 @@ export function implementationReport(
   reply: string,
   secrets: readonly string[] = [],
 ): {
-  status: "completed" | "blocked";
+  status: "completed" | "partial" | "blocked";
   summary: string;
   /** What the worker proposes as worth knowing next time; unverified. */
   lessons?: string[];
@@ -150,7 +150,12 @@ export function implementationReport(
       "summary",
       ...(Object.hasOwn((raw ?? {}) as object, "lessons") ? ["lessons"] : []),
     ]);
-    if (o.status !== "completed" && o.status !== "blocked") return null;
+    if (
+      o.status !== "completed" &&
+      o.status !== "partial" &&
+      o.status !== "blocked"
+    )
+      return null;
     if (typeof o.summary !== "string" || !o.summary.trim()) return null;
     if (
       o.lessons !== undefined &&
@@ -209,6 +214,9 @@ export class WorkflowTranscript {
   private trackReport(frame: CaptureFrame): void {
     const e = frame.event;
     if (e.kind === "tool-start") {
+      // Inspection cannot change the reported candidate. Unknown tools, shell,
+      // writes and a replacement report still invalidate it before admission.
+      if (["read", "grep", "find", "ls", "changes"].includes(e.name)) return;
       this.reportText = undefined;
       this.reportDetails.clear();
       this.reportCapture = undefined;

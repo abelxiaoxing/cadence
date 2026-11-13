@@ -85,10 +85,11 @@ export function createWorkerToolkit(options) {
       name: "cadence_report",
       label: "Report assignment outcome",
       description:
-        "Submit this assignment's structured result after all work. Completed means assigned work is done, not that owner checks or review passed. Use blocked for remaining work. Then give a brief final answer; no JSON formatting is required in that answer. Any later tool call requires a new report.",
+        "Submit this assignment's structured result after all work. Completed means assigned work is done, not that owner checks or review passed. Use partial when useful work is preserved but assigned work remains, or blocked when a concrete prerequisite prevents further progress. Neither is an execution crash or passing verification. Then give a brief final answer; no JSON formatting is required in that answer. Any later editing, shell or unknown tool call requires a new report; readonly inspection does not invalidate it.",
       parameters: Type.Object({
         status: Type.Union([
           Type.Literal("completed"),
+          Type.Literal("partial"),
           Type.Literal("blocked"),
         ]),
         summary: Type.String({ minLength: 1, maxLength: 8192 }),
@@ -103,7 +104,7 @@ export function createWorkerToolkit(options) {
       async execute(_id, input) {
         if (
           !input ||
-          !["completed", "blocked"].includes(input.status) ||
+          !["completed", "partial", "blocked"].includes(input.status) ||
           typeof input.summary !== "string" ||
           !input.summary.trim() ||
           Object.keys(input).some(

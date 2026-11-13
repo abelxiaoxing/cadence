@@ -31,6 +31,8 @@ export class AttemptFailure extends Error {
   constructor(
     message: string,
     readonly steps: string[],
+    /** Stable operation/failure identity, independent of model prose. */
+    readonly identity?: string,
   ) {
     super(message);
   }
@@ -383,7 +385,11 @@ export interface RecoveryPorts {
   /** Durably records the revision and returns the number the run gave it. */
   record(record: RecoveryRecord): number;
   /** `revision` is the recorded decision this work belongs to. */
-  execute(work: RecoveryWork, revision: number): Promise<void>;
+  execute(
+    work: RecoveryWork,
+    revision: number,
+    failure: AttemptFailure,
+  ): Promise<void>;
 }
 /** An unusable reply is asked again this many times before it ends the stage. */
 const OBJECTIONS = 2;
@@ -419,23 +425,39 @@ export class DeliveryController {
   async complete<T>(stage: string, action: () => Promise<T>): Promise<T> {
     let repair: RecoveryWork[] = [];
     let recorded = 0;
+    let failure: AttemptFailure | undefined;
+    let original: AttemptFailure | undefined;
     // Escalation holds for the rest of this stage.
     let floor: RecoveryLevel = "repair";
     for (;;) {
       this.ports.assertRunning();
       try {
         while (repair.length) {
-          await this.ports.execute(repair[0], recorded);
+          if (!failure) throw new Error("Recovery has no original failure");
+          await this.ports.execute(repair[0], recorded, failure);
           repair.shift();
         }
         return await action();
       } catch (error) {
         if (!(error instanceof AttemptFailure)) throw error;
+        // A failed repair must not replace the operation it was meant to fix.
+        // Keep the original facts plus the latest repair, not an ever-growing
+        // chain of clipped model summaries.
+        if (!repair.length) original = error;
+        const attempt =
+          repair.length && original
+            ? new AttemptFailure(
+                error.message,
+                [...new Set([...original.steps, ...error.steps])],
+                `${original.identity ?? stage}:repair:${error.identity ?? "incomplete"}`,
+              )
+            : error;
+        failure = attempt;
         this.ports.assertRunning();
         const observation = await this.ports.observe();
         let decision: RecoveryDecision;
         for (;;) {
-          decision = await this.decide(error, floor);
+          decision = await this.decide(attempt, floor);
           this.ports.assertRunning();
           if (decision.action === "blocked") break;
           const fingerprint = createHash("sha256")
@@ -443,16 +465,16 @@ export class DeliveryController {
               canonicalJson({
                 stage,
                 observation,
-                failure: error.message.replace(
-                  /[0-9a-f]{8}-[0-9a-f-]{27,}/gu,
-                  "<step>",
-                ),
+                failure:
+                  attempt.identity ??
+                  attempt.message.replace(
+                    /[0-9a-f]{8}-[0-9a-f-]{27,}/gu,
+                    "<step>",
+                  ),
                 level: decision.level,
-                strategy: decision.strategy.trim().toLowerCase(),
-                work: decision.work,
-                scope: decision.scope,
-                route: decision.route,
-                deviation: decision.deviation,
+                // Prose (including work instructions) is not new evidence.
+                // A failed changed approach without an observable change must
+                // escalate too; the next level may revise scope/route.
               }),
             )
             .digest("hex");
@@ -460,7 +482,7 @@ export class DeliveryController {
             this.tried.add(fingerprint);
             break;
           }
-          // The same evidence met the same approach: the next level decides.
+          // The same operation and observed state failed again: the next level decides.
           const next =
             RECOVERY_LEVELS[RECOVERY_LEVELS.indexOf(decision.level) + 1];
           if (!next)
@@ -473,7 +495,7 @@ export class DeliveryController {
           revision: ++this.revision,
           stage,
           observation,
-          failure: error.message,
+          failure: attempt.message,
           decision,
         };
         recorded = this.ports.record(record);
@@ -496,7 +518,7 @@ Choose the least departure that can work:
 - level "replan": a different implementation or split of the remaining work; list in "scope" any further repository files it must write. Files edited outside the scope so far are either adopted this way, when the goal needs them, or restored by a work item. While assignments are still waiting to start you may also revise them in "route": drop one that the new approach makes wrong or unnecessary, add one, or give one again under its own ID to rewrite it. An assignment that already started cannot change; what remains of the failed one is your work items. Every assignment that waits for a dropped one must be dropped or rewritten too.
 - level "deviate": only when an acceptance item or decision cannot be met as written. Deliver the closest achievable result and record the deviation: the item, the evidence it is impossible, what is delivered instead, and in "waives" any declared check that can no longer pass because of it. An independent review must find it necessary and minimal, and it leads the final report.
 Use action "blocked" only for a condition outside the repository that no route can remove, and name it in "blocker": an unavailable model, failed authentication, storage or permission limits, a target branch changed from outside, an installation this agreement does not allow, or a missing tool. A hard problem is not a blocker.
-Every continuation needs a reason grounded in new evidence or a different approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
+The execution context supplied with evidence is authoritative about what ran and where. Project guidance that applies only when a resource was declared does not create a missing resource requirement: do not demand an original temporary directory or marker unless the approved commands actually declared one. Never ask a repair worker to obtain undisclosed owner records, inspect private state or reconstruct the owner environment. Strategy text is explanation only; executable repair actions must be in work. A repair that reports partial progress does not resolve the original failure. Rewording a strategy or work instructions is not progress: the same failed operation with unchanged observed state escalates. Every continuation needs new evidence or an actionable changed approach, not another copy of a failed attempt. Model-request recovery belongs to the SDK and is never permission to replay a workflow step. The owner will run the acceptance checks and independent review again.
 ${REPLY}`;
 /** Terminal model-request failure after SDK recovery (or a nonretryable error).
  * This ends delivery, never opens another provider-dependent diagnosis/replay loop.

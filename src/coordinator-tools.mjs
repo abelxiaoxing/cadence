@@ -114,9 +114,26 @@ export const PLAN_PARAMETERS = Type.Object({
     description: "The real acceptance commands: at least one, at most 16.",
   }),
   setup: Type.Optional(
-    Type.Array(CHECK, {
-      description: "One-time preparation commands, at most four.",
-    }),
+    Type.Array(
+      Type.Object({
+        ...CHECK.properties,
+        placement: Type.Union(
+          [
+            Type.Literal("target"),
+            Type.Literal("candidate"),
+            Type.Literal("worktree"),
+          ],
+          {
+            description:
+              "target: preflight once in the original checkout before creating worktrees; candidate: once in the stable candidate; worktree: prepare the candidate and every detached child. Target branch checks belong to target, never worktree. Commands do not export environment into later processes.",
+          },
+        ),
+      }),
+      {
+        description:
+          "Explicit preparation commands with their execution placement, at most four. Run in target, candidate, then worktree stages, preserving order within each stage.",
+      },
+    ),
   ),
   baselineChecks: Type.Optional(Type.Array(CHECK)),
   delivery: Type.Union([

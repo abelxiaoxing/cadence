@@ -52,7 +52,9 @@ That observation holds one of the owner's viewer attachments, so departure (incl
 `CADENCE_AGENT_PANEL=off` turns that observation off.
 The small workflow roster uses the idle interval until this conversation has a followed run, then the active interval; timing constants live in `src/agent-panel-cadence.ts`.
 Only research, implementation, diagnosis, knowledge and review steps first observed running are announced; first-seen settled steps and unattributed legacy tasks are not loaded into the native panel.
-Workflow review rejections are announced and counted as `rejected`, never as agent errors; the browser dock also shows `rejected` separately from `failed`.
+Workflow review rejections are announced and counted as `rejected`, never as agent errors; assignment reports retain `partial` and `blocked` separately too.
+Native cards and the browser dock do not count those as crashes or completed assignments.
+The workflow view counts incomplete reports on the selected step page without inferring a delivery outcome.
 Legacy task history and the WebUI's project-wide dock remain unchanged.
 A run that leaves the active roster remains attributed until its final observation; a failed roster read is not proof of completion.
 A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or a persistently unreadable workflow) ends as an error that says so; `/cadence-history` keeps the actual outcome.
@@ -64,7 +66,7 @@ Settled children leave the feed immediately; completed runs are no longer read.
 Elapsed time counts from when this session first observed a child; no tokens are shown because the owner records no usage.
 Opening a running child reads its retained messages, tool calls and results through the workflow reader, with bounded text fields; full retained evidence stays in `/cadence-history`.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
-Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `rejected`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
+Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `rejected`, `partial`, `blocked`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
 The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
 Nothing shows while no agent runs.

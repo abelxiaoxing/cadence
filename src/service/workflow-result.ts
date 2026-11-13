@@ -39,6 +39,7 @@ function excerpt(value: string, budget: number): string {
 function boundedResult(
   value: unknown,
   [textKey, outputKey, truncatedKey]: string[],
+  maximum = WORKFLOW_RESULT_BYTES,
 ) {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new ContractError("corrupt-selected");
@@ -57,8 +58,7 @@ function boundedResult(
     [outputKey]: "",
     [truncatedKey]: false,
   };
-  const budget =
-    WORKFLOW_RESULT_BYTES - Buffer.byteLength(JSON.stringify(result));
+  const budget = maximum - Buffer.byteLength(JSON.stringify(result));
   if (budget < 0) throw new ContractError("oversize");
   const keptText = excerpt(text, budget);
   const keptOutput = excerpt(output, budget - stringBytes(keptText));
@@ -96,7 +96,15 @@ export function workflowResultDetail(
   const keys = ["text", "output", "truncated"].map((key) =>
     sanitizeText(key, secrets),
   );
-  const result = boundedResult(record[resultKey], keys);
+  // New check records also carry execution context. Budget the actual wrapper,
+  // rather than assuming every record contains only stepId and result.
+  const wrapper =
+    Buffer.byteLength(JSON.stringify({ ...record, [resultKey]: null })) - 4;
+  const result = boundedResult(
+    record[resultKey],
+    keys,
+    Math.min(WORKFLOW_RESULT_BYTES, 256 * 1024 - wrapper),
+  );
   record[resultKey] = result;
   return {
     text: canonicalJson(record, 256 * 1024),

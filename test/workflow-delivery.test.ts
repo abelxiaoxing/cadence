@@ -109,8 +109,8 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
       let text: string,
         report = null;
       if (kind === "diagnosis") {
-        const failed = live.run.steps.find(
-          (s: { status: string }) => s.status === "failed",
+        const failed = live.run.steps.find((s: { status: string }) =>
+          ["failed", "partial", "blocked"].includes(s.status),
         )! as { id: string };
         expect(readFileSync(join(cwd, "partial.txt"), "utf8")).toBe(
           "preserved",
@@ -174,12 +174,12 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
   expect(checks).toBe(3);
   expect(reviews).toBe(3);
   expect(readFileSync(join(cwd, "knowledge.md"), "utf8")).toContain("Verified");
-  expect(owner.setup).toHaveBeenCalledTimes(1);
+  expect(owner.setup).toHaveBeenCalledTimes(2); // candidate, then per-worktree preparation
   expect(owner.publish).toHaveBeenCalledTimes(1);
   expect([...records.keys()].some((p) => p.includes("revisions/1.json"))).toBe(
     true,
   );
   expect(
-    live.run.steps.some((s: { status: string }) => s.status === "failed"),
+    live.run.steps.some((s: { status: string }) => s.status === "blocked"),
   ).toBe(true);
 });
