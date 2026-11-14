@@ -253,6 +253,63 @@ it("a refused native execute leaves its grant usable; retained non-conforming pr
   );
 });
 
+it("consent recording runs once at admission, before grant consumption and accepted work, never for a receipt", async () => {
+  const f = owner();
+  const published = f.workflows.command(randomUUID(), f.epoch, {
+    action: "propose",
+    plan: { ...plan(), delivery: "working-copy" },
+    model: f.version,
+  });
+  if (published.kind !== "workflow" || published.response.type !== "proposal")
+    throw Error("proposal");
+  const p = published.response.proposal;
+  const prepared = f.workflows.command(randomUUID(), f.epoch, {
+    action: "prepare",
+    proposalId: p.id,
+    digest: p.digest,
+  });
+  if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
+    throw Error("grant");
+  const execute: WorkflowRequest = {
+    action: "execute",
+    proposalId: p.id,
+    digest: p.digest,
+    grant: prepared.response.grant,
+  };
+  const beforeAdmission = vi.fn<() => void>(() => {
+    throw Error("recording failed");
+  });
+  expect(() =>
+    f.workflows.command(randomUUID(), f.epoch, execute, { beforeAdmission }),
+  ).toThrow("recording failed");
+  expect(f.workflows.activeRuns().runs).toEqual([]);
+  const id = randomUUID();
+  beforeAdmission.mockImplementation(() => {
+    expect(f.workflows.activeRuns().runs).toEqual([]);
+    expect(
+      f.coordination.files.directory(
+        join(f.coordination.directory, "workflows-v1", "runs", id),
+      ),
+    ).toBe(false);
+  });
+  try {
+    const accepted = f.workflows.command(id, f.epoch, execute, {
+      beforeAdmission,
+    });
+    expect(accepted).toMatchObject({
+      kind: "workflow",
+      response: { type: "run" },
+    });
+    expect(
+      f.workflows.command(id, f.epoch, execute, { beforeAdmission }),
+    ).toEqual(accepted);
+    expect(beforeAdmission).toHaveBeenCalledTimes(2); // failed recorder, then one admission
+  } finally {
+    f.workflows.command(randomUUID(), f.epoch, { action: "cancel", runId: id });
+    await f.workflows.join(id);
+  }
+});
+
 it("approval binds Pi preferences; a changed tool/settings snapshot needs fresh confirmation", () => {
   const f = owner();
   const p = f.workflows.command(randomUUID(), f.epoch, {

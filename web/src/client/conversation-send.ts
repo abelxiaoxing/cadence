@@ -51,7 +51,7 @@ export type PreparationStage = "not-dispatched" | "dispatched" | "confirmed";
 export type PreparationProgress = (
   stage: Exclude<PreparationStage, "not-dispatched">,
 ) => void;
-export type PrepareForSend = (
+export type PrepareExecution = (
   signal: AbortSignal,
   location?: ConversationLocation,
   progress?: PreparationProgress,
@@ -59,7 +59,7 @@ export type PrepareForSend = (
 
 /** One budget covers the gateway read, prepare POST/body and fresh attachment. */
 export async function waitForPreparation(
-  prepare: PrepareForSend,
+  prepare: PrepareExecution,
   departure: AbortSignal,
   location: ConversationLocation | undefined,
   progress: PreparationProgress,

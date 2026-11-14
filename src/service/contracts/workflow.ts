@@ -159,6 +159,8 @@ export interface DeliveryObservation {
   cleanup: { status: "pending" | "removed" | "retained"; reason: string };
 }
 export interface WorkflowProposal {
+  /** Immutable prior binding of the same plan; never inherited execution consent. */
+  revalidatedFrom?: string;
   delivery?: DeliveryBinding;
   id: string;
   epoch: string;
@@ -1113,9 +1115,13 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
     "cwd",
     ...(Object.hasOwn(v ?? {}, "checkoutRoot") ? ["checkoutRoot"] : []),
     ...(Object.hasOwn(v ?? {}, "delivery") ? ["delivery"] : []),
+    ...(Object.hasOwn(v ?? {}, "revalidatedFrom") ? ["revalidatedFrom"] : []),
     ...(modern ? ["display"] : []),
   ]);
   return {
+    ...(o.revalidatedFrom === undefined
+      ? {}
+      : { revalidatedFrom: decodeId(o.revalidatedFrom) }),
     ...(o.delivery === undefined
       ? {}
       : { delivery: decodeDeliveryBinding(o.delivery) }),

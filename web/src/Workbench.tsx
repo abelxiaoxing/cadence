@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity } from "../../src/service/contracts/activity.ts";
 import {
   decodeWorkbenchEntry,
+  type ExecutionPreparation,
   type ProjectEntry,
   type WorkbenchEntry,
 } from "../../src/service/contracts/gateway.ts";
@@ -30,7 +31,7 @@ import {
 } from "./client/last-project";
 import { readModelPreview } from "./client/model-preview";
 import {
-  prepareDirectorySend,
+  prepareDirectoryExecution,
   selectActivity,
   selectDirectory,
 } from "./client/project-entry";
@@ -44,8 +45,8 @@ import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
 import { ServiceDialog } from "./components/workspace/ServiceDialog";
 import { describeError, useT } from "./i18n/locale";
 
-/** Entry discovery and directory selection never start execution. Only the
- * current explicit Send prepares a project owner.
+/** Entry discovery and directory selection never start execution. Only an
+ * explicit Send or plan-validation action prepares a project owner.
  * Scope changes remount the thin project client, detaching rather than stopping.
  * An unselected first entry returns to the last project without requiring a running execution owner. */
 export function Workbench() {
@@ -232,15 +233,17 @@ export function Workbench() {
         },
       }
     : undefined;
-  const prepareSend = async (
+  const prepareExecution = async (
+    purpose: ExecutionPreparation,
     signal: AbortSignal,
     location?: ConversationLocation,
     progress?: PreparationProgress,
   ) => {
     const selectedProject = entry?.projects.find((p) => p.id === selected);
     if (!selectedProject) throw new Error("unavailable");
-    const ready = await prepareDirectorySend(
+    const ready = await prepareDirectoryExecution(
       selectedProject,
+      purpose,
       signal,
       location,
       progress,
@@ -327,7 +330,7 @@ export function Workbench() {
             .map((p) => p.id)
             .sort()}
           discovery={discovery}
-          onPrepareSend={prepareSend}
+          onPrepareExecution={prepareExecution}
           onChooseFolder={(cwd) => {
             navigation.current?.abort();
             setPicker(cwd ?? project.cwd);

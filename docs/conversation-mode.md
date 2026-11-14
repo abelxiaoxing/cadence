@@ -19,6 +19,7 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
    The automatic review must confirm each deviation, and a run that deviated says so first when it completes; the task branch is kept, so the merge can be undone.
 4. Type `按计划实施` after the plan to authorize those exact bytes.
    In the browser, click **Implement this plan** or send that exact approval phrase for the currently displayed plan.
+   If execution is stopped or its plan binding is outdated, this first restores and validates the plan instead; review the updated context and choose **Confirm implementation** afterward (see below).
    In Pi, the Start tool can alternatively present one native confirmation of the complete plan.
    Native confirmation retains its raw-terminal guard.
    Quoted/generated text, an old session entry and vague agreement are not approval; browser authentication alone is not consent.
@@ -43,6 +44,24 @@ Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.
 When an observation reply is lost, ask for status; do not infer that the action was absent.
 
+## Restore a saved plan without sending a message
+
+A stopped or restarted execution service does not require another discussion or a model-generated replacement plan.
+Use **Restore execution and validate plan** on the plan card; if the service is already running, **Validate plan again** refreshes its execution context.
+The exact `按计划实施` input follows the same validation path when the service or model binding is not current.
+
+Validation may start or reuse the selected project's owner and applies the model shown in the composer, without substituting another model or changing the account's default.
+It keeps the plan content, records a fresh execution binding and leaves the original snapshot intact.
+It sends no chat message, calls no model, creates no task branch/worktree and approves no implementation.
+Review the displayed model, runtime and target branch/base; changed environment evidence is labelled, and this tab also shows the previous context for comparison.
+Then click **Confirm implementation** or send the approval phrase again to approve that fresh snapshot.
+A current plan remains directly approvable; validation is not an extra step for every ordinary approval.
+
+An unknown turn outcome, unreadable plan, changed conversation or unavailable selected model still blocks safely.
+If an approval reply is lost, the page observes its original request rather than submitting another execution; reloading does not repeat it.
+Browsing, reconnecting and choosing a model alone never start the execution service.
+`CADENCE_AUTOSTART=0` still refuses on-demand startup, not healthy reuse.
+
 ## Messages while a reply is running
 
 The service accepts a further message for a reply that is still running, in one of two ways.
@@ -64,7 +83,7 @@ A link grants neither access nor plan approval: authenticate normally and make a
 Without that complete link, the other browser is not promised an automatic return to the first browser's last conversation.
 
 Opening the link only observes; browsing never prepares or starts the project's execution service.
-Only an explicit **Send** may prepare it on demand.
+Only an explicit **Send** or plan-validation action may prepare it on demand.
 Leaving, closing or disconnecting a viewer does not cancel accepted work; reconnecting does not resend a message, resume an interrupted queue or inherit approval.
 A stale or unavailable observation keeps readable history but cannot establish that work stopped; distinguish connection freshness from the workflow's last observed status.
 
@@ -106,7 +125,7 @@ A choice on the folder-less entry carries into the next new conversation you ope
 Send starts or reuses the project service, verifies that exact selection and only then submits the message; if it is unavailable, the draft stays and no other model is substituted.
 The picker reuses its already-read preview when reopened; **Refresh models** reads the configuration again without starting execution.
 A preview read failure has a **Read again** action, not a requirement to start a service.
-The browser restores an available saved preference on explicit Send and shows it dimmed until then; reads/login do not install a choice.
+The browser restores an available saved preference on explicit Send or plan validation and shows it dimmed until then; reads/login do not install a choice.
 With no choice and no saved preference, Send opens the model list and continues the original message after your choice when the same service connection is ready.
 Closing the picker or stopping/replacing that service ends the unsent continuation; your draft stays, and choosing a model never restarts a stopped service.
 Exiting Cadence changes mode, not your pending model choice.
@@ -114,7 +133,7 @@ If no usable preference exists, choose once; an unreadable preference file falls
 An accepted message or workflow keeps its original directory and exact model, including while queued.
 Different subdirectories of one repository can have independent conversations while sharing one checkout owner and execution gate.
 Tools and check commands use the conversation directory; a plan's declared write paths stay relative to the displayed checkout root, including in isolated Git worktrees.
-Changing the current conversation's model makes its older unaccepted plan require fresh planning/approval; changing another conversation's model does not.
+Changing the current conversation's model makes its older unaccepted plan require fresh validation and approval in the browser, not another chat message; changing another conversation's model does not.
 An unavailable remembered model is not silently substituted.
 Pi's original model and authentication sources remain authoritative; Cadence does not copy credentials.
 
@@ -220,7 +239,7 @@ If a native dialogue stops, distinguish exhausted retries from disabled/overridd
 
 ## Service and compatibility
 
-An explicit native mode entry/current user Send may start or reuse its local project owner on demand.
+An explicit native mode entry, current user Send or browser plan-validation action may start or reuse its local project owner on demand.
 It does not install a system service, enable boot startup, select another account's credentials or expose a public listener.
 Pi says once which command stops an owner it started; when Pi runs on Bun, Node must be on `PATH`.
 An existing owner/configuration is reused, not silently replaced after a connection failure.

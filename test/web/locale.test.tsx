@@ -157,7 +157,9 @@ it("pre-dispatch, unknown preparation, confirmed preparation and unknown Send ha
   expect(translate("zh", "Project readiness unknown")).toBe("项目准备状态未知");
   expect(translate("zh", "Connecting…")).toBe("正在连接…");
   expect(translate("en", "Connecting…")).toBe("Connecting…");
-  expect(translate("zh", "Ready to prepare on Send")).toBe("发送时按需准备");
+  expect(translate("zh", "Ready to prepare execution")).toBe(
+    "可按需准备执行服务",
+  );
   expect(translate("zh", "Preparing execution for this Send…")).toBe(
     "正在为本次发送准备执行服务…",
   );

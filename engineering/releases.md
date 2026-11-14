@@ -1112,3 +1112,18 @@ After advancing to 2.1.6 and regenerating the canonical operator/service/Web out
 The review regressions use controlled loopback HTTP owners and client lifetimes; they do not claim a real browser, paid provider, native Windows/macOS or production service upgrade was exercised.
 The observed npm latest was 2.1.5, version 2.1.6 was absent and the remote v2.1.6 tag did not exist when selected.
 Local qualification does not claim publication: the authorized tag push will trigger `Publish npm`, and its publish receipt plus audited registry digests and `latest` must be confirmed before reporting release success.
+
+## Release 2.1.7 qualification: recoverable plan confirmation (2026-11-14)
+
+The user explicitly authorized reviewing the current changes, fixing findings, committing, pushing to GitHub and publishing npm through the existing Actions/OIDC lane.
+Saved browser plans can now prepare their stopped owner and revalidate unchanged agreement content without a chat message or model call, retain the prior immutable execution binding, and require a separate fresh implementation confirmation.
+The exact approval phrase shares that path; current bindings remain directly approvable, and uncertain approvals retain their original identity without execution replay.
+Review found and fixed two admission defects: browser consent is recorded only after the executor's readonly preflight succeeds, so definite refusals neither consume grants nor create phantom pending approvals; replacing a plan binding now retires its unused grants at both the browser and executor layers.
+Controlled regressions cover recording before grant consumption and work registration, receipt lookup without repeated recording, both-layer grant retirement, captured context/branch/model, departure, lost replies and English/Chinese recovery cards.
+The existing Send route, token/Origin/CSRF checks, exact model selection, owner lifecycle, original settlement and consumer data remain unchanged.
+
+After advancing to 2.1.7 and rebuilding the canonical operator/service/Web outputs, `bun run verify` passed in **17.4s**: **1993 fast root tests passed, 282 skipped** (132 passing files, two skipped), **479 Web unit/SSR tests passed** (45 files), plus syntax, root/Web types, lint, Agent pins, generated-byte checks and the real-pack audit.
+The targeted review regressions passed in all three exact files (36 tests); this is not a separate release gate or an additional slow-suite requirement.
+The observed npm latest was 2.1.6, version 2.1.7 returned 404 and the remote v2.1.7 tag was absent when selected.
+All local scratch stayed in one private account-cache scope; no paid provider, real-browser automation, production-service restart/upgrade or native Windows/macOS qualification is claimed.
+This is local qualification only; the matching annotated tag will request `Publish npm`, and the CI outcome, audited artifact digests, registry version and `latest` still need confirmation before publication is reported.

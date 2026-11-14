@@ -15,6 +15,8 @@ import {
   oneOf,
   text,
 } from "./core.ts";
+/** Explicit preparation only; neither purpose sends a message or approves work. */
+export type ExecutionPreparation = "send" | "plan-validation";
 export interface ProjectEntry {
   id: string;
   path: string;

@@ -1,9 +1,10 @@
 import type { Activity } from "../../../src/service/contracts/activity.ts";
-/** Explicit directory selection and Send preparation. Neither route sends a
- * conversation message or acquires execution consent. No automatic retry. */
+/** Explicit directory selection and execution preparation. Neither route sends
+ * a conversation message or acquires execution consent. No automatic retry. */
 import {
   decodeProjectEntry,
   decodeWorkbenchEntry,
+  type ExecutionPreparation,
   type ProjectEntry,
 } from "../../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../../src/service/contracts/models.ts";
@@ -70,10 +71,11 @@ export async function selectDirectory(path: string, signal?: AbortSignal) {
   const current = await entry(signal);
   return command("/workbench/v1/select", { path }, current, signal);
 }
-/** Re-read the gateway epoch/CSRF after a restart, but never substitute another
- * directory. This is preparation for the current Send, not replay of a Send. */
-export async function prepareDirectorySend(
+/** Re-read gateway epoch/CSRF without substituting the captured directory.
+ * Only the current explicit action may prepare; neither purpose is approval. */
+export async function prepareDirectoryExecution(
   selected: ProjectEntry,
+  purpose: ExecutionPreparation,
   signal: AbortSignal,
   location?: ConversationLocation,
   progress?: PreparationProgress,
@@ -83,7 +85,9 @@ export async function prepareDirectorySend(
   if (!kept || kept.path !== selected.path || kept.cwd !== selected.cwd)
     throw new Error("stale");
   const result = await command(
-    "/workbench/v1/prepare-send",
+    purpose === "send"
+      ? "/workbench/v1/prepare-send"
+      : "/workbench/v1/prepare-plan",
     {
       projectId: selected.id,
       commandId: crypto.randomUUID(),

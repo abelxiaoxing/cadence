@@ -592,6 +592,100 @@ export class Workflows {
       parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES),
     );
   }
+  /** Rebind the exact retained agreement, not its old authority. The original
+   * stays immutable and the new snapshot must be displayed and confirmed. */
+  revalidate(
+    commandId: string,
+    previous: WorkflowProposal,
+    model: ChoiceVersion,
+  ): WorkflowProposal {
+    this.current();
+    const kept = this.proposal(previous.id);
+    if (canonicalJson(kept) !== canonicalJson(previous))
+      throw new ContractError("stale");
+    if (
+      previous.digest !==
+        hash(
+          canonicalJson(
+            previous.delivery
+              ? { plan: previous.plan, delivery: previous.delivery }
+              : previous.plan,
+          ),
+        ) ||
+      previous.cwd !== this.contexts.capture(model).cwd ||
+      (previous.checkoutRoot !== undefined &&
+        previous.checkoutRoot !== this.cwd)
+    )
+      throw new ContractError("stale");
+    // Revalidation cannot silently redact/rewrite the agreement under new sources.
+    if (
+      sanitizeData(previous.plan, this.o.secrets()) !==
+      canonicalJson(previous.plan)
+    )
+      throw new ContractError("forbidden");
+    return this.publishProposal(
+      commandId,
+      previous.plan,
+      model,
+      () => {},
+      previous.id,
+    );
+  }
+  private publishProposal(
+    commandId: string,
+    input: WorkflowPlan,
+    model: ChoiceVersion,
+    effect: () => void,
+    revalidatedFrom?: string,
+  ): WorkflowProposal {
+    this.floor();
+    const secrets = this.o.secrets();
+    const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(input, secrets)), {
+      strict: true,
+    });
+    const selected = this.model(model);
+    const cwd = this.contexts.capture(model).cwd;
+    const runtime = unattendedRuntime(
+      this.o.models.workerSettings(cwd, selected),
+    );
+    const { source, digest, delivery } = this.observation(plan, runtime);
+    const p: WorkflowProposal = {
+      ...(revalidatedFrom ? { revalidatedFrom } : {}),
+      ...(delivery ? { delivery } : {}),
+      id: commandId,
+      epoch: this.o.owner.lease.registration.epoch,
+      model,
+      plan,
+      cwd,
+      checkoutRoot: this.cwd,
+      observation: digest,
+      display: {
+        runtime: runtimeSummary(runtime),
+        model: `${selected.provider}/${selected.model} · ${selected.thinking}`,
+        branch: source.branch,
+        baseCommit: source.head,
+      },
+      digest: hash(canonicalJson(delivery ? { plan, delivery } : plan)),
+    };
+    if (sanitizeData(p, secrets) !== canonicalJson(p))
+      throw new ContractError("forbidden");
+    const target = join(this.root, "proposals", `${decodeId(commandId)}.json`);
+    const previous = this.files.read(target, RECORD_BYTES);
+    if (previous) {
+      if (previous.bytes.toString("utf8") !== canonicalJson(p))
+        throw new ContractError("conflict");
+    } else {
+      effect();
+      this.write(target, p);
+    }
+    return p;
+  }
+  /** Release an unused owner grant when its browser binding is retired. This
+   * is owner-internal and never cancels already admitted work. */
+  discardGrant(grant: string): void {
+    this.o.owner.lease.assert();
+    this.grants.delete(grant);
+  }
   /** Full consent observation at prepare/execute admission. */
   private assertProposal(p: WorkflowProposal, digest: string) {
     this.current();
@@ -899,16 +993,28 @@ export class Workflows {
     commandId: string,
     epoch: string,
     r: WorkflowRequest,
-    options: { definite?: boolean } = {},
+    options: {
+      definite?: boolean;
+      /** Owner-only consent recording, after every admission check and before
+       * grant consumption or registering work. Never called on receipt lookup. */
+      beforeAdmission?(): void;
+    } = {},
   ): WorkbenchResult {
     if (r.action === "cancel") return this.cancel(commandId, epoch, r.runId);
-    if (!options.definite) return this.admit(commandId, epoch, r, () => {});
+    if (!options.definite)
+      return this.admit(
+        commandId,
+        epoch,
+        r,
+        options.beforeAdmission ?? (() => {}),
+      );
     let effects = true;
     try {
       effects =
         this.o.owner.state !== "idle" || this.attempted(commandId, r.action);
       return this.admit(commandId, epoch, r, () => {
         effects = true;
+        options.beforeAdmission?.();
       });
     } catch (error) {
       if (
@@ -952,55 +1058,11 @@ export class Workflows {
       throw new ContractError("stale");
     const secrets = this.o.secrets();
     if (r.action === "propose") {
-      this.model(r.model);
-      this.floor();
-      // Credential-looking text is redacted, not refused: the stored, displayed
-      // and approved plan is the redacted one, so approval binds those bytes.
-      const plan = decodeWorkflowPlan(
-        JSON.parse(sanitizeData(r.plan, secrets)),
-        { strict: true },
-      );
-      const selected = this.model(r.model);
-      const runtime = unattendedRuntime(
-        this.o.models.workerSettings(
-          this.contexts.capture(r.model).cwd,
-          selected,
-        ),
-      );
-      const { source, digest, delivery } = this.observation(plan, runtime);
-      const p: WorkflowProposal = {
-        ...(delivery ? { delivery } : {}),
-        id: commandId,
-        epoch,
-        model: r.model,
-        plan,
-        cwd: this.contexts.capture(r.model).cwd,
-        checkoutRoot: this.cwd,
-        observation: digest,
-        display: {
-          runtime: runtimeSummary(runtime),
-          model: `${selected.provider}/${selected.model} · ${selected.thinking}`,
-          branch: source.branch,
-          baseCommit: source.head,
-        },
-        digest: hash(canonicalJson(delivery ? { plan, delivery } : plan)),
-      };
-      // Only the owner's own environment (cwd/branch) could still carry a literal.
-      if (sanitizeData(p, secrets) !== canonicalJson(p))
-        throw new ContractError("forbidden");
-      const target = join(this.root, "proposals", `${commandId}.json`);
-      const previous = this.files.read(target, RECORD_BYTES);
-      if (previous) {
-        if (previous.bytes.toString("utf8") !== canonicalJson(p))
-          throw new ContractError("conflict");
-      } else {
-        effect();
-        this.write(target, p);
-      }
+      const proposal = this.publishProposal(commandId, r.plan, r.model, effect);
       return {
         kind: "workflow",
         commandId,
-        response: { type: "proposal", proposal: p },
+        response: { type: "proposal", proposal },
       };
     }
     if (r.action === "prepare") {
@@ -1090,8 +1152,6 @@ export class Workflows {
         if (sanitizeData(delivery, secrets) !== canonicalJson(delivery))
           throw new ContractError("forbidden");
       }
-      effect();
-      this.grants.delete(request.grant);
       if (proposal.plan.delivery === "local-merge")
         target = { head: source.head, branch: source.branch };
       else declared = contentsIdentity(this.cwd, writes);
@@ -1157,6 +1217,7 @@ export class Workflows {
       notes: [],
     };
     effect();
+    if (request.action === "execute") this.grants.delete(request.grant);
     this.active.set(commandId, live);
     this.o.owner.trackConversation(live.original, () =>
       abort.abort({ source: "service", reason: "stop", target: commandId }),
