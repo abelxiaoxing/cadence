@@ -45,6 +45,10 @@ The general workflow command remains native-only.
 Browser confirmation uses a separate conversation-bound boundary; both reach the same execution owner.
 Browser grants additionally bind the authenticated attachment/access generation and exact conversation revision/head, and are consumed before dispatch; a parallel tab cannot accept the same proposal twice.
 Browser access authentication is not execution consent.
+The executor's owner-only `beforeAdmission` hook records browser consent after all readonly admission checks and before either grant is consumed or work is registered; a pre-admission refusal leaves no approval evidence and reports no effect, rather than stranding the browser behind a phantom attempt.
+Receipt lookup never runs the hook again; failed or partial consent recording remains uncertain and quarantines as before.
+Explicit plan revalidation can restore the exact displayed conversation model and publish a fresh execution binding of the unchanged agreement, but creates no grant or worker.
+Its previous snapshot and authority never change; current epoch/source/target observations and a separate new confirmation remain required for admission.
 A fresh conversation Send can report no effect only from a healthy owner, after excluding prior/partial attempts and before registering original work or writing control/acceptance state.
 A server-only refusal type carries this proof to HTTP; error names alone never establish it.
 Prior attempts, partial writes and lost replies remain uncertain and observe-only.
@@ -122,11 +126,12 @@ The remaining historical writer and transport coupling is documented in [archite
 ## Workbench Stop
 
 Workbench state lives separately under `<state-home>/cadence-assistant-v1/workbenches-v1/<configuration-hash>/`, not in a hidden substitute workspace.
-Whole-workbench Stop joins its accepted Send preparations and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
+Whole-workbench Stop joins its accepted Send/plan-validation preparations and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
 An associated owner that is not running (stopped, crashed, restarted under a new epoch or its directory removed) has nothing to stop; one whose Stop is unconfirmed keeps its own state, and the workbench still releases its own registration.
 The gateway follows an associated project's restarted owner (same canonical path, new epoch) instead of refusing its page as stale.
 Selected-only directories have a null epoch and are not Stop associations; browsing their existing owner never changes that.
-A Send preparation registers its original before launching, so departure cannot abandon startup and Stop joins any owner it creates.
+An execution preparation registers its original before launching, so departure cannot abandon startup and Stop joins any owner it creates.
+Its closed purpose (`send` or `plan-validation`) is part of the original command identity; neither purpose grants implementation consent.
 Warm already-associated reuse writes no preparation receipt; a lost preparation response never submits a message.
 Service restart never resumes the old queue.
 

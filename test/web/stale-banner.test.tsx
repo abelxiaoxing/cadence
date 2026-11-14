@@ -241,7 +241,7 @@ it.each([
     );
     expect(statusbar).not.toContain("Chat ready");
     expect(statusbar).not.toContain(">current<");
-    expect(statusbar).not.toContain("Ready to prepare on Send");
+    expect(statusbar).not.toContain("Ready to prepare execution");
     expect(html).not.toContain("Execution will be prepared when you send.");
     expect(html).not.toContain("status-dot ok");
   },
@@ -262,7 +262,7 @@ for (const locale of ["en", "zh"] as const) {
       expect(html).not.toContain("Execution will be prepared when you send.");
       expect(html).not.toContain("浏览不会启动服务");
       expect(statusbar).toContain(
-        locale === "zh" ? "发送时按需准备" : "Ready to prepare on Send",
+        locale === "zh" ? "可按需准备执行服务" : "Ready to prepare execution",
       );
       expect(statusbar).not.toContain("status-dot error");
       expect(statusbar).not.toContain("status-dot ok");

@@ -11,7 +11,7 @@ import {
   waitForPreparation,
 } from "../../web/src/client/conversation-send";
 import {
-  prepareDirectorySend,
+  prepareDirectoryExecution,
   selectActivity,
   selectDirectory,
 } from "../../web/src/client/project-entry";
@@ -69,7 +69,13 @@ it.each(["entry", "identity", "body", "pre-abort", "fetch-throw"])(
           }
         : location;
     await expect(
-      prepareDirectorySend(selected, abort.signal, context, progress),
+      prepareDirectoryExecution(
+        selected,
+        "send",
+        abort.signal,
+        context,
+        progress,
+      ),
     ).rejects.toThrow();
     expect(progress).not.toHaveBeenCalled();
     expect(
@@ -99,7 +105,7 @@ it("selection and preparation work without a browser build, even when the gatewa
   const signal = new AbortController().signal;
   for (const run of [
     () => selectDirectory("/fixture/sub", signal),
-    () => prepareDirectorySend(selected, signal),
+    () => prepareDirectoryExecution(selected, "send", signal),
   ])
     expect((await run()).project).toEqual(ready);
   const commands = fetcher.mock.calls.filter(
@@ -111,6 +117,31 @@ it("selection and preparation work without a browser build, even when the gatewa
     expect(headers.has("X-Cadence-Build")).toBe(false);
     expect(headers.get("X-Cadence-CSRF")).toBe(entry.csrf);
   }
+});
+
+it("plan validation uses its own named preparation route, without message, model or grant authority", async () => {
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) =>
+    Response.json(
+      init?.method === "POST" ? { kind: "project", project: ready } : entry,
+    ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await prepareDirectoryExecution(
+    selected,
+    "plan-validation",
+    new AbortController().signal,
+    location,
+  );
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    "/workbench/v1",
+    "/workbench/v1/prepare-plan",
+  ]);
+  expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+    projectId: selected.id,
+    commandId: expect.any(String),
+    epoch: entry.epoch,
+    location,
+  });
 });
 
 it("preserves a reliable no-effect preparation refusal", async () => {
@@ -131,8 +162,9 @@ it("preserves a reliable no-effect preparation refusal", async () => {
   vi.stubGlobal("fetch", fetcher);
   const progress = vi.fn();
   await expect(
-    prepareDirectorySend(
+    prepareDirectoryExecution(
       selected,
+      "send",
       new AbortController().signal,
       location,
       progress,
@@ -182,8 +214,9 @@ it.each([
     });
     vi.stubGlobal("fetch", fetcher);
     await expect(
-      prepareDirectorySend(
+      prepareDirectoryExecution(
         selected,
+        "send",
         new AbortController().signal,
         location,
         progress,
@@ -215,7 +248,13 @@ it("confirmation binds the original directory/location and precedes attachment t
   const stages: PreparationStage[] = ["not-dispatched"];
   const waiting = waitForPreparation(
     async (signal, context, progress) => {
-      await prepareDirectorySend(selected, signal, context, progress);
+      await prepareDirectoryExecution(
+        selected,
+        "send",
+        signal,
+        context,
+        progress,
+      );
       expect(stages).toEqual(["not-dispatched", "dispatched", "confirmed"]);
       // The real observer waits for a fresh attachment using this same signal.
       await new Promise<void>((_resolve, reject) =>

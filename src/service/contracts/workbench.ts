@@ -222,6 +222,19 @@ export type WorkbenchCommand =
       intent: "message" | "enter" | "exit";
     }
   | {
+      /** Explicitly refresh an unchanged agreement's execution binding. No grant or execution. */
+      kind: "cadence-revalidate";
+      commandId: string;
+      conversationId: string;
+      revision: number;
+      proposalId: string;
+      digest: string;
+      head: string | null;
+      context: ConversationContext;
+      expected: ChoiceVersion;
+      model: ModelSelector;
+    }
+  | {
       kind: "cadence-prepare";
       commandId: string;
       conversationId: string;
@@ -552,6 +565,11 @@ export type WorkbenchResult =
       turn: ChatTurn | null;
     }
   | { kind: "cadence-conversation"; state: CadenceConversation }
+  | {
+      kind: "cadence-revalidated";
+      commandId: string;
+      state: CadenceConversation;
+    }
   | {
       kind: "workflow-active";
       runs: WorkflowRun[];
@@ -971,6 +989,35 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
       intent: oneOf(o.intent, ["message", "enter", "exit"]),
+    };
+  }
+  if (kind === "cadence-revalidate") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "revision",
+      "proposalId",
+      "digest",
+      "head",
+      "context",
+      "expected",
+      "model",
+    ]);
+    const conversationId = decodeSessionId(o.conversationId);
+    const context = decodeConversationContext(o.context);
+    if (context.id !== conversationId) throw new ContractError("invalid");
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId,
+      revision: integer(o.revision, 0),
+      proposalId: decodeId(o.proposalId),
+      digest: decodeHash(o.digest),
+      head: nullable(o.head, decodeEntryId),
+      context,
+      expected: decodeChoiceVersion(o.expected),
+      model: decodeModelSelector(o.model),
     };
   }
   if (kind === "cadence-prepare" || kind === "cadence-approve") {
@@ -1410,6 +1457,14 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     )
       throw new ContractError("invalid");
     return { kind: k, runs, links };
+  }
+  if (k === "cadence-revalidated") {
+    const o = closed(v, ["kind", "commandId", "state"]);
+    return {
+      kind: k,
+      commandId: decodeId(o.commandId),
+      state: decodeCadenceConversation(o.state),
+    };
   }
   if (k === "cadence-grant") {
     const o = closed(v, [

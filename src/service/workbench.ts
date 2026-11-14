@@ -395,6 +395,8 @@ export class Workbench implements WorkbenchPort {
       request.kind === "cadence-exit"
     )
       return this.send(request, caller);
+    if (request.kind === "cadence-revalidate")
+      return this.cadence.revalidate(request, caller);
     if (
       request.kind === "cadence-prepare" ||
       request.kind === "cadence-approve"

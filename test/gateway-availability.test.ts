@@ -41,6 +41,10 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
       res.setHeader("Set-Cookie", "fixture-owner=authenticated; HttpOnly");
       return reply({}, 303);
     }
+    if (req.url === "/local/v1/admin/status") {
+      expect(req.headers["x-cadence-local"]).toBe(capability);
+      return reply({ kind: "ok", value: { status: "alive", epoch } });
+    }
     if (req.url === "/local/v1/admin/activity") {
       expect(req.headers["x-cadence-local"]).toBe(capability);
       return reply({
@@ -172,6 +176,44 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
     expect(gateway.store.associatedProjects()).toEqual([]);
     // Fixture association only: simulate a previously prepared owner, no Send.
     gateway.store.saveProject({ ...selected, epoch });
+    const prepare = async (route: string, location?: object, extra = {}) =>
+      request(gateway!.endpoint, `/workbench/v1/${route}`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          Origin: gateway!.endpoint,
+          "Content-Type": "application/json",
+          "X-Cadence-CSRF": entry.csrf,
+        },
+        body: JSON.stringify({
+          location,
+          ...extra,
+          projectId: selected.id,
+          commandId: randomUUID(),
+          epoch: entry.epoch,
+        }),
+      });
+    // Named preparation routes: warm validation reuses the exact owner,
+    // without a model, message, approval or native execution capability.
+    const prepared = await prepare("prepare-plan", {
+      id: randomUUID(),
+      cwd: project,
+    });
+    expect(prepared.status, prepared.text).toBe(200);
+    expect(JSON.parse(prepared.text).project).toEqual({ ...selected, epoch });
+    expect(
+      (await prepare("approve", { id: randomUUID(), cwd: project })).status,
+    ).toBe(400);
+    expect((await prepare("prepare-plan")).status).toBe(400);
+    expect(
+      (
+        await prepare(
+          "prepare-plan",
+          { id: randomUUID(), cwd: project },
+          { grant: randomUUID() },
+        )
+      ).status,
+    ).toBe(400);
     const attachment = randomUUID();
     const sessionPath = `/projects/${selected.id}/api/v1/session`;
     for (let n = 0; n < 3; n++) {
@@ -184,7 +226,7 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
       ).toBe(200);
     }
     expect([...allocations]).toEqual([attachment]);
-    expect(bootstraps).toBe(2);
+    expect(bootstraps).toBe(3); // explicit preparation retires the prior routing binding
   } finally {
     c.release(lease);
     if (gateway) {

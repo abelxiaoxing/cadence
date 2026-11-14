@@ -97,7 +97,7 @@ export function useProjectObservation(
     setRevision(revision);
     return revision;
   }, []);
-  // Only an authenticated explicit Send preparation supplies this readiness.
+  // Only authenticated explicit execution preparation supplies this readiness.
   // Retire older reads synchronously so none can overwrite its new epoch.
   // The parent adopts this confirmed epoch, not the callback's old selection.
   const prepared = (epoch: string) => {

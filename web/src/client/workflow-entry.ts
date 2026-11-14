@@ -1,6 +1,101 @@
 import { canonicalJson } from "../../../src/service/contracts/core.ts";
+import type { ModelSelector } from "../../../src/service/contracts/domain.ts";
+import type {
+  ChoiceVersion,
+  ConversationContext,
+} from "../../../src/service/contracts/models.ts";
 import type { CadenceConversation } from "../../../src/service/contracts/workbench.ts";
+import type { WorkflowProposal } from "../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../src/service-client.ts";
+import {
+  type PreparationProgress,
+  type PrepareExecution,
+  waitForPreparation,
+} from "./conversation-send";
+
+/** Availability is not plan validity. Both actions are explicit; validation
+ * always ends before approval, including when only an owner identity changed. */
+export function planAction(
+  proposal: WorkflowProposal,
+  ready: boolean,
+  version?: ChoiceVersion,
+  changed = false,
+): "restore" | "validate" | "approve" {
+  if (!ready) return "restore";
+  return changed ||
+    !version ||
+    canonicalJson(version) !== canonicalJson(proposal.model)
+    ? "validate"
+    : "approve";
+}
+
+/** Captures the exact original intent before startup. Revalidation is a single
+ * command, never Send/approval, and does not continue into execution. */
+export async function revalidateWorkflow(o: {
+  client: ServiceClient;
+  state: CadenceConversation;
+  context: ConversationContext;
+  model: ModelSelector;
+  head: string | null;
+  signal: AbortSignal;
+  current(): boolean;
+  prepare?: PrepareExecution;
+  progress?: PreparationProgress;
+}) {
+  const state = structuredClone(o.state);
+  const proposal = state.proposal;
+  const context = structuredClone(o.context);
+  const location = { id: context.id, cwd: context.cwd };
+  const model = structuredClone(o.model);
+  const head = o.head;
+  const commandId = crypto.randomUUID();
+  const current = () => !o.signal.aborted && o.current();
+  if (!proposal || !state.enabled || context.id !== state.id || !current())
+    throw new Error("stale");
+  if (o.prepare)
+    await waitForPreparation(
+      o.prepare,
+      o.signal,
+      location,
+      o.progress ?? (() => {}),
+    );
+  if (!current()) throw new Error("stale");
+  const catalog = await o.client.models(o.signal, location);
+  if (!current()) throw new Error("stale");
+  if (catalog.kind !== "ok") throw new Error(catalog.error.code);
+  const reply = await o.client.workbenchCommand({
+    kind: "cadence-revalidate",
+    commandId,
+    conversationId: state.id,
+    revision: state.revision,
+    proposalId: proposal.id,
+    digest: proposal.digest,
+    head,
+    context,
+    model,
+    expected: catalog.value.version,
+  });
+  if (!current()) throw new Error("stale");
+  if (reply.kind !== "ok") throw new Error(reply.error.code);
+  if (
+    reply.value.kind !== "cadence-revalidated" ||
+    reply.value.state.id !== state.id ||
+    reply.value.state.revision !== state.revision + 1 ||
+    !reply.value.state.enabled ||
+    reply.value.state.head !== state.head ||
+    canonicalJson(reply.value.state.runs) !== canonicalJson(state.runs) ||
+    reply.value.state.proposal?.id !== commandId ||
+    reply.value.state.proposal.revalidatedFrom !== proposal.id ||
+    reply.value.state.proposal.epoch !== catalog.value.version.epoch ||
+    reply.value.state.proposal.cwd !== context.cwd ||
+    canonicalJson(reply.value.state.proposal.model.conversation ?? null) !==
+      canonicalJson(location) ||
+    canonicalJson(reply.value.state.proposal.plan) !==
+      canonicalJson(proposal.plan)
+  )
+    throw new Error("stale");
+  return reply.value.state;
+}
 
 /** One human action, bound to the plan actually displayed. Never called by an effect/reconnect. */
 export async function approveWorkflow(o: {

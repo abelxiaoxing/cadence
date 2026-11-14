@@ -22,8 +22,24 @@ export const zh = {
     "尚未配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供商，然后重新读取列表。",
   "Choose now; the model is verified when you send.":
     "现在选择模型，发送时验证可用性。",
-  "Send with this model before approving a plan.":
-    "请先使用此模型发送消息，再批准计划。",
+  "Validate the plan with this model before approving it.":
+    "请先使用此模型重新核验计划，再确认实施。",
+  "Restore execution and validate plan": "恢复执行服务并核验计划",
+  "Validate plan again": "重新核验计划",
+  "Validating plan…": "正在核验计划…",
+  "Confirm implementation": "确认实施",
+  "Previous execution context": "核验前的执行上下文",
+  "Preparing execution and validating the plan; no implementation is approved.":
+    "正在准备执行服务并核验计划；尚未批准任何实施。",
+  "Reading the validated plan…": "正在读取核验后的计划…",
+  "The plan content is unchanged. Its execution context was revalidated; review it below and confirm implementation. Nothing was approved.":
+    "计划内容未变，已重新核验执行上下文。请查看下方当前计划后确认实施；尚未批准任何实施。",
+  "Repository or execution-environment evidence changed. Review the current context before confirming.":
+    "仓库或执行环境的核验证据已变化，请查看当前上下文后再确认。",
+  "Validation may start the execution service and install the displayed model choice. It sends no message and runs no implementation; confirmation comes afterward.":
+    "核验可能启动执行服务并应用界面中选择的模型，但不会发送聊天消息或实施计划；核验后仍需确认。",
+  "Plan validation did not finish ({code}). No implementation was approved; observe the plan before trying again.":
+    "计划核验未完成（{code}）。未批准任何实施；请读取当前计划后再决定是否重新核验。",
   "Preparing execution…": "正在准备执行环境…",
   "Checking execution state…": "正在确认执行状态…",
   "Execution state unavailable": "执行状态暂时无法确认",
@@ -65,6 +81,8 @@ export const zh = {
   "Wait for the current reply before approving this plan.":
     "请等待当前回复结束，再批准此计划。",
   "Observing plan approval…": "正在确认计划审批结果…",
+  "Observing approval request {id}; no approval is replayed.":
+    "正在查询审批请求 {id} 的结果；不会重放审批。",
   "Read the current conversation context before approving this plan.":
     "请先读取当前会话上下文，再批准此计划。",
   "Conversation folder:": "会话目录：",
@@ -225,8 +243,6 @@ export const zh = {
   "No model": "未使用模型",
   "The message was not sent ({code}). Its draft is kept.":
     "消息尚未发送（{code}）。草稿已保留。",
-  "Execution is not ready to approve this plan. Send a message to refresh the conversation first; nothing was approved.":
-    "当前执行服务无法接受此计划审批。请先发送消息以刷新会话；未批准任何实施。",
   "Execution was prepared, but the conversation was unreadable before Send. Review its restored context and send again; this message was not sent.":
     "执行服务已准备就绪，但发送前无法读取会话。请查看恢复的上下文后再次发送；本次消息尚未发送。",
   "Conversation context is unavailable. Send can prepare execution, but cannot submit this draft until the context is observed.":
@@ -252,7 +268,7 @@ export const zh = {
   "Choose a folder on the service host. Conversations stay with their folder and running work continues. Nothing starts until you send.":
     "选择服务所在主机上的文件夹。会话保留在原文件夹中，运行中的工作不受影响；仅在发送消息时按需启动执行服务。",
   "Connecting…": "正在连接…",
-  "Ready to prepare on Send": "发送时按需准备",
+  "Ready to prepare execution": "可按需准备执行服务",
   "Preparing execution for this Send…": "正在为本次发送准备执行服务…",
   "Preparation outcome is unknown ({code}); an execution service may have started. The message was not sent and its draft is kept.":
     "准备结果未知（{code}）；执行服务可能已启动。消息尚未发送，草稿已保留。",

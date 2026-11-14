@@ -110,6 +110,8 @@ it("selection stays inert; one explicit Send preparation acquires an owner but n
     const prepare = { projectId: project.id, commandId: randomUUID() };
     for (const result of [
       await post("prepare-send", { ...prepare, text: "not a Send route" }),
+      await post("prepare-plan", { ...prepare, grant: randomUUID() }),
+      await post("prepare-plan", prepare), // requires a conversation location
       await post("prepare-send", { ...prepare, epoch: randomUUID() }),
       await post("prepare-send", prepare, { "X-Cadence-CSRF": randomUUID() }),
       await post("prepare-send", prepare, { "X-Cadence-Local": "injected" }),

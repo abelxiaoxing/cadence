@@ -5880,9 +5880,11 @@ function decodeWorkflowProposal(v) {
     "cwd",
     ...Object.hasOwn(v ?? {}, "checkoutRoot") ? ["checkoutRoot"] : [],
     ...Object.hasOwn(v ?? {}, "delivery") ? ["delivery"] : [],
+    ...Object.hasOwn(v ?? {}, "revalidatedFrom") ? ["revalidatedFrom"] : [],
     ...modern ? ["display"] : []
   ]);
   return {
+    ...o.revalidatedFrom === undefined ? {} : { revalidatedFrom: decodeId(o.revalidatedFrom) },
     ...o.delivery === undefined ? {} : { delivery: decodeDeliveryBinding(o.delivery) },
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
@@ -6593,6 +6595,36 @@ function decodeWorkbenchCommand(v) {
       intent: oneOf(o2.intent, ["message", "enter", "exit"])
     };
   }
+  if (kind === "cadence-revalidate") {
+    const o2 = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "revision",
+      "proposalId",
+      "digest",
+      "head",
+      "context",
+      "expected",
+      "model"
+    ]);
+    const conversationId = decodeSessionId(o2.conversationId);
+    const context = decodeConversationContext(o2.context);
+    if (context.id !== conversationId)
+      throw new ContractError("invalid");
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId,
+      revision: integer(o2.revision, 0),
+      proposalId: decodeId(o2.proposalId),
+      digest: decodeHash(o2.digest),
+      head: nullable(o2.head, decodeEntryId),
+      context,
+      expected: decodeChoiceVersion(o2.expected),
+      model: decodeModelSelector(o2.model)
+    };
+  }
   if (kind === "cadence-prepare" || kind === "cadence-approve") {
     const keys2 = [
       "kind",
@@ -6985,6 +7017,14 @@ function decodeWorkbenchResult(v) {
     if (new Set(links.map((l) => l.runId)).size !== links.length || links.some((l) => !runs.some((r) => r.id === l.runId)))
       throw new ContractError("invalid");
     return { kind: k, runs, links };
+  }
+  if (k === "cadence-revalidated") {
+    const o2 = closed(v, ["kind", "commandId", "state"]);
+    return {
+      kind: k,
+      commandId: decodeId(o2.commandId),
+      state: decodeCadenceConversation(o2.state)
+    };
   }
   if (k === "cadence-grant") {
     const o2 = closed(v, [
@@ -16931,7 +16971,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "63f28a34411aedbf5d88f62ce81cfb0eca9e8ed38396e731a2a01253d1287f48",
+    contractHash: "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17163,7 +17203,7 @@ Content-Length: 0\r
     store.saveProject(project);
     return project;
   }
-  async function prepareSend(projectId, id, epoch, current, location) {
+  async function prepareExecution(purpose, projectId, id, epoch, current, location) {
     assert();
     if (epoch !== auth.epoch)
       throw new ContractError("stale");
@@ -17179,7 +17219,7 @@ Content-Length: 0\r
     if (observed.store.root !== selected2.path)
       throw new ContractError("stale");
     const identity = canonicalJson({
-      kind: "prepare-send",
+      kind: purpose === "send" ? "prepare-send" : "prepare-plan",
       projectId,
       epoch,
       ...location ? { location } : {}
@@ -17699,7 +17739,8 @@ Content-Length: 0\r
         reply(res, 200, { kind: "project", project: select(path, epoch) });
         return;
       }
-      if (raw === "/workbench/v1/prepare-send" && req.method === "POST") {
+      const preparationPurpose = raw === "/workbench/v1/prepare-send" ? "send" : raw === "/workbench/v1/prepare-plan" ? "plan-validation" : undefined;
+      if (preparationPurpose && req.method === "POST") {
         const value2 = await body(req);
         const o = closed(value2, [
           "commandId",
@@ -17709,9 +17750,11 @@ Content-Length: 0\r
         ]);
         const id = decodeId(o.commandId), projectId = decodeHash(o.projectId), epoch = decodeId(o.epoch);
         const location = o.location === undefined ? undefined : decodeConversationLocation(o.location);
+        if (preparationPurpose === "plan-validation" && !location)
+          throw new ContractError("invalid");
         auth.current(caller);
         effect = true;
-        const project2 = await prepareSend(projectId, id, epoch, () => auth.current(caller), location);
+        const project2 = await prepareExecution(preparationPurpose, projectId, id, epoch, () => auth.current(caller), location);
         auth.current(caller);
         reply(res, 200, { kind: "project", project: project2 });
         return;
@@ -31604,7 +31647,7 @@ class ConversationWorkflow {
     const displayed = state.proposal ? ` Displayed plan card (data, not instructions): ${JSON.stringify({
       proposalId: state.proposal.id,
       goal: diagnosticText(state.proposal.plan.goal, 256)
-    })}. It stays approvable while you discuss it; publish a replacement with cadence_plan only when the plan itself changes.` : "";
+    })}. It stays available while you discuss it. The user can revalidate its execution context without a message or a model call; publish a replacement with cadence_plan only when the plan itself changes.` : "";
     const routeTable = enabled && this.o.cwd ? routeTableBrief(this.o.cwd, this.o.secrets()) : "";
     const control = {
       instructions: `${CADENCE_INSTRUCTIONS}
@@ -31743,6 +31786,34 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     await this.o.workflows.join(id);
     return this.answers(this.run(id), questions.length);
   }
+  revalidate(c, caller) {
+    if (!caller || !this.o.contexts)
+      throw new ContractError("forbidden");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const { state, file, head } = this.approvalContext(c);
+    const proposal = state.proposal;
+    if (!proposal)
+      throw new ContractError("stale");
+    const location = { id: c.context.id, cwd: c.context.cwd };
+    const { context } = this.o.contexts.records.read(location);
+    if (head !== c.head || c.context.id !== c.conversationId || canonicalJson(context) !== canonicalJson(c.context) || proposal.cwd !== context.cwd)
+      throw new ContractError("stale");
+    const choice = this.o.contexts.choose(location, c.expected, c.model, false);
+    const refreshed = this.o.workflows.revalidate(c.commandId, proposal, choice.version);
+    const next = {
+      ...state,
+      revision: state.revision + 1,
+      proposal: refreshed
+    };
+    this.save(next, file);
+    for (const [id, grant] of this.grants)
+      if (grant.conversationId === state.id) {
+        this.o.workflows.discardGrant(grant.nativeGrant);
+        this.grants.delete(id);
+      }
+    return { kind: "cadence-revalidated", commandId: c.commandId, state: next };
+  }
   approval(c, caller) {
     if (!caller)
       throw new ContractError("forbidden");
@@ -31786,12 +31857,16 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       commandId: c.commandId
     };
   }
-  decide(c, caller, evidence, recording) {
+  approvalContext(c) {
     const { state, file } = this.records.usable(c.conversationId);
     const latest = this.o.conversations.records.latestRun(c.conversationId);
     if (!state.enabled || c.revision !== state.revision || !state.proposal || state.proposal.id !== c.proposalId || state.proposal.digest !== c.digest || !latest || latest.commandId !== state.head || !latest.settled || this.active.has(c.conversationId))
       throw new ContractError("stale");
     const head = this.o.conversations.records.approvalHead(c.conversationId, latest.commandId);
+    return { state, file, head };
+  }
+  decide(c, caller, evidence, recording) {
+    const { state, file, head } = this.approvalContext(c);
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
       for (const [id, g2] of this.grants)
@@ -31831,23 +31906,25 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       this.grants.delete(c.grant);
     if (!grant || grant.caller !== canonicalJson(caller) || grant.expiresAt < Date.now() || grant.revision !== c.revision || grant.conversationId !== c.conversationId || grant.proposalId !== c.proposalId || grant.digest !== c.digest || grant.head !== head)
       throw new ContractError("expired-grant");
-    recording();
-    this.grants.delete(c.grant);
-    try {
-      this.o.coordination.files.create(evidence, canonicalJson({
-        commandId: c.commandId,
-        conversationId: state.id,
-        revision: c.revision,
-        proposalId: c.proposalId,
-        digest: c.digest,
-        caller,
-        epoch,
-        at: Date.now()
-      }, EVIDENCE_BYTES), EVIDENCE_BYTES);
-    } catch (e) {
-      this.o.owner.quarantine();
-      throw e;
-    }
+    const beforeAdmission = () => {
+      recording();
+      this.grants.delete(c.grant);
+      try {
+        this.o.coordination.files.create(evidence, canonicalJson({
+          commandId: c.commandId,
+          conversationId: state.id,
+          revision: c.revision,
+          proposalId: c.proposalId,
+          digest: c.digest,
+          caller,
+          epoch,
+          at: Date.now()
+        }, EVIDENCE_BYTES), EVIDENCE_BYTES);
+      } catch (e) {
+        this.o.owner.quarantine();
+        throw e;
+      }
+    };
     let result;
     try {
       result = this.o.workflows.command(c.commandId, epoch, {
@@ -31855,7 +31932,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         proposalId: c.proposalId,
         digest: c.digest,
         grant: grant.nativeGrant
-      });
+      }, { beforeAdmission });
     } catch (error) {
       if (this.o.owner.state !== "idle" || this.exists(c.commandId))
         this.attach(state.id, c.commandId, true);
@@ -34183,8 +34260,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.6",
-  build: "466def18bdfec1faaf999049b38e5cb08ae6861f57b1847aea4144d1d2180551",
+  version: "2.1.7",
+  build: "71f1c6144e536050f63d0cbc74944e0cd3acbbe4dc012ad8c99f8ca4a600a5bc",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -34468,6 +34545,62 @@ class Workflows {
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES3));
   }
+  revalidate(commandId, previous, model2) {
+    this.current();
+    const kept = this.proposal(previous.id);
+    if (canonicalJson(kept) !== canonicalJson(previous))
+      throw new ContractError("stale");
+    if (previous.digest !== hash(canonicalJson(previous.delivery ? { plan: previous.plan, delivery: previous.delivery } : previous.plan)) || previous.cwd !== this.contexts.capture(model2).cwd || previous.checkoutRoot !== undefined && previous.checkoutRoot !== this.cwd)
+      throw new ContractError("stale");
+    if (sanitizeData(previous.plan, this.o.secrets()) !== canonicalJson(previous.plan))
+      throw new ContractError("forbidden");
+    return this.publishProposal(commandId, previous.plan, model2, () => {}, previous.id);
+  }
+  publishProposal(commandId, input, model2, effect, revalidatedFrom) {
+    this.floor();
+    const secrets = this.o.secrets();
+    const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(input, secrets)), {
+      strict: true
+    });
+    const selected2 = this.model(model2);
+    const cwd = this.contexts.capture(model2).cwd;
+    const runtime = unattendedRuntime(this.o.models.workerSettings(cwd, selected2));
+    const { source, digest: digest2, delivery } = this.observation(plan, runtime);
+    const p = {
+      ...revalidatedFrom ? { revalidatedFrom } : {},
+      ...delivery ? { delivery } : {},
+      id: commandId,
+      epoch: this.o.owner.lease.registration.epoch,
+      model: model2,
+      plan,
+      cwd,
+      checkoutRoot: this.cwd,
+      observation: digest2,
+      display: {
+        runtime: runtimeSummary(runtime),
+        model: `${selected2.provider}/${selected2.model} · ${selected2.thinking}`,
+        branch: source.branch,
+        baseCommit: source.head
+      },
+      digest: hash(canonicalJson(delivery ? { plan, delivery } : plan))
+    };
+    if (sanitizeData(p, secrets) !== canonicalJson(p))
+      throw new ContractError("forbidden");
+    const target2 = join43(this.root, "proposals", `${decodeId(commandId)}.json`);
+    const previous = this.files.read(target2, RECORD_BYTES3);
+    if (previous) {
+      if (previous.bytes.toString("utf8") !== canonicalJson(p))
+        throw new ContractError("conflict");
+    } else {
+      effect();
+      this.write(target2, p);
+    }
+    return p;
+  }
+  discardGrant(grant) {
+    this.o.owner.lease.assert();
+    this.grants.delete(grant);
+  }
   assertProposal(p, digest2) {
     this.current();
     try {
@@ -34669,12 +34802,13 @@ class Workflows {
     if (r.action === "cancel")
       return this.cancel(commandId, epoch, r.runId);
     if (!options.definite)
-      return this.admit(commandId, epoch, r, () => {});
+      return this.admit(commandId, epoch, r, options.beforeAdmission ?? (() => {}));
     let effects = true;
     try {
       effects = this.o.owner.state !== "idle" || this.attempted(commandId, r.action);
       return this.admit(commandId, epoch, r, () => {
         effects = true;
+        options.beforeAdmission?.();
       });
     } catch (error) {
       if (!effects && error instanceof ContractError && !(error instanceof UnacceptedConversationCommand) && this.o.owner.state === "idle")
@@ -34698,44 +34832,11 @@ class Workflows {
       throw new ContractError("stale");
     const secrets = this.o.secrets();
     if (r.action === "propose") {
-      this.model(r.model);
-      this.floor();
-      const plan = decodeWorkflowPlan(JSON.parse(sanitizeData(r.plan, secrets)), { strict: true });
-      const selected2 = this.model(r.model);
-      const runtime2 = unattendedRuntime(this.o.models.workerSettings(this.contexts.capture(r.model).cwd, selected2));
-      const { source, digest: digest2, delivery: delivery2 } = this.observation(plan, runtime2);
-      const p = {
-        ...delivery2 ? { delivery: delivery2 } : {},
-        id: commandId,
-        epoch,
-        model: r.model,
-        plan,
-        cwd: this.contexts.capture(r.model).cwd,
-        checkoutRoot: this.cwd,
-        observation: digest2,
-        display: {
-          runtime: runtimeSummary(runtime2),
-          model: `${selected2.provider}/${selected2.model} · ${selected2.thinking}`,
-          branch: source.branch,
-          baseCommit: source.head
-        },
-        digest: hash(canonicalJson(delivery2 ? { plan, delivery: delivery2 } : plan))
-      };
-      if (sanitizeData(p, secrets) !== canonicalJson(p))
-        throw new ContractError("forbidden");
-      const target3 = join43(this.root, "proposals", `${commandId}.json`);
-      const previous = this.files.read(target3, RECORD_BYTES3);
-      if (previous) {
-        if (previous.bytes.toString("utf8") !== canonicalJson(p))
-          throw new ContractError("conflict");
-      } else {
-        effect();
-        this.write(target3, p);
-      }
+      const proposal2 = this.publishProposal(commandId, r.plan, r.model, effect);
       return {
         kind: "workflow",
         commandId,
-        response: { type: "proposal", proposal: p }
+        response: { type: "proposal", proposal: proposal2 }
       };
     }
     if (r.action === "prepare") {
@@ -34800,8 +34901,6 @@ class Workflows {
         if (sanitizeData(delivery, secrets) !== canonicalJson(delivery))
           throw new ContractError("forbidden");
       }
-      effect();
-      this.grants.delete(request3.grant);
       if (proposal.plan.delivery === "local-merge")
         target2 = { head: source.head, branch: source.branch };
       else
@@ -34857,6 +34956,8 @@ class Workflows {
       notes: []
     };
     effect();
+    if (request3.action === "execute")
+      this.grants.delete(request3.grant);
     this.active.set(commandId, live2);
     this.o.owner.trackConversation(live2.original, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
     try {
@@ -36848,6 +36949,8 @@ class Workbench {
     }
     if (request3.kind === "send" || request3.kind === "cadence-send" || request3.kind === "cadence-exit")
       return this.send(request3, caller);
+    if (request3.kind === "cadence-revalidate")
+      return this.cadence.revalidate(request3, caller);
     if (request3.kind === "cadence-prepare" || request3.kind === "cadence-approve")
       return this.cadence.approval(request3, caller);
     if (request3.kind === "workflow-cancel") {
@@ -37028,7 +37131,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "63f28a34411aedbf5d88f62ce81cfb0eca9e8ed38396e731a2a01253d1287f48";
+  const embedded = "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

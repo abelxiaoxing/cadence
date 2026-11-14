@@ -116,7 +116,8 @@ Only that explicit choice hands the draft to a freshly identified conversation, 
 No draft handoff is a Send intent, pending command, model installation or execution consent; blocked browser storage retains the in-memory handoff and a failed persistence attempt does not delete the stored source.
 The target retires that initialization handoff after mounting, so returning to a conversation cannot resurrect its already-used text or model when browser storage is unavailable.
 Directory selection only remembers its canonical reference; it starts no service, creates no project-private state and requires no Pi login.
-The current explicit Send prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
+The current explicit Send or plan-validation action prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
+The closed `/workbench/v1/prepare-send` and `/workbench/v1/prepare-plan` routes share one preparation implementation and retain distinct command identities; validation requires a captured conversation location, and neither route accepts message text, a model choice or an execution grant.
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh authenticated attachment.
 Build fingerprints are diagnostic metadata, not access or operation gates: different or absent client builds never disable history, activity, model selection, directory changes, Send or service controls.
 Requests still have to express a supported operation; no capability is inferred from a build header, and a browser cannot become a native caller by naming one.
@@ -132,7 +133,15 @@ A preparation response's reliable `effect:none` is preserved through the client 
 Final Send clears uncertainty only on a matched success or reliable `effect:none`; all other failures retain the original command ID for observation without replay.
 Failure keeps the draft; losing an accepted Send reply keeps its original command ID for observation only.
 Leaving the conversation or choosing another branch aborts its unsent continuation, never accepted startup or work.
-Saved plan approval does not prepare a stopped owner: it still requires fresh live, exact-plan, attachment-bound confirmation.
+A saved plan has a separate explicit recovery path: Restore execution and validate plan, or Validate plan again when already connected.
+The exact approval phrase uses that same path when execution or the plan's model/owner binding is not current, and ends at validation rather than approving afterward.
+`cadence-revalidate` captures the displayed proposal/revision, Pi leaf, durable conversation context and exact displayed model before startup; the current owner's model choice version is observed afterward and checked before installation.
+The owner verifies the settled conversation/branch, installs only that choice without changing the account default, and uses the ordinary proposal builder to publish a fresh immutable execution binding of the exact same plan content.
+The previous proposal remains intact and is named by `revalidatedFrom`; no coordinator call, conversation append, grant, worker or Git resource is created, and obsolete unused grants are retired at both the browser and executor layers.
+The new snapshot displays current model/runtime/target/base and, while this tab retains it, the prior context for comparison; changed environment evidence is labelled.
+A separate fresh confirmation approves only that displayed snapshot.
+Neither a stopped owner nor expired context requires an artificial chat message or model-generated replacement plan.
+Unknown turn closure, changed conversation/context, unsupported retained agreements and unavailable selected models refuse without fallback; a failed validation refreshes observation but is never automatically replayed.
 Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
 Use `/cadence [goal]` at the beginning of an explicit Send, or select Cadence on Send, to enable persistent mode in that same conversation.
 Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
@@ -163,7 +172,7 @@ The independent project workflow roster includes native-started work; missing ob
 Active workflow links come only from immutable admission context, never copied/forked terminal entries or the retired browser workflow-link index; existing index files remain untouched.
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
 A failed or interrupted coordinator turn stays in the session; a new explicit Send continues that branch as Pi would (errored replies are skipped and orphaned tool calls closed); no incomplete tool call is resumed.
-A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
+A saved model preference is restored only on explicit Send or plan validation, never readonly browsing; no silent model substitution.
 The model catalog reports that preference read only as `remembered`, and only when it names a selectable entry of the same catalog, so the browser can show it as "used when you send" without installing it; an unreadable or no longer offered preference is simply absent.
 The composer's model button shows the installed choice (or the remembered one, dimmed) and opens an anchored panel: models grouped by provider with a search, unavailable models listed with their reason, and the thinking level as a separate row.
 One click is one explicit choice; choosing another model keeps the current thinking level when it offers it, otherwise the nearest offered level, and the panel shows the result at once.
@@ -180,7 +189,8 @@ Preview candidates are configuration observations, never a claim of provider ava
 Send captures that exact preselection before startup, checks it against the live catalog and installs only that choice through the existing conversation-bound model command.
 An unavailable choice refuses without substitution and keeps the draft; a lost choice reply is never automatically retried or treated as a sent message.
 The post-choice read must match the confirmed version and source selection before continuing; departure, changed owner/choice and stale reads cannot rebind the Send.
-A locally pending different model blocks plan approval until an explicit Send installs it and the plan/context can be observed again.
+A locally pending different model requires explicit plan validation before approval.
+Validation captures and installs that exact selection, shows the fresh execution binding and consumes the local model draft only on its matched successful response; it never sends the text draft.
 A live picker retains its existing explicit server choice behavior.
 Preparation/connection remain neutral progress, and preview or live read failures offer a readonly retry; an installation build difference is not a model restriction.
 Opening/refreshing a panel never prepares execution, restores a preference or submits a message.
@@ -268,7 +278,7 @@ An open conversation adds a Branches tab: the session's user messages as a tree 
 The lower-right folder button contains recent directories and selects one on the service host without starting its independent owner.
 The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
 Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/CSRF checks.
-The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit-Send preparation are separate routes, neither returns an independent backend token link.
+The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit execution preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
 It has a light and a dark colour scheme, both compiled into the one stylesheet as `light-dark()` tokens (light values from pi-web-ui's white theme, the violet accent kept, text at WCAG AA): it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
@@ -413,7 +423,7 @@ Detach is idempotent after authenticated release, including after a lost reply, 
 The serialized observer retries transient acquisition/detach failures and Refresh can reconnect it immediately; failed observation never requires a new Send or a page reload.
 Access revocation still stops observation until the user authenticates again.
 Reattachment never renews a plan grant, repeats a user command or cancels admitted work.
-Send preparation uses one scope through gateway observation, POST and fresh attachment; its budget is defined beside `SEND_PREPARATION_MS`.
+Send and plan-validation preparation use one scope through gateway observation, POST and fresh attachment; their shared budget is defined beside `SEND_PREPARATION_MS`.
 History images keep one scope across all pages; parallel detail parts each dispose only their own scope, so an early Promise.all rejection cannot disconnect still-pending siblings from navigation cancellation.
 
 Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
@@ -443,7 +453,7 @@ Known older history/directory draft namespaces remain usable in place; they are 
 Existing browser draft/pending namespaces are read and retained in place; new directories use that key before history exists, so startup cannot lose their drafts.
 A positively observed new epoch replaces only the serialized execution attachment, never a pending Send or approval.
 A stopped execution owner is labelled as such.
-Message dispatch, server-side model installation, approval, rename and archive still require a live authenticated owner; local model preselection does not, and only current Send may prepare one.
+Message dispatch, server-side model installation, approval, rename and archive still require a live authenticated owner; local model preselection does not, and only a current explicit Send or plan-validation action may prepare one.
 The gateway folder picker and draft remain available while stopped, and a failed first readiness observation does not hide independently readable conversations.
 An unreadable context does not lock local draft editing; an in-flight or uncertain Send and its captured images retain their original locks and identity.
 When conversation reads fail, the composer still accepts a new draft for preparation-only Send; it cannot infer a head or submit that message until a subsequent explicit Send observes the restored context.
@@ -474,7 +484,9 @@ A run that cannot be read again keeps its last observation with an unavailable n
 A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running work); a plan awaiting approval also stays beside it.
 Running work lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
 In Cadence mode a failed, interrupted or unknown turn keeps its actual status in the header and sidebar; approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
-An approval attempt guards only its own in-flight request: the owner consumes a plan once, so a lost reply is resolved by the next observation, not by a browser-side lock.
+An uncertain approval keeps its original command ID in this tab's sessionStorage where available and observes that exact workflow as well as the conversation's run links.
+It blocks further approval/revalidation until resolved; refresh never repeats the command.
+Only a reliable no-effect refusal clears the attempt for a fresh action, while observed conversation consumption resolves an accepted one.
 Ordinary Send does not depend on the Cadence-mode read; when that read fails the owner still refuses an ordinary Send to a Cadence conversation.
 Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.

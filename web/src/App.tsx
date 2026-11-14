@@ -23,7 +23,10 @@ import {
   FiSquare,
   FiTool,
 } from "react-icons/fi";
-import type { ProjectEntry } from "../../src/service/contracts/gateway.ts";
+import type {
+  ExecutionPreparation,
+  ProjectEntry,
+} from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { canonicalJson } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
@@ -113,7 +116,7 @@ export function App({
   onOpenService,
   project,
   onChooseFolder,
-  onPrepareSend,
+  onPrepareExecution,
   directoryNamespaces,
   previewModels,
   initialDraft,
@@ -126,7 +129,8 @@ export function App({
   project?: ProjectEntry;
   directoryNamespaces?: string[];
   onChooseFolder?(cwd?: string): void;
-  onPrepareSend?(
+  onPrepareExecution?(
+    purpose: ExecutionPreparation,
     signal: AbortSignal,
     location?: ConversationLocation,
     progress?: PreparationProgress,
@@ -217,7 +221,7 @@ export function App({
   )
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
-  // history and drafts reachable; only explicit Send can prepare execution.
+  // history and drafts reachable; only an explicit user action can prepare execution.
   const projectObserved = !!(project && (execution.value || execution.error));
   const conversationAvailable =
     !detached && !!(workspace.workspace || projectObserved);
@@ -225,19 +229,27 @@ export function App({
   if (workspace.workspace || execution.value?.workspaceId)
     chatWorkspace.current =
       workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
-  const prepareSend = onPrepareSend
-    ? async (
-        signal: AbortSignal,
-        location?: ConversationLocation,
-        progress?: PreparationProgress,
-      ) => {
-        const epoch = await onPrepareSend(signal, location, progress);
-        if (signal.aborted) throw new Error("stale");
-        execution.prepared(epoch);
-        const observation = workspace.reconnect();
-        await workspace.whenReady(epoch, signal, observation);
-      }
-    : undefined;
+  const preparation = (purpose: ExecutionPreparation) =>
+    onPrepareExecution
+      ? async (
+          signal: AbortSignal,
+          location?: ConversationLocation,
+          progress?: PreparationProgress,
+        ) => {
+          const epoch = await onPrepareExecution(
+            purpose,
+            signal,
+            location,
+            progress,
+          );
+          if (signal.aborted) throw new Error("stale");
+          execution.prepared(epoch);
+          const observation = workspace.reconnect();
+          await workspace.whenReady(epoch, signal, observation);
+        }
+      : undefined;
+  const prepareSend = preparation("send");
+  const preparePlan = preparation("plan-validation");
   const chats = useConversationHistory(api.client, conversationAvailable);
   const chatActivity = useWorkbench(
     api.client,
@@ -645,7 +657,7 @@ export function App({
         : project && execution.readiness === "stale"
           ? "Project observation stale"
           : executionStopped
-            ? "Ready to prepare on Send"
+            ? "Ready to prepare execution"
             : !viewerFresh
               ? "Viewer observation stale"
               : !workspace.workspace
@@ -1033,6 +1045,7 @@ export function App({
                     : undefined
                 }
                 prepareForSend={prepareSend}
+                prepareForPlan={preparePlan}
                 actionsReady={actionsReady}
                 observe={summaryChanges}
                 available={conversationAvailable}

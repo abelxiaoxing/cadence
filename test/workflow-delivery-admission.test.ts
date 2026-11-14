@@ -161,6 +161,39 @@ it("changing the persisted delivery target cannot retain the old plan approval d
     await f.close();
   }
 });
+it("explicit revalidation observes a changed target without changing the agreement, old snapshot or Git resources", {
+  tags: ["slow"],
+}, async () => {
+  const f = fixture();
+  try {
+    f.git("switch", "-c", "release");
+    const fresh = f.workflows.revalidate(
+      randomUUID(),
+      f.proposal,
+      f.proposal.model,
+    );
+    expect(fresh.plan).toEqual(f.proposal.plan);
+    expect(fresh.revalidatedFrom).toBe(f.proposal.id);
+    expect(fresh.delivery?.target.branch).toBe("refs/heads/release");
+    expect(fresh.digest).not.toBe(f.proposal.digest);
+    expect(f.workflows.proposal(f.proposal.id)).toEqual(f.proposal);
+    expect(() =>
+      f.workflows.command(randomUUID(), f.epoch, {
+        action: "prepare",
+        proposalId: f.proposal.id,
+        digest: f.proposal.digest,
+      }),
+    ).toThrow("stale");
+    expect(f.git("branch", "--list", "cadence/*")).toBe("");
+    expect(
+      f.git("worktree", "list", "--porcelain").match(/^worktree /gmu),
+    ).toHaveLength(1);
+    expect(f.execute).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
 it("a retained agreement without named placement stays readable but cannot authorize a new delivery", async () => {
   const f = fixture();
   try {

@@ -49,6 +49,7 @@ import {
   canUpgrade,
   decodeProjectEntry,
   decodeVersion,
+  type ExecutionPreparation,
   MAINTENANCE_ACTIONS,
   type MaintenanceJob,
   type ServiceEntry,
@@ -438,9 +439,10 @@ export async function createGateway(
     store.saveProject(project);
     return project;
   }
-  /** One explicit Send may prepare its selected owner. This endpoint cannot
-   * accept a message, choose a model, grant approval or submit a workflow. */
-  async function prepareSend(
+  /** Explicit Send or plan validation may prepare the selected owner. This
+   * boundary cannot send, choose a model, grant approval or execute a plan. */
+  async function prepareExecution(
+    purpose: ExecutionPreparation,
     projectId: string,
     id: string,
     epoch: string,
@@ -465,7 +467,7 @@ export async function createGateway(
     const observed = new ServiceCoordination(directory, input.stateHome);
     if (observed.store.root !== selected.path) throw new ContractError("stale");
     const identity = canonicalJson({
-      kind: "prepare-send",
+      kind: purpose === "send" ? "prepare-send" : "prepare-plan",
       projectId,
       epoch,
       ...(location ? { location } : {}),
@@ -1136,7 +1138,13 @@ export async function createGateway(
         reply(res, 200, { kind: "project", project: select(path, epoch) });
         return;
       }
-      if (raw === "/workbench/v1/prepare-send" && req.method === "POST") {
+      const preparationPurpose =
+        raw === "/workbench/v1/prepare-send"
+          ? "send"
+          : raw === "/workbench/v1/prepare-plan"
+            ? "plan-validation"
+            : undefined;
+      if (preparationPurpose && req.method === "POST") {
         const value = await body(req);
         const o = closed(value, [
           "commandId",
@@ -1151,9 +1159,12 @@ export async function createGateway(
           o.location === undefined
             ? undefined
             : decodeConversationLocation(o.location);
+        if (preparationPurpose === "plan-validation" && !location)
+          throw new ContractError("invalid");
         auth.current(caller);
         effect = true;
-        const project = await prepareSend(
+        const project = await prepareExecution(
+          preparationPurpose,
           projectId,
           id,
           epoch,

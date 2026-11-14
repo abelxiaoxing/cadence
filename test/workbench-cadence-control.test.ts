@@ -134,7 +134,12 @@ function fixture(
     activeRuns: () => ({ kind: "workflow-active" as const, runs: active }),
     investigated: (id: string) => recorded.has(id),
     join: (id: string) => joinResearch(runs.get(id) as WorkflowRun),
-    command(commandId: string, _epoch: string, r: WorkflowRequest) {
+    command(
+      commandId: string,
+      _epoch: string,
+      r: WorkflowRequest,
+      options?: { beforeAdmission?(): void },
+    ) {
       if (r.action === "propose") {
         const proposal: WorkflowProposal = {
           id: commandId,
@@ -165,6 +170,7 @@ function fixture(
       if (r.action === "execute" && refuseExecute)
         throw new ContractError(refuseExecute);
       if (r.action === "cancel") return workflows.view(r.runId);
+      if (r.action === "execute") options?.beforeAdmission?.();
       const created = run(
         commandId,
         r.action === "research" ? "research" : "implementing",

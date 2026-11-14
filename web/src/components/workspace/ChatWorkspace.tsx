@@ -22,12 +22,16 @@ import {
 } from "react-icons/fi";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type {
+  CadenceConversation,
   ChatCache,
   ChatPending,
   ChatSummary,
   ChatTreeNode,
 } from "../../../../src/service/contracts/workbench.ts";
-import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
+import type {
+  WorkflowProposal,
+  WorkflowRun,
+} from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import {
   canonicalJson,
@@ -61,7 +65,7 @@ import {
   modelWaitDisposition,
   type PendingSend,
   type PreparationStage,
-  type PrepareForSend,
+  type PrepareExecution,
   preparationEffect,
   draftKey as selectDraftKey,
   selector,
@@ -96,6 +100,8 @@ import {
   approveWorkflow,
   cadenceApproval,
   cadenceExit,
+  planAction,
+  revalidateWorkflow,
 } from "../../client/workflow-entry";
 import { pushPromptHistory } from "../../composer/prompt-history";
 import { describeError, useT } from "../../i18n/locale";
@@ -165,6 +171,7 @@ export function ChatWorkspace({
   enabled,
   actionsReady = enabled,
   prepareForSend,
+  prepareForPlan,
   legacyWorkspaceId,
   directoryNamespaces = [],
   available = enabled,
@@ -194,7 +201,9 @@ export function ChatWorkspace({
   onActivity?(activity: ConversationActivity): void;
   enabled: boolean;
   actionsReady?: boolean;
-  prepareForSend?: PrepareForSend;
+  prepareForSend?: PrepareExecution;
+  /** Explicit plan validation may prepare an owner; never called by observation. */
+  prepareForPlan?: PrepareExecution;
   legacyWorkspaceId?: string;
   directoryNamespaces?: string[];
   available?: boolean;
@@ -419,10 +428,32 @@ export function ChatWorkspace({
   const cadenceKnown = !!state && !workflow.error && !state.notice;
   const latestState = useRef(state);
   latestState.current = state;
-  // In-flight approval only. The owner consumes a plan once, so a lost reply
-  // never needs a client-side lock: the next observation shows the run.
-  const [approving, setApproving] = useState("");
-  const attempted = useRef("");
+  // Keep an uncertain approval identity across refresh; it is observed, never replayed.
+  const [approving, setApproving] = useState(() =>
+    stored(`${draftKey}:approval`, ""),
+  );
+  const attempted = useRef(approving);
+  const decisionBusy = useRef(false);
+  const [revalidating, setRevalidating] = useState(false);
+  const [invalidatedPlan, setInvalidatedPlan] = useState("");
+  const [validation, setValidation] = useState<{
+    before: WorkflowProposal;
+    after: CadenceConversation;
+  }>();
+  const rememberApproval = useCallback(
+    (commandId: string) => {
+      attempted.current = commandId;
+      setApproving(commandId);
+      try {
+        if (commandId)
+          sessionStorage.setItem(`${draftKey}:approval`, commandId);
+        else sessionStorage.removeItem(`${draftKey}:approval`);
+      } catch {
+        /* The live attempt remains observable without browser storage. */
+      }
+    },
+    [draftKey],
+  );
   const input = cadenceInput(draft, cadence ? "cadence" : mode);
   const canSend =
     enabled &&
@@ -574,25 +605,51 @@ export function ChatWorkspace({
     canonicalJson(draftModel) !== canonicalJson(context?.model ?? null);
   const planApprovable =
     !!state?.proposal && !!summary && !running && summary.status !== "unknown";
-  const approvalHint = modelPending
-    ? t("Send with this model before approving a plan.")
-    : summary?.status === "unknown"
-      ? t(
-          "The latest turn's outcome is unknown. Approval waits until it is observed.",
-        )
-      : !actionsReady
-        ? t("Read the current execution state before approving this plan.")
-        : !cadenceKnown
-          ? t("Cadence state unavailable")
-          : running
-            ? t("Wait for the current reply before approving this plan.")
-            : approving
-              ? t("Observing plan approval…")
-              : !canSend
-                ? t(
-                    "Read the current conversation context before approving this plan.",
-                  )
-                : undefined;
+  const approvalAction = state?.proposal
+    ? planAction(
+        state.proposal,
+        actionsReady,
+        modelRead.catalog?.version,
+        modelPending || invalidatedPlan === state.proposal.id,
+      )
+    : "approve";
+  const validationPending =
+    !!validation && !!state && state.revision < validation.after.revision;
+  const canValidatePlan =
+    !!state?.proposal &&
+    canSend &&
+    cadenceKnown &&
+    planApprovable &&
+    !approving &&
+    !revalidating &&
+    !validationPending &&
+    (!!prepareForPlan || actionsReady) &&
+    !!(draftModel ?? context?.model);
+  const approvalHint = revalidating
+    ? t(
+        "Preparing execution and validating the plan; no implementation is approved.",
+      )
+    : validationPending
+      ? t("Reading the validated plan…")
+      : modelPending
+        ? t("Validate the plan with this model before approving it.")
+        : summary?.status === "unknown"
+          ? t(
+              "The latest turn's outcome is unknown. Approval waits until it is observed.",
+            )
+          : !actionsReady
+            ? t("Read the current execution state before approving this plan.")
+            : !cadenceKnown
+              ? t("Cadence state unavailable")
+              : running
+                ? t("Wait for the current reply before approving this plan.")
+                : approving
+                  ? t("Observing plan approval…")
+                  : !canSend
+                    ? t(
+                        "Read the current conversation context before approving this plan.",
+                      )
+                    : undefined;
   const textarea = useRef<HTMLTextAreaElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     lastTop = useRef(0);
@@ -660,8 +717,7 @@ export function ChatWorkspace({
       onChanged();
     }
     if (attempted.current && state?.runs.includes(attempted.current)) {
-      attempted.current = "";
-      setApproving("");
+      rememberApproval("");
       setError("");
     }
     if (
@@ -696,6 +752,7 @@ export function ChatWorkspace({
     conversation,
     removeImages,
     workspaceId,
+    rememberApproval,
   ]);
   // Turns render lazily: those far outside the viewport keep only their height.
   const rows = useMemo(
@@ -810,9 +867,10 @@ export function ChatWorkspace({
       ...new Set([
         ...conversation.runs.slice(-windows.terminal),
         ...(state?.runs ?? []).slice(-windows.browser),
+        ...(approving ? [approving] : []),
       ]),
     ],
-    [conversation.runs, state?.runs, windows],
+    [conversation.runs, state?.runs, windows, approving],
   );
   const flows = useWorkflowRuns(client, available ? watched : [], 1000);
   const firstAt = turns.find((turn) => turn.header.at > 0)?.header.at;
@@ -862,12 +920,79 @@ export function ChatWorkspace({
       }}
     />
   );
+  const validatePlan = async () => {
+    if (
+      !canValidatePlan ||
+      !state?.proposal ||
+      !context ||
+      decisionBusy.current
+    )
+      return;
+    const model = draftModel ?? context.model;
+    if (!model) return;
+    const proposal = state.proposal;
+    const observed = state;
+    const generation = sendGeneration.current;
+    // The owner checks the captured revision/head. Its own successful write
+    // may already reach polling before this command's reply comes back.
+    const current = () =>
+      alive.current && sendGeneration.current === generation;
+    decisionBusy.current = true;
+    setBusy(true);
+    setRevalidating(true);
+    clearError();
+    try {
+      const next = await revalidateWorkflow({
+        client,
+        state: observed,
+        context,
+        model,
+        head: conversation.leaf,
+        signal: departure.current.signal,
+        current,
+        prepare: !actionsReady ? prepareForPlan : undefined,
+      });
+      if (!alive.current || sendGeneration.current !== generation) return;
+      setValidation({ before: proposal, after: next });
+      setInvalidatedPlan("");
+      setDraftModel((value) =>
+        canonicalJson(value) === canonicalJson(model) ? null : value,
+      );
+    } catch (error) {
+      if (alive.current && sendGeneration.current === generation)
+        setError(
+          t(
+            "Plan validation did not finish ({code}). No implementation was approved; observe the plan before trying again.",
+            {
+              code: error instanceof Error ? error.message : "unavailable",
+            },
+          ),
+        );
+    } finally {
+      if (alive.current && sendGeneration.current === generation) {
+        decisionBusy.current = false;
+        setBusy(false);
+        setRevalidating(false);
+        setModelReads((n) => n + 1);
+        contextRead.refresh();
+        workflow.refresh();
+        conversation.refresh();
+        onChanged();
+      }
+    }
+  };
   const approve = async () => {
     if (!state?.proposal) {
       refuse(t("No plan is awaiting approval."));
       return;
     }
+    if (approvalAction !== "approve") {
+      await validatePlan();
+      return;
+    }
     if (
+      decisionBusy.current ||
+      validationPending ||
       modelPending ||
       !actionsReady ||
       !cadenceKnown ||
@@ -877,8 +1002,10 @@ export function ChatWorkspace({
       !planApprovable
     )
       return;
+    const proposal = state.proposal;
     const observed = state;
     const generation = sendGeneration.current;
+    decisionBusy.current = true;
     setBusy(true);
     clearError();
     try {
@@ -890,22 +1017,26 @@ export function ChatWorkspace({
           sendGeneration.current === generation &&
           latestState.current?.revision === observed.revision &&
           latestState.current?.enabled === true,
-        submitting: (commandId) => {
-          attempted.current = commandId;
-          setApproving(commandId);
-        },
+        submitting: rememberApproval,
       });
       if (!alive.current || sendGeneration.current !== generation) return;
       if (reply.kind === "error") {
         // A lost reply may still have started the run; the observation shows it.
         setError(reply.error.code);
-        setApproving("");
+        if (reply.error.effect === "none") {
+          rememberApproval("");
+          if (reply.error.code === "stale") setInvalidatedPlan(proposal.id);
+        }
       } else setDraft((value) => (cadenceApproval(value) ? "" : value));
     } catch (e) {
-      if (alive.current && sendGeneration.current === generation)
+      if (alive.current && sendGeneration.current === generation) {
         setError(e instanceof Error ? e.message : "unavailable");
+        if (!attempted.current && e instanceof Error && e.message === "stale")
+          setInvalidatedPlan(proposal.id);
+      }
     } finally {
       if (alive.current && sendGeneration.current === generation) {
+        decisionBusy.current = false;
         setBusy(false);
         workflow.refresh();
         conversation.refresh();
@@ -944,13 +1075,7 @@ export function ChatWorkspace({
       cadence &&
       cadenceApproval(message)
     ) {
-      if (!actionsReady)
-        refuse(
-          t(
-            "Execution is not ready to approve this plan. Send a message to refresh the conversation first; nothing was approved.",
-          ),
-        );
-      else await approve();
+      await approve();
       return;
     }
     const selecting = cadenceInput(message, mode).mode === "cadence";
@@ -1346,6 +1471,9 @@ export function ChatWorkspace({
     departure.current = new AbortController();
     waitingSend.current = null;
     sending.current = false;
+    decisionBusy.current = false;
+    setRevalidating(false);
+    setValidation(undefined);
     setAwaitingModel(false);
     setResume(false);
     setModelOpen(false);
@@ -1838,6 +1966,13 @@ export function ChatWorkspace({
             }
             onRestore={restoreUndelivered}
           />
+          {approving && (
+            <p role="status">
+              {t("Observing approval request {id}; no approval is replayed.", {
+                id: approving,
+              })}
+            </p>
+          )}
           {state?.enabled && state.proposal && (
             <PlanCard
               proposal={state.proposal}
@@ -1848,9 +1983,20 @@ export function ChatWorkspace({
                 cadenceKnown &&
                 planApprovable &&
                 !running &&
-                !approving
+                !approving &&
+                !validationPending &&
+                approvalAction === "approve"
+              }
+              action={approvalAction}
+              canValidate={canValidatePlan}
+              validating={revalidating}
+              previous={
+                validation?.after.proposal?.id === state.proposal.id
+                  ? validation.before
+                  : undefined
               }
               approvalHint={approvalHint}
+              onValidate={() => void validatePlan()}
               onApprove={() => void approve()}
             />
           )}
