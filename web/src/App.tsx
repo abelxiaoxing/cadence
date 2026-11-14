@@ -105,7 +105,6 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 ];
 export function App({
   api: provided,
-  buildCompatible = true,
   onOpenProject,
   homeFolder,
   projectEntries,
@@ -121,8 +120,6 @@ export function App({
   onDraftApplied,
 }: {
   api?: BrowserClient;
-  /** The loaded browser and its workbench gateway must match before mutations. */
-  buildCompatible?: boolean;
   previewModels?: PreviewModels;
   initialDraft?: FolderDraft & { conversationId: string };
   onDraftApplied?(conversationId: string): void;
@@ -216,9 +213,7 @@ export function App({
     workspace.workspace ||
     workspace.observation ||
     workspace.error ||
-    workspace.transportStatus === "stale" ||
-    workspace.compatible === false ||
-    !buildCompatible
+    workspace.transportStatus === "stale"
   )
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
@@ -537,11 +532,7 @@ export function App({
       workspace.refresh();
   };
   const cancel = (runId: string) => {
-    if (
-      canceling.has(runId) ||
-      !workspace.cancelCompatible ||
-      !workspace.activeRuns
-    )
+    if (canceling.has(runId) || !workspace.attached || !workspace.activeRuns)
       return;
     const commandId = crypto.randomUUID(),
       epoch = workspace.activeRuns.epoch;
@@ -614,12 +605,11 @@ export function App({
     workspace.transportStatus === "current" &&
     (!observation.state || observation.state.connection === "current");
   const observationFresh = executionReady && viewerFresh;
-  // What an owner-side action needs: a live compatible owner, freshly observed.
+  // What an owner-side action needs: an authenticated owner, freshly observed.
   const actionsReady =
-    buildCompatible &&
     executionReady &&
     !!workspace.workspace &&
-    !!workspace.compatible &&
+    workspace.attached &&
     !workspace.error &&
     viewerFresh;
   const connecting =
@@ -630,44 +620,38 @@ export function App({
     (!project ||
       (!execution.value && execution.readiness === "unknown") ||
       execution.readiness === "running");
-  const modelAvailability: ModelAvailability = !buildCompatible
-    ? { status: "incompatible" }
-    : executionStopped
+  const modelAvailability: ModelAvailability = executionStopped
+    ? {
+        status:
+          execution.readiness === "not-started" ? "not-started" : "stopped",
+      }
+    : executionReady &&
+        viewerFresh &&
+        workspace.attached &&
+        workspace.epoch &&
+        (!project || execution.value?.epoch === workspace.epoch)
       ? {
-          status:
-            execution.readiness === "not-started" ? "not-started" : "stopped",
+          status: "ready",
+          epoch: workspace.epoch,
+          attachmentVersion: workspace.attachmentVersion,
         }
-      : workspace.compatible === false
-        ? { status: "incompatible" }
-        : executionReady &&
-            viewerFresh &&
-            workspace.compatible &&
-            workspace.epoch &&
-            (!project || execution.value?.epoch === workspace.epoch)
-          ? {
-              status: "ready",
-              epoch: workspace.epoch,
-              attachmentVersion: workspace.attachmentVersion,
-            }
-          : { status: connecting ? "connecting" : "unavailable" };
+      : { status: connecting ? "connecting" : "unavailable" };
   const connection = detached
     ? "Viewer disconnected"
-    : !buildCompatible
-      ? "unavailable / mismatch — reload built assets; normal actions disabled"
-      : connecting
-        ? "Connecting…"
-        : project && execution.readiness === "unknown"
-          ? "Project readiness unknown"
-          : project && execution.readiness === "stale"
-            ? "Project observation stale"
-            : executionStopped
-              ? "Ready to prepare on Send"
-              : !viewerFresh
-                ? "Viewer observation stale"
-                : !workspace.workspace
-                  ? "Viewer observation unavailable"
-                  : (observation.state?.connection ??
-                    (taskId ? "Task snapshot not observed yet" : "Chat ready"));
+    : connecting
+      ? "Connecting…"
+      : project && execution.readiness === "unknown"
+        ? "Project readiness unknown"
+        : project && execution.readiness === "stale"
+          ? "Project observation stale"
+          : executionStopped
+            ? "Ready to prepare on Send"
+            : !viewerFresh
+              ? "Viewer observation stale"
+              : !workspace.workspace
+                ? "Viewer observation unavailable"
+                : (observation.state?.connection ??
+                  (taskId ? "Task snapshot not observed yet" : "Chat ready"));
   const connectionDot = connecting
     ? "busy"
     : executionStopped
@@ -683,8 +667,7 @@ export function App({
     <>
       <AppShell
         panels={panels}
-        compatible={buildCompatible ? workspace.compatible : false}
-        onOpenService={buildCompatible ? onOpenService : undefined}
+        onOpenService={onOpenService}
         onRefresh={() => {
           workspace.refresh();
           execution.refresh();
@@ -829,9 +812,7 @@ export function App({
                     <button
                       type="button"
                       className="danger"
-                      disabled={
-                        !workspace.cancelCompatible || canceling.has(r.runId)
-                      }
+                      disabled={!workspace.attached || canceling.has(r.runId)}
                       onClick={() => cancel(r.runId)}
                     >
                       <FiSquare aria-hidden="true" />
@@ -881,7 +862,7 @@ export function App({
                 runs={runs}
                 snapshot={observation.state?.snapshot.committedSeq}
                 activeRuns={workspace.activeRuns}
-                cancelCompatible={!!workspace.cancelCompatible}
+                canCancel={workspace.attached}
                 canceling={canceling}
                 onCancel={cancel}
                 chats={chatEntries}
@@ -936,17 +917,13 @@ export function App({
                 actionsUnavailable={
                   actionsReady
                     ? ""
-                    : !buildCompatible
+                    : executionStopped
                       ? t(
-                          "unavailable / mismatch — reload built assets; normal actions disabled",
+                          "Rename and archive need the execution service; it starts with your next Send.",
                         )
-                      : executionStopped
-                        ? t(
-                            "Rename and archive need the execution service; it starts with your next Send.",
-                          )
-                        : t(
-                            "Rename and archive are unavailable until the execution service is observed.",
-                          )
+                      : t(
+                          "Rename and archive are unavailable until the execution service is observed.",
+                        )
                 }
                 onConversationsChanged={(id) => {
                   // The lists and the open conversation's head say what is
@@ -1059,14 +1036,13 @@ export function App({
                 actionsReady={actionsReady}
                 observe={summaryChanges}
                 available={conversationAvailable}
-                canInterrupt={!!workspace.cancelCompatible}
+                canInterrupt={workspace.attached}
                 enabled={
-                  buildCompatible &&
-                  (prepareSend
+                  prepareSend
                     ? conversationAvailable
                     : !!workspace.workspace &&
-                      !!workspace.compatible &&
-                      !workspace.error)
+                      workspace.attached &&
+                      !workspace.error
                 }
                 modelAvailability={modelAvailability}
                 previewModels={previewModels}
@@ -1078,7 +1054,7 @@ export function App({
                 onDraftApplied={() => onDraftApplied?.(chatId)}
                 onModelChanged={() => {
                   lifetime.current.depart();
-                  workspace.refresh(true);
+                  workspace.refresh();
                   execution.refresh();
                 }}
                 onChanged={() => {
@@ -1394,25 +1370,16 @@ export function App({
           </>
         }
         folder={
-          <>
-            {(workspace.workspace || project) && (
-              <WorkingFolderButton
-                path={workingFolder}
-                onClick={() =>
-                  onChooseFolder
-                    ? onChooseFolder(workingFolder)
-                    : setProjectOpen("")
-                }
-              />
-            )}
-            {(!buildCompatible || workspace.compatible === false) && (
-              <StatusItem tone="warn">
-                {t(
-                  "unavailable / mismatch — reload built assets; normal actions disabled",
-                )}
-              </StatusItem>
-            )}
-          </>
+          (workspace.workspace || project) && (
+            <WorkingFolderButton
+              path={workingFolder}
+              onClick={() =>
+                onChooseFolder
+                  ? onChooseFolder(workingFolder)
+                  : setProjectOpen("")
+              }
+            />
+          )
         }
       />
       {projectOpen !== null && workspace.workspace && (

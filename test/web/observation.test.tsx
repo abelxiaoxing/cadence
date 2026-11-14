@@ -18,6 +18,7 @@ import { context, id } from "./fixtures";
 const fixtures: Fixture[] = [];
 const stops: (() => void)[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const stop of stops.splice(0)) stop();
   for (const f of fixtures.splice(0)) await f.server.close();
@@ -77,11 +78,16 @@ async function setup() {
     client: new ServiceClient(transport),
   });
   let state: ViewerState | undefined;
-  const select = (taskId: string) => {
+  const states: ViewerState[] = [];
+  const select = (taskId: string | null) => {
     state = undefined;
-    const stop = observer.observe({ kind: "task", id: taskId }, (value) => {
-      state = value;
-    });
+    const stop = observer.observe(
+      taskId ? { kind: "task", id: taskId } : null,
+      (value) => {
+        state = value;
+        states.push(value);
+      },
+    );
     stops.push(stop);
     return stop;
   };
@@ -92,11 +98,12 @@ async function setup() {
     sockets,
     select,
     state: () => state,
+    states,
     sessions: () => sessions,
     sessionAttachments,
   };
 }
-it("changed owner model refreshes capabilities on the existing attachment, not every poll", async () => {
+it("polls refresh capabilities on the existing attachment without renewing grants", async () => {
   const s = await setup();
   s.select(id());
   await expect.poll(() => s.state()?.transportStatus).toBe("current");
@@ -109,15 +116,16 @@ it("changed owner model refreshes capabilities on the existing attachment, not e
   s.observer.refresh();
   await expect.poll(() => s.state()?.workspace?.models).toEqual([model]);
   expect(s.sessions()).toBe(2);
-  expect(s.sessionAttachments[0]).toBeNull();
+  expect(s.sessionAttachments[0]).toBeTruthy();
   expect(s.sessionAttachments[1]).toBe(
     new URL(s.sockets[0].url).searchParams.get("attachment"),
   );
-  // An unchanged model never causes another session request or grants consent.
+  // An unchanged model still checks the same session; this grants no consent.
   const previous = s.state()?.observation;
   s.observer.refresh();
   await expect.poll(() => s.state()?.observation === previous).toBe(false);
-  expect(s.sessions()).toBe(2);
+  expect(s.sessions()).toBe(3);
+  expect(new Set(s.sessionAttachments).size).toBe(1);
 });
 it("serial task switching and repeated refresh do not exhaust 16 attachments", async () => {
   const s = await setup();
@@ -132,7 +140,7 @@ it("serial task switching and repeated refresh do not exhaust 16 attachments", a
   const count = s.sessions();
   for (let i = 0; i < 25; i++) s.observer.refresh();
   await expect.poll(() => s.state()?.workspace?.storeId).toBe(s.f.storeId);
-  expect(s.sessions()).toBe(count);
+  expect(s.sessions()).toBe(count + 1); // concurrent refreshes share one poll
   stop?.();
   await expect
     .poll(() =>
@@ -223,7 +231,7 @@ it("obsolete cleanup cannot detach the replacement task or clear its refresh hoo
   const count = s.sessions();
   s.observer.refresh();
   await expect.poll(() => s.state()?.observation?.snapshot.scope.id).toBe(task);
-  expect(s.sessions()).toBe(count);
+  expect(s.sessions()).toBe(count + 1);
   expect(s.sockets[1].readyState).toBe(WebSocket.OPEN);
 });
 it("failed original session allocations release their actual 16-slot reservations", async () => {
@@ -234,14 +242,14 @@ it("failed original session allocations release their actual 16-slot reservation
   };
   for (let n = 0; n < 20; n++) {
     const stop = s.select(id());
-    await expect.poll(() => s.state()?.error).toMatch(/re-entry/);
+    await expect.poll(() => s.state()?.error).toBe("unavailable");
     stop();
   }
   s.f.projection.session = original;
   s.select(id());
   await expect.poll(() => s.state()?.transportStatus).toBe("current");
 });
-it("lost detach reply retains exact attachment and blocks replacement allocation", async () => {
+it("lost detach reply retains its exact attachment and Refresh recovers without explicit re-entry", async () => {
   const s = await setup();
   s.select(id());
   await expect.poll(() => s.state()?.transportStatus).toBe("current");
@@ -253,13 +261,13 @@ it("lost detach reply retains exact attachment and blocks replacement allocation
   };
   const count = s.sessions();
   s.select(id());
-  await expect.poll(() => s.state()?.error).toMatch(/detach unconfirmed/);
+  await expect.poll(() => s.state()?.error).toMatch(/unavailable detach/);
   expect(s.state()?.workspace).toBeUndefined();
   expect(s.sessions()).toBe(count);
   s.observer.refresh();
   expect(s.sessions()).toBe(count);
   fail = false;
-  s.select(id()); // explicit view re-entry, not an automatic grant renewal
+  s.observer.refresh(); // reconnect observation only, never a command or grant
   await expect.poll(() => s.state()?.transportStatus).toBe("current");
   expect(s.sessions()).toBe(count + 1);
 });
@@ -309,54 +317,214 @@ it("cookie revocation without a selected task/socket clears private state and st
   s.observer.refresh();
   expect(s.sessions()).toBe(count);
 });
-it("malformed original session body retains a known browser allocation and blocks replacement sessions", async () => {
-  const f = await httpFixture();
-  fixtures.push(f);
-  let sessions = 0,
-    state: ViewerState | undefined;
-  const t = new HttpServiceTransport({
-    origin: f.origin,
-    fetch: async (url, init) => {
-      const response = await fetch(url, {
-        ...init,
-        headers: {
-          ...Object.fromEntries(new Headers(init?.headers)),
-          Cookie: f.cookie,
-          Origin: f.origin,
-        },
-      });
-      if (String(url).endsWith("/session")) {
-        sessions++;
-        await response.arrayBuffer(); // original server work settled; inject invalid delivered body
-        return new Response("{", {
-          status: response.status,
-          headers: response.headers,
+it.each(["body", "headers"])(
+  "a lost session %s recovers automatically using the same allocation, without replay",
+  async (loss) => {
+    const f = await httpFixture();
+    fixtures.push(f);
+    f.projection.workspace = async () => ({
+      workspaceId: f.workspaceId,
+      storeId: f.storeId,
+      epoch: f.epoch,
+      committedSeq: "1",
+      rootLabel: "fixture",
+      models: [],
+      context: f.snap(f.scope).context,
+    });
+    const allocations: (string | null)[] = [];
+    const commands: string[] = [];
+    let state: ViewerState | undefined;
+    const t = new HttpServiceTransport({
+      origin: f.origin,
+      fetch: async (url, init) => {
+        const response = await fetch(url, {
+          ...init,
+          headers: {
+            ...Object.fromEntries(new Headers(init?.headers)),
+            Cookie: f.cookie,
+            Origin: f.origin,
+          },
         });
-      }
-      return response;
-    },
-  });
-  const observer = new WorkspaceObserver({
-    transport: t,
-    client: new ServiceClient(t),
-  });
-  stops.push(
-    observer.observe(null, (v) => {
-      state = v;
-    }),
-  );
-  await expect.poll(() => state?.error).toMatch(/re-entry/);
-  for (let n = 0; n < 20; n++) {
-    state = undefined;
+        expect(
+          (f.server as unknown as { attachments: Map<string, unknown> })
+            .attachments.size,
+        ).toBeLessThanOrEqual(1);
+        if (String(url).endsWith("/session")) {
+          allocations.push(
+            new Headers(init?.headers).get("x-cadence-attachment"),
+          );
+          if (allocations.length === 1) {
+            await response.arrayBuffer(); // original settled; lose only its delivered reply
+            if (loss === "headers") throw new Error("response lost");
+            return new Response("{", {
+              status: response.status,
+              headers: response.headers,
+            });
+          }
+        }
+        if (init?.method === "POST") commands.push(String(url));
+        return response;
+      },
+    });
+    const observer = new WorkspaceObserver({
+      transport: t,
+      client: new ServiceClient(t),
+    });
     stops.push(
       observer.observe(null, (v) => {
         state = v;
       }),
     );
-    await expect.poll(() => state?.error).toMatch(/detach unconfirmed/);
-  }
-  expect(sessions).toBe(1);
+    await expect.poll(() => state?.error).toBe("unavailable");
+    await expect
+      .poll(() => state?.workspace?.storeId, { timeout: 2000 })
+      .toBe(f.storeId);
+    expect(state?.attached).toBe(true);
+    expect(allocations).toHaveLength(3); // recover CSRF, retire exact old viewer, attach
+    expect(allocations[0]).toBeTruthy();
+    expect(allocations[1]).toBe(allocations[0]);
+    expect(allocations[2]).not.toBe(allocations[0]);
+    expect(commands).toEqual([`${f.origin}/api/v1/detach`]);
+  },
+);
+it("ordinary polling renews its existing attachment even with no socket or model change", async () => {
+  const s = await setup();
+  s.select(null);
+  await expect.poll(() => s.state()?.workspace?.storeId).toBe(s.f.storeId);
+  const original = s.sessions();
+  s.observer.refresh();
+  await expect.poll(() => s.sessions()).toBe(original + 1);
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.sockets).toHaveLength(0);
 });
+it.each(["poll", "reconnect"])(
+  "%s follows a replacement owner without mixed-epoch readiness or command replay",
+  async (route) => {
+    const s = await setup();
+    const stop = s.select(null);
+    await expect.poll(() => s.state()?.workspace?.storeId).toBe(s.f.storeId);
+    const successor = await httpFixture();
+    fixtures.push(successor);
+    successor.projection.workspace = async () => ({
+      workspaceId: successor.workspaceId,
+      storeId: successor.storeId,
+      epoch: successor.epoch,
+      committedSeq: "1",
+      rootLabel: "successor",
+      models: [],
+      context: successor.snap(successor.scope).context,
+    });
+    const actual = globalThis.fetch;
+    const writes: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const path = new URL(String(url));
+      if (init?.method === "POST") writes.push(path.pathname);
+      const headers = new Headers(init?.headers);
+      headers.set("Cookie", successor.cookie);
+      headers.set("Origin", successor.origin);
+      return actual(`${successor.origin}${path.pathname}${path.search}`, {
+        ...init,
+        headers,
+      });
+    });
+    if (route === "poll") s.observer.refresh();
+    else {
+      stop();
+      s.select(null);
+    }
+    await expect
+      .poll(() => s.state()?.epoch, { timeout: 2000 })
+      .toBe(successor.epoch);
+    await expect.poll(() => s.state()?.workspace?.epoch).toBe(successor.epoch);
+    expect(s.state()?.error).toBeUndefined();
+    expect(s.state()?.attached).toBe(true);
+    for (const state of s.states)
+      if (
+        state.attached &&
+        !state.error &&
+        state.transportStatus === "current" &&
+        state.workspace
+      )
+        expect(state.workspace.epoch).toBe(state.epoch);
+    expect(writes.every((path) => path === "/api/v1/detach")).toBe(true);
+    expect(s.sockets).toHaveLength(0);
+  },
+);
+it.each(["browser", "local"])(
+  "%s: an already-completed detach acknowledges retries without repeating its effect",
+  async (authority) => {
+    const f = await httpFixture();
+    fixtures.push(f);
+    const detached = vi.fn();
+    f.adapters.attachments = { detach: detached, revokeGrants() {} };
+    let lose = true;
+    const transport = new HttpServiceTransport({
+      origin: f.origin,
+      ...(authority === "local" ? { localCapability: f.local } : {}),
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        if (authority === "browser") {
+          headers.set("Cookie", f.cookie);
+          headers.set("Origin", f.origin);
+        }
+        const response = await fetch(url, { ...init, headers });
+        if (String(url).endsWith("/detach") && lose) {
+          lose = false;
+          await response.arrayBuffer();
+          throw new Error("detach response lost after settlement");
+        }
+        return response;
+      },
+    });
+    await transport.session();
+    await expect(transport.detach()).rejects.toThrow("response lost");
+    expect(detached).toHaveBeenCalledTimes(1);
+    await expect(transport.detach()).resolves.toEqual({
+      kind: "ok",
+      value: null,
+    });
+    expect(detached).toHaveBeenCalledTimes(1);
+  },
+);
+it.each(["activeRuns", "snapshot"] as const)(
+  "a replacement epoch in %s never becomes mixed-epoch readiness",
+  async (operation) => {
+    const s = await setup();
+    const task = id();
+    s.select(operation === "snapshot" ? task : null);
+    await expect.poll(() => s.state()?.transportStatus).toBe("current");
+    const originalVersion = s.state()?.attachmentVersion ?? 0;
+    expect(originalVersion).toBeGreaterThan(0);
+    vi.spyOn(s.transport, operation).mockResolvedValueOnce({
+      kind: "ok",
+      value:
+        operation === "snapshot"
+          ? {
+              ...(await s.f.projection.snapshot({ kind: "task", id: task })),
+              epoch: id(),
+            }
+          : {
+              storeId: s.f.storeId,
+              workspaceId: s.f.workspaceId,
+              epoch: id(),
+              status: "complete",
+              runs: [],
+            },
+    });
+    s.observer.refresh();
+    await expect
+      .poll(() => s.state()?.attachmentVersion)
+      .toBeGreaterThan(originalVersion);
+    await expect.poll(() => s.state()?.error).toBeUndefined();
+    for (const state of s.states) {
+      if (!state.attached || state.error || state.transportStatus !== "current")
+        continue;
+      if (state.activeRuns) expect(state.activeRuns.epoch).toBe(state.epoch);
+      if (state.observation)
+        expect(state.observation.snapshot.epoch).toBe(state.epoch);
+    }
+  },
+);
 it("default browser fetch retains its native global receiver (public API mock)", async () => {
   const receivers: unknown[] = [];
   vi.stubGlobal("fetch", async function (this: unknown) {

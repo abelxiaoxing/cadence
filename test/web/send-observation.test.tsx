@@ -1,14 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { abortScope } from "../../src/abort-scope.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { HttpServiceTransport } from "../../src/service-http-client.ts";
 import { WorkspaceObserver } from "../../web/src/client/observer";
 import { httpFixture } from "../helpers/service-http-fixture.ts";
-
-vi.mock("../../web/src/client/build-identity", async () => ({
-  localBuild: (await import("../helpers/source-build.ts")).sourceBuild.assets,
-}));
 
 const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
 afterEach(() => {
@@ -70,7 +66,7 @@ it.each(["any", "timeout", "both"])(
           ready = true;
         });
       const count = calls.length;
-      observer.refresh(true);
+      observer.refresh();
       await expect.poll(() => calls.length).toBeGreaterThan(count);
       expect(ready).toBe(false);
       stop();

@@ -246,7 +246,7 @@ export function TaskSidebar({
   runs,
   snapshot,
   activeRuns,
-  cancelCompatible,
+  canCancel,
   canceling,
   onCancel,
   onTask,
@@ -276,7 +276,7 @@ export function TaskSidebar({
   runs: RunProjection[];
   snapshot?: string;
   activeRuns?: ActiveRuns;
-  cancelCompatible: boolean;
+  canCancel: boolean;
   canceling: Set<string>;
   onCancel: (runId: string) => void;
   onTask: (id: string, title?: string) => void;
@@ -289,7 +289,7 @@ export function TaskSidebar({
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
   /** Why rename and archive cannot be requested now (they need a live
-   * compatible execution owner); empty when they can. */
+   * authenticated execution owner); empty when they can. */
   actionsUnavailable?: string;
   /** A rename or archive was accepted, or its outcome is unknown: the
    * conversation lists should be read again. */
@@ -560,7 +560,7 @@ export function TaskSidebar({
                 <button
                   type="button"
                   className="conversation-stop"
-                  disabled={!cancelCompatible || canceling.has(run.runId)}
+                  disabled={!canCancel || canceling.has(run.runId)}
                   onClick={() => onCancel(run.runId)}
                 >
                   <FiSquare aria-hidden="true" />

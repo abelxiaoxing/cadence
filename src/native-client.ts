@@ -8,16 +8,12 @@ import { Agent, Dispatcher1Wrapper } from "undici";
 import { nativeBuild } from "./native-build.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
 import { ServiceClient } from "./service-client.ts";
-import {
-  ContractError,
-  compatibleBuild,
-  type SessionBootstrap,
-} from "./service-contract.ts";
+import { ContractError, type SessionBootstrap } from "./service-contract.ts";
 import { HttpServiceTransport } from "./service-http-client.ts";
 import { effectiveWorkspace } from "./workspace.ts";
 
 export const MANAGEMENT_GUIDANCE =
-  "Cadence owner absent, unavailable or incompatible. Start it with cadence start --workspace <path> (it recovers automatically from an unclean shutdown), or see what is wrong with cadence doctor --workspace <path>. Stop older Cadence sessions first. No service was started and no embedded executor is available.";
+  "Cadence owner absent or unavailable. Start it with cadence start --workspace <path> (it recovers automatically from an unclean shutdown), or see what is wrong with cadence doctor --workspace <path>. No service was started and no embedded executor is available.";
 
 const UNIT = "cadence.service";
 const LABEL = "com.abelxiaoxing.cadence";
@@ -248,9 +244,6 @@ export class NativeConnection {
       throw new ContractError("stale");
     this.session = reply.value;
     return reply.value;
-  }
-  compatible(safety = false): boolean {
-    return compatibleBuild(this.session?.build, nativeBuild, safety);
   }
   /** Forget an attachment only when the registry proves its owner instance is
    * gone: absent, stopped, or replaced by another epoch. Its slot ended with

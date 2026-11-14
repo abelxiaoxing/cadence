@@ -146,7 +146,6 @@ it.each([
   "preparing",
   "connecting",
   "unavailable",
-  "incompatible",
 ] as const)(
   "%s neither fetches models nor makes manual refresh activate anything",
   (status) => {

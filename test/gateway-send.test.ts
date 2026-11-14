@@ -113,14 +113,13 @@ it("selection stays inert; one explicit Send preparation acquires an owner but n
       await post("prepare-send", { ...prepare, epoch: randomUUID() }),
       await post("prepare-send", prepare, { "X-Cadence-CSRF": randomUUID() }),
       await post("prepare-send", prepare, { "X-Cadence-Local": "injected" }),
-      await post("prepare-send", prepare, { "X-Cadence-Build": "null" }),
     ])
       expect(result.status).not.toBe(200);
     expect(existsSync(c.directory)).toBe(false);
     expect(g.f.contacts()).toBe(0);
     const [first, concurrent] = await Promise.all([
-      post("prepare-send", prepare),
-      post("prepare-send", prepare),
+      post("prepare-send", prepare, { "X-Cadence-Build": "null" }),
+      post("prepare-send", prepare, { "X-Cadence-Build": "older-build" }),
     ]);
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     expect(concurrent).toEqual(first);

@@ -47,7 +47,8 @@ The conversation identity is the public Pi session ID, pinned when the observer 
 The feed admits only roster runs whose immutable `execution.version.conversation.id` matches that session ID, before reading their steps or transcripts.
 Copied/forked session entries and reconstructed workflow links cannot transfer that attribution; missing admission context stays invisible rather than falling back to a project-wide broadcast.
 Resuming the same conversation (including in another terminal) observes its still-running work; a different/new/forked conversation does not inherit it.
-Every TUI session looks for its workspace's already-running owner after startup and retries absent owners; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
+Every TUI session looks for its workspace's already-running owner after startup and retries absent owners; it never starts, recovers or selects one and only detaches on departure.
+Build differences do not suppress an authenticated owner's activity.
 That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
 `CADENCE_AGENT_PANEL=off` turns that observation off.
 The small workflow roster uses the idle interval until this conversation has a followed run, then the active interval; timing constants live in `src/agent-panel-cadence.ts`.
@@ -57,7 +58,7 @@ Native cards and the browser dock do not count those as crashes or completed ass
 The workflow view counts incomplete reports on the selected step page without inferring a delivery outcome.
 Legacy task history and the WebUI's project-wide dock remain unchanged.
 A run that leaves the active roster remains attributed until its final observation; a failed roster read is not proof of completion.
-A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or a persistently unreadable workflow) ends as an error that says so; `/cadence-history` keeps the actual outcome.
+A child whose outcome the session can no longer observe (no readable owner a whole retry after losing it, or a persistently unreadable workflow) ends as an error that says so; `/cadence-history` keeps the actual outcome.
 An abandoned run is not automatically readmitted while it remains in the roster; only its ID is retained until it leaves, preventing repeated failed reads and duplicate agent batches.
 Explicitly reopening the conversation creates a fresh observer; the owner's execution and retained history are unaffected.
 The viewed child streams its transcript; unviewed running children refresh activity at the bounded background interval.
@@ -116,15 +117,15 @@ No draft handoff is a Send intent, pending command, model installation or execut
 The target retires that initialization handoff after mounting, so returning to a conversation cannot resurrect its already-used text or model when browser storage is unavailable.
 Directory selection only remembers its canonical reference; it starts no service, creates no project-private state and requires no Pi login.
 The current explicit Send prepares the selected owner through the same project-launch boundary as native entry (`CADENCE_AUTOSTART=0` refuses startup, not healthy reuse); no separate Open is required.
-The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh compatible attachment.
-The loaded browser also compares its embedded build with every freshly read workbench entry before a directory/preparation POST.
-A mismatch shows an explicit reload notice and disables normal mutations without hiding readonly history; it never reloads or resends automatically, and the rejected command dispatches no POST.
-Text drafts remain in the tab, while the notice warns that unsent images do not survive reload.
+The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh authenticated attachment.
+Build fingerprints are diagnostic metadata, not access or operation gates: different or absent client builds never disable history, activity, model selection, directory changes, Send or service controls.
+Requests still have to express a supported operation; no capability is inferred from a build header, and a browser cannot become a native caller by naming one.
+The browser never reloads or resends automatically; text drafts and unsent images stay in the current tab.
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
 Preparation is not message admission or execution consent.
-`project-entry.ts` reports `dispatched` only after local signal/build/body/identity preparation and the POST's handoff to fetch; that handoff is not proof of receipt.
+`project-entry.ts` reports `dispatched` only after local signal/body/identity preparation and the POST's handoff to fetch; that handoff is not proof of receipt.
 Only a decoded response matching the selected project/path/cwd and a non-null epoch reports `confirmed`, before the serialized viewer attachment wait.
 A request-before-dispatch failure cannot suggest owner startup; an unconfirmed dispatch is preparation-unknown with no message submitted, and an attachment failure cannot undo confirmation.
 A preparation response's reliable `effect:none` is preserved through the client and reported as a refusal with no owner startup, not as an unknown outcome.
@@ -148,7 +149,7 @@ Lost replies to Send or approval return the original receipt or run on a retry w
 One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last run in that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
 That run is the coordinator turn the mode names together with every message sent into it: all of them must have ended with a known closure, and the branch must end in the turn of the newest one Pi was given.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
-The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
+The browser-specific approval channel retains browser authority and existing CSRF/origin checks; the native general workflow command remains forbidden to browsers.
 Both surfaces display the owner-bound target/ref/base and named stable-worktree policy before approval, then recorded candidate acceptance, actual integration, post-checks and retention.
 The conversation cwd/session stays unchanged; observing a managed worktree never starts another owner.
 Version-3 agreement approval covers the goal, explicit decisions, acceptance and the coordinator's listed assumptions, the declared commands and installation policy, and the owner finishing on its own: revising the route and the write scope inside the repository, recovery, recorded deviations confirmed by the automatic review, and verified project-knowledge maintenance.
@@ -181,7 +182,7 @@ An unavailable choice refuses without substitution and keeps the draft; a lost c
 The post-choice read must match the confirmed version and source selection before continuing; departure, changed owner/choice and stale reads cannot rebind the Send.
 A locally pending different model blocks plan approval until an explicit Send installs it and the plan/context can be observed again.
 A live picker retains its existing explicit server choice behavior.
-Preparation/connection remain neutral progress, incompatible execution blocks installation, and preview or live read failures offer only a readonly retry.
+Preparation/connection remain neutral progress, and preview or live read failures offer a readonly retry; an installation build difference is not a model restriction.
 Opening/refreshing a panel never prepares execution, restores a preference or submits a message.
 A retained preference without a catalog remains last-used, not guaranteed usable.
 `web/src/client/use-model-catalog.ts` binds one readonly catalog to the scoped client, observed owner epoch, attachment generation and conversation context revision; readiness recovery, replacement and explicit refresh invalidate old data and read again, without polling model sources.
@@ -192,8 +193,8 @@ It locks choices while this conversation's reply is live; another conversation's
 Its scope note names future messages in this conversation, not every project conversation or already-admitted work.
 A Send with no installed model and no remembered preference opens that panel instead of failing; the message waits there and is sent once after one explicit choice, or not at all if the panel is dismissed or sending stays impossible for ten seconds.
 Both preview and live choices can complete that waiting intent; a preview choice is marked for installation, never treated as an installed choice.
-Continuation keeps the original message/images/head/command ID and prepared owner epoch, waits for compatible readiness and never runs owner preparation again.
-A known Stop, replacement epoch, incompatible connection or dismissal retires the wait and keeps the local draft; choosing a model cannot restart a stopped owner.
+Continuation keeps the original message/images/head/command ID and prepared owner epoch, waits for authenticated readiness and never runs owner preparation again.
+A known Stop, replacement epoch or dismissal retires the wait and keeps the local draft; choosing a model cannot restart a stopped owner.
 Cadence exit preserves an unconsumed model draft on direct success and on receipt observation alike; only an ordinary/coordinator Send's own persisted command marker permits receipt observation to consume that draft.
 Older or unknown receipt kinds conservatively keep the model choice, never infer consumption from text or a different command.
 Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
@@ -219,7 +220,7 @@ Desktop navigation/inspector visibility and widths are display-only browser pref
 `web/src/layout/workspace-layout.ts` owns the shared pane bounds and center-space budget: a narrow desktop overlays the inspector rather than squeezing the conversation, and both pointer and keyboard resizing account for the other docked pane.
 Effective widths shrink without overwriting wider-window preferences; phones use independent drawers, and overlays retain focus containment, Escape, a backdrop and inert covered content.
 Headings and messages share the reading width; the composer frame allows inset padding and its toolbar wraps instead of pushing controls out of a narrow center.
-The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and the build/compatibility statement; the statusbar shows only connection state with the service round trip, the open conversation's context size, cache hit and turn count, a live reply's elapsed time, active runs when there are any, an incompatible build and the working folder.
+The topbar's More menu holds Refresh status, Disconnect this page (detach; started work keeps running) and diagnostic build metadata; the statusbar shows only connection state with the service round trip, the open conversation's context size, cache hit and turn count, a live reply's elapsed time, active runs when there are any and the working folder.
 Its items are compact icon-and-value observations (`web/src/layout/StatusItem.tsx`) that wrap rather than clip; the elapsed time counts from the live turn's recorded start and is absent when that start is unrecorded.
 The open conversation reports its own turn count, live turn, context size and session cache totals to the statusbar; another conversation's last report is never shown for it, and no cost, generation-rate or host-resource figure appears there.
 The connection item appends the service round trip in milliseconds (`web/src/client/latency.ts`): the fastest of the last minute's requests to this origin's service API, from the request leaving to the reply's first byte, read from the browser's resource timing of requests the page already makes.
@@ -252,7 +253,7 @@ Rename turns the row into a field: Enter or Save requests the name, Escape or le
 The history heading's archive control swaps the list for the archived conversations (the `conversations` read with `archived`, read only while shown and never on a timer), each with Unarchive; a failed read there says so and is never an empty list.
 Each request is one command and nothing is changed ahead of it: the row says what is in flight, an accepted or unknown outcome re-reads the lists (and the head of the conversation, when it is the open one), and only those reads change a title or a list.
 A refusal that changed nothing is a toast, and an unknown outcome stays under its row without a retry.
-While no live compatible owner can take them the actions are shown disabled, with one line above the rows saying why (a stopped owner starts with the next Send).
+While no live authenticated owner can take them the actions are shown disabled, with one line above the rows saying why (a stopped owner starts with the next Send).
 History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
 Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
 There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
@@ -266,7 +267,7 @@ The right sidebar uses the current conversation's cwd for readonly files, bounde
 An open conversation adds a Branches tab: the session's user messages as a tree with one rail per fork level, the branch shown marked by a filled dot and weight as well as its tint, a filter over the rows listed, a click that shows a message in its branch, and per-row "Edit and resend" and "Continue from here" (see [Ordinary conversations](#ordinary-conversations)).
 The lower-right folder button contains recent directories and selects one on the service host without starting its independent owner.
 The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
-Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/build/CSRF checks.
+Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/CSRF checks.
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit-Send preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
@@ -404,6 +405,14 @@ This is not a filesystem sandbox for model tools.
 A scope takes the first source reason (including pre-cancellation), removes listeners/timer on cancellation and is disposed in `finally` on normal or exceptional completion.
 Disposal never cancels sources or service work.
 Finite HTTP scopes cover fetch, the entire bounded body and decode; streaming export retains its separate existing budget.
+The browser transport bounds ordinary requests too, so a stalled fetch cannot freeze its polling loop.
+One client-chosen attachment ID survives a lost session header or body; a session read on that same ID recovers CSRF so detach can release it before replacement.
+Retained readonly GET requests do not carry an execution attachment.
+Each observation poll checks the existing session too, so an ordinary chat without a socket keeps its viewer alive and detects owner replacement even when its model list is unchanged; session, workspace, active-roster and snapshot epochs must agree before readiness is reported.
+Detach is idempotent after authenticated release, including after a lost reply, so gateways can retire the exact viewer mapping; a refused old CSRF is recovered by a readonly session check on that same ID before the next detach.
+The serialized observer retries transient acquisition/detach failures and Refresh can reconnect it immediately; failed observation never requires a new Send or a page reload.
+Access revocation still stops observation until the user authenticates again.
+Reattachment never renews a plan grant, repeats a user command or cancels admitted work.
 Send preparation uses one scope through gateway observation, POST and fresh attachment; its budget is defined beside `SEND_PREPARATION_MS`.
 History images keep one scope across all pages; parallel detail parts each dispose only their own scope, so an early Promise.all rejection cannot disconnect still-pending siblings from navigation cancellation.
 
@@ -433,8 +442,8 @@ New drafts use a stable checkout/conversation key, never the owner epoch or the 
 Known older history/directory draft namespaces remain usable in place; they are not copied or deleted, and an intentionally emptied primary draft stays empty.
 Existing browser draft/pending namespaces are read and retained in place; new directories use that key before history exists, so startup cannot lose their drafts.
 A positively observed new epoch replaces only the serialized execution attachment, never a pending Send or approval.
-A stopped execution owner is labelled as such, not as an incompatible build.
-Message dispatch, server-side model installation, approval, rename and archive still require a live compatible owner; local model preselection does not, and only current Send may prepare one.
+A stopped execution owner is labelled as such.
+Message dispatch, server-side model installation, approval, rename and archive still require a live authenticated owner; local model preselection does not, and only current Send may prepare one.
 The gateway folder picker and draft remain available while stopped, and a failed first readiness observation does not hide independently readable conversations.
 An unreadable context does not lock local draft editing; an in-flight or uncertain Send and its captured images retain their original locks and identity.
 When conversation reads fail, the composer still accepts a new draft for preparation-only Send; it cannot infer a head or submit that message until a subsequent explicit Send observes the restored context.
@@ -508,7 +517,7 @@ Reports contain no prompt, output, token, capability or session-file path.
 The normal 30-day recovery archive policy applies to archived dead reports.
 No report is execution authority or a checkout lock.
 
-`activity-discovery.ts` combines those reports with the registry's authenticated compatible owner summaries.
+`activity-discovery.ts` combines those reports with the registry's authenticated owner summaries, regardless of their build fingerprints.
 Owner summaries project original in-memory turn/workflow lifetimes without reading history or creating viewer attachments; queued, recovery, Stop and settlement remain separate phases.
 A summary is complete only for a healthy owner whose original accepted-work count matches the projected roster; quarantine or an unprojected original cannot prove absence.
 The admitted execution context alone supplies conversation/cwd attribution; missing context stays unattributed.

@@ -7,7 +7,6 @@ import {
   type ProjectEntry,
 } from "../../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../../src/service/contracts/models.ts";
-import { assertBrowserBuildCompatible, localBuild } from "./build-identity";
 import type { PreparationProgress } from "./conversation-send";
 import { errorCode, readJson, serviceError } from "./service";
 
@@ -29,9 +28,6 @@ async function command(
   signal?: AbortSignal,
   dispatched?: () => void,
 ) {
-  // The entry was read for this exact operation. Refuse an old loaded page
-  // before dispatch instead of turning a known build mismatch into uncertainty.
-  assertBrowserBuildCompatible(current.build);
   const init: RequestInit = {
     method: "POST",
     credentials: "same-origin",
@@ -40,7 +36,6 @@ async function command(
     headers: {
       "Content-Type": "application/json",
       "X-Cadence-CSRF": current.csrf,
-      "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
     },
     body: JSON.stringify({ ...value, epoch: current.epoch }),
   };

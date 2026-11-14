@@ -14,7 +14,7 @@ const viewer = vi.hoisted(() => ({
   transportStatus: "current" as "current" | "stale" | "closed",
   workspace: undefined as WorkspaceBootstrap | undefined,
   attachmentVersion: 1,
-  compatible: true as boolean | undefined,
+  attached: true,
   error: undefined as string | undefined,
   refresh: () => {},
 }));
@@ -67,7 +67,7 @@ vi.mock("../../web/src/client/use-workspace", () => ({
 }));
 afterEach(() => {
   vi.unstubAllGlobals();
-  viewer.compatible = true;
+  viewer.attached = true;
   viewer.error = undefined;
   viewer.workspace = undefined;
   viewer.transportStatus = "current";
@@ -79,18 +79,12 @@ afterEach(() => {
   retainedRefs.index = 0;
   retainedRefs.slots = [];
 });
-function render(
-  locale: "en" | "zh",
-  project = false,
-  buildCompatible = true,
-  service = false,
-) {
+function render(locale: "en" | "zh", project = false, service = false) {
   retainedRefs.index = 0;
   vi.stubGlobal("window", { location: new URL("http://127.0.0.1:43210/app") });
   return renderToStaticMarkup(
     <LocaleProvider initial={locale}>
       <App
-        buildCompatible={buildCompatible}
         onOpenService={service ? () => {} : undefined}
         project={
           project
@@ -155,9 +149,7 @@ it.each(["en", "zh"] as const)(
     expect(html).not.toMatch(
       /models\.json|systemctl|cadence-service|restart|重启/,
     );
-    expect(html).toContain(
-      locale === "zh" ? "兼容" : "Shared compatibility: compatible",
-    );
+    expect(html).not.toContain("Shared compatibility");
   },
 );
 it.each(["en", "zh"] as const)(
@@ -198,22 +190,15 @@ it("local failures stay separate; readonly failure never suggests starting or re
   expect(unavailable).toContain("Latest state unavailable.");
   expect(unavailable).not.toMatch(/cadence-service|Retained history is shown/);
 });
-it("a real compatibility failure remains distinct from stale and is never declared compatible by the error banner", () => {
-  viewer.compatible = false;
+it("a source browser keeps service controls available without a build compatibility gate", () => {
   viewer.error = "stale";
-  const html = render("en");
+  const html = render("en", true, true);
   expect(html).toContain("Context changed. Read the current state");
-  expect(html).toContain(
-    "unavailable / mismatch — reload built assets; normal actions disabled",
+  expect(html).toContain('aria-label="Cadence service"');
+  expect(html).not.toMatch(
+    /Shared compatibility|reload built assets|normal actions disabled/,
   );
-  expect(html).not.toContain("Shared compatibility: compatible");
-});
-it("an incompatible browser build is not presented as prepare-on-send", () => {
-  const html = render("zh", true, false, true);
-  expect(html).toContain("不可用 / 不匹配——请重新加载构建产物；常规操作已禁用");
-  expect(html).not.toContain("重命名和归档需要执行服务；将在下次发送时启动。");
-  expect(html).not.toContain('aria-label="Cadence 服务"');
-  expect(render("zh", true, true, true)).toContain('aria-label="Cadence 服务"');
+  expect(render("zh", true, true)).toContain('aria-label="Cadence 服务"');
 });
 
 it.each([
@@ -304,7 +289,7 @@ for (const locale of ["en", "zh"] as const) {
       ].includes(phase)
         ? 1
         : 0;
-      viewer.compatible = viewer.attachmentVersion ? true : undefined;
+      viewer.attached = viewer.attachmentVersion > 0;
       if (!["direct", "project-pending"].includes(phase))
         execution.value = {
           kind: "project-observation",
@@ -332,11 +317,10 @@ for (const locale of ["en", "zh"] as const) {
     "project-stale",
     "viewer-error",
     "transport-stale",
-    "incompatible",
   ])(`${locale}: %s during the first connection remains visible`, (failure) => {
     viewer.transportStatus = "closed";
     viewer.attachmentVersion = 0;
-    viewer.compatible = undefined;
+    viewer.attached = false;
     if (failure === "project-error") execution.error = "unavailable";
     if (failure === "project-unavailable")
       execution.value = {
@@ -356,7 +340,6 @@ for (const locale of ["en", "zh"] as const) {
     }
     if (failure === "viewer-error") viewer.error = "unavailable";
     if (failure === "transport-stale") viewer.transportStatus = "stale";
-    if (failure === "incompatible") viewer.compatible = false;
     const html = render(locale, true);
     const statusbar = html.slice(html.indexOf('<footer class="statusbar">'));
     expect(html).toContain('class="workspace-notice"');
@@ -396,7 +379,7 @@ it.each(["data", "failure"])(
     render("en", true);
     viewer.workspace = undefined;
     viewer.error = undefined;
-    viewer.compatible = undefined;
+    viewer.attached = false;
     viewer.transportStatus = "closed";
     viewer.attachmentVersion = 0;
     const html = render("en", true);

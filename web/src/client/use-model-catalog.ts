@@ -12,8 +12,7 @@ export type ModelAvailability =
         | "not-started"
         | "preparing"
         | "connecting"
-        | "unavailable"
-        | "incompatible";
+        | "unavailable";
     };
 
 export interface ModelCatalogRead {
@@ -41,9 +40,7 @@ export function useModelCatalog(
   const attachment =
     availability.status === "ready" ? availability.attachmentVersion : null;
   const preview =
-    epoch === null &&
-    availability.status !== "incompatible" &&
-    availability.status !== "preparing"
+    epoch === null && availability.status !== "preparing"
       ? previewModels
       : undefined;
   const [revision, setRevision] = useState(0);

@@ -25,7 +25,6 @@ vi.mock("../src/native-client.ts", async (original) => ({
     );
     detach = vi.fn(async () => {});
     refresh = vi.fn(async () => ({}));
-    compatible = vi.fn(() => true);
     client = undefined;
     session = undefined;
     constructor() {
@@ -44,7 +43,6 @@ function connection(client: unknown) {
   return {
     attach: vi.fn(async () => client),
     refresh: vi.fn(async () => ({})),
-    compatible: vi.fn(() => true),
     detach: vi.fn(async () => {}),
     forgetSuperseded: vi.fn((_cwd: string) => false),
   } satisfies Record<keyof FeedConnection, unknown>;
@@ -256,15 +254,15 @@ describe("Cadence owner feed", () => {
     expect(conn.attach).not.toHaveBeenCalled();
   });
 
-  it("an incompatible owner is detached without reads", async () => {
+  it("an attached owner is observed without a build compatibility prerequisite", async () => {
     const { client } = workflowOwner();
-    const conn = { ...connection(client), compatible: vi.fn(() => false) };
+    const conn = connection(client);
     const h = host(conn);
     await h.emit("session_start");
     await advance(FEED_TIMING.firstMs);
-    expect(conn.detach).toHaveBeenCalled();
-    expect(client.workbenchRead).not.toHaveBeenCalled();
-    expect(h.published()).toEqual([]);
+    expect(conn.detach).not.toHaveBeenCalled();
+    expect(client.workbenchRead).toHaveBeenCalled();
+    expect(h.published(E.start).length).toBeGreaterThan(0);
   });
 
   it("announces workflow subagents with kinds, activity, a viewed transcript and outcomes", async () => {

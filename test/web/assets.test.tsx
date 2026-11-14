@@ -47,7 +47,7 @@ afterEach(async () => {
   for (const f of fixtures.splice(0)) await f.server.close();
 });
 const source = resolve("web/dist");
-it("shared plan proposal bytes participate in independently compiled compatibility", () => {
+it("shared plan proposal bytes participate in independently compiled build provenance", () => {
   const dir = mkdtempSync(join(tmpdir(), "web-build-inputs-"));
   for (const name of [
     "src/abort-scope.ts",

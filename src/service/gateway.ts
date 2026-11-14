@@ -20,8 +20,6 @@ import { loadWebAssets } from "../service-assets.ts";
 import {
   ContractError,
   canonicalJson,
-  compatibleBuild,
-  decodeClientBuild,
   LIMITS,
   parseWireJson,
   publicError,
@@ -288,7 +286,6 @@ export async function createGateway(
     stateHome: input.stateHome,
     agentDir: input.agentDir,
     epoch: auth.epoch,
-    build,
     readOwner: (c, signal) =>
       nativeCall(c, "activity", false, undefined, signal),
     secrets: () => acquired.access.redactionLiterals(),
@@ -417,13 +414,6 @@ export async function createGateway(
     } finally {
       requesting = false;
     }
-  }
-  function browserBuild(boundary: ReturnType<typeof requestBoundary>): void {
-    const clientBuild = decodeClientBuild(
-      parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024),
-    );
-    if (clientBuild.kind !== "browser" || !compatibleBuild(build, clientBuild))
-      throw new ContractError("unsupported-context");
   }
   /** Selection updates only the authenticated workbench's directory reference.
    * It never reserves a checkout, heals state, initializes Pi or starts an owner. */
@@ -617,7 +607,13 @@ export async function createGateway(
         throw new ContractError("stale");
       return { project, endpoint: local.endpoint, cookie };
     })();
-    bindings.set(id, { epoch: local.epoch, result });
+    const pending = { epoch: local.epoch, result };
+    bindings.set(id, pending);
+    // Share an in-flight bootstrap, not its failure for the owner's lifetime.
+    // A later read may reconnect; it never prepares an owner or replays work.
+    void result.catch(() => {
+      if (bindings.get(id) === pending) bindings.delete(id);
+    });
     return result;
   }
   function stop(): void {
@@ -860,13 +856,15 @@ export async function createGateway(
         const attachment = boundary.headers.get("x-cadence-attachment");
         if (
           (attachment &&
-            attachments.get(attachment)?.projectId !== project.id) ||
+            (attachments.has(attachment)
+              ? attachments.get(attachment)?.projectId !== project.id
+              : route.operation !== "session")) ||
           (req.method === "POST" && !attachment)
         )
           throw new ContractError("stale");
         if (
           route.operation === "session" &&
-          !attachment &&
+          (!attachment || !attachments.has(attachment)) &&
           attachments.size >= 2048
         )
           throw new ContractError("capacity");
@@ -1058,7 +1056,6 @@ export async function createGateway(
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
-        browserBuild(boundary);
         const keys = [...url.searchParams.keys()];
         if (keys.length && (keys.length !== 1 || keys[0] !== "project"))
           throw new ContractError("invalid");
@@ -1080,7 +1077,6 @@ export async function createGateway(
         return;
       }
       if (raw === "/workbench/v1/activity" && req.method === "GET") {
-        browserBuild(boundary);
         const value = await activity.read();
         auth.current(caller);
         assert();
@@ -1125,7 +1121,6 @@ export async function createGateway(
         return;
       }
       if (raw === "/workbench/v1/service" && req.method === "POST") {
-        browserBuild(boundary);
         const value = await body(req);
         auth.current(caller);
         const job = await requestJob(value, () => auth.current(caller));
@@ -1133,7 +1128,6 @@ export async function createGateway(
         return;
       }
       if (raw === "/workbench/v1/select" && req.method === "POST") {
-        browserBuild(boundary);
         const o = closed(await body(req), ["path", "epoch"]);
         const path = text(o.path, 4096, true),
           epoch = decodeId(o.epoch);
@@ -1143,7 +1137,6 @@ export async function createGateway(
         return;
       }
       if (raw === "/workbench/v1/prepare-send" && req.method === "POST") {
-        browserBuild(boundary);
         const value = await body(req);
         const o = closed(value, [
           "commandId",

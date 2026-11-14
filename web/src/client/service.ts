@@ -12,7 +12,6 @@ import {
 } from "../../../src/service/contracts/gateway.ts";
 import { parseWireJson } from "../../../src/service-contract.ts";
 import { boundedText } from "../../../src/service-http-client.ts";
-import { localBuild } from "./build-identity";
 
 export async function readJson(response: Response): Promise<unknown> {
   return parseWireJson(await boundedText(response, 1024 * 1024), 1024 * 1024);
@@ -86,7 +85,6 @@ export async function requestMaintenance(
   request: MaintenanceRequest,
   csrf: string,
 ): Promise<MaintenanceJob> {
-  if (!localBuild) throw new Error("unavailable");
   const response = await fetch("/workbench/v1/service", {
     method: "POST",
     credentials: "same-origin",
@@ -94,7 +92,6 @@ export async function requestMaintenance(
     headers: {
       "Content-Type": "application/json",
       "X-Cadence-CSRF": csrf,
-      "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
     },
     body: JSON.stringify(request),
   });

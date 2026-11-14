@@ -1200,7 +1200,7 @@ export function ChatWorkspace({
         const text = t(
           dispatched
             ? sendFailureMessage()
-            : unsentMessage(preparation, code, effect),
+            : unsentMessage(preparation, effect),
           { code },
         );
         // A pre-dispatch failure or reliable no-effect refusal changed nothing.

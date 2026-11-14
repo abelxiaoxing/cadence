@@ -1,4 +1,4 @@
-/** Compatibility is independent of authentication and of task confirmation. */
+/** Build provenance for diagnostics and packaged assets, never access authority. */
 import { closed, decodeHash, oneOf } from "./core.ts";
 export interface BrowserBuild {
   sourceHash: string;
@@ -48,20 +48,4 @@ export function decodeServiceBuild(value: unknown): ServiceBuild {
     contractHash: decodeHash(o.contractHash),
     assets: decodeBrowserBuild(o.assets),
   };
-}
-export function compatibleBuild(
-  server: ServiceBuild | undefined,
-  client: ClientBuild | null,
-  safety = false,
-): boolean {
-  return (
-    !!server &&
-    !!client &&
-    client.contractHash === server.contractHash &&
-    (safety ||
-      (server.assets.contractHash === server.contractHash &&
-        (client.kind === "native" ||
-          (client.buildId === server.assets.buildId &&
-            client.sourceHash === server.assets.sourceHash))))
-  );
 }

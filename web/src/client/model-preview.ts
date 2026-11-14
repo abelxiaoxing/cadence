@@ -2,7 +2,6 @@ import {
   decodeModelPreview,
   type ModelPreview,
 } from "../../../src/service/contracts/models.ts";
-import { localBuild } from "./build-identity";
 import { errorCode, readJson } from "./service";
 export type PreviewModels = (signal?: AbortSignal) => Promise<ModelPreview>;
 /** Authenticated discovery only; no attachment, CSRF, preparation or model write. */
@@ -10,7 +9,6 @@ export async function readModelPreview(
   project?: string,
   signal?: AbortSignal,
 ): Promise<ModelPreview> {
-  if (!localBuild) throw new Error("unsupported-context");
   const response = await fetch(
     `/workbench/v1/models${project ? `?project=${encodeURIComponent(project)}` : ""}`,
     {
@@ -18,9 +16,6 @@ export async function readModelPreview(
       redirect: "error",
       cache: "no-store",
       signal,
-      headers: {
-        "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
-      },
     },
   );
   const value = await readJson(response);

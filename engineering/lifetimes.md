@@ -86,7 +86,8 @@ The remaining historical writer and transport coupling is documented in [archite
   Missing retained project directories do not invalidate the global registry: canonical existing ancestors, aliases and overlaps are still checked, and a dead owner's reservation is released by the next start or `cadence doctor`.
 - Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
-  Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
+  Browser authentication grants access, not task consent; build fingerprints never restrict observation or operations.
+  Origin/CSRF and operation-specific execution consent remain independent.
 - Boot installs no conversation model.
   Explicit Send/model choice restores its own credential-free preference (or the default/current Pi model for a new conversation) into a retained source selection.
   Already admitted turns/workflows own immutable cwd/checkout/model snapshots; fresh proposals and approvals still validate the current conversation version.

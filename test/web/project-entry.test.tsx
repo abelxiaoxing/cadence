@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  compatibleBuild,
-  type ServiceBuild,
-} from "../../src/service/contracts/build.ts";
 import type {
   ProjectEntry,
   WorkbenchEntry,
@@ -21,29 +17,9 @@ import {
 } from "../../web/src/client/project-entry";
 import { sourceBuild } from "../helpers/source-build.ts";
 
-const build = vi.hoisted(() => ({ available: true }));
-vi.mock("../../web/src/client/build-identity", () => {
-  const compatible = (service: ServiceBuild) =>
-    compatibleBuild(
-      service,
-      build.available ? { kind: "browser", ...sourceBuild.assets } : null,
-    );
-  return {
-    RELOAD_REQUIRED: "reload-required",
-    get localBuild() {
-      return build.available ? sourceBuild.assets : undefined;
-    },
-    browserBuildCompatible: compatible,
-    assertBrowserBuildCompatible(service: ServiceBuild) {
-      if (!build.available) throw new Error("unsupported-context");
-      if (!compatible(service)) throw new Error("reload-required");
-    },
-  };
-});
 const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
 afterEach(() => {
   Object.defineProperties(AbortSignal, descriptors);
-  build.available = true;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -66,7 +42,7 @@ const entry: WorkbenchEntry = {
 };
 const location = { id: randomUUID(), cwd: "/fixture/conversation" };
 
-it.each(["entry", "identity", "build", "body", "pre-abort", "fetch-throw"])(
+it.each(["entry", "identity", "body", "pre-abort", "fetch-throw"])(
   "failure before prepare POST handoff (%s) never suggests startup",
   async (failure) => {
     const abort = new AbortController();
@@ -82,7 +58,6 @@ it.each(["entry", "identity", "build", "body", "pre-abort", "fetch-throw"])(
       );
     });
     vi.stubGlobal("fetch", fetcher);
-    if (failure === "build") build.available = false;
     const progress = vi.fn();
     const context =
       failure === "body"
@@ -105,7 +80,7 @@ it.each(["entry", "identity", "build", "body", "pre-abort", "fetch-throw"])(
     );
   },
 );
-it("refuses a stale loaded browser before any selection or preparation POST", async () => {
+it("selection and preparation work without a browser build, even when the gateway build differs", async () => {
   const staleEntry = {
     ...entry,
     build: {
@@ -114,8 +89,11 @@ it("refuses a stale loaded browser before any selection or preparation POST", as
     },
   };
   const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
-    if (init?.method === "POST") throw new Error("must not dispatch");
-    return Response.json(staleEntry);
+    return Response.json(
+      init?.method === "POST"
+        ? { kind: "project", project: ready }
+        : staleEntry,
+    );
   });
   vi.stubGlobal("fetch", fetcher);
   const signal = new AbortController().signal;
@@ -123,13 +101,16 @@ it("refuses a stale loaded browser before any selection or preparation POST", as
     () => selectDirectory("/fixture/sub", signal),
     () => prepareDirectorySend(selected, signal),
   ])
-    await expect(run()).rejects.toMatchObject({ message: "reload-required" });
-  expect(
-    fetcher.mock.calls.filter(([, init]) => init?.method === "POST"),
-  ).toHaveLength(0);
-  expect(unsentMessage("not-dispatched", "reload-required")).toContain(
-    "No preparation request was sent",
+    expect((await run()).project).toEqual(ready);
+  const commands = fetcher.mock.calls.filter(
+    ([, init]) => init?.method === "POST",
   );
+  expect(commands).toHaveLength(2);
+  for (const [, init] of commands) {
+    const headers = new Headers(init?.headers);
+    expect(headers.has("X-Cadence-Build")).toBe(false);
+    expect(headers.get("X-Cadence-CSRF")).toBe(entry.csrf);
+  }
 });
 
 it("preserves a reliable no-effect preparation refusal", async () => {
@@ -161,12 +142,12 @@ it("preserves a reliable no-effect preparation refusal", async () => {
     effect: "none",
   });
   expect(progress.mock.calls).toEqual([["dispatched"]]);
-  expect(unsentMessage("dispatched", "unsupported-context", "none")).toContain(
+  expect(unsentMessage("dispatched", "none")).toContain(
     "started no execution service",
   );
-  expect(
-    unsentMessage("dispatched", "unsupported-context", "none"),
-  ).not.toContain("outcome is unknown");
+  expect(unsentMessage("dispatched", "none")).not.toContain(
+    "outcome is unknown",
+  );
 });
 
 it.each([

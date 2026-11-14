@@ -60,7 +60,8 @@ If the conversation cannot be read, Send can prepare execution but cannot infer 
 Preparation failure keeps the draft; an owner may already have started, but the message was not sent.
 If the actual Send reply is lost instead, its original command is observed, never resubmitted automatically.
 Project navigation remounts only the browser client; the original owner's work continues.
-Browser proxy traffic keeps browser authority and the owner's own attachments, CSRF/build checks, grants and history proofs; native management routes and local-capability headers are not forwarded.
+Browser proxy traffic keeps browser authority and the owner's own attachments, CSRF checks, grants and history proofs; native management routes and local-capability headers are not forwarded.
+Build differences never block an authenticated page or require restarting work.
 The gateway also refuses the legacy project-level Open command, so every Send preparation is associated through the workbench instead of returning an independent backend token link.
 The gateway's token, backend cookies and native capabilities are never returned in project DTOs or stored in browser localStorage.
 Token rotation retires and detaches its exact browser attachments without cancelling admitted work.

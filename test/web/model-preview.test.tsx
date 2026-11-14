@@ -1,12 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { readModelPreview } from "../../web/src/client/model-preview";
-import { sourceBuild } from "../helpers/source-build.ts";
 
-vi.mock("../../web/src/client/build-identity", () => ({
-  get localBuild() {
-    return sourceBuild.assets;
-  },
-}));
 afterEach(() => vi.unstubAllGlobals());
 const preview = {
   status: "complete",
@@ -28,12 +22,6 @@ it.each([undefined, "a".repeat(64)])(
         redirect: "error",
         cache: "no-store",
         signal: abort.signal,
-        headers: {
-          "X-Cadence-Build": JSON.stringify({
-            kind: "browser",
-            ...sourceBuild.assets,
-          }),
-        },
       },
     );
   },

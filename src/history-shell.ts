@@ -295,7 +295,6 @@ export function registerHistoryShell(pi: ExtensionAPI): void {
         attached = true;
         const session = connection.session;
         if (!session) throw new ContractError("unavailable");
-        if (!connection.compatible()) ui.notify(MANAGEMENT_GUIDANCE);
         const workspace = value(await client.workspace(signal));
         current();
         if (

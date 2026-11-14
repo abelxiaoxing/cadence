@@ -272,17 +272,15 @@ export function ModelPicker({
         ? t("Choose a model")
         : availability.status === "preparing"
           ? t("Preparing execution…")
-          : availability.status === "incompatible"
-            ? t("Model selection needs a compatible connection")
-            : availability.status === "connecting"
-              ? t("Checking execution state…")
-              : availability.status === "unavailable"
-                ? t("Execution state unavailable")
-                : loading
-                  ? t("Reading models…")
-                  : catalogError
-                    ? t("Model list unavailable")
-                    : t("Choose a model");
+          : availability.status === "connecting"
+            ? t("Checking execution state…")
+            : availability.status === "unavailable"
+              ? t("Execution state unavailable")
+              : loading
+                ? t("Reading models…")
+                : catalogError
+                  ? t("Model list unavailable")
+                  : t("Choose a model");
   const buttonText = current
     ? label(current)
     : deferred && history
@@ -350,13 +348,9 @@ export function ModelPicker({
                 ? t(
                     "Execution is being prepared for your Send. Models will load when it is ready.",
                   )
-                : availability.status === "incompatible"
-                  ? t(
-                      "Reload the page to observe a compatible execution connection before choosing a model.",
-                    )
-                  : t(
-                      "Model selection is unavailable until the current conversation and execution state are observed.",
-                    )}
+                : t(
+                    "Model selection is unavailable until the current conversation and execution state are observed.",
+                  )}
             </p>
           )}
           {history && (

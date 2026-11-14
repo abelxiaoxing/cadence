@@ -70,6 +70,7 @@ export class HttpServiceTransport implements ServiceTransport {
       origin: string;
       /** Authenticated same-origin project routing; never an arbitrary URL. */
       project?: string;
+      /** Diagnostic metadata only; authentication never depends on a build. */
       build?: ClientBuild;
       fetch?: typeof fetch;
       /** Optional total bound for finite replies only, never streaming export. */
@@ -105,11 +106,12 @@ export class HttpServiceTransport implements ServiceTransport {
   workbenchCommand(request: WorkbenchCommand): Promise<unknown> {
     return this.request("workbenchCommand", request);
   }
-  private headers(write: boolean): Record<string, string> {
+  private headers(write: boolean, session = false): Record<string, string> {
     const headers: Record<string, string> = { "Cache-Control": "no-store" };
     if (this.options.build)
       headers["X-Cadence-Build"] = canonicalJson(this.options.build);
-    if (this.attachment) headers["X-Cadence-Attachment"] = this.attachment;
+    if (this.attachment && (write || session))
+      headers["X-Cadence-Attachment"] = this.attachment;
     if (this.options.localCapability)
       headers["X-Cadence-Local"] = this.options.localCapability;
     if (write) {
@@ -128,8 +130,8 @@ export class HttpServiceTransport implements ServiceTransport {
     const input = decodeHttpInput(operation, value),
       wire = wireRequest(operation, input),
       write = wire.method === "POST";
-    // No automatic session/preflight refresh, changed command ID, mutation retry,
-    // credential query or redirect follow after an uncertain HTTP outcome.
+    // No command replay, preflight renewal, changed command ID or redirect
+    // follow after an uncertain HTTP outcome.
     const scope =
       this.options.requestTimeoutMs === undefined
         ? undefined
@@ -137,27 +139,30 @@ export class HttpServiceTransport implements ServiceTransport {
     const requestSignal = scope?.signal ?? signal;
     try {
       if (requestSignal?.aborted) throw requestSignal.reason;
+      // One client-chosen observation ID survives a lost header/body. Repeating
+      // session reuses that slot and recovers CSRF, never a command or grant.
+      if (operation === "session") this.attachment ??= crypto.randomUUID();
       const response = await this.fetcher(
         `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
         {
           method: wire.method,
-          headers: this.headers(write),
+          headers: this.headers(write, operation === "session"),
           credentials: "same-origin",
           redirect: "error",
           signal: requestSignal,
           ...(write ? { body: wire.body } : {}),
         },
       );
-      // Keep a known allocation even if its original response body is lost or
-      // malformed. Without a validated CSRF challenge detach may remain blocked;
-      // never silently forget that slot and acquire 16 replacement sessions.
+      // Validate the reply's allocation without losing our original ID when
+      // its header or body is missing. A later session read can recover it.
       let sessionAttachment: string | undefined;
       try {
         if (operation === "session" && response.ok) {
           sessionAttachment = decodeId(
             response.headers.get("x-cadence-attachment"),
           );
-          this.attachment = sessionAttachment;
+          if (sessionAttachment !== this.attachment)
+            throw new ContractError("invalid");
         }
       } catch (error) {
         await response.body?.cancel().catch(() => {});
@@ -276,19 +281,41 @@ export class HttpServiceTransport implements ServiceTransport {
   async detach(): Promise<unknown> {
     const attachment = this.attachment;
     if (!attachment) return;
+    // A lost session body may leave the exact allocation without its CSRF.
+    // Read that same ID again so departure/reconnection can release it instead
+    // of blocking forever or abandoning a slot. This cannot submit work.
+    if (!this.options.localCapability && !this.csrf) {
+      const session = decodeReply(await this.session(), decodeSessionBootstrap);
+      if (session.kind === "error") {
+        if (!["stale", "unauthenticated"].includes(session.error.code))
+          throw new ContractError(session.error.code);
+        if (this.attachment === attachment) this.attachment = undefined;
+        return session;
+      }
+    }
     const result = decodeReply(await this.request("detach", null), (value) => {
       if (value !== null) throw new ContractError("invalid");
       return null;
     });
     // A lost reply does not prove release. Retain the exact attachment for a
-    // later explicit detach rather than allocating another of the 16 slots.
+    // later detach rather than allocating another of the 16 slots.
     // Stale means the server no longer owns this ID; rotation also revokes it.
     if (
       result.kind === "error" &&
       result.error.code !== "stale" &&
       result.error.code !== "unauthenticated"
-    )
+    ) {
+      // A restarted direct owner can keep the access token but replace CSRF.
+      // The next detach recovers it by reading the same allocation, rather than
+      // repeatedly sending this refused challenge. No work command is retried.
+      if (
+        result.error.code === "forbidden" &&
+        !this.options.localCapability &&
+        this.attachment === attachment
+      )
+        this.csrf = null;
       throw new ContractError(result.error.code);
+    }
     if (this.attachment === attachment) {
       this.attachment = undefined;
       this.csrf = null;

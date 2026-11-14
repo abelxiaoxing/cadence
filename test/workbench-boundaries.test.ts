@@ -333,7 +333,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("workbench commands retain browser Origin/CSRF/build/attachment checks before any adapter effect", async () => {
+it("workbench commands retain browser Origin/CSRF/attachment checks without a build gate", async () => {
   const f = await httpFixture();
   let calls = 0;
   f.adapters.workbench = {
@@ -356,7 +356,6 @@ it("workbench commands retain browser Origin/CSRF/build/attachment checks before
       { cookie: "" },
       { origin: "https://foreign.invalid" },
       { "x-cadence-csrf": "wrong" },
-      { "x-cadence-build": "{}" },
       { "x-cadence-attachment": randomUUID() },
     ];
     for (const change of changes) {
@@ -372,7 +371,7 @@ it("workbench commands retain browser Origin/CSRF/build/attachment checks before
       (
         await request(f.origin, "/api/v1/workbench/command", {
           method: "POST",
-          headers: bound.headers,
+          headers: { ...bound.headers, "x-cadence-build": "{}" },
           body,
         })
       ).status,
