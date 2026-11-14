@@ -3,13 +3,11 @@ import {
   type ActivityDiscovery,
   decodeActivityDiscovery,
 } from "../../../src/service/contracts/activity.ts";
-import { localBuild } from "./build-identity";
 import { errorCode, readJson } from "./service";
 
 export async function readActivity(
   signal: AbortSignal,
 ): Promise<ActivityDiscovery> {
-  if (!localBuild) throw new Error("unsupported-context");
   const scope = abortScope([signal], 12000);
   try {
     const response = await fetch("/workbench/v1/activity", {
@@ -17,9 +15,6 @@ export async function readActivity(
       redirect: "error",
       cache: "no-store",
       signal: scope.signal,
-      headers: {
-        "X-Cadence-Build": JSON.stringify({ kind: "browser", ...localBuild }),
-      },
     });
     const value = await readJson(response);
     if (!response.ok) throw new Error(errorCode(value));

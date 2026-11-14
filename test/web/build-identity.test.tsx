@@ -6,28 +6,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("the embedded browser build accepts only the exact advertised gateway build", async () => {
+it("the embedded browser build is diagnostic metadata, not an access decision", async () => {
   vi.stubGlobal("__CADENCE_BUILD__", sourceBuild.assets);
   const identity = await import("../../web/src/client/build-identity");
-  expect(identity.browserBuildCompatible(sourceBuild)).toBe(true);
-  expect(() =>
-    identity.assertBrowserBuildCompatible(sourceBuild),
-  ).not.toThrow();
-  const stale = {
-    ...sourceBuild,
-    assets: { ...sourceBuild.assets, buildId: "0".repeat(64) },
-  };
-  expect(identity.browserBuildCompatible(stale)).toBe(false);
-  expect(() => identity.assertBrowserBuildCompatible(stale)).toThrow(
-    "reload-required",
-  );
+  expect(identity.localBuild).toEqual(sourceBuild.assets);
+  expect(Object.keys(identity)).toEqual(["localBuild"]);
 });
 
-it("an unbuilt browser cannot acquire mutation compatibility", async () => {
+it("a source browser without embedded provenance can still load", async () => {
   vi.stubGlobal("__CADENCE_BUILD__", undefined);
   const identity = await import("../../web/src/client/build-identity");
-  expect(identity.browserBuildCompatible(sourceBuild)).toBe(false);
-  expect(() => identity.assertBrowserBuildCompatible(sourceBuild)).toThrow(
-    "unsupported-context",
-  );
+  expect(identity.localBuild).toBeNull();
 });

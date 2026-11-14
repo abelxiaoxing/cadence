@@ -78,7 +78,6 @@ function fixture() {
     stateHome,
     agentDir,
     epoch,
-    build,
     now: () => now,
     secrets: () => [] as string[],
     readOwner: vi.fn(
@@ -378,7 +377,7 @@ it("shared in-flight/cache queries do not create one transport per tab; invalida
   reader.close();
   await expect(reader.read()).rejects.toThrow();
 });
-it("closed DTOs reject control fields and incompatible owners are partial; credentials are not returned", async () => {
+it("different owner builds remain readable; closed DTOs reject control fields and credentials are not returned", async () => {
   const f = ownerFixture();
   f.options.readOwner.mockResolvedValue({
     kind: "owner-activity",
@@ -389,7 +388,7 @@ it("closed DTOs reject control fields and incompatible owners are partial; crede
     activities: [],
   });
   const value = await new ActivityDiscoveryReader(f.options).read();
-  expect(value).toMatchObject({ completeness: "partial", projects: [] });
+  expect(value).toMatchObject({ completeness: "complete", projects: [] });
   expect(() =>
     decodeActivityDiscovery({ ...value, token: "secret" }),
   ).toThrow();

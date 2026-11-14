@@ -28,9 +28,6 @@ vi.mock("../src/native-client.ts", async (original) => ({
     refresh() {
       return this.delegate.refresh();
     }
-    compatible(safety?: boolean) {
-      return this.delegate.compatible(safety);
-    }
   },
 }));
 // Tests of the child refusal below explicitly re-enable the production guard.
@@ -78,7 +75,6 @@ function service() {
     attach: vi.fn(async () => client),
     detach: vi.fn(async () => {}),
     refresh: vi.fn(async () => session),
-    compatible: vi.fn(() => true),
   };
   injected.connection = connection;
   return { connection, client, commands: [], epoch };

@@ -206,7 +206,13 @@ it("native export verifies digest/EOF, refuses overwrites/links and preserves in
             },
           },
         },
-        { headers: { "x-cadence-attachment": randomUUID() } },
+        {
+          headers: {
+            "x-cadence-attachment": new Headers(init?.headers).get(
+              "x-cadence-attachment",
+            )!,
+          },
+        },
       );
     if (String(url).endsWith("/detach"))
       return Response.json({ kind: "ok", value: null });

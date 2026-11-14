@@ -1098,3 +1098,17 @@ Observed npm latest was 2.1.4, version 2.1.5 returned 404, and the remote v2.1.5
 Verification ran on Linux using the installed Node and Bun, with one private scope under the account's `cadence/tmp` cache container.
 No extra slow suite, paid-provider call, browser automation, native Windows/macOS qualification, local dependency installation or production-service update/restart was performed.
 This appendix records local qualification only; pushing the annotated tag will request the existing OIDC workflow, whose publish receipt and audited artifact must still be confirmed against npm before publication is reported as successful.
+
+## Release 2.1.6 qualification: authenticated availability and reconnect recovery (2026-11-14)
+
+The user explicitly requested review, fixes, one commit, GitHub push and npm publication through GitHub CI only.
+Build fingerprints no longer gate browser/native access, model selection, Send, directory selection, activity discovery or service controls; diagnostic provenance and packaged-asset integrity remain.
+Transient observation failures reconnect on the same known allocation, retained GET reads are independent of that allocation, and failed gateway bootstrap promises are no longer cached for an owner's whole epoch.
+Review found and fixed three remaining recovery gaps: no-socket polls now renew their existing session and reject mixed-epoch readiness; a refused old CSRF is recovered through a readonly same-ID session read before detach; and authenticated detach retries acknowledge already-released viewers without repeating the detach effect, allowing gateways to retire their mappings.
+Token/Origin/CSRF checks, browser-versus-native authority, exact workflow approval, actual Cancel/Stop and observe-only uncertain commands remain intact.
+`AGENTS.md` now requires the existing tag-triggered GitHub Actions/OIDC lane for every npm publication and prohibits local publish, token fallbacks and automatic publication replay.
+
+After advancing to 2.1.6 and regenerating the canonical operator/service/Web outputs, `bun run verify` passed: **1978 fast root tests passed, 281 skipped** (131 passing files, two skipped), **463 Web unit/SSR tests passed** (44 files), plus syntax, root/Web types, lint, Agent pins, generated-byte checks and real-pack audit.
+The review regressions use controlled loopback HTTP owners and client lifetimes; they do not claim a real browser, paid provider, native Windows/macOS or production service upgrade was exercised.
+The observed npm latest was 2.1.5, version 2.1.6 was absent and the remote v2.1.6 tag did not exist when selected.
+Local qualification does not claim publication: the authorized tag push will trigger `Publish npm`, and its publish receipt plus audited registry digests and `latest` must be confirmed before reporting release success.

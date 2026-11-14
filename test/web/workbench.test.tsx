@@ -16,7 +16,6 @@ import {
 } from "../../web/src/client/last-project";
 import { recordedTurn } from "../../web/src/client/turn-source";
 import { cadenceInput } from "../../web/src/client/use-workbench";
-import { BuildReloadNotice } from "../../web/src/components/workspace/BuildReloadNotice";
 import {
   LEGACY_OMITTED_NOTICE,
   toolState,
@@ -35,21 +34,6 @@ import { LocaleProvider } from "../../web/src/i18n/locale";
 import { transport } from "./fixtures";
 
 afterEach(() => vi.unstubAllGlobals());
-
-it("build mismatch has an explicit, non-automatic reload action in both locales", () => {
-  const english = renderToStaticMarkup(<BuildReloadNotice />);
-  expect(english).toContain("Reload the updated Cadence WebUI.");
-  expect(english).toContain("unsent images do not");
-  expect(english).toContain("Reload WebUI");
-  const chinese = renderToStaticMarkup(
-    <LocaleProvider initial="zh">
-      <BuildReloadNotice />
-    </LocaleProvider>,
-  );
-  expect(chinese).toContain("请刷新已更新的 Cadence WebUI。");
-  expect(chinese).toContain("未发送图片不会保留");
-  expect(chinese).toContain("刷新 WebUI");
-});
 
 it("only an explicit leading command selects Cadence; mentions, quoted commands and code remain ordinary", () => {
   expect(cadenceInput("/cadence fix auth", "chat")).toEqual({

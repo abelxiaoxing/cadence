@@ -2244,27 +2244,12 @@ function decodeBrowserBuild(value) {
     buildId: decodeHash(o.buildId)
   };
 }
-function decodeClientBuild(value) {
-  const kind = oneOf(Object.getOwnPropertyDescriptor(value ?? {}, "kind")?.value, ["native", "browser"]);
-  const o = closed(value, kind === "native" ? ["kind", "contractHash"] : ["kind", "contractHash", "sourceHash", "buildId"]);
-  return kind === "native" ? { kind, contractHash: decodeHash(o.contractHash) } : {
-    kind,
-    ...decodeBrowserBuild({
-      contractHash: o.contractHash,
-      sourceHash: o.sourceHash,
-      buildId: o.buildId
-    })
-  };
-}
 function decodeServiceBuild(value) {
   const o = closed(value, ["contractHash", "assets"]);
   return {
     contractHash: decodeHash(o.contractHash),
     assets: decodeBrowserBuild(o.assets)
   };
-}
-function compatibleBuild(server, client, safety = false) {
-  return !!server && !!client && client.contractHash === server.contractHash && (safety || server.assets.contractHash === server.contractHash && (client.kind === "native" || client.buildId === server.assets.buildId && client.sourceHash === server.assets.sourceHash));
 }
 // src/service/contracts/history.ts
 function decodeReceipt(v) {
@@ -10090,10 +10075,7 @@ class ActivityDiscoveryReader {
             const summary = decodeOwnerActivity(await o.readOwner(c, signal));
             if (signal.aborted)
               return;
-            if (summary.epoch !== row.epoch || c.localAccess().epoch !== row.epoch || !compatibleBuild(summary.build, {
-              kind: "native",
-              contractHash: o.build.contractHash
-            }))
+            if (summary.epoch !== row.epoch || c.localAccess().epoch !== row.epoch)
               throw new Error;
             if (summary.activities.some((activity2) => activity2.epoch !== row.epoch || activity2.source === "terminal"))
               throw new Error("invalid-attribution");
@@ -16267,7 +16249,7 @@ Content-Length: 0\r
           this.attachments.set(attachmentId, attachment);
         }
         res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body")
+      } else if (route.source === "body" && (route.operation !== "detach" || this.attachments.has(attachmentId)))
         attachment = this.attachment(caller);
       const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
       if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
@@ -16276,26 +16258,14 @@ Content-Length: 0\r
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting)
         unavailable();
-      if (attachment && this.attachment(caller) !== attachment)
+      if (attachment && route.operation !== "detach" && this.attachment(caller) !== attachment)
         throw new ContractError("stale");
       if (route.operation === "export" || route.operation === "download") {
         await this.export(route.operation, input, caller, abort.signal, res, resetIdle);
         return;
       }
-      const rawBuild = boundary.headers.get("x-cadence-build");
-      const clientBuild = rawBuild === undefined ? null : decodeClientBuild(parseWireJson(rawBuild, 1024));
-      if (caller.authority === "browser" && clientBuild?.kind === "native")
-        throw new ContractError("forbidden");
-      if ([
-        "preflight",
-        "command",
-        "chooseModel",
-        "cancel",
-        "workbenchCommand"
-      ].includes(route.operation) && !compatibleBuild(this.options.build, clientBuild, route.operation === "cancel" || route.operation === "workbenchCommand" && decodeWorkbenchCommand(input).kind === "interrupt"))
-        throw new ContractError("unsupported-context");
       dispatched = route.operation === "command" || route.operation === "cancel" || route.operation === "chooseModel" || route.operation === "workbenchCommand";
-      const value = await this.dispatch(route.operation, input, caller, abort.signal, clientBuild);
+      const value = await this.dispatch(route.operation, input, caller, abort.signal);
       this.options.auth.current(caller);
       if (abort.signal.aborted)
         unavailable();
@@ -16373,7 +16343,7 @@ Content-Length: 0\r
     const value = this.options.management.invoke(operation);
     send(res, 200, { kind: "ok", value });
   }
-  async dispatch(operation, input, caller, signal, build2) {
+  async dispatch(operation, input, caller, signal) {
     const a = this.options.adapters, p = a.projection;
     switch (operation) {
       case "workbenchRead":
@@ -16424,7 +16394,8 @@ Content-Length: 0\r
           value: a.modelChoice.choose(decodeChooseModelRequest(input))
         };
       case "detach":
-        this.detach(this.attachment(caller));
+        if (this.attachments.has(caller.attachmentId))
+          this.detach(this.attachment(caller));
         return { kind: "ok", value: null };
       case "preflight":
       case "command":
@@ -16451,7 +16422,7 @@ Content-Length: 0\r
           authority: caller.authority,
           csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
           capabilities: {
-            actions: original.capabilities.actions && !!a.workbench && compatibleBuild(this.options.build, build2),
+            actions: original.capabilities.actions && !!a.workbench,
             manualChecks: false,
             history: original.capabilities.history
           }
@@ -16960,7 +16931,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "c62dcda9dc71daea1a7c8ef3f8b671c6a1cc0cfa4ddd98ed008eec9b3ea81245",
+    contractHash: "63f28a34411aedbf5d88f62ce81cfb0eca9e8ed38396e731a2a01253d1287f48",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17075,7 +17046,6 @@ Content-Length: 0\r
     stateHome: input.stateHome,
     agentDir: input.agentDir,
     epoch: auth.epoch,
-    build: build2,
     readOwner: (c, signal) => nativeCall(c, "activity", false, undefined, signal),
     secrets: () => acquired.access.redactionLiterals()
   });
@@ -17174,11 +17144,6 @@ Content-Length: 0\r
     } finally {
       requesting = false;
     }
-  }
-  function browserBuild(boundary) {
-    const clientBuild = decodeClientBuild(parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024));
-    if (clientBuild.kind !== "browser" || !compatibleBuild(build2, clientBuild))
-      throw new ContractError("unsupported-context");
   }
   function select(path, epoch) {
     assert();
@@ -17336,7 +17301,12 @@ Content-Length: 0\r
         throw new ContractError("stale");
       return { project, endpoint: local.endpoint, cookie };
     })();
-    bindings.set(id, { epoch: local.epoch, result });
+    const pending2 = { epoch: local.epoch, result };
+    bindings.set(id, pending2);
+    result.catch(() => {
+      if (bindings.get(id) === pending2)
+        bindings.delete(id);
+    });
     return result;
   }
   function stop() {
@@ -17523,9 +17493,9 @@ Content-Length: 0\r
         if (route2.operation === "session" && !store.associatedProjects().some((p) => p.id === project.id))
           throw new ContractError("unavailable");
         const attachment = boundary.headers.get("x-cadence-attachment");
-        if (attachment && attachments.get(attachment)?.projectId !== project.id || req.method === "POST" && !attachment)
+        if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.projectId !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment)
           throw new ContractError("stale");
-        if (route2.operation === "session" && !attachment && attachments.size >= 2048)
+        if (route2.operation === "session" && (!attachment || !attachments.has(attachment)) && attachments.size >= 2048)
           throw new ContractError("capacity");
         if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
           throw new ContractError("forbidden");
@@ -17665,7 +17635,6 @@ Content-Length: 0\r
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
-        browserBuild(boundary);
         const keys2 = [...url.searchParams.keys()];
         if (keys2.length && (keys2.length !== 1 || keys2[0] !== "project"))
           throw new ContractError("invalid");
@@ -17680,7 +17649,6 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/workbench/v1/activity" && req.method === "GET") {
-        browserBuild(boundary);
         const value2 = await activity2.read();
         auth.current(caller);
         assert();
@@ -17717,7 +17685,6 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/workbench/v1/service" && req.method === "POST") {
-        browserBuild(boundary);
         const value2 = await body(req);
         auth.current(caller);
         const job2 = await requestJob(value2, () => auth.current(caller));
@@ -17725,7 +17692,6 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/workbench/v1/select" && req.method === "POST") {
-        browserBuild(boundary);
         const o = closed(await body(req), ["path", "epoch"]);
         const path = text(o.path, 4096, true), epoch = decodeId(o.epoch);
         auth.current(caller);
@@ -17734,7 +17700,6 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/workbench/v1/prepare-send" && req.method === "POST") {
-        browserBuild(boundary);
         const value2 = await body(req);
         const o = closed(value2, [
           "commandId",
@@ -34218,8 +34183,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.5",
-  build: "f394594500c6c18cd7ae0d307db53bbfbf13f988bfd92f5e3ca1bbc15b0d5e91",
+  version: "2.1.6",
+  build: "466def18bdfec1faaf999049b38e5cb08ae6861f57b1847aea4144d1d2180551",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37063,7 +37028,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "c62dcda9dc71daea1a7c8ef3f8b671c6a1cc0cfa4ddd98ed008eec9b3ea81245";
+  const embedded = "63f28a34411aedbf5d88f62ce81cfb0eca9e8ed38396e731a2a01253d1287f48";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

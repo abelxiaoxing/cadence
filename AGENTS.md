@@ -36,6 +36,13 @@ Keep research and commit skills independent; Git commits, pushes, installation, 
 Preserve unrelated working-tree changes and actual native/auth/storage outcomes.
 Use the installed public Pi declarations rather than assuming global documentation matches the peer.
 
+## npm publication
+
+- Publish npm releases **only through GitHub Actions**: the existing `.github/workflows/publish.yml` (`Publish npm`) and its npm Trusted Publishing/OIDC job.
+- Never run local `npm publish`, `bun publish`, a token-based fallback or another publication route; do not bypass CI when a release is delayed or fails.
+- After explicit release authorization, follow `docs/reuse-and-distribution.md#maintainer-releases-from-any-computer`: verify the candidate, push the release commit to `main`, then push its matching annotated `vMAJOR.MINOR.PATCH` tag.
+- Confirm the CI outcome and registry version, `latest` and audited artifact digests before claiming publication; if visibility is pending, use the documented readonly check, never replay publication or move the tag.
+
 ## Temporary-file hygiene
 
 - Never scatter temporary directories, logs, reports, package archives or audit snapshots directly in `$HOME`, project parents, the desktop or arbitrary sibling directories.

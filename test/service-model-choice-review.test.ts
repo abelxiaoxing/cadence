@@ -61,7 +61,10 @@ it.each(["models", "chooseModel"] as const)(
       req.resume();
       res.setHeader("content-type", "application/json");
       if (req.url === "/api/v1/session") {
-        res.setHeader("x-cadence-attachment", randomUUID());
+        res.setHeader(
+          "x-cadence-attachment",
+          String(req.headers["x-cadence-attachment"]),
+        );
         res.end(
           JSON.stringify({
             kind: "ok",

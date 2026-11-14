@@ -32,8 +32,11 @@ The generated `src/model-preview.mjs` alone imports the SDK for preview; it uses
 Its fixed private pipe carries no tool/command authority; only the credential-free, versionless `ModelPreview` returns to the gateway.
 It creates no owner, session, tools or project state, calls no provider/auth operation and has no preference write path; native model installation/worker preparation remain owner-only.
 The canonical service builder separately bundles the gateway to reject any SDK import in its transitive closure; the installed preview child is an audited ordinary-JavaScript package member, never a source-tree fallback.
+Build provenance remains metadata and a package-integrity input, never runtime access authority; authenticated clients need no matching source/contract/assets hash.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
 Proxy attachments name their exact owner epoch: a confirmed stopped epoch or authenticated successor retires that old viewer without forwarding old CSRF through a new owner's cookie; unknown outcomes remain unavailable, and prior work is neither canceled nor replayed.
+An authenticated session read may supply its client's fixed allocation ID before the gateway has seen it; other operations cannot introduce one.
+Failed owner bootstrap promises are evicted, so a transient failure cannot poison that owner's routing for its whole epoch.
 Ordinary Send/tools require a selected folder; `web/src/Workbench.tsx` routes the folder-first interface through one shared `AppShell`, with `FolderSetup` supplying its initial/missing-directory content and `App` its selected conversation content.
 Folder setup has local text/model drafts but no project client or unbound chat executor; only an explicit directory selection can bind that draft to a new conversation (see [Clients](clients.md#browser)).
 `src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations (browser admission and live preview), readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.

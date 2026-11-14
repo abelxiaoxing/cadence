@@ -5028,9 +5028,6 @@ button.link:hover:not(:disabled) {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
-.more-menu-build.warn {
-  color: var(--amber-text);
-}
 
 /* ---- Project-less entry: one central Open action ---- */
 .welcome-action {

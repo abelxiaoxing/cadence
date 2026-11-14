@@ -22,7 +22,6 @@ import {
   type ActivityDiscovery,
   decodeOwnerActivity,
 } from "./contracts/activity.ts";
-import { compatibleBuild, type ServiceBuild } from "./contracts/build.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { holderState } from "./liveness.ts";
 import { sessionDirectory } from "./pi-sessions.ts";
@@ -52,7 +51,6 @@ export class ActivityDiscoveryReader {
       stateHome: string;
       agentDir: string;
       epoch: string;
-      build: ServiceBuild;
       readOwner(c: ServiceCoordination, signal: AbortSignal): Promise<unknown>;
       secrets(): readonly string[];
       now?: () => number;
@@ -278,11 +276,7 @@ export class ActivityDiscoveryReader {
                 if (signal.aborted) return;
                 if (
                   summary.epoch !== row.epoch ||
-                  c.localAccess().epoch !== row.epoch ||
-                  !compatibleBuild(summary.build, {
-                    kind: "native",
-                    contractHash: o.build.contractHash,
-                  })
+                  c.localAccess().epoch !== row.epoch
                 )
                   throw new Error();
                 if (

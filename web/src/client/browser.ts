@@ -5,6 +5,7 @@ import { localBuild } from "./build-identity";
 export function browserClient(project?: string) {
   const transport = new HttpServiceTransport({
     origin: window.location.origin,
+    requestTimeoutMs: 10000,
     ...(project ? { project } : {}),
     ...(localBuild
       ? { build: { kind: "browser" as const, ...localBuild } }

@@ -98,7 +98,7 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
       taskId={null}
       scope={null}
       runs={runs}
-      cancelCompatible={false}
+      canCancel={false}
       canceling={new Set()}
       onCancel={() => {}}
       onTask={() => {}}
@@ -192,7 +192,7 @@ it("conversation rows are a title and a time; origin is the icon's name and a st
       taskId={null}
       scope={null}
       runs={[]}
-      cancelCompatible={false}
+      canCancel={false}
       canceling={new Set()}
       onCancel={() => {}}
       onTask={() => {}}

@@ -435,9 +435,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       if (generation !== expected) throw new ContractError("stale");
     };
     const operation = (async () => {
-      const broken =
-        !!connection.client &&
-        (reattach || !connection.session || !connection.compatible());
+      const broken = !!connection.client && (reattach || !connection.session);
       if (connection.client && !broken) return;
       reattach = false;
       if (broken) connection.forgetSuperseded(ctx.cwd);
@@ -548,18 +546,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     active(ctx);
     await ensureAttached(ctx);
     if (generation !== expected) throw new ContractError("stale");
-    if (!connection.client || !connection.compatible()) {
-      reattach = true;
-      let stop = "its explicit stop command";
-      try {
-        stop = projectStopCommand(effectiveWorkspace(ctx.cwd).workspace);
-      } catch {
-        // The guidance keeps its generic wording.
-      }
-      throw new Error(
-        `unsupported-context: the running Cadence project owner does not match this Cadence build or its WebUI assets. Nothing was started or replaced. When no accepted work is running, stop it with ${stop}; the next Cadence use starts the matching version.`,
-      );
-    }
+    if (!connection.client) throw new ContractError("unavailable");
     if (selectModel) await ensureModel(ctx);
     if (generation !== expected) throw new ContractError("stale");
   };

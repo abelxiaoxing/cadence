@@ -30,9 +30,6 @@ vi.mock("../src/native-client.ts", () => ({
   NativeConnection: class {
     client = injected.attach ? undefined : injected.client;
     session = injected.attach ? undefined : { epoch: injected.epoch };
-    compatible() {
-      return !!this.session;
-    }
     forgetSuperseded() {
       injected.forgotten++;
       return false;

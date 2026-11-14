@@ -11,13 +11,10 @@ import type { Socket } from "node:net";
 import { gzipSync, constants as zlib } from "node:zlib";
 import { type WebSocket, WebSocketServer } from "ws";
 import {
-  type ClientBuild,
   ContractError,
   canonicalJson,
   compareSequence,
-  compatibleBuild,
   decodeChooseModelRequest,
-  decodeClientBuild,
   decodeCurrentChangesRequest,
   decodeCurrentRequest,
   decodeCursor,
@@ -601,7 +598,11 @@ export class ServiceHttpServer {
           this.attachments.set(attachmentId, attachment);
         }
         res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body") attachment = this.attachment(caller);
+      } else if (
+        route.source === "body" &&
+        (route.operation !== "detach" || this.attachments.has(attachmentId))
+      )
+        attachment = this.attachment(caller);
       const input =
         route.source === "body"
           ? await this.body(req, abort.signal)
@@ -619,7 +620,11 @@ export class ServiceHttpServer {
       decodeHttpInput(route.operation, input);
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting) unavailable();
-      if (attachment && this.attachment(caller) !== attachment)
+      if (
+        attachment &&
+        route.operation !== "detach" &&
+        this.attachment(caller) !== attachment
+      )
         throw new ContractError("stale");
       if (route.operation === "export" || route.operation === "download") {
         await this.export(
@@ -632,30 +637,8 @@ export class ServiceHttpServer {
         );
         return;
       }
-      const rawBuild = boundary.headers.get("x-cadence-build");
-      const clientBuild =
-        rawBuild === undefined
-          ? null
-          : decodeClientBuild(parseWireJson(rawBuild, 1024));
-      if (caller.authority === "browser" && clientBuild?.kind === "native")
-        throw new ContractError("forbidden");
-      if (
-        [
-          "preflight",
-          "command",
-          "chooseModel",
-          "cancel",
-          "workbenchCommand",
-        ].includes(route.operation) &&
-        !compatibleBuild(
-          this.options.build,
-          clientBuild,
-          route.operation === "cancel" ||
-            (route.operation === "workbenchCommand" &&
-              decodeWorkbenchCommand(input).kind === "interrupt"),
-        )
-      )
-        throw new ContractError("unsupported-context");
+      // Authentication and the decoded operation determine authority. Build
+      // fingerprints describe an installation, never permission to use it.
       dispatched =
         route.operation === "command" ||
         route.operation === "cancel" ||
@@ -666,7 +649,6 @@ export class ServiceHttpServer {
         input,
         caller,
         abort.signal,
-        clientBuild,
       );
       // Rotation while a readonly adapter awaits must not deliver its private result.
       this.options.auth.current(caller);
@@ -791,7 +773,6 @@ export class ServiceHttpServer {
     input: unknown,
     caller: Caller,
     signal: AbortSignal,
-    build: ClientBuild | null,
   ): Promise<unknown> {
     const a = this.options.adapters,
       p = a.projection;
@@ -842,7 +823,10 @@ export class ServiceHttpServer {
           value: a.modelChoice.choose(decodeChooseModelRequest(input)),
         };
       case "detach":
-        this.detach(this.attachment(caller));
+        // An authenticated retry can acknowledge an already-released viewer.
+        // This also lets gateways retire their mapping after a lost reply.
+        if (this.attachments.has(caller.attachmentId))
+          this.detach(this.attachment(caller));
         return { kind: "ok", value: null };
       // Retired task controls cannot mint a grant or dispatch old work, even
       // through a stale client. Receipts/history and explicit Cancel remain.
@@ -876,10 +860,7 @@ export class ServiceHttpServer {
           authority: caller.authority,
           csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
           capabilities: {
-            actions:
-              original.capabilities.actions &&
-              !!a.workbench &&
-              compatibleBuild(this.options.build, build),
+            actions: original.capabilities.actions && !!a.workbench,
             manualChecks: false,
             history: original.capabilities.history,
           },

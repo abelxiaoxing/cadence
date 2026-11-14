@@ -182,7 +182,6 @@ it.each([
   ["preparing", "Preparing execution…"],
   ["connecting", "Checking execution state…"],
   ["unavailable", "Execution state unavailable"],
-  ["incompatible", "Model selection needs a compatible connection"],
 ] as const)(
   "%s explains the execution state instead of a model catalog error",
   (status, message) => {

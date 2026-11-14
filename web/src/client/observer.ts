@@ -3,20 +3,14 @@ import {
   type ObservationState,
   ProjectionTracker,
 } from "../../../src/service-client.ts";
-import {
-  canonicalJson,
-  compatibleBuild,
-} from "../../../src/service-contract.ts";
 import type { Scope, WorkspaceBootstrap } from "../types";
 import type { BrowserClient } from "./browser";
-import { localBuild } from "./build-identity";
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
   epoch?: string;
   activeRuns?: import("../types").ActiveRuns;
   actions: boolean;
-  compatible?: boolean;
-  cancelCompatible?: boolean;
+  attached: boolean;
   observation?: ObservationState;
   transportStatus: "current" | "stale" | "closed";
   attachmentVersion: number;
@@ -28,7 +22,7 @@ export class WorkspaceObserver {
   private serial: Promise<void> = Promise.resolve();
   private version = 0;
   private stopCurrent: (() => void) | undefined;
-  private pollCurrent: ((capabilities?: boolean) => void) | undefined;
+  private pollCurrent: (() => void) | undefined;
   private latest: ViewerState | undefined;
   private readonly readiness = new Set<(state: ViewerState) => void>();
   /** Wait for the existing observation owner; never allocate a second session.
@@ -49,11 +43,9 @@ export class WorkspaceObserver {
       };
       const check = (state: ViewerState) => {
         if (this.version < minimumVersion || state.epoch !== epoch) return;
-        if (state.compatible === false)
-          finish(new Error("unsupported-context"));
-        else if (
+        if (
           state.workspace?.epoch === epoch &&
-          state.compatible &&
+          state.attached &&
           !state.error &&
           state.transportStatus === "current"
         )
@@ -71,8 +63,8 @@ export class WorkspaceObserver {
     });
   }
   constructor(private readonly api: BrowserClient) {}
-  refresh(capabilities = false): void {
-    this.pollCurrent?.(capabilities);
+  refresh(): void {
+    this.pollCurrent?.();
   }
   observe(
     scope: Scope | null,
@@ -89,7 +81,7 @@ export class WorkspaceObserver {
     let generation = 0;
     let socketVersion = 0;
     let reading = false;
-    let attached = false;
+    let acquiring = false;
     let lastPoll = 0;
     // A failed read (e.g. a passive read fenced by publication) is observed
     // again soon rather than after the full reconcile period. Readonly only.
@@ -98,6 +90,7 @@ export class WorkspaceObserver {
     let actionCapability = false;
     let state: ViewerState = {
       actions: false,
+      attached: false,
       transportStatus: "closed",
       attachmentVersion: 0,
     };
@@ -120,32 +113,44 @@ export class WorkspaceObserver {
       if (version === this.version) this.pollCurrent = undefined;
     };
     this.stopCurrent = stop;
-    // Session allocation is deliberately awaited, not abandoned: a late successful
-    // allocation must be detached before any replacement acquires another slot.
+    // One serialized observation lifetime. Session retries reuse the transport's
+    // exact allocation ID, even after a lost reply; no command/grant is replayed.
+    const retryAttachment = () => {
+      clearTimeout(retry);
+      if (current() && !blocked) retry = setTimeout(reconnect, 1000);
+    };
     const enqueue = (job: () => Promise<void>) => {
-      this.serial = this.serial.then(job).catch(() => {
-        if (current()) {
-          blocked = true;
+      this.serial = this.serial.then(job).catch((error: unknown) => {
+        if (current() && !blocked) {
           abort.abort();
-          clearInterval(timer);
-          clearTimeout(retry);
           socketVersion++;
           stopSocket?.();
-          state.error =
-            "Observation unavailable or detach unconfirmed; explicit re-entry required.";
+          state.attached = false;
+          state.error = error instanceof Error ? error.message : "unavailable";
           state.actions = false;
-          state.transportStatus = "closed";
-          state.workspace = undefined;
-          tracker = new ProjectionTracker();
+          state.transportStatus = "stale";
           emit();
+          retryAttachment();
+        }
+      });
+    };
+    const reconnect = () => {
+      if (!current() || blocked || acquiring) return;
+      clearTimeout(retry);
+      acquiring = true;
+      enqueue(async () => {
+        try {
+          await acquire();
+        } finally {
+          acquiring = false;
         }
       });
     };
     const detach = async () => {
       await this.api.transport.detach();
     };
-    const poll = async (capabilities = false) => {
-      if (!current() || !attached || reading || blocked) return;
+    const poll = async (refreshSession = true) => {
+      if (!current() || !state.attached || reading || blocked) return;
       reading = true;
       state.actions = false;
       let succeeded = false;
@@ -153,28 +158,35 @@ export class WorkspaceObserver {
       lastPoll = Date.now();
       const signal = abort.signal;
       try {
-        // Capability observations reuse the exact attachment, never allocation,
-        // a new grant or mutation replay. Another client can change owner choice.
-        const refreshCapabilities = async () => {
+        // Keep the same attachment alive and notice a replacement owner even
+        // in ordinary chat, where there is no WebSocket or changed model list.
+        if (refreshSession) {
           const session = await this.api.client.session(signal);
-          if (!current() || signal.aborted) return false;
+          if (!current() || signal.aborted) return;
           if (session.kind === "error") {
             state.actions = false;
             state.error = session.error.code;
             if (revoked(session.error.code)) revoke();
-            return false;
+            return;
           }
-          installCapabilities(session.value);
-          return true;
-        };
-        if (capabilities && !(await refreshCapabilities())) return;
+          if (session.value.epoch !== state.epoch) {
+            state.error = "stale";
+            return;
+          }
+          actionCapability = session.value.capabilities.actions;
+        }
         if (!scope) state.transportStatus = "current";
         // Safety roster is independent of selected history/workspace proof progress.
         // Inconclusive history must not make active work undiscoverable for Cancel.
         const active = await this.api.client.activeRuns(signal);
         if (!current() || signal.aborted) return;
-        if (active.kind === "ok") state.activeRuns = active.value;
-        else if (revoked(active.error.code)) {
+        if (active.kind === "ok") {
+          if (active.value.epoch !== state.epoch) {
+            state.error = "stale";
+            return;
+          }
+          state.activeRuns = active.value;
+        } else if (revoked(active.error.code)) {
           revoke();
           return;
         } else state.activeRuns = undefined;
@@ -186,13 +198,10 @@ export class WorkspaceObserver {
           if (revoked(workspace.error.code)) revoke();
           return;
         }
-        if (
-          !capabilities &&
-          canonicalJson(state.workspace?.models ?? []) !==
-            canonicalJson(workspace.value.models) &&
-          !(await refreshCapabilities())
-        )
+        if (workspace.value.epoch !== state.epoch) {
+          state.error = "stale";
           return;
+        }
         state.workspace = workspace.value;
         if (scope) {
           const ticket = tracker.beginSnapshot();
@@ -201,6 +210,8 @@ export class WorkspaceObserver {
           if (reply.kind === "error") {
             state.error = reply.error.code;
             if (revoked(reply.error.code)) revoke();
+          } else if (reply.value.epoch !== state.epoch) {
+            state.error = "stale";
           } else {
             const installed = tracker.install(reply.value, Date.now(), ticket);
             if (installed !== undefined) generation = installed;
@@ -212,20 +223,24 @@ export class WorkspaceObserver {
           succeeded = true;
         }
       } catch {
-        if (current()) {
+        if (current() && !signal.aborted) {
           state.error = "Observation unavailable.";
           state.actions = false;
           state.transportStatus = "stale";
         }
       } finally {
         reading = false;
-        failed = !succeeded;
-        state.actions = succeeded && actionCapability;
-        emit();
+        if (current() && !signal.aborted) {
+          failed = !succeeded;
+          state.actions = succeeded && actionCapability;
+          emit();
+          if (!succeeded && state.error === "stale") reconnect();
+        }
       }
     };
     const revoke = () => {
       blocked = true;
+      state.attached = false;
       state.actions = false;
       state.transportStatus = "closed";
       state.error = "Access revoked; explicit token re-entry required.";
@@ -240,18 +255,13 @@ export class WorkspaceObserver {
       enqueue(detach);
       emit();
     };
-    const installCapabilities = (
-      session: import("../types").SessionBootstrap,
-    ) => {
-      const build = localBuild
-        ? { kind: "browser" as const, ...localBuild }
-        : null;
-      state.compatible = compatibleBuild(session.build, build);
-      state.cancelCompatible = compatibleBuild(session.build, build, true);
-      actionCapability = session.capabilities.actions && state.compatible;
-    };
     const acquire = async () => {
-      attached = false;
+      if (!current() || blocked) return;
+      state.attached = false;
+      state.actions = false;
+      abort.abort();
+      socketVersion++;
+      stopSocket?.();
       await detach();
       if (!current() || blocked) return;
       const session = await this.api.client.session();
@@ -260,26 +270,24 @@ export class WorkspaceObserver {
         return;
       }
       if (session.kind === "error") {
-        blocked = true; // Unknown allocation/auth: never loop creating unused grants.
-        state.error = `${session.error.code}; explicit re-entry required.`;
-        state.workspace = undefined;
-        tracker = new ProjectionTracker();
-        state.actions = false;
-        emit();
-        return;
+        if (revoked(session.error.code)) {
+          revoke();
+          return;
+        }
+        throw new Error(session.error.code);
       }
-      attached = true;
       abort = new AbortController();
       tracker = new ProjectionTracker();
       state = {
         epoch: session.value.epoch,
+        attached: true,
         actions: session.value.capabilities.actions,
         transportStatus: "closed",
         attachmentVersion: state.attachmentVersion + 1,
       };
-      installCapabilities(session.value);
+      actionCapability = session.value.capabilities.actions;
       emit();
-      await poll();
+      await poll(false); // acquire already read this exact session
       if (!current() || blocked || !scope) return;
       const socket = ++socketVersion;
       stopSocket = this.api.transport.subscribe(
@@ -306,22 +314,23 @@ export class WorkspaceObserver {
           if (!current() || blocked || socket !== socketVersion) return;
           state.transportStatus = status;
           if (status === "closed") {
-            attached = false;
+            state.attached = false;
             state.actions = false;
             state.attachmentVersion++;
             abort.abort();
             socketVersion++;
             // The server revoked this socket's attachment. Acquire observation only;
             // dialogs/grants are invalidated, never silently renewed.
-            retry = setTimeout(() => enqueue(acquire), 1000);
+            retryAttachment();
           }
           emit();
         },
       );
     };
-    enqueue(acquire);
-    this.pollCurrent = (capabilities) => {
-      void poll(capabilities);
+    reconnect();
+    this.pollCurrent = () => {
+      if (state.attached) void poll();
+      else reconnect();
     };
     timer = setInterval(() => {
       if (!current() || blocked) return;

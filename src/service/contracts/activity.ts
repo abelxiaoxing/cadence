@@ -108,7 +108,7 @@ export interface ActivityDiscovery {
   epoch: string;
   observedAt: number;
   completeness: "complete" | "partial";
-  /** Unreadable, stale, incompatible, or capacity-limited observations, not completed work. */
+  /** Unreadable, stale or capacity-limited observations, not completed work. */
   unavailable: number;
   projects: ActivityProject[];
 }

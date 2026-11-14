@@ -14,6 +14,7 @@ export function useWorkspace(
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<ViewerState>({
     actions: false,
+    attached: false,
     transportStatus: "closed",
     attachmentVersion: 0,
   });
@@ -26,6 +27,7 @@ export function useWorkspace(
     void revision;
     setState({
       actions: false,
+      attached: false,
       transportStatus: "closed",
       attachmentVersion: 0,
     });
@@ -34,7 +36,7 @@ export function useWorkspace(
   }, [observer, kind, id, enabled, epoch, revision]);
   return {
     ...state,
-    refresh: (capabilities = false) => observer.refresh(capabilities),
+    refresh: () => observer.refresh(),
     whenReady: (epoch: string, signal: AbortSignal, minimumVersion?: number) =>
       observer.whenReady(epoch, signal, minimumVersion),
     reconnect: () => {

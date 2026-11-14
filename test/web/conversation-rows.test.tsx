@@ -212,7 +212,7 @@ it("the sidebar gives history rows their actions, Running work none, and states 
         taskId={null}
         scope={null}
         runs={[]}
-        cancelCompatible={false}
+        canCancel={false}
         canceling={new Set()}
         onCancel={() => {}}
         onTask={() => {}}

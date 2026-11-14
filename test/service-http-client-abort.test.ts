@@ -139,7 +139,13 @@ it("lost final command body remains unknown with one POST; disposal sends no Can
             capabilities: { actions: true, manualChecks: false, history: true },
           },
         },
-        { headers: { "x-cadence-attachment": randomUUID() } },
+        {
+          headers: {
+            "x-cadence-attachment": new Headers(init.headers).get(
+              "x-cadence-attachment",
+            )!,
+          },
+        },
       );
     const signal = init?.signal;
     return new Response(

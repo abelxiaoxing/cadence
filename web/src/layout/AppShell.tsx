@@ -49,7 +49,6 @@ export function AppShell({
   notices,
   status,
   folder,
-  compatible,
   onRefresh,
   onDisconnect,
   onOpenService,
@@ -66,7 +65,6 @@ export function AppShell({
   notices?: ReactNode;
   status: ReactNode;
   folder: ReactNode;
-  compatible?: boolean;
   onRefresh(): void;
   onDisconnect?(): void;
   onOpenService?(): void;
@@ -208,21 +206,9 @@ export function AppShell({
                   </button>
                 )}
                 <div
-                  className={`more-menu-build${compatible === false ? " warn" : ""}`}
+                  className="more-menu-build"
                   title={localBuild?.buildId ?? t("unbuilt source")}
                 >
-                  <span>
-                    {t("Shared compatibility: {state}.", {
-                      state:
-                        compatible === undefined
-                          ? t("Execution compatibility not observed")
-                          : compatible
-                            ? t("compatible")
-                            : t(
-                                "unavailable / mismatch — reload built assets; normal actions disabled",
-                              ),
-                    })}
-                  </span>
                   <Template
                     text={t("Local browser build: {build}.")}
                     slots={{

@@ -16,7 +16,6 @@ import { LIMITS } from "./service-contract.ts";
 export interface FeedConnection {
   attach(cwd: string): Promise<FeedClient>;
   refresh(): Promise<unknown>;
-  compatible(): boolean;
   detach(): Promise<void>;
   forgetSuperseded?(cwd: string): boolean;
 }
@@ -243,7 +242,6 @@ class Feed {
           await this.connection.detach().catch(() => {});
           return;
         }
-        if (!this.connection.compatible()) throw new Error("incompatible");
         this.client = client;
       }
       await this.observe(this.client);

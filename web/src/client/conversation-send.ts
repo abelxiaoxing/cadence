@@ -28,7 +28,6 @@ import {
   type WorkbenchCommand,
 } from "../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../src/service-client.ts";
-import { RELOAD_REQUIRED } from "./build-identity";
 
 type Intent =
   | Omit<Extract<WorkbenchCommand, { kind: "send" }>, "model">
@@ -74,13 +73,7 @@ export async function waitForPreparation(
   }
 }
 
-export function unsentMessage(
-  stage: PreparationStage,
-  code?: string,
-  effect?: string,
-) {
-  if (stage === "not-dispatched" && code === RELOAD_REQUIRED)
-    return "Cadence WebUI has updated. Reload this page before sending. No preparation request was sent, the message was not sent, and its draft is kept.";
+export function unsentMessage(stage: PreparationStage, effect?: string) {
   if (effect === "none")
     return "Execution preparation was refused with no effect ({code}). This attempt started no execution service; the message was not sent and its draft is kept.";
   switch (stage) {
@@ -217,9 +210,7 @@ export function modelWaitDisposition(
   if (!intent.preparedEpoch) return "cancel";
   if (availability.status === "ready")
     return availability.epoch === intent.preparedEpoch ? "ready" : "cancel";
-  return ["stopped", "not-started", "incompatible"].includes(
-    availability.status,
-  )
+  return ["stopped", "not-started"].includes(availability.status)
     ? "cancel"
     : "wait";
 }

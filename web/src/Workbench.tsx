@@ -15,7 +15,6 @@ import {
 } from "../../src/service-contract.ts";
 import { App } from "./App";
 import { browserClient } from "./client/browser";
-import { browserBuildCompatible } from "./client/build-identity";
 import type { PreparationProgress } from "./client/conversation-send";
 import {
   bindFolderDraft,
@@ -39,7 +38,6 @@ import { currentProject } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { useActivity } from "./client/use-activity";
 import type { ActivityListProps } from "./components/workspace/ActivityList";
-import { BuildReloadNotice } from "./components/workspace/BuildReloadNotice";
 import { FolderSetup } from "./components/workspace/FolderSetup";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
@@ -79,7 +77,6 @@ export function Workbench() {
   } | null>(null);
   const epochChanged = useCallback(() => refresh((n) => n + 1), []);
   const activities = useActivity(entry?.epoch, epochChanged);
-  const buildCompatible = !entry || browserBuildCompatible(entry.build);
   const navigation = useRef<AbortController | null>(null);
   useEffect(() => () => navigation.current?.abort(), []);
   const hashes = useRef(new Map<string, string>());
@@ -291,7 +288,7 @@ export function Workbench() {
     if (project) rememberProject(project.id);
   }, [project]);
   if (entry === null) return <App />;
-  const service = entry && serviceOpen && buildCompatible && (
+  const service = entry && serviceOpen && (
     <ServiceDialog
       epoch={entry.epoch}
       csrf={entry.csrf}
@@ -321,7 +318,6 @@ export function Workbench() {
         <App
           key={project.id}
           api={api}
-          buildCompatible={buildCompatible}
           project={project}
           previewModels={previewModels}
           initialDraft={initialDraft}
@@ -344,7 +340,6 @@ export function Workbench() {
           }))}
           notices={
             <>
-              {!buildCompatible && <BuildReloadNotice />}
               {openError && <p role="alert">{openError}</p>}
               <RecoveryNotices
                 notices={entry.recoveries}
@@ -362,7 +357,7 @@ export function Workbench() {
     <>
       <FolderSetup
         discovery={discovery}
-        ready={!!entry && buildCompatible}
+        ready={!!entry}
         previewModels={entry ? previewModels : undefined}
         draft={folderDraft}
         onDraftChange={(draft) => {
@@ -372,7 +367,7 @@ export function Workbench() {
         }}
         restore={restore}
         onRefresh={() => refresh((n) => n + 1)}
-        onOpenService={entry && buildCompatible ? openService : undefined}
+        onOpenService={entry ? openService : undefined}
         onChooseFolder={() => {
           cancelRestore();
           setOpenError("");
@@ -381,7 +376,6 @@ export function Workbench() {
         }}
         notices={
           <>
-            {!buildCompatible && <BuildReloadNotice />}
             {openError && (
               <p role="alert" className="banner-notice">
                 {openError}
