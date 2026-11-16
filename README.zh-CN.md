@@ -66,7 +66,9 @@ cadence server install   # 可选的 WebUI 与开机服务
 
 ### 浏览器
 
-1. 打开打印出的链接一次（`cadence token-link --reveal` 可再次打印）。
+1. 打开普通地址（例如 `http://127.0.0.1:17423`）并输入访问口令。
+   同一浏览器、同一地址、令牌未变且 Cookie 有效时，最长一年内无需重新输入，重启服务后也继续有效。
+   原有私有链接仍可使用（`cadence token-link --reveal` 可再次打印）。
 2. 用右下角按钮选择工作文件夹。
 3. 发送 `/cadence [目标]`，回答澄清问题。
 4. 点击 **Implement this plan**，在看板和 **Subagents** 面板中跟进。

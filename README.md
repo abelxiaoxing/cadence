@@ -66,7 +66,9 @@ The token grants access to your workspace: keep the link private.
 
 ### Browser
 
-1. Open the printed link once (`cadence token-link --reveal` prints it again).
+1. Open the ordinary address (for example `http://127.0.0.1:17423`) and enter your access key.
+   This browser stays signed in for up to a year, including after service restarts, while the token and cookie remain valid.
+   The printed private link still works (`cadence token-link --reveal` prints it again).
 2. Pick a working folder with the lower-right button.
 3. Send `/cadence [goal]`, then answer the clarifying questions.
 4. Click **Implement this plan** and follow the board and the **Subagents** dock.
