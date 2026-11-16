@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseEnvFile } from "../skills/_shared/load-config.mjs";
@@ -47,6 +47,7 @@ import {
   removeLoginRun,
   stopLoginRun,
 } from "../src/service/login-run.ts";
+import { cgroupPath } from "../src/service/maintenance.ts";
 import {
   ensureServerConfig,
   serverConfigPath,
@@ -67,6 +68,75 @@ function temporary(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+/** This process's systemd hierarchy path; undefined where /proc has none. */
+const ownCgroup = (() => {
+  try {
+    return cgroupPath(readFileSync("/proc/self/cgroup", "utf8"));
+  } catch {
+    return undefined;
+  }
+})();
+/** The controlled manager boundary of a spawned management CLI: stand-ins
+ * for `systemctl`, `loginctl` and `busctl` record their calls and answer
+ * like an unregistered manager, so the real user manager and the production
+ * cadence.service are never touched. `controlGroup` is the unit's
+ * ControlGroup as the controlled manager reports it; empty means this
+ * process is outside the unit. */
+function manager(controlGroup = "") {
+  const root = temporary("cadence-manager-");
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "systemctl"),
+    [
+      "#!/bin/sh",
+      'if [ -n "$CADENCE_MANAGER_LOG" ]; then',
+      '  printf \'%s\\n\' "$*" >>"$CADENCE_MANAGER_LOG"',
+      "fi",
+      '[ "$1" = "--user" ] && shift',
+      'case "$1" in',
+      "  show-environment)",
+      "    exit 0",
+      "    ;;",
+      "  show)",
+      '    for a in "$@"; do',
+      '      [ "$a" = "--property=ControlGroup" ] && {',
+      "        printf '%s\\n' \"$CADENCE_FAKE_CONTROL_GROUP\"",
+      "        exit 0",
+      "      }",
+      "    done",
+      "    exit 0",
+      "    ;;",
+      "  is-enabled)",
+      "    printf 'not-found\\n'",
+      "    exit 1",
+      "    ;;",
+      "  is-active)",
+      "    printf 'inactive\\n'",
+      "    exit 3",
+      "    ;;",
+      "  *)",
+      "    exit 0",
+      "    ;;",
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  for (const name of ["loginctl", "busctl"])
+    writeFileSync(join(bin, name), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const runtime = join(root, "runtime");
+  mkdirSync(runtime);
+  return {
+    log: join(root, "calls.log"),
+    env: {
+      XDG_RUNTIME_DIR: runtime,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      CADENCE_MANAGER_LOG: join(root, "calls.log"),
+      CADENCE_FAKE_CONTROL_GROUP: controlGroup,
+    },
+  };
 }
 
 const AGENT = "com.abelxiaoxing.cadence";
@@ -560,7 +630,7 @@ describe.skipIf(process.platform !== "linux")("systemd user service", () => {
   }, () => {
     const data = temporary("cadence-server-cli-");
     const cli = join(repository, "src", "service-cli.mjs");
-    const env = { ...process.env, XDG_DATA_HOME: data };
+    const env = { ...process.env, XDG_DATA_HOME: data, ...manager().env };
     const run = (...argv: string[]) =>
       spawnSync(process.execPath, [cli, ...argv], { encoding: "utf8", env });
     const help = run("--help").stdout;
@@ -1035,8 +1105,9 @@ describe("startup guidance", () => {
     return { o, home, checkout, global };
   }
 
-  /** `cadence server <argv>` for an isolated home; callers pass a missing
-   * workspace so that nothing can register even if a check regressed. */
+  /** `cadence server <argv>` for an isolated home and a controlled manager;
+   * callers pass a missing workspace so that nothing can register even if a
+   * check regressed. */
   function server(home: string, ...argv: string[]) {
     return spawnSync(
       process.execPath,
@@ -1049,6 +1120,7 @@ describe("startup guidance", () => {
           USERPROFILE: home,
           XDG_DATA_HOME: join(home, "data"),
           LOCALAPPDATA: join(home, "local"),
+          ...manager().env,
         },
       },
     );
@@ -1112,6 +1184,41 @@ describe("startup guidance", () => {
     walk(home);
     expect(files).toEqual([join(".pi", "agent", "cadence", ".env")]);
   });
+
+  // The real /proc/self/cgroup with a controlled manager: the CLI refuses a
+  // service change from inside the unit before any change, with only the
+  // ControlGroup query reaching the manager boundary.
+  it.skipIf(process.platform !== "linux" || !ownCgroup)(
+    "a server change from inside the unit is refused before any change",
+    () => {
+      if (!ownCgroup) return;
+      const home = temporary("cadence-inside-");
+      const m = manager(ownCgroup);
+      const refused = spawnSync(
+        process.execPath,
+        [join(repository, "src", "service-cli.mjs"), "server", "stop"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_DATA_HOME: join(home, "data"),
+            LOCALAPPDATA: join(home, "local"),
+            ...m.env,
+          },
+        },
+      );
+      expect(refused.status).toBe(1);
+      expect(refused.stdout).toBe(
+        '{"status":"inside-service","unit":"cadence.service"}\n',
+      );
+      expect(existsSync(join(home, ".pi"))).toBe(false);
+      expect(readFileSync(m.log, "utf8")).toBe(
+        "--user show --property=ControlGroup --value cadence.service\n",
+      );
+    },
+  );
 
   it("server install and restart keep a configured port and token; an unusable .env refuses before any change", {
     tags: ["slow"],

@@ -1,5 +1,5 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -100,16 +100,40 @@ it.skipIf(process.platform === "win32")(
   "a known socket is not opened as a text file",
   async () => {
     const { root, call } = await fixture();
-    const server = createServer();
-    const path = join(root, "socket");
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(path, resolve);
+    // The inherited TMPDIR can exceed the 107-character sun_path bound, so
+    // the listener binds the relative name from inside the temp root; the
+    // tool must refuse the resulting long absolute path.
+    const listen =
+      "require('node:net').createServer().listen('socket', () => process.stdout.write('ready\\n'));";
+    const listener = spawn(process.execPath, ["-e", listen], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const exited = new Promise((resolve) => {
+      listener.once("exit", resolve);
+      listener.once("error", resolve);
+    });
+    const ready = new Promise((resolve, reject) => {
+      let out = "";
+      listener.once("error", reject);
+      listener.stdout.on("data", (chunk) => {
+        out += chunk;
+        if (out.includes("ready")) resolve();
+      });
     });
     try {
-      await expect(call("read", { path })).rejects.toThrow("regular files");
+      await Promise.race([
+        ready,
+        exited.then((code) => {
+          throw new Error(`socket listener exited ${code}`);
+        }),
+      ]);
+      await expect(
+        call("read", { path: join(root, "socket") }),
+      ).rejects.toThrow("regular files");
     } finally {
-      await new Promise((resolve) => server.close(resolve));
+      listener.kill();
+      await exited;
     }
   },
 );
