@@ -325,6 +325,7 @@ var LIMITS = Object.freeze({
   stopWaitMs: 60000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
+  cookieLifetimeMs: 365 * 24 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
   unconfirmedStopMs: 3000,
   graphBytes: 512 * 1024,
@@ -10451,6 +10452,23 @@ function decodeCookieToken(raw) {
     return raw;
   }
 }
+function sanitizeNextPath(raw) {
+  const fallback = "/app";
+  if (typeof raw !== "string")
+    return fallback;
+  const value = raw.trim();
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\x00-\x1f\x7f]/u.test(value))
+    return fallback;
+  try {
+    const url = new URL(value, "http://cadence.invalid");
+    url.searchParams.delete("token");
+    url.searchParams.delete("auth_error");
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    return path.startsWith("/") && !path.startsWith("//") ? path : fallback;
+  } catch {
+    return fallback;
+  }
+}
 function cookieTokens(header, name) {
   if (!header)
     return [];
@@ -10758,7 +10776,28 @@ class HttpAuthentication {
       throw new ContractError("forbidden");
     if (!this.material.matches(value))
       throw new ContractError("unauthenticated");
-    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  login(value, boundary) {
+    this.material.assertCurrent();
+    const origin = boundary.headers.get("origin");
+    if (origin === undefined || origin !== boundary.origin)
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  clearCookie(secure) {
+    return buildTokenCookie(this.cookieName, "", 0, secure);
+  }
+  carriesCookie(header) {
+    if (!header)
+      return false;
+    for (const part of header.split(";")) {
+      if (part.trim().split("=")[0] === this.cookieName)
+        return true;
+    }
+    return false;
   }
   authenticate(boundary, attachmentId, mutation2 = false, websocket = false) {
     this.material.assertCurrent();
@@ -10792,6 +10831,49 @@ class HttpAuthentication {
     if (!this.material.available || caller.accessGeneration !== this.material.generation)
       throw new ContractError("unauthenticated");
   }
+}
+
+// src/service/auth-page.ts
+function escapeAttr(value) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderAuthPage(options) {
+  const next = escapeAttr(options.nextPath);
+  const notice = options.authError ? `<p class="notice">Access key was not accepted. Check the current key and try again.</p>` : "";
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadence access</title>
+<style>
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#0f1115;color:#e6e8ee}
+.card{width:100%;max-width:420px;background:#171a21;border:1px solid #2a2f3a;border-radius:12px;padding:28px}
+h1{font-size:18px;margin:0 0 6px}
+.desc{font-size:14px;color:#9aa3b2;margin:0 0 18px;line-height:1.5}
+.notice{font-size:13px;color:#fde68a;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:10px 12px;margin:0 0 16px}
+label{display:block;font-size:13px;color:#9aa3b2;margin-bottom:6px}
+input[type=password]{width:100%;box-sizing:border-box;background:#0f1115;border:1px solid #2a2f3a;border-radius:8px;color:#e6e8ee;padding:10px 12px;font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+button{width:100%;margin-top:16px;background:#3b82f6;border:0;border-radius:8px;color:#fff;padding:11px 16px;font-size:14px;font-weight:500;cursor:pointer}
+button:hover{background:#2563eb}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Cadence</h1>
+<p class="desc">Enter the access key for this workspace to continue.</p>
+${notice}
+<form method="post" action="/auth">
+<input type="hidden" name="next" value="${next}">
+<label for="key">Access key</label>
+<input id="key" name="password" type="password" autocomplete="current-password" autofocus>
+<button type="submit">Continue</button>
+</form>
+</div>
+</body>
+</html>
+`;
 }
 
 // src/service/autostart.ts
@@ -16214,11 +16296,17 @@ Content-Length: 0\r
       res.destroy();
     }, LIMITS.downloadIdleMs);
     const resetIdle = () => timer.refresh();
+    let boundary;
+    let url;
     try {
-      const boundary = requestBoundary(req, this.policy, this.origin);
+      boundary = requestBoundary(req, this.policy, this.origin);
       const target = req.url ?? "";
       assertRequestTarget(target);
-      const url = new URL(target, this.origin);
+      url = new URL(target, this.origin);
+      if (target === "/auth" && req.method === "POST") {
+        await this.login(req, res, boundary, abort.signal);
+        return;
+      }
       if (url.searchParams.has("token")) {
         if (req.method !== "GET" || !target.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
           throw new ContractError("invalid");
@@ -16235,8 +16323,18 @@ Content-Length: 0\r
         return;
       }
       if (target === "/" && req.method === "GET") {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
+        if (!this.accepting)
+          unavailable();
+        try {
+          this.options.auth.authenticate(boundary, randomUUID13(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return this.unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (target.startsWith("/local/v1/admin/")) {
@@ -16326,6 +16424,10 @@ Content-Length: 0\r
         res.destroy();
       else {
         const code2 = e instanceof ContractError ? e.code : "unavailable";
+        if (code2 === "unauthenticated" && boundary && url) {
+          this.unauthorized(res, boundary, url);
+          return;
+        }
         res.setHeader("Connection", "close");
         send(res, errorStatus(code2), refusal(code2, dispatched && !(e instanceof UnacceptedConversationCommand)));
       }
@@ -16335,6 +16437,66 @@ Content-Length: 0\r
       this.requests.delete(abort);
       if (counted)
         this.reads--;
+    }
+  }
+  async formBody(req, signal) {
+    if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || req.headers["content-encoding"] !== undefined)
+      throw new ContractError("invalid");
+    const length = req.headers["content-length"];
+    if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
+      throw new ContractError("oversize");
+    const chunks = [];
+    let bytes = 0;
+    for await (const value of req.iterator({ destroyOnReturn: false })) {
+      if (signal.aborted)
+        throw new ContractError("unavailable");
+      const chunk = value;
+      bytes += chunk.length;
+      if (bytes > LIMITS.controlBytes)
+        throw new ContractError("oversize");
+      chunks.push(chunk);
+    }
+    return new URLSearchParams(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+  }
+  async login(req, res, boundary, signal) {
+    if (!this.accepting)
+      unavailable();
+    const form = await this.formBody(req, signal);
+    const submitted = form.get("password") ?? "";
+    const next = sanitizeNextPath(form.get("next"));
+    try {
+      res.setHeader("Set-Cookie", this.options.auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code2 = e instanceof ContractError ? e.code : "unavailable";
+      if (code2 === "unauthenticated") {
+        if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader("Set-Cookie", this.options.auth.clearCookie(boundary.secure));
+        res.statusCode = 303;
+        res.setHeader("Location", "/?auth_error=1");
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      send(res, errorStatus(code2), refusal(code2));
+    }
+  }
+  unauthorized(res, boundary, url) {
+    if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader("Set-Cookie", this.options.auth.clearCookie(boundary.secure));
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(renderAuthPage({
+        authError: url.searchParams.has("auth_error"),
+        nextPath: sanitizeNextPath(`${url.pathname}${url.search}${url.hash}`)
+      }));
+    } else {
+      res.setHeader("Connection", "close");
+      send(res, 401, refusal("unauthenticated"));
     }
   }
   async manage(req, res, boundary, signal) {
@@ -16971,7 +17133,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b",
+    contractHash: "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17423,6 +17585,61 @@ Content-Length: 0\r
     const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
     return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
   }
+  async function formBody(req) {
+    if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || req.headers["content-encoding"] || req.headers["transfer-encoding"])
+      throw new ContractError("invalid");
+    const chunks = [];
+    let count = 0;
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+      count += chunk.length;
+      if (count > LIMITS.controlBytes)
+        throw new ContractError("oversize");
+      chunks.push(chunk);
+    }
+    return new URLSearchParams(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+  }
+  async function login(req, res, boundary) {
+    const form = await formBody(req);
+    const submitted = form.get("password") ?? "";
+    const next = sanitizeNextPath(form.get("next"));
+    try {
+      res.setHeader("Set-Cookie", auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code2 = e instanceof ContractError ? e.code : "unavailable";
+      if (code2 === "unauthenticated") {
+        if (auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+        res.statusCode = 303;
+        res.setHeader("Location", "/?auth_error=1");
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      reply(res, code2 === "forbidden" ? 403 : 400, {
+        kind: "error",
+        error: publicError(code2)
+      });
+    }
+  }
+  function unauthorized(res, boundary, url) {
+    if (auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(renderAuthPage({
+        authError: url.searchParams.has("auth_error"),
+        nextPath: sanitizeNextPath(`${url.pathname}${url.search}${url.hash}`)
+      }));
+    } else {
+      res.setHeader("Connection", "close");
+      reply(res, 401, { kind: "error", error: publicError("unauthenticated") });
+    }
+  }
   async function handle(req, res) {
     let effect = false;
     if (++pending > 64) {
@@ -17431,10 +17648,17 @@ Content-Length: 0\r
       return;
     }
     fixedHeaders(res);
+    let boundary;
+    let url;
     try {
-      const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+      boundary = requestBoundary(req, input.policy, endpoint2);
+      const raw = req.url ?? "";
       assertRequestTarget(raw);
-      const url = new URL(raw, endpoint2);
+      url = new URL(raw, endpoint2);
+      if (raw === "/auth" && req.method === "POST") {
+        await login(req, res, boundary);
+        return;
+      }
       if (raw === "/healthz" && req.method === "GET") {
         reply(res, 200, { status: "ok" });
         return;
@@ -17450,8 +17674,16 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/" && req.method === "GET") {
-        res.end(`Cadence workbench: open the private link. No default workspace is created.
-`);
+        try {
+          auth.authenticate(boundary, randomUUID14(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (raw.startsWith("/local/v1/admin/")) {
@@ -17769,6 +18001,8 @@ Content-Length: 0\r
       const code2 = error instanceof ContractError ? error.code : "unavailable";
       if (res.headersSent)
         res.destroy();
+      else if (code2 === "unauthenticated" && boundary && url)
+        unauthorized(res, boundary, url);
       else
         reply(res, code2 === "unauthenticated" ? 401 : code2 === "forbidden" ? 403 : 400, {
           kind: "error",
@@ -34261,7 +34495,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.7",
-  build: "71f1c6144e536050f63d0cbc74944e0cd3acbbe4dc012ad8c99f8ca4a600a5bc",
+  build: "5e2d5cf4fc2d8acb57b5574399ee3c1c80a3da1a2618a6caca5dda7423bf83e3",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37131,7 +37365,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b";
+  const embedded = "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
