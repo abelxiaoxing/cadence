@@ -27,7 +27,12 @@ import {
 import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
 import { effectiveWorkspace } from "../workspace.ts";
 import { ActivityDiscoveryReader } from "./activity-discovery.ts";
-import { HttpAuthentication, requestBoundary } from "./auth.ts";
+import {
+  HttpAuthentication,
+  requestBoundary,
+  sanitizeNextPath,
+} from "./auth.ts";
+import { renderAuthPage } from "./auth-page.ts";
 import { hostSystem, serviceConfigPath } from "./autostart.ts";
 import {
   nativeCall,
@@ -710,6 +715,78 @@ export async function createGateway(
     const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
     return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
   }
+  async function formBody(req: IncomingMessage): Promise<URLSearchParams> {
+    if (
+      req.headers["content-type"] !== "application/x-www-form-urlencoded" ||
+      req.headers["content-encoding"] ||
+      req.headers["transfer-encoding"]
+    )
+      throw new ContractError("invalid");
+    const chunks: Buffer[] = [];
+    let count = 0;
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+      count += chunk.length;
+      if (count > LIMITS.controlBytes) throw new ContractError("oversize");
+      chunks.push(chunk);
+    }
+    return new URLSearchParams(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+    );
+  }
+  /** Native password-form login, isomorphic to the owner's POST /auth. */
+  async function login(
+    req: IncomingMessage,
+    res: ServerResponse,
+    boundary: import("./auth.ts").RequestBoundary,
+  ) {
+    const form = await formBody(req);
+    const submitted = form.get("password") ?? "";
+    const next = sanitizeNextPath(form.get("next"));
+    try {
+      res.setHeader("Set-Cookie", auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code = e instanceof ContractError ? e.code : "unavailable";
+      if (code === "unauthenticated") {
+        if (auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+        res.statusCode = 303;
+        res.setHeader("Location", "/?auth_error=1");
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      reply(res, code === "forbidden" ? 403 : 400, {
+        kind: "error",
+        error: publicError(code),
+      });
+    }
+  }
+  /** 401 with content negotiation and cookie expiry, isomorphic to the owner. */
+  function unauthorized(
+    res: ServerResponse,
+    boundary: import("./auth.ts").RequestBoundary,
+    url: URL,
+  ) {
+    if (auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(
+        renderAuthPage({
+          authError: url.searchParams.has("auth_error"),
+          nextPath: sanitizeNextPath(`${url.pathname}${url.search}${url.hash}`),
+        }),
+      );
+    } else {
+      res.setHeader("Connection", "close");
+      reply(res, 401, { kind: "error", error: publicError("unauthenticated") });
+    }
+  }
   async function handle(req: IncomingMessage, res: ServerResponse) {
     let effect = false;
     if (++pending > 64) {
@@ -718,11 +795,17 @@ export async function createGateway(
       return;
     }
     fixedHeaders(res);
+    let boundary: import("./auth.ts").RequestBoundary | undefined;
+    let url: URL | undefined;
     try {
-      const boundary = requestBoundary(req, input.policy, endpoint),
-        raw = req.url ?? "";
+      boundary = requestBoundary(req, input.policy, endpoint);
+      const raw = req.url ?? "";
       assertRequestTarget(raw);
-      const url = new URL(raw, endpoint);
+      url = new URL(raw, endpoint);
+      if (raw === "/auth" && req.method === "POST") {
+        await login(req, res, boundary);
+        return;
+      }
       if (raw === "/healthz" && req.method === "GET") {
         reply(res, 200, { status: "ok" });
         return;
@@ -745,9 +828,16 @@ export async function createGateway(
         return;
       }
       if (raw === "/" && req.method === "GET") {
-        res.end(
-          "Cadence workbench: open the private link. No default workspace is created.\n",
-        );
+        try {
+          auth.authenticate(boundary, randomUUID(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (raw.startsWith("/local/v1/admin/")) {
@@ -1187,6 +1277,8 @@ export async function createGateway(
     } catch (error) {
       const code = error instanceof ContractError ? error.code : "unavailable";
       if (res.headersSent) res.destroy();
+      else if (code === "unauthenticated" && boundary && url)
+        unauthorized(res, boundary, url);
       else
         reply(
           res,

@@ -105,7 +105,8 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 ## Browser
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
-Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
+A valid bootstrap redirects to a token-free URL and sets an HttpOnly SameSite cookie for one year for subsequent HTTP/WebSocket access; no localStorage token copy.
+An unauthenticated `GET /` or `GET /app` answers 401 with a script-free password page that posts the key to `POST /auth`; a correct key sets the same one-year cookie, a wrong key shows a neutral notice, and an invalid or rotated cookie is expired in the 401.
 The browser has one folder-first conversation interface, not a workbench/project home or a return-to-home action.
 The lower-right folder button is the persistent directory switcher; its picker holds recent folders on the service host.
 A complete project/conversation link wins over browser preferences; otherwise entry restores the last associated readable folder, even when its execution owner is stopped.

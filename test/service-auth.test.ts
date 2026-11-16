@@ -361,16 +361,32 @@ describe("explicit private access setup (no user/provider credentials)", () => {
 });
 
 describe("actual Node HTTP security boundary, injected task/history ports", () => {
-  it("public health/entry reveal no private identity or token; private routes require auth before JSON/body", async () => {
+  it("public health stays open; entry and private routes require auth before JSON/body", async () => {
     const f = await setup();
-    for (const path of ["/", "/healthz"]) {
-      const r = await request(f.origin, path);
+    {
+      const r = await request(f.origin, "/healthz");
       expect(r.status).toBe(200);
       expect(r.headers["set-cookie"]).toBeUndefined();
       for (const secret of [f.dir, f.token, f.local, f.epoch, f.workspaceId])
         expect(r.text).not.toContain(secret);
       expect(r.headers["cache-control"]).toBe("no-store");
       expect(r.headers["referrer-policy"]).toBe("no-referrer");
+    }
+    // Unauthenticated entry is the script-free 401 password page: the only
+    // same-origin Referrer-Policy response, no script/backfill, no secrets.
+    {
+      const r = await request(f.origin, "/", {
+        headers: { accept: "text/html" },
+      });
+      expect(r.status).toBe(401);
+      expect(r.headers["referrer-policy"]).toBe("same-origin");
+      expect(r.headers["content-type"]).toBe("text/html; charset=utf-8");
+      for (const secret of [f.dir, f.token, f.local, f.epoch, f.workspaceId])
+        expect(r.text).not.toContain(secret);
+      expect(r.text).not.toMatch(/<script/i);
+      expect(r.text).not.toContain("localStorage");
+      expect(r.text).toContain('action="/auth"');
+      expect(r.text).toContain('autocomplete="current-password"');
     }
     for (const path of [
       "/app",
@@ -398,7 +414,7 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     expect(r.headers.location).toBe("/app");
     expect(r.text).toBe("");
     const cookie = r.headers["set-cookie"]![0];
-    expect(cookie).toContain("HttpOnly; SameSite=Strict; Max-Age=43200");
+    expect(cookie).toContain("HttpOnly; SameSite=Strict; Max-Age=31536000");
     expect(cookie).not.toContain("Secure");
     expect(cookie).not.toContain("Domain");
     expect(
@@ -425,6 +441,118 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
       (await request(f.origin, `/?token=${f.token}`, { method: "POST" }))
         .status,
     ).toBe(400);
+  });
+  it("POST /auth sets a one-year HttpOnly SameSite=Strict cookie and 303s to the sanitized next", async () => {
+    const f = await setup();
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        origin: f.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: `password=${encodeURIComponent(f.token)}&next=${encodeURIComponent("/app")}`,
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/app");
+    const cookie = r.headers["set-cookie"]![0];
+    expect(cookie).toContain(`${f.auth.cookieName}=`);
+    expect(cookie).toContain(
+      "Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000",
+    );
+    expect(cookie).not.toContain("Secure");
+    // The issued cookie authenticates.
+    expect(
+      (await request(f.origin, "/app", { headers: { cookie: f.cookie } }))
+        .status,
+    ).toBe(200);
+  });
+  it("POST /auth wrong key 303s to /?auth_error=1 and expires the stale cookie it carried", async () => {
+    const f = await setup();
+    const stale = f.cookie; // valid now
+    f.material.rotate(); // now stale
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        origin: f.origin,
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: stale,
+      },
+      body: `password=wrong&next=${encodeURIComponent("/app")}`,
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/?auth_error=1");
+    expect(r.headers["set-cookie"]![0]).toContain(`${f.auth.cookieName}=`);
+    expect(r.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    // The error page is the empty-form password page with a neutral notice.
+    const page = await request(f.origin, "/?auth_error=1", {
+      headers: { accept: "text/html" },
+    });
+    expect(page.status).toBe(401);
+    expect(page.headers["referrer-policy"]).toBe("same-origin");
+    expect(page.text).toContain('action="/auth"');
+    expect(page.text).not.toMatch(/<script/i);
+    expect(page.text).toContain("Access key was not accepted");
+  });
+  it.each([
+    ["missing", {}],
+    ["null", { origin: "null" }],
+    ["external", { origin: "http://evil.invalid" }],
+  ])("POST /auth with %s Origin is 403", async (_name, extra) => {
+    const f = await setup();
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        ...extra,
+      },
+      body: `password=${encodeURIComponent(f.token)}`,
+    });
+    expect(r.status).toBe(403);
+  });
+  it("POST /auth next sanitization: //, \\\\, control chars refused; token/auth_error stripped; default /app", async () => {
+    const f = await setup();
+    const login = (next: string) =>
+      request(f.origin, "/auth", {
+        method: "POST",
+        headers: {
+          origin: f.origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: `password=${encodeURIComponent(f.token)}&next=${encodeURIComponent(next)}`,
+      });
+    expect((await login("/app?foo=bar")).headers.location).toBe("/app?foo=bar");
+    expect((await login("//evil.invalid")).headers.location).toBe("/app");
+    expect((await login("https://evil.invalid")).headers.location).toBe("/app");
+    expect((await login("/\\evil")).headers.location).toBe("/app");
+    expect((await login("/app\nx")).headers.location).toBe("/app");
+    expect(
+      (await login("/app?token=secret&auth_error=1")).headers.location,
+    ).toBe("/app");
+    expect((await login("")).headers.location).toBe("/app");
+  });
+  it("invalid/rotated cookie 401 clears the cookie in both HTML and JSON", async () => {
+    const f = await setup();
+    const stale = f.cookie;
+    f.material.rotate(); // now stale
+    const html = await request(f.origin, "/app", {
+      headers: { cookie: stale, accept: "text/html" },
+    });
+    expect(html.status).toBe(401);
+    expect(html.headers["referrer-policy"]).toBe("same-origin");
+    expect(html.text).not.toMatch(/<script/i);
+    expect(html.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    const json = await request(f.origin, "/app", {
+      headers: { cookie: stale },
+    });
+    expect(json.status).toBe(401);
+    expect(json.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    expect(json.text).toContain("unauthenticated");
+  });
+  it("authenticated GET / redirects to /app instead of the old help text", async () => {
+    const f = await setup();
+    const r = await request(f.origin, "/", { headers: { cookie: f.cookie } });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/app");
   });
   it.each([
     "host",
