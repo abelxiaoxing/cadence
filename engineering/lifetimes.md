@@ -30,7 +30,7 @@ Retained task worktrees from earlier releases remain untouched.
 Direct working-copy delivery serializes edits without Git mutation.
 The terminal is never an embedded executor.
 One fresh 120s grant binds the exact displayed version-3 delivery agreement, model source, project observation and owner epoch.
-The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations inside its immutable goal, decisions, acceptance, write paths and exact commands; a model cannot change those permissions.
+The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations under its approved goal, decisions, acceptance and exact commands; route and repository write-scope revisions follow [checks and review](checks-review.md#automatic-conversation-workflow), never expand external authority.
 There is no total delivery deadline or fixed repair-round quota.
 Agents have no total runtime deadline; setup/check commands are unlimited unless their exact approved definition specifies a timeout.
 Original closure requirements are unchanged.
@@ -58,6 +58,9 @@ Explicit workflow Cancel and owner Stop independently stop those originals.
 No restart replays an unfinished workflow.
 At startup a run left queued/running (or accepted without a snapshot) is recorded as `unknown` with a notice that the owner restarted, nothing was inferred or replayed, and worktrees and partial edits are retained (an integrating run may have fast-forwarded); unreadable records stay untouched and do not fence startup.
 Stop joins the shared owner accounting.
+Result redaction remains available under the held lease during Stop and quarantine, so closing admission cannot prevent native results from being recorded; model discovery, selection and auth preparation still refuse new work.
+An unknown conversation outcome alone is not an unknown process closure: startup accepts a retained native record confirming that original's closure, including for inputs sharing its worker, while leaving every uncertain outcome unchanged and never replaying it.
+Missing or unconfirmed native evidence for an unknown outcome still refuses startup.
 Workflow cancel needs only the lease and epoch, so it works while the owner is quarantined or stopping; the fast-forward merge itself is never interrupted, and if HEAD cannot be re-read after it the run ends `unknown`, not failed.
 An interrupted run's notice says it was interrupted and that starting it again continues the work; its outcome is still `unknown`, never inferred.
 A native workflow command refused before any write, grant or admission for a never-attempted ID, by a healthy owner, reports no effect; anything else stays uncertain.

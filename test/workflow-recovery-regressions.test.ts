@@ -1,14 +1,20 @@
 /** Owner control-flow regressions with controlled work; the temporary-environment
  * case also runs one short real shell. No service or provider subprocesses. */
+
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
-import type { WorkflowRun } from "../src/service/contracts/workflow.ts";
+import {
+  readableWorkflowPlan,
+  type WorkflowRun,
+} from "../src/service/contracts/workflow.ts";
 import { RunEnvironment } from "../src/service/run-environment.ts";
 import { AttemptFailure } from "../src/service/workflow-controller.ts";
 import { deliveryObservation } from "../src/service/workflow-delivery.ts";
+import * as workflowGit from "../src/service/workflow-git.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -95,6 +101,48 @@ function fixture() {
   });
   return { owner, live, proposal };
 }
+it("generated delivery documents preserve literal agreement text and pass the real Markdown gate", () => {
+  const { owner, live } = fixture();
+  const definition = plan();
+  definition.design =
+    "Keep <style> and <script> out of the page. Preserve both paths.\n" +
+    "owner | gateway\n" +
+    "````````html\n<script>example only</script>\n````````\n";
+  const changed = ["src/<literal>.ts", "a|b.md", "a`b.md"];
+  const planBody = owner.documentBody(
+    live,
+    definition,
+    "plan/plan.md",
+    changed,
+  );
+  const resultBody = owner.documentBody(
+    live,
+    definition,
+    "plan/result.md",
+    changed,
+  );
+  writeFileSync(join(owner.cwd, "plan.md"), planBody);
+  writeFileSync(join(owner.cwd, "result.md"), resultBody);
+  const lint = spawnSync(
+    process.execPath,
+    [
+      resolve(import.meta.dirname, "../node_modules/rumdl/bin/rumdl"),
+      "check",
+      "--config",
+      resolve(import.meta.dirname, "../.rumdl.toml"),
+      owner.cwd,
+    ],
+    { cwd: owner.cwd, encoding: "utf8" },
+  );
+  expect(lint.error).toBeUndefined();
+  expect(lint.status, lint.stdout + lint.stderr).toBe(0);
+  const literal = planBody.match(
+    /^# Workflow plan\n\n(`{3,})text\n([\s\S]*)\1\n$/u,
+  );
+  expect(literal?.[2]).toBe(readableWorkflowPlan(definition));
+  expect(resultBody).toContain(changed.join("\n"));
+  expect(resultBody).toContain("This file is not a verification result");
+});
 it("setup recovery retries only the failed command, never preceding successful effects", async () => {
   const { owner, live, proposal } = fixture();
   Object.assign(proposal.plan, {
@@ -367,6 +415,163 @@ it("the owner passes original check context to both diagnosis and repair, withou
     expect(prompt).toContain('"TMPDIR":null');
   }
   expect(prompts[1]).toContain("Original failure to resolve");
+});
+
+it.each(["web", "README.md", "test/socket.test.ts"])(
+  "detached recovery keeps new %s scope usable but routes integrated sibling output through a follow-up",
+  async (path) => {
+    const { owner, live, proposal } = fixture();
+    const collides = path !== "test/socket.test.ts";
+    const child = join(owner.cwd, "tasks", "server");
+    const base = "a".repeat(40),
+      first = "b".repeat(40),
+      latest = "c".repeat(40);
+    const tasks = [
+      { id: "server", writes: ["src/auth.ts"] },
+      { id: "web", writes: ["web"] },
+      { id: "docs", writes: ["README.md"] },
+    ].map((t) => ({
+      ...t,
+      title: t.id,
+      instructions: t.id,
+      after: [],
+      reads: [],
+    }));
+    Object.assign(proposal.plan, { tasks });
+    const delivery = {
+      view: {
+        worktreeRoot: owner.cwd,
+        workspace: { head: first },
+        artifacts: [{ id: "server", path: child, base }],
+      },
+    };
+    const owned = new Map([[child, ["src/auth.ts"]]]);
+    const revise = vi.fn(
+      (_route: { add: { id: string }[] }, _revision: number) =>
+        "Queued a combined repair",
+    );
+    Object.assign(live, { delivery, owned, route: { tasks, revise } });
+    Object.assign(live.run, {
+      revision: 0,
+      tasks: tasks.map((t) => ({
+        ...t,
+        state: t.id === "server" ? "running" : "completed",
+      })),
+    });
+    const observed = vi
+      .spyOn(workflowGit, "committedPaths")
+      .mockImplementationOnce(async () => {
+        // Another sibling integrates during the readonly comparison.
+        delivery.view.workspace.head = latest;
+        return [];
+      })
+      .mockResolvedValue(["web/observer.ts", "README.md"]);
+    const failed = owner.step(live, "server", "implementation");
+    owner.finishStep(live, failed, {
+      ...success,
+      outcome: "failed",
+      exitCode: 1,
+    });
+    const prompts: string[] = [];
+    owner.worker = async (
+      _live: unknown,
+      _cwd: string,
+      _id: string,
+      prompt: string,
+    ) => {
+      prompts.push(prompt);
+      const decision = {
+        action: "continue",
+        cause: "A sibling file is missing from this fork",
+        evidence: [failed.id],
+        strategy: "Finish the missing work",
+        work: [],
+        scope: prompts.length === 1 ? [path] : ["test/socket.test.ts"],
+        ...(prompts.length === 1
+          ? {
+              work: [
+                {
+                  title: "Duplicate sibling",
+                  instructions: "Recreate it",
+                  writes: [path],
+                },
+              ],
+            }
+          : {
+              route: {
+                add: [
+                  {
+                    id: "combined-repair",
+                    title: "Combined repair",
+                    instructions: "Inspect actual sibling output first",
+                    writes: [path, "test/socket.test.ts"],
+                    after: ["server", "web", "docs"],
+                  },
+                ],
+              },
+            }),
+      };
+      const step = owner.step(live, "diagnose", "diagnosis");
+      const result = { ...success, text: JSON.stringify(decision) };
+      owner.finishStep(live, step, result);
+      return { step, result };
+    };
+    owner.editAttempt = vi.fn();
+    let attempt = 0;
+    try {
+      await owner
+        .controller(live, child, proposal)
+        .complete("assignment server", async () => {
+          if (++attempt === 1)
+            throw new AttemptFailure("partial assignment", [failed.id]);
+        });
+      expect(prompts).toHaveLength(collides ? 2 : 1);
+      expect(prompts[0]).toContain(
+        "completed means integrated into the combined candidate",
+      );
+      expect(observed.mock.calls).toEqual([
+        [owner.cwd, base, first],
+        [owner.cwd, base, latest],
+      ]);
+      if (collides) {
+        expect(prompts[1]).toContain("after this detached assignment forked");
+        expect(prompts[1]).toContain(
+          "add a queued route assignment after server",
+        );
+        expect(owner.editAttempt).not.toHaveBeenCalled();
+        expect(owned.get(child)).toEqual(["src/auth.ts"]);
+        expect(revise).toHaveBeenCalledTimes(1);
+        expect(revise.mock.calls[0][0].add[0].id).toBe("combined-repair");
+      } else {
+        expect(owner.editAttempt).toHaveBeenCalledTimes(1);
+        expect(owned.get(child)).toEqual(["src/auth.ts", path]);
+        expect(revise).not.toHaveBeenCalled();
+      }
+      expect(live.run).toMatchObject({
+        revision: 1,
+        scope: ["test/socket.test.ts"],
+      });
+    } finally {
+      observed.mockRestore();
+    }
+  },
+);
+
+it("a Git precheck refusal records its actual reason without inventing a native result", async () => {
+  const { owner, live } = fixture();
+  owner.run = vi.fn();
+  await expect(
+    owner.recordGitStep(live, owner.cwd, "worktree-remove", async () => {
+      throw new Error("Ignored dependency link retained");
+    }),
+  ).rejects.toThrow("Ignored dependency link retained");
+  expect(owner.run).not.toHaveBeenCalled();
+  expect(live.run.steps[0]).toMatchObject({
+    kind: "git",
+    status: "failed",
+    exitCode: null,
+    text: "No Git result was recorded: Ignored dependency link retained",
+  });
 });
 
 it("check context is captured before launch, contains only named environment values and is sanitized before retention", async () => {

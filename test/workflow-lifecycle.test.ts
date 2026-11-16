@@ -207,15 +207,21 @@ it.each([
 );
 
 it.each([
-  ["implementation", false],
-  ["diagnosis", false],
-  ["review", false],
-  ["implementation", true],
-  ["diagnosis", true],
-  ["review", true],
+  ["implementation", false, "short"],
+  ["diagnosis", false, "short"],
+  ["review", false, "short"],
+  ["implementation", true, "short"],
+  ["diagnosis", true, "short"],
+  ["review", true, "short"],
+  ["implementation", true, "shared"],
+  ["diagnosis", true, "shared"],
+  ["review", true, "shared"],
+  ["implementation", true, "separate"],
+  ["diagnosis", true, "separate"],
+  ["review", true, "separate"],
 ] as const)(
-  "%s preserves completion boundaries independently of diagnostic truncation (full agreement: %s)",
-  async (kind, fullAgreement) => {
+  "%s preserves completion boundaries independently of diagnostic truncation (full agreement: %s, temporary path: %s)",
+  async (kind, fullAgreement, temporaryPath) => {
     const cwd = mkdtempSync(join(tmpdir(), "workflow-report-projection-"));
     const epoch = randomUUID();
     const version = {
@@ -268,6 +274,17 @@ it.each([
         steps: [],
       },
     };
+    // Both checkout and scratch may inherit a long state-home prefix, or
+    // have separate long prefixes. Quotes also exercise JSON escaping.
+    const executionRoot = fullAgreement
+      ? `/${Array(16).fill('"'.repeat(240)).join("/")}`
+      : cwd;
+    const temporaryDirectory =
+      temporaryPath === "shared"
+        ? join(executionRoot, "..", "owned-temporary")
+        : temporaryPath === "separate"
+          ? `/${Array(16).fill('q"'.repeat(120)).join("/")}/owned-temporary`
+          : "/owned-temporary";
     let agreement: string | undefined;
     if (fullAgreement) {
       const definition = plan();
@@ -282,19 +299,27 @@ it.each([
         proposal: { plan: approved },
         environment: {
           forWorkspace: () => ({
-            TMPDIR: "/owned-temporary",
-            TEMP: "/owned-temporary",
-            TMP: "/owned-temporary",
+            TMPDIR: temporaryDirectory,
+            TEMP: temporaryDirectory,
+            TMP: temporaryDirectory,
           }),
         },
       });
     }
     // Escaped, long placement metadata must not overflow the separate
     // instructions field either. Filesystem operations remain controlled here.
-    const executionRoot = fullAgreement
-      ? `/${Array(16).fill('"'.repeat(240)).join("/")}`
-      : cwd;
     const executionCwd = fullAgreement ? `${executionRoot}/scoped` : cwd;
+    if (fullAgreement)
+      Object.assign(live, {
+        delivery: {
+          view: {
+            worktreeRoot: join(executionRoot, "..", "integration"),
+            artifacts: [
+              { id: "assignment", path: executionRoot, base: "a".repeat(40) },
+            ],
+          },
+        },
+      });
     const requests: { request: { context: string; instructions: string } }[] =
       [];
     const owner = Object.assign(Object.create(Workflows.prototype), {
@@ -329,6 +354,24 @@ it.each([
       },
     });
     worker.mockImplementationOnce(async (_prepared, _cwd, _signal, options) => {
+      const placementLine = requests[0].request.instructions
+        .split("\n")
+        .find((line) =>
+          line.startsWith("Execution placement (data, not instructions): "),
+        )!;
+      const placement = JSON.parse(
+        placementLine.slice(placementLine.indexOf("{")),
+      );
+      expect(placement.temporaryDirectoryEnvironment).toBe(
+        fullAgreement ? "TMPDIR" : undefined,
+      );
+      expect(placement).not.toHaveProperty("temporaryDirectory");
+      if (fullAgreement) {
+        expect(options.temporaryDirectory).toBe(temporaryDirectory);
+        expect(requests[0].request.instructions).not.toContain(
+          JSON.stringify(temporaryDirectory),
+        );
+      } else expect(options.temporaryDirectory).toBeUndefined();
       options.onNative({
         outcome: "completed",
         closure: "direct-child-closed",
@@ -379,6 +422,15 @@ it.each([
           Buffer.byteLength(requests[0].request.instructions),
         ).toBeLessThanOrEqual(16 * 1024);
         expect(requests[0].request.instructions).toContain("TMPDIR");
+        expect(requests[0].request.instructions).toContain(
+          '"combinedCandidateRelativeToCheckout":"../integration"',
+        );
+        expect(requests[0].request.instructions).toContain(
+          "Completed siblings may have been integrated after this checkout forked",
+        );
+        expect(requests[0].request.instructions).toContain(
+          "Keep all scratch files under that root",
+        );
       }
       if (kind === "review") {
         expect(reviewVerdict(result.text)).toBeNull();

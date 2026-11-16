@@ -125,6 +125,8 @@ function fixture(mode = "pass") {
   const definition = plan();
   definition.tasks = [definition.tasks[0]];
   definition.documents = ["knowledge.md"];
+  if (mode === "baseline-scope")
+    definition.baselineChecks = [{ name: "baseline", command: "verify" }];
   const p: WorkflowProposal = {
     id: randomUUID(),
     epoch,
@@ -252,7 +254,8 @@ function fixture(mode = "pass") {
             "post-target-moved",
             "post-retry",
           ].includes(mode) && postChecks === 1
-        : mode === "check-repair" && candidateChecks <= 3;
+        : (mode === "check-repair" && candidateChecks <= 3) ||
+          (mode === "baseline-scope" && candidateChecks === 1);
       return {
         ...ok,
         outcome: failed ? "failed" : "completed",
@@ -322,6 +325,7 @@ function fixture(mode = "pass") {
         // Blocked is only for a named condition outside the repository.
         ...(blocked ? { blocker: "tool" } : {}),
         cause: "controlled observed failure",
+        ...(mode === "baseline-scope" ? { scope: ["test/fixture.ts"] } : {}),
         evidence: [failed.id],
         strategy: `Continue from preserved evidence, revision ${(run.revision ?? 0) + 1}`,
         work:
@@ -331,7 +335,9 @@ function fixture(mode = "pass") {
                 {
                   title: "Fix remaining behavior",
                   instructions: "Use preserved output",
-                  writes: ["a.txt"],
+                  writes: [
+                    mode === "baseline-scope" ? "test/fixture.ts" : "a.txt",
+                  ],
                 },
               ],
       });
@@ -359,6 +365,13 @@ function fixture(mode = "pass") {
       if (mode === "review-change")
         put(cwd, "a.txt", "foreign edit during review");
       if (mode === "cancel") live.abort.abort();
+    } else if (mode === "baseline-scope" && name.startsWith("repair-")) {
+      events.push("baseline-repair");
+      put(cwd, "test/fixture.ts", "environment-independent fixture");
+      report = {
+        status: "completed",
+        summary: "Preserved the assertion, fixed its fixture",
+      };
     } else {
       events.push("implementation");
       implementations++;
@@ -419,6 +432,40 @@ it("one named stable worktree combines implementation, verified knowledge and fi
   expect(seam.trees.get(f.d.worktreeRoot)!.files.get("knowledge.md")).toContain(
     "Verified",
   );
+});
+it("baseline repair can expand the original scope and deliver without another approval", async () => {
+  const f = fixture("baseline-scope");
+  await f.execute();
+  expect(f.run.scope).toContain("test/fixture.ts");
+  const revisions = [...f.records.entries()]
+    .filter(([path]) => path.includes("revisions/"))
+    .map(([, value]) => value);
+  expect(revisions).toEqual([
+    expect.objectContaining({
+      stage: "baseline",
+      decision: expect.objectContaining({
+        level: "replan",
+        scope: ["test/fixture.ts"],
+      }),
+    }),
+  ]);
+  expect(f.events.indexOf("baseline-repair")).toBeLessThan(
+    f.events.indexOf("implementation"),
+  );
+  expect(f.events.filter((event) => event === "diagnosis")).toHaveLength(1);
+  expect(f.workspaces).toHaveLength(1);
+  expect(
+    f.run.steps.some(
+      (step) => step.kind === "check" && step.status === "failed",
+    ),
+  ).toBe(true);
+  expect(f.d.acceptance?.candidate).toBe(f.run.mergedCommit);
+  expect(f.d.postChecks).toBe("passed");
+  expect(
+    seam.trees
+      .get(f.d.binding.target.checkoutRoot)!
+      .files.get("test/fixture.ts"),
+  ).toBe("environment-independent fixture");
 });
 it.each(["partial", "check-repair", "unparseable", "rejected"])(
   "adaptive %s recovery preserves one branch, with no fixed repair quota or new approval",

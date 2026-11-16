@@ -220,6 +220,10 @@ it("independent assignments run side by side in their own worktrees; a dependent
     "Predecessor assignments already applied here: a, b",
   );
   expect(f.attempts.find((a) => a.id === "a")?.writes).toEqual(["src/a.ts"]);
+  expect(f.attempts.find((a) => a.id === "a")?.prompt).toContain(
+    "This is a detached snapshot",
+  );
+  expect(c?.prompt).not.toContain("This is a detached snapshot");
   expect(f.live.owned).toBeUndefined();
 });
 

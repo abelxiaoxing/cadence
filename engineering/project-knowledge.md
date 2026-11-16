@@ -22,7 +22,9 @@ Project facts, the current delivery's handoff and raw history are separate:
 
 The route table's `## Routes` section maps code areas to what to read first, one line each: a list item naming one or more backquoted code paths, an arrow (`->`), a backquoted Markdown target with an optional `#Heading`, then a dash and what that settles.
 A route's target is a topic card or a section of an existing project document.
-A topic card is sections (`##`) of entries; an entry is a `###` heading stating one rule or fact, followed by short `Kind:`, `Why:`, `Anchors:` and `Source:` lines.
+A topic card is sections (`##`) of entries; an entry is a `###` heading stating one rule or fact, followed by short `Kind:`, `Why:`, `Anchors:` and `Source:` paragraphs.
+Blank lines separate headings and field paragraphs; `Anchors:` remains a plain paragraph so the store parser can read it.
+The curator receives a concrete Markdown example, and the written store must satisfy the project's applicable documentation checks.
 An anchor is `` `path` `` or `` `path#text` ``, where the text is a symbol or test name that occurs in the file; line numbers are never anchors.
 
 The budget lives in `KNOWLEDGE_STORE`: 4KiB for the route table, 8KiB per topic, 1KiB per entry, 200KiB for the whole store and at most 64 topic files.
@@ -87,7 +89,7 @@ The old `projectContext` proposal field and version 2's `knowledge` paths are re
 ## Regression owners
 
 - `test/knowledge-store.test.ts`: route and entry parsing, section addressing, the budget, blocking versus noted findings, the reading order, section-aware excerpts and Chinese goals.
-- `test/project-knowledge.test.ts`, `test/project-knowledge-bounds.test.ts`: fresh source observation, discovery, Trellis-spec reading without activation/import, privacy, partial coverage and the curator's brief.
+- `test/project-knowledge.test.ts`, `test/project-knowledge-bounds.test.ts`: fresh source observation, discovery, Trellis-spec reading without activation/import, privacy, partial coverage and the curator's brief, whose topic example is checked by the real Markdown linter and anchor parser.
 - `test/workflow-knowledge.test.ts`: the curating step, its failing store check, undeliverable stores, failure history, what each worker is named, the usage record, proposed lessons, and stale or reused investigations.
 - `test/investigations.test.ts`: which files an answer cites, changed citations and the identity of a repeated question.
 - `test/workflow-delivery.test.ts`: implementation failure, autonomous continuation, real-result handoff, knowledge maintenance and fresh combined-candidate verification in one owner loop.

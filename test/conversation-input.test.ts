@@ -740,6 +740,25 @@ it("only a waiting message is withdrawn: at once while the owner alone holds it,
   expect(f.state(early).notice).toBe(WITHDRAWN);
 });
 
+it("an unknown outcome with recorded native closure permits startup without changing or replaying the old messages", async () => {
+  const f = fixture();
+  const run = await f.start();
+  run.worker.ready();
+  const queued = f.input(run, "queue", "Not delivered");
+  // A sibling storage/workflow failure may quarantine the owner even though
+  // this conversation's own original process has confirmed its native close.
+  f.owner.state = "quarantined";
+  run.worker.end("canceled");
+  expect(await f.settled[0]).toEqual({ status: "uncertain" });
+  expect(f.state(run.commandId).status).toBe("unknown");
+  expect(f.state(queued).status).toBe("unknown");
+  const next = fixture(f.root);
+  expect(() => next.conversations.assertSettled()).not.toThrow();
+  expect(next.state(run.commandId).status).toBe("unknown");
+  expect(next.state(queued).status).toBe("unknown");
+  expect(next.settled).toHaveLength(0);
+});
+
 it("an unknown closure leaves every message of the run unknown and refuses the next start; one the owner's death cut short does not", async () => {
   const f = fixture();
   const run = await f.start();

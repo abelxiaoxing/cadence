@@ -522,7 +522,24 @@ export function curationInstructions(brief: CurationBrief): string {
   const managed = brief.managed
     ? `You maintain the project's knowledge store: the route table ${store.index} and topic cards under ${store.topics}/. It is a bounded cache, not a growing document: it holds what a capable engineer could not cheaply re-derive from the code, and new knowledge must displace or compress old knowledge.
 Budget, enforced after you finish (exceeding it fails this delivery): route table ${store.indexBytes} bytes; one topic ${store.topicBytes} bytes; one entry ${store.entryBytes} bytes; the whole store ${store.totalBytes} bytes; at most ${store.topicFiles} topics. Now: route table ${brief.usage.indexBytes} bytes; store ${brief.usage.totalBytes} bytes; ${brief.usage.topics.map((t) => `${t.path} ${t.bytes} bytes/${t.entries} entries`).join("; ") || "no topics yet"}.
-Format. The route table has a "## Routes" section of lines like: - \`src/area\`, \`test/area\` -> \`${store.topics}/topic.md#Heading\` — what that settles. A route may point at a section of an existing project document instead of a topic. A topic is "# Title", "## Section" headings and entries; an entry is "### One sentence stating the rule or fact" followed by short lines "Kind: contract | decision | pitfall | practice", "Why: one line", "Anchors: \`path#symbol-or-test-name\`, \`path\`" and "Source: this delivery, date". Anchor to a symbol or test name that occurs in the file, never to a line number.
+Format. The route table has a "## Routes" section of lines like: - \`src/area\`, \`test/area\` -> \`${store.topics}/topic.md#Heading\` — what that settles. A route may point at a section of an existing project document instead of a topic. A topic has a title, section headings and entries. Each entry states one rule or fact in its heading, then has four short plain-paragraph fields: Kind (contract | decision | pitfall | practice), Why, Anchors and Source. Keep blank lines around headings and between field paragraphs; do not pack the fields into consecutive lines or prefix Anchors with a list marker. Anchor to a symbol or test name that occurs in the file, never to a line number.
+Use this topic shape, replacing the placeholders with verified facts:
+\`\`\`markdown
+# Topic
+
+## Section
+
+### One sentence stating the rule or fact
+
+Kind: contract
+
+Why: State the reason in one sentence.
+
+Anchors: \`src/area.ts#symbol\`
+
+Source: this delivery, YYYY-MM-DD
+\`\`\`
+Apply the project's Markdown conventions to the store too, and validate the written documents with its applicable existing checks. A check run before an edit does not validate that edit.
 Admit only what is worth a reader's attention next time: a contract between parts, a decision and its reason, a pitfall this delivery actually hit, a verification recipe. Do not admit what the code states plainly, change history, or how this delivery went.
 For every candidate lesson choose one: merge it into an existing entry, add an entry, or drop it. Finding nothing reusable is a valid result; never manufacture a rule.
 When space is needed, remove in this order: entries whose anchors no longer resolve; duplicates and entries a newer one replaces; entries now guaranteed by a test or a type (the check is the knowledge); routes nothing has needed for a long time, with the entries only they lead to, and entries about code that no longer matters; only then shorten wording, without dropping a condition. Split a topic that mixes areas; delete a topic left empty and its routes.

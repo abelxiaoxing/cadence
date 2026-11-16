@@ -7,6 +7,7 @@ import {
   MODEL_REQUEST_FAILED,
   modelFailureText,
   modelRequestFailed,
+  RECOVERY_BYTES,
   type RecoveryBounds,
   type RecoveryDecision,
   type RecoveryLevel,
@@ -242,8 +243,6 @@ it("a repair names only paths in the current scope and actual evidence, never ne
     { ...value, acceptance: "ignore failing tests" },
     { ...value, work: [{ ...value.work[0], writes: ["src-other/file.ts"] }] },
     { ...value, work: [{ ...value.work[0], writes: ["../outside"] }] },
-    // A repair cannot widen the scope; that is a revision of the route.
-    { ...value, scope: ["docs/guide.md"] },
     // Blocked needs a named outside condition and dispatches nothing.
     { ...value, action: "blocked" },
     { ...value, action: "blocked", work: [], blocker: null },
@@ -255,6 +254,125 @@ it("a repair names only paths in the current scope and actual evidence, never ne
   expect(() =>
     decodeRecoveryDecision("I would simply retry.", bounds()),
   ).toThrow(InvalidDecision);
+});
+it("recovery distinguishes a check-only assignment from out-of-scope writes", () => {
+  const edit = {
+    title: "Fix import ordering",
+    instructions: "Format the changed source with the installed formatter",
+    writes: ["src/login.ts"],
+  };
+  const check = {
+    title: "Run the integration gate",
+    instructions: "Run the declared checks again",
+    writes: [] as string[],
+  };
+  const value = { ...decision(), work: [edit, check] };
+  expect(() => decodeRecoveryDecision(JSON.stringify(value), bounds())).toThrow(
+    "work[1].writes must name at least one editing path; omit check-only work items because the owner reruns the declared checks and review",
+  );
+  expect(() =>
+    decodeRecoveryDecision(
+      JSON.stringify({
+        ...value,
+        work: [edit, { ...check, writes: ["test/login.test.ts"] }],
+      }),
+      bounds(),
+    ),
+  ).toThrow("work[1].writes is outside the current write scope");
+  expect(
+    decodeRecoveryDecision(
+      JSON.stringify({ ...value, work: [edit] }),
+      bounds(),
+    ),
+  ).toEqual({ ...value, work: [edit] });
+});
+it("recovery accepts one complete decision surrounded by diagnostic prose", () => {
+  const value = {
+    ...decision('Keep the literal { marker and escaped "quote" in the file'),
+    work: [
+      {
+        title: "Repair knowledge Markdown",
+        instructions: "Separate metadata paragraphs; retain every lint rule",
+        writes: ["src/knowledge.md"],
+      },
+    ],
+  };
+  const json = JSON.stringify(value);
+  for (const reply of [
+    json,
+    `\`\`\`json\n${json}\n\`\`\``,
+    `Diagnosis complete. Only lint failed.\n${json}`,
+    `See [failure](test/foo.test.ts).\n${json}`,
+    `Evidence [step-a] identifies the failed check.\n${json}`,
+    `See [failure][1].\n\`\`\`json\n${json}\n\`\`\`\n[1]: test/foo.test.ts`,
+    `${json}\nThe [step-a] evidence and [regression](test/foo.test.ts) remain available.`,
+    `Observed facts: headings need blank lines.\n\n\`\`\`json\n${json}\n\`\`\`\nThe owner checks the repaired candidate.`,
+  ])
+    expect(decodeRecoveryDecision(reply, bounds())).toEqual(value);
+});
+it("recovery refuses ambiguous, malformed and oversized surrounded decisions", () => {
+  const json = JSON.stringify(decision());
+  for (const reply of [
+    `First answer:\n${json}\nSecond answer:\n${json}`,
+    `Continue:\n${json}\nBlocked:\n${JSON.stringify({ ...decision(), action: "blocked", blocker: "model" })}`,
+    `Diagnosis:\n${json.replace('"action":"continue"', '"action":"blocked","action":"continue"')}`,
+    `Diagnosis:\n${json.slice(0, -1)}`,
+    `Diagnosis:\n${json}\n{"action":`,
+    `Diagnosis:\n{"example":${json}}`,
+    `Diagnosis:\n[${json}]`,
+    `Diagnosis:\n[null, ${json}]`,
+    `Diagnosis:\n[${JSON.stringify('literal ] and escaped " quote')}, ${json}]`,
+    `Diagnosis:\n[[${json}]]`,
+    `${"诊".repeat(Math.floor(RECOVERY_BYTES / 3))}\n${json}`,
+    `${json}\n${" ".repeat(RECOVERY_BYTES)}`,
+  ])
+    expect(() => decodeRecoveryDecision(reply, bounds())).toThrow(
+      InvalidDecision,
+    );
+  for (const invalid of [
+    { ...decision(), evidence: ["invented-step"] },
+    { ...decision(), scope: [".env"] },
+    { ...decision(), command: "skip verification" },
+    {
+      ...decision(),
+      work: [{ title: "change", instructions: "edit", writes: ["../outside"] }],
+    },
+  ])
+    expect(() =>
+      decodeRecoveryDecision(
+        `Diagnosis:\n${JSON.stringify(invalid)}`,
+        bounds(),
+      ),
+    ).toThrow(InvalidDecision);
+});
+it("concrete scope additions determine replan without a redundant model label", () => {
+  for (const level of [undefined, "repair", "replan"]) {
+    const value = {
+      ...decision(),
+      level,
+      scope: ["test/socket.test.ts", "scripts/verify.mjs"],
+      work: [
+        {
+          title: "Repair the environment-dependent fixture",
+          instructions:
+            "Keep the real socket assertion and service protections",
+          writes: ["test/socket.test.ts"],
+        },
+      ],
+    };
+    expect(
+      decodeRecoveryDecision(
+        JSON.stringify(value),
+        bounds({ floor: "replan" }),
+      ),
+    ).toEqual({ ...value, level: "replan" });
+    expect(() =>
+      decodeRecoveryDecision(
+        JSON.stringify({ ...value, scope: [".env"] }),
+        bounds(),
+      ),
+    ).toThrow(InvalidDecision);
+  }
 });
 it("a revised route may bring repository files into the write scope, never credentials, keys or paths outside it", () => {
   const value = {
@@ -515,9 +633,13 @@ it("a revised route drops, rewrites and adds only assignments that have not star
       within,
     ).route?.add[0].writes,
   ).toEqual(["lib/new.ts"]);
+  expect(
+    decodeRecoveryDecision(
+      JSON.stringify({ ...value, level: "repair" }),
+      within,
+    ),
+  ).toEqual(value);
   for (const [invalid, reason] of [
-    // A repair keeps the assignments; only a revised route changes them.
-    [{ ...value, level: "repair" }, "revise the route with level replan"],
     [{ ...value, route: { drop: ["b"] } }, "has not started"],
     [{ ...value, route: { drop: ["a"] } }, "has not started"],
     [{ ...value, route: { add: [add("b")] } }, "has not started"],

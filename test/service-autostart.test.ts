@@ -15,10 +15,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseEnvFile } from "../skills/_shared/load-config.mjs";
 import { CONFIG_TEMPLATE } from "../src/install-config.mjs";
 import { autostartHint, autostartNotice } from "../src/native-client.ts";
+import * as autostart from "../src/service/autostart.ts";
 import {
   type AutostartSystem,
   autostartStatus,
@@ -30,6 +31,7 @@ import {
   stopAutostart,
   unitPath,
 } from "../src/service/autostart.ts";
+import { managementMain } from "../src/service/cli.ts";
 import {
   buildPlist,
   configureLaunchAgent,
@@ -1053,13 +1055,52 @@ describe("startup guidance", () => {
       },
     );
   }
+  /** Exercise the real CLI against a controlled host, never the enclosing
+   * service manager. HOME alone cannot isolate the parent's cgroup. */
+  async function managedServer(s: AutostartSystem, ...argv: string[]) {
+    const previousExit = process.exitCode;
+    let stdout = "",
+      stderr = "";
+    const host = vi.spyOn(autostart, "hostSystem").mockReturnValue(s);
+    const out = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk) => {
+        stdout += String(chunk);
+        return true;
+      });
+    const err = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderr += String(chunk);
+        return true;
+      });
+    try {
+      process.exitCode = 0;
+      await managementMain(
+        ["server", ...argv],
+        new URL("../src/service-host.mjs", import.meta.url),
+      );
+      return { status: process.exitCode, stdout, stderr };
+    } finally {
+      process.exitCode = previousExit;
+      host.mockRestore();
+      out.mockRestore();
+      err.mockRestore();
+    }
+  }
   const WEBUI =
     /\n# Cadence WebUI for `cadence server install`: edit, then run `cadence server restart`\.\n# The token admits anyone who has it to your workspace; keep it private\.\nCADENCE_PORT=17423\nCADENCE_TOKEN=([A-Za-z0-9_-]{43})\n$/;
 
-  it("server install creates the research template with the WebUI port and a random token, then only adds missing keys", () => {
+  it("server install creates the research template with the WebUI port and a random token, then only adds missing keys", async () => {
     const home = temporary("cadence-template-");
+    const s = { ...fake().s, home };
     const file = join(home, ".pi", "agent", "cadence", ".env");
-    const first = server(home, "install", "--workspace", join(home, "missing"));
+    const first = await managedServer(
+      s,
+      "install",
+      "--workspace",
+      join(home, "missing"),
+    );
     expect(first.status).toBe(1);
     expect(first.stderr).toContain(
       `Cadence created the research configuration template ${file}\n`,
@@ -1085,7 +1126,12 @@ describe("startup guidance", () => {
     }
     // Another home gets another token.
     const other = temporary("cadence-template-");
-    server(other, "install", "--workspace", join(other, "missing"));
+    await managedServer(
+      { ...s, home: other },
+      "install",
+      "--workspace",
+      join(other, "missing"),
+    );
     expect(
       parseEnvFile(
         readFileSync(join(other, ".pi", "agent", "cadence", ".env"), "utf8"),
@@ -1093,8 +1139,8 @@ describe("startup guidance", () => {
     ).not.toBe(token);
     // An existing file keeps every byte; only the missing keys are appended.
     writeFileSync(file, "GROK_API_KEY=keep-me");
-    const second = server(
-      home,
+    const second = await managedServer(
+      s,
       "install",
       "--workspace",
       join(home, "missing"),
@@ -1111,6 +1157,40 @@ describe("startup guidance", () => {
     };
     walk(home);
     expect(files).toEqual([join(".pi", "agent", "cadence", ".env")]);
+  });
+
+  it("the CLI refuses its own service before any template or management effects", async () => {
+    const { s } = fake();
+    const group =
+      "/user.slice/user-1000.slice/user@1000.service/app.slice/cadence.service";
+    s.cgroup = () => `0::${group}/worker\n`;
+    const manager = vi.fn(() => ({ status: 0, stdout: `${group}\n` }));
+    s.systemctl = manager;
+    for (const action of [
+      "install",
+      "restart",
+      "stop",
+      "uninstall",
+      "upgrade",
+    ]) {
+      const result = await managedServer(s, action);
+      expect(result.status).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual({
+        status: "inside-service",
+        unit: s.unit,
+      });
+      expect(result.stderr).toContain(
+        "This command runs inside cadence.service",
+      );
+      expect(existsSync(join(s.home, ".pi", "agent", "cadence", ".env"))).toBe(
+        false,
+      );
+    }
+    expect(manager.mock.calls).toEqual(
+      Array.from({ length: 5 }, () => [
+        ["show", "--property=ControlGroup", "--value", s.unit],
+      ]),
+    );
   });
 
   it("server install and restart keep a configured port and token; an unusable .env refuses before any change", {

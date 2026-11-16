@@ -76,6 +76,8 @@ Cleanup and the final record are joined before releasing the checkout permit; ac
 This is private scratch ownership, not a sandbox or permission to modify other external files.
 
 Baseline checks cannot require future outputs.
+A failed baseline can be repaired inside the repository, including its fixtures and verification scripts, without another approval; it is not automatically an external environment blocker.
+The post-baseline scope check uses the run's recorded revisions, not the original plan's narrower paths, so a legitimate setup/baseline repair remains deliverable.
 One stable candidate collects earlier outputs; each editing attempt is attributed against its own write scope, in the candidate or in its assignment's child worktree.
 Initial cleanliness preconditions are not rerun against the delivery's own work.
 Implementation and knowledge workers submit `cadence_report`, independently captured from successful tool-result content even after transcript preview overflow.
@@ -87,7 +89,15 @@ Partial/blocked steps keep those statuses separately from their successful nativ
 Malformed or missing reports remain failed attempts.
 All incomplete attempts enter recovery, not inferred success.
 The owner records a readonly diagnosis and a route revision with actual failed-step references before dispatching further work.
+Recovery accepts one complete JSON decision with optional surrounding diagnostic prose or a code fence.
+Markdown links and bracketed evidence labels in that prose are allowed; a decision nested inside an array remains refused.
+The entire reply stays byte-bounded; multiple objects, duplicate keys, incomplete objects and array wrappers refuse rather than selecting a convenient fragment.
+Extracted decisions still pass the same strict schema, evidence, scope, protected-path and route checks.
+Each recovery work item needs an editing path; the owner reruns checks and review without a separate check-only assignment.
+An empty `work[i].writes` is reported as that field's missing editing scope, not as an out-of-scope write or a request to expand scope.
 A revision has a level: `repair` stays inside the current write scope; `replan` may bring further repository paths into it (never credentials, keys, `.env`, `.git` or paths outside the repository, and for a fast-forward delivery never a path the target checkout has its own changes to); `deviate` records that an acceptance item or decision cannot be met as written, what is delivered instead, and which declared checks it sets aside.
+Concrete scope or route additions determine `replan` even when the model omitted that label or called it `repair`; a redundant label mismatch does not require another diagnosis.
+Diagnosis considers repository-local alternatives beyond the initial scope before declaring an external blocker, including fixtures incompatible with long temporary paths or inherited service environments; their repair preserves the asserted behavior and production protections, not a demand to move owner resources or run checks outside the service.
 While assignments are still being scheduled, a `replan` or `deviate` decision may also revise the route itself (`RecoveryRoute`): drop an assignment that has not started, add one, or give one again under its own ID to rewrite it.
 An assignment that has started never changes (what remains of the failed one is the decision's work items), every assignment that waited for a dropped one must be dropped or rewritten in the same decision, the order stays acyclic and one run lists at most 48 assignments in all.
 A new assignment may write anywhere in the run's scope, including what the same decision adds to it; those paths belong to that assignment, not to the tree that decided.
@@ -133,6 +143,8 @@ Agent review verdicts are accepted bare, fenced or inside prose; a review step i
 None of the latter outcomes counts as delivery approval.
 The first settled review-step snapshot already contains its verdict, never a temporary process-success status that could end client observation early; retained native process and transcript outcomes remain independent.
 Workflow delivery notes are written before the final candidate checks and say they are not a verification result.
+The stored plan preserves the complete readable agreement as literal text in a collision-safe Markdown fence; user/model examples and command syntax never become document markup.
+Changed-path lists are also literal, and the owner's note headings, lists and prose follow the project's Markdown rules without excluding generated documents from checks.
 Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
 Unmodified guidance is not part of the dirty check; explicitly approved knowledge write targets are.
 Generated workflow notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check.

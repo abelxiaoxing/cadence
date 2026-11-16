@@ -13,7 +13,10 @@ import {
   taskBranch,
   WorkflowDelivery,
 } from "../src/service/workflow-delivery.ts";
-import { worktreeResidue } from "../src/service/workflow-git.ts";
+import {
+  WorkflowRefusal,
+  worktreeResidue,
+} from "../src/service/workflow-git.ts";
 import { decodeWorkerPublicRequest } from "../src/worker-public.mjs";
 import { deliveryFixture } from "./helpers/delivery-fixture.ts";
 
@@ -62,6 +65,28 @@ it("planning observation does not create Git resources; explicit preparation cre
   expect(f.git("rev-parse", "HEAD")).toBe(f.base);
   expect(decodeDeliveryObservation(f.view)).toEqual(f.view);
   await expect(f.delivery.create(async () => {})).rejects.toThrow("conflict");
+  f.delivery.finish();
+});
+it("an unrecorded candidate commit names the changed HEAD and preserves both worktrees", async () => {
+  const f = deliveryFixture(),
+    cwd = await f.create();
+  writeFileSync(join(cwd, "a.txt"), "worker committed outside the owner\n");
+  f.gitAt(cwd, "commit", "-qam", "unrecorded worker commit");
+  const observed = f.head(cwd);
+  const refusal = await f.delivery.assertTip().catch((error) => error);
+  expect(refusal).toBeInstanceOf(WorkflowRefusal);
+  expect(refusal.code).toBe("stale");
+  expect(refusal.detail).toContain("Worktree HEAD changed outside");
+  expect(refusal.detail).toContain(cwd);
+  expect(refusal.detail).toContain(`expected ${f.base}`);
+  expect(refusal.detail).toContain(`observed ${observed}`);
+  expect(refusal.detail).toContain("retained");
+  expect(f.view.workspace?.head).toBe(f.base);
+  expect(f.head(cwd)).toBe(observed);
+  expect(f.git("rev-parse", "HEAD")).toBe(f.base);
+  expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe(
+    "worker committed outside the owner\n",
+  );
   f.delivery.finish();
 });
 it("exact acceptance refuses hidden staged edits and a substituted context or candidate", async () => {
@@ -363,7 +388,10 @@ it("an assignment's own worktree starts at the candidate's commit, its commit is
   f.gitAt(child, "add", "--", "guide.md");
   f.gitAt(child, "commit", "-qm", "assignment docs");
   // A commit the owner did not record is not the tip it will integrate.
-  await expect(f.delivery.assertTip(child)).rejects.toThrow();
+  await expect(f.delivery.assertTip(child)).rejects.toMatchObject({
+    code: "stale",
+    detail: expect.stringContaining(child),
+  });
   const commit = f.head(child);
   f.delivery.update(commit, child);
   expect(await f.delivery.assertTip(child)).toBe(commit);

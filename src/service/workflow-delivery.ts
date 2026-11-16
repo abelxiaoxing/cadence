@@ -24,6 +24,7 @@ import {
   gitRun,
   gitText,
   nested,
+  WorkflowRefusal,
   worktreeResidue,
 } from "./workflow-git.ts";
 
@@ -249,8 +250,17 @@ export class WorkflowDelivery {
       path === this.view.worktreeRoot
         ? this.view.workspace?.head
         : this.child(path)?.head;
-    if (!head || (await gitHead(path)) !== head)
-      throw new ContractError("stale");
+    if (!head)
+      throw new WorkflowRefusal(
+        "stale",
+        `No owner-recorded HEAD exists for worktree ${path}; its files and commits are retained.`,
+      );
+    const observed = await gitHead(path);
+    if (observed !== head)
+      throw new WorkflowRefusal(
+        "stale",
+        `Worktree HEAD changed outside the owner's recorded Git operations: ${path}; expected ${head}, observed ${observed}. Its files and commits are retained; no automatic adoption or replay.`,
+      );
     return head;
   }
   update(head: string, path = this.view.worktreeRoot): void {
