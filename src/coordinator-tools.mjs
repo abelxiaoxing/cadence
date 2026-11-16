@@ -201,8 +201,13 @@ export function createCoordinatorTools() {
     {
       name: "cadence_status",
       description:
-        "Read actual workflow progress and outcomes, not inferred success.",
-      parameters: Type.Object({}),
+        "Read actual workflow progress and outcomes. With a result's runId and stepId, read its retained JSON result in pages; pass next unchanged to continue. limited describes missing retained evidence, independently of pagination. Read truncated research answers here before investigating again. Never starts work.",
+      parameters: Type.Object({
+        runId: Type.Optional(Type.String()),
+        stepId: Type.Optional(Type.String()),
+        offset: Type.Optional(Type.Integer()),
+        digest: Type.Optional(Type.String()),
+      }),
     },
   ].map((tool) => ({
     ...tool,

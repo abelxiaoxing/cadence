@@ -510,6 +510,11 @@ Cancel uses the independent active roster (including the fallback strip when wor
 Native research/plan/start claim their shared conversation state synchronously before attachment or model awaits; a concurrent mutation in that generation refuses before dispatch, while status and explicit Cancel remain available.
 Each mutation carries its own claim through dispatch and response handling; navigation retires its admission authority without canceling its original, blocking a new generation or letting an old finally release a newer claim.
 Research replies carry exact run/step identities.
+Browser research replies include a `result` pointer for each answered or failed step, beyond the bounded initial preview.
+The browser coordinator passes that pointer to `cadence_status` to read the retained JSON result, then passes `next` unchanged until it is null; this never starts another investigation.
+Each continuation binds the run, step and digest of the current redacted projection, so a changed projection refuses instead of silently joining incompatible pages.
+The original result's `limited` flag remains independent of pagination: reaching the last page does not recover bytes the worker capture did not retain.
+Only runs linked to that conversation can be read through this coordinator tool; the existing private bridge bound is unchanged.
 `cadence_status` accepts an explicit `runId` for retained results/transcripts without changing the current selection or acknowledging a different current unknown run.
 Cancel pins the displayed run identity before its confirmation dialog.
 Session changes invalidate in-flight dispatch/response handling; no command is replayed.

@@ -302,9 +302,10 @@ export class OwnerModelContext {
     return [...new Set(literals)];
   }
   /** Owner-only readonly literals for current text before any model is selected.
-   * Reuses the bounded catalog source policy, without enumerating/choosing models. */
+   * Also needed while originals settle after Stop/quarantine. Retain source and
+   * lease checks, but do not require admission to still be open. */
   viewRedactionLiterals(): readonly string[] {
-    return this.catalogLiterals(this.catalogSource());
+    return this.catalogLiterals(this.readCatalogSource());
   }
   get loading(): boolean {
     return this.#loading;
@@ -342,6 +343,10 @@ export class OwnerModelContext {
   }
   private catalogSource(): PiSnapshot {
     this.alive();
+    return this.readCatalogSource();
+  }
+  private readCatalogSource(): PiSnapshot {
+    this.#options.owner.lease.assert();
     if (
       this.#loading ||
       !this.#runtime ||

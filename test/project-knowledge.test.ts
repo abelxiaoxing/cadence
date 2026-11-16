@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -7,8 +8,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expect, it } from "vitest";
+import { knowledgeEntries } from "../src/service/knowledge-store.ts";
 import {
   type CurationBrief,
   curationInstructions,
@@ -152,6 +154,44 @@ it("the curator is told to keep a bounded store from evidence: what to admit, wh
   expect(unmanaged).toContain("not maintained in this delivery");
   expect(unmanaged).toContain("engineering/search.md");
   expect(unmanaged).not.toContain("Budget, enforced");
+});
+
+it("the curator's topic example parses its anchor and passes the real Markdown gate", () => {
+  const instructions = curationInstructions({
+    documents: [],
+    managed: true,
+    usage: { indexBytes: 0, totalBytes: 0, topics: [] },
+    revalidate: [],
+    notes: [],
+    rotation: null,
+    idle: [],
+    lessons: "",
+    history: "",
+    deviations: "",
+  });
+  const examples = [...instructions.matchAll(/```markdown\n([\s\S]*?)\n```/gu)];
+  expect(examples).toHaveLength(1);
+  const body = `${examples[0][1]}\n`;
+  const entries = knowledgeEntries(".cadence/knowledge/topic.md", body);
+  expect(entries).toHaveLength(1);
+  expect(entries[0].anchors).toEqual([
+    { path: "src/area.ts", symbol: "symbol" },
+  ]);
+  const { root, put } = fixture();
+  put("topic.md", body);
+  const lint = spawnSync(
+    process.execPath,
+    [
+      resolve(import.meta.dirname, "../node_modules/rumdl/bin/rumdl"),
+      "check",
+      "--config",
+      resolve(import.meta.dirname, "../.rumdl.toml"),
+      join(root, "topic.md"),
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(lint.error).toBeUndefined();
+  expect(lint.status, lint.stdout + lint.stderr).toBe(0);
 });
 
 it("known secrets in document filenames do not leak through manifests or omission notices", () => {

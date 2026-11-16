@@ -12,6 +12,7 @@ import {
   parseWireJson,
   text,
 } from "./contracts/core.ts";
+import { decodeNativeSettlement } from "./contracts/domain.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
 import { decodeExecutionContext } from "./contracts/models.ts";
 import type { WorkbenchRead } from "./contracts/workbench.ts";
@@ -269,21 +270,30 @@ export class ConversationRecords {
     this.states.set(commandId, { key, state });
     return state;
   }
-  /** Whether the owner that ran this command recorded that it could not
-   * establish its worker's closure. A command merely left queued or running was
+  /** Whether the recorded originals leave the worker's closure unconfirmed.
+   * A quarantined owner can record an unknown outcome despite known native
+   * closure; reading that fact never changes or replays the uncertain command.
+   * A command merely left queued or running was
    * cut short by that owner's death; startup healing has stopped its workers
    * before any reader exists, so that one is interrupted, not unknown. A
    * message sent into a reply shares that reply's worker, so its closure is
    * the reply's as well as its own. */
   closureUnknown(commandId: string): boolean {
-    const recorded = (id: string) => {
+    const unknown = (id: string) => {
       const value = this.read(this.path(id, "state.json"));
       if (value === undefined) throw new ContractError("corrupt-selected");
       return decodeState(value).status === "unknown";
     };
-    if (recorded(commandId)) return true;
     const command = this.accepted(commandId)?.command;
-    return command?.kind === "conversation-input" && recorded(command.turnId);
+    const turnId =
+      command?.kind === "conversation-input" ? command.turnId : commandId;
+    if (!unknown(commandId) && (turnId === commandId || !unknown(turnId)))
+      return false;
+    const native = this.read(this.path(turnId, "native.json"));
+    return (
+      native === undefined ||
+      decodeNativeSettlement(native).closure === "unconfirmed"
+    );
   }
   liveFor(id: string): LiveTurn | undefined {
     for (const live of this.active.values())

@@ -421,7 +421,7 @@ it("a revision made while assignments are scheduled is told the route, changes i
     });
   // The diagnosis saw what is still waiting and what it would write.
   expect(prompts[0]).toContain("Assignments of the current route");
-  expect(prompts[0]).toContain("- a [running] A");
+  expect(prompts[0]).toContain("- a [running; writes a.txt] A");
   expect(prompts[0]).toContain("- b [queued; writes b.txt] B");
   expect(revised).toEqual([{ route: { drop: [], add: [added] }, revision: 1 }]);
   expect(live.run.notice).toContain("Assignments added: e.");

@@ -456,7 +456,7 @@ export class Conversations {
         conversationId: id,
       });
   }
-  /** Startup refuses while a browser message's closure was recorded as unknown:
+  /** Startup refuses while a browser message's native closure is unconfirmed:
    * its worker may still write to the session. A message the previous owner's
    * death interrupted (still recorded queued or running) does not refuse: host
    * startup has already stopped that owner's workers by exact identity, and the

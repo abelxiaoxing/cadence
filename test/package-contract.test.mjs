@@ -174,9 +174,17 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(implementation).toMatch(/not passing checks or delivery approval/i);
     expect(implementation).toContain("cadence_report");
     expect(implementation).toContain("service owns delegation and recovery");
+    expect(implementation).toContain(
+      "Judge completion against your own assignment",
+    );
     expect(implementation).not.toMatch(
       /parent.*seals the candidate|supplied disposable proposal root/i,
     );
+    const diagnosis = read(path.join(root, "agents/diagnosis-worker.md"));
+    expect(diagnosis).toContain("expand its write scope inside the repository");
+    expect(diagnosis).toContain("beyond the initial scope");
+    expect(diagnosis).toContain("combined candidate readonly");
+    expect(diagnosis).not.toContain("in-scope remaining assignments");
     for (const role of ["design-explorer", "diagnosis-worker"]) {
       const body = read(path.join(root, `agents/${role}.md`));
       expect(body).toMatch(/readonly/i);

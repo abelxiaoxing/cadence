@@ -41,6 +41,10 @@ A revision wakes the scheduler, so an added assignment can start beside the ones
 With nothing running and exactly one ready assignment, it runs in the candidate itself, so a serial plan never creates another worktree and keeps predecessor and partial-attempt outputs in place.
 When several are ready, what the candidate holds is committed first and each gets a child worktree at `<run-id>/tasks/<assignment-id>`, detached at the candidate's commit (it never owns or moves a branch) and recorded as a `DeliveryArtifact`.
 Only setup commands placed at `worktree` run in each child (the placement contract is in [checks and review](checks-review.md)); its worker and its own recovery are confined to the paths it owns (its declared writes plus what its revisions add, never a path a running sibling owns).
+A child remains a fork-time snapshot: later completed siblings are in the combined candidate, not necessarily in that child.
+Worker placement names its assignment, fork and relative readonly candidate location; assignment reports judge their own work, not missing sibling or queued build outputs.
+Before widening a child's repair scope, recovery compares its fork with the current candidate's committed paths, repeating the comparison if integration advanced during that read.
+Paths already changed there are repaired through a queued follow-up after the required dependencies, not recreated in the old child; unrelated repository-local additions remain allowed, and current running ownership is checked after those asynchronous reads.
 On success the owner commits that scope in the child, cherry-picks the commit onto the candidate (still one parent per candidate commit) and removes the child with plain `git worktree remove` only when nothing at all is left in it.
 Because assignments that run together never own the same path a pick cannot conflict; whether their results fit together is decided by the combined checks and review, and repaired in the candidate.
 After one assignment fails for good, nothing further starts or is integrated, every started one is joined, and unintegrated work stays in its retained child worktree.
@@ -52,6 +56,8 @@ The Pi conversation, its cwd/model and the user's original branch are not moved 
 Creation intent precedes Git effects; actual registration, common directory, branch, HEAD and filesystem identity are checked before worker use.
 A partial creation remains visible and retained, not reported as atomic success.
 Local delivery requires Git with `--no-lazy-fetch`, an existing branch, commit identity and no unfinished Git operation.
+Workers leave edits uncommitted; a local-delivery agreement's commits belong to the owner.
+An unrecorded candidate or assignment HEAD refuses with its worktree path, expected and observed commits; files and commits are retained without adoption or replay.
 Missing partial-clone objects refuse instead of triggering downloads.
 Declared targets must be clean, nonignored and visible in the index; unrelated user changes stay allowed and are never stashed, reset or copied into the candidate.
 Dependencies do not travel with a worktree: any setup needs explicit agreement commands, never automatic copying or installation.

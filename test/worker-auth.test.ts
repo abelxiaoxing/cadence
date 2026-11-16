@@ -125,6 +125,7 @@ async function fixture() {
   result.prepared.consume(JSON.stringify, () => {});
   return {
     context,
+    owner,
     agentDir,
     cwd,
     prepared: result.prepared,
@@ -137,6 +138,23 @@ async function fixture() {
     selection,
   };
 }
+
+it.each(["stopping", "quarantined"])(
+  "retains current redaction during %s without reopening model admission",
+  async (state) => {
+    const f = await fixture();
+    f.owner.state = state;
+    f.credential("settlement-token");
+    expect(f.context.viewRedactionLiterals()).toContain("settlement-token");
+    expect(() => f.context.catalog()).toThrow("quarantine");
+    await expect(f.prepared.refreshAuth()).rejects.toThrow("quarantine");
+    expect(f.getAuth).toHaveBeenCalledTimes(1);
+    vi.spyOn(f.owner.lease, "assert").mockImplementation(() => {
+      throw Error("lost lease");
+    });
+    expect(() => f.context.viewRedactionLiterals()).toThrow("lost lease");
+  },
+);
 
 it("owner refreshes the pinned identity at later requests, with request validity rather than worker lifetime", async () => {
   const f = await fixture();

@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { spawnSync } from "node:child_process";
+import { lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -97,20 +97,30 @@ it("known nonregular read targets refuse without opening them", async () => {
   await expect(call("read", { path: root })).rejects.toThrow("regular files");
 });
 it.skipIf(process.platform === "win32")(
-  "a known socket is not opened as a text file",
+  "a known socket under a long temporary path is not opened as a text file",
   async () => {
     const { root, call } = await fixture();
-    const server = createServer();
-    const path = join(root, "socket");
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(path, resolve);
-    });
-    try {
-      await expect(call("read", { path })).rejects.toThrow("regular files");
-    } finally {
-      await new Promise((resolve) => server.close(resolve));
-    }
+    const directory = join(root, "long-socket-directory-".repeat(6));
+    await mkdir(directory);
+    const path = join(directory, "socket");
+    expect(Buffer.byteLength(path)).toBeGreaterThan(107);
+    // Bind a short relative name in a child's cwd, not the test runner's.
+    // Exiting leaves a real socket inode; no listener or child stays alive.
+    // Everything remains under the caller-owned temp tree, even on macOS.
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        'import { createServer } from "node:net"; createServer().listen("socket", () => process.exit(0));',
+      ],
+      { cwd: directory, encoding: "utf8", timeout: 5000 },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.signal).toBeNull();
+    expect(child.status, child.stderr).toBe(0);
+    expect((await lstat(path)).isSocket()).toBe(true);
+    await expect(call("read", { path })).rejects.toThrow("regular files");
   },
 );
 it.each(["grep", "find"])(

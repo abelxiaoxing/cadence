@@ -28,6 +28,7 @@ import type { ConversationControl } from "../src/service/conversations.ts";
 import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
+import { workflowResultDetail } from "../src/service/workflow-result.ts";
 import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -106,6 +107,11 @@ function fixture(
     },
   };
   const runs = new Map<string, WorkflowRun>();
+  const results = new Map<
+    string,
+    { text: string; output: string; truncated: boolean }
+  >();
+  const detailReads: string[] = [];
   const active: WorkflowRun[] = [];
   /** Investigation identities the owner holds an answer under. */
   const recorded = new Set<string>();
@@ -122,6 +128,17 @@ function fixture(
     humanReviewed: false,
   });
   const workflows = {
+    detail(runId: string, stepId: string): WorkbenchResult {
+      detailReads.push(runId);
+      const result = results.get(stepId);
+      if (!runs.get(runId)?.steps.some((step) => step.id === stepId) || !result)
+        throw new ContractError("unavailable");
+      return {
+        kind: "file",
+        path: `workflow/${runId}/${stepId}`,
+        ...workflowResultDetail({ stepId, result }, project.secrets?.() ?? []),
+      };
+    },
     view(id: string): WorkbenchResult {
       const r = runs.get(id);
       if (!r) throw new ContractError("unavailable");
@@ -237,6 +254,8 @@ function fixture(
     links,
     turns,
     runs,
+    results,
+    detailReads,
     active,
     recorded,
     run,
@@ -596,6 +615,7 @@ it("a research result has one entry per question: its last step, and the identit
         investigation: child,
         text: expect.stringMatching(/^A{100}/u),
         truncated: true,
+        result: { runId: result.id, stepId: expect.any(String) },
       },
       {
         question: 2,
@@ -603,18 +623,119 @@ it("a research result has one entry per question: its last step, and the identit
         investigation: reusedStep,
         text: "Reused recorded investigation",
         truncated: false,
+        result: { runId: result.id, stepId: expect.any(String) },
       },
       {
         question: 3,
         status: "failed",
         text: expect.stringContaining("Provider: 429 rate limit"),
         truncated: false,
+        result: { runId: result.id, stepId: expect.any(String) },
       },
     ],
   });
   expect(
     Buffer.byteLength((result.questions as { text: string }[])[0].text),
   ).toBeLessThanOrEqual(4096);
+  await f.settle(turn);
+});
+
+it("coordinators can read the retained answer past its preview without another investigation", async () => {
+  const secrets = ["private-canary"];
+  const stepId = `research-1-${randomUUID()}`;
+  // Escapes and astral characters exercise encoded IPC bounds and page edges.
+  const answer =
+    '"\\\n😀'.repeat(18000) +
+    " The requested conclusion is at the end. private-canary";
+  const f = fixture(
+    async (run) => {
+      run.status = "completed";
+      run.steps = [
+        {
+          id: stepId,
+          kind: "research",
+          status: "completed",
+          text: answer.slice(0, 16384),
+          exitCode: 0,
+          truncated: true,
+        },
+      ];
+    },
+    { secrets: () => secrets },
+  );
+  f.results.set(stepId, { text: answer, output: "", truncated: true });
+  const turn = f.send(randomUUID(), "enter");
+  const research = await f.tool(turn, "cadence_research", {
+    goal: "g",
+    questions: ["one"],
+  });
+  const question = (
+    research.questions as { text: string; result: Record<string, unknown> }[]
+  )[0];
+  expect(question.text).not.toContain("requested conclusion");
+  expect(question.result).toEqual({ runId: research.id, stepId });
+  let request = question.result;
+  let retained = "";
+  let first: Record<string, unknown> | undefined;
+  for (;;) {
+    const page = await f.tool(turn, "cadence_status", request);
+    first ??= page;
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({ id: 1, ok: true, text: JSON.stringify(page) }),
+      ),
+    ).toBeLessThan(384 * 1024);
+    expect(page.limited).toBe(true); // A retained capture limit never becomes complete.
+    const text = page.text as string;
+    expect(text).not.toMatch(/[\ud800-\udfff]/u);
+    expect(text).not.toContain("private-canary");
+    retained += text;
+    if (!page.next) break;
+    request = page.next as Record<string, unknown>;
+  }
+  expect(JSON.parse(retained).result.text).toContain(
+    "requested conclusion is at the end",
+  );
+  expect(f.runs.size).toBe(1);
+  const other = randomUUID();
+  f.runs.set(other, f.run(other, "research"));
+  const reads = f.detailReads.length;
+  expect(
+    await f.tool(turn, "cadence_status", { runId: other, stepId }),
+  ).toMatchObject({ refused: "invalid" });
+  expect(f.detailReads.length).toBe(reads);
+  expect(
+    await f.tool(turn, "cadence_status", { ...question.result, offset: 1 }),
+  ).toMatchObject({ refused: "invalid" });
+  secrets.push("requested conclusion");
+  expect(await f.tool(turn, "cadence_status", first!.next)).toMatchObject({
+    refused: "changed-result",
+  });
+  const fresh = await f.tool(turn, "cadence_status", question.result);
+  expect(fresh.digest).not.toBe(first!.digest);
+  expect(
+    await f.tool(turn, "cadence_status", {
+      ...question.result,
+      stepId: "unknown",
+    }),
+  ).toMatchObject({ refused: "unavailable" });
+  for (const offset of [-1, 0.5, Number.MAX_SAFE_INTEGER])
+    expect(
+      await f.tool(turn, "cadence_status", {
+        ...question.result,
+        offset,
+        digest: fresh.digest,
+      }),
+    ).toMatchObject({ refused: "invalid" });
+  f.results.set(stepId, {
+    text: "Whole retained answer",
+    output: "",
+    truncated: false,
+  });
+  expect(await f.tool(turn, "cadence_status", question.result)).toMatchObject({
+    limited: false,
+    next: null,
+  });
   await f.settle(turn);
 });
 
