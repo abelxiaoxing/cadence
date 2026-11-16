@@ -185,7 +185,7 @@ After `npm install -g`, `pi install "$(npm root -g)/@abelxiaoxing/cadence"` reco
 Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client and supports the WebUI update route above, but its copy puts no `cadence` on `PATH`; if you want the optional boot service, register it with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
 Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
 A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
-Opening the private link once leaves an HttpOnly cookie in that browser; the address without the token only explains how to get the link.
+Opening the private link once leaves an HttpOnly `SameSite=Strict` cookie in that browser for one year; the address without the token shows a script-free password page that posts the key to `POST /auth` (a correct key sets the same one-year cookie).
 
 ### Port and token
 

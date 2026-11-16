@@ -193,6 +193,7 @@ var LIMITS = Object.freeze({
   stopWaitMs: 60000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
+  cookieLifetimeMs: 365 * 24 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
   unconfirmedStopMs: 3000,
   graphBytes: 512 * 1024,
@@ -4249,7 +4250,28 @@ class HttpAuthentication {
       throw new ContractError("forbidden");
     if (!this.material.matches(value))
       throw new ContractError("unauthenticated");
-    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  login(value, boundary) {
+    this.material.assertCurrent();
+    const origin = boundary.headers.get("origin");
+    if (origin === undefined || origin !== boundary.origin)
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  clearCookie(secure) {
+    return buildTokenCookie(this.cookieName, "", 0, secure);
+  }
+  carriesCookie(header) {
+    if (!header)
+      return false;
+    for (const part of header.split(";")) {
+      if (part.trim().split("=")[0] === this.cookieName)
+        return true;
+    }
+    return false;
   }
   authenticate(boundary, attachmentId, mutation = false, websocket = false) {
     this.material.assertCurrent();

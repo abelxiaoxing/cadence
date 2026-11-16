@@ -79,6 +79,31 @@ export function decodeCookieToken(raw: string): string {
     return raw;
   }
 }
+/** Sanitize a login return target: same-origin absolute path only. Refuses
+ * `//`, `\`, control characters and query credentials; defaults to `/app`.
+ * Never an external redirect. */
+export function sanitizeNextPath(raw: unknown): string {
+  const fallback = "/app";
+  if (typeof raw !== "string") return fallback;
+  const value = raw.trim();
+  if (
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: a return path must reject control characters (newline injection, open redirect)
+    /[\x00-\x1f\x7f]/u.test(value)
+  )
+    return fallback;
+  try {
+    const url = new URL(value, "http://cadence.invalid");
+    url.searchParams.delete("token");
+    url.searchParams.delete("auth_error");
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    return path.startsWith("/") && !path.startsWith("//") ? path : fallback;
+  } catch {
+    return fallback;
+  }
+}
 function cookieTokens(header: string | undefined, name: string): string[] {
   if (!header) return [];
   let found = false;
@@ -503,9 +528,37 @@ export class HttpAuthentication {
     return buildTokenCookie(
       this.cookieName,
       encodeURIComponent(value),
-      LIMITS.browserLifetimeMs / 1000,
+      LIMITS.cookieLifetimeMs / 1000,
       boundary.secure,
     );
+  }
+  /** Native password-form login (POST /auth). Origin must be present and exact;
+   * Sec-Fetch-* is never trusted. Returns the one-year cookie header value. */
+  login(value: string, boundary: RequestBoundary): string {
+    this.material.assertCurrent();
+    const origin = boundary.headers.get("origin");
+    if (origin === undefined || origin !== boundary.origin)
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(
+      this.cookieName,
+      encodeURIComponent(value),
+      LIMITS.cookieLifetimeMs / 1000,
+      boundary.secure,
+    );
+  }
+  /** Expire the browser cookie of the current name (Max-Age=0). */
+  clearCookie(secure: boolean): string {
+    return buildTokenCookie(this.cookieName, "", 0, secure);
+  }
+  /** Whether the request carried a cookie of the current name (possibly stale). */
+  carriesCookie(header: string | undefined): boolean {
+    if (!header) return false;
+    for (const part of header.split(";")) {
+      if (part.trim().split("=")[0] === this.cookieName) return true;
+    }
+    return false;
   }
   authenticate(
     boundary: RequestBoundary,

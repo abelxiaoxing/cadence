@@ -16,6 +16,7 @@ export declare const LIMITS: Readonly<{
   stopWaitMs: 60000;
   authValidityMarginMs: 120000;
   browserLifetimeMs: number;
+  cookieLifetimeMs: number;
   terminateGraceMs: 1000;
   unconfirmedStopMs: 3000;
   graphBytes: number;

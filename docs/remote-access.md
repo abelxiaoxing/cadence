@@ -48,10 +48,19 @@ Audit any additional proxy-generated forwarding headers against the exact backen
 HTTP and WebSocket upgrade must use the same authenticated route; no public backend bypass or insecure credential-bearing HTTP.
 This example does not install Caddy, provision DNS/certificates, change a firewall or deploy a service.
 
-Use `cadence-service token-link --workspace /absolute/project --reveal` to reveal a private entry link deliberately; the background service prints its link at `cadence server install` and `restart`.
-Only root GET token entry accepts query credentials; subsequent private reads, exports and WS use the HttpOnly SameSite=Strict Secure cookie.
-Browser mutations/readonly POSTs require exact Origin and CSRF; access does not grant Start/check/review consent.
+Use `cadence-service token-link --workspace /absolute/project --reveal` to reveal a private entry link deliberately.
+The background service prints its link at `cadence server install` and `restart`.
+Unauthenticated `GET /` and `GET /app` answer 401 with a script-free password page (no script, no value backfill, no storage) that posts the key to `POST /auth`.
+That page is the only `Referrer-Policy: same-origin` response, so a browser native form submits a valid Origin.
+A correct key sets the `HttpOnly` `SameSite=Strict` cookie for one year (`Max-Age=31536000`) and 303s to the sanitized entry.
+A wrong key redirects to the error page with a neutral notice and expires any stale cookie it carried; a sanitized `next` parameter preserves the selected project for another attempt.
+Only the root `GET /?token=` bootstrap still accepts query credentials, and it sets the same one-year cookie.
+Subsequent private reads, exports and WS use that cookie.
+Browser mutations/readonly POSTs require exact Origin and CSRF.
+`POST /auth` requires a present, exact Origin (missing/`null`/external is 403).
+Access does not grant Start/check/review consent.
 A bad explicit token refuses even with an older cookie.
+An invalid or rotated cookie is answered 401 (password page for HTML acceptors, JSON otherwise) and the cookie is expired.
 Never put provider credentials in a browser or URL.
 
 `token-rotate` invalidates old links/cookies, pending grants, authenticated sockets and incomplete downloads without canceling admitted tasks.
@@ -68,6 +77,7 @@ Use the same `proxy.origin` and trusted immediate proxy addresses as above; the 
 The selected policy is retained in private workbench state, so after orderly `cadence workbench stop` a default `cadence server install` can register that entry without a project or a default workspace.
 Do not install over an independently running detached entry; stop it explicitly first.
 The gateway authenticates and validates Host/Origin before routing, rejects browser local-capability headers and management paths, and forwards project requests with browser cookies, not native authority.
+Its unauthenticated `GET /` and `GET /app?project=` answer the same script-free 401 password page and `POST /auth` one-year cookie login as the owner; the sanitized entry preserves the `?project=` parameter.
 Project attachment IDs, owner CSRF/build compatibility, consent, retained read proofs and exports remain owner-validated.
 A workbench token rotation revokes its routes and retires its exact browser viewers without cancelling admitted project work.
 Project ports, backend cookies and local capabilities remain server-side.

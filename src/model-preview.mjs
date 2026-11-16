@@ -19,6 +19,7 @@ var LIMITS = Object.freeze({
   stopWaitMs: 60000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
+  cookieLifetimeMs: 365 * 24 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
   unconfirmedStopMs: 3000,
   graphBytes: 512 * 1024,

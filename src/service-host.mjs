@@ -325,6 +325,7 @@ var LIMITS = Object.freeze({
   stopWaitMs: 60000,
   authValidityMarginMs: 120000,
   browserLifetimeMs: 12 * 60 * 60 * 1000,
+  cookieLifetimeMs: 365 * 24 * 60 * 60 * 1000,
   terminateGraceMs: 1000,
   unconfirmedStopMs: 3000,
   graphBytes: 512 * 1024,
@@ -10451,6 +10452,23 @@ function decodeCookieToken(raw) {
     return raw;
   }
 }
+function sanitizeNextPath(raw) {
+  const fallback = "/app";
+  if (typeof raw !== "string")
+    return fallback;
+  const value = raw.trim();
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\x00-\x1f\x7f]/u.test(value))
+    return fallback;
+  try {
+    const url = new URL(value, "http://cadence.invalid");
+    url.searchParams.delete("token");
+    url.searchParams.delete("auth_error");
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    return path.startsWith("/") && !path.startsWith("//") ? path : fallback;
+  } catch {
+    return fallback;
+  }
+}
 function cookieTokens(header, name) {
   if (!header)
     return [];
@@ -10758,7 +10776,28 @@ class HttpAuthentication {
       throw new ContractError("forbidden");
     if (!this.material.matches(value))
       throw new ContractError("unauthenticated");
-    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  login(value, boundary) {
+    this.material.assertCurrent();
+    const origin = boundary.headers.get("origin");
+    if (origin === undefined || origin !== boundary.origin)
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.cookieLifetimeMs / 1000, boundary.secure);
+  }
+  clearCookie(secure) {
+    return buildTokenCookie(this.cookieName, "", 0, secure);
+  }
+  carriesCookie(header) {
+    if (!header)
+      return false;
+    for (const part of header.split(";")) {
+      if (part.trim().split("=")[0] === this.cookieName)
+        return true;
+    }
+    return false;
   }
   authenticate(boundary, attachmentId, mutation2 = false, websocket = false) {
     this.material.assertCurrent();
@@ -10792,6 +10831,545 @@ class HttpAuthentication {
     if (!this.material.available || caller.accessGeneration !== this.material.generation)
       throw new ContractError("unauthenticated");
   }
+}
+
+// src/service/auth-form.ts
+async function readLoginForm(req, signal) {
+  if (req.headers["content-type"] !== "application/x-www-form-urlencoded" || req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] !== undefined)
+    throw new ContractError("invalid");
+  const length = req.headers["content-length"];
+  if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
+    throw new ContractError("oversize");
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+    if (signal?.aborted)
+      throw new ContractError("unavailable");
+    bytes += chunk.length;
+    if (bytes > LIMITS.controlBytes)
+      throw new ContractError("oversize");
+    chunks.push(chunk);
+  }
+  let form;
+  try {
+    form = new URLSearchParams(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+  } catch {
+    throw new ContractError("invalid");
+  }
+  if (form.getAll("password").length !== 1 || form.getAll("next").length > 1 || [...form.keys()].some((key) => key !== "password" && key !== "next"))
+    throw new ContractError("invalid");
+  return {
+    password: form.get("password") ?? "",
+    next: sanitizeNextPath(form.get("next"))
+  };
+}
+function loginRetryPath(next) {
+  const target = sanitizeNextPath(next);
+  return target === "/app" ? "/?auth_error=1" : `/?${new URLSearchParams({ auth_error: "1", next: target })}`;
+}
+function loginNextPath(url) {
+  return sanitizeNextPath(url.pathname === "/" && url.searchParams.has("auth_error") ? url.searchParams.get("next") : `${url.pathname}${url.search}${url.hash}`);
+}
+
+// src/service/auth-page.ts
+import { createHash as createHash9 } from "node:crypto";
+var styles = `
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #edf4f1;
+  background: #0a100f;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 40px 28px;
+  background:
+    radial-gradient(ellipse at 12% 5%, #183a302e, transparent 55%),
+    radial-gradient(ellipse at 90% 95%, #253b492e, transparent 50%), #0a100f;
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(#9bc6b605 1px, transparent 1px),
+    linear-gradient(90deg, #9bc6b605 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+main {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  width: min(1080px, 100%);
+  min-height: 650px;
+  border: 1px solid #b2d6c51c;
+  border-radius: 28px;
+  overflow: hidden;
+  background: #101916;
+  box-shadow: 0 40px 100px #0005;
+}
+.story {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 42px 48px;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse at 25% 80%, #2e6f4d40, transparent 65%),
+    linear-gradient(145deg, #172922, #101c19);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.7px;
+}
+.brand svg {
+  width: 34px;
+  height: 34px;
+  color: #b8f3ce;
+}
+.intro {
+  position: relative;
+  z-index: 1;
+  margin-top: 76px;
+}
+.eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2.3px;
+  text-transform: uppercase;
+  color: #a4bdb1;
+  margin: 0 0 19px;
+}
+.headline {
+  font-size: clamp(42px, 4.4vw, 58px);
+  font-weight: 450;
+  line-height: 1.08;
+  letter-spacing: -2.7px;
+  margin: 0;
+}
+.headline em {
+  font-style: normal;
+  color: #bbf4cf;
+}
+.lede {
+  max-width: 310px;
+  margin: 24px 0 0;
+  color: #a8beb2;
+  font-size: 14px;
+  line-height: 1.75;
+}
+.orbit {
+  position: absolute;
+  z-index: -1;
+  width: 430px;
+  height: 430px;
+  right: -180px;
+  bottom: -175px;
+  border: 1px solid #b8f3ce30;
+  border-radius: 50%;
+  box-shadow:
+    0 0 80px #8affac09,
+    inset 0 0 80px #8affac09;
+}
+.orbit::before,
+.orbit::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid #b8f3ce1a;
+  inset: 44px;
+}
+.orbit::after {
+  inset: -48px;
+  border-style: dashed;
+  border-color: #b8f3ce17;
+}
+.satellite {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: orbit 36s linear infinite;
+}
+.satellite::before {
+  content: "";
+  position: absolute;
+  top: 60px;
+  left: 60px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c2f6d3;
+  box-shadow: 0 0 24px #b6ffcd88;
+}
+.rhythm {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: auto;
+  padding-top: 72px;
+  font-size: 11px;
+  color: #b0c4b8;
+  letter-spacing: 0.3px;
+}
+.rhythm span {
+  color: #638273;
+}
+.entry {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 64px 56px;
+  background: linear-gradient(150deg, #16201b66, transparent 65%);
+}
+.access {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  border: 1px solid #d6f3e51a;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  color: #bed2c5;
+  text-transform: uppercase;
+  margin-bottom: 30px;
+}
+.access svg {
+  width: 12px;
+  height: 12px;
+  color: #b8edc7;
+}
+h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 500;
+  letter-spacing: -1.2px;
+  margin: 0 0 12px;
+}
+.description {
+  font-size: 14px;
+  color: #a5b5ab;
+  line-height: 1.65;
+  margin: 0 0 32px;
+}
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #d1e0d6;
+  margin-bottom: 10px;
+}
+.field {
+  position: relative;
+}
+.field svg {
+  position: absolute;
+  left: 16px;
+  top: 18px;
+  width: 18px;
+  height: 18px;
+  color: #849e8e;
+  pointer-events: none;
+}
+input[type="password"] {
+  display: block;
+  width: 100%;
+  height: 54px;
+  border: 1px solid #c2e7cf26;
+  border-radius: 10px;
+  background: #0b130f;
+  color: #edf4f1;
+  padding: 0 16px 0 46px;
+  font:
+    16px ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  letter-spacing: 1px;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+input::placeholder {
+  font:
+    13px ui-sans-serif,
+    system-ui,
+    sans-serif;
+  letter-spacing: 0;
+  color: #7f9588;
+}
+input:hover {
+  border-color: #a9d9b950;
+}
+input:focus-visible {
+  outline: 2px solid #b8f3ce;
+  outline-offset: 3px;
+  border-color: #b8f3ce;
+}
+input[aria-invalid="true"] {
+  border-color: #e5aa87;
+}
+.hint {
+  margin: 10px 0 24px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #92a99a;
+}
+button {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px solid #d8ffe0;
+  border-radius: 10px;
+  background: #c5f5d4;
+  color: #14271c;
+  font:
+    600 13px ui-sans-serif,
+    system-ui,
+    sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 24px #9cffbb0a;
+  transition:
+    background 0.2s,
+    transform 0.2s,
+    box-shadow 0.2s;
+}
+button svg {
+  width: 17px;
+  height: 17px;
+  transition: transform 0.2s;
+}
+button:hover {
+  background: #d8ffe3;
+  box-shadow: 0 4px 28px #9cffbb1c;
+  transform: translateY(-1px);
+}
+button:hover svg {
+  transform: translateX(3px);
+}
+button:active {
+  transform: translateY(0);
+}
+button:focus-visible {
+  outline: 2px solid #c5f5d4;
+  outline-offset: 4px;
+}
+.remember {
+  margin: 22px auto 0;
+  max-width: 270px;
+  text-align: center;
+  color: #91a799;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.notice {
+  font-size: 12px;
+  color: #f4c6a9;
+  background: #a34a2019;
+  border: 1px solid #dca47c40;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 20px;
+  line-height: 1.65;
+}
+footer {
+  position: relative;
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(1080px, 100%);
+  padding: 20px 8px 0;
+  color: #829b8b;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.shell {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+}
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (min-width: 1600px) {
+  main {
+    min-height: 700px;
+  }
+  .intro {
+    margin-top: 100px;
+  }
+}
+@media (max-width: 800px) {
+  body {
+    padding: 24px 18px;
+  }
+  main {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+    min-height: 0;
+    border-radius: 22px;
+  }
+  .story {
+    padding: 28px 30px 30px;
+  }
+  .intro {
+    margin-top: 34px;
+  }
+  .headline {
+    font-size: 40px;
+    letter-spacing: -1.8px;
+  }
+  .headline br {
+    display: none;
+  }
+  .lede {
+    font-size: 13px;
+    margin-top: 14px;
+    max-width: 340px;
+  }
+  .rhythm {
+    display: none;
+  }
+  .orbit {
+    width: 320px;
+    height: 320px;
+    right: -180px;
+    bottom: -215px;
+  }
+  .entry {
+    padding: 32px 30px 36px;
+  }
+  .access {
+    margin-bottom: 22px;
+  }
+  h1 {
+    font-size: 28px;
+  }
+  .description {
+    margin-bottom: 26px;
+  }
+  footer {
+    max-width: 480px;
+    padding-top: 16px;
+    font-size: 9px;
+  }
+  .eyebrow {
+    margin-bottom: 12px;
+  }
+}
+@media (max-width: 360px) {
+  body {
+    padding: 14px 10px;
+  }
+  .story,
+  .entry {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+  .headline {
+    font-size: 36px;
+  }
+  footer {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+@media (forced-colors: active) {
+  main,
+  input[type="password"],
+  button,
+  .access,
+  .notice {
+    border: 1px solid CanvasText;
+  }
+  .orbit {
+    display: none;
+  }
+  .headline em {
+    color: CanvasText;
+  }
+}
+`;
+var AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash9("sha256").update(styles).digest("base64")}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
+function escapeAttr(value) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderAuthPage(options) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Welcome to Cadence</title>
+<style>${styles}</style>
+</head>
+<body>
+<div class="shell">
+<main>
+<section class="story" aria-label="Cadence">
+<div class="brand"><svg viewBox="0 0 36 36" fill="none" aria-hidden="true"><rect x="1" y="1" width="34" height="34" rx="11" stroke="currentColor" stroke-opacity=".3"/><path d="M25 12a9 9 0 1 0 0 12M12 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>cadence</div>
+<div class="intro">
+<p class="eyebrow">A little focus. A lot of possibility.</p>
+<p class="headline">Find your flow.<br> Build <em>what’s next.</em></p>
+<p class="lede">A space for your ideas to become plans, and your plans to become something real.</p>
+</div>
+<div class="orbit" aria-hidden="true"><div class="satellite"></div></div>
+<div class="rhythm" aria-hidden="true">Think <span>↗</span> Create <span>↗</span> Keep going</div>
+</section>
+<section class="entry" aria-labelledby="welcome">
+<div class="access"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="4" y="9" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 9V6a3 3 0 0 1 6 0v3" stroke="currentColor" stroke-width="1.5"/></svg>Private workspace</div>
+<h1 id="welcome">Welcome to Cadence.</h1>
+<p class="description">Your next idea starts here.<br>Enter your access key to step inside.</p>
+${options.authError ? '<p id="auth-notice" class="notice" role="alert">Access key was not accepted. Check the current key and try again.</p>' : ""}
+<form method="post" action="/auth">
+<input type="hidden" name="next" value="${escapeAttr(options.nextPath)}">
+<label for="key">Access key</label>
+<div class="field">
+<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="9" r="4" stroke="currentColor" stroke-width="1.6"/><path d="m11 12 8 8m-3-3 2-2m-5-1 2-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+<input id="key" name="password" type="password" placeholder="Enter your access key" autocomplete="current-password" required autofocus aria-describedby="key-hint${options.authError ? " auth-notice" : ""}"${options.authError ? ' aria-invalid="true"' : ""}>
+</div>
+<p id="key-hint" class="hint">Use the key provided by your Cadence server.</p>
+<button type="submit">Open workspace<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+</form>
+<p class="remember">Stay signed in on this browser for up to a year.<br>Your access key stays out of the address bar.</p>
+</section>
+</main>
+<footer><span>Cadence · A workspace for what’s next.</span><span>Your space. Your pace.</span></footer>
+</div>
+</body>
+</html>
+`;
 }
 
 // src/service/autostart.ts
@@ -12631,7 +13209,7 @@ function decodeStartupReport(value) {
 }
 
 // src/service/self-heal.ts
-import { createHash as createHash9, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash10, randomUUID as randomUUID11 } from "node:crypto";
 import { lstatSync as lstatSync13, opendirSync as opendirSync7 } from "node:fs";
 import { hostname as hostname7 } from "node:os";
 import { join as join19 } from "node:path";
@@ -13322,7 +13900,7 @@ function liveReservations(c) {
   return out;
 }
 function projectFiles(c, root) {
-  const privateRoot = join19(c.files.namespace, createHash9("sha256").update(root).digest("hex"));
+  const privateRoot = join19(c.files.namespace, createHash10("sha256").update(root).digest("hex"));
   return {
     root,
     privateRoot,
@@ -14535,9 +15113,9 @@ class CadencePreferences {
 }
 
 // src/conversation-identity.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 function conversationIdentity(identity) {
-  const h = createHash10("sha256").update(identity).digest("hex");
+  const h = createHash11("sha256").update(identity).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
@@ -15526,7 +16104,7 @@ class ConversationControls {
 }
 
 // src/service/workbench-files.ts
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 import {
   closeSync as closeSync7,
   constants as constants7,
@@ -15689,7 +16267,7 @@ class WorkbenchFiles {
       kind: "file-part",
       path,
       size: stat.size,
-      version: createHash11("sha256").update(`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`).digest("hex").slice(0, 32),
+      version: createHash12("sha256").update(`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`).digest("hex").slice(0, 32),
       data: buffer.toString("base64"),
       next: end < stat.size ? end : null
     };
@@ -15899,7 +16477,7 @@ async function readGatewayModels(project, input, secrets, read) {
 }
 
 // src/service/http.ts
-import { createHash as createHash12, randomUUID as randomUUID13 } from "node:crypto";
+import { createHash as createHash13, randomUUID as randomUUID13 } from "node:crypto";
 import {
   createServer
 } from "node:http";
@@ -15988,7 +16566,7 @@ class ServiceHttpServer {
       this.assets.set(asset.path, {
         ...asset,
         bytes: Uint8Array.from(asset.bytes),
-        etag: `"${createHash12("sha256").update(asset.bytes).digest("hex")}"`
+        etag: `"${createHash13("sha256").update(asset.bytes).digest("hex")}"`
       });
     }
     this.server = createServer({
@@ -16216,11 +16794,17 @@ Content-Length: 0\r
       res.destroy();
     }, LIMITS.downloadIdleMs);
     const resetIdle = () => timer.refresh();
+    let boundary;
+    let url;
     try {
-      const boundary = requestBoundary(req, this.policy, this.origin);
+      boundary = requestBoundary(req, this.policy, this.origin);
       const target = req.url ?? "";
       assertRequestTarget(target);
-      const url = new URL(target, this.origin);
+      url = new URL(target, this.origin);
+      if (target === "/auth" && req.method === "POST") {
+        await this.login(req, res, boundary, abort.signal);
+        return;
+      }
       if (url.searchParams.has("token")) {
         if (req.method !== "GET" || !target.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
           throw new ContractError("invalid");
@@ -16237,8 +16821,18 @@ Content-Length: 0\r
         return;
       }
       if (target === "/" && req.method === "GET") {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
+        if (!this.accepting)
+          unavailable();
+        try {
+          this.options.auth.authenticate(boundary, randomUUID13(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return this.unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (target.startsWith("/local/v1/admin/")) {
@@ -16328,6 +16922,10 @@ Content-Length: 0\r
         res.destroy();
       else {
         const code2 = e instanceof ContractError ? e.code : "unavailable";
+        if (code2 === "unauthenticated" && boundary && url) {
+          this.unauthorized(res, boundary, url);
+          return;
+        }
         res.setHeader("Connection", "close");
         send(res, errorStatus(code2), refusal(code2, dispatched && !(e instanceof UnacceptedConversationCommand)));
       }
@@ -16337,6 +16935,59 @@ Content-Length: 0\r
       this.requests.delete(abort);
       if (counted)
         this.reads--;
+    }
+  }
+  async login(req, res, boundary, signal) {
+    if (!this.accepting)
+      unavailable();
+    if (!boundary.headers.has("origin"))
+      throw new ContractError("forbidden");
+    if (this.bodies >= LIMITS.admissionCount)
+      throw new ContractError("capacity");
+    this.bodies++;
+    let form;
+    try {
+      form = await readLoginForm(req, signal);
+    } finally {
+      this.bodies--;
+    }
+    if (!this.accepting || signal.aborted)
+      unavailable();
+    const { password: submitted, next } = form;
+    try {
+      res.setHeader("Set-Cookie", this.options.auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code2 = e instanceof ContractError ? e.code : "unavailable";
+      if (code2 === "unauthenticated") {
+        if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader("Set-Cookie", this.options.auth.clearCookie(boundary.secure));
+        res.statusCode = 303;
+        res.setHeader("Location", loginRetryPath(next));
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      send(res, errorStatus(code2), refusal(code2));
+    }
+  }
+  unauthorized(res, boundary, url) {
+    if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader("Set-Cookie", this.options.auth.clearCookie(boundary.secure));
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Security-Policy", AUTH_PAGE_CSP);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(renderAuthPage({
+        authError: url.searchParams.has("auth_error"),
+        nextPath: loginNextPath(url)
+      }));
+    } else {
+      res.setHeader("Connection", "close");
+      send(res, 401, refusal("unauthenticated"));
     }
   }
   async manage(req, res, boundary, signal) {
@@ -16535,7 +17186,7 @@ Content-Length: 0\r
       res.setHeader("Content-Type", operation === "download" && request2.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request2.format === "markdown" ? "md" : "ndjson"}"`);
       let trailer;
-      const digest = createHash12("sha256");
+      const digest = createHash13("sha256");
       const write2 = async (frame) => {
         const data2 = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
 `);
@@ -16773,7 +17424,7 @@ Content-Length: 0\r
 
 // src/service/model-preview-process.ts
 import { spawn as spawn4 } from "node:child_process";
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/service/model-preview-protocol.ts
@@ -16823,7 +17474,7 @@ class ModelPreviewProcesses {
       });
       const body = canonicalJson(input, PREVIEW_INPUT_BYTES);
       const env = captureEnvironment(hostEnvironment(environment2));
-      const key = createHash13("sha256").update(body).update(JSON.stringify(env)).digest("hex");
+      const key = createHash14("sha256").update(body).update(JSON.stringify(env)).digest("hex");
       const previous = this.jobs.get(key);
       if (previous)
         return previous.result;
@@ -16973,7 +17624,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b",
+    contractHash: "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17425,6 +18076,51 @@ Content-Length: 0\r
     const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
     return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
   }
+  async function login(req, res, boundary) {
+    assert();
+    if (!boundary.headers.has("origin"))
+      throw new ContractError("forbidden");
+    const { password: submitted, next } = await readLoginForm(req);
+    assert();
+    try {
+      res.setHeader("Set-Cookie", auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code2 = e instanceof ContractError ? e.code : "unavailable";
+      if (code2 === "unauthenticated") {
+        if (auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+        res.statusCode = 303;
+        res.setHeader("Location", loginRetryPath(next));
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      reply(res, code2 === "forbidden" ? 403 : 400, {
+        kind: "error",
+        error: publicError(code2)
+      });
+    }
+  }
+  function unauthorized(res, boundary, url) {
+    if (auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader("Set-Cookie", auth.clearCookie(boundary.secure));
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Security-Policy", AUTH_PAGE_CSP);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(renderAuthPage({
+        authError: url.searchParams.has("auth_error"),
+        nextPath: loginNextPath(url)
+      }));
+    } else {
+      res.setHeader("Connection", "close");
+      reply(res, 401, { kind: "error", error: publicError("unauthenticated") });
+    }
+  }
   async function handle(req, res) {
     let effect = false;
     if (++pending > 64) {
@@ -17433,10 +18129,17 @@ Content-Length: 0\r
       return;
     }
     fixedHeaders(res);
+    let boundary;
+    let url;
     try {
-      const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+      boundary = requestBoundary(req, input.policy, endpoint2);
+      const raw = req.url ?? "";
       assertRequestTarget(raw);
-      const url = new URL(raw, endpoint2);
+      url = new URL(raw, endpoint2);
+      if (raw === "/auth" && req.method === "POST") {
+        await login(req, res, boundary);
+        return;
+      }
       if (raw === "/healthz" && req.method === "GET") {
         reply(res, 200, { status: "ok" });
         return;
@@ -17452,8 +18155,16 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/" && req.method === "GET") {
-        res.end(`Cadence workbench: open the private link. No default workspace is created.
-`);
+        try {
+          auth.authenticate(boundary, randomUUID14(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (raw.startsWith("/local/v1/admin/")) {
@@ -17771,6 +18482,8 @@ Content-Length: 0\r
       const code2 = error instanceof ContractError ? error.code : "unavailable";
       if (res.headersSent)
         res.destroy();
+      else if (code2 === "unauthenticated" && boundary && url)
+        unauthorized(res, boundary, url);
       else
         reply(res, code2 === "unauthenticated" ? 401 : code2 === "forbidden" ? 403 : 400, {
           kind: "error",
@@ -17859,7 +18572,7 @@ import { join as join45 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // src/agent-registry.ts
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 var AGENT_FILES = [
   "design-explorer.md",
@@ -17876,7 +18589,7 @@ function loadAgentDefinitions() {
       role: fileName.replace(/\.md$/, ""),
       fileName,
       path,
-      sha256: createHash14("sha256").update(data2).digest("hex"),
+      sha256: createHash15("sha256").update(data2).digest("hex"),
       bytes: data2.length,
       content: data2.toString("utf8")
     };
@@ -18131,7 +18844,7 @@ class HistoryLive {
 }
 
 // src/history/navigation.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 import { lstatSync as lstatSync18 } from "node:fs";
 import { dirname as dirname18, join as join29 } from "node:path";
 
@@ -19358,7 +20071,7 @@ class HistoryNavigation {
         continue;
       }
       let pending = Buffer.alloc(0), at2 = offset, bodyBytes = 0;
-      const checksum = createHash15("sha256"), rows = [];
+      const checksum = createHash16("sha256"), rows = [];
       while (at2 < size2) {
         const chunk = this.block(path, at2, size2, budget);
         at2 += chunk.length;
@@ -19861,7 +20574,7 @@ function navigationKeys(row) {
 }
 
 // src/history/projection.ts
-import { createHash as createHash21 } from "node:crypto";
+import { createHash as createHash22 } from "node:crypto";
 
 // src/history/task-folds.ts
 var TASKS = 1024;
@@ -20204,17 +20917,17 @@ function materializeEntity(s, sources) {
 }
 
 // src/history/export.ts
-import { createHash as createHash19, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash20, randomUUID as randomUUID15 } from "node:crypto";
 import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/history/search.ts
-import { createHash as createHash18 } from "node:crypto";
+import { createHash as createHash19 } from "node:crypto";
 
 // src/history/read-proof.ts
 import {
   createCipheriv,
   createDecipheriv,
-  createHash as createHash16,
+  createHash as createHash17,
   randomBytes as randomBytes5
 } from "node:crypto";
 var PREFIX = "rp1.";
@@ -20266,7 +20979,7 @@ class HistoryReadProof {
       root: this.files.format.rootIdentity,
       format: material.formatStamp,
       key: material.keyStamp,
-      request: createHash16("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
+      request: createHash17("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
     }));
   }
   seal(context, plaintext, budget) {
@@ -21038,11 +21751,11 @@ function decodeRetainedProgress(value) {
 }
 
 // src/history/retained-traversal.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash18 } from "node:crypto";
 function bad5() {
   throw new ContractError("corrupt-selected");
 }
-var fingerprint = (v) => createHash17("sha256").update(canonicalJson(v)).digest("hex");
+var fingerprint = (v) => createHash18("sha256").update(canonicalJson(v)).digest("hex");
 var ready = (v) => {
   const s = v.state;
   if (s.phase !== "ready")
@@ -21398,11 +22111,11 @@ var digits = (id) => {
   return s.slice(0, 12) + s.slice(13, 16) + s.slice(17);
 };
 var publicTextRef = (id, label, text2, field, batch, row, slot) => ({
-  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash18("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
+  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash19("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
   version: batch.rows.indexOf(row) * EVENT_SLOTS + slot + 1,
   field,
   bytes: Buffer.byteLength(text2),
-  sha256: createHash18("sha256").update(text2).digest("hex")
+  sha256: createHash19("sha256").update(text2).digest("hex")
 });
 var initial = () => ({
   pos: { segment: 1, offset: 0 },
@@ -21418,7 +22131,7 @@ function scanCursor(base, p) {
   const snapshot = p.snapshot.toString(16).padStart(14, "0");
   if (snapshot.length !== 14)
     throw new ContractError("capacity");
-  const binding = createHash18("sha256").update(canonicalJson({
+  const binding = createHash19("sha256").update(canonicalJson({
     ...readIdentity(base),
     recordId: null,
     recordVersion: version,
@@ -21759,7 +22472,7 @@ class RetainedScan {
             graph: {
               recordId: v.intent.operationId,
               revision: graph.revision,
-              sha256: createHash18("sha256").update(canonicalJson(graph)).digest("hex")
+              sha256: createHash19("sha256").update(canonicalJson(graph)).digest("hex")
             }
           },
           graph
@@ -22058,7 +22771,7 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash19("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash20("sha256").update(readFileSync5(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
@@ -22118,7 +22831,7 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request3 = decodeExportRequest(input), exportId = randomUUID15(), digest = createHash19("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID15(), digest = createHash20("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
@@ -22187,7 +22900,7 @@ async function* exportHistory(projection, input, signal) {
       const { detail, owner } = item, original = open2.get(detail.content.recordId);
       if (detail.content.bytes ? !original || original.bytes !== detail.content.bytes || original.content !== canonicalJson(detail.content) : original !== undefined)
         throw new ContractError("corrupt-selected");
-      if ((original?.hash ?? createHash19("sha256")).digest("hex") !== detail.content.sha256)
+      if ((original?.hash ?? createHash20("sha256")).digest("hex") !== detail.content.sha256)
         throw new ContractError("corrupt-selected");
       open2.delete(detail.content.recordId);
       const events = [];
@@ -22218,7 +22931,7 @@ async function* exportHistory(projection, input, signal) {
     coverage = combineCoverage(coverage, item.coverage);
     const length = Buffer.byteLength(item.text);
     if (item.inline) {
-      if (item.start !== 0 || length !== item.content.bytes || createHash19("sha256").update(item.text).digest("hex") !== item.content.sha256)
+      if (item.start !== 0 || length !== item.content.bytes || createHash20("sha256").update(item.text).digest("hex") !== item.content.sha256)
         throw new ContractError("corrupt-selected");
     } else {
       let original = open2.get(item.content.recordId);
@@ -22228,7 +22941,7 @@ async function* exportHistory(projection, input, signal) {
         original = {
           bytes: 0,
           content: canonicalJson(item.content),
-          hash: createHash19("sha256")
+          hash: createHash20("sha256")
         };
         open2.set(item.content.recordId, original);
       }
@@ -22343,7 +23056,7 @@ async function* exportHistory(projection, input, signal) {
 }
 
 // src/history/list-progress.ts
-import { createHash as createHash20 } from "node:crypto";
+import { createHash as createHash21 } from "node:crypto";
 
 // src/history/detail-progress.ts
 function bad7() {
@@ -22817,7 +23530,7 @@ function fits(link, scope) {
   return scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
 }
 function nextAfter(request3, n) {
-  const h = createHash20("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
+  const h = createHash21("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
   return {
     recordId: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     version: 1,
@@ -23201,7 +23914,7 @@ async function read(p, request3, entity) {
       const tasks = [...p.environment.legacyTasks(budget)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
-      const sum = createHash20("sha256");
+      const sum = createHash21("sha256");
       for (const task2 of tasks) {
         budget.reserve(0);
         sum.update(JSON.stringify({
@@ -23214,7 +23927,7 @@ async function read(p, request3, entity) {
       if (s.legacy > tasks.length)
         bad9();
       if (!s.legacyIdentity && request3.after?.version === Number.MAX_SAFE_INTEGER) {
-        const h = createHash20("sha256").update(canonicalJson({
+        const h = createHash21("sha256").update(canonicalJson({
           ...readIdentity(request3),
           after: null,
           legacy: s.legacy === 0 ? "begin" : identity,
@@ -23494,7 +24207,7 @@ class HistoryProjection {
   };
   cursor(request3, pos, row, item) {
     const offset = pos.offset * (LIMITS.segmentRecords + 1) * ROW_SLOTS + row * ROW_SLOTS + item;
-    const digest = createHash21("sha256").update(canonicalJson({
+    const digest = createHash22("sha256").update(canonicalJson({
       ...readIdentity(request3),
       after: null,
       position: { ...pos, row, item }
@@ -23685,7 +24398,7 @@ class HistoryProjection {
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
     const cursor = (offset2, identity2) => {
-      const digest2 = createHash21("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
+      const digest2 = createHash22("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
       return {
         recordId: `${digest2.slice(0, 8)}-${digest2.slice(8, 12)}-4${digest2.slice(13, 16)}-8${digest2.slice(17, 20)}-${digest2.slice(20, 32)}`,
         version: legacyVersion,
@@ -23712,7 +24425,7 @@ class HistoryProjection {
     }
     if (legacy.length > 1000)
       throw new ContractError("capacity");
-    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash21("sha256");
+    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash22("sha256");
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
@@ -23902,7 +24615,7 @@ class HistoryProjection {
 }
 
 // src/history/reader.ts
-import { createHash as createHash22 } from "node:crypto";
+import { createHash as createHash23 } from "node:crypto";
 import { existsSync as existsSync3 } from "node:fs";
 import { join as join30 } from "node:path";
 
@@ -24564,7 +25277,7 @@ class HistoryReader {
         }
       }
       const text2 = Buffer.concat(pieces);
-      if (end !== detail.content.bytes || createHash22("sha256").update(text2).digest("hex") !== detail.content.sha256)
+      if (end !== detail.content.bytes || createHash23("sha256").update(text2).digest("hex") !== detail.content.sha256)
         return;
       return { detail, bytes: text2 };
     } catch {
@@ -24599,7 +25312,7 @@ class HistoryReader {
       if (!current2 || current2.length < expected.bytes || hash(current2.subarray(0, expected.bytes)) !== expected.identity)
         throw new ContractError("corrupt-selected");
     }
-    const checksum = createHash22("sha256");
+    const checksum = createHash23("sha256");
     let bytes = 0;
     let cached;
     for (const e of locator.chunks) {
@@ -24873,16 +25586,16 @@ class HistoryReader {
 }
 
 // src/history/recovery.ts
-import { createHash as createHash26, randomUUID as randomUUID19 } from "node:crypto";
+import { createHash as createHash27, randomUUID as randomUUID19 } from "node:crypto";
 import { lstatSync as lstatSync19, opendirSync as opendirSync11 } from "node:fs";
 import { join as join34, relative as relative7 } from "node:path";
 
 // src/history/writer.ts
-import { createHash as createHash25, randomUUID as randomUUID18 } from "node:crypto";
+import { createHash as createHash26, randomUUID as randomUUID18 } from "node:crypto";
 import { join as join33 } from "node:path";
 
 // src/task-store.ts
-import { createHash as createHash23, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash24, randomUUID as randomUUID16 } from "node:crypto";
 import {
   closeSync as closeSync8,
   fsyncSync as fsyncSync4,
@@ -24970,7 +25683,7 @@ function recordText(record3) {
 `;
 }
 function contentIdentity(text2) {
-  return createHash23("sha256").update(text2).digest("hex");
+  return createHash24("sha256").update(text2).digest("hex");
 }
 function savedRecordIdentity(record3) {
   return contentIdentity(recordText(record3));
@@ -25115,11 +25828,11 @@ function legacyTaskStore(c) {
 }
 
 // src/history/plans.ts
-import { createHash as createHash24, randomUUID as randomUUID17 } from "node:crypto";
+import { createHash as createHash25, randomUUID as randomUUID17 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash24("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash25("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
 function planRecording(plan, graph, operationId, epoch) {
@@ -26768,7 +27481,7 @@ class HistoryWriter {
       recordId: randomUUID18(),
       version: 1,
       bytes: 0,
-      hash: createHash25("sha256"),
+      hash: createHash26("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -27146,7 +27859,7 @@ function readOperationStateForPublication(files, operationId) {
 // src/history/recovery.ts
 function digestHistory(files, exclude) {
   files.assertFormat();
-  const digest = createHash26("sha256");
+  const digest = createHash27("sha256");
   let count2 = 0;
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
@@ -27258,7 +27971,7 @@ async function healHistory(lease, log) {
 
 // src/subagent-process.ts
 import { spawn as spawn5 } from "node:child_process";
-import { createHash as createHash28, randomUUID as randomUUID22 } from "node:crypto";
+import { createHash as createHash29, randomUUID as randomUUID22 } from "node:crypto";
 import { join as join36 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
@@ -27400,7 +28113,7 @@ class RunEnvironment {
 }
 
 // src/worker-capture.mjs
-import { createHash as createHash27, randomUUID as randomUUID21 } from "node:crypto";
+import { createHash as createHash28, randomUUID as randomUUID21 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -27503,7 +28216,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash27("sha256"),
+          finalHash: createHash28("sha256"),
           finalBytes: 0,
           finalIndex: -1
         });
@@ -27530,7 +28243,7 @@ class CaptureState {
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash27("sha256"),
+          hash: createHash28("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -28591,7 +29304,7 @@ function launchConversation(prepared, conversation, signal, options) {
   const imageInput = options.images?.length ? JSON.stringify(options.images) : undefined;
   const imageDescriptor = imageInput === undefined ? undefined : {
     bytes: Buffer.byteLength(imageInput),
-    sha256: createHash28("sha256").update(imageInput).digest("hex")
+    sha256: createHash29("sha256").update(imageInput).digest("hex")
   };
   return prepared.consume((material) => {
     encoded2 = encodeEnvelope({
@@ -30269,7 +30982,7 @@ For follow-up to a settled or interrupted run, inspect retained outcomes first. 
 
 // src/service/project-knowledge.ts
 import { isUtf8 } from "node:buffer";
-import { createHash as createHash30 } from "node:crypto";
+import { createHash as createHash31 } from "node:crypto";
 import {
   closeSync as closeSync11,
   constants as constants11,
@@ -30287,7 +31000,7 @@ import { dirname as dirname22, posix } from "node:path";
 
 // src/service/workflow-git.ts
 import { spawn as spawn6, spawnSync as spawnSync6 } from "node:child_process";
-import { createHash as createHash29 } from "node:crypto";
+import { createHash as createHash30 } from "node:crypto";
 import {
   closeSync as closeSync10,
   constants as constants10,
@@ -30449,7 +31162,7 @@ function fileIdentity(p, st, hashBytes) {
   try {
     if (!fstatSync7(fd).isFile())
       throw new ContractError("stale");
-    const digest = createHash29("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash30("sha256"), buffer = Buffer.alloc(CHUNK);
     for (let n = readSync6(fd, buffer);n > 0; n = readSync6(fd, buffer))
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
@@ -30476,7 +31189,7 @@ async function fileIdentityAsync(p, st, hashBytes, signal) {
     const same2 = (a, b) => a.isFile() && b.isFile() && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
     if (!same2(st, before))
       throw new ContractError("stale");
-    const digest = createHash29("sha256"), buffer = Buffer.alloc(CHUNK);
+    const digest = createHash30("sha256"), buffer = Buffer.alloc(CHUNK);
     let remaining = before.size;
     while (remaining > 0) {
       if (signal?.aborted)
@@ -31217,7 +31930,7 @@ ${line}`;
 `);
 }
 var roots = ["engineering", "docs", ".trellis/spec", ".cadence/knowledge"];
-var digest = (s) => createHash30("sha256").update(s).digest("hex");
+var digest = (s) => createHash31("sha256").update(s).digest("hex");
 var markdown2 = (p) => /\.md$/iu.test(p) && !/^(?:\.cadence\/assistant|\.trellis\/(?:workspace|tasks))(?:\/|$)/u.test(p) && !p.split("/").some((part) => part === ".." || part === ".git" || part === "node_modules" || part.startsWith(".env") || part.startsWith(".") && part !== ".cadence" && part !== ".trellis");
 function readKnowledgeFile(root, path) {
   if (!markdown2(path))
@@ -32856,14 +33569,14 @@ import { fileURLToPath as fileURLToPath7 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync7 } from "node:child_process";
-import { createHash as createHash31 } from "node:crypto";
+import { createHash as createHash32 } from "node:crypto";
 import { lstatSync as lstatSync25, readdirSync as readdirSync5, readlinkSync as readlinkSync2 } from "node:fs";
 import { join as join41, relative as relative10 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash31("sha256");
+  const hash3 = createHash32("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -32921,7 +33634,7 @@ function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash31("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash32("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -33097,7 +33810,7 @@ function executionDirectory(execution, tree) {
 }
 
 // src/service/investigations.ts
-import { createHash as createHash32 } from "node:crypto";
+import { createHash as createHash33 } from "node:crypto";
 import { readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
 var INVESTIGATIONS = {
   cited: 32,
@@ -33113,7 +33826,7 @@ function fileDigest(root, path) {
     const st = statSync4(file);
     if (!st.isFile() || st.size > INVESTIGATIONS.fileBytes)
       return null;
-    return createHash32("sha256").update(readFileSync7(file)).digest("hex");
+    return createHash33("sha256").update(readFileSync7(file)).digest("hex");
   } catch {
     return null;
   }
@@ -33141,14 +33854,14 @@ function changedFiles(root, files) {
   return files.filter((file) => fileDigest(root, file.path) !== file.digest).map((file) => file.path);
 }
 function questionKey(question, roots2) {
-  return createHash32("sha256").update(JSON.stringify([
+  return createHash33("sha256").update(JSON.stringify([
     question.trim().replace(/\s+/gu, " "),
     [...roots2 ?? []].sort()
   ])).digest("hex");
 }
 
 // src/service/workflow-controller.ts
-import { createHash as createHash33 } from "node:crypto";
+import { createHash as createHash34 } from "node:crypto";
 var RECOVERY_BYTES = 32768;
 
 class AttemptFailure extends Error {
@@ -33457,7 +34170,7 @@ class DeliveryController {
           this.ports.assertRunning();
           if (decision.action === "blocked")
             break;
-          const fingerprint2 = createHash33("sha256").update(canonicalJson({
+          const fingerprint2 = createHash34("sha256").update(canonicalJson({
             stage,
             observation,
             failure: attempt2.identity ?? attempt2.message.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gu, "<step>"),
@@ -34404,8 +35117,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.8",
-  build: "130758d2c50a6fc52bba2e6de5744a7fbd4b81e20bf5841a7db317a9a4056a99",
+  version: "2.1.9",
+  build: "90395624f4308e49e37f4c427661bb878871b9d2b80eacff894eb1d897f153c4",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37309,7 +38022,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "6aa819700494584b707a8e1b44428c532cd7ac7b1c8a28126e401b43f527543b";
+  const embedded = "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

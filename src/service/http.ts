@@ -53,7 +53,13 @@ import {
   type SocketOutput,
   WS_PATH,
 } from "../service-wire.ts";
-import { type HttpAuthentication, requestBoundary } from "./auth.ts";
+import {
+  type HttpAuthentication,
+  type RequestBoundary,
+  requestBoundary,
+} from "./auth.ts";
+import { loginNextPath, loginRetryPath, readLoginForm } from "./auth-form.ts";
+import { AUTH_PAGE_CSP, renderAuthPage } from "./auth-page.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, list } from "./contracts/core.ts";
 import type { WorkbenchPort } from "./contracts/workbench.ts";
@@ -505,11 +511,17 @@ export class ServiceHttpServer {
       res.destroy();
     }, LIMITS.downloadIdleMs);
     const resetIdle = () => timer.refresh();
+    let boundary: RequestBoundary | undefined;
+    let url: URL | undefined;
     try {
-      const boundary = requestBoundary(req, this.policy, this.origin);
+      boundary = requestBoundary(req, this.policy, this.origin);
       const target = req.url ?? "";
       assertRequestTarget(target);
-      const url = new URL(target, this.origin);
+      url = new URL(target, this.origin);
+      if (target === "/auth" && req.method === "POST") {
+        await this.login(req, res, boundary, abort.signal);
+        return;
+      }
       if (url.searchParams.has("token")) {
         if (
           req.method !== "GET" ||
@@ -535,10 +547,17 @@ export class ServiceHttpServer {
         return;
       }
       if (target === "/" && req.method === "GET") {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(
-          "Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n",
-        );
+        if (!this.accepting) unavailable();
+        try {
+          this.options.auth.authenticate(boundary, randomUUID(), false);
+        } catch (e) {
+          if (e instanceof ContractError && e.code === "unauthenticated")
+            return this.unauthorized(res, boundary, url);
+          throw e;
+        }
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
         return;
       }
       if (target.startsWith("/local/v1/admin/")) {
@@ -682,6 +701,10 @@ export class ServiceHttpServer {
       if (res.headersSent) res.destroy();
       else {
         const code = e instanceof ContractError ? e.code : "unavailable";
+        if (code === "unauthenticated" && boundary && url) {
+          this.unauthorized(res, boundary, url);
+          return;
+        }
         res.setHeader("Connection", "close");
         send(
           res,
@@ -697,6 +720,79 @@ export class ServiceHttpServer {
       res.off("close", abortRead);
       this.requests.delete(abort);
       if (counted) this.reads--;
+    }
+  }
+  /** Native password-form login. Success sets the one-year cookie and 303s to
+   * the sanitized next; a wrong key redirects to the error page, retaining next, and expires any
+   * stale cookie the request carried. Missing/external Origin is 403. */
+  private async login(
+    req: IncomingMessage,
+    res: ServerResponse,
+    boundary: RequestBoundary,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!this.accepting) unavailable();
+    if (!boundary.headers.has("origin")) throw new ContractError("forbidden");
+    if (this.bodies >= LIMITS.admissionCount)
+      throw new ContractError("capacity");
+    this.bodies++;
+    let form: Awaited<ReturnType<typeof readLoginForm>>;
+    try {
+      form = await readLoginForm(req, signal);
+    } finally {
+      this.bodies--;
+    }
+    if (!this.accepting || signal.aborted) unavailable();
+    const { password: submitted, next } = form;
+    try {
+      res.setHeader("Set-Cookie", this.options.auth.login(submitted, boundary));
+      res.statusCode = 303;
+      res.setHeader("Location", next);
+      res.end();
+    } catch (e) {
+      const code = e instanceof ContractError ? e.code : "unavailable";
+      if (code === "unauthenticated") {
+        if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+          res.setHeader(
+            "Set-Cookie",
+            this.options.auth.clearCookie(boundary.secure),
+          );
+        res.statusCode = 303;
+        res.setHeader("Location", loginRetryPath(next));
+        res.end();
+        return;
+      }
+      res.setHeader("Connection", "close");
+      send(res, errorStatus(code), refusal(code));
+    }
+  }
+  /** 401 with content negotiation: HTML acceptors get the script-free password
+   * page (the only same-origin Referrer-Policy response); others get JSON.
+   * Both expire the current cookie. */
+  private unauthorized(
+    res: ServerResponse,
+    boundary: RequestBoundary,
+    url: URL,
+  ): void {
+    if (this.options.auth.carriesCookie(boundary.headers.get("cookie")))
+      res.setHeader(
+        "Set-Cookie",
+        this.options.auth.clearCookie(boundary.secure),
+      );
+    if ((boundary.headers.get("accept") ?? "").includes("text/html")) {
+      res.setHeader("Referrer-Policy", "same-origin");
+      res.setHeader("Content-Security-Policy", AUTH_PAGE_CSP);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.statusCode = 401;
+      res.end(
+        renderAuthPage({
+          authError: url.searchParams.has("auth_error"),
+          nextPath: loginNextPath(url),
+        }),
+      );
+    } else {
+      res.setHeader("Connection", "close");
+      send(res, 401, refusal("unauthenticated"));
     }
   }
   private async manage(

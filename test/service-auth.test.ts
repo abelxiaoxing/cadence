@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   chmodSync,
@@ -361,16 +361,41 @@ describe("explicit private access setup (no user/provider credentials)", () => {
 });
 
 describe("actual Node HTTP security boundary, injected task/history ports", () => {
-  it("public health/entry reveal no private identity or token; private routes require auth before JSON/body", async () => {
+  it("public health stays open; entry and private routes require auth before JSON/body", async () => {
     const f = await setup();
-    for (const path of ["/", "/healthz"]) {
-      const r = await request(f.origin, path);
+    {
+      const r = await request(f.origin, "/healthz");
       expect(r.status).toBe(200);
       expect(r.headers["set-cookie"]).toBeUndefined();
       for (const secret of [f.dir, f.token, f.local, f.epoch, f.workspaceId])
         expect(r.text).not.toContain(secret);
       expect(r.headers["cache-control"]).toBe("no-store");
       expect(r.headers["referrer-policy"]).toBe("no-referrer");
+    }
+    // Unauthenticated entry is the script-free 401 password page: the only
+    // same-origin Referrer-Policy response, no script/backfill, no secrets.
+    {
+      const r = await request(f.origin, "/", {
+        headers: { accept: "text/html" },
+      });
+      expect(r.status).toBe(401);
+      expect(r.headers["referrer-policy"]).toBe("same-origin");
+      expect(r.headers["content-type"]).toBe("text/html; charset=utf-8");
+      const css = /<style>([\s\S]*?)<\/style>/.exec(r.text)![1];
+      const hash = createHash("sha256").update(css).digest("base64");
+      expect(r.headers["content-security-policy"]).toContain(
+        `style-src 'sha256-${hash}'`,
+      );
+      expect(r.headers["content-security-policy"]).not.toMatch(
+        /unsafe-inline|script-src 'self'/,
+      );
+      expect(r.text).toContain('aria-describedby="key-hint"');
+      for (const secret of [f.dir, f.token, f.local, f.epoch, f.workspaceId])
+        expect(r.text).not.toContain(secret);
+      expect(r.text).not.toMatch(/<script/i);
+      expect(r.text).not.toContain("localStorage");
+      expect(r.text).toContain('action="/auth"');
+      expect(r.text).toContain('autocomplete="current-password"');
     }
     for (const path of [
       "/app",
@@ -398,7 +423,7 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     expect(r.headers.location).toBe("/app");
     expect(r.text).toBe("");
     const cookie = r.headers["set-cookie"]![0];
-    expect(cookie).toContain("HttpOnly; SameSite=Strict; Max-Age=43200");
+    expect(cookie).toContain("HttpOnly; SameSite=Strict; Max-Age=31536000");
     expect(cookie).not.toContain("Secure");
     expect(cookie).not.toContain("Domain");
     expect(
@@ -425,6 +450,139 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
       (await request(f.origin, `/?token=${f.token}`, { method: "POST" }))
         .status,
     ).toBe(400);
+  });
+  it("POST /auth sets a one-year HttpOnly SameSite=Strict cookie and 303s to the sanitized next", async () => {
+    const f = await setup();
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        origin: f.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: `password=${encodeURIComponent(f.token)}&next=${encodeURIComponent("/app")}`,
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/app");
+    const cookie = r.headers["set-cookie"]![0];
+    expect(cookie).toContain(`${f.auth.cookieName}=`);
+    expect(cookie).toContain(
+      "Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000",
+    );
+    expect(cookie).not.toContain("Secure");
+    // The issued cookie authenticates.
+    expect(
+      (await request(f.origin, "/app", { headers: { cookie: f.cookie } }))
+        .status,
+    ).toBe(200);
+  });
+  it("login retry retains a safe destination and never reflects the rejected key", async () => {
+    const f = await setup();
+    const next = "/app?project=selected";
+    const wrong = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        origin: f.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ password: "rejected-key", next }).toString(),
+    });
+    expect(wrong.status).toBe(303);
+    expect(wrong.headers.location).not.toContain("rejected-key");
+    const page = await request(f.origin, wrong.headers.location!, {
+      headers: { accept: "text/html" },
+    });
+    expect(page.text).toContain(`name="next" value="${next}"`);
+    expect(page.text).toContain('role="alert"');
+    expect(page.text).toContain('aria-invalid="true"');
+    expect(page.text).not.toContain("rejected-key");
+  });
+  it("POST /auth wrong key 303s to /?auth_error=1 and expires the stale cookie it carried", async () => {
+    const f = await setup();
+    const stale = f.cookie; // valid now
+    f.material.rotate(); // now stale
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        origin: f.origin,
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: stale,
+      },
+      body: `password=wrong&next=${encodeURIComponent("/app")}`,
+    });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/?auth_error=1");
+    expect(r.headers["set-cookie"]![0]).toContain(`${f.auth.cookieName}=`);
+    expect(r.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    // The error page is the empty-form password page with a neutral notice.
+    const page = await request(f.origin, "/?auth_error=1", {
+      headers: { accept: "text/html" },
+    });
+    expect(page.status).toBe(401);
+    expect(page.headers["referrer-policy"]).toBe("same-origin");
+    expect(page.text).toContain('action="/auth"');
+    expect(page.text).not.toMatch(/<script/i);
+    expect(page.text).toContain("Access key was not accepted");
+  });
+  it.each([
+    ["missing", {}],
+    ["null", { origin: "null" }],
+    ["external", { origin: "http://evil.invalid" }],
+  ])("POST /auth with %s Origin is 403", async (_name, extra) => {
+    const f = await setup();
+    const r = await request(f.origin, "/auth", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        ...extra,
+      },
+      body: `password=${encodeURIComponent(f.token)}`,
+    });
+    expect(r.status).toBe(403);
+  });
+  it("POST /auth next sanitization: //, \\\\, control chars refused; token/auth_error stripped; default /app", async () => {
+    const f = await setup();
+    const login = (next: string) =>
+      request(f.origin, "/auth", {
+        method: "POST",
+        headers: {
+          origin: f.origin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: `password=${encodeURIComponent(f.token)}&next=${encodeURIComponent(next)}`,
+      });
+    expect((await login("/app?foo=bar")).headers.location).toBe("/app?foo=bar");
+    expect((await login("//evil.invalid")).headers.location).toBe("/app");
+    expect((await login("https://evil.invalid")).headers.location).toBe("/app");
+    expect((await login("/\\evil")).headers.location).toBe("/app");
+    expect((await login("/app\nx")).headers.location).toBe("/app");
+    expect(
+      (await login("/app?token=secret&auth_error=1")).headers.location,
+    ).toBe("/app");
+    expect((await login("")).headers.location).toBe("/app");
+  });
+  it("invalid/rotated cookie 401 clears the cookie in both HTML and JSON", async () => {
+    const f = await setup();
+    const stale = f.cookie;
+    f.material.rotate(); // now stale
+    const html = await request(f.origin, "/app", {
+      headers: { cookie: stale, accept: "text/html" },
+    });
+    expect(html.status).toBe(401);
+    expect(html.headers["referrer-policy"]).toBe("same-origin");
+    expect(html.text).not.toMatch(/<script/i);
+    expect(html.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    const json = await request(f.origin, "/app", {
+      headers: { cookie: stale },
+    });
+    expect(json.status).toBe(401);
+    expect(json.headers["set-cookie"]![0]).toContain("Max-Age=0");
+    expect(json.text).toContain("unauthenticated");
+  });
+  it("authenticated GET / redirects to /app instead of the old help text", async () => {
+    const f = await setup();
+    const r = await request(f.origin, "/", { headers: { cookie: f.cookie } });
+    expect(r.status).toBe(303);
+    expect(r.headers.location).toBe("/app");
   });
   it.each([
     "host",
@@ -1054,7 +1212,11 @@ describe("actual isolated same-host HTTPS reverse proxy (not deployed/physical r
         proxy: { origin: publicOrigin, trustedAddresses: ["127.0.0.1"] },
       });
       target = f.origin;
-      const tls = (path: string, headers: Record<string, string> = {}) =>
+      const tls = (
+        path: string,
+        headers: Record<string, string> = {},
+        body?: string,
+      ) =>
         new Promise<{
           status: number;
           headers: import("node:http").IncomingMessage["headers"];
@@ -1062,7 +1224,17 @@ describe("actual isolated same-host HTTPS reverse proxy (not deployed/physical r
         }>((resolve, reject) => {
           const req = httpsRequest(
             `${publicOrigin}${path}`,
-            { ca, headers, agent: false },
+            {
+              ca,
+              method: body === undefined ? "GET" : "POST",
+              headers: {
+                ...headers,
+                ...(body === undefined
+                  ? {}
+                  : { "content-length": String(Buffer.byteLength(body)) }),
+              },
+              agent: false,
+            },
             (res) => {
               let text = "";
               res.setEncoding("utf8");
@@ -1079,8 +1251,21 @@ describe("actual isolated same-host HTTPS reverse proxy (not deployed/physical r
             },
           );
           req.on("error", reject);
-          req.end();
+          req.end(body);
         });
+      const login = await tls(
+        "/auth",
+        {
+          origin: publicOrigin,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        new URLSearchParams({ password: f.token, next: "/app" }).toString(),
+      );
+      expect(login.status).toBe(303);
+      expect(login.headers.location).toBe("/app");
+      expect(login.headers["set-cookie"]![0]).toContain(
+        "Max-Age=31536000; Secure",
+      );
       const boot = await tls(`/?token=${f.token}`);
       expect(boot.status).toBe(303);
       expect(boot.headers["set-cookie"]![0]).toContain("; Secure");
@@ -1980,4 +2165,49 @@ it("native Node Fetch carries only its automatic cors mode, not browser origin/s
       origin: undefined,
     },
   ]);
+});
+
+// The public form shares the owner ingress pool with authenticated JSON bodies.
+it("partial login bodies reserve the existing ingress slots and release them on disconnect", async () => {
+  const f = await setup(),
+    entered = deferred();
+  let received = 0;
+  f.server.server.on("request", (req) => {
+    if (req.url === "/auth" && ++received === 16) entered.resolve();
+  });
+  const headers = {
+    origin: f.origin,
+    "content-type": "application/x-www-form-urlencoded",
+  };
+  const requests = Array.from({ length: 16 }, () => {
+    const req = httpRequest(`${f.origin}/auth`, {
+      method: "POST",
+      headers: { ...headers, "content-length": "40" },
+      agent: false,
+    });
+    const closed = new Promise<void>((resolve) => req.once("close", resolve));
+    req.on("error", () => {});
+    req.write("password=");
+    return { req, closed };
+  });
+  try {
+    await entered.promise;
+    const response = await request(f.origin, "/auth", {
+      method: "POST",
+      headers,
+      body: `password=${encodeURIComponent(f.token)}`,
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect((await request(f.origin, "/healthz")).status).toBe(200);
+  } finally {
+    for (const { req } of requests) req.destroy();
+    await Promise.all(requests.map(({ closed }) => closed));
+  }
+  const login = await request(f.origin, "/auth", {
+    method: "POST",
+    headers,
+    body: `password=${encodeURIComponent(f.token)}`,
+  });
+  expect(login.status).toBe(303);
 });
