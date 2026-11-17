@@ -2121,3 +2121,239 @@ it.each([true, false])(
     );
   },
 );
+
+it.each([
+  "extra-field",
+  "invalid-id",
+  "missing-message-id",
+  "assistant-role",
+  "user-role",
+  "non-message-parent",
+  "same-as-message",
+  "duplicate-result",
+  "duplicate-message",
+  "cross-command-result",
+  "foreign-command",
+  "foreign-user",
+  "foreign-run",
+  "foreign-branch",
+  "pre-admission",
+  "wrong-parent",
+])(
+  "independent result bridge refuses %s without rewriting history",
+  (problem) => {
+    const cwd = project(),
+      dir = mkdtempSync(join(tmpdir(), "result-identity-invalid-")),
+      commandId = randomUUID(),
+      captureMessageId = randomUUID(),
+      captureResultCallId = randomUUID();
+    const u = user(null, "Question"),
+      start = entry("custom", u.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId, userId: u.id },
+      });
+    const result = entry("message", start.id, {
+      message: {
+        role: "toolResult",
+        toolCallId: "call",
+        toolName: "read",
+        content: [],
+        isError: false,
+      },
+    });
+    const data: Record<string, unknown> = {
+      commandId,
+      userId: u.id,
+      captureMessageId,
+      captureResultCallId,
+    };
+    const marker = entry("custom", result.id, {
+      customType: BROWSER_COMMAND_ENTRY,
+      data,
+    });
+    const entries = [u, start, result, marker];
+    if (problem === "extra-field") data.resultText = "forbidden";
+    if (problem === "invalid-id") data.captureResultCallId = "not-a-uuid";
+    if (problem === "missing-message-id") delete data.captureMessageId;
+    if (problem === "same-as-message")
+      data.captureResultCallId = captureMessageId;
+    if (problem === "assistant-role")
+      result.message = { role: "assistant", content: [] };
+    if (problem === "user-role") {
+      (start.data as Record<string, unknown>).captureMessageId =
+        captureMessageId;
+      (start.data as Record<string, unknown>).captureResultCallId =
+        captureResultCallId;
+      delete data.captureMessageId;
+      delete data.captureResultCallId;
+    }
+    if (problem === "non-message-parent") marker.parentId = start.id;
+    if (problem === "foreign-user") data.userId = "foreign";
+    if (problem === "foreign-run") data.run = randomUUID();
+    if (problem === "foreign-command") data.commandId = randomUUID();
+    if (
+      ["duplicate-result", "duplicate-message", "foreign-branch"].includes(
+        problem,
+      )
+    ) {
+      const other = entry(
+        "message",
+        problem === "foreign-branch" ? start.id : marker.id,
+        { message: result.message },
+      );
+      entries.push(
+        other,
+        entry("custom", other.id, {
+          customType: BROWSER_COMMAND_ENTRY,
+          data: {
+            commandId,
+            userId: u.id,
+            captureMessageId:
+              problem === "duplicate-message"
+                ? captureResultCallId
+                : randomUUID(),
+            ...(problem === "duplicate-message" ? {} : { captureResultCallId }),
+          },
+        }),
+      );
+    }
+    if (problem === "cross-command-result") {
+      const otherCommand = randomUUID(),
+        otherUser = user(marker.id, "Other");
+      const otherStart = entry("custom", otherUser.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId: otherCommand, userId: otherUser.id },
+      });
+      const otherResult = entry("message", otherStart.id, {
+        message: result.message,
+      });
+      entries.push(
+        otherUser,
+        otherStart,
+        otherResult,
+        entry("custom", otherResult.id, {
+          customType: BROWSER_COMMAND_ENTRY,
+          data: {
+            commandId: otherCommand,
+            userId: otherUser.id,
+            captureMessageId: randomUUID(),
+            captureResultCallId,
+          },
+        }),
+      );
+    }
+    const saved = write(dir, cwd, entries),
+      original = readFileSync(saved.path),
+      sessions = new PiSessions(dir, cwd),
+      session = sessions.session(saved.id)!;
+    if (problem === "pre-admission" || problem === "wrong-parent") {
+      expect(() =>
+        session.commandEntries(
+          commandId,
+          problem === "wrong-parent" ? "foreign" : null,
+          problem === "pre-admission" ? original.length : 0,
+        ),
+      ).toThrow();
+    } else {
+      if (problem === "foreign-command") {
+        expect(
+          session.commandEntries(commandId, null, 0).map((e) => e.id),
+        ).toEqual([u.id, start.id]);
+        expect(() =>
+          session.commandEntries(data.commandId as string, null, 0),
+        ).toThrow();
+      } else expect(() => session.commandEntries(commandId, null, 0)).toThrow();
+      expect(() =>
+        sessions.turn(session, session.branch(entries.at(-1)!.id), []),
+      ).toThrow();
+    }
+    expect(readFileSync(saved.path)).toEqual(original);
+  },
+);
+
+it.each([false, true])(
+  "verified result messages suppress earlier independent previews without guessing old links (result bridge=%s)",
+  async (linked) => {
+    const f = streamingFixture(),
+      cwd = project(),
+      dir = mkdtempSync(join(tmpdir(), "earlier-result-")),
+      commandId = randomUUID();
+    await f.start();
+    await f.end([]);
+    await f.sdk.event({
+      type: "tool_execution_end",
+      toolCallId: "source",
+      toolName: "read",
+      isError: false,
+      result: { content: [{ type: "text", text: "Output" }] },
+    });
+    const preview = f.live.extend([]).items;
+    expect(preview).toHaveLength(1);
+    const message = {
+      role: "toolResult",
+      toolCallId: "source",
+      toolName: "read",
+      isError: false,
+      content: [{ type: "text", text: "Output" }],
+    };
+    await f.sdk.event({ type: "message_start", message });
+    const captureMessageId = f.sdk.messageId!,
+      captureResultCallId = f.sdk.resultCallId!;
+    expect(preview[0].renderId).toBe(`call:${captureResultCallId}`);
+    await f.sdk.event({ type: "message_end", message });
+    const u = user(null, "Question"),
+      start = entry("custom", u.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId, userId: u.id },
+      });
+    const result = entry("message", start.id, { message }),
+      marker = entry("custom", result.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: u.id,
+          captureMessageId,
+          ...(linked ? { captureResultCallId } : {}),
+        },
+      });
+    const next = user(marker.id, "Next");
+    const saved = write(dir, cwd, [u, start, result, marker, next]),
+      original = readFileSync(saved.path),
+      sessions = new PiSessions(dir, cwd),
+      session = sessions.session(saved.id)!;
+    const earlier = sessions.turn(session, session.branch(marker.id), []);
+    expect(earlier.items.at(-1)!.renderId).toBe(
+      linked ? preview[0].renderId : `capture:${captureMessageId}:0`,
+    );
+    const current = turnItems([session.byId.get(next.id)!], []);
+    const extended = f.live.extend(
+      current.items,
+      earlier.items,
+      earlier.captureMessages,
+    );
+    expect(extended.items).toEqual(current.items);
+    const publicTurn = listTurn({ ...current, items: extended.items });
+    expect(
+      decodeWorkbenchResult({
+        kind: "conversation-turn",
+        conversationId: saved.id,
+        leaf: next.id,
+        ordinal: 1,
+        turn: {
+          id: publicTurn.id,
+          entry: publicTurn.entry,
+          parent: publicTurn.parent,
+          at: publicTurn.at,
+          status: publicTurn.status,
+          notice: publicTurn.notice,
+          omitted: publicTurn.omitted,
+          steps: publicTurn.steps.length,
+          stable: publicTurn.steps.length,
+        },
+        start: 0,
+        steps: publicTurn.steps,
+      }),
+    ).toMatchObject({ steps: [{ role: "user", text: "Next" }] });
+    expect(readFileSync(saved.path)).toEqual(original);
+  },
+);

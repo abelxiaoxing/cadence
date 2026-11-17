@@ -71,6 +71,8 @@ export class SdkCapture {
   constructor(emitter: CaptureEmitter, secrets?: string[]);
   /** Current genuine SDK occurrence, available before message_end capture. */
   readonly messageId: string | null;
+  /** Unique result execution without a declaration, on the current message only. */
+  readonly resultCallId: string | null;
   selected: FinalSelection | null;
   events: number;
   dispose(): void;

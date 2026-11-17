@@ -84,6 +84,9 @@ A branch is the path from the root to one entry; it splits into turns at user me
 Built turns are cached by content and secret set; redaction applies to every returned field, and large fields split into parts by their exact encoded size.
 A live browser turn adds only capture occurrences not explicitly linked to its verified durable command-owned prefix; it never subtracts by visible message count or compares text bodies.
 The optional `captureMessageId` on `cadence-browser-command/1` links a finalized Pi message to its capture UUID under the existing command/run/user/parent/offset/branch checks.
+For an independently observed execution with no linked declaration, optional `captureResultCallId` on that same marker binds the Pi `toolResult` to its capture call UUID; it requires `captureMessageId` and a tool-result message parent.
+The worker takes both identities from the current `SdkCapture` occurrence after Pi writes the message and before capture processes `message_end`, not from message text or the displayed tool name.
+Marker fields stay closed; capture message and result-call UUIDs share the session-wide uniqueness check, including other commands and branches, without relaxing the admission or parent checks.
 Real content indices preserve text/thinking/tool/text order, and empty, thinking-only and tool-only messages still participate in handoff.
 While live, an unmarked Pi tail is withheld until ownership is known; final capture arriving before or after the marker cannot append a second copy.
 Old history without the metadata keeps its recorded identity, not a guessed association.
@@ -95,6 +98,15 @@ Association uses the source call ID and complete, unredacted, unclipped source n
 Display names still undergo current read redaction and Unicode-safe clipping to the existing 128-byte JSON-encoded budget (including quotes/escapes); identical clipped prefixes or identical redacted displays do not prove identity.
 Missing/non-string historical names retain the `tool` fallback on both sides; unmatched results remain separate source-positioned items.
 Unresolved duplicate call IDs remain ambiguous even when their names differ; only a matched result releases that ID for a subsequent declaration, preserving legal reuse and each declaration's render identity.
+Capture likewise requires one finalized unresolved declaration for the raw ID and an exact private name before attaching a tool-start; partial declarations alone, missing IDs, duplicate IDs or name collisions cannot prove that join.
+When an assistant occurrence retires unresolved finalized declarations, capture retains only their private source identity within the existing unresolved-entry allowance, until a matching declaration result or the next user boundary clears it; starting another assistant message cannot make a reused ID unambiguous.
+A tool-start without a unique declaration, or a tool-end without a uniquely observed running execution, has its own call UUID and `call:<UUID>` render identity.
+Only one matching ended execution by complete private source ID/name can associate a result message; ambiguous executions or missing source identity emit no result association, even for empty or identical output.
+For an execution with a declaration, the result keeps the declaration's `capture:<message UUID>:<content index>` identity; only an independent execution supplies `captureResultCallId` to the marker.
+That explicit independent-result link takes precedence over Pi's declaration lookup: the result stays at its own source position with `call:<UUID>`, leaving any unresolved declarations neutral rather than copying output into them.
+Pi remains the durable body source, so an independent result does not acquire execution arguments absent from Pi; its content version may change at handoff without changing its render identity.
+`LiveCapture` overlays tools only by exact render identity and suppresses an independent preview once its explicitly associated result message belongs to the verified durable prefix, including earlier turns; it never falls back to public source IDs or redacted/clipped names.
+Old markers without `captureResultCallId` retain the existing declaration lookup and capture-message/Pi result identity, not an invented call UUID; an existing verified result-message link can still suppress its preview without guessing an execution link or rewriting history.
 Settled reads make remaining pending/running declarations unavailable (or canceled for a canceled reply), never successful or failed just because their parent settled.
 These read-time rules also apply to unmarked old Pi history without inventing capture links or rewriting stored bytes.
 Snapshots replace tool output; a hash of the full redacted item versions equal-part content changes independently of explicit execution state.

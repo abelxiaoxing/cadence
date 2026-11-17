@@ -534,7 +534,12 @@ function commandMarker(entry: SessionEntry) {
     ...(Object.hasOwn(value ?? {}, "captureMessageId")
       ? ["captureMessageId"]
       : []),
+    ...(Object.hasOwn(value ?? {}, "captureResultCallId")
+      ? ["captureResultCallId"]
+      : []),
   ]);
+  if (d.captureResultCallId !== undefined && d.captureMessageId === undefined)
+    throw new ContractError("corrupt-selected");
   return {
     commandId: decodeId(d.commandId),
     userId: decodeEntryId(d.userId),
@@ -542,15 +547,22 @@ function commandMarker(entry: SessionEntry) {
     ...(d.captureMessageId === undefined
       ? {}
       : { captureMessageId: decodeId(d.captureMessageId) }),
+    ...(d.captureResultCallId === undefined
+      ? {}
+      : { captureResultCallId: decodeId(d.captureResultCallId) }),
   };
+}
+interface CaptureLink {
+  messageId: string;
+  resultCallId?: string;
 }
 /** Validate the bridge on this branch, including entries with no visible blocks.
  * Admission parent/offset/run checks remain in runEntries; no text comparison. */
-function captureLinks(entries: SessionEntry[]): Map<string, string> {
+function captureLinks(entries: SessionEntry[]): Map<string, CaptureLink> {
   const byId = new Map(entries.map((e) => [e.id, e]));
   const commands = new Map<string, ReturnType<typeof commandMarker>>();
   const ids = new Set<string>();
-  const links = new Map<string, string>();
+  const links = new Map<string, CaptureLink>();
   let user: string | undefined;
   for (const entry of entries) {
     if (isUser(entry)) user = entry.id;
@@ -566,7 +578,9 @@ function captureLinks(entries: SessionEntry[]): Map<string, string> {
       marker.userId !== user ||
       (!first && entry.parentId !== marker.userId) ||
       (first && (first.userId !== marker.userId || first.run !== marker.run)) ||
-      marker.run === marker.commandId
+      marker.run === marker.commandId ||
+      (marker.captureResultCallId !== undefined &&
+        role(parent) !== "toolResult")
     )
       throw new ContractError("corrupt-selected");
     commands.set(marker.commandId, marker);
@@ -574,7 +588,17 @@ function captureLinks(entries: SessionEntry[]): Map<string, string> {
       if (ids.has(marker.captureMessageId) || links.has(parent.id))
         throw new ContractError("corrupt-selected");
       ids.add(marker.captureMessageId);
-      links.set(parent.id, marker.captureMessageId);
+      if (marker.captureResultCallId) {
+        if (ids.has(marker.captureResultCallId))
+          throw new ContractError("corrupt-selected");
+        ids.add(marker.captureResultCallId);
+      }
+      links.set(parent.id, {
+        messageId: marker.captureMessageId,
+        ...(marker.captureResultCallId
+          ? { resultCallId: marker.captureResultCallId }
+          : {}),
+      });
     }
   }
   return links;
@@ -690,12 +714,14 @@ export class ParsedSession {
             data && typeof data === "object" && !Array.isArray(data)
               ? (data as Record<string, unknown>)
               : {};
-          const captureId = own(d, "captureMessageId");
-          if (typeof captureId === "string")
-            this.captureOccurrences.set(
-              captureId,
-              (this.captureOccurrences.get(captureId) ?? 0) + 1,
-            );
+          for (const field of ["captureMessageId", "captureResultCallId"]) {
+            const captureId = own(d, field);
+            if (typeof captureId === "string")
+              this.captureOccurrences.set(
+                captureId,
+                (this.captureOccurrences.get(captureId) ?? 0) + 1,
+              );
+          }
           const commandId = own(d, "commandId");
           if (typeof commandId === "string") {
             const boundary = {
@@ -741,9 +767,10 @@ export class ParsedSession {
     return this;
   }
   validateCaptures(entries: SessionEntry[]): void {
-    for (const id of captureLinks(entries).values())
-      if (this.captureOccurrences.get(id) !== 1)
-        throw new ContractError("corrupt-selected");
+    for (const link of captureLinks(entries).values())
+      for (const id of [link.messageId, link.resultCallId])
+        if (id !== undefined && this.captureOccurrences.get(id) !== 1)
+          throw new ContractError("corrupt-selected");
   }
   /** Pi's current leaf: the entry appended last. */
   current(): string | null {
@@ -1091,7 +1118,8 @@ export function turnItems(
       state: error ? "failed" : "completed",
     });
   for (const entry of entries) {
-    const captureId = links.get(entry.id);
+    const link = links.get(entry.id),
+      captureId = link?.messageId;
     const renderId = (index: number) =>
       captureId ? `capture:${captureId}:${index}` : `pi:${entry.id}:${index}`;
     const m = message(entry);
@@ -1224,6 +1252,7 @@ export function turnItems(
         );
         const call = typeof id === "string" ? tools.get(id) : undefined;
         if (
+          !link?.resultCallId &&
           call &&
           call.rawName === (typeof name === "string" ? name : "tool")
         ) {
@@ -1239,7 +1268,11 @@ export function turnItems(
             output,
             own(m, "isError") === true,
           );
-          orphan.renderId = renderId(0);
+          // This result belongs to an observed independent execution, not an
+          // unresolved declaration, even if its source ID/name would match.
+          orphan.renderId = link?.resultCallId
+            ? `call:${link.resultCallId}`
+            : renderId(0);
         }
       } else if (kind === "bashExecution") {
         const command = own(m, "command"),
@@ -1279,7 +1312,7 @@ export function turnItems(
   }
   const first = entries.find(isUser) ?? entries[0];
   return {
-    captureMessages: [...links.values()],
+    captureMessages: [...links.values()].map((link) => link.messageId),
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
     parent: first?.parentId ?? null,

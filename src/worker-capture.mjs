@@ -613,19 +613,28 @@ function source(value, secrets) {
 }
 /** Actual awaited core-agent event adapter. Core emits one message occurrence
  * at a time; concurrent open occurrences refuse, never join by a nearest ID.
- * Tool joins require a unique raw ID AND name among genuine declarations/starts. */
+ * Declarations require a unique unresolved raw ID, then an exact private name;
+ * execution/result joins require a unique raw ID AND name among genuine starts. */
 export class SdkCapture {
   constructor(emitter, secrets = []) {
     this.emitter = emitter;
     this.secrets = secrets;
     this.current = null;
     this.calls = [];
+    // Retired declaration IDs still make a later declaration in this user turn
+    // ambiguous in Pi. Keep identity only, within the same unresolved window.
+    this.retiredDeclarations = new Map();
     this.selected = null;
     this.events = 0;
     this.updates = new WeakMap();
   }
   get messageId() {
     return this.current?.role === "system" ? null : (this.current?.id ?? null);
+  }
+  /** Only an actually linked execution without a declaration needs its own
+   * durable identity. Available at the existing pre-message_end marker write. */
+  get resultCallId() {
+    return this.current?.resultCallId ?? null;
   }
   emit(e) {
     return this.emitter.emit(e);
@@ -858,11 +867,15 @@ export class SdkCapture {
       name: sanitizeText(name, this.secrets) || "redacted",
       source: source(raw, this.secrets),
       declaration,
+      finalized: false,
       started: false,
       ended: false,
       resultLinked: false,
     };
-    if (this.calls.length >= LIMITS.captureEntries)
+    if (
+      this.calls.length + this.retiredDeclarations.size >=
+      LIMITS.captureEntries
+    )
       throw new ContractError("capacity");
     this.calls.push(call);
     return call;
@@ -913,6 +926,7 @@ export class SdkCapture {
           call.name = sanitizeText(name, this.secrets) || "redacted";
           call.source = source(raw, this.secrets);
         }
+        call.finalized = true;
         const argsDetailId = await this.args(
           call,
           own(block, "arguments"),
@@ -1030,9 +1044,27 @@ export class SdkCapture {
       case "message_start": {
         requireFact(this.current === null);
         const message = own(event, "message");
-        if (own(message, "role") === "assistant")
-          this.calls = this.calls.filter((c) => c.started && !c.ended);
+        if (own(message, "role") === "assistant") {
+          this.calls = this.calls.filter((c) => {
+            if (c.started && !c.ended) return true;
+            if (
+              c.declaration &&
+              c.finalized &&
+              typeof c.raw === "string" &&
+              c.raw
+            )
+              this.retiredDeclarations.set(
+                c.raw,
+                this.retiredDeclarations.has(c.raw) ? null : c.rawName,
+              );
+            return false;
+          });
+        }
         const rawRole = own(message, "role");
+        if (rawRole === "user") {
+          this.retiredDeclarations.clear();
+          this.calls = this.calls.filter((c) => c.started && !c.ended);
+        }
         const role = rawRole === "toolResult" ? "tool-result" : rawRole;
         requireFact(
           ["system", "user", "assistant", "tool-result"].includes(role),
@@ -1046,6 +1078,27 @@ export class SdkCapture {
               )
             : [];
         const call = matches.length === 1 ? matches[0] : null;
+        if (
+          role === "tool-result" &&
+          typeof own(message, "toolCallId") === "string" &&
+          (!call || call.declaration)
+        ) {
+          // A result with no observed execution can still settle Pi's unique
+          // declaration. Release that source ID for later legal reuse, without
+          // fabricating an execution/resultCallId. An explicit independent
+          // execution, however, never settles a declaration in Pi.
+          const raw = own(message, "toolCallId"),
+            name = own(message, "toolName");
+          const declared = this.calls.filter(
+            (c) => c.declaration && c.finalized && c.raw === raw,
+          );
+          if (this.retiredDeclarations.has(raw)) {
+            if (!declared.length && this.retiredDeclarations.get(raw) === name)
+              this.retiredDeclarations.delete(raw);
+          } else if (declared.length === 1 && declared[0].rawName === name) {
+            this.calls = this.calls.filter((c) => c !== declared[0]);
+          }
+        }
         if (call) {
           call.resultLinked = true;
           this.calls = this.calls.filter((c) => c !== call);
@@ -1053,6 +1106,7 @@ export class SdkCapture {
         this.current = {
           id: randomUUID(),
           role,
+          resultCallId: call && !call.declaration ? call.id : null,
           streams: new Map(),
           declarations: new Map(),
           thinking: new Map(),
@@ -1254,9 +1308,26 @@ export class SdkCapture {
       case "tool_execution_start": {
         const raw = own(event, "toolCallId"),
           name = own(event, "toolName");
-        const matches = this.matches(raw, name, (c) => !c.started && !c.ended);
+        // Like Pi's projection, duplicate unresolved declaration IDs remain
+        // ambiguous even when their full private names differ. Display names
+        // (redacted/clipped on the wire) never participate in this decision.
+        const declarations = this.calls.filter(
+          (c) =>
+            typeof raw === "string" &&
+            raw.length > 0 &&
+            c.raw === raw &&
+            c.declaration &&
+            c.finalized &&
+            !c.resultLinked,
+        );
         const call =
-          matches.length === 1 ? matches[0] : this.newCall(raw, name);
+          !this.retiredDeclarations.has(raw) &&
+          declarations.length === 1 &&
+          declarations[0].rawName === name &&
+          !declarations[0].started &&
+          !declarations[0].ended
+            ? declarations[0]
+            : this.newCall(raw, name);
         const argsDetailId = await this.args(
           call,
           own(event, "args"),
