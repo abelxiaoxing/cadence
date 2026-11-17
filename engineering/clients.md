@@ -402,6 +402,9 @@ A chat image, recorded or still an unsent draft, opens enlarged in a modal viewe
 No session paths or remote image URLs are returned, and no session is rewritten.
 The WebUI loads the newest turns first and reads earlier ones as the top of the transcript nears the viewport; displayed turns remain in source order, and turns far from the viewport render as placeholders of their measured height.
 Content, image and opened-detail growth follows the bottom only while the reader is already following (within the existing 80px boundary); scrolling up keeps that reading position, earlier-page loading retains its anchor, and Latest messages explicitly resumes following.
+In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback to `useLazyWindow`'s `onContentResize`: the hook observes both the scroll container and registered row elements, so image/detail height changes can follow without a new head read or parent render.
+That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
+Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
 A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
@@ -512,7 +515,12 @@ Closing a detail or leaving its conversation retires pending reads, and stale re
 A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
 No thinking body or signature is streamed, and a thinking block is neither answer text (it is not copied with the reply) nor evidence that an earlier tool call has a result.
 Ordinary replies render every received text snapshot immediately through stable Markdown prefix segments and an active tail, not an artificial character-paced catch-up animation.
-The same block component and rendering identity survive preview/durable/terminal observations; read coordinates and earlier-page positions are not React keys.
+With explicit rendering metadata, the same block component and rendering identity survive preview/durable/terminal observations, independently of changing read coordinates and earlier-page positions.
+`ConversationReader` derives `LoadedTurn.renderId` from the user step's rendering identity; `ChatWorkspace` uses `turn.renderId ?? turn.header.id` on the outer Fragment around the entire turn, not only on its inner message/tool blocks.
+The row's `id` stays `turn.header.id`: `LazyMount` registration and measurement, `data-lazy-id`, jump pins, question tracking, branch versions and workflow placement use that read/navigation coordinate.
+Edit/continue anchors and Send retain their recorded parent/end branch entries, never rendering identities.
+A command-to-Pi handoff can therefore update those coordinates without replacing the rendered row and its opened details.
+Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
 The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
 The line "Thinking that could not be read is not shown" appears only for the `omitted.thinking` flag: thinking Pi stored unreadable, or in a workflow subagent's transcript thinking its capture did not keep.
 An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.

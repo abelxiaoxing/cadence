@@ -527,7 +527,7 @@
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "fba2c4b9d911a3fd5cf2e96cc2dfb89e9178f39e97b44f9fc730f93deb032e4b",
     "test/web/workbench.test.tsx": "88fe65988c0348b6c7c7bb7dba7752aa34e7db904e187fd69ae501ef23a98383",
-    "web/src/components/workspace/ChatWorkspace.tsx": "9c4be25f26a910bffde8b308e2b8fe5564475b27778e55fece6c7040ca5136e7",
+    "web/src/components/workspace/ChatWorkspace.tsx": "c8e5bef489eaede85d553ffe94330a6a370bb6249cc935cc125876a5db47384e",
     "web/src/components/workspace/ChatSteps.tsx": "79e0bc1fbc4eeae3a1d2e3c9f2a3539f37e481a10b721b9894b1876cfa15868a",
     "web/src/components/workspace/AgentDock.tsx": "c7701ebeb1d2123d742fbe294cfdd456513be86f3e6d7696321e7e3f8b5e0c83",
     "web/src/components/workspace/FilesPanel.tsx": "5334ecd1a6dead88c1bcd9504c6b69e2ab0f700ea07674076054312f4b7ba0b1",
@@ -695,11 +695,13 @@
     "web/src/components/StreamMarkdown.tsx": "e44e50174252f329ec0477e9c21d512c97df6061d0cbd1aebea30ccfc175f657",
     "web/src/components/workspace/turn-source.ts": "0dcc746257a6755a7cc240caeaa17891cc13c3f6abddfe81d0d6a98099db4837",
     "web/src/components/workspace/RuntimeObservation.tsx": "0598fa98e45ffabec0d9c074d3102e7a8152d10acdaaaaa12ac8bbdf191b3c35",
-    "test/web/chat-timeline.test.tsx": "8ab03d1ee9150d2e79ea9807be163e87952f456b3986596752306f5956b57e14",
+    "test/web/chat-timeline.test.tsx": "dda319b8699e0b419e4e05a3edcb5e6dc1ae5a83bcea66628bf6467274dce1e1",
     "test/web/runtime-observation.test.tsx": "a0d8c353a27753c6dcda69cf889fd312b6b48e4e9c401c5ff5410082a68e9524",
     "test/web/workflow-agent.test.tsx": "9d090f8368e288de286041b8f5d7ef5816e53a18192848e7e3a4190f7bd9cdf2",
     "test/runtime-timeline.test.ts": "37854a1cc1f63c2d1426ad7bac9f1311e345632c48e33505b7ea84d92c141c5b",
-    "test/helpers/runtime-timeline.ts": "ea2a95f8a1111b41719ed365f05cf2b5e076ab976af1486ac2ed7faf355ae5c7"
+    "test/helpers/runtime-timeline.ts": "ea2a95f8a1111b41719ed365f05cf2b5e076ab976af1486ac2ed7faf355ae5c7",
+    "web/dist/assets/cadence.js": "dd20cdb879f5bfa0324a7a8b9f0fc6e06103deee9aef498b05cc0edb8ec7fef6",
+    "web/dist/manifest.json": "244c84dd93183dc1d7e7037dc438dbbcfbc051de00fbf1c7dd3e09df43c0c0a2"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -1072,6 +1074,11 @@
       "id": "explicit-plan-revalidation",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned recovery path, with no new upstream adaptation: a stopped or replaced owner can be explicitly prepared for plan validation without sending a conversation message. The owner checks the captured conversation, branch and model intent, retains the unchanged agreement in a fresh immutable execution binding and requires a separate fresh confirmation; no model prompt, grant, worker or Git resource is created by validation. The existing Send route is preserved and shares preparation lifetime ownership with the named plan route. Plan cards and exact approval phrases share the recovery path, display current and prior context, and uncertain approvals retain their original identity for observation without replay. Consent recording now runs only at the executor's admission boundary, so a definite refusal leaves both grants and no phantom evidence; revalidation retires unused grants at both layers. Destination pins reflect the changed integration bodies and controlled persistence/client/SSR tests; upstream source and license pins and historical evidence are unchanged. No real-browser, paid-provider or deployed-service qualification is claimed."
+    },
+    {
+      "id": "ordinary-timeline-workspace-wiring",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned wiring repair within the existing MIT-adapted conversation and lazy-window presentation: the outer turn Fragment uses the reader's renderId (recorded-id fallback for legacy history), while lazy measurements, navigation, workflow placement and Send anchors retain their read coordinates. The main conversation passes its current-intent keepEnd callback into the existing row/container ResizeObserver, sharing the composer resize rule without forcing scrolled-up readers to the bottom. ChatWorkspace and chat-timeline destination pins are refreshed; the canonical Node builder regenerates web/dist, and the changed cadence.js plus its complete asset manifest are pinned here. Shipped names are unchanged, so the independently enumerated package member list is unchanged. New element-tree, controlled-hook and synthetic-resize regressions cover the actual workspace call sites, not React DOM reconciliation or real-browser scrolling. Existing upstream source/license pins and historical evidence, including prior qualification limits, remain unchanged; new-candidate checks and independent Agent review are separate."
     }
   ],
   "testAdaptations": [

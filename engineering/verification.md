@@ -132,8 +132,14 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   Workflow observations and read failures are controlled inputs, not a real workflow executor or transport outage.
   Keep backend imports out of Web tests so frontend type checking does not traverse service/SDK declarations.
   `stream-markdown` checks immediate complete snapshots and stable prefix segmentation without replay; `workbench` checks stable row identities and folded thinking.
+  `test/web/chat-timeline.test.tsx` also executes `ChatWorkspace` with controlled hooks and observations and inspects its actual outer Fragment and child keys: preview-to-Pi handoff, inserted thinking/tools, settlement, re-observation and prepended history retain those keys, equal bodies remain separate and legacy turns keep their recorded fallback.
+  Key-addressed child hook cells exercise an opened tool retaining its displayed detail while its final read is pending; these cells are a test harness, not React's DOM reconciler.
+  The same workspace fixture drives the real lazy-window observer callback over registered row refs without a new conversation snapshot: below/exactly at the 80px boundary, paused reading, Latest, user return to the bottom, composer resize, hidden-view restoration, earlier-page compensation and observer/frame cleanup.
+  It also asserts that registration/measurement, question tracking and jump pins, branch versions, workflow placement, edit/continue and Send anchors still use read/navigation coordinates, not rendering identities.
+  Helper-only identity or resize tests cannot establish that the main workspace is wired to them.
+  A focused wiring rerun is `bun run test:web test/web/chat-timeline.test.tsx test/web/lazy-window.test.tsx`; apply the exact-file/passed-assertion coverage rule above, without treating it as a replacement for `verify` or independent Agent review of the new candidate.
   `test/web/{runtime-observation,workspace-layout,lazy-window,workflow-agent}.test.tsx` covers separate localized observation feedback, normal-flow composer/Stop markup, long-name CSS constraints and follow-versus-scrolled-up resize intent.
-  Controlled hooks, source/CSS assertions and SSR are not a mounted DOM, real browser scrolling, narrow-screen/focus/pointer qualification or a paid-provider run.
+  Controlled hooks, element-tree/source/CSS assertions, synthetic ResizeObserver dimensions and SSR are not a mounted DOM: native scroll clamping/anchoring, React DOM reconciliation, real browser scrolling, narrow-screen/focus/pointer behavior and paid providers remain unverified by these tests.
 - `conversation-rename`, `gateway-archive`, `conversation-records`, `session-sharing`, `pi-sdk-baseline`, `session-rename`: the owner's rename rules against a stand-in child (read-back acknowledgement, one per session, no Send meanwhile, Stop, repeated commands), archive records in live and stopped-owner listings, the terminal's silence about a name record, and Pi's own `appendSessionInfo` shape.
   `session-rename` is slow: the real child against fabricated session files (one appended entry, a torn last line, another identity, an older format, an empty or missing file, the child guard) and a generated owner renaming and archiving over HTTP across a restart.
 - `test/web/{conversation-inputs,composer,conversation-reader}.test.tsx`: when the browser offers the text typed to a running reply, the two commands, what each outcome does to the draft, a waiting message's whole-text rule, the waiting and undelivered rows, the split control beside Stop, and the reader carrying both lists.
@@ -200,7 +206,9 @@ Real-browser automation has been removed, not replaced by a claim that unit test
 ## Builds and packaging
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
-Publish `web/dist` from Node: Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
+Publish `web/dist` through `bun run build:web` (the package script runs `node scripts/build-web.mjs`): Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
+The canonical builder compares two private builds under the inherited temporary root and publishes their validated asset/manifest closure; never hand-edit generated assets or rebuild service/native outputs for a Web-only source change.
+Refresh affected destination hashes in `provenance/webui-reuse.json` while preserving upstream source/license pins and historical evidence; generated asset names belong to the independently maintained `provenance/package-members.json`, which changes only when the reviewed shipped membership changes.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 The pack stage also parses every module the archive ships and refuses a relative runtime import the archive does not contain: the source tree resolves such an import, so only the archive shows a file left out of `files`.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.

@@ -673,6 +673,9 @@ export function ChatWorkspace({
     lastTop = useRef(0);
   const stick = useRef(true),
     [away, setAway] = useState(false);
+  const keepEnd = useCallback(() => {
+    followLatest(scroll.current, stick.current);
+  }, []);
   // `display: none` drops the scroll offset; restore it when the view returns.
   useLayoutEffect(() => {
     if (!hidden && scroll.current && !stick.current)
@@ -775,6 +778,8 @@ export function ChatWorkspace({
   const rows = useMemo(
     () =>
       turns.map((turn) => ({
+        // Read/navigation coordinate, shared by LazyMount, measurements and
+        // jump pins. The Fragment below has a separate stable render identity.
         id: turn.header.id,
         role: "assistant",
         version: turn.steps.reduce(
@@ -785,7 +790,13 @@ export function ChatWorkspace({
       })),
     [turns],
   );
-  const lazy = useLazyWindow(scroll, rows, jump?.id ?? null);
+  const lazy = useLazyWindow(
+    scroll,
+    rows,
+    jump?.id ?? null,
+    undefined,
+    keepEnd,
+  );
   // Earlier turns load while the reader is near the top, on scroll and after
   // each render (a short transcript fills itself); no page is ever switched.
   const { earlier, loadEarlier } = conversation;
@@ -1697,9 +1708,6 @@ export function ChatWorkspace({
     activeTurn === null
       ? questions.length - 1
       : questions.findIndex((question) => question.id === activeTurn);
-  const keepEnd = useCallback(() => {
-    followLatest(scroll.current, stick.current);
-  }, []);
   const strip = anchor ? (
     <div className="composer-anchor">
       {anchor.kind === "edit" ? (
@@ -1905,7 +1913,7 @@ export function ChatWorkspace({
           {rows.map(({ id, version, turn }, position) => {
             const forks = versions.get(id);
             return (
-              <Fragment key={id}>
+              <Fragment key={turn.renderId ?? turn.header.id}>
                 {id === firstOff && (
                   <p className="chat-anchor-divider">
                     <FiGitBranch aria-hidden="true" />
