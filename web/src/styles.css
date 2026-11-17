@@ -1,4 +1,6 @@
+@import "tailwindcss" source(none);
 @import "./reference.css";
+@source "./**/*.{ts,tsx}";
 /* Cadence task-workspace chrome restyled from pi-web-ui web/src/styles.css
  * e8bab487af208bc9a1ab60a821652323f598127f (base, topbar/chip/tb-tab/panel-toggle,
  * data-tip, panel/lp-section/session-item, resize handle, statusbar, msg-meta/body,
@@ -6,20 +8,18 @@
  * notices and img-lightbox families. MIT (c) 2026 xing-shuyin;
  * source-family lineage in provenance/webui-reuse.json. Tokens come from reference.css. */
 :root {
-  /* Every colour token is one light-dark() pair: the light value is pi-web-ui's
-   * themes/white.css (b627452c) with Cadence's violet accent kept, the dark one
-   * pi's default. The scheme follows the system until `data-theme` names one
-   * (web/src/layout/theme.ts). */
+  /* Scheme tokens follow the system until `data-theme` names one. Glass and
+   * Cyan → Blue accents share the same tokens across every workspace surface. */
   color-scheme: light dark;
   /* WCAG AA (4.5:1) for small safety statements, selected-tab text and the
    * primary button, on the page, raised and tinted surfaces of either scheme
    * (test/web/theme.test.tsx). pi's #6b7284 and #8b5cf6 text read 3.5–4.2:1 on
    * the dark surfaces and white.css's #818b98 3.2–3.5:1 on the light ones. */
-  --text-faint: light-dark(#636c76, #858c9e);
-  --accent-text: light-dark(#6d28d9, #a78bfa);
-  --accent-strong: #7c3aed;
-  /* Text and glyphs on a filled accent, danger or brand surface. */
-  --on-accent: #ffffff;
+  --text-faint: light-dark(#5b6675, #8e99ad);
+  --accent-text: light-dark(#1d4ed8, #67e8f9);
+  --accent-strong: light-dark(#1d4ed8, #22d3ee);
+  /* Dark glyphs keep the Cyan end of the dark gradient readable. */
+  --on-accent: light-dark(#ffffff, #082f49);
   /* Elevation: resting cards, floating menus and tooltips, dialogs and drawers. */
   --shadow-1: light-dark(rgba(31, 35, 40, 0.08), rgba(0, 0, 0, 0.2));
   --shadow-2: light-dark(rgba(31, 35, 40, 0.14), rgba(0, 0, 0, 0.42));
@@ -77,11 +77,36 @@ body,
   overflow: hidden;
 }
 body {
+  position: relative;
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
   font-size: 14px;
   line-height: 1.6;
+}
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+body::before {
+  background:
+    radial-gradient(circle at 12% 8%, var(--mesh-a), transparent 42%),
+    radial-gradient(circle at 88% 12%, var(--mesh-b), transparent 44%),
+    radial-gradient(circle at 52% 96%, var(--mesh-c), transparent 48%);
+}
+body::after {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+#root {
+  position: relative;
+  z-index: 1;
 }
 button > svg {
   min-width: 1em;
@@ -199,13 +224,15 @@ code {
 }
 :where(button.primary) {
   border-color: var(--accent-strong);
-  background: var(--accent-strong);
+  background: var(--primary-gradient);
   color: var(--on-accent);
+  box-shadow: 0 6px 20px var(--primary-glow);
 }
 :where(button.primary:hover:not(:disabled)) {
-  border-color: var(--link-hover);
-  background: color-mix(in srgb, var(--accent-strong) 85%, #000);
+  border-color: var(--accent);
+  background: var(--primary-hover);
   color: var(--on-accent);
+  box-shadow: 0 8px 26px var(--primary-glow);
 }
 :where(button.danger) {
   border-color: color-mix(in srgb, var(--red) 45%, transparent);
@@ -231,7 +258,7 @@ code {
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--inputbox-bg);
   color: var(--text);
   font: inherit;
   font-size: 13px;
@@ -304,10 +331,12 @@ summary:focus-visible,
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--glass-border);
   background: var(--topbar-bg, var(--bg-elev));
+  box-shadow: 0 8px 32px var(--glass-shadow);
   flex-shrink: 0;
+  @apply backdrop-blur-xl;
   --topbar-ctl-h: 28px;
 }
 .topbar-flow {
@@ -338,22 +367,22 @@ summary:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--primary-gradient);
   color: var(--on-accent);
   font-weight: 700;
   font-size: 15px;
   line-height: 1;
   flex-shrink: 0;
-  box-shadow: 0 1px 3px var(--shadow-1);
+  box-shadow: 0 6px 20px var(--primary-glow);
 }
 .brand-name {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
   line-height: 1;
 }
 .chip {
@@ -613,6 +642,7 @@ summary:focus-visible,
   flex: none;
   min-height: 0;
   overflow: hidden;
+  @apply backdrop-blur-xl;
 }
 .drawer-left {
   width: var(--left-w);
@@ -1698,11 +1728,13 @@ summary:focus-visible,
 .scm-file,
 .card {
   margin: 8px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
   background: var(--card-bg, var(--bg-elev));
+  box-shadow: 0 10px 30px var(--glass-shadow);
   font-size: 12.5px;
+  @apply backdrop-blur-xl;
 }
 .run-summary > h3,
 .receipt > h3 {
@@ -1804,7 +1836,7 @@ summary:focus-visible,
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
+  background: var(--primary-gradient);
   color: var(--on-accent);
   font-size: 22px;
   font-weight: 700;
@@ -1824,9 +1856,10 @@ summary:focus-visible,
   gap: 0 2px;
   min-height: 22px;
   padding: 1px 4px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--glass-border);
   background: var(--statusbar-bg, var(--bg-elev));
   font-size: 11px;
+  @apply backdrop-blur-xl;
   line-height: 1.4;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -2143,11 +2176,12 @@ summary:focus-visible,
   max-height: calc(100dvh - 48px);
   padding: 0 20px;
   overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--bg-elev2);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  background: var(--menu-bg);
   color: var(--text);
   box-shadow: 0 20px 60px var(--shadow-3);
+  @apply backdrop-blur-xl;
   font-size: 13px;
 }
 /* A ::backdrop inherits custom properties only in 2024 and later engines. */
@@ -3249,13 +3283,19 @@ summary:focus-visible,
   flex: none;
   position: relative;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
   background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 6px 24px var(--shadow-1);
+  box-shadow:
+    0 12px 40px var(--glass-shadow),
+    0 0 24px var(--primary-glow);
+  @apply backdrop-blur-xl;
 }
 .chat-composer:focus-within {
   border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 12px 40px var(--glass-shadow);
 }
 /* The text area grows with its text (ChatComposer sets its height); the
  * handle on the card's top edge sets a fixed height instead of a native
@@ -4076,9 +4116,11 @@ button.file-item:hover:not(:disabled),
   max-width: 920px;
   margin: -6px auto 16px;
   padding: 2px;
-  border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  background: var(--bg-elev);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: 0 8px 24px var(--glass-shadow);
+  @apply backdrop-blur-xl;
 }
 .workflow-line-open {
   display: flex;
@@ -4381,11 +4423,13 @@ button.file-item:hover:not(:disabled),
   max-width: 920px;
   margin: 0 auto 16px;
   padding: 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-left: 3px solid var(--accent);
-  border-radius: 10px;
-  background: var(--bg-elev);
+  border-radius: 16px;
+  background: var(--card-bg);
+  box-shadow: 0 12px 36px var(--glass-shadow);
   color: var(--text);
+  @apply backdrop-blur-xl;
   overflow-wrap: anywhere;
 }
 .workflow-plan .primary {
@@ -4782,11 +4826,12 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   width: 340px;
   max-height: min(460px, 62vh);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-elev);
-  box-shadow: 0 12px 32px var(--shadow-3);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--menu-bg);
+  box-shadow: 0 16px 40px var(--shadow-3);
   overflow: hidden;
+  @apply backdrop-blur-xl;
 }
 .model-popover-lead {
   margin: 0;
@@ -4993,10 +5038,11 @@ button.link:hover:not(:disabled) {
   z-index: 60;
   width: 260px;
   padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px var(--shadow-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--menu-bg);
+  box-shadow: 0 16px 40px var(--shadow-2);
+  @apply backdrop-blur-xl;
 }
 .more-menu-items button {
   display: flex;

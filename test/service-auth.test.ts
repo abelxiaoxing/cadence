@@ -521,7 +521,7 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     expect(page.headers["referrer-policy"]).toBe("same-origin");
     expect(page.text).toContain('action="/auth"');
     expect(page.text).not.toMatch(/<script/i);
-    expect(page.text).toContain("Access key was not accepted");
+    expect(page.text).toContain("Invalid access token");
   });
   it.each([
     ["missing", {}],

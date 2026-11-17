@@ -1,6 +1,7 @@
 /* Adapted pi-web-ui Vite configuration; MIT (c) 2026 xing-shuyin.
  * Fixed local outputs; the builder independently audits names, bodies and closure. */
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { localVisStyles } from "./build-vis-style.ts";
@@ -11,7 +12,7 @@ export default defineConfig({
   resolve: { preserveSymlinks: true },
   publicDir: false,
   envDir: false,
-  plugins: [react(), localVisStyles()],
+  plugins: [tailwindcss(), react(), localVisStyles()],
   build: {
     target: "es2022",
     outDir: "dist",

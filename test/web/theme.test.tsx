@@ -1,5 +1,5 @@
-// The colour tokens of both schemes and the theme choice. Contrast is computed
-// from the stylesheet sources; no browser renders them here.
+// The glass colour tokens of both schemes and the theme choice. Contrast is
+// computed from the stylesheet sources; no browser renders them here.
 // Adapted from pi-web-ui tests/unit/theme-text-contrast.test.ts and
 // tests/helpers/theme-contrast.ts @ b627452c; MIT (c) 2026 xing-shuyin.
 import { readFileSync } from "node:fs";
@@ -98,7 +98,10 @@ const ON_SURFACES: Readonly<
   "--err-text": { min: AA, surfaces: [...PAGE, "--notice-err-bg"] },
   "--amber-text": { min: AA, surfaces: [...PAGE, "--notice-warn-bg"] },
   "--code-text": { min: AA, surfaces: ["--code-bg"] },
-  "--on-accent": { min: AA, surfaces: ["--accent-strong"] },
+  "--on-accent": {
+    min: AA,
+    surfaces: ["--accent-strong", "--brand-grad-a", "--brand-grad-b"],
+  },
   "--hl-keyword": { min: AA, surfaces: ["--code-bg"] },
   "--hl-title": { min: AA, surfaces: ["--code-bg"] },
   "--hl-constant": { min: AA, surfaces: ["--code-bg"] },
@@ -161,10 +164,10 @@ it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
     value.startsWith("light-dark("),
   );
   expect(pairs.length).toBeGreaterThan(90);
-  expect(color("--bg", "light")).toEqual([255, 255, 255, 1]);
-  expect(color("--bg", "dark")).toEqual([13, 14, 18, 1]);
-  // Cadence keeps its violet accent in both schemes.
-  expect(TOKENS.get("--accent")).toBe("light-dark(#7c3aed, #8b5cf6)");
+  expect(color("--bg", "light")).toEqual([245, 247, 255, 1]);
+  expect(color("--bg", "dark")).toEqual([2, 6, 23, 1]);
+  // Cyan → Blue is the shared primary accent in both schemes.
+  expect(TOKENS.get("--accent")).toBe("light-dark(#2563eb, #22d3ee)");
   const [reference, styles] = SHEETS;
   expect(styles).toContain("color-scheme: light dark;");
   expect(styles).toMatch(

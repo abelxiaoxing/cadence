@@ -4,12 +4,29 @@ import { createHash } from "node:crypto";
 // No scripts, remote assets, inline attributes or credential-bearing URLs.
 const styles = `
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #edf4f1;
-  background: #0a100f;
+    Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-synthesis: none;
+  --page: light-dark(#f5f7ff, #020617);
+  --text: light-dark(#0f172a, #e6edf7);
+  --muted: light-dark(#536176, #94a3b8);
+  --glass: light-dark(rgba(255, 255, 255, 0.62), rgba(15, 23, 42, 0.62));
+  --glass-line: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.1));
+  --field: light-dark(rgba(255, 255, 255, 0.5), rgba(2, 6, 23, 0.48));
+  --field-line: light-dark(rgba(100, 116, 139, 0.28), rgba(255, 255, 255, 0.12));
+  --primary-a: light-dark(#0e7490, #22d3ee);
+  --primary-b: light-dark(#1d4ed8, #60a5fa);
+  --on-primary: light-dark(#ffffff, #082f49);
+  --focus: light-dark(#2563eb, #22d3ee);
+  --glow: light-dark(rgba(37, 99, 235, 0.22), rgba(34, 211, 238, 0.2));
+  --shadow: light-dark(rgba(30, 64, 175, 0.14), rgba(0, 0, 0, 0.42));
+  --mesh-a: light-dark(rgba(147, 197, 253, 0.64), rgba(34, 211, 238, 0.1));
+  --mesh-b: light-dark(rgba(196, 181, 253, 0.58), rgba(37, 99, 235, 0.16));
+  --mesh-c: light-dark(rgba(165, 243, 252, 0.52), rgba(99, 102, 241, 0.1));
+  --grid: light-dark(rgba(37, 99, 235, 0.04), rgba(56, 189, 248, 0.055));
+  --error: light-dark(#b91c1c, #fda4af);
+  --error-bg: light-dark(rgba(254, 226, 226, 0.7), rgba(159, 18, 57, 0.12));
 }
 * {
   box-sizing: border-box;
@@ -20,267 +37,150 @@ body {
   min-height: 100svh;
   display: grid;
   place-items: center;
-  padding: 40px 28px;
-  background:
-    radial-gradient(ellipse at 12% 5%, #183a302e, transparent 55%),
-    radial-gradient(ellipse at 90% 95%, #253b492e, transparent 50%), #0a100f;
+  padding: 28px 20px;
+  color: var(--text);
+  background: var(--page);
 }
-body::before {
+body::before,
+body::after {
   content: "";
   position: fixed;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
+}
+body::before {
+  background:
+    radial-gradient(circle at 12% 10%, var(--mesh-a), transparent 42%),
+    radial-gradient(circle at 90% 16%, var(--mesh-b), transparent 44%),
+    radial-gradient(circle at 52% 100%, var(--mesh-c), transparent 48%);
+}
+body::after {
   background-image:
-    linear-gradient(#9bc6b605 1px, transparent 1px),
-    linear-gradient(90deg, #9bc6b605 1px, transparent 1px);
-  background-size: 64px 64px;
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, #000, transparent 78%);
 }
 main {
   position: relative;
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  width: min(1080px, 100%);
-  min-height: 650px;
-  border: 1px solid #b2d6c51c;
+  z-index: 1;
+  width: min(400px, 100%);
+  padding: 40px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
   border-radius: 28px;
-  overflow: hidden;
-  background: #101916;
-  box-shadow: 0 40px 100px #0005;
+  background: var(--glass);
+  box-shadow:
+    0 28px 80px var(--shadow),
+    0 0 48px var(--glow),
+    inset 0 1px 0 var(--glass-line);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  text-align: center;
+  animation: arrive 0.45s ease-out both;
 }
-.story {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  padding: 42px 48px;
-  display: flex;
-  flex-direction: column;
-  background:
-    radial-gradient(ellipse at 25% 80%, #2e6f4d40, transparent 65%),
-    linear-gradient(145deg, #172922, #101c19);
+main::before {
+  content: "";
+  position: absolute;
+  inset: 0 18% auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--primary-a), transparent);
+  opacity: 0.75;
 }
 .brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.7px;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
 }
-.brand svg {
-  width: 34px;
-  height: 34px;
-  color: #b8f3ce;
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--glass-line);
+  border-radius: 16px;
+  color: var(--on-primary);
+  background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
+  box-shadow: 0 10px 32px var(--glow);
 }
-.intro {
-  position: relative;
-  z-index: 1;
-  margin-top: 76px;
-}
-.eyebrow {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 2.3px;
-  text-transform: uppercase;
-  color: #a4bdb1;
-  margin: 0 0 19px;
-}
-.headline {
-  font-size: clamp(42px, 4.4vw, 58px);
-  font-weight: 450;
-  line-height: 1.08;
-  letter-spacing: -2.7px;
-  margin: 0;
-}
-.headline em {
-  font-style: normal;
-  color: #bbf4cf;
-}
-.lede {
-  max-width: 310px;
-  margin: 24px 0 0;
-  color: #a8beb2;
-  font-size: 14px;
-  line-height: 1.75;
-}
-.orbit {
-  position: absolute;
-  z-index: -1;
-  width: 430px;
-  height: 430px;
-  right: -180px;
-  bottom: -175px;
-  border: 1px solid #b8f3ce30;
-  border-radius: 50%;
-  box-shadow:
-    0 0 80px #8affac09,
-    inset 0 0 80px #8affac09;
-}
-.orbit::before,
-.orbit::after {
-  content: "";
-  position: absolute;
-  border-radius: 50%;
-  border: 1px solid #b8f3ce1a;
-  inset: 44px;
-}
-.orbit::after {
-  inset: -48px;
-  border-style: dashed;
-  border-color: #b8f3ce17;
-}
-.satellite {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  animation: orbit 36s linear infinite;
-}
-.satellite::before {
-  content: "";
-  position: absolute;
-  top: 60px;
-  left: 60px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #c2f6d3;
-  box-shadow: 0 0 24px #b6ffcd88;
-}
-.rhythm {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: auto;
-  padding-top: 72px;
-  font-size: 11px;
-  color: #b0c4b8;
-  letter-spacing: 0.3px;
-}
-.rhythm span {
-  color: #638273;
-}
-.entry {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 64px 56px;
-  background: linear-gradient(150deg, #16201b66, transparent 65%);
-}
-.access {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  width: fit-content;
-  border: 1px solid #d6f3e51a;
-  border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 10px;
-  letter-spacing: 1.4px;
-  color: #bed2c5;
-  text-transform: uppercase;
-  margin-bottom: 30px;
-}
-.access svg {
-  width: 12px;
-  height: 12px;
-  color: #b8edc7;
+.brand-mark svg {
+  width: 30px;
+  height: 30px;
 }
 h1 {
-  font-size: 32px;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
   line-height: 1.2;
-  font-weight: 500;
-  letter-spacing: -1.2px;
-  margin: 0 0 12px;
+  letter-spacing: -0.7px;
 }
-.description {
-  font-size: 14px;
-  color: #a5b5ab;
-  line-height: 1.65;
-  margin: 0 0 32px;
-}
-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  color: #d1e0d6;
-  margin-bottom: 10px;
+form {
+  margin-top: 34px;
 }
 .field {
   position: relative;
+  margin-bottom: 14px;
 }
-.field svg {
+.field > svg {
   position: absolute;
+  top: 17px;
   left: 16px;
-  top: 18px;
   width: 18px;
   height: 18px;
-  color: #849e8e;
+  color: var(--muted);
   pointer-events: none;
 }
 input[type="password"] {
   display: block;
   width: 100%;
-  height: 54px;
-  border: 1px solid #c2e7cf26;
-  border-radius: 10px;
-  background: #0b130f;
-  color: #edf4f1;
+  height: 52px;
   padding: 0 16px 0 46px;
-  font:
-    16px ui-monospace,
-    SFMono-Regular,
-    Consolas,
-    monospace;
-  letter-spacing: 1px;
+  border: 1px solid var(--field-line);
+  border-radius: 14px;
+  outline: none;
+  background: var(--field);
+  color: var(--text);
+  font: 15px ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.5px;
   transition:
     border-color 0.2s,
-    box-shadow 0.2s;
+    box-shadow 0.2s,
+    background 0.2s;
 }
 input::placeholder {
-  font:
-    13px ui-sans-serif,
-    system-ui,
-    sans-serif;
+  color: var(--muted);
+  font-family: Inter, Geist, ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0;
-  color: #7f9588;
 }
 input:hover {
-  border-color: #a9d9b950;
+  border-color: var(--focus);
 }
 input:focus-visible {
-  outline: 2px solid #b8f3ce;
-  outline-offset: 3px;
-  border-color: #b8f3ce;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px var(--glow);
 }
 input[aria-invalid="true"] {
-  border-color: #e5aa87;
-}
-.hint {
-  margin: 10px 0 24px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #92a99a;
+  border-color: var(--error);
 }
 button {
   width: 100%;
-  min-height: 52px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  border: 1px solid #d8ffe0;
-  border-radius: 10px;
-  background: #c5f5d4;
-  color: #14271c;
-  font:
-    600 13px ui-sans-serif,
-    system-ui,
-    sans-serif;
+  gap: 10px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
+  color: var(--on-primary);
+  font: 600 14px Inter, Geist, ui-sans-serif, system-ui, sans-serif;
   cursor: pointer;
-  box-shadow: 0 4px 24px #9cffbb0a;
+  box-shadow: 0 10px 28px var(--glow);
   transition:
-    background 0.2s,
     transform 0.2s,
-    box-shadow 0.2s;
+    box-shadow 0.2s,
+    filter 0.2s;
 }
 button svg {
   width: 17px;
@@ -288,9 +188,9 @@ button svg {
   transition: transform 0.2s;
 }
 button:hover {
-  background: #d8ffe3;
-  box-shadow: 0 4px 28px #9cffbb1c;
+  filter: brightness(1.06);
   transform: translateY(-1px);
+  box-shadow: 0 14px 34px var(--glow);
 }
 button:hover svg {
   transform: translateX(3px);
@@ -299,130 +199,44 @@ button:active {
   transform: translateY(0);
 }
 button:focus-visible {
-  outline: 2px solid #c5f5d4;
+  outline: 2px solid var(--focus);
   outline-offset: 4px;
 }
-.remember {
-  margin: 22px auto 0;
-  max-width: 270px;
-  text-align: center;
-  color: #91a799;
-  font-size: 11px;
-  line-height: 1.8;
-}
 .notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--error);
+  border-radius: 12px;
+  background: var(--error-bg);
+  color: var(--error);
   font-size: 12px;
-  color: #f4c6a9;
-  background: #a34a2019;
-  border: 1px solid #dca47c40;
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin: 0 0 20px;
-  line-height: 1.65;
+  line-height: 1.5;
+  text-align: left;
 }
-footer {
-  position: relative;
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  width: min(1080px, 100%);
-  padding: 20px 8px 0;
-  color: #829b8b;
-  font-size: 10px;
-  letter-spacing: 0.3px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
-.shell {
-  width: 100%;
-  display: grid;
-  justify-items: center;
-}
-@keyframes orbit {
-  to {
-    transform: rotate(360deg);
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
 }
-@media (min-width: 1600px) {
-  main {
-    min-height: 700px;
-  }
-  .intro {
-    margin-top: 100px;
-  }
-}
-@media (max-width: 800px) {
+@media (max-width: 420px) {
   body {
-    padding: 24px 18px;
+    padding: 18px 14px;
   }
   main {
-    grid-template-columns: 1fr;
-    max-width: 480px;
-    min-height: 0;
-    border-radius: 22px;
-  }
-  .story {
-    padding: 28px 30px 30px;
-  }
-  .intro {
-    margin-top: 34px;
-  }
-  .headline {
-    font-size: 40px;
-    letter-spacing: -1.8px;
-  }
-  .headline br {
-    display: none;
-  }
-  .lede {
-    font-size: 13px;
-    margin-top: 14px;
-    max-width: 340px;
-  }
-  .rhythm {
-    display: none;
-  }
-  .orbit {
-    width: 320px;
-    height: 320px;
-    right: -180px;
-    bottom: -215px;
-  }
-  .entry {
-    padding: 32px 30px 36px;
-  }
-  .access {
-    margin-bottom: 22px;
-  }
-  h1 {
-    font-size: 28px;
-  }
-  .description {
-    margin-bottom: 26px;
-  }
-  footer {
-    max-width: 480px;
-    padding-top: 16px;
-    font-size: 9px;
-  }
-  .eyebrow {
-    margin-bottom: 12px;
-  }
-}
-@media (max-width: 360px) {
-  body {
-    padding: 14px 10px;
-  }
-  .story,
-  .entry {
-    padding-left: 22px;
-    padding-right: 22px;
-  }
-  .headline {
-    font-size: 36px;
-  }
-  footer {
-    flex-wrap: wrap;
-    gap: 6px;
+    padding: 32px 24px;
+    border-radius: 24px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -434,18 +248,17 @@ footer {
   }
 }
 @media (forced-colors: active) {
+  body::before,
+  body::after,
+  main::before {
+    display: none;
+  }
   main,
   input[type="password"],
   button,
-  .access,
+  .brand-mark,
   .notice {
     border: 1px solid CanvasText;
-  }
-  .orbit {
-    display: none;
-  }
-  .headline em {
-    color: CanvasText;
   }
 }
 `;
@@ -472,43 +285,28 @@ export function renderAuthPage(options: AuthPageOptions): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>Welcome to Cadence</title>
+<meta name="color-scheme" content="light dark">
+<title>Cadence</title>
 <style>${styles}</style>
 </head>
 <body>
-<div class="shell">
-<main>
-<section class="story" aria-label="Cadence">
-<div class="brand"><svg viewBox="0 0 36 36" fill="none" aria-hidden="true"><rect x="1" y="1" width="34" height="34" rx="11" stroke="currentColor" stroke-opacity=".3"/><path d="M25 12a9 9 0 1 0 0 12M12 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>cadence</div>
-<div class="intro">
-<p class="eyebrow">A little focus. A lot of possibility.</p>
-<p class="headline">Find your flow.<br> Build <em>what’s next.</em></p>
-<p class="lede">A space for your ideas to become plans, and your plans to become something real.</p>
+<main aria-labelledby="welcome">
+<div class="brand">
+<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="M25 11a9 9 0 1 0 0 14M12 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+<h1 id="welcome">Cadence</h1>
 </div>
-<div class="orbit" aria-hidden="true"><div class="satellite"></div></div>
-<div class="rhythm" aria-hidden="true">Think <span>↗</span> Create <span>↗</span> Keep going</div>
-</section>
-<section class="entry" aria-labelledby="welcome">
-<div class="access"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="4" y="9" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 9V6a3 3 0 0 1 6 0v3" stroke="currentColor" stroke-width="1.5"/></svg>Private workspace</div>
-<h1 id="welcome">Welcome to Cadence.</h1>
-<p class="description">Your next idea starts here.<br>Enter your access key to step inside.</p>
-${options.authError ? '<p id="auth-notice" class="notice" role="alert">Access key was not accepted. Check the current key and try again.</p>' : ""}
+${options.authError ? '<p id="auth-notice" class="notice" role="alert">Invalid access token.</p>' : ""}
 <form method="post" action="/auth">
 <input type="hidden" name="next" value="${escapeAttr(options.nextPath)}">
-<label for="key">Access key</label>
+<label class="sr-only" for="key">Access token</label>
 <div class="field">
 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="8" cy="9" r="4" stroke="currentColor" stroke-width="1.6"/><path d="m11 12 8 8m-3-3 2-2m-5-1 2-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-<input id="key" name="password" type="password" placeholder="Enter your access key" autocomplete="current-password" required autofocus aria-describedby="key-hint${options.authError ? " auth-notice" : ""}"${options.authError ? ' aria-invalid="true"' : ""}>
+<input id="key" name="password" type="password" placeholder="Access token" autocomplete="current-password" required autofocus aria-describedby="key-hint${options.authError ? " auth-notice" : ""}"${options.authError ? ' aria-invalid="true"' : ""}>
 </div>
-<p id="key-hint" class="hint">Use the key provided by your Cadence server.</p>
-<button type="submit">Open workspace<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+<p id="key-hint" class="sr-only">Use the token provided by your Cadence server.</p>
+<button type="submit">Enter<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 </form>
-<p class="remember">Stay signed in on this browser for up to a year.<br>Your access key stays out of the address bar.</p>
-</section>
 </main>
-<footer><span>Cadence · A workspace for what’s next.</span><span>Your space. Your pace.</span></footer>
-</div>
 </body>
 </html>
 `;
