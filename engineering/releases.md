@@ -3,6 +3,20 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.1.10 acceptance snapshot
+
+Full `verify` passed on the release candidate: 2038 root/native tests in 134 files (2 skipped) and 479 web tests in 45 files.
+Syntax, generated bundles, type checks, deterministic web builds, lint, Agent pins and the real-pack audit were all green.
+The WebUI is restyled as a glass light/dark theme: translucent panels with white highlight edges over a local mesh-gradient light background and a dark navy grid with neon glows.
+Primary accents use a Cyan → Blue gradient with glow on the brand mark and primary buttons; the sans stack is Inter/Geist-first and Tailwind CSS 4 is wired into the audited Vite build.
+The script-free 401 access page is now a minimal centered glass card (brand, token field, Enter) that follows the system colour scheme.
+It keeps its exact-hash CSP, no scripts and no stored preference, and the error notice is shortened to “Invalid access token.”
+Observed environment: Linux, Node 26.7.0, Bun 1.3.14.
+The canonical operator/service/Web builders were rerun for the 2.1.10 version and the release commit `d6fc083` was pushed to `main` before the annotated `v2.1.10` tag.
+GitHub Actions `Publish npm` run 44003761620 (prepare, publish) succeeded; the audited artifact SHA-256 is `dcf99797d654cafb385bedd88db1b8fd0e1f516b0235e98b275828b72836b79e`.
+The registry confirms `@abelxiaoxing/cadence@2.1.10` as `latest` with integrity `sha512-YJE9mFkekKPH9lrlWAkIW8pew0K3060lvcndFmpIwt0XzG+YPUItgtTR2QaBfVxpaICAyaUHfLvy/+NJth+UAg==` and SHA-1 `7bdfa5a9349f91e8ebb528c454f231437d011df6`.
+Commit, push and npm publication were explicitly authorized; no consumer installation/service change, dependency or browser download, or enlarged test budget occurred.
+
 ## Release 2.0.22 acceptance snapshot
 
 Fixes the regressions found in a full review of 2.0.21's persistent conversation workflows.
