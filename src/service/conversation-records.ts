@@ -74,6 +74,30 @@ export const UNOBSERVED =
  * as undelivered. */
 export const WITHDRAWN = "Withdrawn before it was delivered.";
 const LIVE: ChatStatus[] = ["queued", "running"];
+/** Missing tool results never turn into success merely because the reply ended. */
+function settledSteps<T extends BuiltTurn>(turn: T): T {
+  if (
+    LIVE.includes(turn.status) ||
+    !turn.items.some((item) =>
+      ["pending", "running", "streaming"].includes(item.state ?? ""),
+    )
+  )
+    return turn;
+  return {
+    ...turn,
+    ...listTurn({
+      ...turn,
+      items: turn.items.map((item) =>
+        ["pending", "running", "streaming"].includes(item.state ?? "")
+          ? {
+              ...item,
+              state: turn.status === "canceled" ? "canceled" : "unavailable",
+            }
+          : item,
+      ),
+    }),
+  };
+}
 /** Cheap no-follow identity of a retained file ("absent" when missing). It
  * selects cached projections only; every miss re-reads through PrivateFiles. */
 export function observedFile(path: string): string {
@@ -867,24 +891,25 @@ export class ConversationRecords {
       const running = view.parts
         ?.slice(0, -1)
         .some((part) => part.entries[0].id === turn.id);
+      const observed = recorded
+        ? {
+            ...turn,
+            ...(recorded.execution ? { execution: recorded.execution } : {}),
+            status: recorded.status,
+            notice: turn.notice || sanitizeText(recorded.notice, secrets),
+            // The recorded thinking flag says the live capture kept none; the
+            // session holds it, so only what Pi stored unreadable is omitted.
+            omitted: {
+              thinking: turn.omitted.thinking,
+              media: turn.omitted.media || recorded.omitted.media,
+              other: turn.omitted.other || recorded.omitted.other,
+            },
+          }
+        : running && view.live
+          ? { ...turn, execution: view.live.execution }
+          : turn;
       return {
-        turn: recorded
-          ? {
-              ...turn,
-              ...(recorded.execution ? { execution: recorded.execution } : {}),
-              status: recorded.status,
-              notice: turn.notice || sanitizeText(recorded.notice, secrets),
-              // The recorded thinking flag says the live capture kept none; the
-              // session holds it, so only what Pi stored unreadable is omitted.
-              omitted: {
-                thinking: turn.omitted.thinking,
-                media: turn.omitted.media || recorded.omitted.media,
-                other: turn.omitted.other || recorded.omitted.other,
-              },
-            }
-          : running && view.live
-            ? { ...turn, execution: view.live.execution }
-            : turn,
+        turn: running ? observed : settledSteps(observed),
         stable: turn.steps.length,
       };
     }
@@ -894,21 +919,21 @@ export class ConversationRecords {
     // An unusable record of the run is reported here, by its turn.
     const parts = view.parts ?? this.liveParts(view.session, live);
     const chain = parts.at(-1)?.entries ?? [];
-    // The capture counts the whole run, so its earlier turns' items are too.
+    // Preserve all explicit identities, including messages with no visible items.
     const session = view.session;
-    const earlier = session
+    const earlierTurns = session
       ? parts
           .slice(0, -1)
-          .flatMap(
-            (part) => this.sessions.turn(session, part.entries, secrets).items,
-          )
+          .map((part) => this.sessions.turn(session, part.entries, secrets))
       : [];
+    const earlier = earlierTurns.flatMap((turn) => turn.items);
     const written = turnItems(chain, secrets);
     const items = chain.length
       ? written.items
       : [
           {
             id: "user",
+            renderId: `command:${live.commandId}:user`,
             role: "user" as const,
             text: live.accepted.command.text,
             ...(live.images?.length
@@ -926,7 +951,10 @@ export class ConversationRecords {
             error: false,
           },
         ];
-    const extended = live.capture?.extend(items, earlier) ?? {
+    const extended = live.capture?.extend(items, earlier, [
+      ...earlierTurns.flatMap((turn) => turn.captureMessages ?? []),
+      ...(written.captureMessages ?? []),
+    ]) ?? {
       items,
       stable: items.length,
     };
@@ -941,6 +969,7 @@ export class ConversationRecords {
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
       ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
+      ...(live.capture ? { activity: live.capture.activity } : {}),
       omitted: {
         thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
@@ -954,8 +983,10 @@ export class ConversationRecords {
       })),
     });
     return {
-      turn: { ...turn, execution: live.execution },
-      stable: extended.stable,
+      turn: { ...settledSteps(turn), execution: live.execution },
+      stable: LIVE.includes(live.state.status)
+        ? extended.stable
+        : turn.steps.length,
     };
   }
   turnSteps(
@@ -977,6 +1008,7 @@ export class ConversationRecords {
       turn: {
         ...(turn.execution ? { execution: turn.execution } : {}),
         ...(turn.retry ? { retry: turn.retry } : {}),
+        ...(turn.activity ? { activity: turn.activity } : {}),
         id: turn.id,
         status: turn.status,
         notice: turn.notice,

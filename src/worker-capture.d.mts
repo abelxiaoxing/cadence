@@ -69,6 +69,8 @@ export class CaptureEmitter {
 }
 export class SdkCapture {
   constructor(emitter: CaptureEmitter, secrets?: string[]);
+  /** Current genuine SDK occurrence, available before message_end capture. */
+  readonly messageId: string | null;
   selected: FinalSelection | null;
   events: number;
   dispose(): void;

@@ -1109,3 +1109,149 @@ it("a streamed key/delimiter waits for its value across whitespace and repeated 
     }
   }
 });
+
+it.each(["stop", "aborted"])(
+  "thinking %s emits only occurrence/index/phase and never touches opaque SDK fields",
+  async (stopReason) => {
+    let raw = "",
+      touched = 0;
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          raw += chunk;
+          done();
+        },
+      }),
+      () => {
+        throw new Error("capture failed");
+      },
+    );
+    const capture = new SdkCapture(emitter);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    expect(() =>
+      emitter.emit({
+        kind: "thinking-activity",
+        messageId: randomUUID(),
+        index: 0,
+        phase: "active",
+      }),
+    ).toThrow();
+    await capture.event({
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    const messageId = capture.messageId!;
+    for (const type of [
+      "thinking_start",
+      "thinking_delta",
+      ...(stopReason === "stop" ? ["thinking_end"] : []),
+    ]) {
+      await capture.event({
+        type: "message_update",
+        assistantMessageEvent: {
+          type,
+          contentIndex: 2,
+          get partial() {
+            touched++;
+            throw new Error("private");
+          },
+          get delta() {
+            touched++;
+            throw new Error("private");
+          },
+          get content() {
+            touched++;
+            throw new Error("private");
+          },
+          get signature() {
+            touched++;
+            throw new Error("private");
+          },
+        },
+      });
+    }
+    await capture.event({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        stopReason,
+        content: [
+          { type: "text", text: "a" },
+          { type: "text", text: "b" },
+          {
+            type: "thinking",
+            get thinking() {
+              touched++;
+              throw new Error("private");
+            },
+            get thinkingSignature() {
+              touched++;
+              throw new Error("private");
+            },
+          },
+        ],
+      },
+    });
+    expect(capture.messageId).toBeNull();
+    expect(touched).toBe(0);
+    const events = raw
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).event);
+    expect(events.filter((e) => e.kind === "thinking-activity")).toEqual([
+      { kind: "thinking-activity", messageId, index: 2, phase: "active" },
+      { kind: "thinking-activity", messageId, index: 2, phase: "active" },
+      {
+        kind: "thinking-activity",
+        messageId,
+        index: 2,
+        phase: stopReason === "stop" ? "complete" : "unavailable",
+      },
+    ]);
+    expect(emitter.state.coverage.omissions).toContain("hidden-thinking");
+    expect(() =>
+      emitter.emit({
+        kind: "thinking-activity",
+        messageId,
+        index: 2,
+        phase: "active",
+      }),
+    ).toThrow();
+    expect(raw).not.toContain("private");
+  },
+);
+
+it("thinking activity shares the existing unresolved capture window rather than a new per-message allowance", () => {
+  const childRunId = randomUUID(),
+    messageId = randomUUID(),
+    state = new CaptureState(childRunId);
+  let workerSeq = 0;
+  const accept = (event: CaptureEvent) =>
+    state.accept({
+      protocol: 2,
+      childRunId,
+      workerSeq: ++workerSeq,
+      observedMs: 0,
+      event,
+    });
+  accept({ kind: "ready", requestProtocol: 2 });
+  accept({
+    kind: "message-start",
+    messageId,
+    role: "assistant",
+    source: { disposition: "unavailable", value: null },
+    resultCallId: null,
+  });
+  for (let index = 0; index < LIMITS.captureEntries; index++)
+    accept({ kind: "thinking-activity", messageId, index, phase: "active" });
+  expect(() =>
+    accept({
+      kind: "message-start",
+      messageId: randomUUID(),
+      role: "assistant",
+      source: { disposition: "unavailable", value: null },
+      resultCallId: null,
+    }),
+  ).toThrow("capacity");
+});

@@ -30,6 +30,7 @@ import { managedActivity } from "./contracts/activity.ts";
 import { ContractError, canonicalJson } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
 import {
+  type ChatActivity,
   type ChatItem,
   type ChatStatus,
   type ChatTurn,
@@ -172,37 +173,30 @@ export interface LiveTurn {
 export class LiveCapture {
   retry: ChatTurn["retry"];
   notice = "";
-  /** What was observed and not kept, for the run's own message and then for
-   * each message delivered into it, in the order Pi was given them. */
+  activity: ChatActivity = { kind: "waiting", sequence: 0 };
   private readonly unkept = [{ thinking: false, media: false, other: false }];
   private users = 0;
-  private readonly assistants: { id: string; text: string; error: boolean }[] =
-    [];
-  private readonly tools: {
-    id: string;
-    name: string;
-    args: string;
-    text: string;
-    error: boolean;
-  }[] = [];
+  private readonly messages = new Map<
+    string,
+    { blocks: Map<number, ChatItem>; ended: boolean }
+  >();
+  private readonly order: ({ messageId: string } | { callId: string })[] = [];
+  private readonly tools = new Map<
+    string,
+    { item: ChatItem; source?: string }
+  >();
   private readonly details = new Map<
     string,
     { descriptor: DetailDescriptor; sanitizer: DetailSanitizer; text: string }
-  >();
-  private readonly blocks = new Map<
-    string,
-    { messageId: string; text: string }
   >();
   private imageUser: string | undefined;
   constructor(
     private readonly secrets: () => readonly string[],
     private readonly inputImages = false,
   ) {}
-  /** The flags of the message whose reply is being captured. */
   get omitted(): ChatTurn["omitted"] {
     return this.unkept[this.unkept.length - 1];
   }
-  /** The flags of the run's `index`th delivered message, its own being 0. */
   omittedFor(index: number): ChatTurn["omitted"] {
     return (
       this.unkept[index] ?? { thinking: false, media: false, other: false }
@@ -213,45 +207,136 @@ export class LiveCapture {
       ? value
       : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
   }
+  private block(
+    messageId: string,
+    index: number,
+    role: ChatItem["role"],
+  ): ChatItem | undefined {
+    const message = this.messages.get(messageId);
+    if (!message) return undefined;
+    let item = message.blocks.get(index);
+    if (!item) {
+      item = {
+        id: `${messageId}:${index}`,
+        renderId: `capture:${messageId}:${index}`,
+        role,
+        text: "",
+        name: "",
+        args: "",
+        error: false,
+        state: role === "tool" ? "pending" : "streaming",
+      };
+      message.blocks.set(index, item);
+    }
+    return item;
+  }
   private tool(callId: string) {
-    let tool = this.tools.find((t) => t.id === callId);
+    let tool = this.tools.get(callId);
     if (!tool) {
-      tool = { id: callId, name: "", args: "", text: "", error: false };
-      this.tools.push(tool);
-      // Pi writes each result as it ends: older previews are only counted.
-      const stale = this.tools[this.tools.length - 1 - RECENT_PREVIEWS];
-      if (stale) stale.args = stale.text = "";
+      tool = {
+        item: {
+          id: callId,
+          renderId: `call:${callId}`,
+          role: "tool",
+          name: "",
+          args: "",
+          text: "",
+          error: false,
+          state: "pending",
+        },
+      };
+      this.tools.set(callId, tool);
+      const stale = [...this.tools.values()].at(-1 - RECENT_PREVIEWS);
+      if (stale) stale.item.args = stale.item.text = "";
     }
     return tool;
   }
   accept(frame: CaptureFrame): void {
     const e = frame.event;
+    const activity = (kind: ChatActivity["kind"], name?: string) => {
+      this.activity = {
+        kind,
+        sequence: frame.workerSeq,
+        ...(name === undefined ? {} : { name }),
+      };
+    };
     if (e.kind === "message-start" && e.role === "user") {
-      // Only the run's own message carries the admitted images; each later
-      // user message was sent into the run and starts its own flags.
       if (this.users++)
         this.unkept.push({ thinking: false, media: false, other: false });
       else if (this.inputImages) this.imageUser = e.messageId;
     } else if (e.kind === "message-start" && e.role === "assistant") {
-      if (!this.assistants.some((a) => a.id === e.messageId)) {
-        this.assistants.push({ id: e.messageId, text: "", error: false });
-        const stale =
-          this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
-        if (stale) stale.text = "";
+      if (!this.messages.has(e.messageId)) {
+        this.messages.set(e.messageId, { blocks: new Map(), ended: false });
+        this.order.push({ messageId: e.messageId });
+        // Retain bounded recent bodies only; identities survive until the run ends.
+        const stale = [...this.messages.values()].at(-1 - RECENT_PREVIEWS);
+        if (stale)
+          for (const item of stale.blocks.values()) item.text = item.args = "";
       }
+    } else if (e.kind === "thinking-activity") {
+      const item = this.block(e.messageId, e.index, "thinking");
+      if (item)
+        item.state =
+          e.phase === "active"
+            ? "streaming"
+            : e.phase === "complete"
+              ? "completed"
+              : "unavailable";
+      activity(e.phase === "active" ? "thinking" : "waiting");
+    } else if (e.kind === "call-declaration") {
+      const tool = this.tool(e.callId);
+      const item = this.block(e.declaration.messageId, e.index, "tool");
+      if (item && item !== tool.item) {
+        const { id, renderId } = item;
+        Object.assign(item, tool.item, { id, renderId });
+        tool.item = item;
+      }
+      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.source =
+        e.source.disposition === "observed"
+          ? (e.source.value ?? undefined)
+          : undefined;
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
-      tool.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
-      if (e.kind === "tool-end") tool.error = e.isError;
+      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.source =
+        e.source.disposition === "observed"
+          ? (e.source.value ?? undefined)
+          : undefined;
+      if (
+        !e.declaration &&
+        !this.order.some((row) => "callId" in row && row.callId === e.callId)
+      )
+        this.order.push({ callId: e.callId });
+      tool.item.state =
+        e.kind === "tool-start"
+          ? "running"
+          : e.isError
+            ? "failed"
+            : "completed";
+      if (e.kind === "tool-end") tool.item.error = e.isError;
+      activity(
+        e.kind === "tool-start" ? "tool" : "waiting",
+        e.kind === "tool-start" ? tool.item.name : undefined,
+      );
+    } else if (e.kind === "tool-update") {
+      activity("tool", this.tool(e.callId).item.name);
     } else if (e.kind === "detail-begin") {
-      const kind = e.descriptor.owner.kind;
-      if (kind === "context" || kind === "handoff") return;
+      const o = e.descriptor.owner;
+      // Aggregated final text exists for old transcript consumers, not this timeline.
+      if (
+        o.kind === "context" ||
+        o.kind === "handoff" ||
+        o.kind === "message-final"
+      )
+        return;
       if (this.details.size >= 64) return;
       this.details.set(e.detailId, {
         descriptor: e.descriptor,
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
         text: "",
       });
+      if (o.kind === "message") this.block(o.messageId, o.index, "assistant");
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d) return;
@@ -261,38 +346,89 @@ export class LiveCapture {
           : d.sanitizer.end();
       if (Buffer.byteLength(d.text) <= PREVIEW_BYTES) d.text += added;
       const o = d.descriptor.owner;
-      if (o.kind === "message" && o.stage === "stream") {
-        this.blocks.set(o.blockId, { messageId: o.messageId, text: d.text });
-        const message = this.assistants.find((a) => a.id === o.messageId);
-        if (message)
-          message.text = this.bounded(
-            [...this.blocks.values()]
-              .filter((b) => b.messageId === o.messageId)
-              .map((b) => b.text)
-              .join(""),
-          );
-      } else if (o.kind === "message-final") {
-        const message = this.assistants.find((a) => a.id === o.messageId);
-        if (message) message.text = this.bounded(d.text);
-      } else if (o.kind === "tool") {
-        const tool = this.tool(o.callId);
+      if (
+        o.kind === "message" &&
+        (o.stage === "stream" || e.kind === "detail-end")
+      ) {
+        const item = this.block(o.messageId, o.index, "assistant");
+        if (item) {
+          item.text = this.bounded(d.text);
+          activity("text");
+        }
+      } else if (o.kind === "tool" && e.kind === "detail-end") {
+        const tool = this.tool(o.callId).item;
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
           tool.args = this.bounded(d.text);
-        if (o.stage === "result" || o.stage === "update-snapshot")
-          tool.text = this.bounded(d.text);
+        if (o.stage === "result" || o.stage === "update-snapshot") {
+          // Each update is a complete replacement, not another output fragment.
+          let text = d.text;
+          if (d.descriptor.encoding === "canonical-json") {
+            try {
+              const value = JSON.parse(d.text);
+              text = Array.isArray(value.content)
+                ? value.content
+                    .filter(
+                      (b: { type?: string; text?: unknown }) =>
+                        b.type === "text" && typeof b.text === "string",
+                    )
+                    .map((b: { text: string }) => b.text)
+                    .join("\n\n")
+                : "";
+            } catch {
+              /* A clipped snapshot remains an explicitly bounded preview. */
+            }
+          }
+          tool.text = this.bounded(text);
+        }
       }
       if (e.kind === "detail-end") this.details.delete(e.detailId);
     } else if (e.kind === "message-end") {
-      const message = this.assistants.find((a) => a.id === e.messageId);
-      if (message)
-        message.error = ["error", "aborted", "length"].includes(e.stopReason);
-      for (const [id, block] of this.blocks)
-        if (block.messageId === e.messageId) this.blocks.delete(id);
+      const message = this.messages.get(e.messageId);
+      if (message) {
+        message.ended = true;
+        for (const [index, item] of message.blocks) {
+          if (index >= e.finalBlockCount && item.role !== "thinking") {
+            message.blocks.delete(index);
+            continue;
+          }
+          if (item.role === "assistant") {
+            item.error = ["error", "aborted", "length"].includes(e.stopReason);
+            item.state =
+              e.stopReason === "aborted"
+                ? "canceled"
+                : item.error
+                  ? "failed"
+                  : "completed";
+          } else if (
+            item.role === "thinking" &&
+            (item.state === "streaming" ||
+              ["error", "aborted"].includes(e.stopReason))
+          )
+            item.state = "unavailable";
+          else if (
+            item.role === "tool" &&
+            item.state === "pending" &&
+            ["error", "aborted", "length"].includes(e.stopReason)
+          )
+            item.state =
+              e.stopReason === "aborted" ? "canceled" : "unavailable";
+        }
+        activity("waiting");
+      }
     } else if (e.kind === "model-retry") {
       this.retry = e.progress ?? undefined;
+      activity("waiting");
     } else if (e.kind === "worker-failure") {
       this.retry = undefined;
       this.notice = `worker-failure: ${e.code}`;
+      for (const message of this.messages.values())
+        for (const item of message.blocks.values())
+          if (["streaming", "running", "pending"].includes(item.state ?? ""))
+            item.state = "unavailable";
+      for (const { item } of this.tools.values())
+        if (["running", "pending"].includes(item.state ?? ""))
+          item.state = "unavailable";
+      activity("waiting");
     } else if (
       e.kind === "omitted-block" &&
       e.block.owner.kind !== "context" &&
@@ -303,71 +439,66 @@ export class LiveCapture {
         e.block.owner.kind === "message" &&
         e.block.owner.messageId === this.imageUser
       )
-    )
-      // A flag, not a notice line: it must never displace a failure reason.
+    ) {
       this.omitted[OMITTED_FLAG[e.block.reason]] = true;
+    }
   }
-  /** The written items extended by what Pi has not written yet. Pi writes each
-   * message when it ends, in the order the worker streamed them, so the
-   * written assistant messages and tool results are counted, not matched.
-   * Thinking is not streamed here: a block that splits one message's text
-   * leaves that text counted once. The capture covers the whole run, so the
-   * items of its `earlier` turns are counted too and left out of the result. */
+  /** Only explicit durable identities suppress previews (even invisible messages).
+   * The reader withholds the unmarked Pi tail, so durable-before-marker cannot
+   * briefly show both copies. Earlier turns are never joined by text or count. */
   extend(
     items: ChatItem[],
     earlier: readonly ChatItem[] = [],
+    writtenMessages: readonly string[] = [],
   ): { items: ChatItem[]; stable: number } {
-    const out = [...earlier, ...items].map((item) => ({ ...item }));
-    let written = 0,
-      counted: string | undefined;
-    for (const item of out) {
-      if (item.role === "assistant") {
-        // A written assistant item is `<entry id>:<index>`.
-        const at = item.id.lastIndexOf(":");
-        const message = at < 0 ? item.id : item.id.slice(0, at);
-        if (message !== counted) written++;
-        counted = message;
-      } else if (item.role !== "thinking") counted = undefined;
-    }
-    const calls = out.filter((i) => i.role === "tool");
-    const results = calls.filter((i) => i.text || i.error).length;
-    let stable = out.length;
-    this.tools.forEach((tool, index) => {
-      if (index < results) return;
-      const item =
-        index < calls.length
-          ? calls[index]
-          : (() => {
-              const added: ChatItem = {
-                id: tool.id,
-                role: "tool",
-                name: tool.name,
-                args: tool.args,
-                text: "",
-                error: false,
-              };
-              out.push(added);
-              return added;
-            })();
-      item.text = tool.text;
-      item.error = tool.error;
+    const out = items.map((item) => ({ ...item }));
+    const written = new Set(writtenMessages);
+    const previous = new Set(earlier.map((item) => item.renderId));
+    const changing = out.findIndex((item) =>
+      ["pending", "running", "streaming"].includes(item.state ?? ""),
+    );
+    let stable = changing < 0 ? out.length : changing;
+    const matchedCalls = new Set<string>();
+    for (const [callId, tool] of this.tools) {
+      const matches = out.filter(
+        (item) =>
+          item.role === "tool" &&
+          (item.renderId === tool.item.renderId ||
+            (tool.item.renderId === `call:${callId}` &&
+              tool.source &&
+              item.id === tool.source &&
+              item.name === tool.item.name)),
+      );
+      if (matches.length !== 1) continue;
+      matchedCalls.add(callId);
+      const item = matches[0];
+      if (item.state !== "pending" && item.state !== "running") continue;
+      item.text = tool.item.text;
+      item.args = tool.item.args || item.args;
+      item.state = tool.item.state;
+      item.error = tool.item.error;
       stable = Math.min(stable, out.indexOf(item));
-    });
-    this.assistants.slice(written).forEach((message) => {
-      stable = Math.min(stable, out.length);
-      out.push({
-        id: message.id,
-        role: "assistant",
-        text: message.text,
-        name: "",
-        args: "",
-        error: message.error,
-      });
-    });
-    return {
-      items: out.slice(earlier.length),
-      stable: Math.max(0, stable - earlier.length),
-    };
+    }
+    for (const row of this.order) {
+      if ("messageId" in row && written.has(row.messageId)) continue;
+      const blocks =
+        "messageId" in row
+          ? [...(this.messages.get(row.messageId)?.blocks.entries() ?? [])]
+              .sort(([a], [b]) => a - b)
+              .map(([, item]) => item)
+          : [this.tool(row.callId).item];
+      for (const item of blocks) {
+        if (
+          previous.has(item.renderId) ||
+          ("callId" in row && matchedCalls.has(row.callId)) ||
+          out.some((existing) => existing.renderId === item.renderId)
+        )
+          continue;
+        stable = Math.min(stable, out.length);
+        out.push({ ...item });
+      }
+    }
+    return { items: out, stable };
   }
 }
 

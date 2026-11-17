@@ -30,9 +30,10 @@ import {
 } from "../session-entries.mjs";
 import { sanitizeText } from "../worker-redaction.mjs";
 import { withinWorkspace } from "../workspace.ts";
-import { ContractError } from "./contracts/core.ts";
+import { ContractError, closed, decodeId } from "./contracts/core.ts";
 import type { ChatImage, WorkbenchResult } from "./contracts/workbench.ts";
 import {
+  type ChatActivity,
   type ChatItem,
   type ChatStatus,
   type ChatStep,
@@ -40,6 +41,7 @@ import {
   type ChatTurn,
   chatStep,
   clipText,
+  decodeEntryId,
   TREE_NODES,
 } from "./contracts/workbench.ts";
 
@@ -517,6 +519,66 @@ function fold(summary: SessionSummary, line: Line): void {
   }
 }
 
+/** The optional bridge contains identity only; old markers remain valid. */
+function commandMarker(entry: SessionEntry) {
+  if (
+    entry.type !== "custom" ||
+    own(entry.raw, "customType") !== BROWSER_COMMAND_ENTRY
+  )
+    return undefined;
+  const value = own(entry.raw, "data");
+  const d = closed(value, [
+    "commandId",
+    "userId",
+    ...(Object.hasOwn(value ?? {}, "run") ? ["run"] : []),
+    ...(Object.hasOwn(value ?? {}, "captureMessageId")
+      ? ["captureMessageId"]
+      : []),
+  ]);
+  return {
+    commandId: decodeId(d.commandId),
+    userId: decodeEntryId(d.userId),
+    ...(d.run === undefined ? {} : { run: decodeId(d.run) }),
+    ...(d.captureMessageId === undefined
+      ? {}
+      : { captureMessageId: decodeId(d.captureMessageId) }),
+  };
+}
+/** Validate the bridge on this branch, including entries with no visible blocks.
+ * Admission parent/offset/run checks remain in runEntries; no text comparison. */
+function captureLinks(entries: SessionEntry[]): Map<string, string> {
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const commands = new Map<string, ReturnType<typeof commandMarker>>();
+  const ids = new Set<string>();
+  const links = new Map<string, string>();
+  let user: string | undefined;
+  for (const entry of entries) {
+    if (isUser(entry)) user = entry.id;
+    const marker = commandMarker(entry);
+    if (!marker) continue;
+    const first = commands.get(marker.commandId);
+    const parent = entry.parentId ? byId.get(entry.parentId) : undefined;
+    if (
+      !parent ||
+      parent.pos >= entry.pos ||
+      parent.type !== "message" ||
+      !["user", "assistant", "toolResult"].includes(role(parent) as string) ||
+      marker.userId !== user ||
+      (!first && entry.parentId !== marker.userId) ||
+      (first && (first.userId !== marker.userId || first.run !== marker.run)) ||
+      marker.run === marker.commandId
+    )
+      throw new ContractError("corrupt-selected");
+    commands.set(marker.commandId, marker);
+    if (marker.captureMessageId) {
+      if (ids.has(marker.captureMessageId) || links.has(parent.id))
+        throw new ContractError("corrupt-selected");
+      ids.add(marker.captureMessageId);
+      links.set(parent.id, marker.captureMessageId);
+    }
+  }
+  return links;
+}
 /** One `cadence-browser-command/1` entry: the user entry it names and, for a
  * message sent into a running reply, that reply's command. */
 interface Boundary {
@@ -543,6 +605,7 @@ export class ParsedSession {
   readonly cache: SessionCache = { input: 0, read: 0, write: 0 };
   /** Each browser command's boundaries in the order Pi appended them. */
   private readonly boundaries = new Map<string, Boundary[]>();
+  private readonly captureOccurrences = new Map<string, number>();
   constructor(readonly path: string) {}
   private body(
     pos: number,
@@ -627,6 +690,12 @@ export class ParsedSession {
             data && typeof data === "object" && !Array.isArray(data)
               ? (data as Record<string, unknown>)
               : {};
+          const captureId = own(d, "captureMessageId");
+          if (typeof captureId === "string")
+            this.captureOccurrences.set(
+              captureId,
+              (this.captureOccurrences.get(captureId) ?? 0) + 1,
+            );
           const commandId = own(d, "commandId");
           if (typeof commandId === "string") {
             const boundary = {
@@ -664,11 +733,17 @@ export class ParsedSession {
         this.usages.clear();
         this.cache.input = this.cache.read = this.cache.write = 0;
         this.boundaries.clear();
+        this.captureOccurrences.clear();
         this.header = null;
       },
     );
     this.read = next;
     return this;
+  }
+  validateCaptures(entries: SessionEntry[]): void {
+    for (const id of captureLinks(entries).values())
+      if (this.captureOccurrences.get(id) !== 1)
+        throw new ContractError("corrupt-selected");
   }
   /** Pi's current leaf: the entry appended last. */
   current(): string | null {
@@ -829,6 +904,7 @@ export class ParsedSession {
     if (!this.follows(first.user, run.parent, run.offset))
       throw new ContractError("stale");
     if (
+      first.boundaries.some((boundary) => boundary.run !== undefined) ||
       sent.some((part) =>
         part.boundaries.some((boundary) => boundary.run !== run.commandId),
       )
@@ -863,7 +939,9 @@ export class ParsedSession {
         })
       )
         throw new ContractError("corrupt-selected");
-      return { commandId: part.commandId, entries: chain.slice(start, end) };
+      const entries = chain.slice(start, end);
+      this.validateCaptures(entries);
+      return { commandId: part.commandId, entries };
     });
   }
 
@@ -943,6 +1021,9 @@ function shown(entry: SessionEntry): boolean {
 /** One turn as listed steps, with every item redacted and split into the parts
  * a step-detail read returns. */
 export interface BuiltTurn {
+  activity?: ChatActivity;
+  /** Internal identities, including empty assistant and tool-result messages. */
+  captureMessages?: string[];
   retry?: ChatTurn["retry"];
   id: string;
   entry: string | null;
@@ -966,9 +1047,18 @@ export function turnItems(
   entries: SessionEntry[],
   secrets: readonly string[],
 ): Omit<BuiltTurn, "steps" | "parts"> {
+  const links = captureLinks(entries);
+  const userCommands = new Map(
+    entries.flatMap((entry) => {
+      const marker = commandMarker(entry);
+      return marker && entry.parentId === marker.userId
+        ? [[marker.userId, marker.commandId] as const]
+        : [];
+    }),
+  );
   const omitted = { thinking: false, media: false, other: false };
   const items: ChatItem[] = [];
-  const tools = new Map<string, ChatItem>();
+  const tools = new Map<string, ChatItem | null>();
   let status: ChatStatus = "completed",
     notice = "";
   const add = (item: ChatItem) => {
@@ -987,8 +1077,21 @@ export function turnItems(
     args: string,
     text = "",
     error = false,
-  ) => add({ id, role: "tool", name, args, text, error });
+  ) =>
+    add({
+      id,
+      renderId: `pi:${id}`,
+      role: "tool",
+      name,
+      args,
+      text,
+      error,
+      state: error ? "failed" : "completed",
+    });
   for (const entry of entries) {
+    const captureId = links.get(entry.id);
+    const renderId = (index: number) =>
+      captureId ? `capture:${captureId}:${index}` : `pi:${entry.id}:${index}`;
     const m = message(entry);
     if (m) {
       const kind = own(m, "role");
@@ -1005,6 +1108,10 @@ export function turnItems(
         add({
           ...(images.length ? { images } : {}),
           id: entry.id,
+          renderId: userCommands.has(entry.id)
+            ? `command:${userCommands.get(entry.id)}:user`
+            : renderId(0),
+          state: "completed",
           role: "user",
           text,
           name: "",
@@ -1012,9 +1119,17 @@ export function turnItems(
           error: false,
         });
       } else if (kind === "assistant") {
-        let text: ChatItem | undefined;
         const content = own(m, "content");
-        for (const block of Array.isArray(content) ? content : []) {
+        const state =
+          own(m, "stopReason") === "aborted"
+            ? "canceled"
+            : ["error", "length"].includes(own(m, "stopReason") as string)
+              ? "failed"
+              : "completed";
+        for (const [index, block] of (Array.isArray(content)
+          ? content
+          : []
+        ).entries()) {
           const b =
             block && typeof block === "object"
               ? (block as Record<string, unknown>)
@@ -1022,19 +1137,18 @@ export function turnItems(
           const type = own(b, "type");
           if (type === "text" && typeof own(b, "text") === "string") {
             const value = own(b, "text") as string;
-            if (text && items[items.length - 1] === text)
-              text.text += sanitizeText(`\n\n${value}`, secrets);
-            else
-              text = add({
-                id: `${entry.id}:${items.length}`,
-                role: "assistant",
-                text: value,
-                name: "",
-                args: "",
-                error: ["error", "aborted", "length"].includes(
-                  own(m, "stopReason") as string,
-                ),
-              });
+            add({
+              id: `${entry.id}:${index}`,
+              renderId: renderId(index),
+              state,
+              role: "assistant",
+              text: value,
+              name: "",
+              args: "",
+              error: ["error", "aborted", "length"].includes(
+                own(m, "stopReason") as string,
+              ),
+            });
           } else if (type === "toolCall") {
             const id = own(b, "id"),
               name = own(b, "name");
@@ -1045,11 +1159,16 @@ export function turnItems(
               omitted.other = true;
             }
             const call = tool(
-              typeof id === "string" && id ? id : `${entry.id}:${items.length}`,
+              typeof id === "string" && id ? id : `${entry.id}:${index}`,
               typeof name === "string" ? name : "tool",
               args,
             );
-            if (typeof id === "string") tools.set(id, call);
+            call.renderId = renderId(index);
+            call.state = state === "completed" ? "pending" : state;
+            if (typeof id === "string") {
+              // Duplicate provider call IDs are ambiguous, never overwrite an earlier execution.
+              tools.set(id, tools.has(id) ? null : call);
+            }
           } else if (type === "thinking" || type === "redactedThinking") {
             const value = own(b, "thinking");
             if (
@@ -1059,14 +1178,29 @@ export function turnItems(
               own(b, "redacted") !== true
             )
               add({
-                id: `${entry.id}:${items.length}`,
+                id: `${entry.id}:${index}`,
+                renderId: renderId(index),
+                state: "completed",
                 role: "thinking",
                 text: value,
                 name: "",
                 args: "",
                 error: false,
               });
-            else omitted.thinking = true;
+            else {
+              omitted.thinking = true;
+              if (captureId)
+                add({
+                  id: `${entry.id}:${index}`,
+                  renderId: renderId(index),
+                  state: "unavailable",
+                  role: "thinking",
+                  text: "",
+                  name: "",
+                  args: "",
+                  error: false,
+                });
+            }
           } else if (type === "image") omitted.media = true;
           else omitted.other = true;
         }
@@ -1079,17 +1213,25 @@ export function turnItems(
           secrets,
         );
         const call = typeof id === "string" ? tools.get(id) : undefined;
-        if (call) {
+        if (
+          call &&
+          call.name ===
+            sanitizeText(typeof name === "string" ? name : "tool", secrets)
+        ) {
           call.text = output;
           call.error = own(m, "isError") === true;
-        } else
-          tool(
+          call.state = call.error ? "failed" : "completed";
+          if (typeof id === "string") tools.delete(id);
+        } else {
+          const orphan = tool(
             typeof id === "string" && id ? id : entry.id,
             typeof name === "string" ? name : "tool",
             "",
             output,
             own(m, "isError") === true,
           );
+          orphan.renderId = renderId(0);
+        }
       } else if (kind === "bashExecution") {
         const command = own(m, "command"),
           output = own(m, "output"),
@@ -1128,6 +1270,7 @@ export function turnItems(
   }
   const first = entries.find(isUser) ?? entries[0];
   return {
+    captureMessages: [...links.values()],
     id: first?.id ?? "",
     entry: entries.at(-1)?.id ?? null,
     parent: first?.parentId ?? null,
@@ -1186,6 +1329,16 @@ export function itemParts(item: ChatItem): ChatItem[] {
 }
 /** A built turn's listed steps and detail parts. `live` items may still change. */
 export function listTurn(turn: Omit<BuiltTurn, "steps" | "parts">): BuiltTurn {
+  turn = {
+    ...turn,
+    items: turn.items.map((item) => ({
+      ...item,
+      renderId: item.renderId ?? `pi:${item.id}`,
+      version: createHash("sha256")
+        .update(JSON.stringify([item.text, item.args, item.images ?? []]))
+        .digest("hex"),
+    })),
+  };
   const parts = turn.items.map(itemParts);
   const steps = turn.items.map((item, index) => {
     const listed = chatStep(
@@ -1412,6 +1565,7 @@ export class PiSessions {
     entries: SessionEntry[],
     secrets: readonly string[],
   ): BuiltTurn {
+    session.validateCaptures(entries);
     const key = [
       session.path,
       session.incarnation,

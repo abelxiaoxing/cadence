@@ -329,11 +329,31 @@ export interface ChatImage {
   index: number;
   mimeType: string;
 }
-export interface ChatItem {
+/** Rendering identity is independent of the step/part read coordinates. */
+export interface ChatPresentation {
+  renderId?: string;
+  /** Version of the full redacted content, not its part count or execution state. */
+  version?: string;
+  state?:
+    | "pending"
+    | "streaming"
+    | "running"
+    | "completed"
+    | "failed"
+    | "canceled"
+    | "unavailable";
+}
+/** Last actual capture activity; sequence advances only on observed events. */
+export interface ChatActivity {
+  kind: "waiting" | "thinking" | "text" | "tool";
+  sequence: number;
+  name?: string;
+}
+export interface ChatItem extends ChatPresentation {
   images?: ChatImage[];
   id: string;
-  /** `thinking` is one readable thinking block of an assistant message, in its
-   * recorded place; its signature is never returned. */
+  /** `thinking` is a recorded readable block, or an explicit body-free
+   * activity placeholder; its signature is never returned. */
   role: "user" | "assistant" | "tool" | "thinking";
   text: string;
   name: string;
@@ -362,7 +382,7 @@ export interface ChatTurn {
  * arguments or output or a thinking block's text, and keeps at most
  * `STEP_TEXT_BYTES` of message text; the full item is read per step with
  * `conversation-step`, one part at a time. */
-export interface ChatStep {
+export interface ChatStep extends ChatPresentation {
   images?: ChatImage[];
   id: string;
   role: ChatItem["role"];
@@ -379,6 +399,7 @@ export interface ChatStep {
 }
 /** One turn of a conversation branch: a user message and what followed it. */
 export interface ChatTurnHeader {
+  activity?: ChatActivity;
   execution?: ExecutionContext;
   retry?: ModelRetry;
   /** The user message's session entry id; a browser command id while Pi has not
@@ -502,6 +523,7 @@ export function chatStep(
   const text = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
+    ...presentation(item),
     role: item.role,
     text,
     ...(item.images?.length ? { images: item.images } : {}),
@@ -1191,8 +1213,56 @@ function decodeChatImages(v: unknown): ChatImage[] {
     };
   });
 }
+const PRESENTATION_KEYS = ["renderId", "version", "state"] as const;
+function presentationKeys(v: unknown): string[] {
+  return PRESENTATION_KEYS.filter((key) => Object.hasOwn(v ?? {}, key));
+}
+function presentation(v: ChatPresentation): ChatPresentation {
+  return {
+    ...(v.renderId === undefined ? {} : { renderId: v.renderId }),
+    ...(v.version === undefined ? {} : { version: v.version }),
+    ...(v.state === undefined ? {} : { state: v.state }),
+  };
+}
+function decodePresentation(o: Record<string, unknown>): ChatPresentation {
+  return {
+    ...(o.renderId === undefined
+      ? {}
+      : { renderId: text(o.renderId, 160, true) }),
+    ...(o.version === undefined ? {} : { version: decodeHash(o.version) }),
+    ...(o.state === undefined
+      ? {}
+      : {
+          state: oneOf(o.state, [
+            "pending",
+            "streaming",
+            "running",
+            "completed",
+            "failed",
+            "canceled",
+            "unavailable",
+          ] as const),
+        }),
+  };
+}
+function decodeChatActivity(v: unknown): ChatActivity {
+  const o = closed(v, [
+    "kind",
+    "sequence",
+    ...(Object.hasOwn(v ?? {}, "name") ? ["name"] : []),
+  ]);
+  const kind = oneOf(o.kind, ["waiting", "thinking", "text", "tool"] as const);
+  if (o.name !== undefined && kind !== "tool")
+    throw new ContractError("invalid");
+  return {
+    kind,
+    sequence: integer(o.sequence, 0),
+    ...(o.name === undefined ? {} : { name: text(o.name, 128) }),
+  };
+}
 export function decodeChatItem(v: unknown): ChatItem {
   const i = closed(v, [
+    ...presentationKeys(v),
     "id",
     "role",
     "text",
@@ -1202,6 +1272,7 @@ export function decodeChatItem(v: unknown): ChatItem {
     ...(Object.hasOwn(v ?? {}, "images") ? ["images"] : []),
   ]);
   return {
+    ...decodePresentation(i),
     ...(i.images === undefined ? {} : { images: decodeChatImages(i.images) }),
     id: text(i.id, 160, true),
     role: oneOf(i.role, ITEM_ROLES),
@@ -1213,6 +1284,7 @@ export function decodeChatItem(v: unknown): ChatItem {
 }
 function decodeChatStep(v: unknown): ChatStep {
   const o = closed(v, [
+    ...presentationKeys(v),
     "id",
     "role",
     "text",
@@ -1224,6 +1296,7 @@ function decodeChatStep(v: unknown): ChatStep {
     "parts",
   ]);
   const step = {
+    ...decodePresentation(o),
     ...(o.images === undefined ? {} : { images: decodeChatImages(o.images) }),
     id: text(o.id, 160, true),
     role: oneOf(o.role, ITEM_ROLES),
@@ -1239,13 +1312,31 @@ function decodeChatStep(v: unknown): ChatStep {
     (step.text || step.clipped)
   )
     throw new ContractError("invalid");
-  // A thinking block is listed only when it has text to read.
-  if (step.role === "thinking" && !step.parts)
-    throw new ContractError("invalid");
+  // Legacy thinking steps require readable text. New activity placeholders
+  // explicitly carry state and identity, and cannot fabricate detail parts.
+  if (step.role === "thinking") {
+    if (
+      !step.parts &&
+      !(
+        step.renderId &&
+        [
+          "streaming",
+          "completed",
+          "unavailable",
+          "canceled",
+          "failed",
+        ].includes(step.state ?? "")
+      )
+    )
+      throw new ContractError("invalid");
+    if (step.parts && step.state !== undefined && step.state !== "completed")
+      throw new ContractError("invalid");
+  }
   return step;
 }
 function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
   const o = closed(v, [
+    ...(Object.hasOwn(v ?? {}, "activity") ? ["activity"] : []),
     "id",
     "status",
     "notice",
@@ -1261,6 +1352,9 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
+    ...(o.activity === undefined
+      ? {}
+      : { activity: decodeChatActivity(o.activity) }),
     ...(o.execution === undefined
       ? {}
       : { execution: decodeExecutionContext(o.execution) }),

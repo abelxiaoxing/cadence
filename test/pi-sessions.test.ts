@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { expect, it, vi } from "vitest";
 import { canonicalJson, LIMITS } from "../src/service/contracts/core.ts";
 import {
@@ -40,6 +41,7 @@ import {
   CADENCE_MODE_ENTRY,
   WEBUI_SESSION_ENTRY,
 } from "../src/session-entries.mjs";
+import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import type { CaptureFrame } from "../src/worker-public.mjs";
 
 const project = () => realpathSync(mkdtempSync(join(tmpdir(), "pi-project-")));
@@ -336,7 +338,7 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
     ["tool", "compaction", "Earlier work"],
     ["tool", "cadence-workflow-result", "Workflow done"],
   ]);
-  expect(first.items[1].id).toBe(`${call.id}:1`);
+  expect(first.items[1].id).toBe(`${call.id}:0`);
   expect(first.items[3].args).toBe('{"path":"a.json"}');
   expect(first.items[5].error).toBe(true);
   expect(first.omitted).toEqual({ thinking: true, media: true, other: false });
@@ -365,7 +367,10 @@ it("splits a branch into turns of chat items, redacted, with Pi's failure status
   expect(listed.steps[0].parts).toBe(0);
   // Thinking is listed without its text, which a step read returns.
   expect(listed.steps[1]).toEqual({
-    id: `${call.id}:1`,
+    id: `${call.id}:0`,
+    renderId: `pi:${call.id}:0`,
+    version: expect.stringMatching(/^[a-f0-9]{64}$/),
+    state: "completed",
     role: "thinking",
     text: "",
     clipped: false,
@@ -438,6 +443,9 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   const message = chatStep(
     {
       id: escaped(160),
+      renderId: escaped(160),
+      version: "a".repeat(64),
+      state: "completed",
       role: "assistant",
       text: escaped(100000),
       name: escaped(128),
@@ -449,6 +457,9 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   const tool = chatStep(
     {
       id: escaped(160),
+      renderId: escaped(160),
+      version: "a".repeat(64),
+      state: "completed",
       role: "tool",
       text: escaped(100000),
       name: escaped(128),
@@ -464,6 +475,11 @@ it("a full step listing at every field's encoded worst case fits one read reply"
     ordinal: Number.MAX_SAFE_INTEGER,
     turn: {
       id: "z".repeat(64),
+      activity: {
+        kind: "tool",
+        name: escaped(128),
+        sequence: Number.MAX_SAFE_INTEGER,
+      },
       status: "completed",
       notice: escaped(1024),
       omitted: { thinking: true, media: true, other: true },
@@ -484,6 +500,9 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   const thinking = chatStep(
     {
       id: escaped(160),
+      renderId: escaped(160),
+      version: "a".repeat(64),
+      state: "completed",
       role: "thinking",
       text: escaped(100000),
       name: "",
@@ -501,11 +520,37 @@ it("a full step listing at every field's encoded worst case fits one read reply"
   for (const refused of [
     { ...thinking, text: "listed" },
     { ...thinking, clipped: true },
-    { ...thinking, parts: 0 },
+    {
+      id: "legacy",
+      role: "thinking",
+      text: "",
+      clipped: false,
+      name: "",
+      target: "",
+      error: false,
+      parts: 0,
+    },
+    { ...thinking, state: "unavailable" },
+    { ...thinking, parts: 0, state: "running" },
+    { ...thinking, version: "not-a-version" },
+    { ...thinking, signature: "no" },
   ])
     expect(() => decodeWorkbenchResult({ ...value, steps: [refused] })).toThrow(
       "invalid",
     );
+  const placeholder = { ...thinking, parts: 0, state: "streaming" };
+  expect(
+    decodeWorkbenchResult({ ...value, steps: [placeholder] }),
+  ).toMatchObject({ steps: [placeholder] });
+  for (const activity of [
+    { kind: "thinking", sequence: -1 },
+    { kind: "thinking", sequence: 1, text: "private" },
+    { kind: "thinking", sequence: 1, name: "tool-only" },
+    { kind: "success", sequence: 1 },
+  ])
+    expect(() =>
+      decodeWorkbenchResult({ ...value, turn: { ...value.turn, activity } }),
+    ).toThrow();
 });
 
 it("finds a browser turn's own entries, not a terminal message sent from the same point", () => {
@@ -672,7 +717,7 @@ it("keeps the newest tree nodes when a session has more than one read holds", ()
   expect(tree?.nodes[0]).toMatchObject({ text: "m5", parent: null });
 });
 
-it("a live preview adds only what Pi has not written yet, by count", () => {
+it("a live preview joins tools by explicit call source, not visible message or result counts", () => {
   const capture = new LiveCapture(() => ["SECRET"]);
   let seq = 0;
   const frame = (event: CaptureFrame["event"]) =>
@@ -683,7 +728,7 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
       observedMs: 0,
       event,
     } as CaptureFrame);
-  const source = { kind: "sdk" } as never;
+  const source = { disposition: "observed", value: "call" } as const;
   frame({
     kind: "message-start",
     messageId: "a1",
@@ -760,6 +805,8 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
     },
     {
       id: "call",
+      renderId: "call:t1",
+      state: "pending" as const,
       role: "tool" as const,
       text: "",
       name: "bash",
@@ -767,17 +814,15 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
       error: false,
     },
   ];
-  const { items, stable } = capture.extend(written);
+  const { items, stable } = capture.extend(written, [], ["a1"]);
   expect(items.map((i) => [i.id, i.text])).toEqual([
     ["u", "q"],
     ["w1", "first"],
     ["call", "partial [redacted] output"],
-    ["a2", ""],
   ]);
   expect(stable).toBe(2);
   expect(written[2].text).toBe("");
-  // The capture covers the whole run: once a message sent into it begins a
-  // new turn, the items of the earlier turns are counted and left out.
+  // Explicit identities from earlier turns prevent their tools reappearing.
   const earlier = [written[0], written[1], { ...written[2], text: "done" }];
   const next = {
     id: "u2",
@@ -787,8 +832,8 @@ it("a live preview adds only what Pi has not written yet, by count", () => {
     args: "",
     error: false,
   };
-  expect(capture.extend([next], earlier)).toEqual({
-    items: [next, { ...next, id: "a2", role: "assistant", text: "" }],
+  expect(capture.extend([next], earlier, ["a1"])).toEqual({
+    items: [next],
     stable: 1,
   });
 });
@@ -1017,54 +1062,26 @@ it("a session's cache totals sum every usage record of the file as Pi's statisti
   expect(sessions.session(id)?.cache).toEqual({ input: 0, read: 0, write: 0 });
 });
 
-it("written thinking never shifts the live preview's count of written messages", () => {
-  const capture = new LiveCapture(() => []);
-  for (const [workerSeq, messageId] of ["a1", "a2"].entries())
-    capture.accept({
-      protocol: 2,
-      childRunId: "c",
-      workerSeq: workerSeq + 1,
-      observedMs: 0,
-      event: {
-        kind: "message-start",
-        messageId,
-        role: "assistant",
-        source: { kind: "sdk" } as never,
-        resultCallId: null,
-      },
-    } as CaptureFrame);
-  const item = (id: string, role: "user" | "assistant" | "thinking") => ({
-    id,
-    role,
-    text: id,
+it("an old unlinked item never acquires a capture identity by text or position", async () => {
+  const f = streamingFixture();
+  const first = await f.start();
+  await f.end([{ type: "text", text: "Same" }]);
+  const second = await f.start();
+  await f.end([{ type: "text", text: "Same" }]);
+  const old = {
+    id: "old:0",
+    role: "assistant" as const,
+    text: "Same",
     name: "",
     args: "",
     error: false,
-  });
-  // One written message whose text a thinking block splits: a2 is not written.
-  const split = capture.extend([
-    item("u", "user"),
-    item("e1:1", "assistant"),
-    item("e1:2", "thinking"),
-    item("e1:3", "assistant"),
-  ]);
-  expect(split.items.map((i) => i.id)).toEqual([
-    "u",
-    "e1:1",
-    "e1:2",
-    "e1:3",
-    "a2",
-  ]);
-  expect(split.stable).toBe(4);
-  // Two written messages, the second led by its thinking: nothing to add.
-  const both = capture.extend([
-    item("u", "user"),
-    item("e1:1", "assistant"),
-    item("e2:2", "thinking"),
-    item("e2:3", "assistant"),
-  ]);
-  expect(both.items.map((i) => i.id)).toEqual(["u", "e1:1", "e2:2", "e2:3"]);
-  expect(both.stable).toBe(4);
+  };
+  // Only the first explicit occurrence is written, regardless of the old item's content.
+  const read = f.live.extend([old], [], [first]);
+  expect(read.items.map((item) => item.id)).toEqual(["old:0", `${second}:0`]);
+  expect(read.items[0].renderId).toBeUndefined();
+  expect(read.items[1].renderId).toBe(`capture:${second}:0`);
+  expect(f.live.extend([old], [], [first, second]).items).toEqual([old]);
 });
 
 it.skipIf(typeof process.getuid !== "function")(
@@ -1316,4 +1333,319 @@ it("retained descriptors include large images even beyond the old content-index 
   );
   expect(view.omitted.media).toBe(false);
   expect(JSON.stringify(view)).not.toContain(data);
+});
+
+/** No service or provider: the genuine capture codec feeds the live reader. */
+function streamingFixture() {
+  const live = new LiveCapture(() => []);
+  const events: CaptureFrame[] = [];
+  const emitter = new CaptureEmitter(
+    randomUUID(),
+    new Writable({
+      write(chunk, _encoding, done) {
+        const frame = JSON.parse(String(chunk)) as CaptureFrame;
+        events.push(frame);
+        live.accept(frame);
+        done();
+      },
+    }),
+    () => {
+      throw new Error("capture failed");
+    },
+  );
+  const sdk = new SdkCapture(emitter);
+  let ready = false;
+  const start = async () => {
+    if (!ready) {
+      await emitter.emit({ kind: "ready", requestProtocol: 2 });
+      ready = true;
+    }
+    await sdk.event({ type: "message_start", message: { role: "assistant" } });
+    const e = events.at(-1)!.event;
+    if (e.kind !== "message-start") throw new Error("missing start");
+    return e.messageId;
+  };
+  const end = (content: unknown[], stopReason = "stop") =>
+    sdk.event({
+      type: "message_end",
+      message: { role: "assistant", content, stopReason },
+    });
+  return { live, sdk, start, end };
+}
+it("stream identity: batches retain empty/thinking/tool messages and legitimate repeated text", async () => {
+  const f = streamingFixture(),
+    cwd = project(),
+    commandId = randomUUID();
+  const dir = mkdtempSync(join(tmpdir(), "identity-batch-"));
+  const u = user(null, "question");
+  const entries = [
+    u,
+    entry("custom", u.id, {
+      customType: BROWSER_COMMAND_ENTRY,
+      data: { commandId, userId: u.id },
+    }),
+  ];
+  const ids: string[] = [];
+  for (const content of [
+    [{ type: "text", text: "Repeated" }],
+    [{ type: "thinking", thinking: "stored only" }],
+    [{ type: "toolCall", id: "call", name: "read", arguments: {} }],
+    [],
+    [{ type: "text", text: "Repeated" }],
+  ]) {
+    const captureMessageId = await f.start();
+    ids.push(captureMessageId);
+    await f.end(content);
+    const a = assistant(entries.at(-1)!.id, content);
+    entries.push(
+      a,
+      entry("custom", a.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId, userId: u.id, captureMessageId },
+      }),
+    );
+  }
+  const saved = write(dir, cwd, entries),
+    sessions = new PiSessions(dir, cwd);
+  const session = sessions.session(saved.id)!;
+  const durable = turnItems(session.branch(session.current()), []);
+  expect(durable.captureMessages).toEqual(ids);
+  const merged = f.live.extend(durable.items, [], durable.captureMessages);
+  expect(
+    merged.items.filter((i) => i.role === "assistant").map((i) => i.text),
+  ).toEqual(["Repeated", "Repeated"]);
+  expect(merged.items.map((i) => i.role)).toEqual([
+    "user",
+    "assistant",
+    "thinking",
+    "tool",
+    "assistant",
+  ]);
+});
+it("stream identity: text-thinking-tool-text keeps real content indices before and after durable handoff", async () => {
+  const f = streamingFixture(),
+    id = await f.start();
+  const content = [
+    { type: "text", text: "First" },
+    { type: "thinking", thinking: "private" },
+    { type: "toolCall", id: "call", name: "read", arguments: {} },
+    { type: "text", text: "Last" },
+  ];
+  await f.end(content);
+  const preview = f.live.extend([]).items;
+  expect(preview.map((i) => i.role)).toEqual([
+    "assistant",
+    "thinking",
+    "tool",
+    "assistant",
+  ]);
+  expect(preview.map((i) => i.renderId)).toEqual(
+    content.map((_, index) => `capture:${id}:${index}`),
+  );
+  expect(
+    preview.filter((i) => i.role === "assistant").map((i) => i.text),
+  ).toEqual(["First", "Last"]);
+  expect(JSON.stringify(preview)).not.toContain("private");
+});
+
+it("tool snapshots replace output and change the detail version with the same parts count; empty final output still settles", async () => {
+  const f = streamingFixture();
+  await f.start();
+  await f.end(
+    [
+      {
+        type: "toolCall",
+        id: "execute",
+        name: "bash",
+        arguments: { command: "controlled" },
+      },
+    ],
+    "toolUse",
+  );
+  const steps = () =>
+    listTurn({ ...turnItems([], []), items: f.live.extend([]).items });
+  const pending = steps().steps[0];
+  expect(pending.state).toBe("pending");
+  await f.sdk.event({
+    type: "tool_execution_start",
+    toolCallId: "execute",
+    toolName: "bash",
+    args: { command: "controlled" },
+  });
+  const running = steps().steps[0];
+  expect(running).toMatchObject({
+    state: "running",
+    renderId: pending.renderId,
+    version: pending.version,
+  });
+  for (const text of ["First snapshot", "Other snapshot"]) {
+    await f.sdk.event({
+      type: "tool_execution_update",
+      toolCallId: "execute",
+      toolName: "bash",
+      partialResult: { content: [{ type: "text", text }] },
+    });
+    const current = steps();
+    expect(current.parts[0][0].text).toBe(text);
+    expect(current.steps[0]).toMatchObject({
+      renderId: pending.renderId,
+      state: "running",
+      parts: running.parts,
+    });
+    expect(current.steps[0].version).not.toBe(running.version);
+    if (text.startsWith("First")) running.version = current.steps[0].version;
+  }
+  await f.sdk.event({
+    type: "tool_execution_end",
+    toolCallId: "execute",
+    toolName: "bash",
+    isError: false,
+    result: { content: [] },
+  });
+  expect(steps().steps[0]).toMatchObject({
+    state: "completed",
+    parts: running.parts,
+    renderId: pending.renderId,
+  });
+  expect(steps().parts[0][0].text).toBe("");
+});
+it.each(["error", "aborted"])(
+  "%s ends thinking and partial tool activity without inventing output, then a retry keeps a new identity",
+  async (stopReason) => {
+    const f = streamingFixture(),
+      first = await f.start();
+    await f.sdk.event({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    });
+    await f.end(
+      [
+        { type: "thinking", thinking: "not streamed" },
+        { type: "text", text: "Repeated" },
+        { type: "toolCall", id: "not-executed", name: "read", arguments: {} },
+      ],
+      stopReason,
+    );
+    const failed = f.live.extend([]).items;
+    expect(failed[0]).toMatchObject({ state: "unavailable", text: "" });
+    expect(failed[1].state).toBe(
+      stopReason === "aborted" ? "canceled" : "failed",
+    );
+    expect(failed[2].state).toBe(
+      stopReason === "aborted" ? "canceled" : "unavailable",
+    );
+    const second = await f.start();
+    await f.end([{ type: "text", text: "Repeated" }]);
+    expect(second).not.toBe(first);
+    expect(
+      f.live
+        .extend([])
+        .items.filter((i) => i.role === "assistant")
+        .map((i) => i.text),
+    ).toEqual(["Repeated", "Repeated"]);
+  },
+);
+it.each([
+  "duplicate",
+  "foreign-user",
+  "foreign-run",
+  "non-message-parent",
+  "extra-field",
+  "invalid-id",
+  "foreign-branch",
+])("capture bridge refuses %s without guessing a replacement", (problem) => {
+  const cwd = project(),
+    dir = mkdtempSync(join(tmpdir(), "identity-invalid-")),
+    commandId = randomUUID(),
+    captureMessageId = randomUUID();
+  const u = user(null, "q"),
+    start = entry("custom", u.id, {
+      customType: BROWSER_COMMAND_ENTRY,
+      data: { commandId, userId: u.id, captureMessageId: randomUUID() },
+    });
+  const a = assistant(start.id, [{ type: "text", text: "same" }]);
+  const marker = entry("custom", a.id, {
+    customType: BROWSER_COMMAND_ENTRY,
+    data: { commandId, userId: u.id, captureMessageId },
+  });
+  const data = marker.data as Record<string, unknown>;
+  const entries = [u, start, a, marker];
+  if (problem === "duplicate")
+    entries.push(
+      entry("custom", marker.id, { customType: BROWSER_COMMAND_ENTRY, data }),
+    );
+  if (problem === "foreign-user") data.userId = "another";
+  if (problem === "foreign-run") data.run = randomUUID();
+  if (problem === "non-message-parent") marker.parentId = start.id;
+  if (problem === "extra-field") data.body = "forbidden";
+  if (problem === "invalid-id") data.captureMessageId = "not-a-uuid";
+  if (problem === "foreign-branch") {
+    const other = assistant(start.id, []);
+    entries.push(
+      other,
+      entry("custom", other.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: { commandId: randomUUID(), userId: u.id, captureMessageId },
+      }),
+    );
+  }
+  const saved = write(dir, cwd, entries),
+    sessions = new PiSessions(dir, cwd),
+    session = sessions.session(saved.id)!;
+  expect(() => session.commandEntries(commandId, null, 0)).toThrow();
+  expect(() => sessions.turn(session, session.branch(marker.id), [])).toThrow();
+});
+
+it("tool results keep source order and can reuse a call ID only after its previous result settled", () => {
+  const cwd = project(),
+    dir = mkdtempSync(join(tmpdir(), "identity-tools-"));
+  const u = user(null, "q"),
+    entries = [u];
+  for (const text of ["first", "second"]) {
+    const a = assistant(
+      entries.at(-1)!.id,
+      [
+        { type: "text", text: "Before" },
+        { type: "toolCall", id: "same-call", name: "read", arguments: {} },
+        { type: "text", text: "After" },
+      ],
+      "toolUse",
+    );
+    entries.push(
+      a,
+      entry("message", a.id, {
+        message: {
+          role: "toolResult",
+          toolCallId: "same-call",
+          toolName: "read",
+          content: [{ type: "text", text }],
+          isError: text === "second",
+        },
+      }),
+    );
+  }
+  const saved = write(dir, cwd, entries),
+    sessions = new PiSessions(dir, cwd),
+    session = sessions.session(saved.id)!;
+  const built = sessions.turn(session, session.branch(session.current()), []);
+  expect(built.items.map((item) => item.role)).toEqual([
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "assistant",
+    "tool",
+    "assistant",
+  ]);
+  expect(
+    built.items
+      .filter((item) => item.role === "tool")
+      .map((item) => [item.text, item.state]),
+  ).toEqual([
+    ["first", "completed"],
+    ["second", "failed"],
+  ]);
+  expect(new Set(built.steps.map((step) => step.renderId)).size).toBe(
+    built.steps.length,
+  );
 });
