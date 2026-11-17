@@ -2,6 +2,12 @@
 
 ## Emitted licenses
 
+The browser's pi-web-ui adaptations retain `Copyright (c) 2026 xing-shuyin` and the complete original MIT text in `licenses/pi-web-ui-MIT.txt`.
+Ordinary conversations reuse its stable rendering-identity, Markdown prefix/tail and user-intent scrolling patterns; `web/src/components/StreamMarkdown.tsx` adapts the already pinned prefix renderer without its character-paced snapshot replay.
+Cadence supplies capture-to-Pi ownership correlation, finite reads and separate runtime observations rather than importing the upstream executor or position-based association.
+`provenance/webui-reuse.json` pins current adaptation/integration bodies; existing upstream source and license pins stay unchanged.
+These sources ship inside the canonical browser assets, not as new standalone package members.
+
 `licenses/bundled-web.txt` contains full original notices with stable labeled boundaries: React/DOM/scheduler; react-icons and the selected Feather family; unified/Markdown/HTML utilities; highlight.js; KaTeX code; vis-timeline and the versions actually embedded by its standalone build.
 KaTeX's 60 emitted TTF/WOFF/WOFF2 fonts retain their original bytes and separate SIL OFL1.1 plus reserved-family copyright notices.
 The vis bundle includes its own Babel/core-js/moment/vis-data/vis-util and other dependencies; project-resolved package versions are not substituted for those embedded versions.

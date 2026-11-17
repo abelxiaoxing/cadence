@@ -83,6 +83,7 @@ it("ordinary messages use rich text and real tool cards, not task success infere
         id: "t",
         role: "tool",
         text: "actual output",
+        state: "completed",
         name: "read",
         args: '{"path":"file.txt"}',
         error: false,
@@ -99,7 +100,7 @@ it("ordinary messages use rich text and real tool cards, not task success infere
   });
   const html = renderToStaticMarkup(<ChatTurnView turn={turn} />);
   expect(html).toContain("<strong>Visible</strong>");
-  // The reply that followed the call is what records its result.
+  // The recorded tool result is independent of this reply's failure.
   expect(html).toContain('<div class="toolcall ok">');
   expect(html).toContain('aria-label="Tool result recorded"');
   expect(html).toContain(">file.txt</span>");
@@ -206,15 +207,21 @@ it("a tool card states what was recorded for its call, live or settled", () => {
     name: "read",
     args: '{"path":"src/x.ts"}',
   });
-  // Everything listed is settled, so the reply itself is what is in progress.
+  // Legacy stability says nothing about a tool result. Keep it readable and neutral.
   const running = renderTurn({ status: "running", items: [user, read] });
-  expect(running).toContain('<div class="toolcall ok">');
+  expect(running).toContain('<div class="toolcall idle">');
+  expect(
+    renderTurn({ items: [user, { ...read, state: "completed" }] }),
+  ).toContain('<div class="toolcall ok">');
   expect(running).toMatch(/class="msg-working" role="status">.*Working…/);
   expect(renderTurn({ status: "running", items: [user] })).toContain(
     "Working…",
   );
-  // A call the owner may still change is the one in progress.
-  const settled = sourceOf({ status: "running", items: [user, read] });
+  // Only observed execution, not stable/parts, says a call is in progress.
+  const settled = sourceOf({
+    status: "running",
+    items: [user, { ...read, state: "running" }],
+  });
   const live = { ...settled, header: { ...settled.header, stable: 1 } };
   expect(toolState(live, 1)).toBe("run");
   const inFlight = renderToStaticMarkup(<ChatTurnView turn={live} />);
@@ -359,13 +366,25 @@ it("a readable thinking block is a folded card in its recorded place, never the 
   const waiting = renderToStaticMarkup(<ChatTurnView turn={settled} />);
   expect(waiting).toMatch(/class="msg-working" role="status">.*Working…/);
   expect(waiting).toContain('<div class="thinking">');
-  // One the owner may still change says so, without inventing its text.
+  // An explicit body-free event says so, without inventing readable details.
   const recording = renderToStaticMarkup(
     <ChatTurnView
-      turn={{ ...settled, header: { ...settled.header, stable: 1 } }}
+      turn={{
+        ...settled,
+        steps: [
+          settled.steps[0],
+          {
+            ...settled.steps[1],
+            renderId: "capture:thinking:0",
+            parts: 0,
+            state: "streaming",
+          },
+        ],
+      }}
     />,
   );
-  expect(recording).toContain('aria-label="Thinking still being recorded"');
+  expect(recording).toContain("Thinking activity observed");
+  expect(recording).not.toContain('title="Show thinking"');
   expect(recording).not.toContain("msg-working");
   expect(recording).not.toContain("Working it out");
 });
@@ -1071,3 +1090,107 @@ it("folder setup keeps a text draft and model preselection, never a Send intent"
   expect(onChooseFolder).not.toHaveBeenCalled();
   expect(onDraftChange).not.toHaveBeenCalled();
 });
+
+it("presentation keys follow source identities, not read coordinates, equal body text or execution state", () => {
+  const text = (id: string) =>
+    chatItem(id, "assistant", {
+      text: "legitimate repeat",
+      renderId: `capture:${id}:0`,
+      version: "v1",
+      state: "streaming",
+    });
+  const first = text("first"),
+    last = text("last");
+  const prior = sourceOf({ status: "running", items: [first, last] });
+  const inserted = sourceOf({
+    status: "running",
+    items: [
+      first,
+      chatItem("empty", "assistant"),
+      chatItem("thinking", "thinking", {
+        renderId: "capture:middle:0",
+        state: "streaming",
+      }),
+      chatItem("tool", "tool", {
+        renderId: "capture:middle:1",
+        state: "running",
+      }),
+      { ...last, id: "durable:last", state: "completed" },
+    ],
+  });
+  const before = turnParts(prior.steps).replies;
+  const after = turnParts(inserted.steps).replies;
+  expect(after.map((p) => p.key)).toEqual([
+    "capture:first:0",
+    "capture:middle:0",
+    "capture:middle:1",
+    "capture:last:0",
+  ]);
+  expect(after.at(-1)?.index).not.toBe(before.at(-1)?.index);
+  expect(after.at(-1)?.key).toBe(before.at(-1)?.key);
+  expect(after.filter((p) => p.step.text === "legitimate repeat")).toHaveLength(
+    2,
+  );
+  const legacy = sourceOf({
+    items: [chatItem("old-entry", "assistant", { text: "legitimate repeat" })],
+  });
+  expect(turnParts(legacy.steps).replies[0].key).toBe("legacy:old-entry");
+});
+
+it.each(["en", "zh"] as const)(
+  "thinking activity has no fake expandable detail and hands off folded (%s)",
+  (locale) => {
+    const source = sourceOf({
+      status: "running",
+      items: [
+        chatItem("t", "thinking", {
+          renderId: "capture:thinking:0",
+          state: "streaming",
+        }),
+      ],
+    });
+    source.steps = source.steps.map((step) => ({ ...step, parts: 0 }));
+    const activity = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <ChatTurnView turn={source} />
+      </LocaleProvider>,
+    );
+    expect(activity).toContain(
+      locale === "en" ? "Thinking activity observed" : "已观察到思考活动",
+    );
+    expect(activity).not.toContain("aria-expanded");
+    expect(activity).not.toContain("thinking-body");
+    const ended = {
+      ...source,
+      header: { ...source.header, status: "canceled" as const },
+      steps: source.steps.map((s) => ({ ...s, state: "canceled" as const })),
+    };
+    const unavailable = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <ChatTurnView turn={ended} />
+      </LocaleProvider>,
+    );
+    expect(unavailable).toContain(
+      locale === "en" ? "Thinking content unavailable" : "思考内容不可用",
+    );
+    expect(unavailable).not.toContain("aria-expanded");
+    const durable = {
+      ...source,
+      steps: source.steps.map((s) => ({
+        ...s,
+        parts: 1,
+        state: "completed" as const,
+      })),
+    };
+    const readable = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <ChatTurnView turn={durable} />
+      </LocaleProvider>,
+    );
+    expect(readable).toContain('aria-expanded="false"');
+    expect(readable).not.toContain("thinking-body");
+    expect(turnParts(durable.steps).replies[0].key).toBe(
+      turnParts(source.steps).replies[0].key,
+    );
+  },
+);

@@ -322,6 +322,9 @@ A terminal holding the session keeps its old name until `/resume`; its next mess
 The session directory follows Pi's precedence: `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in the project's `.pi/settings.json` or the agent directory's `settings.json`, then `<agentDir>/sessions/--<cwd>--`; session headers bind their own cwd within the owning checkout.
 Same-checkout subdirectories share the owner's readonly session cache, not one execution cwd; another account's agent directory is never adopted.
 Each browser turn records `cadence-browser-command/1` after each finalized Pi message, naming its actual user entry and owned prefix through the worker's public SessionManager; command identity and parent/offset checks, never prompt text, associate its entries.
+New markers optionally name the capture message UUID (`captureMessageId`); that occurrence plus the real content index identifies each preview and durable block, including messages with no visible text.
+The reader validates command/run/user/parent/branch ownership before using the link and withholds an unmarked Pi tail during live handoff; neither equal bodies nor the number of visible messages establishes a match.
+Old markers and terminal history remain readable under their recorded identities, without invented capture links.
 A message sent into a running reply is recorded the same way under its own command, from the user entry Pi writes for it, and also names the reply's command (`run`); the reader splits the run's entries where each such message began.
 A browser-created session carries a `cadence-webui/1` custom entry, which Pi keeps out of the model context; the terminal resumes it with `/resume` or `pi --session <id>` like any other session.
 Pi writes each message when it ends, raw: thinking, signatures and tool output are stored as the terminal stores them, and the owner redacts its credentials from everything it returns instead.
@@ -356,7 +359,8 @@ A message its reply ended without delivering (`undelivered`) is shown with its r
 The transcript shows a delivered message as the ordinary turn it is.
 A turn whose entry Pi never wrote (a refusal before any model call, or a Cadence control reply) is shown after the branch end it was sent from until the branch moves on, and so is each message its reply ended without delivering (`undelivered`), with its reason.
 A turn reports unreadable thinking, omitted media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced.
-The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking, and the session holds what Pi wrote.
+The thinking flag a live capture records for its message stays in that record but is not reported: the capture carries no thinking body or signature, and the session holds what Pi wrote.
+Body-free thinking activity carries only its occurrence, real content index and phase; it occupies the same timeline position as a later readable Pi block, or ends explicitly unavailable without a fake detail affordance.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns.
 A turn the previous owner's death cut short (still recorded queued or running) is reported as interrupted and does not keep the next owner from starting, because host startup has already stopped that owner's workers by exact identity; a turn whose closure an owner itself recorded as unknown keeps fences and refuses startup.
@@ -386,6 +390,8 @@ Without a chosen branch the WebUI follows Pi's current leaf, the entry appended 
 The run's earlier messages are by then ordinary turns of that branch, each ended as Pi recorded its reply, and its newest is the one live turn.
 A head read that names an earlier end of the live run follows it to the current one, so a client that chose the branch it sent from keeps the run in view; turn, step and image reads name their branch exactly.
 A listing never carries a tool's arguments or output or a thinking block's text, and keeps at most 16KiB of message text; the WebUI reads a tool's detail or a thinking block's text when its step is opened and a clipped message's rest when it is shown.
+Optional `renderId`, full-redacted-content `version` and explicit block `state` separate rendering identity, data revision and execution observations from turn/step/part read coordinates.
+The live turn header's `activity` is the last actual capture event kind and sequence (with a redacted tool name where applicable), not a progress estimate or execution receipt.
 Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps.
 A readable thinking block is a step of its own role in its recorded place, read in full through the step-detail read like a tool's output; its signature is never returned.
 Thinking Pi stored unreadable (redacted, or a signature without text) and unsupported media are flagged as omitted.
@@ -394,7 +400,8 @@ A live turn extends that view only with its verified command-owned prefix, the e
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
 A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.
-The WebUI shows the newest turns first and reads earlier ones as the top of the transcript nears the viewport; turns far from the viewport render as placeholders of their measured height.
+The WebUI loads the newest turns first and reads earlier ones as the top of the transcript nears the viewport; displayed turns remain in source order, and turns far from the viewport render as placeholders of their measured height.
+Content, image and opened-detail growth follows the bottom only while the reader is already following (within the existing 80px boundary); scrolling up keeps that reading position, earlier-page loading retains its anchor, and Latest messages explicitly resumes following.
 A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
@@ -499,11 +506,18 @@ Ordinary Send does not depend on the Cadence-mode read; when that read fails the
 Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.
 An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one block per readable thinking step and one card per tool call, with nothing folded behind a summary.
-A card names the tool and what it acted on, and reads its arguments and output only once opened.
-A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live reply shows only the thinking steps the owner lists (nothing is streamed into them), and a block is neither the answer text (it is not copied with the reply, and a reply that ends in one is not shown as streaming) nor evidence that an earlier tool call has a result.
+A card names the tool and what it acted on, and reads its arguments and output only while opened.
+Opened details refresh when their full-content version, coordinates or execution state changes, even with the same parts count; reply termination makes a final read.
+Closing a detail or leaving its conversation retires pending reads, and stale results cannot replace the current selection.
+A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
+No thinking body or signature is streamed, and a thinking block is neither answer text (it is not copied with the reply) nor evidence that an earlier tool call has a result.
+Ordinary replies render every received text snapshot immediately through stable Markdown prefix segments and an active tail, not an artificial character-paced catch-up animation.
+The same block component and rendering identity survive preview/durable/terminal observations; read coordinates and earlier-page positions are not React keys.
+The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
 The line "Thinking that could not be read is not shown" appears only for the `omitted.thinking` flag: thinking Pi stored unreadable, or in a workflow subagent's transcript thinking its capture did not keep.
 An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
-Its glyph states what was recorded for that call, never whether the work succeeded: in progress while the owner may still change the step, a result where the turn completed or a later assistant message followed the call, an error, or no observed result when the turn ended badly right after it.
+Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
+Neither a later assistant message, a stable step nor reply completion proves a tool result; old history without explicit state stays neutral unless it records an error.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
 Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
@@ -514,6 +528,13 @@ The right panel defaults to files; its History details inspector remains bound t
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
+`RuntimeObservation` sits in normal layout flow beside the composer, outside the scrolling transcript, with separate reply status, workflow phase/outcome and observation connection/freshness statements.
+It prefers the turn header's actual thinking/text/tool activity; absent or ended activity says waiting/no new progress, and a failed or paused observation labels retained facts as last observed rather than completing them.
+An event-free poll does not prove a stalled model or a disconnected tool.
+A reply ending, a tool result, `stable` and `agent_end` never establish workflow delivery success.
+No percentage, ETA or inferred stuck/success status is displayed.
+The compact bar wraps and bounds long tool names without an overlay or input/Stop lock; English and Chinese use the existing locale catalog.
+Source/SSR and controlled-state tests do not qualify actual narrow-screen layout, focus or pointer interactions.
 
 Native research/plan/start claim their shared conversation state synchronously before attachment or model awaits; a concurrent mutation in that generation refuses before dispatch, while status and explicit Cancel remain available.
 Each mutation carries its own claim through dispatch and response handling; navigation retires its admission authority without canceling its original, blocking a new generation or letting an old finally release a newer claim.

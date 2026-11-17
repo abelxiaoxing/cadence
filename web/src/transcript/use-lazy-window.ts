@@ -33,7 +33,11 @@ export function useLazyWindow(
   rows: readonly WindowRow[],
   pinned: string | null = null,
   tailBudget = 1800,
+  onContentResize?: () => void,
 ) {
+  const onResize = useRef(onContentResize);
+  onResize.current = onContentResize;
+  const observerRef = useRef<ResizeObserver | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
@@ -91,17 +95,28 @@ export function useLazyWindow(
     sweep();
   }, [sweep, rows, pinned]);
   useEffect(() => {
-    const observer = new ResizeObserver(scheduleSweep);
+    const observer = new ResizeObserver(() => {
+      scheduleSweep();
+      onResize.current?.();
+    });
+    observerRef.current = observer;
     if (scrollRef.current) observer.observe(scrollRef.current);
+    for (const el of elsRef.current.values()) observer.observe(el);
     return () => {
+      observerRef.current = null;
       observer.disconnect();
       cancelAnimationFrame(sweepRafRef.current);
+      sweepRafRef.current = 0;
     };
   }, [scheduleSweep, scrollRef]);
   const register = useCallback(
     (id: string) => (el: HTMLDivElement | null) => {
-      if (el) elsRef.current.set(id, el);
-      else elsRef.current.delete(id);
+      const prior = elsRef.current.get(id);
+      if (prior && prior !== el) observerRef.current?.unobserve(prior);
+      if (el) {
+        elsRef.current.set(id, el);
+        observerRef.current?.observe(el);
+      } else elsRef.current.delete(id);
     },
     [],
   );
@@ -111,4 +126,28 @@ export function useLazyWindow(
     [],
   );
   return { hidden, scheduleSweep, recordMeasured, register, placeholder };
+}
+
+/** Height changes are not user intent. Only a previously following reader may
+ * move to the end; neither image loading nor opening details re-enables it. */
+export function followResize(
+  root: Pick<HTMLElement, "scrollHeight" | "scrollTop"> | null,
+  following: boolean,
+): void {
+  if (root && following) root.scrollTop = root.scrollHeight;
+}
+
+/** A non-windowed transcript (the subagent view) observes its whole body. */
+export function useFollowResize(
+  scroll: RefObject<HTMLElement | null>,
+  body: RefObject<HTMLElement | null>,
+  following: RefObject<boolean>,
+) {
+  useEffect(() => {
+    const observer = new ResizeObserver(() =>
+      followResize(scroll.current, following.current),
+    );
+    if (body.current) observer.observe(body.current);
+    return () => observer.disconnect();
+  }, [scroll, body, following]);
 }

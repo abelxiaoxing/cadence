@@ -82,7 +82,17 @@ Replaced or shortened files reset the index and built-turn incarnation; no total
 Metadata and the installed Pi SessionManager still scale with entry count; compaction does not shrink historical files.
 A branch is the path from the root to one entry; it splits into turns at user messages, and each turn becomes chat items: text, tool calls paired with their results, terminal `!` commands, compaction and branch summaries and displayed extension messages.
 Built turns are cached by content and secret set; redaction applies to every returned field, and large fields split into parts by their exact encoded size.
-A live browser turn adds, by count, only the streamed messages and tool output its worker has not yet written to the session.
+A live browser turn adds only capture occurrences not explicitly linked to its verified durable command-owned prefix; it never subtracts by visible message count or compares text bodies.
+The optional `captureMessageId` on `cadence-browser-command/1` links a finalized Pi message to its capture UUID under the existing command/run/user/parent/offset/branch checks.
+Real content indices preserve text/thinking/tool/text order, and empty, thinking-only and tool-only messages still participate in handoff.
+While live, an unmarked Pi tail is withheld until ownership is known; final capture arriving before or after the marker cannot append a second copy.
+Old history without the metadata keeps its recorded identity, not a guessed association.
+Tool execution/results attach by call identity without moving the declaration's source position.
+Snapshots replace tool output; a hash of the full redacted item versions equal-part content changes independently of explicit execution state.
+Thinking activity frames contain only message UUID, index and phase, share the existing capture bounds and closed-field validation, and never inspect or transmit thinking text, signatures or opaque provider data.
+A body-free placeholder has no detail parts; readable thinking is read lazily only from Pi, with the same render identity, while unavailable/interrupted content is explicitly nonexpandable.
+Listing/detail presentation metadata is optional for older history and carries no new body store.
+Activity sequence/kind is an observation of capture, never proof of native settlement, tool success or workflow completion.
 The owner's `conversation-commands-v1` keeps per message `accepted.json` (command, session, parent entry, file size, execution snapshot and selected session path), an expected-byte `state.json` (status, notice, omitted flags, its user entry), the auth journal, `launch.json` and `native.json`, plus a per-session index of the last 64 messages.
 An accepted command ID is never admitted again; a lost reply observes its original record.
 Read projections reapply current redaction to failed attempts and live previews as well as Pi content.

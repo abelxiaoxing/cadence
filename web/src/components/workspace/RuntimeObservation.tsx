@@ -1,7 +1,10 @@
 /** Cadence observations, separate from the transcript and execution controls.
  * No polling, clock, body text or inferred delivery outcome lives here. */
 import { FiActivity, FiGitBranch, FiRadio } from "react-icons/fi";
-import type { ChatStatus } from "../../../../src/service/contracts/workbench.ts";
+import type {
+  ChatStatus,
+  ChatTurnHeader,
+} from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import type { ModelAvailability } from "../../client/use-model-catalog";
 import { type MessageKey, useT } from "../../i18n/locale";
@@ -19,6 +22,24 @@ export type RuntimeActivity =
       name: string;
       state: "running" | "completed" | "failed" | "canceled" | "unknown";
     };
+
+/** The owner already distinguishes an active tool/thinking/text event from
+ * waiting after it ends. Do not reconstruct activity from visible steps: a
+ * poll may contain several completed messages, or none with readable text. */
+export function runtimeActivity(header?: ChatTurnHeader): RuntimeActivity {
+  if (header?.status !== "running") return { kind: "waiting" };
+  const activity = header.activity;
+  switch (activity?.kind) {
+    case "thinking":
+      return { kind: "thinking", state: "active" };
+    case "text":
+      return { kind: "output" };
+    case "tool":
+      return { kind: "tool", name: activity.name ?? "", state: "running" };
+    default:
+      return { kind: "waiting" };
+  }
+}
 
 export type RuntimeConnection =
   | "observing"

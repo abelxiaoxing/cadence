@@ -118,6 +118,7 @@ import { ChatWelcome } from "./ChatWelcome";
 import { QuestionRail } from "./QuestionRail";
 import {
   RuntimeObservation,
+  runtimeActivity,
   runtimeConnection,
   runtimeWorkflow,
 } from "./RuntimeObservation";
@@ -2086,6 +2087,7 @@ export function ChatWorkspace({
       </div>
       <RuntimeObservation
         reply={summary?.status ?? conversation.attempt?.status}
+        activity={runtimeActivity(lastTurn)}
         workflow={watched.length ? (runtimeRun ?? null) : undefined}
         connection={connection}
         replyStale={!!conversation.error}

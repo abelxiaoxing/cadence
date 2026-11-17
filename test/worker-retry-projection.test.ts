@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Writable } from "node:stream";
 import { expect, it, vi } from "vitest";
 import {
   type ChatTurn,
@@ -8,6 +9,7 @@ import { LiveCapture } from "../src/service/conversations.ts";
 import { turnItems } from "../src/service/pi-sessions.ts";
 import { TurnCapture } from "../src/service/turn-capture.ts";
 import { WorkflowTranscript } from "../src/service/workflow-report.ts";
+import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import {
   type CaptureFrame,
   decodeCaptureEvent,
@@ -95,36 +97,71 @@ it("workflow recovery progress persists even without a new message or tool event
   expect(value.retry).toBeUndefined();
   expect(value.status).toBe("running");
 });
-it("failed response text remains explicitly incomplete in live and retained projections", () => {
-  const id = randomUUID(),
-    value = turn(),
+/** Genuine, state-checked frames; no provider, worker or service is started. */
+async function captureFixture(accept: (frame: CaptureFrame) => void) {
+  const emitter = new CaptureEmitter(
+    randomUUID(),
+    new Writable({
+      write(chunk, _encoding, done) {
+        accept(JSON.parse(String(chunk)) as CaptureFrame);
+        done();
+      },
+    }),
+    () => {
+      throw new Error("capture failed");
+    },
+  );
+  await emitter.emit({ kind: "ready", requestProtocol: 2 });
+  return new SdkCapture(emitter);
+}
+
+it("failed response text remains explicitly incomplete in live and retained projections", async () => {
+  const value = turn(),
     live = new LiveCapture(() => []);
   const capture = new TurnCapture(
     value,
     () => {},
     () => [],
   );
-  for (const event of [
-    {
-      kind: "message-start",
-      messageId: id,
-      role: "assistant",
-      source: { disposition: "unavailable", value: null },
-      resultCallId: null,
+  const sdk = await captureFixture((frame) => {
+    capture.accept(frame);
+    live.accept(frame);
+  });
+  await sdk.event({
+    type: "message_start",
+    message: { role: "assistant" },
+  });
+  const id = sdk.messageId!;
+  await sdk.event({
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "Partial",
     },
-    {
-      kind: "message-end",
-      messageId: id,
-      finalDetailId: null,
-      finalBlockCount: 0,
+  });
+  // Closes the real stream detail and emits finalBlockCount: 1, not an
+  // empty assistant message that has no body to mark incomplete.
+  await sdk.event({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Partial" }],
       stopReason: "error",
     },
-  ] satisfies CaptureFrame["event"][]) {
-    capture.accept(frame(event));
-    live.accept(frame(event));
-  }
+  });
+  expect(value.items).toHaveLength(1);
+  expect(value.items[0].text).toBe("Partial");
   expect(value.items[0].error).toBe(true);
-  expect(live.extend([]).items[0].error).toBe(true);
+  const preview = live.extend([]).items;
+  expect(preview).toHaveLength(1);
+  expect(preview[0].error).toBe(true);
+  expect(preview[0]).toMatchObject({
+    renderId: `capture:${id}:0`,
+    text: "Partial",
+    state: "failed",
+  });
+  expect(sdk.selected).toBeNull();
   const built = turnItems(
     ["error", "stop"].map((stopReason, i) => ({
       type: "message",
@@ -143,7 +180,54 @@ it("failed response text remains explicitly incomplete in live and retained proj
     [],
   );
   expect(built.items.map((i) => i.error)).toEqual([true, false]);
+  expect(built.items.map((i) => i.text)).toEqual(["Partial", "Complete"]);
+  expect(built.items.map((i) => i.state)).toEqual(["failed", "completed"]);
   expect(built.status).toBe("completed");
+});
+
+it("an empty assistant adds no body and preserves adjacent legitimate repeated text", async () => {
+  const live = new LiveCapture(() => []);
+  const sdk = await captureFixture((frame) => live.accept(frame));
+  const entries = [
+    [{ type: "text", text: "Repeated" }],
+    [],
+    [{ type: "text", text: "Repeated" }],
+  ].map((content, i) => ({
+    type: "message",
+    id: `entry${i}`,
+    parentId: i ? `entry${i - 1}` : null,
+    timestamp: new Date(0).toISOString(),
+    pos: i,
+    raw: { message: { role: "assistant", content, stopReason: "stop" } },
+  }));
+  const expected: { renderId: string; text: string }[] = [];
+  const preview = () =>
+    live.extend([]).items.map(({ renderId, text }) => ({ renderId, text }));
+  for (const entry of entries) {
+    await sdk.event({
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    const id = sdk.messageId!;
+    expect(preview()).toEqual(expected);
+    await sdk.event({ type: "message_end", message: entry.raw.message });
+    if (entry.raw.message.content.length)
+      expected.push({ renderId: `capture:${id}:0`, text: "Repeated" });
+    // Assert at every boundary, including the empty message, not only after
+    // the second identical body has arrived.
+    expect(preview()).toEqual(expected);
+  }
+  expect(expected).toHaveLength(2);
+  expect(expected[0].renderId).not.toBe(expected[1].renderId);
+  expect(live.extend([]).items.map((i) => i.state)).toEqual([
+    "completed",
+    "completed",
+  ]);
+  const built = turnItems(entries, []);
+  expect(built.items.map((i) => i.id)).toEqual(["entry0:0", "entry2:0"]);
+  expect(built.items.map((i) => i.text)).toEqual(["Repeated", "Repeated"]);
+  expect(built.items.map((i) => i.error)).toEqual([false, false]);
+  expect(turnItems([entries[1]], []).items).toEqual([]);
 });
 
 it("transcript overflow does not hide active recovery or displace the truncation warning", () => {
