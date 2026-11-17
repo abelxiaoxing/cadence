@@ -102,6 +102,62 @@ A new session drops all of the previous session's agents; late reads from its st
 The panel never starts, cancels or keeps an agent or Pi alive; across restarts only the cards remain.
 For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays a batch of fake agents (the second fails), then a fake review agent with its own card, and runs nothing.
 
+## Streaming timelines
+
+### Stable rendering and details
+
+An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one block per readable thinking step and one card per tool call, with nothing folded behind a summary.
+A card names the tool and what it acted on, and reads its arguments and output only while opened.
+Opened details refresh when their full-content version, coordinates or execution state changes, even with the same parts count; reply termination makes a final read.
+Closing a detail or leaving its conversation retires pending reads, and stale results cannot replace the current selection.
+A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
+No thinking body or signature is streamed, and a thinking block is neither answer text (it is not copied with the reply) nor evidence that an earlier tool call has a result.
+Ordinary replies render every received text snapshot immediately through stable Markdown prefix segments and an active tail, not an artificial character-paced catch-up animation.
+`segmentStream` parses the whole snapshot with the same CommonMark/GFM/dollar-and-backslash-math syntax as `MarkdownBody`, splitting only independent top-level roots; lists, quotes, indented/fenced code and math containers stay intact.
+From the first root containing a reference or definition (including nested definitions and footnotes), the remaining document is rendered together to preserve resolution, numbering, backlinks and one final footnote footer.
+Segments retain exact source slices, separators, indentation and line endings, keyed by real UTF-16 source offsets; new syntax may revise the dependent suffix, while unchanged prefixes remain memoized rather than being promised immutable forever.
+Ordinary `StreamMarkdown` uses the same `MarkdownBody` pipeline even for an incomplete fence, preserving its safe-link/media rules and code controls; streaming versus terminal status alone neither repartitions text nor switches renderers.
+The separate workflow stream renderer consumes the shared semantic segments but retains its existing pacer and plain open-fence preview; ordinary chat does not use that pacer.
+With explicit rendering metadata, the same block component and rendering identity survive preview/durable/terminal observations, independently of changing read coordinates and earlier-page positions.
+`ConversationReader` derives `LoadedTurn.renderId` from the user step's rendering identity; `ChatWorkspace` uses `turn.renderId ?? turn.header.id` on the outer Fragment around the entire turn, not only on its inner message/tool blocks.
+The row's `id` stays `turn.header.id`: `LazyMount` registration and measurement, `data-lazy-id`, jump pins, question tracking, branch versions and workflow placement use that read/navigation coordinate.
+Edit/continue anchors and Send retain their recorded parent/end branch entries, never rendering identities.
+A command-to-Pi handoff can therefore update those coordinates without replacing the rendered row and its opened details.
+Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
+The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
+An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
+Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
+Neither a later assistant message, a stable step nor reply completion proves a tool result; old history without explicit state stays neutral unless it records an error.
+This rule also applies to workflow subagent cards: completed/failed tool observations survive a failed or canceled reply, while a pending/running call without a result becomes neutral once the reply ends, never an endless spinner or inferred success.
+Tool result/error labels state only the recorded call outcome, independently of reply, assignment and workflow delivery status.
+
+### Workflow tool observations
+
+`WorkflowAgentView` reads the selected subagent's bounded retained `workflow-transcript` every second while its step is queued/running (or its run is not yet observed); a step's terminal observation switches the interval to zero and triggers one final read, including failure, cancellation and unknown closure.
+Its tool snapshots become observable at the [capture publication boundaries](history.md#conversation-workflow-records), not merely when the assistant next speaks.
+Unlike ordinary conversation listings, that workflow read already contains full retained items: `recordedTurn` hides tool bodies behind a local detail closure, which changes with each newly observed transcript even when the item identity and parts count stay the same and no content-version field is recorded.
+The actual `ChatTurnView`/`ToolStep` path refreshes an opened detail from that closure while keeping its previous displayed value and expansion state until the new value arrives; closed tool cards do not invoke it.
+The separate retained step result (`workflow-detail`) is requested only while opened, polls while the step is live and also gets a final read when its live interval stops.
+Changing client, run or step retires the view's polling and expanded-detail lifetime; late reads cannot populate the replacement view, and navigation never cancels the worker.
+
+### Scroll intent
+
+The WebUI loads the newest turns first and reads earlier ones as the top of the transcript nears the viewport; displayed turns remain in source order, and turns far from the viewport render as placeholders of their measured height.
+Content, image and opened-detail growth follows the bottom only while the reader is already following (within the existing 80px boundary); scrolling up keeps that reading position, earlier-page loading retains its anchor, and Latest messages explicitly resumes following.
+In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback to `useLazyWindow`'s `onContentResize`: the hook observes both the scroll container and registered row elements, so image/detail height changes can follow without a new head read or parent render.
+That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
+Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
+
+### Runtime observation
+
+`RuntimeObservation` sits in normal layout flow beside the composer, outside the scrolling transcript, with separate reply status, workflow phase/outcome and observation connection/freshness statements.
+It prefers the turn header's actual thinking/text/tool activity; absent or ended activity says waiting/no new progress, and a failed or paused observation labels retained facts as last observed rather than completing them.
+An event-free poll does not prove a stalled model or a disconnected tool.
+A reply ending, a tool result, `stable` and `agent_end` never establish workflow delivery success.
+No percentage, ETA or inferred stuck/success status is displayed.
+The compact bar wraps and bounds long tool names without an overlay or input/Stop lock; English and Chinese use the existing locale catalog.
+Source/SSR and controlled-state tests do not qualify actual narrow-screen layout, focus or pointer interactions.
+
 ## Browser
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
@@ -400,11 +456,7 @@ A live turn extends that view only with its verified command-owned prefix, the e
 Authenticated `conversation-image` reads return bounded parts, including through stopped-owner readers; the browser creates and revokes local Blob URLs.
 A chat image, recorded or still an unsent draft, opens enlarged in a modal viewer with zoom controls over its own Blob URL of the same validated bytes; opening it reads and sends nothing.
 No session paths or remote image URLs are returned, and no session is rewritten.
-The WebUI loads the newest turns first and reads earlier ones as the top of the transcript nears the viewport; displayed turns remain in source order, and turns far from the viewport render as placeholders of their measured height.
-Content, image and opened-detail growth follows the bottom only while the reader is already following (within the existing 80px boundary); scrolling up keeps that reading position, earlier-page loading retains its anchor, and Latest messages explicitly resumes following.
-In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback to `useLazyWindow`'s `onContentResize`: the hook observes both the scroll container and registered row elements, so image/detail height changes can follow without a new head read or parent render.
-That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
-Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
+Timeline loading and resize-follow behavior are defined under [Scroll intent](#scroll-intent).
 A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
 It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
@@ -497,12 +549,7 @@ It also states the number of route revisions and the paths they added to the wri
 A check step that a recorded deviation set aside is labelled as set aside beside its failed status, and the acceptance line then says how many checks were set aside instead of that the checks passed.
 The label comes from the acceptance record, or for a direct working-copy delivery from the verified round whose failed check a deviation names; an earlier failure of the same check stays a plain failure.
 These views open in the center over the conversation, which stays mounted (draft, scroll and observations) behind them.
-`WorkflowAgentView` reads the selected subagent's bounded retained `workflow-transcript` every second while its step is queued/running (or its run is not yet observed); a step's terminal observation switches the interval to zero and triggers one final read, including failure, cancellation and unknown closure.
-Its tool snapshots become observable at the [capture publication boundaries](history.md#conversation-workflow-records), not merely when the assistant next speaks.
-Unlike ordinary conversation listings, that workflow read already contains full retained items: `recordedTurn` hides tool bodies behind a local detail closure, which changes with each newly observed transcript even when the item identity and parts count stay the same and no content-version field is recorded.
-The actual `ChatTurnView`/`ToolStep` path refreshes an opened detail from that closure while keeping its previous displayed value and expansion state until the new value arrives; closed tool cards do not invoke it.
-The separate retained step result (`workflow-detail`) is requested only while opened, polls while the step is live and also gets a final read when its live interval stops.
-Changing client, run or step retires the view's polling and expanded-detail lifetime; late reads cannot populate the replacement view, and navigation never cancels the worker.
+Subagent transcript polling and lazy details follow [Workflow tool observations](#workflow-tool-observations).
 The chat reads the newest workflows of the terminal's and the browser's lists at first (`RUN_WINDOW` each) and earlier ones while the loaded turns could hold them.
 A run that cannot be read again keeps its last observation with an unavailable note; an ID never read (a terminal attempt the owner refused leaves one) shows nothing and is retried every ten seconds, never taken as settled or absent.
 A live workflow's phase leads the conversation's header and sidebar status in either mode, but a reply that ended badly keeps its own status, beside the phase in the header and in its place in the sidebar row (the workflow is listed under Running work); a plan awaiting approval also stays beside it.
@@ -514,31 +561,8 @@ Only a reliable no-effect refusal clears the attempt for a fresh action, while o
 Ordinary Send does not depend on the Cadence-mode read; when that read fails the owner still refuses an ordinary Send to a Cadence conversation.
 Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; search and the History details tab also appear only in those scopes, rather than as permanently disabled ordinary-chat controls; an ordinary conversation has no view switch and shows its tool calls as cards in the transcript.
-An ordinary turn shows the user's message, then one speaker label over the reply in recorded order: message text, one block per readable thinking step and one card per tool call, with nothing folded behind a summary.
-A card names the tool and what it acted on, and reads its arguments and output only while opened.
-Opened details refresh when their full-content version, coordinates or execution state changes, even with the same parts count; reply termination makes a final read.
-Closing a detail or leaving its conversation retires pending reads, and stale results cannot replace the current selection.
-A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
-No thinking body or signature is streamed, and a thinking block is neither answer text (it is not copied with the reply) nor evidence that an earlier tool call has a result.
-Ordinary replies render every received text snapshot immediately through stable Markdown prefix segments and an active tail, not an artificial character-paced catch-up animation.
-`segmentStream` parses the whole snapshot with the same CommonMark/GFM/dollar-and-backslash-math syntax as `MarkdownBody`, splitting only independent top-level roots; lists, quotes, indented/fenced code and math containers stay intact.
-From the first root containing a reference or definition (including nested definitions and footnotes), the remaining document is rendered together to preserve resolution, numbering, backlinks and one final footnote footer.
-Segments retain exact source slices, separators, indentation and line endings, keyed by real UTF-16 source offsets; new syntax may revise the dependent suffix, while unchanged prefixes remain memoized rather than being promised immutable forever.
-Ordinary `StreamMarkdown` uses the same `MarkdownBody` pipeline even for an incomplete fence, preserving its safe-link/media rules and code controls; streaming versus terminal status alone neither repartitions text nor switches renderers.
-The separate workflow stream renderer consumes the shared semantic segments but retains its existing pacer and plain open-fence preview; ordinary chat does not use that pacer.
-With explicit rendering metadata, the same block component and rendering identity survive preview/durable/terminal observations, independently of changing read coordinates and earlier-page positions.
-`ConversationReader` derives `LoadedTurn.renderId` from the user step's rendering identity; `ChatWorkspace` uses `turn.renderId ?? turn.header.id` on the outer Fragment around the entire turn, not only on its inner message/tool blocks.
-The row's `id` stays `turn.header.id`: `LazyMount` registration and measurement, `data-lazy-id`, jump pins, question tracking, branch versions and workflow placement use that read/navigation coordinate.
-Edit/continue anchors and Send retain their recorded parent/end branch entries, never rendering identities.
-A command-to-Pi handoff can therefore update those coordinates without replacing the rendered row and its opened details.
-Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
-The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
+Streaming identity, Markdown and detail reads follow [Stable rendering and details](#stable-rendering-and-details).
 The line "Thinking that could not be read is not shown" appears only for the `omitted.thinking` flag: thinking Pi stored unreadable, or in a workflow subagent's transcript thinking its capture did not keep.
-An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
-Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
-Neither a later assistant message, a stable step nor reply completion proves a tool result; old history without explicit state stays neutral unless it records an error.
-This rule also applies to workflow subagent cards: completed/failed tool observations survive a failed or canceled reply, while a pending/running call without a result becomes neutral once the reply ends, never an endless spinner or inferred success.
-Tool result/error labels state only the recorded call outcome, independently of reply, assignment and workflow delivery status.
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
 Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
@@ -549,13 +573,7 @@ The right panel defaults to files; its History details inspector remains bound t
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
-`RuntimeObservation` sits in normal layout flow beside the composer, outside the scrolling transcript, with separate reply status, workflow phase/outcome and observation connection/freshness statements.
-It prefers the turn header's actual thinking/text/tool activity; absent or ended activity says waiting/no new progress, and a failed or paused observation labels retained facts as last observed rather than completing them.
-An event-free poll does not prove a stalled model or a disconnected tool.
-A reply ending, a tool result, `stable` and `agent_end` never establish workflow delivery success.
-No percentage, ETA or inferred stuck/success status is displayed.
-The compact bar wraps and bounds long tool names without an overlay or input/Stop lock; English and Chinese use the existing locale catalog.
-Source/SSR and controlled-state tests do not qualify actual narrow-screen layout, focus or pointer interactions.
+The composer feedback follows [Runtime observation](#runtime-observation).
 
 Native research/plan/start claim their shared conversation state synchronously before attachment or model awaits; a concurrent mutation in that generation refuses before dispatch, while status and explicit Cancel remain available.
 Each mutation carries its own claim through dispatch and response handling; navigation retires its admission authority without canceling its original, blocking a new generation or letting an old finally release a newer claim.

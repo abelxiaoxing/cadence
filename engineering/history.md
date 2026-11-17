@@ -122,7 +122,7 @@ Within the existing transcript bounds, `TurnCapture` requests publication on `to
 `WorkflowTranscript.accept` exposes that publication request to the worker's `onFrame` handler in `Workflows`, which uses the existing expected-byte transcript write; polling observes retained bytes, not the mutable capture object.
 New tool items record `running` at tool-start and `completed` or `failed` at tool-end, with the existing error flag, attached by call identity rather than tool name or output text.
 A parent step/run ending without tool-end never manufactures a tool result or rewrites these item states; the reader marks a still-running retained transcript `unknown` when its step is no longer running.
-Old items without state remain readable without inferred completion, capture association or history migration; client presentation of unfinished and legacy calls is defined in [clients](clients.md#webui-contracts).
+Old items without state remain readable without inferred completion, capture association or history migration; client presentation of unfinished and legacy calls is defined in [clients](clients.md#stable-rendering-and-details).
 Transcript overflow still retains a labelled prefix under the existing bounds, and storage failure is not successful publication.
 Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.
 Selected final-result previews come from the sanitized complete captured message or independently captured structured assignment report before clipping, not a raw prefix that could bisect a known literal.

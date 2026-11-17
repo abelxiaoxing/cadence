@@ -10,15 +10,15 @@ Why: with an inherited TMPDIR deeper than 107 characters an absolute socket path
 
 Anchors: `test/research-tools.test.mjs#a known socket under a long temporary path is not opened as a text file`
 
-Source: this delivery, 2026-11-16
+Source: this delivery, 2026-11-17
 
 ### Management CLI tests inject their manager and cgroup boundaries
 
 Kind: pitfall
 
 Why: changing HOME alone cannot isolate an inherited service cgroup.
-The main-branch `managedServer` fixture calls the real CLI handler with injected `AutostartSystem` manager and cgroup ports, so the self-management refusal stays covered without calling the host service manager.
+The `managedServer` fixture calls the real CLI handler with injected `AutostartSystem` manager and cgroup ports, so the self-management refusal stays covered without calling the host service manager.
 
 Anchors: `test/service-autostart.test.ts#managedServer`, `src/service/maintenance.ts#cgroupPath`
 
-Source: this delivery, 2026-11-16
+Source: this delivery, 2026-11-17
