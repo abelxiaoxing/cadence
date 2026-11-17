@@ -156,7 +156,9 @@ It holds no checkout barrier while awaiting research, so the existing worker bar
 One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
 While that turn runs it takes further messages like an ordinary reply (see [Ordinary conversations](#ordinary-conversations)): they join the turn the mode names, change no mode or plan state and are never read as approval, exit or mode entry.
 A plan card persists across later messages until a new plan replaces it, the user exits or execution is admitted; a refused approval keeps the card.
-Plans may be published while other workflows run; research is refused with an explanation only behind an approved implementation, and its run ID is recorded only once accepted.
+Plans and research in another conversation may proceed while an implementation runs; a conversation with its own accepted implementation cannot start another implementation or investigation until it settles.
+Research IDs are recorded only once accepted.
+WebUI and native sessions use the same scheduling and isolation rules in [lifetimes](lifetimes.md).
 An unreadable or incomplete control record degrades only its own conversation: the read carries a notice, every Cadence command there refuses, and nothing is repaired; other conversations and owner startup are unaffected.
 Lost replies to Send or approval return the original receipt or run on a retry with the same command ID.
 One human plan approval binds the exact visible proposal, conversation revision, the browser's settled last run in that conversation, the current Pi branch leaf, model, project observation, owner epoch and authenticated attachment/access generation.
@@ -329,7 +331,8 @@ A message sent into a running reply has the same record with that reply's comman
 Archiving is the owner's own record too: `conversation-archive` writes or removes `service-v1/conversations-v1/archive/<session>.json`, whose presence is the whole fact, and never moves, rewrites or deletes the session file, so `pi -r` still lists the session.
 The record covers the checkout: one owner lists every same-checkout session, and other checkouts are unaffected.
 Their tools operate on the host, not in a sandbox.
-Each turn holds the checkout's exclusive gate, so ordinary turns, Cadence children and parent checks cannot edit/read across one another's active write window; leaving a tab only detaches.
+Each turn holds the checkout's exclusive gate, excluding research, direct delivery edits and final integration on that checkout.
+Work in isolated candidates may proceed concurrently; leaving a tab only detaches.
 An active turn retains independent interruption authority; explicit Cancel or Stop signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
 Access-token rotation revokes viewers, not admitted queued turns.
 Each admitted turn/workflow records its original execution context; queue release and later workers never consult a mutable conversation/owner picker to replace it.

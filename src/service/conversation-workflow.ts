@@ -563,16 +563,18 @@ export class ConversationWorkflow {
         `${diagnosticText(error instanceof Error && !(error instanceof ContractError) ? error.message : "request: is not valid", 512, this.o.secrets())}. No investigation was started. Correct exactly that and call again in this turn.`,
       );
     }
-    // Readonly investigations may queue behind each other, never behind a
-    // long approved implementation that holds the checkout.
+    // Keep this conversation focused on its accepted task; other conversations
+    // investigate concurrently under the shared checkout read gate.
     const busy = this.o.workflows
       .activeRuns()
-      .runs.filter((r) => r.phase !== "research")
+      .runs.filter(
+        (r) => r.phase !== "research" && current.state.runs.includes(r.id),
+      )
       .map((r) => r.id);
     if (busy.length)
       return refusal(
         "checkout-busy",
-        `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`,
+        `This conversation has an approved workflow (${busy.join(", ")}). Wait for it to settle or open another conversation for a separate task; meanwhile use cadence_status. Nothing was started.`,
       );
     const id = randomUUID(),
       conversationId = current.state.id;
@@ -741,6 +743,14 @@ export class ConversationWorkflow {
     recording: () => void,
   ): WorkbenchResult {
     const { state, file, head } = this.approvalContext(c);
+    if (
+      this.o.workflows
+        .activeRuns()
+        .runs.some(
+          (run) => run.phase !== "research" && state.runs.includes(run.id),
+        )
+    )
+      throw new ContractError("conflict");
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
       for (const [id, g] of this.grants)

@@ -3,6 +3,10 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  CheckoutGate,
+  type CheckoutPermit,
+} from "../src/service/checkout-gate.ts";
 import type { ExecutionContext } from "../src/service/contracts/models.ts";
 import {
   decodeDeliveryObservation,
@@ -14,6 +18,7 @@ import {
   deliveryObservation,
   WorkflowDelivery,
 } from "../src/service/workflow-delivery.ts";
+import { pathIdentity } from "../src/service/workflow-git.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -79,7 +84,7 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
       scope.map((p) => [p, seam.trees.get(cwd)!.files.get(p) ?? null]),
     ),
   }),
-  pathIdentity: () => null,
+  pathIdentity: vi.fn((): string | null => null),
   documentPlacement: async () => "commit",
   committedPaths: async () => ["a.txt"],
   worktreeResidue: async () => [],
@@ -89,7 +94,16 @@ afterEach(() => {
   vi.restoreAllMocks();
   seam.trees.clear();
   seam.missing = false;
+  vi.mocked(pathIdentity).mockReset().mockReturnValue(null);
 });
+
+function latch() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function fixture(mode = "pass") {
   const root = resolve("/controlled-delivery-fixture"),
@@ -173,6 +187,8 @@ function fixture(mode = "pass") {
   const delivery = new WorkflowDelivery(d, resources, () => {});
   vi.spyOn(delivery, "prepareHome").mockImplementation(() => {});
   const cleanup = vi.spyOn(delivery, "cleanup");
+  const owner = { state: "idle" as const, lease: { assert() {} } };
+  const gate = new CheckoutGate(owner);
   const live = {
     run,
     execution,
@@ -182,6 +198,8 @@ function fixture(mode = "pass") {
     delivered: new Set<string>(),
     notes: [] as string[],
     delivery,
+    guidance: { agents: null },
+    barrier: undefined as CheckoutPermit | undefined,
   };
   let serial = 2,
     implementations = 0,
@@ -212,8 +230,10 @@ function fixture(mode = "pass") {
   const engine = Object.assign(Object.create(Workflows.prototype), {
     cwd: root,
     root: resolve("/controlled-records"),
+    active: new Map([[run.id, live]]),
     o: {
-      owner: { state: "idle", lease: { assert() {} } },
+      owner,
+      gate,
       secrets: () => [],
       coordination: {
         files: {
@@ -405,7 +425,17 @@ function fixture(mode = "pass") {
     records,
     workspaces,
     cleanup,
-    execute: () => engine.implement(live, p),
+    execute: async () => {
+      live.barrier = await engine.o.gate.acquire(
+        live.run.id,
+        live.abort.signal,
+      );
+      try {
+        return await engine.implement(live, p);
+      } finally {
+        live.barrier?.release();
+      }
+    },
     counts: () => ({ implementations, candidateChecks, postChecks, reviews }),
   };
 }
@@ -433,6 +463,118 @@ it("one named stable worktree combines implementation, verified knowledge and fi
     "Verified",
   );
 });
+it("isolated implementations overlap and one may deliver while the other is still working", async () => {
+  const first = fixture();
+  const second = fixture();
+  const gate = first.engine.o.gate;
+  second.engine.o.gate = gate;
+  first.engine.active.set(second.run.id, second.live);
+  const enteredFirst = latch();
+  const enteredSecond = latch();
+  const finishFirst = latch();
+  const finishSecond = latch();
+  const assignments = first.engine.assignments.bind(first.engine);
+  vi.spyOn(first.engine, "assignments").mockImplementation(async () => {
+    enteredFirst.resolve();
+    await finishFirst.promise;
+    await assignments(first.live, first.d.worktreeRoot, first.live.proposal);
+  });
+  vi.spyOn(second.engine, "assignments").mockImplementation(async () => {
+    enteredSecond.resolve();
+    await finishSecond.promise;
+    throw new Error("second assignment settled unsuccessfully");
+  });
+  const a = first.execute();
+  let b: Promise<unknown> | undefined;
+  try {
+    await enteredFirst.promise;
+    expect(() => gate.assertQuiescent()).not.toThrow();
+    b = expect(second.execute()).rejects.toThrow("second assignment settled");
+    await enteredSecond.promise;
+    expect(first.events).not.toContain("merge");
+    expect(second.events).not.toContain("merge");
+    finishFirst.resolve();
+    await a;
+    expect(first.d.postChecks).toBe("passed");
+    expect(second.d.integration.status).toBe("pending");
+    expect(second.live.delivery.frontierHead()).toBe(first.run.mergedCommit);
+  } finally {
+    finishFirst.resolve();
+    finishSecond.resolve();
+    await Promise.allSettled([a, ...(b ? [b] : [])]);
+  }
+  gate.assertQuiescent();
+});
+
+it("canceling final-access admission leaves other original holders intact", async () => {
+  const f = fixture();
+  const gate = f.engine.o.gate;
+  const reader = await gate.acquire(
+    randomUUID(),
+    new AbortController().signal,
+    "shared",
+  );
+  const waiting = expect(
+    f.engine.checkoutAccess(f.live, "exclusive"),
+  ).rejects.toThrow("stale");
+  f.live.abort.abort();
+  await waiting;
+  expect(f.live.barrier).toBeUndefined();
+  reader.assertHeld();
+  expect(() => gate.assertQuiescent()).toThrow("conflict");
+  reader.release();
+  gate.assertQuiescent();
+});
+
+it("refreshes sibling knowledge before this run maintains shared project knowledge", async () => {
+  const f = fixture();
+  const refresh = vi.spyOn(f.engine, "refreshCandidate");
+  const learn = vi.spyOn(f.engine, "learn");
+  await f.execute();
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(learn).toHaveBeenCalledOnce();
+  expect(refresh.mock.invocationCallOrder[0]).toBeLessThan(
+    learn.mock.invocationCallOrder[0],
+  );
+});
+
+it("guidance drift during the final review refuses the target merge", async () => {
+  const f = fixture();
+  const publish = f.engine.publish.bind(f.engine);
+  vi.spyOn(f.engine, "publish").mockImplementation(() => {
+    publish(f.live, f.d.worktreeRoot, f.live.proposal.plan, [], []);
+    vi.mocked(pathIdentity).mockReturnValue("changed guidance");
+  });
+  await expect(f.execute()).rejects.toThrow("conflict");
+  expect(f.events).not.toContain("merge");
+  expect(f.run.mergedCommit).toBeNull();
+  expect(f.d.integration.status).toBe("blocked");
+  expect(f.cleanup).not.toHaveBeenCalled();
+});
+
+it.each(["head", "branch"] as const)(
+  "post-check %s drift never advances a sibling",
+  async (field) => {
+    const f = fixture();
+    const advance = vi.spyOn(f.engine, "advanceSiblings");
+    const checks = f.engine.checks.bind(f.engine);
+    vi.spyOn(f.engine, "checks").mockImplementation(
+      async (_live, cwd, ...rest) => {
+        const result = await checks(_live, cwd, ...rest);
+        if (cwd === f.engine.cwd)
+          seam.trees.get(f.engine.cwd)![field] =
+            field === "head" ? "f".repeat(40) : "refs/heads/other";
+        return result;
+      },
+    );
+    await expect(f.execute()).rejects.toThrow("stale");
+    expect(f.run.mergedCommit).not.toBeNull();
+    expect(f.d.postChecks).toBe("unknown");
+    expect(advance).not.toHaveBeenCalled();
+    expect(f.cleanup).not.toHaveBeenCalled();
+  },
+);
+
 it("baseline repair can expand the original scope and deliver without another approval", async () => {
   const f = fixture("baseline-scope");
   await f.execute();

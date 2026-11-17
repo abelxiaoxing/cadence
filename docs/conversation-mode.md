@@ -175,7 +175,11 @@ Ignored generated Markdown remains ignored and is published without forcing it i
 The named task branch is kept.
 Only owned worktrees at the delivered commit, after successful post-merge checks and without any residue, are removed with plain `git worktree remove`.
 Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
-Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
+Separate WebUI or terminal conversations may run independent local-merge workflows concurrently, within the owner's four-active-run limit including investigations.
+A single conversation still permits only one approved implementation at a time; open another conversation for an independent goal.
+Target preflight and candidate creation are exclusive.
+Implementation, checks and automatic review then run in isolated candidates without holding the target checkout gate; working-copy edits and ordinary host-tool conversations remain exclusive.
+Final delivery is exclusive and serialized from candidate refresh through shared project-knowledge maintenance, post-merge checks and cleanup.
 There is no fixed delivery-duration or repair-round quota.
 Agents have no fixed total runtime deadline.
 Setup/check commands default to no timeout; an explicitly approved per-command timeout still applies, including in older plans.
@@ -211,7 +215,10 @@ A concrete external blocker is reported with preserved work, not a generic reque
 Final candidate checks must pass before merge.
 Post-merge failures retain the actual merge commit.
 Repairs stay in the same named candidate, invalidate its earlier acceptance, and are checked/reviewed against a new exact candidate.
-Only this run’s last confirmed merge can serve as the next integration baseline; external target movement or branch switching blocks integration.
+When a verified Cadence sibling advances the same branch, a pending non-overlapping candidate merges that delivery into its own worktree, then repeats real checks and automatic Agent review before publication.
+Both histories are preserved; no rebase or automatic conflict resolution occurs.
+Overlapping writes, changed `AGENTS.md`, external target movement or branch switching retain the candidate and require a fresh plan.
+Only this run’s last confirmed merge can serve as its next post-merge recovery baseline.
 Repairs can fast-forward that unchanged target again; the user’s unrelated index is never committed.
 Unresolved failures remain failures; no rollback is fabricated.
 Automatic review is never recorded as human review.
@@ -273,7 +280,8 @@ Search limits and omitted coverage are reported explicitly; a partial search doe
 The bounded `grep` tool searches literal text, not regular expressions.
 No files are copied to accelerate research.
 
-Separate runs in one project wait for the shared checkout gate; questions inside a run can overlap.
+Readonly runs in one project share checkout access; questions inside a run can also overlap.
+An investigation in a conversation with its own active implementation waits for that implementation, while other conversations remain independent.
 Agents have no total process deadline or substitute idle/step/tool-call quota.
 Leaving the page or losing a coordinator bridge does not cancel accepted investigations.
 Explicit Cancel/Stop retain their actual closure and recorded source.
