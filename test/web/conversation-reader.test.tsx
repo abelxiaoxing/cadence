@@ -227,7 +227,8 @@ it("a new turn loading never hides the turns already shown", async () => {
   turns.push({ ...settled(), status: "running", stable: 0 });
   reader.refresh();
   await vi.advanceTimersByTimeAsync(0);
-  expect(reader.view().count).toBe(3);
+  // Head and body publish together; a new count cannot describe an old body.
+  expect(reader.view().count).toBe(2);
   expect(reader.view().turns.map((t) => t.ordinal)).toEqual([0, 1]);
   release();
   await vi.advanceTimersByTimeAsync(0);
@@ -309,7 +310,7 @@ it("branch navigation retires pending readonly reads and cannot reuse the old ob
   const reader = new ConversationReader(client, id, () => {});
   reader.setActive(true);
   await vi.advanceTimersByTimeAsync(0);
-  expect(reader.view().summary).toBeDefined();
+  expect(reader.view().summary).toBeUndefined();
   reader.choose(turns[0].id);
   reader.choose(null);
   expect(reader.view().summary).toBeUndefined();
@@ -640,4 +641,232 @@ it("messages waiting for the running reply and ones it ended without delivering 
   reader.choose("another-leaf");
   expect(reader.view()).toMatchObject({ pending: [], undelivered: [] });
   reader.close();
+});
+
+it("publishes a terminal head only with its final body", async () => {
+  vi.useFakeTimers();
+  const live = { ...settled(), status: "running" as ChatStatus, stable: 1 };
+  const o = owner([live]);
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const before = reader.view();
+  let release!: () => void;
+  o.hold(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  live.status = "completed";
+  live.stable = 3;
+  live.steps.push({ ...step(2), role: "assistant", text: "final text" });
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view()).toBe(before);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().summary?.status).toBe("completed");
+  expect(reader.view().turns[0].steps.at(-1)?.text).toBe("final text");
+  reader.close();
+});
+
+it("retains capture identities through invisible messages, durable handoff, repeated text and earlier pages", async () => {
+  vi.useFakeTimers();
+  const text = (
+    message: string,
+    block: number,
+    body = "same answer",
+  ): ChatStep => ({
+    ...step(1),
+    id: `preview:${message}:${block}`,
+    renderId: `capture:${message}:${block}`,
+    version: "v1",
+    state: "completed",
+    role: "assistant",
+    text: body,
+  });
+  const first = text("a", 0),
+    last = text("c", 3);
+  const think: ChatStep = {
+    ...text("c", 1),
+    role: "thinking",
+    text: "",
+    parts: 0,
+    state: "streaming",
+  };
+  const tool: ChatStep = {
+    ...text("c", 2),
+    role: "tool",
+    text: "",
+    state: "running",
+  };
+  const live: Turn = {
+    id: "command",
+    status: "running",
+    stable: 0,
+    steps: [
+      { ...step(0), renderId: "command:command:user" },
+      first,
+      // Empty assistant is not a displayed text row, but is still a source step.
+      { ...text("empty", 0, "") },
+      think,
+      tool,
+      last,
+    ],
+  };
+  const turns = [settled(), settled(), live];
+  const o = owner(turns);
+  const reader = new ConversationReader(o.client, id, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const prior = reader.view().turns[1];
+  live.id = "pi-user";
+  live.steps = live.steps.map((s) => ({ ...s, id: `pi:${s.id}` }));
+  live.steps[3] = { ...live.steps[3], state: "completed", parts: 1 };
+  live.steps[4] = {
+    ...live.steps[4],
+    state: "completed",
+    version: "output-changed-same-parts",
+  };
+  live.status = "completed";
+  live.stable = live.steps.length;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  const durable = reader.view().turns[1];
+  expect(durable.renderId).toBe(prior.renderId);
+  expect(durable.header.id).not.toBe(prior.header.id);
+  expect(durable.steps.map((s) => s.renderId)).toEqual(
+    prior.steps.map((s) => s.renderId),
+  );
+  expect(
+    durable.steps
+      .filter((s) => s.role === "assistant" && s.text)
+      .map((s) => s.text),
+  ).toEqual(["same answer", "same answer"]);
+  reader.loadEarlier();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.map((t) => t.ordinal)).toEqual([0, 1, 2]);
+  expect(reader.view().turns.at(-1)).toBe(durable);
+  reader.setActive(false);
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().turns.at(-1)).toBe(durable);
+  reader.close();
+});
+
+it("rejects a changing paged snapshot instead of publishing a partial or mixed timeline", async () => {
+  vi.useFakeTimers();
+  const live = {
+    ...settled(STEP_READ + 2),
+    status: "running" as ChatStatus,
+    stable: 0,
+  };
+  const o = owner([live]);
+  let race = false;
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request) => {
+        const reply = await o.client.workbenchRead(request);
+        if (
+          race &&
+          request.kind === "conversation-turn" &&
+          request.before !== null &&
+          reply.value.kind === "conversation-turn"
+        )
+          reply.value.turn.steps++;
+        return reply;
+      },
+    },
+    id,
+    () => {},
+  );
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const prior = reader.view().turns[0];
+  race = true;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().error).toBe("stale");
+  expect(reader.view().turns[0]).toBe(prior);
+  race = false;
+  reader.refresh();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(reader.view().error).toBe("");
+  expect(reader.view().turns[0]).toBe(prior);
+  reader.close();
+});
+
+it("fences detail replies by full-content version even with equal parts, and after cancellation", async () => {
+  vi.useFakeTimers();
+  const live = settled();
+  live.steps[1] = {
+    ...live.steps[1],
+    renderId: "capture:tool:0",
+    version: "v1",
+    state: "running",
+  };
+  const o = owner([live]);
+  let version = "v1";
+  let release: (() => void) | undefined;
+  let hold = false;
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request) => {
+        const reply = await o.client.workbenchRead(request);
+        if (reply.value.kind === "conversation-step") {
+          reply.value.item.renderId = "capture:tool:0";
+          reply.value.item.version = version;
+          if (hold)
+            await new Promise<void>((resolve) => {
+              release = resolve;
+            });
+        }
+        return reply;
+      },
+    },
+    id,
+    () => {},
+  );
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const turn = reader.view().turns[0];
+  expect(await turn.detail(1, 1, new AbortController().signal)).toEqual({
+    text: "out0",
+    args: "{}",
+  });
+  version = "v2";
+  await expect(turn.detail(1, 1, new AbortController().signal)).rejects.toThrow(
+    "stale",
+  );
+  version = "v1";
+  hold = true;
+  const abort = new AbortController();
+  const pending = expect(turn.detail(1, 1, abort.signal)).rejects.toThrow(
+    "stale",
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  abort.abort();
+  release?.();
+  await pending;
+  reader.close();
+});
+
+it("closing an in-flight observation cannot publish or recreate a poll timer", async () => {
+  vi.useFakeTimers();
+  const o = owner([settled()]);
+  let release!: () => void;
+  o.hold(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const notify = vi.fn();
+  const reader = new ConversationReader(o.client, id, notify);
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  reader.close();
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(notify).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
 });

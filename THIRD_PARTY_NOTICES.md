@@ -19,6 +19,15 @@ Cadence replaces upstream agent/file sourcing with its existing readonly event f
 No upstream executor, manager, steering, stopping or persisted-run reader is included.
 `provenance/agent-browser-reuse.json` records exact source hashes, local paths and adaptations; the complete upstream MIT license is preserved in `licenses/pi-subagents-MIT.txt`.
 
+## pi-web-ui browser adaptations
+
+The browser adapts components and rendering/scrolling patterns from [xing-shuyin/pi-web-ui](https://github.com/xing-shuyin/pi-web-ui), MIT, Copyright (c) 2026 xing-shuyin.
+The complete original license is preserved in `licenses/pi-web-ui-MIT.txt`; `provenance/webui-reuse.json` records the reviewed source revisions, source hashes and current local adaptations.
+The ordinary conversation timeline uses the existing Message/MessageList, ToolCallBlock and ThinkingBlock composition and user-intent scrolling.
+Its `web/src/components/StreamMarkdown.tsx` adapts the prefix-cache renderer from commit `e8bab487af208bc9a1ab60a821652323f598127f`, retaining stable Markdown segments while removing artificial character-paced replay of received snapshots.
+Cadence supplies its own capture/Pi identity correlation, lazy detail/version reads and separate reply/workflow/connection observations; no upstream executor, re-ask semantics or position-guessed message association is included.
+These adaptations are bundled into the built WebUI with the other recorded pi-web-ui reuse, not shipped as a second runtime.
+
 ## Bundled browser dependencies, icons and fonts
 
 `licenses/bundled-web.txt` preserves the full actual emitted dependency notices, including React/DOM/scheduler, react-icons and Feather, unified/Markdown/HTML utilities, highlight.js, KaTeX and vis-timeline's embedded vendor versions.

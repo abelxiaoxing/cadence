@@ -1,30 +1,49 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiCpu } from "react-icons/fi";
 import type { ServiceClient } from "../../../../src/service-client.ts";
-import { recordedTurn } from "../../client/turn-source";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
+import { useFollowResize } from "../../transcript/use-lazy-window";
 import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
+import { recordedTurn } from "./turn-source";
 import { WorkflowCard } from "./WorkflowPanel";
 
 const LIVE = ["queued", "running"];
 
-/** Main-area context of one workflow subagent, or of a whole run when no step is selected. */
-export function WorkflowAgentView({
-  client,
-  agent,
-  backLabel,
-  onBack,
-  onOpenAgent,
-}: {
+interface AgentViewProps {
   client: ServiceClient;
   agent: WorkflowAgent;
   backLabel: string;
   onBack(): void;
   onOpenAgent(agent: WorkflowAgent): void;
-}) {
+}
+
+/** Navigation retires the old polling, expanded detail and scroll lifetime. */
+export function WorkflowAgentView(props: AgentViewProps) {
+  const binding = useRef({ client: props.client, generation: 0 });
+  if (binding.current.client !== props.client)
+    binding.current = {
+      client: props.client,
+      generation: binding.current.generation + 1,
+    };
+  return (
+    <AgentView
+      key={`${binding.current.generation}:${props.agent.runId}:${props.agent.stepId ?? ""}`}
+      {...props}
+    />
+  );
+}
+
+/** Main-area context of one workflow subagent, or of a whole run when no step is selected. */
+function AgentView({
+  client,
+  agent,
+  backLabel,
+  onBack,
+  onOpenAgent,
+}: AgentViewProps) {
   const { t, tx } = useT();
   const [poll, setPoll] = useState(1000);
   const page = useWorkbench(
@@ -64,15 +83,18 @@ export function WorkflowAgentView({
     detail && agent.stepId
       ? { kind: "workflow-detail", id: agent.runId, stepId: agent.stepId }
       : null,
+    // Changing to zero performs one final read, including failure/cancellation.
+    detail && live ? 1000 : 0,
   );
   const scroll = useRef<HTMLDivElement>(null),
     stick = useRef(true);
+  const body = useRef<HTMLDivElement>(null);
+  useFollowResize(scroll, body, stick);
   // Follow a live transcript while the reader stays at its end.
-  const items = turn?.steps.length ?? 0;
   useEffect(() => {
-    if (items && stick.current && scroll.current)
+    if (turn && stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [items]);
+  }, [turn]);
   return (
     <section
       className="chat-workspace workflow-agent"
@@ -105,70 +127,73 @@ export function WorkflowAgentView({
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        {page.error && (
-          <p role="alert" className="banner-notice">
-            {page.error} ·{" "}
-            {t(
-              "State unavailable is not completion. No automatic resubmission.",
-            )}
-          </p>
-        )}
-        {/* A whole workflow's card heads itself with its goal and state. */}
-        {run && agent.stepId && (
-          <p className="inspector-note workflow-agent-goal">
-            {t("Workflow")}: {run.goal} · {tx(run.phase)} · {tx(run.status)}
-          </p>
-        )}
-        {!agent.stepId && (
-          <WorkflowCard
-            client={client}
-            id={agent.runId}
-            onOpenAgent={onOpenAgent}
-          />
-        )}
-        {agent.stepId && transcript.error && (
-          <p role="alert">{transcript.error}</p>
-        )}
-        {agent.stepId &&
-          (turn ? (
-            <ChatTurnView turn={turn} />
-          ) : (
-            <p className="inspector-note">
+        <div ref={body}>
+          {page.error && (
+            <p role="alert" className="banner-notice">
+              {page.error} ·{" "}
               {t(
-                "No retained transcript observed yet; absence is not proof of no activity.",
+                "State unavailable is not completion. No automatic resubmission.",
               )}
             </p>
-          ))}
-        {step && (
-          <section
-            className="workflow-agent-result"
-            aria-label={t("Step result")}
-          >
-            <h3>{t("Step result")}</h3>
-            {step.exitCode !== null && (
-              <p>
-                {t("Exit code")}: {step.exitCode}
-              </p>
-            )}
-            {step.text ? (
-              <Markdown text={step.text} />
+          )}
+          {/* A whole workflow's card heads itself with its goal and state. */}
+          {run && agent.stepId && (
+            <p className="inspector-note workflow-agent-goal">
+              {t("Workflow")}: {run.goal} · {tx(run.phase)} · {tx(run.status)}
+            </p>
+          )}
+          {!agent.stepId && (
+            <WorkflowCard
+              client={client}
+              id={agent.runId}
+              onOpenAgent={onOpenAgent}
+            />
+          )}
+          {agent.stepId && transcript.error && (
+            <p role="alert">{transcript.error}</p>
+          )}
+          {agent.stepId &&
+            (turn ? (
+              <ChatTurnView turn={turn} />
             ) : (
-              <p className="inspector-note">{t("No result yet.")}</p>
-            )}
-            {step.truncated && <p>{t("Preview is truncated.")}</p>}
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => setDetail(true)}
+              <p className="inspector-note">
+                {t(
+                  "No retained transcript observed yet; absence is not proof of no activity.",
+                )}
+              </p>
+            ))}
+          {step && (
+            <section
+              className="workflow-agent-result"
+              aria-label={t("Step result")}
             >
-              {t("Read retained step result")}
-            </button>
-            {detail && result.value?.kind === "file" && (
-              <pre className="workflow-detail">{result.value.text}</pre>
-            )}
-            {detail && result.error && <p role="alert">{result.error}</p>}
-          </section>
-        )}
+              <h3>{t("Step result")}</h3>
+              {step.exitCode !== null && (
+                <p>
+                  {t("Exit code")}: {step.exitCode}
+                </p>
+              )}
+              {step.text ? (
+                <Markdown text={step.text} />
+              ) : (
+                <p className="inspector-note">{t("No result yet.")}</p>
+              )}
+              {step.truncated && <p>{t("Preview is truncated.")}</p>}
+              <button
+                type="button"
+                className="ghost"
+                aria-expanded={detail}
+                onClick={() => setDetail((shown) => !shown)}
+              >
+                {t("Read retained step result")}
+              </button>
+              {detail && result.value?.kind === "file" && (
+                <pre className="workflow-detail">{result.value.text}</pre>
+              )}
+              {detail && result.error && <p role="alert">{result.error}</p>}
+            </section>
+          )}
+        </div>
       </div>
     </section>
   );

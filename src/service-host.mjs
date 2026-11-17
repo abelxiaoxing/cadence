@@ -1499,6 +1499,15 @@ function decodeCaptureEvent(v) {
         resultCallId
       };
     }
+    case "thinking-activity": {
+      const o = closed(v, ["kind", "messageId", "index", "phase"]);
+      return {
+        kind,
+        messageId: decodeId(o.messageId),
+        index: integer(o.index, 0, LIMITS.dataFrames),
+        phase: oneOf(o.phase, ["active", "complete", "unavailable"])
+      };
+    }
     case "message-text": {
       const o = closed(v, ["kind", "messageId", "blockId", "detailId"]);
       return {
@@ -6306,6 +6315,7 @@ function chatStep(item, parts, more = false) {
   const text2 = lazy ? "" : clipText(item.text, STEP_TEXT_BYTES);
   return {
     id: item.id,
+    ...presentation(item),
     role: item.role,
     text: text2,
     ...item.images?.length ? { images: item.images } : {},
@@ -6772,8 +6782,52 @@ function decodeChatImages(v) {
     };
   });
 }
+var PRESENTATION_KEYS = ["renderId", "version", "state"];
+function presentationKeys(v) {
+  return PRESENTATION_KEYS.filter((key) => Object.hasOwn(v ?? {}, key));
+}
+function presentation(v) {
+  return {
+    ...v.renderId === undefined ? {} : { renderId: v.renderId },
+    ...v.version === undefined ? {} : { version: v.version },
+    ...v.state === undefined ? {} : { state: v.state }
+  };
+}
+function decodePresentation(o) {
+  return {
+    ...o.renderId === undefined ? {} : { renderId: text(o.renderId, 160, true) },
+    ...o.version === undefined ? {} : { version: decodeHash(o.version) },
+    ...o.state === undefined ? {} : {
+      state: oneOf(o.state, [
+        "pending",
+        "streaming",
+        "running",
+        "completed",
+        "failed",
+        "canceled",
+        "unavailable"
+      ])
+    }
+  };
+}
+function decodeChatActivity(v) {
+  const o = closed(v, [
+    "kind",
+    "sequence",
+    ...Object.hasOwn(v ?? {}, "name") ? ["name"] : []
+  ]);
+  const kind = oneOf(o.kind, ["waiting", "thinking", "text", "tool"]);
+  if (o.name !== undefined && kind !== "tool")
+    throw new ContractError("invalid");
+  return {
+    kind,
+    sequence: integer(o.sequence, 0),
+    ...o.name === undefined ? {} : { name: text(o.name, 128) }
+  };
+}
 function decodeChatItem(v) {
   const i = closed(v, [
+    ...presentationKeys(v),
     "id",
     "role",
     "text",
@@ -6783,6 +6837,7 @@ function decodeChatItem(v) {
     ...Object.hasOwn(v ?? {}, "images") ? ["images"] : []
   ]);
   return {
+    ...decodePresentation(i),
     ...i.images === undefined ? {} : { images: decodeChatImages(i.images) },
     id: text(i.id, 160, true),
     role: oneOf(i.role, ITEM_ROLES),
@@ -6794,6 +6849,7 @@ function decodeChatItem(v) {
 }
 function decodeChatStep(v) {
   const o = closed(v, [
+    ...presentationKeys(v),
     "id",
     "role",
     "text",
@@ -6805,6 +6861,7 @@ function decodeChatStep(v) {
     "parts"
   ]);
   const step = {
+    ...decodePresentation(o),
     ...o.images === undefined ? {} : { images: decodeChatImages(o.images) },
     id: text(o.id, 160, true),
     role: oneOf(o.role, ITEM_ROLES),
@@ -6817,12 +6874,23 @@ function decodeChatStep(v) {
   };
   if ((step.role === "tool" || step.role === "thinking") && (step.text || step.clipped))
     throw new ContractError("invalid");
-  if (step.role === "thinking" && !step.parts)
-    throw new ContractError("invalid");
+  if (step.role === "thinking") {
+    if (!step.parts && !(step.renderId && [
+      "streaming",
+      "completed",
+      "unavailable",
+      "canceled",
+      "failed"
+    ].includes(step.state ?? "")))
+      throw new ContractError("invalid");
+    if (step.parts && step.state !== undefined && step.state !== "completed")
+      throw new ContractError("invalid");
+  }
   return step;
 }
 function decodeChatTurnHeader(v) {
   const o = closed(v, [
+    ...Object.hasOwn(v ?? {}, "activity") ? ["activity"] : [],
     "id",
     "status",
     "notice",
@@ -6838,6 +6906,7 @@ function decodeChatTurnHeader(v) {
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   const steps = integer(o.steps, 0);
   return {
+    ...o.activity === undefined ? {} : { activity: decodeChatActivity(o.activity) },
     ...o.execution === undefined ? {} : { execution: decodeExecutionContext(o.execution) },
     ...o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) },
     id: decodeEntryId(o.id),
@@ -9290,6 +9359,49 @@ function fold(summary, line) {
       summary.stop = stopStatus(m);
   }
 }
+function commandMarker(entry) {
+  if (entry.type !== "custom" || own2(entry.raw, "customType") !== BROWSER_COMMAND_ENTRY)
+    return;
+  const value = own2(entry.raw, "data");
+  const d = closed(value, [
+    "commandId",
+    "userId",
+    ...Object.hasOwn(value ?? {}, "run") ? ["run"] : [],
+    ...Object.hasOwn(value ?? {}, "captureMessageId") ? ["captureMessageId"] : []
+  ]);
+  return {
+    commandId: decodeId(d.commandId),
+    userId: decodeEntryId(d.userId),
+    ...d.run === undefined ? {} : { run: decodeId(d.run) },
+    ...d.captureMessageId === undefined ? {} : { captureMessageId: decodeId(d.captureMessageId) }
+  };
+}
+function captureLinks(entries2) {
+  const byId = new Map(entries2.map((e) => [e.id, e]));
+  const commands = new Map;
+  const ids = new Set;
+  const links = new Map;
+  let user;
+  for (const entry of entries2) {
+    if (isUser(entry))
+      user = entry.id;
+    const marker2 = commandMarker(entry);
+    if (!marker2)
+      continue;
+    const first = commands.get(marker2.commandId);
+    const parent = entry.parentId ? byId.get(entry.parentId) : undefined;
+    if (!parent || parent.pos >= entry.pos || parent.type !== "message" || !["user", "assistant", "toolResult"].includes(role2(parent)) || marker2.userId !== user || !first && entry.parentId !== marker2.userId || first && (first.userId !== marker2.userId || first.run !== marker2.run) || marker2.run === marker2.commandId)
+      throw new ContractError("corrupt-selected");
+    commands.set(marker2.commandId, marker2);
+    if (marker2.captureMessageId) {
+      if (ids.has(marker2.captureMessageId) || links.has(parent.id))
+        throw new ContractError("corrupt-selected");
+      ids.add(marker2.captureMessageId);
+      links.set(parent.id, marker2.captureMessageId);
+    }
+  }
+  return links;
+}
 
 class ParsedSession {
   path;
@@ -9304,6 +9416,7 @@ class ParsedSession {
   usages = new Map;
   cache = { input: 0, read: 0, write: 0 };
   boundaries = new Map;
+  captureOccurrences = new Map;
   constructor(path) {
     this.path = path;
   }
@@ -9375,6 +9488,9 @@ class ParsedSession {
       if (entry.type === "custom" && own2(entry.raw, "customType") === BROWSER_COMMAND_ENTRY) {
         const data = own2(entry.raw, "data");
         const d = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+        const captureId = own2(d, "captureMessageId");
+        if (typeof captureId === "string")
+          this.captureOccurrences.set(captureId, (this.captureOccurrences.get(captureId) ?? 0) + 1);
         const commandId = own2(d, "commandId");
         if (typeof commandId === "string") {
           const boundary = {
@@ -9413,10 +9529,16 @@ class ParsedSession {
       this.usages.clear();
       this.cache.input = this.cache.read = this.cache.write = 0;
       this.boundaries.clear();
+      this.captureOccurrences.clear();
       this.header = null;
     });
     this.read = next;
     return this;
+  }
+  validateCaptures(entries2) {
+    for (const id of captureLinks(entries2).values())
+      if (this.captureOccurrences.get(id) !== 1)
+        throw new ContractError("corrupt-selected");
   }
   current() {
     return this.entries.at(-1)?.id ?? null;
@@ -9520,7 +9642,7 @@ class ParsedSession {
     }
     if (!this.follows(first.user, run.parent, run.offset))
       throw new ContractError("stale");
-    if (sent.some((part) => part.boundaries.some((boundary) => boundary.run !== run.commandId)))
+    if (first.boundaries.some((boundary) => boundary.run !== undefined) || sent.some((part) => part.boundaries.some((boundary) => boundary.run !== run.commandId)))
       throw new ContractError("corrupt-selected");
     const parts = [
       { commandId: run.commandId, ...first },
@@ -9541,7 +9663,9 @@ class ParsedSession {
         return position <= start || position >= end || boundary.user !== part.user.id;
       }))
         throw new ContractError("corrupt-selected");
-      return { commandId: part.commandId, entries: chain.slice(start, end) };
+      const entries2 = chain.slice(start, end);
+      this.validateCaptures(entries2);
+      return { commandId: part.commandId, entries: entries2 };
     });
   }
   tree(leaf, secrets) {
@@ -9596,6 +9720,11 @@ function shown(entry) {
 }
 var clip = (value, bytes) => clipText(value, bytes);
 function turnItems(entries2, secrets) {
+  const links = captureLinks(entries2);
+  const userCommands = new Map(entries2.flatMap((entry) => {
+    const marker2 = commandMarker(entry);
+    return marker2 && entry.parentId === marker2.userId ? [[marker2.userId, marker2.commandId]] : [];
+  }));
   const omitted = { thinking: false, media: false, other: false };
   const items = [];
   const tools = new Map;
@@ -9610,8 +9739,19 @@ function turnItems(entries2, secrets) {
     });
     return items[items.length - 1];
   };
-  const tool = (id, name, args, text2 = "", error = false) => add({ id, role: "tool", name, args, text: text2, error });
+  const tool = (id, name, args, text2 = "", error = false) => add({
+    id,
+    renderId: `pi:${id}`,
+    role: "tool",
+    name,
+    args,
+    text: text2,
+    error,
+    state: error ? "failed" : "completed"
+  });
   for (const entry of entries2) {
+    const captureId = links.get(entry.id);
+    const renderId = (index) => captureId ? `capture:${captureId}:${index}` : `pi:${entry.id}:${index}`;
     const m = message(entry);
     if (m) {
       const kind = own2(m, "role");
@@ -9625,6 +9765,8 @@ function turnItems(entries2, secrets) {
         add({
           ...images.length ? { images } : {},
           id: entry.id,
+          renderId: userCommands.has(entry.id) ? `command:${userCommands.get(entry.id)}:user` : renderId(0),
+          state: "completed",
           role: "user",
           text: text2,
           name: "",
@@ -9632,26 +9774,23 @@ function turnItems(entries2, secrets) {
           error: false
         });
       } else if (kind === "assistant") {
-        let text2;
         const content = own2(m, "content");
-        for (const block of Array.isArray(content) ? content : []) {
+        const state = own2(m, "stopReason") === "aborted" ? "canceled" : ["error", "length"].includes(own2(m, "stopReason")) ? "failed" : "completed";
+        for (const [index, block] of (Array.isArray(content) ? content : []).entries()) {
           const b = block && typeof block === "object" ? block : {};
           const type = own2(b, "type");
           if (type === "text" && typeof own2(b, "text") === "string") {
             const value = own2(b, "text");
-            if (text2 && items[items.length - 1] === text2)
-              text2.text += sanitizeText(`
-
-${value}`, secrets);
-            else
-              text2 = add({
-                id: `${entry.id}:${items.length}`,
-                role: "assistant",
-                text: value,
-                name: "",
-                args: "",
-                error: ["error", "aborted", "length"].includes(own2(m, "stopReason"))
-              });
+            add({
+              id: `${entry.id}:${index}`,
+              renderId: renderId(index),
+              state,
+              role: "assistant",
+              text: value,
+              name: "",
+              args: "",
+              error: ["error", "aborted", "length"].includes(own2(m, "stopReason"))
+            });
           } else if (type === "toolCall") {
             const id = own2(b, "id"), name = own2(b, "name");
             let args = "";
@@ -9660,22 +9799,39 @@ ${value}`, secrets);
             } catch {
               omitted.other = true;
             }
-            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${items.length}`, typeof name === "string" ? name : "tool", args);
-            if (typeof id === "string")
-              tools.set(id, call);
+            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${index}`, typeof name === "string" ? name : "tool", args);
+            call.renderId = renderId(index);
+            call.state = state === "completed" ? "pending" : state;
+            if (typeof id === "string") {
+              tools.set(id, tools.has(id) ? null : call);
+            }
           } else if (type === "thinking" || type === "redactedThinking") {
             const value = own2(b, "thinking");
             if (type === "thinking" && typeof value === "string" && value.trim() && own2(b, "redacted") !== true)
               add({
-                id: `${entry.id}:${items.length}`,
+                id: `${entry.id}:${index}`,
+                renderId: renderId(index),
+                state: "completed",
                 role: "thinking",
                 text: value,
                 name: "",
                 args: "",
                 error: false
               });
-            else
+            else {
               omitted.thinking = true;
+              if (captureId)
+                add({
+                  id: `${entry.id}:${index}`,
+                  renderId: renderId(index),
+                  state: "unavailable",
+                  role: "thinking",
+                  text: "",
+                  name: "",
+                  args: "",
+                  error: false
+                });
+            }
           } else if (type === "image")
             omitted.media = true;
           else
@@ -9686,11 +9842,16 @@ ${value}`, secrets);
         const id = own2(m, "toolCallId"), name = own2(m, "toolName");
         const output = sanitizeText(contentText(own2(m, "content"), omitted), secrets);
         const call = typeof id === "string" ? tools.get(id) : undefined;
-        if (call) {
+        if (call && call.name === sanitizeText(typeof name === "string" ? name : "tool", secrets)) {
           call.text = output;
           call.error = own2(m, "isError") === true;
-        } else
-          tool(typeof id === "string" && id ? id : entry.id, typeof name === "string" ? name : "tool", "", output, own2(m, "isError") === true);
+          call.state = call.error ? "failed" : "completed";
+          if (typeof id === "string")
+            tools.delete(id);
+        } else {
+          const orphan = tool(typeof id === "string" && id ? id : entry.id, typeof name === "string" ? name : "tool", "", output, own2(m, "isError") === true);
+          orphan.renderId = renderId(0);
+        }
       } else if (kind === "bashExecution") {
         const command = own2(m, "command"), output = own2(m, "output"), code = own2(m, "exitCode");
         tool(entry.id, "bash", JSON.stringify({
@@ -9707,6 +9868,7 @@ ${value}`, secrets);
   }
   const first = entries2.find(isUser) ?? entries2[0];
   return {
+    captureMessages: [...links.values()],
     id: first?.id ?? "",
     entry: entries2.at(-1)?.id ?? null,
     parent: first?.parentId ?? null,
@@ -9747,6 +9909,14 @@ function itemParts(item) {
   }));
 }
 function listTurn(turn) {
+  turn = {
+    ...turn,
+    items: turn.items.map((item) => ({
+      ...item,
+      renderId: item.renderId ?? `pi:${item.id}`,
+      version: createHash7("sha256").update(JSON.stringify([item.text, item.args, item.images ?? []])).digest("hex")
+    }))
+  };
   const parts = turn.items.map(itemParts);
   const steps = turn.items.map((item, index) => {
     const listed = chatStep(item.role === "tool" && item.args.length > TARGET_ARGS ? { ...item, args: "" } : item, 0);
@@ -9924,6 +10094,7 @@ class PiSessions {
     return parsed;
   }
   turn(session, entries2, secrets) {
+    session.validateCaptures(entries2);
     const key = [
       session.path,
       session.incarnation,
@@ -14929,6 +15100,20 @@ var NOT_DELIVERED = "Not delivered: the reply ended before this message reached 
 var UNOBSERVED = "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
 var WITHDRAWN = "Withdrawn before it was delivered.";
 var LIVE = ["queued", "running"];
+function settledSteps(turn) {
+  if (LIVE.includes(turn.status) || !turn.items.some((item) => ["pending", "running", "streaming"].includes(item.state ?? "")))
+    return turn;
+  return {
+    ...turn,
+    ...listTurn({
+      ...turn,
+      items: turn.items.map((item) => ["pending", "running", "streaming"].includes(item.state ?? "") ? {
+        ...item,
+        state: turn.status === "canceled" ? "canceled" : "unavailable"
+      } : item)
+    })
+  };
+}
 function observedFile(path) {
   try {
     const s = lstatSync15(path);
@@ -15477,18 +15662,19 @@ class ConversationRecords {
       const turn2 = this.sessions.turn(view.session, view.turns[ordinal], secrets);
       const recorded = this.overlay(id, view.session).get(turn2.id);
       const running = view.parts?.slice(0, -1).some((part) => part.entries[0].id === turn2.id);
+      const observed = recorded ? {
+        ...turn2,
+        ...recorded.execution ? { execution: recorded.execution } : {},
+        status: recorded.status,
+        notice: turn2.notice || sanitizeText(recorded.notice, secrets),
+        omitted: {
+          thinking: turn2.omitted.thinking,
+          media: turn2.omitted.media || recorded.omitted.media,
+          other: turn2.omitted.other || recorded.omitted.other
+        }
+      } : running && view.live ? { ...turn2, execution: view.live.execution } : turn2;
       return {
-        turn: recorded ? {
-          ...turn2,
-          ...recorded.execution ? { execution: recorded.execution } : {},
-          status: recorded.status,
-          notice: turn2.notice || sanitizeText(recorded.notice, secrets),
-          omitted: {
-            thinking: turn2.omitted.thinking,
-            media: turn2.omitted.media || recorded.omitted.media,
-            other: turn2.omitted.other || recorded.omitted.other
-          }
-        } : running && view.live ? { ...turn2, execution: view.live.execution } : turn2,
+        turn: running ? observed : settledSteps(observed),
         stable: turn2.steps.length
       };
     }
@@ -15498,11 +15684,13 @@ class ConversationRecords {
     const parts = view.parts ?? this.liveParts(view.session, live2);
     const chain = parts.at(-1)?.entries ?? [];
     const session = view.session;
-    const earlier = session ? parts.slice(0, -1).flatMap((part) => this.sessions.turn(session, part.entries, secrets).items) : [];
+    const earlierTurns = session ? parts.slice(0, -1).map((part) => this.sessions.turn(session, part.entries, secrets)) : [];
+    const earlier = earlierTurns.flatMap((turn2) => turn2.items);
     const written = turnItems(chain, secrets);
     const items = chain.length ? written.items : [
       {
         id: "user",
+        renderId: `command:${live2.commandId}:user`,
         role: "user",
         text: live2.accepted.command.text,
         ...live2.images?.length ? {
@@ -15518,7 +15706,10 @@ class ConversationRecords {
         error: false
       }
     ];
-    const extended = live2.capture?.extend(items, earlier) ?? {
+    const extended = live2.capture?.extend(items, earlier, [
+      ...earlierTurns.flatMap((turn2) => turn2.captureMessages ?? []),
+      ...written.captureMessages ?? []
+    ]) ?? {
       items,
       stable: items.length
     };
@@ -15531,6 +15722,7 @@ class ConversationRecords {
       status: live2.state.status,
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
       ...live2.capture?.retry ? { retry: live2.capture.retry } : {},
+      ...live2.capture ? { activity: live2.capture.activity } : {},
       omitted: {
         thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
@@ -15544,8 +15736,8 @@ class ConversationRecords {
       }))
     });
     return {
-      turn: { ...turn, execution: live2.execution },
-      stable: extended.stable
+      turn: { ...settledSteps(turn), execution: live2.execution },
+      stable: LIVE.includes(live2.state.status) ? extended.stable : turn.steps.length
     };
   }
   turnSteps(id, leaf, ordinal, before) {
@@ -15563,6 +15755,7 @@ class ConversationRecords {
       turn: {
         ...turn.execution ? { execution: turn.execution } : {},
         ...turn.retry ? { retry: turn.retry } : {},
+        ...turn.activity ? { activity: turn.activity } : {},
         id: turn.id,
         status: turn.status,
         notice: turn.notice,
@@ -17422,7 +17615,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "3846f914e00df88943b373694eaa7cb68e5f8e55f201087ab3f82d535d3eb0db",
+    contractHash: "8801198e182c2457f2ff8feb9331db22d449f2b483c0befd08ce493b4db6fb4a",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -27945,6 +28138,7 @@ class CaptureState {
     this.messages = new Map;
     this.calls = new Map;
     this.blocks = new Map;
+    this.thinkingEntries = 0;
     this.dataFrames = 0;
     this.controlFrames = 0;
     this.bytes = 0;
@@ -27962,7 +28156,7 @@ class CaptureState {
     const control = controlEvent(e.kind);
     this.bytes += encodedBytes ?? utf8Bytes(canonicalJson(frame)) + 1;
     this[control ? "controlFrames" : "dataFrames"]++;
-    if (this.details.size + this.messages.size + this.calls.size + this.blocks.size > LIMITS.captureEntries)
+    if (this.details.size + this.messages.size + this.calls.size + this.blocks.size + this.thinkingEntries > LIMITS.captureEntries)
       throw new ContractError("capacity");
     const message2 = (id) => {
       const m = this.messages.get(id);
@@ -28016,7 +28210,8 @@ class CaptureState {
           finalIndices: new Set,
           finalHash: createHash28("sha256"),
           finalBytes: 0,
-          finalIndex: -1
+          finalIndex: -1,
+          thinking: new Map
         });
         break;
       case "detail-begin":
@@ -28073,6 +28268,17 @@ class CaptureState {
         this.mergeCoverage(e.coverage);
         if (["context", "handoff"].includes(d.descriptor.owner.kind))
           this.details.delete(e.detailId);
+        break;
+      }
+      case "thinking-activity": {
+        const m = message2(e.messageId);
+        requireFact2(!m.ended && m.role === "assistant");
+        const previous = m.thinking.get(e.index);
+        requireFact2(previous === undefined || previous === "active");
+        requireFact2(m.thinking.size < LIMITS.captureEntries || previous !== undefined);
+        if (previous === undefined)
+          this.thinkingEntries++;
+        m.thinking.set(e.index, e.phase);
         break;
       }
       case "message-text": {
@@ -28146,6 +28352,9 @@ class CaptureState {
               requireFact2(d.descriptor.owner.index < e.finalBlockCount);
           }
         requireFact2(m.finalIndices.size === e.finalBlockCount && [...m.finalIndices].every((i) => i < e.finalBlockCount));
+        requireFact2([...m.thinking.values()].every((phase) => phase !== "active"));
+        this.thinkingEntries -= m.thinking.size;
+        m.thinking.clear();
         m.ended = true;
         m.final = e.finalDetailId;
         m.stopReason = e.stopReason;
@@ -32571,12 +32780,13 @@ class LiveCapture {
   inputImages;
   retry;
   notice = "";
+  activity = { kind: "waiting", sequence: 0 };
   unkept = [{ thinking: false, media: false, other: false }];
   users = 0;
-  assistants = [];
-  tools = [];
+  messages = new Map;
+  order = [];
+  tools = new Map;
   details = new Map;
-  blocks = new Map;
   imageUser;
   constructor(secrets, inputImages = false) {
     this.secrets = secrets;
@@ -32591,39 +32801,101 @@ class LiveCapture {
   bounded(value) {
     return Buffer.byteLength(value) <= PREVIEW_BYTES ? value : `${Buffer.from(value).subarray(0, PREVIEW_BYTES).toString("utf8").replace(/�$/u, "")}${PREVIEW_MARK}`;
   }
+  block(messageId, index, role3) {
+    const message2 = this.messages.get(messageId);
+    if (!message2)
+      return;
+    let item = message2.blocks.get(index);
+    if (!item) {
+      item = {
+        id: `${messageId}:${index}`,
+        renderId: `capture:${messageId}:${index}`,
+        role: role3,
+        text: "",
+        name: "",
+        args: "",
+        error: false,
+        state: role3 === "tool" ? "pending" : "streaming"
+      };
+      message2.blocks.set(index, item);
+    }
+    return item;
+  }
   tool(callId) {
-    let tool = this.tools.find((t) => t.id === callId);
+    let tool = this.tools.get(callId);
     if (!tool) {
-      tool = { id: callId, name: "", args: "", text: "", error: false };
-      this.tools.push(tool);
-      const stale = this.tools[this.tools.length - 1 - RECENT_PREVIEWS];
+      tool = {
+        item: {
+          id: callId,
+          renderId: `call:${callId}`,
+          role: "tool",
+          name: "",
+          args: "",
+          text: "",
+          error: false,
+          state: "pending"
+        }
+      };
+      this.tools.set(callId, tool);
+      const stale = [...this.tools.values()].at(-1 - RECENT_PREVIEWS);
       if (stale)
-        stale.args = stale.text = "";
+        stale.item.args = stale.item.text = "";
     }
     return tool;
   }
   accept(frame) {
     const e = frame.event;
+    const activity2 = (kind, name) => {
+      this.activity = {
+        kind,
+        sequence: frame.workerSeq,
+        ...name === undefined ? {} : { name }
+      };
+    };
     if (e.kind === "message-start" && e.role === "user") {
       if (this.users++)
         this.unkept.push({ thinking: false, media: false, other: false });
       else if (this.inputImages)
         this.imageUser = e.messageId;
     } else if (e.kind === "message-start" && e.role === "assistant") {
-      if (!this.assistants.some((a) => a.id === e.messageId)) {
-        this.assistants.push({ id: e.messageId, text: "", error: false });
-        const stale = this.assistants[this.assistants.length - 1 - RECENT_PREVIEWS];
+      if (!this.messages.has(e.messageId)) {
+        this.messages.set(e.messageId, { blocks: new Map, ended: false });
+        this.order.push({ messageId: e.messageId });
+        const stale = [...this.messages.values()].at(-1 - RECENT_PREVIEWS);
         if (stale)
-          stale.text = "";
+          for (const item of stale.blocks.values())
+            item.text = item.args = "";
       }
+    } else if (e.kind === "thinking-activity") {
+      const item = this.block(e.messageId, e.index, "thinking");
+      if (item)
+        item.state = e.phase === "active" ? "streaming" : e.phase === "complete" ? "completed" : "unavailable";
+      activity2(e.phase === "active" ? "thinking" : "waiting");
+    } else if (e.kind === "call-declaration") {
+      const tool = this.tool(e.callId);
+      const item = this.block(e.declaration.messageId, e.index, "tool");
+      if (item && item !== tool.item) {
+        const { id, renderId } = item;
+        Object.assign(item, tool.item, { id, renderId });
+        tool.item = item;
+      }
+      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.source = e.source.disposition === "observed" ? e.source.value ?? undefined : undefined;
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
-      tool.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.source = e.source.disposition === "observed" ? e.source.value ?? undefined : undefined;
+      if (!e.declaration && !this.order.some((row) => ("callId" in row) && row.callId === e.callId))
+        this.order.push({ callId: e.callId });
+      tool.item.state = e.kind === "tool-start" ? "running" : e.isError ? "failed" : "completed";
       if (e.kind === "tool-end")
-        tool.error = e.isError;
+        tool.item.error = e.isError;
+      activity2(e.kind === "tool-start" ? "tool" : "waiting", e.kind === "tool-start" ? tool.item.name : undefined);
+    } else if (e.kind === "tool-update") {
+      activity2("tool", this.tool(e.callId).item.name);
     } else if (e.kind === "detail-begin") {
-      const kind = e.descriptor.owner.kind;
-      if (kind === "context" || kind === "handoff")
+      const o = e.descriptor.owner;
+      if (o.kind === "context" || o.kind === "handoff" || o.kind === "message-final")
         return;
       if (this.details.size >= 64)
         return;
@@ -32632,6 +32904,8 @@ class LiveCapture {
         sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
         text: ""
       });
+      if (o.kind === "message")
+        this.block(o.messageId, o.index, "assistant");
     } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
       const d = this.details.get(e.detailId);
       if (!d)
@@ -32640,89 +32914,101 @@ class LiveCapture {
       if (Buffer.byteLength(d.text) <= PREVIEW_BYTES)
         d.text += added;
       const o = d.descriptor.owner;
-      if (o.kind === "message" && o.stage === "stream") {
-        this.blocks.set(o.blockId, { messageId: o.messageId, text: d.text });
-        const message2 = this.assistants.find((a) => a.id === o.messageId);
-        if (message2)
-          message2.text = this.bounded([...this.blocks.values()].filter((b) => b.messageId === o.messageId).map((b) => b.text).join(""));
-      } else if (o.kind === "message-final") {
-        const message2 = this.assistants.find((a) => a.id === o.messageId);
-        if (message2)
-          message2.text = this.bounded(d.text);
-      } else if (o.kind === "tool") {
-        const tool = this.tool(o.callId);
+      if (o.kind === "message" && (o.stage === "stream" || e.kind === "detail-end")) {
+        const item = this.block(o.messageId, o.index, "assistant");
+        if (item) {
+          item.text = this.bounded(d.text);
+          activity2("text");
+        }
+      } else if (o.kind === "tool" && e.kind === "detail-end") {
+        const tool = this.tool(o.callId).item;
         if (o.stage === "execution-arguments" || o.stage === "arguments-final")
           tool.args = this.bounded(d.text);
-        if (o.stage === "result" || o.stage === "update-snapshot")
-          tool.text = this.bounded(d.text);
+        if (o.stage === "result" || o.stage === "update-snapshot") {
+          let text2 = d.text;
+          if (d.descriptor.encoding === "canonical-json") {
+            try {
+              const value = JSON.parse(d.text);
+              text2 = Array.isArray(value.content) ? value.content.filter((b) => b.type === "text" && typeof b.text === "string").map((b) => b.text).join(`
+
+`) : "";
+            } catch {}
+          }
+          tool.text = this.bounded(text2);
+        }
       }
       if (e.kind === "detail-end")
         this.details.delete(e.detailId);
     } else if (e.kind === "message-end") {
-      const message2 = this.assistants.find((a) => a.id === e.messageId);
-      if (message2)
-        message2.error = ["error", "aborted", "length"].includes(e.stopReason);
-      for (const [id, block] of this.blocks)
-        if (block.messageId === e.messageId)
-          this.blocks.delete(id);
+      const message2 = this.messages.get(e.messageId);
+      if (message2) {
+        message2.ended = true;
+        for (const [index, item] of message2.blocks) {
+          if (index >= e.finalBlockCount && item.role !== "thinking") {
+            message2.blocks.delete(index);
+            continue;
+          }
+          if (item.role === "assistant") {
+            item.error = ["error", "aborted", "length"].includes(e.stopReason);
+            item.state = e.stopReason === "aborted" ? "canceled" : item.error ? "failed" : "completed";
+          } else if (item.role === "thinking" && (item.state === "streaming" || ["error", "aborted"].includes(e.stopReason)))
+            item.state = "unavailable";
+          else if (item.role === "tool" && item.state === "pending" && ["error", "aborted", "length"].includes(e.stopReason))
+            item.state = e.stopReason === "aborted" ? "canceled" : "unavailable";
+        }
+        activity2("waiting");
+      }
     } else if (e.kind === "model-retry") {
       this.retry = e.progress ?? undefined;
+      activity2("waiting");
     } else if (e.kind === "worker-failure") {
       this.retry = undefined;
       this.notice = `worker-failure: ${e.code}`;
-    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff" && !(this.inputImages && e.block.sourceType === "image" && e.block.owner.kind === "message" && e.block.owner.messageId === this.imageUser))
+      for (const message2 of this.messages.values())
+        for (const item of message2.blocks.values())
+          if (["streaming", "running", "pending"].includes(item.state ?? ""))
+            item.state = "unavailable";
+      for (const { item } of this.tools.values())
+        if (["running", "pending"].includes(item.state ?? ""))
+          item.state = "unavailable";
+      activity2("waiting");
+    } else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff" && !(this.inputImages && e.block.sourceType === "image" && e.block.owner.kind === "message" && e.block.owner.messageId === this.imageUser)) {
       this.omitted[OMITTED_FLAG[e.block.reason]] = true;
-  }
-  extend(items, earlier = []) {
-    const out = [...earlier, ...items].map((item) => ({ ...item }));
-    let written = 0, counted;
-    for (const item of out) {
-      if (item.role === "assistant") {
-        const at2 = item.id.lastIndexOf(":");
-        const message2 = at2 < 0 ? item.id : item.id.slice(0, at2);
-        if (message2 !== counted)
-          written++;
-        counted = message2;
-      } else if (item.role !== "thinking")
-        counted = undefined;
     }
-    const calls = out.filter((i) => i.role === "tool");
-    const results = calls.filter((i) => i.text || i.error).length;
-    let stable = out.length;
-    this.tools.forEach((tool, index) => {
-      if (index < results)
-        return;
-      const item = index < calls.length ? calls[index] : (() => {
-        const added = {
-          id: tool.id,
-          role: "tool",
-          name: tool.name,
-          args: tool.args,
-          text: "",
-          error: false
-        };
-        out.push(added);
-        return added;
-      })();
-      item.text = tool.text;
-      item.error = tool.error;
+  }
+  extend(items, earlier = [], writtenMessages = []) {
+    const out = items.map((item) => ({ ...item }));
+    const written = new Set(writtenMessages);
+    const previous = new Set(earlier.map((item) => item.renderId));
+    const changing = out.findIndex((item) => ["pending", "running", "streaming"].includes(item.state ?? ""));
+    let stable = changing < 0 ? out.length : changing;
+    const matchedCalls = new Set;
+    for (const [callId, tool] of this.tools) {
+      const matches = out.filter((item2) => item2.role === "tool" && (item2.renderId === tool.item.renderId || tool.item.renderId === `call:${callId}` && tool.source && item2.id === tool.source && item2.name === tool.item.name));
+      if (matches.length !== 1)
+        continue;
+      matchedCalls.add(callId);
+      const item = matches[0];
+      if (item.state !== "pending" && item.state !== "running")
+        continue;
+      item.text = tool.item.text;
+      item.args = tool.item.args || item.args;
+      item.state = tool.item.state;
+      item.error = tool.item.error;
       stable = Math.min(stable, out.indexOf(item));
-    });
-    this.assistants.slice(written).forEach((message2) => {
-      stable = Math.min(stable, out.length);
-      out.push({
-        id: message2.id,
-        role: "assistant",
-        text: message2.text,
-        name: "",
-        args: "",
-        error: message2.error
-      });
-    });
-    return {
-      items: out.slice(earlier.length),
-      stable: Math.max(0, stable - earlier.length)
-    };
+    }
+    for (const row of this.order) {
+      if ("messageId" in row && written.has(row.messageId))
+        continue;
+      const blocks = "messageId" in row ? [...this.messages.get(row.messageId)?.blocks.entries() ?? []].sort(([a], [b]) => a - b).map(([, item]) => item) : [this.tool(row.callId).item];
+      for (const item of blocks) {
+        if (previous.has(item.renderId) || "callId" in row && matchedCalls.has(row.callId) || out.some((existing) => existing.renderId === item.renderId))
+          continue;
+        stable = Math.min(stable, out.length);
+        out.push({ ...item });
+      }
+    }
+    return { items: out, stable };
   }
 }
 
@@ -34954,7 +35240,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "fb8907e51cabeeb2c429c35eb9980e73b670ac963375c82a855043fd0c784079",
+  build: "75a203bb2f0a950a4632ae121a40da548e72cb768d32633cfc02139ee3b549e7",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37935,7 +38221,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "3846f914e00df88943b373694eaa7cb68e5f8e55f201087ab3f82d535d3eb0db";
+  const embedded = "8801198e182c2457f2ff8feb9331db22d449f2b483c0befd08ce493b4db6fb4a";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

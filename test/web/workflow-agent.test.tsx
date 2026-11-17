@@ -7,14 +7,24 @@ import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAg
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { transport } from "./fixtures";
 
-const observed = vi.hoisted(() => ({ run: null as WorkflowRun | null }));
+const observed = vi.hoisted(() => ({
+  run: null as WorkflowRun | null,
+  reads: [] as { kind?: string; interval: number }[],
+}));
 vi.mock("../../web/src/client/use-workbench", () => ({
-  useWorkbench: (_client: unknown, read: { kind: string } | null) => ({
-    value:
-      read?.kind === "workflow"
-        ? { kind: "workflow", response: { type: "run", run: observed.run } }
-        : null,
-  }),
+  useWorkbench: (
+    _client: unknown,
+    read: { kind: string } | null,
+    interval = 0,
+  ) => {
+    observed.reads.push({ kind: read?.kind, interval });
+    return {
+      value:
+        read?.kind === "workflow"
+          ? { kind: "workflow", response: { type: "run", run: observed.run } }
+          : null,
+    };
+  },
 }));
 
 it.each([
@@ -63,5 +73,49 @@ it.each([
     expect(html).toContain("Agent review rejected: missing acceptance test.");
     expect(html).not.toContain('class="ep-state failed"');
     expect(run.steps[0].exitCode).toBe(0);
+  },
+);
+
+it.each(["running", "completed", "failed", "canceled"] as const)(
+  "subagent transcript interval follows explicit step status %s; closed result stays lazy",
+  (status) => {
+    observed.reads = [];
+    const run: WorkflowRun = {
+      id: randomUUID(),
+      epoch: randomUUID(),
+      goal: "fixture",
+      status: "running",
+      phase: "research",
+      notice: "",
+      mergedCommit: null,
+      humanReviewed: false,
+      steps: [
+        {
+          id: "agent",
+          childRunId: randomUUID(),
+          kind: "research",
+          status,
+          text: "",
+          exitCode: null,
+          truncated: false,
+        },
+      ],
+    };
+    observed.run = run;
+    renderToStaticMarkup(
+      <WorkflowAgentView
+        client={new ServiceClient(transport())}
+        agent={{ runId: run.id, stepId: "agent", label: "fixture" }}
+        backLabel="Back"
+        onBack={() => {}}
+        onOpenAgent={() => {}}
+      />,
+    );
+    expect(
+      observed.reads.find((r) => r.kind === "workflow-transcript")?.interval,
+    ).toBe(status === "running" ? 1000 : 0);
+    expect(observed.reads.some((r) => r.kind === "workflow-detail")).toBe(
+      false,
+    );
   },
 );

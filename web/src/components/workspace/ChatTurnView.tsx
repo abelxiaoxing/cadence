@@ -13,10 +13,11 @@ import {
 } from "react-icons/fi";
 import type { TurnSource } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
-import { StreamMarkdown } from "../rich/StreamMarkdown";
+import { StreamMarkdown } from "../StreamMarkdown";
 import {
   LEGACY_OMITTED_NOTICE,
   StepText,
+  ThinkingStep,
   ToolStep,
   turnParts,
 } from "./ChatSteps";
@@ -25,7 +26,7 @@ import {
   MessageAction,
   MessageActions,
 } from "./MessageActions";
-import { ThinkingStep } from "./ThinkingStep";
+import { stepActive } from "./turn-source";
 
 const clock = (at: number, locale: string) =>
   new Date(at).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en-GB", {
@@ -102,12 +103,8 @@ export const ChatTurnView = memo(function ChatTurnView({
     .split("\n")
     .filter((line) => line && line !== LEGACY_OMITTED_NOTICE);
   const { execution } = header;
-  // While the reply is live its last message is still being written; a
-  // thinking block or a tool card at the end is not message text.
-  const streaming = live && replies.at(-1)?.step.role === "assistant";
-  // Nothing visibly in progress: no tool call or message is being written yet.
-  const waiting =
-    live && !streaming && !replies.some(({ index }) => index >= header.stable);
+  // Stable is a read-cache boundary, never evidence of model/tool activity.
+  const waiting = live && !replies.some(({ step }) => stepActive(step));
   const time = header.at > 0 && (
     <time className="msg-time" dateTime={new Date(header.at).toISOString()}>
       {clock(header.at, locale)}
@@ -123,14 +120,14 @@ export const ChatTurnView = memo(function ChatTurnView({
           : t("Conversation turn")
       }
     >
-      {user.map(({ step, index }, position) => {
+      {user.map(({ step, index, key }, position) => {
         const copyable = step.text.trim() !== "";
         const edit = position === 0 && editAction;
         // Without a reply the user's message is the turn's last.
         const branch =
           !replied && position === user.length - 1 && continueAction;
         return (
-          <article className="msg msg-user" key={index}>
+          <article className="msg msg-user" key={key}>
             <div className="msg-meta">
               <span className="msg-role">{t("You")}</span>
               {time}
@@ -178,7 +175,10 @@ export const ChatTurnView = memo(function ChatTurnView({
               <MessageActions label={t("Message actions")}>
                 {edit}
                 {copyable && (
-                  <CopyMessageAction turn={turn} parts={[{ step, index }]} />
+                  <CopyMessageAction
+                    turn={turn}
+                    parts={[{ step, index, key }]}
+                  />
                 )}
                 {branch}
               </MessageActions>
@@ -215,18 +215,13 @@ export const ChatTurnView = memo(function ChatTurnView({
             </p>
           )}
           <div className="msg-body">
-            {replies.map(({ step, index }, position) =>
+            {replies.map(({ step, index, key }) =>
               step.role === "tool" ? (
-                <ToolStep key={index} turn={turn} index={index} step={step} />
+                <ToolStep key={key} turn={turn} index={index} step={step} />
               ) : step.role === "thinking" ? (
-                <ThinkingStep
-                  key={index}
-                  turn={turn}
-                  index={index}
-                  step={step}
-                />
+                <ThinkingStep key={key} turn={turn} index={index} step={step} />
               ) : (
-                <div className="msg-part" key={index}>
+                <div className="msg-part" key={key}>
                   {step.error && (
                     <span className="ep-state failed">
                       {t("Incomplete model response")}
@@ -236,11 +231,12 @@ export const ChatTurnView = memo(function ChatTurnView({
                     turn={turn}
                     index={index}
                     step={step}
-                    render={
-                      streaming && position === replies.length - 1
-                        ? (text) => <StreamMarkdown text={text} />
-                        : undefined
-                    }
+                    render={(text) => (
+                      <StreamMarkdown
+                        text={text}
+                        streaming={live && step.state === "streaming"}
+                      />
+                    )}
                   />
                 </div>
               ),

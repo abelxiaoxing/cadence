@@ -11,6 +11,7 @@ import {
   planWindow,
   type WinRect,
 } from "../../web/src/transcript/lazy-window.ts";
+import { followResize } from "../../web/src/transcript/use-lazy-window";
 
 function rect(id: string, top: number, bottom: number): WinRect {
   return { id, top, bottom };
@@ -231,5 +232,26 @@ describe("getPlaceholderHeight", () => {
     expect(getPlaceholderHeight("m1", 9, c, 280)).toBe(280);
     c.set("m1", { h: 2400, len: 9 }); // 新内容实测后恢复
     expect(getPlaceholderHeight("m1", 9, c, 280)).toBe(2400);
+  });
+});
+
+describe("resize following (controlled dimensions, not browser scrolling)", () => {
+  it("follows text, image and expanded detail growth only until the reader scrolls up", () => {
+    const root = { scrollHeight: 1000, scrollTop: 600 };
+    followResize(root, true);
+    expect(root.scrollTop).toBe(1000);
+    root.scrollHeight = 1400;
+    followResize(root, true);
+    expect(root.scrollTop).toBe(1400);
+    root.scrollTop = 400; // The user's scroll handler turned following off.
+    root.scrollHeight = 2100;
+    followResize(root, false);
+    expect(root.scrollTop).toBe(400);
+    root.scrollHeight = 2600; // A late image/detail does not reclaim the bottom.
+    followResize(root, false);
+    expect(root.scrollTop).toBe(400);
+    followResize(root, true); // Explicit Latest, or user back at the bottom.
+    expect(root.scrollTop).toBe(2600);
+    followResize(null, true);
   });
 });

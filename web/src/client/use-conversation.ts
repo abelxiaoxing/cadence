@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ServiceClient } from "../../../src/service-client.ts";
 import {
   ConversationReader,
@@ -18,15 +18,30 @@ export function useConversation(
   showFrom(ordinal: number): void;
   choose(leaf: string | null, first?: number): void;
 } {
-  const [reader, setReader] = useState<ConversationReader | null>(null);
-  const [view, setView] = useState<ConversationView | null>(null);
+  const scope = useMemo(
+    () => ({ client, id, initialLeaf }),
+    [client, id, initialLeaf],
+  );
+  const latest = useRef(scope);
+  latest.current = scope;
+  const [state, setState] = useState<{
+    scope: typeof scope;
+    reader: ConversationReader;
+    view: ConversationView;
+  }>();
   useEffect(() => {
-    const next = new ConversationReader(client, id, () => setView(next.view()));
+    const next = new ConversationReader(client, id, () => {
+      if (latest.current === scope)
+        setState({ scope, reader: next, view: next.view() });
+    });
     next.choose(initialLeaf);
-    setReader(next);
-    setView(next.view());
+    setState({ scope, reader: next, view: next.view() });
     return () => next.close();
-  }, [client, id, initialLeaf]);
+  }, [client, id, initialLeaf, scope]);
+  // Navigation fences old data and actions during render, before effect cleanup.
+  const current = state?.scope === scope ? state : undefined;
+  const reader = current?.reader;
+  const view = current?.view;
   useEffect(() => {
     reader?.setActive(enabled);
   }, [reader, enabled]);

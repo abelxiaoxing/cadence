@@ -7,6 +7,7 @@ import type { IconType } from "react-icons";
 import {
   FiCheck,
   FiCompass,
+  FiCpu,
   FiEdit2,
   FiEdit3,
   FiFileText,
@@ -19,7 +20,7 @@ import {
 } from "react-icons/fi";
 import type { ChatStep } from "../../../../src/service/contracts/workbench.ts";
 import type { TurnSource } from "../../client/conversation-reader";
-import { useStepDetail } from "../../client/turn-source";
+import { stepIdentity } from "../../client/conversation-reader";
 import { describeError, type MessageKey, useT } from "../../i18n/locale";
 import { parseFileMutationArgs } from "../../rich/file-diff";
 import { CopyButton } from "../rich/CopyButton";
@@ -27,6 +28,7 @@ import { Markdown } from "../rich/Markdown";
 import { CollapsibleHead } from "../transcript/CollapsibleHead";
 import { ChatImages } from "./ChatImages";
 import { FileChangeCard } from "./FileChangeCard";
+import { stepActive, useStepDetail } from "./turn-source";
 
 /** Turns saved before `omitted` existed carry this line in `notice`. It states
  * the retention rule rather than an outcome of the turn, so it is not shown. */
@@ -36,6 +38,7 @@ export const LEGACY_OMITTED_NOTICE =
 export interface IndexedStep {
   step: ChatStep;
   index: number;
+  key: string;
 }
 /** A turn's user messages and, in recorded order, what followed them: message
  * text, thinking blocks and tool calls. An assistant message that only carried
@@ -44,7 +47,11 @@ export function turnParts(steps: readonly ChatStep[]): {
   user: IndexedStep[];
   replies: IndexedStep[];
 } {
-  const indexed = steps.map((step, index) => ({ step, index }));
+  const indexed = steps.map((step, index) => ({
+    step,
+    index,
+    key: stepIdentity(step),
+  }));
   return {
     user: indexed.filter(({ step }) => step.role === "user"),
     replies: indexed.filter(
@@ -72,20 +79,20 @@ const PLAIN_TOOL: readonly [IconType, Tone] = [FiTool, "default"];
 const toolLook = (name: string) =>
   Object.hasOwn(TOOLS, name) ? TOOLS[name] : PLAIN_TOOL;
 
-/** What is recorded for one tool call. `ok` only where its result must exist:
- * the turn completed, or a later assistant message followed the call. A later
- * thinking block is not that evidence: it may belong to the calling message. */
+/** Explicit call state is separate from immutable content and reply outcome.
+ * Old history without it remains neutral unless it records an actual error. */
 export type ToolState = "run" | "ok" | "err" | "idle";
 export function toolState(turn: TurnSource, index: number): ToolState {
-  const { header, steps } = turn;
-  if (steps[index]?.error) return "err";
-  const live = header.status === "queued" || header.status === "running";
-  if (live && index >= header.stable) return "run";
-  return header.status === "completed" ||
-    live ||
-    steps.slice(index + 1).some((step) => step.role === "assistant")
-    ? "ok"
-    : "idle";
+  const step = turn.steps[index];
+  if (step?.error || step?.state === "failed") return "err";
+  if (step?.state === "completed") return "ok";
+  if (
+    step &&
+    stepActive(step) &&
+    (turn.header.status === "queued" || turn.header.status === "running")
+  )
+    return "run";
+  return "idle";
 }
 const STATE_LABEL: Readonly<Record<ToolState, MessageKey>> = {
   run: "Tool call in progress",
@@ -278,6 +285,87 @@ export function ToolStep({
           ) : (
             <p className={detail.error ? "banner-notice" : "inspector-note"}>
               {detail.error ? describeError(t, detail.error) : t("Reading…")}
+            </p>
+          )}
+          {detail.value && detail.error && (
+            <p className="banner-notice">{describeError(t, detail.error)}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Adapted from the existing pi-web-ui ThinkingBlock (MIT (c) 2026
+ * xing-shuyin). An activity has no detail affordance; readable Pi thinking
+ * takes its place with the same step identity and starts folded. */
+export function ThinkingStep({
+  turn,
+  index,
+  step,
+}: {
+  turn: TurnSource;
+  index: number;
+  step: ChatStep;
+}) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const detail = useStepDetail(turn, index, step, open && step.parts > 0);
+  const recording =
+    stepActive(step) &&
+    (turn.header.status === "queued" || turn.header.status === "running");
+  if (step.parts === 0)
+    return (
+      <div className="thinking">
+        <div
+          className="chead thinking-head"
+          title={t(
+            "Thinking content is not streamed. Readable recorded thinking can be opened after it is saved.",
+          )}
+        >
+          <FiCpu className="thinking-icon" aria-hidden="true" />
+          <span className="thinking-label" role="status">
+            {t(
+              recording
+                ? "Thinking activity observed"
+                : step.state === "completed"
+                  ? "Thinking activity ended"
+                  : "Thinking content unavailable",
+            )}
+          </span>
+          {recording && <HalfRingSpinner />}
+        </div>
+      </div>
+    );
+  const text = detail.value?.text.trim() ?? "";
+  return (
+    <div className={`thinking${open ? " open" : ""}`}>
+      <CollapsibleHead
+        open={open}
+        onToggle={() => setOpen((shown) => !shown)}
+        headClassName="thinking-head"
+        titleText={t(open ? "Collapse" : "Show thinking")}
+        icon={<FiCpu aria-hidden="true" />}
+        iconClassName="thinking-icon"
+        titleClassName="thinking-label"
+        after={
+          <>
+            <span className="toolcall-spacer" />
+            {text && <CopyButton text={text} className="chead-copy" />}
+          </>
+        }
+      >
+        {t("Thinking")}
+      </CollapsibleHead>
+      {open && (
+        <div className="thinking-body">
+          {text || (
+            <p className={detail.error ? "banner-notice" : "inspector-note"}>
+              {detail.error
+                ? describeError(t, detail.error)
+                : detail.value
+                  ? t("No thinking text is recorded for this block.")
+                  : t("Reading…")}
             </p>
           )}
         </div>

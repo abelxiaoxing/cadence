@@ -1,6 +1,9 @@
 /* Adapted from pi-web-ui tests/unit/stream-markdown.test.ts @ e8bab487af208bc9a1ab60a821652323f598127f.
  * MIT (c) 2026 xing-shuyin. Pure tests, not browser/device evidence. */
+
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
 import {
   segmentStream,
   stepSmoothStream,
@@ -118,4 +121,42 @@ describe("stepSmoothStream — 自适应平滑流式步进（大段接收、逐�
     expect(stepSmoothStream(target, 2)).toBe(4);
     expect(target.slice(0, stepSmoothStream(target, 2))).toBe("Hi🚀");
   });
+});
+
+// Ordinary chat deliberately does NOT use the legacy character pacer above.
+// SSR proves the received snapshot is rendered immediately, not DOM continuity.
+
+it("ordinary live snapshots render all observed characters on the first render and after handoff", () => {
+  for (const text of [
+    "Already visible 🚀",
+    "Already visible 🚀\n\nNew observed content",
+    "A".repeat(1800),
+  ]) {
+    for (const streaming of [true, false]) {
+      const html = renderToStaticMarkup(
+        <StreamMarkdown text={text} streaming={streaming} />,
+      );
+      for (const part of text.split("\n\n")) expect(html).toContain(part);
+    }
+  }
+});
+
+it("ordinary markdown freezes the prefix while only the actually streaming open fence stays plain", () => {
+  const text = "Frozen paragraph\n\n```js\nconst n = 1";
+  const live = renderToStaticMarkup(<StreamMarkdown text={text} streaming />);
+  expect(live).toContain("<p>Frozen paragraph</p>");
+  expect(live).toContain("<code>```js\nconst n = 1</code>");
+  const ended = renderToStaticMarkup(<StreamMarkdown text={text} />);
+  expect(ended).toContain("<p>Frozen paragraph</p>");
+  expect(ended).toContain("hljs");
+  expect(ended).not.toContain("<code>```js");
+});
+
+it("retains document-wide Markdown references without a terminal-state renderer swap", () => {
+  const text =
+    "See [reference][r].\n\nAnother paragraph.\n\n[r]: https://example.com/";
+  const live = renderToStaticMarkup(<StreamMarkdown text={text} streaming />);
+  const done = renderToStaticMarkup(<StreamMarkdown text={text} />);
+  expect(live).toContain('href="https://example.com/"');
+  expect(done).toBe(live);
 });
