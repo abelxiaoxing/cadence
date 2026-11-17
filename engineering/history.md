@@ -95,7 +95,9 @@ An unexecuted declaration without a matching result uses the same state in captu
 The assistant's own failed/canceled text state and existing reply status/notice remain independent, including while the owner still reports `running` during model-request retry.
 Only a matching Pi `toolResult` decides the tool's `completed`/`failed` state from `isError`; later response failure or cancellation does not overwrite that result.
 Association uses the source call ID and complete, unredacted, unclipped source name, held only in `turnItems`' local index beside the declaration's public item, never in a `ChatItem`, DTO, log or new persistent record.
-Display names still undergo current read redaction and Unicode-safe clipping to the existing 128-byte JSON-encoded budget (including quotes/escapes); identical clipped prefixes or identical redacted displays do not prove identity.
+Tool display names in live activity, listings, lazy details and Pi history share `clipText(sanitizeText(name, secrets), 128)`: current redaction first, then Unicode-safe clipping to the existing 128-byte JSON-encoded budget (including quotes/escapes).
+`LiveCapture` applies that same budget at call-declaration and tool-start/tool-end ingress, including when the owner learns a secret after the SDK; UTF-16 `slice` must not split a surrogate pair or ignore redaction expansion.
+Neither projection changes the SDK's private raw names, capture/call identity joins or public decoder limits; identical clipped prefixes or identical redacted displays do not prove identity.
 Missing/non-string historical names retain the `tool` fallback on both sides; unmatched results remain separate source-positioned items.
 Unresolved duplicate call IDs remain ambiguous even when their names differ; only a matched result releases that ID for a subsequent declaration, preserving legal reuse and each declaration's render identity.
 Capture likewise requires one finalized unresolved declaration for the raw ID and an exact private name before attaching a tool-start; partial declarations alone, missing IDs, duplicate IDs or name collisions cannot prove that join.
@@ -115,8 +117,9 @@ A body-free placeholder has no detail parts; readable thinking is read lazily on
 Listing/detail presentation metadata is optional for older history and carries no new body store.
 Activity sequence/kind is an observation of capture, never proof of native settlement, tool success or workflow completion.
 Every live turn read clones its activity metadata and sanitizes an optional tool name with the same current (or last successfully observed) literals from `ConversationRecords.readSecrets()` used by the rest of that read, even if no capture event arrived since the previous read.
-The name is clipped to its existing 128-byte wire bound only after sanitation, on a UTF-8 scalar boundary; kind/sequence and absence of a name are preserved.
-This projection changes neither `LiveCapture` nor admission/session bytes, including when an earlier step page carries the activity header; a secret-source failure without any prior successful observation retains the existing refusal rather than returning unredacted metadata.
+The same post-redaction encoded name budget applies to every extended live item before `listTurn` derives the listing and lazy detail parts; an early page containing only the activity header cannot qualify full tool reads.
+Kind/sequence and absence of an activity name are preserved, even when the reader learns a secret without a new capture event.
+Read projection changes neither `LiveCapture` nor admission/state/index/session bytes, including when an earlier step page carries the activity header; a secret-source failure without any prior successful observation retains the existing refusal rather than returning unredacted metadata.
 The owner's `conversation-commands-v1` keeps per message `accepted.json` (command, session, parent entry, file size, execution snapshot and selected session path), an expected-byte `state.json` (status, notice, omitted flags, its user entry), the auth journal, `launch.json` and `native.json`, plus a per-session index of the last 64 messages.
 An accepted command ID is never admitted again; a lost reply observes its original record.
 Read projections reapply current redaction to failed attempts and live previews as well as Pi content.

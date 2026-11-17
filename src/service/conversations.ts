@@ -34,6 +34,7 @@ import {
   type ChatItem,
   type ChatStatus,
   type ChatTurn,
+  clipText,
   decodeSessionId,
   RUN_INPUTS,
   WAITING_INPUTS,
@@ -296,10 +297,10 @@ export class LiveCapture {
         Object.assign(item, tool.item, { id, renderId });
         tool.item = item;
       }
-      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
-      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
       if (
         !e.declaration &&
         !this.order.some((row) => "callId" in row && row.callId === e.callId)

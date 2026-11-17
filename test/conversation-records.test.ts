@@ -453,6 +453,366 @@ it.each([
   },
 );
 
+it.each(
+  [
+    {
+      label: "reader redaction expansion",
+      name: "~xy~".repeat(30),
+      expected: `${"[redacted]".repeat(12)}[redac`,
+      ownerLearns: false,
+    },
+    {
+      label: "owner redaction at a surrogate boundary",
+      name: `${"a".repeat(117)}~xy~🔧`,
+      expected: `${"a".repeat(117)}[redacted`,
+      ownerLearns: true,
+    },
+  ].flatMap((scenario) =>
+    ["final-first", "marker-first"].flatMap((order) =>
+      [false, true].map((isError) => ({ ...scenario, order, isError })),
+    ),
+  ),
+)(
+  "$label/$order/isError=$isError: full tool pages and lazy details share the current encoded name budget",
+  async ({ name, expected, ownerLearns, order, isError }) => {
+    const f = fixture(),
+      secret = "~xy~",
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "Question" }] },
+      ]),
+      commandId = f.command(saved.id, "running", saved.entries[0]);
+    let leaf = saved.entries[0],
+      serial = 2;
+    const append = (type: string, fields: Record<string, unknown>) => {
+      const id = (serial++).toString(16).padStart(8, "0");
+      appendFileSync(
+        saved.path,
+        `${JSON.stringify({ type, id, parentId: leaf, timestamp: new Date(1_800_000_000_000).toISOString(), ...fields })}\n`,
+      );
+      leaf = id;
+    };
+    const mark = (captureMessageId?: string) =>
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: saved.entries[0],
+          ...(captureMessageId ? { captureMessageId } : {}),
+        },
+      });
+    mark();
+    let ownerSecrets: string[] = [];
+    const capture = new LiveCapture(() => ownerSecrets),
+      frames: CaptureFrame[] = [],
+      emitter = new CaptureEmitter(
+        randomUUID(),
+        new Writable({
+          write(chunk, _encoding, done) {
+            const frame = JSON.parse(String(chunk)) as CaptureFrame;
+            frames.push(frame);
+            capture.accept(frame);
+            done();
+          },
+        }),
+        () => {
+          throw new Error("capture failed");
+        },
+      ),
+      // The SDK never knows this fabricated secret; its private name/ID join
+      // must survive the owner's and reader's independent display redaction.
+      sdk = new SdkCapture(emitter),
+      live = goLive(f, commandId, capture);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    const declaration = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Before" },
+        {
+          type: "toolCall",
+          id: "source-call",
+          name,
+          arguments: { path: "file.ts" },
+        },
+        { type: "text", text: "After" },
+      ],
+    };
+    await sdk.event({ type: "message_start", message: declaration });
+    const declarationId = sdk.messageId!;
+    if (ownerLearns) ownerSecrets = [secret];
+    for (const contentIndex of [0, 1, 2]) {
+      await sdk.event({
+        type: "message_update",
+        assistantMessageEvent:
+          contentIndex === 1
+            ? { type: "toolcall_start", contentIndex, partial: declaration }
+            : {
+                type: "text_delta",
+                contentIndex,
+                delta: declaration.content[contentIndex].text,
+              },
+      });
+    }
+    await sdk.event({ type: "message_end", message: declaration });
+    const paths = [
+      saved.path,
+      f.records.path(commandId, "accepted.json"),
+      f.records.path(commandId, "state.json"),
+      f.records.indexPath(saved.id),
+    ];
+    const captureSnapshot = () => ({
+      activity: capture.activity,
+      preview: capture.extend([]),
+      omitted: capture.omitted,
+      retry: capture.retry,
+      notice: capture.notice,
+      frames: frames.length,
+      admission: live.accepted,
+      state: live.state,
+    });
+    const filesSnapshot = () =>
+      paths.map((path) => ({
+        bytes: readFileSync(path),
+        identity: observedFile(path),
+      }));
+    let viewLeaf: string | null = null,
+      displayName = ownerLearns ? expected : name;
+    const read = (
+      state: string,
+      output: string,
+      reader = f.records,
+      before: number | null = null,
+    ) => {
+      const files = filesSnapshot(),
+        snapshot = structuredClone(captureSnapshot()),
+        activity = capture.activity;
+      if (ownerLearns)
+        expect(
+          snapshot.preview.items.find((item) => item.role === "tool")?.name,
+        ).toBe(expected);
+      const raw = reader.turnSteps(saved.id, viewLeaf, 0, before),
+        value = decodeWorkbenchResult(raw);
+      if (value.kind !== "conversation-turn") throw Error("turn");
+      expect(value.start).toBe(0);
+      expect(value.turn.steps).toBe(4);
+      expect(value.steps.map((step) => step.role)).toEqual(
+        ["user", "assistant", "tool", "assistant"].slice(0, before ?? 4),
+      );
+      expect(value.steps.slice(1).map((step) => step.renderId)).toEqual(
+        [0, 1, 2]
+          .slice(0, value.steps.length - 1)
+          .map((index) => `capture:${declarationId}:${index}`),
+      );
+      expect(value.steps[1].text).toBe("Before");
+      if (before === null) expect(value.steps[3].text).toBe("After");
+      const tool = value.steps[2];
+      expect(tool).toMatchObject({
+        name: displayName,
+        state,
+        error: state === "failed",
+        parts: 1,
+        text: "",
+      });
+      const rawDetail = reader.step(saved.id, viewLeaf, value.turn.id, 2, 0),
+        detail = decodeWorkbenchResult(rawDetail);
+      if (detail.kind !== "conversation-step") throw Error("step");
+      expect(detail.item).toMatchObject({
+        name: displayName,
+        renderId: tool.renderId,
+        version: tool.version,
+        state: tool.state,
+        error: tool.error,
+        args: '{"path":"file.ts"}',
+        text: output,
+      });
+      const names = [tool.name, detail.item.name];
+      if (value.turn.activity?.kind === "tool") {
+        expect(value.turn.activity).toEqual({ ...activity, name: displayName });
+        names.push(value.turn.activity.name!);
+      }
+      for (const projected of names) {
+        expect(
+          Buffer.byteLength(JSON.stringify(projected)),
+        ).toBeLessThanOrEqual(128);
+        expect(projected).not.toMatch(/[\uD800-\uDFFF]/u);
+        if (displayName === expected) expect(projected).not.toContain(secret);
+      }
+      if (displayName === expected)
+        expect(JSON.stringify([raw, value, rawDetail, detail])).not.toContain(
+          secret,
+        );
+      expect(capture.activity).toBe(activity);
+      expect(captureSnapshot()).toEqual(snapshot);
+      expect(filesSnapshot()).toEqual(files);
+      return { raw, value, tool, rawDetail, detail };
+    };
+    read("pending", "");
+    const execution = { toolCallId: "source-call", toolName: name };
+    await sdk.event({
+      type: "tool_execution_start",
+      ...execution,
+      args: { path: "file.ts" },
+    });
+    const started = read("running", ""),
+      sequence = capture.activity.sequence;
+    expect(started.value.turn.activity).toEqual({
+      kind: "tool",
+      sequence,
+      name: displayName,
+    });
+    // No capture event or durable append accompanies the reader's new secrets.
+    f.secrets([secret]);
+    displayName = expected;
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const current = read("running", "");
+      expect(current.value.turn.activity).toEqual({
+        kind: "tool",
+        sequence,
+        name: expected,
+      });
+      expect(current.tool.renderId).toBe(started.tool.renderId);
+      expect(current.tool.parts).toBe(started.tool.parts);
+      // Display-name redaction does not change the arguments/output version.
+      expect(current.tool.version).toBe(started.tool.version);
+    }
+    const current = read("running", "");
+    // Neither display clipping nor the fixture may relax the public decoder.
+    for (const changes of [{ name: "n".repeat(129) }, { unknown: true }]) {
+      expect(() =>
+        decodeWorkbenchResult({
+          ...current.raw,
+          steps: current.value.steps.map((step, index) =>
+            index === 2 ? { ...step, ...changes } : step,
+          ),
+        }),
+      ).toThrow();
+      expect(() =>
+        decodeWorkbenchResult({
+          ...current.rawDetail,
+          item: { ...current.detail.item, ...changes },
+        }),
+      ).toThrow();
+      expect(() =>
+        decodeWorkbenchResult({
+          ...current.raw,
+          turn: {
+            ...current.value.turn,
+            activity: { ...current.value.turn.activity, ...changes },
+          },
+        }),
+      ).toThrow();
+    }
+    for (const text of ["First snapshot", "Second snapshot"]) {
+      await sdk.event({
+        type: "tool_execution_update",
+        ...execution,
+        partialResult: { content: [{ type: "text", text }] },
+      });
+      const updated = read("running", text);
+      expect(updated.tool.parts).toBe(current.tool.parts);
+      expect(updated.tool.version).not.toBe(current.tool.version);
+      current.tool = updated.tool;
+    }
+    // The finalized declaration is still a preview. An unmarked Pi append
+    // cannot replace it or duplicate it, including after read-time redaction.
+    const preview = read("running", "Second snapshot");
+    append("message", { message: declaration });
+    expect(read("running", "Second snapshot").value.steps).toEqual(
+      preview.value.steps,
+    );
+    const declarationEntry = leaf;
+    mark(declarationId);
+    const durable = read("running", "Second snapshot");
+    // Pi replaces read coordinates, not render identities or displayed data.
+    expect(durable.value.steps.map((step) => step.id)).toEqual([
+      saved.entries[0],
+      `${declarationEntry}:0`,
+      "source-call",
+      `${declarationEntry}:2`,
+    ]);
+    expect(durable.value.steps).toMatchObject(
+      preview.value.steps.map(({ id: _id, ...step }) => step),
+    );
+    const result = { content: [{ type: "text", text: "Final output" }] };
+    await sdk.event({
+      type: "tool_execution_end",
+      ...execution,
+      isError,
+      result,
+    });
+    const state = isError ? "failed" : "completed",
+      ended = read(state, "Final output");
+    expect(ended.tool.parts).toBe(current.tool.parts);
+    expect(ended.tool.version).not.toBe(current.tool.version);
+    // All owner-ingress name assignments, not just the read projection, use
+    // scalar-safe encoded clipping after the owner learns the secret.
+    if (ownerLearns) {
+      const tool = capture
+        .extend([])
+        .items.find((item) => item.role === "tool")!;
+      expect(tool.name).toBe(expected);
+      expect(tool.name).not.toMatch(/[\uD800-\uDFFF]/u);
+    }
+    const calls = frames
+      .map((frame) => frame.event)
+      .filter(
+        (event) =>
+          event.kind === "call-declaration" ||
+          event.kind === "tool-start" ||
+          event.kind === "tool-end",
+      );
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    expect(calls.every((event) => event.name === name)).toBe(true);
+    expect(new Set(calls.map((event) => event.callId)).size).toBe(1);
+    const resultMessage = {
+      role: "toolResult",
+      ...execution,
+      isError,
+      ...result,
+    };
+    await sdk.event({ type: "message_start", message: resultMessage });
+    const resultId = sdk.messageId!,
+      finish = () => sdk.event({ type: "message_end", message: resultMessage });
+    if (order === "final-first") await finish();
+    const beforePi = read(state, "Final output");
+    append("message", { message: resultMessage });
+    expect(read(state, "Final output").value.steps).toEqual(
+      beforePi.value.steps,
+    );
+    mark(resultId);
+    const handed = read(state, "Final output");
+    if (order === "marker-first") await finish();
+    expect(read(state, "Final output").value.steps).toEqual(handed.value.steps);
+    expect(handed.value.steps).toEqual(ended.value.steps);
+    live.state.status = "completed";
+    const terminal = read(state, "Final output");
+    expect(terminal.value.turn.status).toBe("completed");
+    expect(terminal.value.steps).toEqual(handed.value.steps);
+    f.active.delete(commandId);
+    writeFileSync(
+      f.records.path(commandId, "state.json"),
+      JSON.stringify({ ...live.state, user: saved.entries[0] }),
+    );
+    const cold = f.reconnect(),
+      files = filesSnapshot(),
+      snapshot = structuredClone(captureSnapshot()),
+      reconnected = decodeWorkbenchResult(
+        cold.conversation(saved.id, null, null),
+      );
+    expect(filesSnapshot()).toEqual(files);
+    expect(captureSnapshot()).toEqual(snapshot);
+    if (reconnected.kind !== "conversation") throw Error("conversation");
+    viewLeaf = reconnected.leaf;
+    const final = read(state, "Final output", cold);
+    expect(final.value.turn).toMatchObject({ status: "completed", stable: 4 });
+    expect(final.value.turn).not.toHaveProperty("activity");
+    expect(final.value.steps).toEqual(terminal.value.steps);
+    expect(read(state, "Final output", cold, 3).value.steps).toEqual(
+      final.value.steps.slice(0, 3),
+    );
+  },
+);
+
 it.each([
   { error: new Error("unreadable fixture secrets"), code: "unavailable" },
   { error: new ContractError("corrupt-selected"), code: "corrupt-selected" },
