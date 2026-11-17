@@ -1545,6 +1545,120 @@ it.each(["error", "aborted"])(
     ).toEqual(["Repeated", "Repeated"]);
   },
 );
+it.each(["error", "length", "aborted", "toolUse"])(
+  "%s keeps an unexecuted declaration neutral in capture and linked or legacy Pi history",
+  async (stopReason) => {
+    const f = streamingFixture(),
+      captureMessageId = await f.start();
+    const content = [
+      { type: "text", text: "Before" },
+      {
+        type: "toolCall",
+        id: "not-executed",
+        name: "read",
+        arguments: { path: "file.ts" },
+      },
+      { type: "text", text: "After" },
+    ];
+    await f.end(content, stopReason);
+    const preview = f.live.extend([]).items;
+    const toolState =
+      stopReason === "aborted"
+        ? "canceled"
+        : stopReason === "toolUse"
+          ? "pending"
+          : "unavailable";
+    const assistantState =
+      stopReason === "aborted"
+        ? "canceled"
+        : stopReason === "toolUse"
+          ? "completed"
+          : "failed";
+    expect(preview.map((item) => item.state)).toEqual([
+      assistantState,
+      toolState,
+      assistantState,
+    ]);
+    expect(preview[1]).toMatchObject({ error: false, text: "" });
+    for (const linked of [true, false]) {
+      const cwd = project(),
+        dir = mkdtempSync(join(tmpdir(), "declaration-state-")),
+        commandId = randomUUID(),
+        u = user(null, "Question"),
+        entries = [u];
+      const mark = (parentId: string, captureMessageId?: string) =>
+        entry("custom", parentId, {
+          customType: BROWSER_COMMAND_ENTRY,
+          data: {
+            commandId,
+            userId: u.id,
+            ...(captureMessageId ? { captureMessageId } : {}),
+          },
+        });
+      if (linked) entries.push(mark(u.id));
+      const reply = assistant(
+        entries.at(-1)!.id,
+        content,
+        stopReason,
+        "Model request failed",
+      );
+      entries.push(reply);
+      if (linked) entries.push(mark(reply.id, captureMessageId));
+      const saved = write(dir, cwd, entries),
+        original = readFileSync(saved.path);
+      // Separate readers exercise cold observations; no marker means no guessed link.
+      for (let observation = 0; observation < 2; observation++) {
+        const sessions = new PiSessions(dir, cwd),
+          session = sessions.session(saved.id)!,
+          durable = sessions.turn(
+            session,
+            session.branch(session.current()),
+            [],
+          );
+        expect(
+          durable.items
+            .slice(1)
+            .map((item) => [item.role, item.state, item.error]),
+        ).toEqual(preview.map((item) => [item.role, item.state, item.error]));
+        expect(durable.steps.slice(1).map((step) => step.renderId)).toEqual(
+          content.map((_, index) =>
+            linked
+              ? `capture:${captureMessageId}:${index}`
+              : `pi:${reply.id}:${index}`,
+          ),
+        );
+        expect(durable.steps[2]).toMatchObject({
+          state: toolState,
+          error: false,
+          parts: 1,
+          text: "",
+        });
+        expect(durable.parts[2][0]).toMatchObject({
+          state: toolState,
+          error: false,
+          text: "",
+          args: '{"path":"file.ts"}',
+        });
+        // Preserve Pi's existing reply-level status/notice, including length's status.
+        expect(durable).toMatchObject({
+          status:
+            stopReason === "error"
+              ? "failed"
+              : stopReason === "aborted"
+                ? "canceled"
+                : "completed",
+          notice: stopReason === "error" ? "Model request failed" : "",
+        });
+        if (linked)
+          expect(
+            f.live.extend(durable.items, [], durable.captureMessages).items,
+          ).toEqual(durable.items);
+        else expect(durable.captureMessages).toEqual([]);
+        expect(readFileSync(saved.path)).toEqual(original);
+      }
+    }
+  },
+);
 it.each([
   "duplicate",
   "foreign-user",

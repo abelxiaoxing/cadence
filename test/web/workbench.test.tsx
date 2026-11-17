@@ -243,8 +243,8 @@ it("a tool card states what was recorded for its call, live or settled", () => {
   expect(toolTarget('{"pattern":"TODO","path":"src"}')).toBe("TODO  src");
 });
 it.each(["en", "zh"] as const)(
-  "tool outcomes survive every reply terminal state, while legacy output and unfinished calls stay neutral (%s)",
-  (locale) => {
+  "tool outcomes and unexecuted declarations stay independent of running and terminal replies (%s, SSR)",
+  async (locale) => {
     const cases = [
       {
         fields: { state: "completed" as const },
@@ -261,6 +261,11 @@ it.each(["en", "zh"] as const)(
         state: "idle",
         label: locale === "en" ? "No tool result observed" : "未观察到工具结果",
       },
+      ...(["unavailable", "canceled"] as const).map((state) => ({
+        fields: { state, error: false },
+        state: "idle",
+        label: locale === "en" ? "No tool result observed" : "未观察到工具结果",
+      })),
       // A readable legacy body is not evidence of tool-end. A recorded error is.
       {
         fields: {},
@@ -274,33 +279,59 @@ it.each(["en", "zh"] as const)(
       },
     ];
     for (const status of [
+      "running",
       "completed",
       "failed",
       "canceled",
       "unknown",
     ] as const) {
       for (const test of cases) {
+        const noResult = ["unavailable", "canceled"].includes(
+          test.fields.state ?? "",
+        );
         const item = chatItem("call", "tool", {
           name: "read",
-          text: "Retained output is not a completion event",
+          args: '{"path":"file.ts","offset":17}',
+          text: noResult ? "" : "Retained output is not a completion event",
           ...test.fields,
         });
         const source = sourceOf({ status, items: [item] });
+        const detail = vi.fn(source.detail);
+        source.detail = detail;
+        const active = status === "running" && item.state === "running";
+        const state = active ? "run" : test.state;
+        const label = active
+          ? locale === "en"
+            ? "Tool call in progress"
+            : "工具调用进行中"
+          : test.label;
         expect(source.header.stable).toBe(1);
         expect(source.steps[0].parts).toBe(1);
         expect(source.steps[0].state).toBe(item.state);
-        expect(toolState(source, 0)).toBe(test.state);
+        expect(toolState(source, 0)).toBe(state);
         const html = renderToStaticMarkup(
           <LocaleProvider initial={locale}>
             <ChatTurnView turn={source} />
           </LocaleProvider>,
         );
-        expect(html).toContain(`<div class="toolcall ${test.state}">`);
-        expect(html).toContain(`aria-label="${test.label}"`);
+        expect(html).toContain(`<div class="toolcall ${state}">`);
+        expect(html).toContain(`aria-label="${label}"`);
         expect(html).toContain('aria-expanded="false"');
-        expect(html).not.toContain(item.text);
-        expect(html).not.toContain('class="toolcall run"');
-        if (status !== "completed")
+        if (item.text) expect(html).not.toContain(item.text);
+        expect(html).not.toContain("toolcall-body");
+        expect(detail).not.toHaveBeenCalled();
+        expect(await source.detail(0, 1, new AbortController().signal)).toEqual(
+          { text: item.text, args: item.args },
+        );
+        expect(detail).toHaveBeenCalledTimes(1);
+        if (!active) expect(html).not.toContain('class="toolcall run"');
+        if (noResult) {
+          expect(html).not.toContain('class="toolcall err"');
+          expect(html).not.toContain(
+            locale === "en" ? "Tool error recorded" : "已记录工具错误",
+          );
+        }
+        if (status !== "completed" && status !== "running")
           expect(html).toContain(`<p class="ep-state ${status}">`);
       }
     }

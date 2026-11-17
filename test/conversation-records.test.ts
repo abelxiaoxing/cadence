@@ -41,7 +41,7 @@ function fixture() {
   } as unknown as ServiceCoordination;
   let secrets: string[] | Error = [];
   const active = new Map<string, LiveTurn>();
-  const records = new ConversationRecords({
+  const options = {
     coordination,
     cwd,
     agentDir,
@@ -51,7 +51,8 @@ function fixture() {
       if (secrets instanceof Error) throw secrets;
       return secrets;
     },
-  });
+  };
+  const records = new ConversationRecords(options);
   const write = (path: string, value: unknown) =>
     coordination.files.create(path, JSON.stringify(value));
   const command = (
@@ -98,6 +99,7 @@ function fixture() {
   };
   return {
     records,
+    reconnect: () => new ConversationRecords({ ...options, active: new Map() }),
     active,
     files: coordination.files,
     cwd,
@@ -1001,5 +1003,303 @@ it.each(["completed", "failed", "canceled"])(
         },
       ],
     });
+  },
+);
+
+it.each(
+  ["error", "length", "aborted"].flatMap((stopReason) =>
+    ["final-first", "marker-first"].map((order) => ({ stopReason, order })),
+  ),
+)(
+  "$stopReason/$order: an unexecuted declaration stays neutral across Pi handoff, retry and cold reads",
+  async ({ stopReason, order }) => {
+    const f = fixture(),
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "Question" }] },
+      ]),
+      commandId = f.command(saved.id, "running", saved.entries[0]);
+    let leaf = saved.entries[0],
+      serial = 2;
+    const append = (type: string, fields: Record<string, unknown>) => {
+      const id = (serial++).toString(16).padStart(8, "0");
+      appendFileSync(
+        saved.path,
+        `${JSON.stringify({ type, id, parentId: leaf, timestamp: new Date(1_800_000_000_000).toISOString(), ...fields })}\n`,
+      );
+      leaf = id;
+    };
+    const mark = (captureMessageId?: string) =>
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: saved.entries[0],
+          ...(captureMessageId ? { captureMessageId } : {}),
+        },
+      });
+    mark();
+    const capture = new LiveCapture(() => []);
+    const events: import("../src/worker-public.mjs").CaptureFrame["event"][] =
+      [];
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          const frame = JSON.parse(String(chunk));
+          events.push(frame.event);
+          capture.accept(frame);
+          done();
+        },
+      }),
+      () => {
+        throw new Error("capture failed");
+      },
+    );
+    const sdk = new SdkCapture(emitter),
+      live = goLive(f, commandId, capture);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    const record = async (message: Record<string, unknown>) => {
+      await sdk.event({ type: "message_start", message });
+      const id = sdk.messageId!;
+      await sdk.event({ type: "message_end", message });
+      append("message", { message });
+      mark(id);
+    };
+    // Real SDK capture observations and matching Pi results are controls: neither
+    // a later failed response nor cancellation can overwrite their tool outcomes.
+    await record({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "toolCall", id: "success", name: "read", arguments: {} },
+        { type: "toolCall", id: "failure", name: "read", arguments: {} },
+      ],
+    });
+    for (const [toolCallId, isError] of [
+      ["success", false],
+      ["failure", true],
+    ] as const) {
+      await sdk.event({
+        type: "tool_execution_start",
+        toolCallId,
+        toolName: "read",
+        args: {},
+      });
+      const result = {
+        content: [{ type: "text", text: `${toolCallId} output` }],
+      };
+      await sdk.event({
+        type: "tool_execution_end",
+        toolCallId,
+        toolName: "read",
+        isError,
+        result,
+      });
+      await record({
+        role: "toolResult",
+        toolCallId,
+        toolName: "read",
+        isError,
+        ...result,
+      });
+    }
+    const controlsEnd = events.length;
+    const message = {
+      role: "assistant",
+      stopReason,
+      errorMessage: "Model request failed",
+      content: [
+        { type: "text", text: "Before declaration" },
+        {
+          type: "toolCall",
+          id: "not-executed",
+          name: "read",
+          arguments: { path: "file.ts" },
+        },
+        { type: "text", text: "After declaration" },
+      ],
+    };
+    await sdk.event({ type: "message_start", message });
+    const captureMessageId = sdk.messageId!;
+    for (const contentIndex of [0, 1, 2]) {
+      await sdk.event({
+        type: "message_update",
+        assistantMessageEvent:
+          contentIndex === 1
+            ? { type: "toolcall_start", contentIndex, partial: message }
+            : {
+                type: "text_delta",
+                contentIndex,
+                delta: message.content[contentIndex].text,
+              },
+      });
+    }
+    let viewLeaf: string | null = null;
+    const paths = [
+      saved.path,
+      f.records.path(commandId, "accepted.json"),
+      f.records.path(commandId, "state.json"),
+      f.records.indexPath(saved.id),
+    ];
+    const read = (before: number | null = null, reader = f.records) => {
+      const original = paths.map((path) => readFileSync(path));
+      const value = decodeWorkbenchResult(
+        reader.turnSteps(saved.id, viewLeaf, 0, before),
+      );
+      if (value.kind !== "conversation-turn") throw Error("turn");
+      for (const [index, step] of value.steps.entries()) {
+        if (step.role !== "tool") continue;
+        // A partial declaration without arguments has no readable detail yet.
+        if (step.parts === 0) {
+          expect(index).toBe(4);
+          expect(step).toMatchObject({ state: "pending", error: false });
+          expect(() =>
+            reader.step(
+              saved.id,
+              viewLeaf,
+              value.turn.id,
+              value.start + index,
+              0,
+            ),
+          ).toThrow("stale");
+          continue;
+        }
+        expect(step.parts).toBe(1);
+        expect(step.text).toBe("");
+        const detail = decodeWorkbenchResult(
+          reader.step(
+            saved.id,
+            viewLeaf,
+            value.turn.id,
+            value.start + index,
+            0,
+          ),
+        );
+        expect(detail).toMatchObject({
+          item: {
+            renderId: step.renderId,
+            state: step.state,
+            error: step.error,
+            version: step.version,
+          },
+        });
+        if (detail.kind !== "conversation-step") throw Error("step");
+        expect(detail.item.text).toBe(
+          index === 1 ? "success output" : index === 2 ? "failure output" : "",
+        );
+        if (index === 4 && step.state !== "pending")
+          expect(detail.item.args).toBe('{"path":"file.ts"}');
+      }
+      expect(paths.map((path) => readFileSync(path))).toEqual(original);
+      return value;
+    };
+    const initial = read();
+    const roles = ["user", "tool", "tool", "assistant", "tool", "assistant"];
+    const checkTools = (
+      value: ReturnType<typeof read>,
+      declarationState: string,
+    ) => {
+      expect(value.steps.map((step) => step.role)).toEqual(
+        roles.slice(0, value.steps.length),
+      );
+      expect(
+        value.steps
+          .filter((step) => step.role === "tool")
+          .map((step) => [step.state, step.error]),
+      ).toEqual([
+        ["completed", false],
+        ["failed", true],
+        [declarationState, false],
+      ]);
+      expect(value.steps.map((step) => step.renderId)).toEqual(
+        initial.steps.slice(0, value.steps.length).map((step) => step.renderId),
+      );
+      expect(value.steps[4].renderId).toBe(`capture:${captureMessageId}:1`);
+    };
+    checkTools(initial, "pending");
+    const finish = () => sdk.event({ type: "message_end", message });
+    if (order === "final-first") await finish();
+    const beforePi = read(),
+      state = stopReason === "aborted" ? "canceled" : "unavailable";
+    checkTools(beforePi, order === "final-first" ? state : "pending");
+    append("message", { message });
+    // Pi's body exists, but until the marker it cannot replace/duplicate capture.
+    expect(read().steps).toEqual(beforePi.steps);
+    mark(captureMessageId);
+    const handed = read();
+    checkTools(handed, state);
+    expect(handed.turn.status).toBe("running");
+    expect(handed.steps[3]).toMatchObject({
+      text: "Before declaration",
+      state: stopReason === "aborted" ? "canceled" : "failed",
+      error: true,
+    });
+    expect(handed.steps[5]).toMatchObject({
+      text: "After declaration",
+      state: handed.steps[3].state,
+      error: true,
+    });
+    if (order === "marker-first") await finish();
+    expect(read().steps).toEqual(handed.steps);
+    if (stopReason !== "aborted") {
+      const progress = {
+        phase: "waiting" as const,
+        attempt: 2,
+        maxAttempts: 6,
+        delayMs: 10000,
+      };
+      await emitter.emit({ kind: "model-retry", progress });
+      for (const observation of [read(), read(5)]) {
+        checkTools(observation, state);
+        expect(observation.turn).toMatchObject({
+          status: "running",
+          retry: progress,
+        });
+      }
+      await emitter.emit({ kind: "model-retry", progress: null });
+    }
+    checkTools(read(5), state);
+    expect(read(5).steps).toEqual(handed.steps.slice(0, 5));
+    // No execution/result event exists for the declaration under test.
+    expect(
+      events
+        .slice(controlsEnd)
+        .filter(
+          (event) =>
+            event.kind === "tool-start" ||
+            event.kind === "tool-end" ||
+            (event.kind === "message-start" && event.role === "tool-result"),
+        ),
+    ).toEqual([]);
+    live.state.status = stopReason === "aborted" ? "canceled" : "failed";
+    checkTools(read(), state);
+    expect(read().turn.status).toBe(live.state.status);
+    f.active.delete(commandId);
+    writeFileSync(
+      f.records.path(commandId, "state.json"),
+      JSON.stringify({
+        ...live.state,
+        user: saved.entries[0],
+        notice: "Owner settlement",
+      }),
+    );
+    const cold = f.reconnect();
+    const original = paths.map((path) => readFileSync(path));
+    const reconnected = decodeWorkbenchResult(
+      cold.conversation(saved.id, null, null),
+    );
+    expect(paths.map((path) => readFileSync(path))).toEqual(original);
+    if (reconnected.kind !== "conversation") throw Error("conversation");
+    viewLeaf = reconnected.leaf;
+    expect(reconnected.summary?.status).toBe(live.state.status);
+    const final = read(null, cold);
+    checkTools(final, state);
+    expect(final.steps).toEqual(handed.steps);
+    expect(final.turn).toMatchObject({
+      status: live.state.status,
+      notice:
+        stopReason === "error" ? "Model request failed" : "Owner settlement",
+    });
+    expect(read(5, cold).steps).toEqual(final.steps.slice(0, 5));
   },
 );
