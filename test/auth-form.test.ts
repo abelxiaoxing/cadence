@@ -93,4 +93,9 @@ it("the native form escapes reflected attributes without adding scripts or filli
   const password = /<input id="key"[^>]*>/.exec(html)![0];
   expect(password).not.toMatch(/\bvalue=/);
   expect(password).toContain('type="password"');
+  expect(password).toContain('placeholder="Access token"');
+  expect(html).toContain('<meta name="color-scheme" content="light dark">');
+  expect(html).not.toContain("Find your flow");
+  expect(html).not.toContain("Stay signed in");
+  expect(html.match(/<h1/g)).toHaveLength(1);
 });

@@ -91,7 +91,7 @@ export function AppShell({
   });
   useDrawerFocus(layout, drawer, !!drawer, closeDrawer);
   return (
-    <div className={`app${panels.className}`}>
+    <div className={`app${panels.className} antialiased`}>
       <header className="topbar">
         <button
           type="button"
