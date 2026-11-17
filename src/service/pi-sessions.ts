@@ -1058,7 +1058,9 @@ export function turnItems(
   );
   const omitted = { thinking: false, media: false, other: false };
   const items: ChatItem[] = [];
-  const tools = new Map<string, ChatItem | null>();
+  // Source identity stays local to this projection. Public names are redacted
+  // and clipped for display, so they cannot identify a result's declaration.
+  const tools = new Map<string, { rawName: string; item: ChatItem } | null>();
   let status: ChatStatus = "completed",
     notice = "";
   const add = (item: ChatItem) => {
@@ -1151,7 +1153,8 @@ export function turnItems(
             });
           } else if (type === "toolCall") {
             const id = own(b, "id"),
-              name = own(b, "name");
+              name = own(b, "name"),
+              rawName = typeof name === "string" ? name : "tool";
             let args = "";
             try {
               args = JSON.stringify(own(b, "arguments") ?? {}) ?? "";
@@ -1160,7 +1163,7 @@ export function turnItems(
             }
             const call = tool(
               typeof id === "string" && id ? id : `${entry.id}:${index}`,
-              typeof name === "string" ? name : "tool",
+              rawName,
               args,
             );
             call.renderId = renderId(index);
@@ -1174,7 +1177,7 @@ export function turnItems(
                   : "pending";
             if (typeof id === "string") {
               // Duplicate provider call IDs are ambiguous, never overwrite an earlier execution.
-              tools.set(id, tools.has(id) ? null : call);
+              tools.set(id, tools.has(id) ? null : { rawName, item: call });
             }
           } else if (type === "thinking" || type === "redactedThinking") {
             const value = own(b, "thinking");
@@ -1222,12 +1225,11 @@ export function turnItems(
         const call = typeof id === "string" ? tools.get(id) : undefined;
         if (
           call &&
-          call.name ===
-            sanitizeText(typeof name === "string" ? name : "tool", secrets)
+          call.rawName === (typeof name === "string" ? name : "tool")
         ) {
-          call.text = output;
-          call.error = own(m, "isError") === true;
-          call.state = call.error ? "failed" : "completed";
+          call.item.text = output;
+          call.item.error = own(m, "isError") === true;
+          call.item.state = call.item.error ? "failed" : "completed";
           if (typeof id === "string") tools.delete(id);
         } else {
           const orphan = tool(

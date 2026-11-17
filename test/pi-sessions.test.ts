@@ -1763,3 +1763,361 @@ it("tool results keep source order and can reuse a call ID only after its previo
     built.steps.length,
   );
 });
+
+/** Controlled Pi bytes, never SDK input: old names may exceed capture's limits. */
+function toolNameHistory(linked: boolean, messages: Record<string, unknown>[]) {
+  const cwd = project(),
+    dir = mkdtempSync(join(tmpdir(), "tool-name-history-")),
+    commandId = randomUUID(),
+    u = user(null, "Question"),
+    entries = [u];
+  const mark = (captureMessageId?: string) =>
+    entries.push(
+      entry("custom", entries.at(-1)!.id, {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: u.id,
+          ...(captureMessageId ? { captureMessageId } : {}),
+        },
+      }),
+    );
+  if (linked) mark();
+  const identities = messages.map((message) => {
+    const source = entry("message", entries.at(-1)!.id, { message }),
+      captureMessageId = randomUUID();
+    entries.push(source);
+    if (linked) mark(captureMessageId);
+    return linked ? `capture:${captureMessageId}` : `pi:${source.id}`;
+  });
+  const saved = write(dir, cwd, entries),
+    original = readFileSync(saved.path);
+  return {
+    renderId: (message: number, index = 0) => `${identities[message]}:${index}`,
+    read(secrets: readonly string[] = []) {
+      const sessions = new PiSessions(dir, cwd),
+        session = sessions.session(saved.id)!,
+        built = sessions.turn(
+          session,
+          session.branch(session.current()),
+          secrets,
+        );
+      expect(built.captureMessages).toHaveLength(linked ? messages.length : 0);
+      for (const [step, parts] of built.parts.entries()) {
+        for (const [part, item] of parts.entries()) {
+          // Closed public decoding rejects any accidentally exposed raw identity.
+          expect(
+            decodeWorkbenchResult({
+              kind: "conversation-step",
+              conversationId: saved.id,
+              leaf: session.current(),
+              turnId: u.id,
+              step,
+              part,
+              item,
+            }),
+          ).toMatchObject({ item });
+          expect(
+            Buffer.byteLength(JSON.stringify(item.name)),
+          ).toBeLessThanOrEqual(128);
+          expect(item.name).not.toMatch(/\p{Surrogate}/u);
+        }
+      }
+      for (const secret of secrets)
+        expect(JSON.stringify(built)).not.toContain(secret);
+      expect(readFileSync(saved.path)).toEqual(original);
+      return built;
+    },
+  };
+}
+
+const toolNameCases = [
+  { label: "126-byte ASCII", name: "n".repeat(126), display: "n".repeat(126) },
+  { label: "127-byte ASCII", name: "n".repeat(127), display: "n".repeat(126) },
+  { label: "128-byte ASCII", name: "n".repeat(128), display: "n".repeat(126) },
+  { label: "multibyte", name: "界".repeat(43), display: "界".repeat(42) },
+  { label: "surrogate pair", name: "😀".repeat(32), display: "😀".repeat(31) },
+  {
+    label: "JSON escapes",
+    name: '"\\'.repeat(32),
+    display: `${'"\\'.repeat(31)}"`,
+  },
+  {
+    label: "read redaction expansion",
+    name: `lookup-${"k7X".repeat(14)}`,
+    display: `lookup-${"[redacted]".repeat(11)}[redacted`,
+    secrets: ["k7X"],
+  },
+];
+it.each(
+  toolNameCases.flatMap((test) =>
+    [true, false].flatMap((linked) =>
+      [false, true].map((isError) => ({ ...test, linked, isError })),
+    ),
+  ),
+)(
+  "$label, linked=$linked, isError=$isError: tool results match full source names, not display names",
+  ({ name, display, linked, isError, ...test }) => {
+    const f = toolNameHistory(linked, [
+      {
+        role: "assistant",
+        stopReason: isError ? "aborted" : "length",
+        content: [
+          { type: "text", text: "Before" },
+          {
+            type: "toolCall",
+            id: "call",
+            name,
+            arguments: { path: "file.ts" },
+          },
+          { type: "text", text: "After" },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call",
+        toolName: name,
+        content: [{ type: "text", text: "Recorded output" }],
+        isError,
+      },
+      { role: "assistant", stopReason: "error", content: [] },
+    ]);
+    // A fresh reader repeats the association without capture/overlay state.
+    for (let observation = 0; observation < 2; observation++) {
+      const built = f.read("secrets" in test ? test.secrets : []);
+      expect(built.items.map((item) => item.role)).toEqual([
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+      ]);
+      expect(built.items[2]).toMatchObject({
+        renderId: f.renderId(0, 1),
+        name: display,
+        text: "Recorded output",
+        args: '{"path":"file.ts"}',
+        error: isError,
+        state: isError ? "failed" : "completed",
+      });
+      expect(built.steps[2]).toMatchObject({
+        renderId: f.renderId(0, 1),
+        name: display,
+        text: "",
+        parts: 1,
+        state: built.items[2].state,
+        error: isError,
+        version: built.items[2].version,
+      });
+      expect(built.parts[2]).toEqual([built.items[2]]);
+    }
+  },
+);
+
+it.each(
+  [
+    {
+      label: "same clipped prefix",
+      declared: `${"n".repeat(126)}-one`,
+      result: `${"n".repeat(126)}-two`,
+      secrets: [],
+    },
+    {
+      label: "result equals clipped display",
+      declared: "n".repeat(127),
+      result: "n".repeat(126),
+      secrets: [],
+    },
+    {
+      label: "same redacted display",
+      declared: "lookup-secret-one",
+      result: "lookup-secret-two",
+      secrets: ["secret-one", "secret-two"],
+    },
+  ].flatMap((test) => [true, false].map((linked) => ({ ...test, linked }))),
+)(
+  "$label, linked=$linked: a display collision cannot assign a result to the wrong declaration",
+  ({ declared, result, secrets, linked }) => {
+    const f = toolNameHistory(linked, [
+      {
+        role: "assistant",
+        stopReason: "error",
+        content: [
+          { type: "toolCall", id: "same-call", name: declared, arguments: {} },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "same-call",
+        toolName: result,
+        content: [{ type: "text", text: "Orphan output" }],
+        isError: true,
+      },
+    ]);
+    const built = f.read(secrets);
+    expect(built.items.map((item) => item.role)).toEqual([
+      "user",
+      "tool",
+      "tool",
+    ]);
+    expect(built.items[1].name).toBe(built.items[2].name);
+    expect(built.items[1]).toMatchObject({
+      renderId: f.renderId(0),
+      state: "unavailable",
+      error: false,
+      text: "",
+    });
+    expect(built.items[2]).toMatchObject({
+      renderId: f.renderId(1),
+      state: "failed",
+      error: true,
+      text: "Orphan output",
+    });
+  },
+);
+
+it.each([true, false])(
+  "linked=%s: unresolved duplicate call IDs remain ambiguous even with different full names",
+  (linked) => {
+    for (const secondName of ["n".repeat(127), "n".repeat(128)]) {
+      const f = toolNameHistory(linked, [
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            {
+              type: "toolCall",
+              id: "duplicate",
+              name: "n".repeat(127),
+              arguments: {},
+            },
+            {
+              type: "toolCall",
+              id: "duplicate",
+              name: secondName,
+              arguments: {},
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "duplicate",
+          toolName: secondName,
+          content: [{ type: "text", text: "Ambiguous result" }],
+          isError: false,
+        },
+      ]);
+      const built = f.read();
+      expect(
+        built.items
+          .slice(1)
+          .map((item) => [item.renderId, item.state, item.error, item.text]),
+      ).toEqual([
+        [f.renderId(0, 0), "pending", false, ""],
+        [f.renderId(0, 1), "pending", false, ""],
+        [f.renderId(1), "completed", false, "Ambiguous result"],
+      ]);
+    }
+  },
+);
+
+it.each([true, false])(
+  "linked=%s: a matched result releases the source call ID for legal reuse",
+  (linked) => {
+    const f = toolNameHistory(
+      linked,
+      [126, 127, 128].flatMap((length, index) => [
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            { type: "text", text: `Before ${index}` },
+            {
+              type: "toolCall",
+              id: "reused",
+              name: "n".repeat(length),
+              arguments: { index },
+            },
+            { type: "text", text: `After ${index}` },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "reused",
+          toolName: "n".repeat(length),
+          content: [{ type: "text", text: `Result ${index}` }],
+          isError: index === 1,
+        },
+      ]),
+    );
+    const built = f.read();
+    expect(built.items.map((item) => item.role)).toEqual([
+      "user",
+      ...Array(3).fill(["assistant", "tool", "assistant"]).flat(),
+    ]);
+    expect(
+      built.items
+        .filter((item) => item.role === "tool")
+        .map((item) => [item.renderId, item.text, item.state]),
+    ).toEqual([
+      [f.renderId(0, 1), "Result 0", "completed"],
+      [f.renderId(2, 1), "Result 1", "failed"],
+      [f.renderId(4, 1), "Result 2", "completed"],
+    ]);
+  },
+);
+
+it.each([true, false])(
+  "linked=%s: missing historical names still default to tool, but missing/wrong IDs never match",
+  (linked) => {
+    const f = toolNameHistory(linked, [
+      {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [
+          { type: "toolCall", id: "missing-name", arguments: {} },
+          {
+            type: "toolCall",
+            id: "explicit-name",
+            name: "tool",
+            arguments: {},
+          },
+          { type: "toolCall", name: "tool", arguments: {} },
+          { type: "toolCall", id: "unmatched", name: "tool", arguments: {} },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "missing-name",
+        content: [{ type: "text", text: "Default" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "explicit-name",
+        content: [{ type: "text", text: "Explicit" }],
+      },
+      { role: "toolResult", content: [{ type: "text", text: "No ID" }] },
+      {
+        role: "toolResult",
+        toolCallId: "other",
+        toolName: "tool",
+        content: [{ type: "text", text: "Wrong ID" }],
+      },
+    ]);
+    const built = f.read();
+    expect(
+      built.items
+        .slice(1)
+        .map((item) => [item.renderId, item.state, item.text]),
+    ).toEqual([
+      [f.renderId(0, 0), "completed", "Default"],
+      [f.renderId(0, 1), "completed", "Explicit"],
+      [f.renderId(0, 2), "pending", ""],
+      [f.renderId(0, 3), "pending", ""],
+      [f.renderId(3), "completed", "No ID"],
+      [f.renderId(4), "completed", "Wrong ID"],
+    ]);
+    expect(built.items.slice(1).every((item) => item.name === "tool")).toBe(
+      true,
+    );
+  },
+);

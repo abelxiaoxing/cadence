@@ -1303,3 +1303,252 @@ it.each(
     expect(read(5, cold).steps).toEqual(final.steps.slice(0, 5));
   },
 );
+
+it.each(
+  [127, 128].flatMap((length) =>
+    ["final-first", "marker-first"].flatMap((order) =>
+      [false, true].map((isError) => ({ length, order, isError })),
+    ),
+  ),
+)(
+  "$length-byte tool name/$order/isError=$isError: durable association survives without the live overlay",
+  async ({ length, order, isError }) => {
+    const f = fixture(),
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "Question" }] },
+      ]),
+      commandId = f.command(saved.id, "running", saved.entries[0]),
+      name = "n".repeat(length);
+    let leaf = saved.entries[0],
+      serial = 2;
+    const append = (type: string, fields: Record<string, unknown>) => {
+      const id = (serial++).toString(16).padStart(8, "0");
+      appendFileSync(
+        saved.path,
+        `${JSON.stringify({ type, id, parentId: leaf, timestamp: new Date(1_800_000_000_000).toISOString(), ...fields })}\n`,
+      );
+      leaf = id;
+    };
+    const mark = (captureMessageId?: string) =>
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: saved.entries[0],
+          ...(captureMessageId ? { captureMessageId } : {}),
+        },
+      });
+    mark();
+    const capture = new LiveCapture(() => []);
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          capture.accept(JSON.parse(String(chunk)));
+          done();
+        },
+      }),
+      () => {
+        throw new Error("capture failed");
+      },
+    );
+    const sdk = new SdkCapture(emitter),
+      live = goLive(f, commandId, capture);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    const declaration = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Before" },
+        {
+          type: "toolCall",
+          id: "source-call",
+          name,
+          arguments: { path: "file.ts" },
+        },
+        { type: "text", text: "After" },
+      ],
+    };
+    await sdk.event({ type: "message_start", message: declaration });
+    const declarationId = sdk.messageId!;
+    for (const contentIndex of [0, 1, 2]) {
+      await sdk.event({
+        type: "message_update",
+        assistantMessageEvent:
+          contentIndex === 1
+            ? { type: "toolcall_start", contentIndex, partial: declaration }
+            : {
+                type: "text_delta",
+                contentIndex,
+                delta: declaration.content[contentIndex].text,
+              },
+      });
+    }
+    let viewLeaf: string | null = null;
+    const paths = [
+      saved.path,
+      f.records.path(commandId, "accepted.json"),
+      f.records.path(commandId, "state.json"),
+      f.records.indexPath(saved.id),
+    ];
+    const read = (before: number | null = null, reader = f.records) => {
+      const original = paths.map((path) => readFileSync(path));
+      const value = decodeWorkbenchResult(
+        reader.turnSteps(saved.id, viewLeaf, 0, before),
+      );
+      if (value.kind !== "conversation-turn") throw Error("turn");
+      const tools = value.steps.filter((step) => step.role === "tool");
+      expect(tools).toHaveLength(1);
+      expect(value.turn.steps).toBe(4);
+      expect(value.start).toBe(0);
+      expect(value.steps.map((step) => step.role)).toEqual(
+        ["user", "assistant", "tool", "assistant"].slice(0, before ?? 4),
+      );
+      for (const [index, text] of [
+        [1, "Before"],
+        [3, "After"],
+      ] as const) {
+        const step = value.steps[index];
+        if (step)
+          // Genuine capture retains these short deltas in its sanitizer tail
+          // until message-end; durable/final text must then be complete.
+          expect(step.text).toBe(step.state === "streaming" ? "" : text);
+      }
+      expect(value.steps.slice(1).map((step) => step.renderId)).toEqual(
+        [0, 1, 2]
+          .slice(0, value.steps.length - 1)
+          .map((index) => `capture:${declarationId}:${index}`),
+      );
+      const tool = tools[0];
+      expect(tool.text).toBe("");
+      expect(Buffer.byteLength(tool.name)).toBeLessThanOrEqual(128);
+      let output = "";
+      if (tool.parts) {
+        expect(tool.parts).toBe(1);
+        const detail = decodeWorkbenchResult(
+          reader.step(saved.id, viewLeaf, value.turn.id, 2, 0),
+        );
+        if (detail.kind !== "conversation-step") throw Error("step");
+        expect(detail.item).toMatchObject({
+          name: tool.name,
+          renderId: tool.renderId,
+          version: tool.version,
+          state: tool.state,
+          error: tool.error,
+          args: '{"path":"file.ts"}',
+        });
+        output = detail.item.text;
+      } else {
+        expect(tool.state).toBe("pending");
+        expect(() =>
+          reader.step(saved.id, viewLeaf, value.turn.id, 2, 0),
+        ).toThrow("stale");
+      }
+      expect(paths.map((path) => readFileSync(path))).toEqual(original);
+      return { value, tool, output };
+    };
+    const check = (
+      state: string,
+      output: string,
+      before: number | null = null,
+      reader = f.records,
+    ) => {
+      const observed = read(before, reader);
+      expect(observed.tool).toMatchObject({ state, error: state === "failed" });
+      expect(observed.output).toBe(output);
+      return observed;
+    };
+    check("pending", "");
+    // Exercise both orders for the declaration AND result message. A raw Pi
+    // append must be withheld until its command-owned marker becomes visible.
+    const handoff = async (
+      message: Record<string, unknown>,
+      captureMessageId: string,
+      state: string,
+      output: string,
+    ) => {
+      const finish = () => sdk.event({ type: "message_end", message });
+      if (order === "final-first") await finish();
+      const beforePi = check(state, output);
+      append("message", { message });
+      expect(check(state, output).value.steps).toEqual(beforePi.value.steps);
+      mark(captureMessageId);
+      const handed = check(state, output);
+      if (order === "marker-first") await finish();
+      expect(check(state, output).value.steps).toEqual(handed.value.steps);
+      return handed;
+    };
+    const declared = await handoff(declaration, declarationId, "pending", "");
+    expect(declared.tool.name).toBe("n".repeat(126));
+    await sdk.event({
+      type: "tool_execution_start",
+      toolCallId: "source-call",
+      toolName: name,
+      args: { path: "file.ts" },
+    });
+    check("running", "");
+    await sdk.event({
+      type: "tool_execution_update",
+      toolCallId: "source-call",
+      toolName: name,
+      partialResult: { content: [{ type: "text", text: "Partial output" }] },
+    });
+    const running = check("running", "Partial output");
+    const result = { content: [{ type: "text", text: "Recorded output" }] };
+    await sdk.event({
+      type: "tool_execution_end",
+      toolCallId: "source-call",
+      toolName: name,
+      isError,
+      result,
+    });
+    const state = isError ? "failed" : "completed";
+    const ended = check(state, "Recorded output");
+    expect(ended.tool.parts).toBe(running.tool.parts);
+    expect(ended.tool.version).not.toBe(running.tool.version);
+    const resultMessage = {
+      role: "toolResult",
+      toolCallId: "source-call",
+      toolName: name,
+      isError,
+      ...result,
+    };
+    await sdk.event({ type: "message_start", message: resultMessage });
+    const handed = await handoff(
+      resultMessage,
+      sdk.messageId!,
+      state,
+      "Recorded output",
+    );
+    expect(handed.tool.name).toBe("n".repeat(126));
+    expect(handed.value.turn.status).toBe("running");
+    expect(check(state, "Recorded output", 3).value.steps).toEqual(
+      handed.value.steps.slice(0, 3),
+    );
+    // Reply completion is independent of the tool result. A new cold reader has
+    // no LiveCapture to repair/mask a broken durable association.
+    live.state.status = "completed";
+    const settled = check(state, "Recorded output");
+    expect(settled.value.turn.status).toBe("completed");
+    f.active.delete(commandId);
+    writeFileSync(
+      f.records.path(commandId, "state.json"),
+      JSON.stringify({ ...live.state, user: saved.entries[0] }),
+    );
+    const cold = f.reconnect(),
+      original = paths.map((path) => readFileSync(path));
+    const reconnected = decodeWorkbenchResult(
+      cold.conversation(saved.id, null, null),
+    );
+    expect(paths.map((path) => readFileSync(path))).toEqual(original);
+    if (reconnected.kind !== "conversation") throw Error("conversation");
+    viewLeaf = reconnected.leaf;
+    expect(reconnected.summary?.status).toBe("completed");
+    const final = check(state, "Recorded output", null, cold);
+    expect(final.value.turn).toMatchObject({ status: "completed", stable: 4 });
+    expect(final.value.steps).toEqual(handed.value.steps);
+    expect(check(state, "Recorded output", 3, cold).value.steps).toEqual(
+      final.value.steps.slice(0, 3),
+    );
+  },
+);
