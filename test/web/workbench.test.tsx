@@ -242,6 +242,71 @@ it("a tool card states what was recorded for its call, live or settled", () => {
   expect(toolTarget('["path"]')).toBe("");
   expect(toolTarget('{"pattern":"TODO","path":"src"}')).toBe("TODO  src");
 });
+it.each(["en", "zh"] as const)(
+  "tool outcomes survive every reply terminal state, while legacy output and unfinished calls stay neutral (%s)",
+  (locale) => {
+    const cases = [
+      {
+        fields: { state: "completed" as const },
+        state: "ok",
+        label: locale === "en" ? "Tool result recorded" : "已记录工具结果",
+      },
+      {
+        fields: { state: "failed" as const, error: true },
+        state: "err",
+        label: locale === "en" ? "Tool error recorded" : "已记录工具错误",
+      },
+      {
+        fields: { state: "running" as const },
+        state: "idle",
+        label: locale === "en" ? "No tool result observed" : "未观察到工具结果",
+      },
+      // A readable legacy body is not evidence of tool-end. A recorded error is.
+      {
+        fields: {},
+        state: "idle",
+        label: locale === "en" ? "No tool result observed" : "未观察到工具结果",
+      },
+      {
+        fields: { error: true },
+        state: "err",
+        label: locale === "en" ? "Tool error recorded" : "已记录工具错误",
+      },
+    ];
+    for (const status of [
+      "completed",
+      "failed",
+      "canceled",
+      "unknown",
+    ] as const) {
+      for (const test of cases) {
+        const item = chatItem("call", "tool", {
+          name: "read",
+          text: "Retained output is not a completion event",
+          ...test.fields,
+        });
+        const source = sourceOf({ status, items: [item] });
+        expect(source.header.stable).toBe(1);
+        expect(source.steps[0].parts).toBe(1);
+        expect(source.steps[0].state).toBe(item.state);
+        expect(toolState(source, 0)).toBe(test.state);
+        const html = renderToStaticMarkup(
+          <LocaleProvider initial={locale}>
+            <ChatTurnView turn={source} />
+          </LocaleProvider>,
+        );
+        expect(html).toContain(`<div class="toolcall ${test.state}">`);
+        expect(html).toContain(`aria-label="${test.label}"`);
+        expect(html).toContain('aria-expanded="false"');
+        expect(html).not.toContain(item.text);
+        expect(html).not.toContain('class="toolcall run"');
+        if (status !== "completed")
+          expect(html).toContain(`<p class="ep-state ${status}">`);
+      }
+    }
+  },
+);
+
 it("tool cards take model-named tools without reaching the prototype", () => {
   const user = chatItem("user", "user", { text: "Analyze" });
   const tool = (id: string, name: string, args = "{}") =>

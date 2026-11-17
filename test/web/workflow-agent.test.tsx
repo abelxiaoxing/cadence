@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import type {
+  ChatTurn,
+  WorkbenchRead,
+} from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
@@ -9,23 +13,37 @@ import { transport } from "./fixtures";
 
 const observed = vi.hoisted(() => ({
   run: null as WorkflowRun | null,
-  reads: [] as { kind?: string; interval: number }[],
+  transcript: null as ChatTurn | null,
+  reads: [] as { request: WorkbenchRead | null; interval: number }[],
 }));
 vi.mock("../../web/src/client/use-workbench", () => ({
   useWorkbench: (
     _client: unknown,
-    read: { kind: string } | null,
+    read: WorkbenchRead | null,
     interval = 0,
   ) => {
-    observed.reads.push({ kind: read?.kind, interval });
+    observed.reads.push({ request: read, interval });
     return {
       value:
         read?.kind === "workflow"
           ? { kind: "workflow", response: { type: "run", run: observed.run } }
-          : null,
+          : read?.kind === "workflow-transcript"
+            ? {
+                kind: "workflow-transcript",
+                runId: read.id,
+                stepId: read.stepId,
+                turn: observed.transcript,
+              }
+            : null,
     };
   },
 }));
+
+afterEach(() => {
+  observed.run = null;
+  observed.transcript = null;
+  observed.reads = [];
+});
 
 it.each([
   ["en", "rejected", "failed"],
@@ -76,10 +94,18 @@ it.each([
   },
 );
 
-it.each(["running", "completed", "failed", "canceled"] as const)(
-  "subagent transcript interval follows explicit step status %s; closed result stays lazy",
-  (status) => {
-    observed.reads = [];
+it.each([
+  ["en", "running"],
+  ["zh", "running"],
+  ["en", "completed"],
+  ["zh", "completed"],
+  ["en", "failed"],
+  ["zh", "failed"],
+  ["en", "canceled"],
+  ["zh", "canceled"],
+] as const)(
+  "observed workflow transcript reaches real tool cards independently of reply/workflow outcomes (%s, %s)",
+  (locale, status) => {
     const run: WorkflowRun = {
       id: randomUUID(),
       epoch: randomUUID(),
@@ -102,20 +128,93 @@ it.each(["running", "completed", "failed", "canceled"] as const)(
       ],
     };
     observed.run = run;
-    renderToStaticMarkup(
-      <WorkflowAgentView
-        client={new ServiceClient(transport())}
-        agent={{ runId: run.id, stepId: "agent", label: "fixture" }}
-        backLabel="Back"
-        onBack={() => {}}
-        onOpenAgent={() => {}}
-      />,
+    observed.transcript = {
+      id: run.steps[0].childRunId ?? randomUUID(),
+      epoch: run.epoch,
+      status,
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      items: [
+        {
+          id: "answer",
+          role: "assistant",
+          name: "",
+          args: "",
+          text: "**Observed** subagent reply",
+          error: false,
+        },
+        ...(["running", "completed", "failed", undefined] as const).map(
+          (state, i) => ({
+            id: `call-${i}`,
+            role: "tool" as const,
+            name: `fixture-tool-${i}`,
+            args: "{}",
+            text: `retained output ${i}`,
+            error: state === "failed",
+            ...(state ? { state } : {}),
+          }),
+        ),
+      ],
+    };
+    // These are controlled public observations, not the backend producer.
+    // SSR executes WorkflowAgentView -> recordedTurn -> ChatTurnView -> ToolStep.
+    const html = renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <WorkflowAgentView
+          client={new ServiceClient(transport())}
+          agent={{ runId: run.id, stepId: "agent", label: "fixture" }}
+          backLabel="Back"
+          onBack={() => {}}
+          onOpenAgent={() => {}}
+        />
+      </LocaleProvider>,
     );
+    expect(html).toContain("<strong>Observed</strong> subagent reply");
+    expect(html.match(/class="toolcall /g)).toHaveLength(4);
+    const labels =
+      locale === "en"
+        ? [
+            "Tool call in progress",
+            "Tool result recorded",
+            "Tool error recorded",
+            "No tool result observed",
+          ]
+        : [
+            "工具调用进行中",
+            "已记录工具结果",
+            "已记录工具错误",
+            "未观察到工具结果",
+          ];
+    const classes = [
+      status === "running" ? "run" : "idle",
+      "ok",
+      "err",
+      "idle",
+    ];
+    const cards = html.split('<div class="toolcall ').slice(1);
+    cards.forEach((card, i) => {
+      expect(card).toMatch(new RegExp(`^${classes[i]}">`));
+      expect(card).toContain(`toolcall-name">fixture-tool-${i}</span>`);
+      expect(card).toContain(
+        `aria-label="${labels[i === 0 && status !== "running" ? 3 : i]}"`,
+      );
+      expect(card).toContain('aria-expanded="false"');
+      expect(card).not.toContain(`retained output ${i}`);
+    });
+    // A completed/failed tool does not settle the reply or the workflow;
+    // conversely a failed/canceled reply cannot erase a recorded tool result.
+    expect(html).toContain(`class="ep-state ${status}"`);
+    expect(html).toContain(` · ${locale === "en" ? "running" : "运行中"}</p>`);
+    if (status === "failed" || status === "canceled")
+      expect(html).toContain(`<p class="ep-state ${status}">`);
     expect(
-      observed.reads.find((r) => r.kind === "workflow-transcript")?.interval,
-    ).toBe(status === "running" ? 1000 : 0);
-    expect(observed.reads.some((r) => r.kind === "workflow-detail")).toBe(
-      false,
-    );
+      observed.reads.find((r) => r.request?.kind === "workflow-transcript"),
+    ).toEqual({
+      request: { kind: "workflow-transcript", id: run.id, stepId: "agent" },
+      interval: status === "running" ? 1000 : 0,
+    });
+    expect(
+      observed.reads.some((r) => r.request?.kind === "workflow-detail"),
+    ).toBe(false);
   },
 );
