@@ -1164,7 +1164,14 @@ export function turnItems(
               args,
             );
             call.renderId = renderId(index);
-            call.state = state === "completed" ? "pending" : state;
+            // A failed response is not a tool result. Only a matching
+            // toolResult below can establish this declaration's outcome.
+            call.state =
+              state === "failed"
+                ? "unavailable"
+                : state === "canceled"
+                  ? "canceled"
+                  : "pending";
             if (typeof id === "string") {
               // Duplicate provider call IDs are ambiguous, never overwrite an earlier execution.
               tools.set(id, tools.has(id) ? null : call);

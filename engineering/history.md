@@ -88,6 +88,11 @@ Real content indices preserve text/thinking/tool/text order, and empty, thinking
 While live, an unmarked Pi tail is withheld until ownership is known; final capture arriving before or after the marker cannot append a second copy.
 Old history without the metadata keeps its recorded identity, not a guessed association.
 Tool execution/results attach by call identity without moving the declaration's source position.
+An unexecuted declaration without a matching result uses the same state in capture and Pi: assistant `stopReason=error|length` means `unavailable`, `aborted` means `canceled`, and a normal response leaves it `pending`; none sets the tool's `error` flag.
+The assistant's own failed/canceled text state and existing reply status/notice remain independent, including while the owner still reports `running` during model-request retry.
+Only a matching Pi `toolResult` (call ID and name, with ambiguous duplicate declarations refused association) decides the tool's `completed`/`failed` state from `isError`; later response failure or cancellation does not overwrite that result.
+Settled reads make remaining pending/running declarations unavailable (or canceled for a canceled reply), never successful or failed just because their parent settled.
+These read-time rules also apply to unmarked old Pi history without inventing capture links or rewriting stored bytes.
 Snapshots replace tool output; a hash of the full redacted item versions equal-part content changes independently of explicit execution state.
 Thinking activity frames contain only message UUID, index and phase, share the existing capture bounds and closed-field validation, and never inspect or transmit thinking text, signatures or opaque provider data.
 A body-free placeholder has no detail parts; readable thinking is read lazily only from Pi, with the same render identity, while unavailable/interrupted content is explicitly nonexpandable.

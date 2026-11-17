@@ -9801,7 +9801,7 @@ function turnItems(entries2, secrets) {
             }
             const call = tool(typeof id === "string" && id ? id : `${entry.id}:${index}`, typeof name === "string" ? name : "tool", args);
             call.renderId = renderId(index);
-            call.state = state === "completed" ? "pending" : state;
+            call.state = state === "failed" ? "unavailable" : state === "canceled" ? "canceled" : "pending";
             if (typeof id === "string") {
               tools.set(id, tools.has(id) ? null : call);
             }
@@ -35259,7 +35259,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "b4bd2bf531d1e840739c1875e454b63f373b7ded933e4f55be63be66412820f0",
+  build: "ec9bef2f9572088ab29be4b539a4590bf076b5a4e40aac88a2af497ea7d9a4fb",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
