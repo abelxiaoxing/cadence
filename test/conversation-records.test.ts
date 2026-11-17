@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { expect, it } from "vitest";
 import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
 import { ConversationRecords } from "../src/service/conversation-records.ts";
@@ -20,6 +21,7 @@ import type { ServiceCoordination } from "../src/service/coordination.ts";
 import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
+import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 function fixture() {
@@ -588,3 +590,185 @@ it("a reply the previous owner's death interrupted does not refuse the next star
       });
   }
 });
+
+it.each(["final-first", "marker-first"])(
+  "identity handoff %s: unmarked Pi tail never duplicates or clears the visible reply",
+  async (order) => {
+    const f = fixture(),
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "Question" }] },
+      ]);
+    const commandId = f.command(saved.id, "running", saved.entries[0]);
+    let leaf = saved.entries[0],
+      serial = 2;
+    const append = (type: string, fields: Record<string, unknown>) => {
+      const id = (serial++).toString(16).padStart(8, "0");
+      appendFileSync(
+        saved.path,
+        `${JSON.stringify({ type, id, parentId: leaf, timestamp: new Date(1_800_000_000_000).toISOString(), ...fields })}\n`,
+      );
+      leaf = id;
+    };
+    const mark = (captureMessageId?: string) =>
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: saved.entries[0],
+          ...(captureMessageId ? { captureMessageId } : {}),
+        },
+      });
+    mark();
+    const live = new LiveCapture(() => []);
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          live.accept(JSON.parse(String(chunk)));
+          done();
+        },
+      }),
+      () => {
+        throw new Error("capture failed");
+      },
+    );
+    const sdk = new SdkCapture(emitter);
+    goLive(f, commandId, live);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    await sdk.event({ type: "message_start", message: { role: "assistant" } });
+    const captureMessageId = sdk.messageId!;
+    const text = "Already visible answer. ".repeat(12);
+    await sdk.event({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: text,
+      },
+    });
+    await sdk.event({
+      type: "message_update",
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 1 },
+    });
+    let viewLeaf: string | null = null;
+    const read = (before: number | null = null) => {
+      const value = decodeWorkbenchResult(
+        f.records.turnSteps(saved.id, viewLeaf, 0, before),
+      );
+      if (value.kind !== "conversation-turn") throw new Error("turn");
+      return value;
+    };
+    const initial = read();
+    expect(initial.steps.map((s) => s.role)).toEqual([
+      "user",
+      "assistant",
+      "thinking",
+    ]);
+    expect(initial.steps[1].text.length).toBeGreaterThan(0);
+    expect(initial.steps[2]).toMatchObject({
+      parts: 0,
+      state: "streaming",
+      text: "",
+    });
+    expect(initial.turn.activity).toMatchObject({ kind: "thinking" });
+    const message = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [
+        { type: "text", text },
+        {
+          type: "thinking",
+          thinking: "Pi-only readable reasoning",
+          thinkingSignature: "never-public",
+        },
+        { type: "text", text: "Last" },
+      ],
+    };
+    const finish = () => sdk.event({ type: "message_end", message });
+    if (order === "final-first") await finish();
+    const beforePi = read();
+    append("message", { message });
+    // Pi writes before the SDK subscriber's marker and before final capture.
+    expect(read().steps).toEqual(beforePi.steps);
+    mark(captureMessageId);
+    const handed = read();
+    expect(handed.steps.map((s) => s.role)).toEqual([
+      "user",
+      "assistant",
+      "thinking",
+      "assistant",
+    ]);
+    expect(handed.steps[1]).toMatchObject({
+      text,
+      renderId: initial.steps[1].renderId,
+    });
+    expect(handed.steps[2]).toMatchObject({
+      text: "",
+      parts: 1,
+      renderId: initial.steps[2].renderId,
+      state: "completed",
+    });
+    expect(JSON.stringify(handed)).not.toContain("Pi-only");
+    expect(JSON.stringify(handed)).not.toContain("never-public");
+    if (order === "marker-first") await finish();
+    expect(read().steps).toEqual(handed.steps);
+    expect(read(2).steps).toEqual(handed.steps.slice(0, 2));
+    // Reconnect/cold observation retains the exact same presentation identities.
+    f.active.delete(commandId);
+    writeFileSync(
+      f.records.path(commandId, "state.json"),
+      JSON.stringify({
+        status: "completed",
+        notice: "",
+        user: saved.entries[0],
+        omitted: { thinking: true, media: false, other: false },
+      }),
+    );
+    f.records.closeReads();
+    const reconnected = f.records.conversation(saved.id, null, null);
+    if (reconnected.kind !== "conversation") throw new Error("conversation");
+    viewLeaf = reconnected.leaf;
+    expect(read().steps).toEqual(handed.steps);
+    expect(
+      decodeWorkbenchResult(
+        f.records.step(saved.id, viewLeaf, saved.entries[0], 2, 0),
+      ),
+    ).toMatchObject({
+      item: {
+        text: "Pi-only readable reasoning",
+        renderId: initial.steps[2].renderId,
+      },
+    });
+  },
+);
+
+it.each(["completed", "failed", "canceled"])(
+  "a settled %s reply never reports a declared tool without a result as successful or still running",
+  (status) => {
+    const f = fixture(),
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "q" }] },
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          content: [
+            { type: "toolCall", id: "call", name: "read", arguments: {} },
+          ],
+        },
+      ]);
+    f.command(saved.id, status, saved.entries[0]);
+    const value = decodeWorkbenchResult(
+      f.records.turnSteps(saved.id, saved.entries[1], 0, null),
+    );
+    expect(value).toMatchObject({
+      turn: { status },
+      steps: [
+        { role: "user" },
+        {
+          role: "tool",
+          state: status === "canceled" ? "canceled" : "unavailable",
+        },
+      ],
+    });
+  },
+);

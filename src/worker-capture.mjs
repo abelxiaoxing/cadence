@@ -53,6 +53,7 @@ export class CaptureState {
     this.messages = new Map();
     this.calls = new Map();
     this.blocks = new Map();
+    this.thinkingEntries = 0;
     this.dataFrames = 0;
     this.controlFrames = 0;
     this.bytes = 0;
@@ -76,7 +77,8 @@ export class CaptureState {
       this.details.size +
         this.messages.size +
         this.calls.size +
-        this.blocks.size >
+        this.blocks.size +
+        this.thinkingEntries >
       LIMITS.captureEntries
     )
       throw new ContractError("capacity");
@@ -138,6 +140,7 @@ export class CaptureState {
           finalHash: createHash("sha256"),
           finalBytes: 0,
           finalIndex: -1,
+          thinking: new Map(),
         });
         break;
       case "detail-begin":
@@ -217,6 +220,18 @@ export class CaptureState {
         this.mergeCoverage(e.coverage);
         if (["context", "handoff"].includes(d.descriptor.owner.kind))
           this.details.delete(e.detailId);
+        break;
+      }
+      case "thinking-activity": {
+        const m = message(e.messageId);
+        requireFact(!m.ended && m.role === "assistant");
+        const previous = m.thinking.get(e.index);
+        requireFact(previous === undefined || previous === "active");
+        requireFact(
+          m.thinking.size < LIMITS.captureEntries || previous !== undefined,
+        );
+        if (previous === undefined) this.thinkingEntries++;
+        m.thinking.set(e.index, e.phase);
         break;
       }
       case "message-text": {
@@ -333,6 +348,11 @@ export class CaptureState {
           m.finalIndices.size === e.finalBlockCount &&
             [...m.finalIndices].every((i) => i < e.finalBlockCount),
         );
+        requireFact(
+          [...m.thinking.values()].every((phase) => phase !== "active"),
+        );
+        this.thinkingEntries -= m.thinking.size;
+        m.thinking.clear();
         m.ended = true;
         m.final = e.finalDetailId;
         m.stopReason = e.stopReason;
@@ -603,6 +623,9 @@ export class SdkCapture {
     this.selected = null;
     this.events = 0;
     this.updates = new WeakMap();
+  }
+  get messageId() {
+    return this.current?.role === "system" ? null : (this.current?.id ?? null);
   }
   emit(e) {
     return this.emitter.emit(e);
@@ -906,6 +929,19 @@ export class SdkCapture {
           stage: "final",
         });
       } else {
+        if (
+          type === "thinking" &&
+          message.role === "assistant" &&
+          !message.thinking.has(index)
+        ) {
+          message.thinking.set(index, "complete");
+          await this.emit({
+            kind: "thinking-activity",
+            messageId: message.id,
+            index,
+            phase: "complete",
+          });
+        }
         const reason =
           type === "thinking"
             ? "hidden-thinking"
@@ -1019,6 +1055,7 @@ export class SdkCapture {
           role,
           streams: new Map(),
           declarations: new Map(),
+          thinking: new Map(),
         };
         if (role === "system") {
           // Pi emits prompt/section/tool-loadout changes as paired system
@@ -1052,13 +1089,39 @@ export class SdkCapture {
         const update = own(event, "assistantMessageEvent"),
           type = own(update, "type");
         const index = own(update, "contentIndex");
-        if (["text_delta", "toolcall_start", "toolcall_delta"].includes(type))
+        if (
+          [
+            "text_delta",
+            "toolcall_start",
+            "toolcall_delta",
+            "thinking_start",
+            "thinking_delta",
+            "thinking_end",
+          ].includes(type)
+        )
           requireFact(
             Number.isSafeInteger(index) &&
               index >= 0 &&
               index <= LIMITS.dataFrames,
           );
-        if (type === "text_delta") {
+        if (
+          ["thinking_start", "thinking_delta", "thinking_end"].includes(type)
+        ) {
+          // Do not even access partial/content/delta: providers may carry opaque
+          // thinking or getters here. Only the real lifecycle/index is public.
+          const previous = m.thinking.get(index);
+          requireFact(previous === undefined || previous === "active");
+          if (previous === undefined || type !== "thinking_start") {
+            const phase = type === "thinking_end" ? "complete" : "active";
+            m.thinking.set(index, phase);
+            await this.emit({
+              kind: "thinking-activity",
+              messageId: m.id,
+              index,
+              phase,
+            });
+          }
+        } else if (type === "text_delta") {
           let stream = m.streams.get(index);
           if (!stream) {
             const blockId = randomUUID();
@@ -1138,6 +1201,20 @@ export class SdkCapture {
           own(message, "content"),
           "final",
         );
+        for (const [index, phase] of m.thinking) {
+          if (phase !== "active") continue;
+          const ended = ["error", "aborted"].includes(
+            own(message, "stopReason"),
+          )
+            ? "unavailable"
+            : "complete";
+          await this.emit({
+            kind: "thinking-activity",
+            messageId: m.id,
+            index,
+            phase: ended,
+          });
+        }
         const finalDetailId =
           m.role === "assistant"
             ? await this.detail(

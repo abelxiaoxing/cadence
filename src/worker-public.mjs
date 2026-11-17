@@ -1310,6 +1310,15 @@ export function decodeCaptureEvent(v) {
         resultCallId,
       };
     }
+    case "thinking-activity": {
+      const o = closed(v, ["kind", "messageId", "index", "phase"]);
+      return {
+        kind,
+        messageId: decodeId(o.messageId),
+        index: integer(o.index, 0, LIMITS.dataFrames),
+        phase: oneOf(o.phase, ["active", "complete", "unavailable"]),
+      };
+    }
     case "message-text": {
       const o = closed(v, ["kind", "messageId", "blockId", "detailId"]);
       return {

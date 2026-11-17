@@ -668,7 +668,7 @@ try {
       if (own(event, "type") === "message_update") {
         const update = own(event, "assistantMessageEvent");
         const type = own(update, "type");
-        if (type === "text_delta" || type === "thinking_delta") {
+        if (type === "text_delta") {
           const delta = own(update, "delta");
           if (typeof delta !== "string") throw new Error("Malformed SDK event");
           modelOutputBytes += Buffer.byteLength(delta);
@@ -703,7 +703,9 @@ try {
           }
           if (recordedUser === null)
             refuse("events", "event-projection-failed");
+          if (!capture.messageId) refuse("events", "event-projection-failed");
           manager.appendCustomEntry(BROWSER_COMMAND_ENTRY, {
+            captureMessageId: capture.messageId,
             commandId: command,
             userId: recordedUser,
             ...(command === publicRequest.runId

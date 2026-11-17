@@ -601,6 +601,13 @@ export type CaptureEvent =
       resultCallId: string | null;
     }
   | {
+      /** Activity only: never a thinking body, delta or signature. */
+      kind: "thinking-activity";
+      messageId: string;
+      index: number;
+      phase: "active" | "complete" | "unavailable";
+    }
+  | {
       kind: "message-text";
       messageId: string;
       blockId: string;

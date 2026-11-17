@@ -2838,3 +2838,46 @@ describe.each([
     },
   );
 });
+
+it.each([worker, facade])(
+  "thinking activity codec is closed, bounded and compatible with old capture frames",
+  (codec) => {
+    const messageId = "10000000-0000-4000-8000-000000000001";
+    const event = {
+      kind: "thinking-activity",
+      messageId,
+      index: 3,
+      phase: "active",
+    };
+    expect(codec.decodeCaptureEvent(event)).toEqual(event);
+    for (const extra of [
+      { text: "hidden" },
+      { signature: "hidden" },
+      { content: [] },
+      { body: {} },
+    ])
+      expect(() => codec.decodeCaptureEvent({ ...event, ...extra })).toThrow();
+    for (const change of [
+      { index: -1 },
+      { index: 0.5 },
+      { index: worker.LIMITS.dataFrames + 1 },
+      { phase: "done" },
+      { messageId: "source-id" },
+      { kind: "thinking-delta" },
+    ])
+      expect(() => codec.decodeCaptureEvent({ ...event, ...change })).toThrow();
+    const legacy = {
+      kind: "message-start",
+      messageId,
+      role: "assistant",
+      source: { disposition: "unavailable", value: null },
+      resultCallId: null,
+    };
+    expect(codec.decodeCaptureEvent(legacy)).toEqual(legacy);
+    const recording = {
+      source: { first: 1, last: 1, firstObservedMs: 0, lastObservedMs: 0 },
+      event,
+    };
+    expect(codec.decodeRecordingEvent(recording)).toEqual(recording);
+  },
+);
