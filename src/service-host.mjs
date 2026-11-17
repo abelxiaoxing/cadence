@@ -15754,7 +15754,7 @@ class ConversationRecords {
       items: extended.items.map((item) => ({
         ...item,
         text: sanitizeText(item.text, secrets),
-        name: sanitizeText(item.name, secrets),
+        name: clipText(sanitizeText(item.name, secrets), 128),
         args: sanitizeText(item.args, secrets)
       }))
     });
@@ -32906,10 +32906,10 @@ class LiveCapture {
         Object.assign(item, tool.item, { id, renderId });
         tool.item = item;
       }
-      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
-      tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
+      tool.item.name = clipText(sanitizeText(e.name, this.secrets()), 128);
       if (!e.declaration && !this.order.some((row) => ("callId" in row) && row.callId === e.callId))
         this.order.push({ callId: e.callId });
       tool.item.state = e.kind === "tool-start" ? "running" : e.isError ? "failed" : "completed";
@@ -35279,7 +35279,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "ef4ec1cdcde7f08cfbf71bb084c7678cdd5a6ed7a19dc4e8471e01fbaac0455b",
+  build: "9dd6139a141df55410936ada8c9074dfe1665ddc528d87d96d3b36a8aed95266",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

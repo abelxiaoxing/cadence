@@ -991,7 +991,7 @@ export class ConversationRecords {
       items: extended.items.map((item) => ({
         ...item,
         text: sanitizeText(item.text, secrets),
-        name: sanitizeText(item.name, secrets),
+        name: clipText(sanitizeText(item.name, secrets), 128),
         args: sanitizeText(item.args, secrets),
       })),
     });
