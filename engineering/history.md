@@ -90,7 +90,11 @@ Old history without the metadata keeps its recorded identity, not a guessed asso
 Tool execution/results attach by call identity without moving the declaration's source position.
 An unexecuted declaration without a matching result uses the same state in capture and Pi: assistant `stopReason=error|length` means `unavailable`, `aborted` means `canceled`, and a normal response leaves it `pending`; none sets the tool's `error` flag.
 The assistant's own failed/canceled text state and existing reply status/notice remain independent, including while the owner still reports `running` during model-request retry.
-Only a matching Pi `toolResult` (call ID and name, with ambiguous duplicate declarations refused association) decides the tool's `completed`/`failed` state from `isError`; later response failure or cancellation does not overwrite that result.
+Only a matching Pi `toolResult` decides the tool's `completed`/`failed` state from `isError`; later response failure or cancellation does not overwrite that result.
+Association uses the source call ID and complete, unredacted, unclipped source name, held only in `turnItems`' local index beside the declaration's public item, never in a `ChatItem`, DTO, log or new persistent record.
+Display names still undergo current read redaction and Unicode-safe clipping to the existing 128-byte JSON-encoded budget (including quotes/escapes); identical clipped prefixes or identical redacted displays do not prove identity.
+Missing/non-string historical names retain the `tool` fallback on both sides; unmatched results remain separate source-positioned items.
+Unresolved duplicate call IDs remain ambiguous even when their names differ; only a matched result releases that ID for a subsequent declaration, preserving legal reuse and each declaration's render identity.
 Settled reads make remaining pending/running declarations unavailable (or canceled for a canceled reply), never successful or failed just because their parent settled.
 These read-time rules also apply to unmarked old Pi history without inventing capture links or rewriting stored bytes.
 Snapshots replace tool output; a hash of the full redacted item versions equal-part content changes independently of explicit execution state.

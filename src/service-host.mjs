@@ -9792,18 +9792,18 @@ function turnItems(entries2, secrets) {
               error: ["error", "aborted", "length"].includes(own2(m, "stopReason"))
             });
           } else if (type === "toolCall") {
-            const id = own2(b, "id"), name = own2(b, "name");
+            const id = own2(b, "id"), name = own2(b, "name"), rawName = typeof name === "string" ? name : "tool";
             let args = "";
             try {
               args = JSON.stringify(own2(b, "arguments") ?? {}) ?? "";
             } catch {
               omitted.other = true;
             }
-            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${index}`, typeof name === "string" ? name : "tool", args);
+            const call = tool(typeof id === "string" && id ? id : `${entry.id}:${index}`, rawName, args);
             call.renderId = renderId(index);
             call.state = state === "failed" ? "unavailable" : state === "canceled" ? "canceled" : "pending";
             if (typeof id === "string") {
-              tools.set(id, tools.has(id) ? null : call);
+              tools.set(id, tools.has(id) ? null : { rawName, item: call });
             }
           } else if (type === "thinking" || type === "redactedThinking") {
             const value = own2(b, "thinking");
@@ -9842,10 +9842,10 @@ function turnItems(entries2, secrets) {
         const id = own2(m, "toolCallId"), name = own2(m, "toolName");
         const output = sanitizeText(contentText(own2(m, "content"), omitted), secrets);
         const call = typeof id === "string" ? tools.get(id) : undefined;
-        if (call && call.name === sanitizeText(typeof name === "string" ? name : "tool", secrets)) {
-          call.text = output;
-          call.error = own2(m, "isError") === true;
-          call.state = call.error ? "failed" : "completed";
+        if (call && call.rawName === (typeof name === "string" ? name : "tool")) {
+          call.item.text = output;
+          call.item.error = own2(m, "isError") === true;
+          call.item.state = call.item.error ? "failed" : "completed";
           if (typeof id === "string")
             tools.delete(id);
         } else {
@@ -35259,7 +35259,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "ec9bef2f9572088ab29be4b539a4590bf076b5a4e40aac88a2af497ea7d9a4fb",
+  build: "d408755bb06229d0e5de5ddf1688b313c4b0c7fcd0ebba5811d3d3d6d4f1c4c6",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
