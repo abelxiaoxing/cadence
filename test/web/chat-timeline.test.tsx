@@ -19,10 +19,15 @@ import type {
 } from "../../web/src/client/conversation-reader";
 import { useConversation } from "../../web/src/client/use-conversation";
 import { useWorkbench } from "../../web/src/client/use-workbench";
+import { MarkdownBody } from "../../web/src/components/rich/Markdown";
+import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
 import { CollapsibleHead } from "../../web/src/components/transcript/CollapsibleHead";
 import { LazyMount } from "../../web/src/components/transcript/LazyMount";
 import { ChatComposer } from "../../web/src/components/workspace/ChatComposer";
-import { ToolStep } from "../../web/src/components/workspace/ChatSteps";
+import {
+  StepText,
+  ToolStep,
+} from "../../web/src/components/workspace/ChatSteps";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
@@ -861,6 +866,190 @@ it("ChatWorkspace keeps outer row identities through Pi handoff, inserted blocks
   f.flushFrames();
   expect(f.draw().rows[1].lazy.props.height).toBe(777);
 });
+
+// Inspect the actual memoized segment elements and their inner renderer, not a
+// parallel key calculator. These are controlled component trees, NOT mounted
+// React DOM continuity or layout evidence.
+function markdownSegments(props: ComponentProps<typeof StreamMarkdown>) {
+  const body = (
+    StreamMarkdown as unknown as {
+      type(props: ComponentProps<typeof StreamMarkdown>): ReactElement<{
+        children: ReactElement<{ text: string }>[];
+      }>;
+    }
+  ).type(props);
+  return body.props.children.map((element) => {
+    const renderer = (
+      element.type as unknown as {
+        type(props: { text: string }): ReactElement<{ text: string }>;
+      }
+    ).type(element.props);
+    return {
+      key: element.key,
+      type: element.type,
+      text: element.props.text,
+      renderer: renderer.type,
+      renderedText: renderer.props.text,
+    };
+  });
+}
+
+it("the real chat path keeps source-position Markdown identities across append, active-to-frozen, durable/terminal handoff, tool insertion and history observations", () => {
+  const text = "Header 🚀\r\n\r\n- item\r\n\r\n  continuation\r\n\r\nTail";
+  const base = loaded("command", "command:user", 1);
+  const preview: LoadedTurn = {
+    ...base,
+    steps: base.steps.map((step, i) =>
+      i === 1 ? { ...step, text, state: "streaming" } : step,
+    ),
+  };
+  const f = workspaceFixture([preview]);
+  const draw = () => {
+    const { outer, view } = required(
+      f
+        .draw()
+        .rows.find((row) => row.view.props.turn.renderId === preview.renderId),
+    );
+    const rowPath = `row:${outer.key}`;
+    const row = child(rowPath, () => {
+      const tree = (
+        ChatTurnView as unknown as {
+          type(props: ComponentProps<typeof ChatTurnView>): ReactNode;
+        }
+      ).type(view.props);
+      commit();
+      return tree;
+    });
+    const part = required(
+      elements<{ className?: string; children?: ReactNode }>(row, "div").find(
+        (element) => element.props.className === "msg-part",
+      ),
+    );
+    const step = required(
+      elements<ComponentProps<typeof StepText>>(part, StepText)[0],
+    );
+    const partPath = `${rowPath}/part:${part.key}`;
+    const content = child(partPath, () => {
+      const tree = StepText(step.props);
+      commit();
+      return tree;
+    });
+    const markdown = required(
+      elements<ComponentProps<typeof StreamMarkdown>>(
+        content,
+        StreamMarkdown,
+      )[0],
+    );
+    return {
+      row: outer.key,
+      part: part.key,
+      type: markdown.type,
+      streaming: markdown.props.streaming,
+      segments: child(`${partPath}/markdown`, () =>
+        markdownSegments(markdown.props),
+      ),
+    };
+  };
+  const initial = draw();
+  expect(initial.streaming).toBe(true);
+  expect(initial.segments.map((segment) => segment.key)).toEqual([
+    "stream-offset:0",
+    `stream-offset:${text.indexOf("- item")}`,
+    `stream-offset:${text.indexOf("Tail")}`,
+  ]);
+  expect(initial.segments.map((segment) => segment.renderedText).join("")).toBe(
+    text,
+  );
+  expect(
+    initial.segments.every((segment) => segment.renderer === MarkdownBody),
+  ).toBe(true);
+
+  const appended: LoadedTurn = {
+    ...preview,
+    steps: preview.steps.map((step, i) =>
+      i === 1
+        ? { ...step, text: `${text}\r\n\r\n## Next\r\n\r\nnew tail` }
+        : step,
+    ),
+  };
+  f.conversation.turns = [appended];
+  const next = draw();
+  // Complete prefix props and identities do not change. The old active tail
+  // gains only its source separator and keeps both component/renderer types.
+  expect(next.segments.slice(0, 2)).toEqual(initial.segments.slice(0, 2));
+  expect(next.segments[2]).toEqual({
+    ...initial.segments[2],
+    text: "Tail\r\n\r\n",
+    renderedText: "Tail\r\n\r\n",
+  });
+  expect(next.segments.map((segment) => segment.text).join("")).toBe(
+    appended.steps[1].text,
+  );
+
+  const durable: LoadedTurn = {
+    ...appended,
+    header: { ...appended.header, id: "pi-user" },
+    steps: [
+      appended.steps[0],
+      { ...appended.steps[2], id: "new-tool", renderId: "capture:unrelated:0" },
+      { ...appended.steps[1], id: "pi-text", state: "completed" },
+      appended.steps[2],
+    ],
+  };
+  const terminal: LoadedTurn = {
+    ...durable,
+    header: {
+      ...durable.header,
+      status: "completed",
+      stable: durable.steps.length,
+    },
+  };
+  for (const turns of [
+    [durable],
+    [terminal],
+    [{ ...terminal, steps: terminal.steps.map((step) => ({ ...step })) }],
+    [loaded("older-pi", undefined, 0), terminal],
+  ]) {
+    f.conversation.turns = turns;
+    const observed = draw();
+    expect(observed.streaming).toBe(false);
+    expect(observed).toEqual({ ...next, streaming: false });
+  }
+});
+
+it.each([
+  {
+    before: "Unchanged prefix\n\n\\[\na\n\nb",
+    append: "\n\\]\n\nAfter",
+  },
+  {
+    before: "Unchanged prefix\n\n[ref]\n\nMiddle",
+    append: "\n\n> [ref]: https://example.com/",
+  },
+  {
+    before: "Unchanged prefix\n\nNote[^n]\n\nMiddle",
+    append: "\n\n[^n]: note",
+  },
+])(
+  "new syntax only revises the dependent suffix, without replacing the unaffected prefix ($append)",
+  ({ before, append }) => {
+    const initial = render(() =>
+      markdownSegments({ text: before, streaming: true }),
+    );
+    const next = render(() =>
+      markdownSegments({ text: before + append, streaming: true }),
+    );
+    expect(next[0]).toEqual(initial[0]);
+    expect(next[1].key).toBe(initial[1].key);
+    expect(next[1].type).toBe(initial[1].type);
+    expect(next[1].renderer).toBe(MarkdownBody);
+    expect(next.map((segment) => segment.text).join("")).toBe(before + append);
+    for (const streaming of [false, true, false])
+      expect(
+        render(() => markdownSegments({ text: before + append, streaming })),
+      ).toEqual(next);
+  },
+);
 
 it("the main row's actual ancestor and step keys preserve an opened tool and its read value during handoff and a pending final read", async () => {
   const source = fixture();

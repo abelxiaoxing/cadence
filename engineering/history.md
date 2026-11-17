@@ -93,6 +93,9 @@ Thinking activity frames contain only message UUID, index and phase, share the e
 A body-free placeholder has no detail parts; readable thinking is read lazily only from Pi, with the same render identity, while unavailable/interrupted content is explicitly nonexpandable.
 Listing/detail presentation metadata is optional for older history and carries no new body store.
 Activity sequence/kind is an observation of capture, never proof of native settlement, tool success or workflow completion.
+Every live turn read clones its activity metadata and sanitizes an optional tool name with the same current (or last successfully observed) literals from `ConversationRecords.readSecrets()` used by the rest of that read, even if no capture event arrived since the previous read.
+The name is clipped to its existing 128-byte wire bound only after sanitation, on a UTF-8 scalar boundary; kind/sequence and absence of a name are preserved.
+This projection changes neither `LiveCapture` nor admission/session bytes, including when an earlier step page carries the activity header; a secret-source failure without any prior successful observation retains the existing refusal rather than returning unredacted metadata.
 The owner's `conversation-commands-v1` keeps per message `accepted.json` (command, session, parent entry, file size, execution snapshot and selected session path), an expected-byte `state.json` (status, notice, omitted flags, its user entry), the auth journal, `launch.json` and `native.json`, plus a per-session index of the last 64 messages.
 An accepted command ID is never admitted again; a lost reply observes its original record.
 Read projections reapply current redaction to failed attempts and live previews as well as Pi content.

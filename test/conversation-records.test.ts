@@ -10,8 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { expect, it } from "vitest";
+import { ContractError } from "../src/service/contracts/core.ts";
 import { decodeWorkbenchResult } from "../src/service/contracts/workbench.ts";
-import { ConversationRecords } from "../src/service/conversation-records.ts";
+import {
+  ConversationRecords,
+  observedFile,
+} from "../src/service/conversation-records.ts";
 import {
   Conversations,
   LiveCapture,
@@ -35,7 +39,7 @@ function fixture() {
     files: new PrivateFiles(root),
     store: { root: cwd },
   } as unknown as ServiceCoordination;
-  let secrets: string[] = [];
+  let secrets: string[] | Error = [];
   const active = new Map<string, LiveTurn>();
   const records = new ConversationRecords({
     coordination,
@@ -43,7 +47,10 @@ function fixture() {
     agentDir,
     active,
     assertCurrent() {},
-    secrets: () => secrets,
+    secrets: () => {
+      if (secrets instanceof Error) throw secrets;
+      return secrets;
+    },
   });
   const write = (path: string, value: unknown) =>
     coordination.files.create(path, JSON.stringify(value));
@@ -96,7 +103,7 @@ function fixture() {
     cwd,
     agentDir,
     command,
-    secrets(value: string[]) {
+    secrets(value: string[] | Error) {
       secrets = value;
     },
   };
@@ -263,6 +270,230 @@ function goLive(
   f.active.set(commandId, live);
   return live;
 }
+it("live tool activity reapplies current secrets on every read without changing capture or retained files", () => {
+  const f = fixture(),
+    saved = writeSession(f, [
+      { role: "user", content: [{ type: "text", text: "Earlier" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Reply" }],
+        stopReason: "stop",
+      },
+    ]),
+    secret = "fabricated-activity-credential",
+    name = `inspect-${secret}`,
+    commandId = f.command(
+      saved.id,
+      "running",
+      null,
+      "Next",
+      "",
+      saved.entries[1],
+    ),
+    capture = new LiveCapture(() => []),
+    live = goLive(f, commandId, capture),
+    admission = structuredClone(live.accepted);
+  const originals = [
+    saved.path,
+    f.records.path(commandId, "accepted.json"),
+    f.records.path(commandId, "state.json"),
+    f.records.indexPath(saved.id),
+  ].map((path) => ({
+    path,
+    bytes: readFileSync(path),
+    identity: observedFile(path),
+  }));
+  const read = () => {
+    const raw = f.records.turnSteps(saved.id, saved.entries[1], 1, null);
+    const decoded = decodeWorkbenchResult(raw);
+    if (
+      raw.kind !== "conversation-turn" ||
+      decoded.kind !== "conversation-turn"
+    )
+      throw Error("turn");
+    return { raw, decoded };
+  };
+  expect(read().decoded.turn.activity).toEqual({
+    kind: "waiting",
+    sequence: 0,
+  });
+  const frame = {
+      protocol: 2 as const,
+      childRunId: randomUUID(),
+      observedMs: 0,
+    },
+    callId = randomUUID(),
+    start = {
+      kind: "tool-start" as const,
+      callId,
+      source: { disposition: "unavailable" as const, value: null },
+      declaration: null,
+      name,
+      argsDetailId: randomUUID(),
+    };
+  capture.accept({ ...frame, workerSeq: 1, event: start });
+  expect(read().decoded.turn.activity).toEqual({
+    kind: "tool",
+    sequence: 1,
+    name,
+  });
+  // Only the reader's secret source changes. No new capture event is needed.
+  f.secrets([secret]);
+  for (const sequence of [1, 2]) {
+    if (sequence === 2)
+      capture.accept({
+        ...frame,
+        workerSeq: sequence,
+        event: {
+          kind: "tool-update",
+          callId,
+          detailId: randomUUID(),
+          semantics: "snapshot",
+        },
+      });
+    const activity = capture.activity,
+      before = structuredClone({ activity, preview: capture.extend([]) });
+    expect(activity).toEqual({ kind: "tool", sequence, name });
+    for (let repeat = 0; repeat < 2; repeat++) {
+      const { raw, decoded } = read();
+      expect(JSON.stringify([raw, decoded])).not.toContain(secret);
+      expect(decoded.turn.activity).toEqual({
+        kind: "tool",
+        sequence,
+        name: "inspect-[redacted]",
+      });
+      expect(raw.turn.activity).not.toBe(activity);
+      expect(capture.activity).toBe(activity);
+      expect({
+        activity: capture.activity,
+        preview: capture.extend([]),
+      }).toEqual(before);
+      expect(() =>
+        decodeWorkbenchResult({
+          ...raw,
+          turn: {
+            ...raw.turn,
+            activity: { ...raw.turn.activity, text: "not-allowed" },
+          },
+        }),
+      ).toThrow();
+    }
+  }
+  capture.accept({
+    ...frame,
+    workerSeq: 3,
+    event: { ...start, callId: randomUUID(), name: "read" },
+  });
+  expect(read().decoded.turn.activity).toEqual({
+    kind: "tool",
+    sequence: 3,
+    name: "read",
+  });
+  capture.accept({
+    ...frame,
+    workerSeq: 4,
+    event: { kind: "model-retry", progress: null },
+  });
+  const waiting = read();
+  expect(waiting.decoded.turn.activity).toEqual({
+    kind: "waiting",
+    sequence: 4,
+  });
+  expect(waiting.raw.turn.activity).not.toBe(capture.activity);
+  expect(waiting.raw.turn.activity).not.toHaveProperty("name");
+  expect(capture.activity).toEqual({ kind: "waiting", sequence: 4 });
+  expect(live.accepted).toEqual(admission);
+  for (const { path, bytes, identity } of originals) {
+    expect(readFileSync(path)).toEqual(bytes);
+    expect(observedFile(path)).toBe(identity);
+  }
+});
+
+it.each([
+  { name: "~xy~".repeat(30), expected: `${"[redacted]".repeat(12)}[redac` },
+  {
+    name: `${"a".repeat(115)}~xy~🔧end`,
+    expected: `${"a".repeat(115)}[redacted]`,
+  },
+])(
+  "activity names are safely bounded after read redaction: $name",
+  ({ name, expected }) => {
+    const f = fixture(),
+      id = randomUUID(),
+      commandId = f.command(id, "running", null),
+      capture = new LiveCapture(() => []);
+    goLive(f, commandId, capture);
+    capture.accept({
+      protocol: 2,
+      childRunId: randomUUID(),
+      workerSeq: 1,
+      observedMs: 0,
+      event: {
+        kind: "tool-start",
+        callId: randomUUID(),
+        source: { disposition: "unavailable", value: null },
+        declaration: null,
+        name,
+        argsDetailId: randomUUID(),
+      },
+    });
+    f.secrets(["~xy~"]);
+    // Activity is also returned with an earlier page, independently of tool rows.
+    const raw = f.records.turnSteps(id, null, 0, 1),
+      decoded = decodeWorkbenchResult(raw);
+    expect(JSON.stringify([raw, decoded])).not.toContain("~xy~");
+    expect(decoded).toMatchObject({
+      turn: { activity: { kind: "tool", sequence: 1, name: expected } },
+    });
+    expect(Buffer.byteLength(expected)).toBeLessThanOrEqual(128);
+    expect(capture.activity).toEqual({ kind: "tool", sequence: 1, name });
+  },
+);
+
+it.each([
+  { error: new Error("unreadable fixture secrets"), code: "unavailable" },
+  { error: new ContractError("corrupt-selected"), code: "corrupt-selected" },
+])(
+  "activity reads retain secret-source refusal and last-known behavior: $code",
+  ({ error, code }) => {
+    const f = fixture(),
+      id = randomUUID(),
+      commandId = f.command(id, "running", null),
+      capture = new LiveCapture(() => []);
+    goLive(f, commandId, capture);
+    capture.accept({
+      protocol: 2,
+      childRunId: randomUUID(),
+      workerSeq: 1,
+      observedMs: 0,
+      event: {
+        kind: "tool-start",
+        callId: randomUUID(),
+        source: { disposition: "unavailable", value: null },
+        declaration: null,
+        name: "inspect-fabricated-activity-credential",
+        argsDetailId: randomUUID(),
+      },
+    });
+    const read = () =>
+      decodeWorkbenchResult(f.records.turnSteps(id, null, 0, null));
+    f.secrets(error);
+    expect(read).toThrow(code);
+    f.secrets(["fabricated-activity-credential"]);
+    const known = read();
+    expect(known).toMatchObject({
+      turn: {
+        activity: { kind: "tool", sequence: 1, name: "inspect-[redacted]" },
+      },
+    });
+    f.secrets(error);
+    expect(read()).toEqual(known);
+    expect(capture.activity.name).toBe(
+      "inspect-fabricated-activity-credential",
+    );
+  },
+);
+
 it("thinking Pi wrote is a lazily read step; the capture's recorded thinking flag is not reported beside it", () => {
   const f = fixture(),
     secret = "fabricated-thinking-credential";

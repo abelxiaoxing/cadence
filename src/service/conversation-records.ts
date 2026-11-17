@@ -959,6 +959,7 @@ export class ConversationRecords {
       stable: items.length,
     };
     const omitted = live.capture?.omitted;
+    const activity = live.capture?.activity;
     const turn = listTurn({
       id: chain[0]?.id ?? live.commandId,
       entry: null,
@@ -969,7 +970,19 @@ export class ConversationRecords {
       status: live.state.status,
       notice: sanitizeText(live.capture?.notice ?? "", secrets),
       ...(live.capture?.retry ? { retry: live.capture.retry } : {}),
-      ...(live.capture ? { activity: live.capture.activity } : {}),
+      ...(activity
+        ? {
+            activity: {
+              ...activity,
+              // The reader may know secrets that capture did not yet know.
+              ...(activity.name === undefined
+                ? {}
+                : {
+                    name: clipText(sanitizeText(activity.name, secrets), 128),
+                  }),
+            },
+          }
+        : {}),
       omitted: {
         thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
