@@ -3,6 +3,7 @@ import { IMAGE_LIMITS } from "../../src/image-content.mjs";
 import {
   type ChatStatus,
   type ChatStep,
+  decodeWorkbenchResult,
   STEP_READ,
   type WorkbenchRead,
   type WorkbenchResult,
@@ -13,6 +14,13 @@ import {
   LIVE_MS,
 } from "../../web/src/client/conversation-reader";
 import { PNG } from "../helpers/images.ts";
+import {
+  independentFixtureIds,
+  independentRead,
+  independentResults,
+  independentScenarios,
+  independentTimeline,
+} from "../helpers/runtime-timeline.ts";
 
 const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
 afterEach(() => {
@@ -869,4 +877,158 @@ it("closing an in-flight observation cannot publish or recreate a poll timer", a
   await vi.advanceTimersByTimeAsync(0);
   expect(notify).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(independentScenarios)(
+  "$kind/$order/$terminal: reads the backend-constrained independent execution timeline without merging results, including earlier history and a cold reconnect",
+  async ({ kind, order, terminal }) => {
+    vi.useFakeTimers();
+    const ids = independentFixtureIds();
+    const points = independentTimeline(order, terminal);
+    let snapshot = independentResults(ids, kind, points[0]);
+    const reads: WorkbenchRead[] = [];
+    const client = {
+      workbenchRead: async (request: WorkbenchRead) => {
+        reads.push(request);
+        return {
+          kind: "ok" as const,
+          value: decodeWorkbenchResult(independentRead(snapshot, request)),
+        };
+      },
+    };
+    let reader = new ConversationReader(client, ids.conversation, () => {});
+    reader.setActive(true);
+    try {
+      for (const point of points) {
+        snapshot = independentResults(ids, kind, point);
+        if (point.action === "reconnect") {
+          reader.close();
+          reader = new ConversationReader(client, ids.conversation, () => {});
+          reader.setActive(true);
+        } else reader.refresh();
+        await vi.advanceTimersByTimeAsync(0);
+        const view = reader.view(),
+          turn = view.turns.at(-1);
+        if (!turn) throw Error("missing timeline turn");
+        expect(view.error, point.action).toBe("");
+        expect(turn.renderId).toBe(`command:${ids.command}:user`);
+        expect(turn.steps, point.action).toEqual(snapshot.turn.steps);
+        expect(new Set(turn.steps.map((s) => s.renderId)).size).toBe(
+          turn.steps.length,
+        );
+        if (point.executed) {
+          const execution = turn.steps.filter(
+            (s) => s.renderId === `call:${ids.execution}`,
+          );
+          expect(execution).toHaveLength(1);
+          expect(execution[0].parts).toBe(1);
+          expect(execution[0].id).toBe(
+            point.durable ? ids.call : ids.execution,
+          );
+        }
+        if (point.repeated) {
+          expect(
+            turn.steps
+              .filter((s) => s.renderId?.startsWith("call:"))
+              .map((s) => s.renderId),
+          ).toEqual([`call:${ids.execution}`, `call:${ids.repeatExecution}`]);
+        }
+        if (point.action === "result-mark" || point.action === "reconnect") {
+          expect(view.turns.map((t) => t.ordinal)).toEqual([2, 3]);
+          reader.loadEarlier();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(reader.view().turns.map((t) => t.ordinal)).toEqual([
+            0, 1, 2, 3,
+          ]);
+          expect(reader.view().turns.at(-1)).toBe(turn);
+          expect(
+            reader
+              .view()
+              .turns.slice(0, -1)
+              .map((t) => t.steps),
+          ).toEqual(snapshot.history.map((t) => t.steps));
+        }
+      }
+      // Listing observations and pagination never read unopened tool details.
+      expect(reads.filter((r) => r.kind === "conversation-step")).toEqual([]);
+    } finally {
+      reader.close();
+    }
+  },
+);
+
+it("independent detail reads reject same-part stale versions, equal-body wrong identities and replies from a retired conversation", async () => {
+  vi.useFakeTimers();
+  const ids = independentFixtureIds(),
+    points = independentTimeline("final-first");
+  const at = (action: (typeof points)[number]["action"]) => {
+    const point = points.find((p) => p.action === action);
+    if (!point) throw Error("missing timeline checkpoint");
+    return independentResults(ids, "ambiguous", point);
+  };
+  let snapshot = at("tool-first"),
+    hold = false;
+  let pending: { signal?: AbortSignal; release(): void } | undefined;
+  let substituteEqualResult = false;
+  const client = {
+    workbenchRead: async (request: WorkbenchRead, signal?: AbortSignal) => {
+      let value = decodeWorkbenchResult(independentRead(snapshot, request));
+      if (request.kind === "conversation-step") {
+        if (substituteEqualResult && value.kind === "conversation-step") {
+          const other = snapshot.tools.at(-1);
+          if (!other) throw Error("missing repeated execution");
+          value = { ...value, item: other.item };
+        }
+        if (hold)
+          await new Promise<void>((resolve) => {
+            pending = { signal, release: resolve };
+          });
+      }
+      return { kind: "ok" as const, value };
+    },
+  };
+  const reader = new ConversationReader(client, ids.conversation, () => {});
+  reader.setActive(true);
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    const first = reader.view().turns.at(-1);
+    if (!first) throw Error("missing first observation");
+    const index = first.steps.findIndex(
+      (s) => s.renderId === `call:${ids.execution}`,
+    );
+    expect(await first.detail(index, 1, new AbortController().signal)).toEqual({
+      text: "first output",
+      args: "{}",
+    });
+    snapshot = at("tool-later");
+    await expect(
+      first.detail(index, 1, new AbortController().signal),
+    ).rejects.toThrow("stale");
+    snapshot = at("repeat-result");
+    reader.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    const repeated = reader.view().turns.at(-1);
+    if (!repeated) throw Error("missing repeated observation");
+    const actual = snapshot.tools.slice(-2);
+    expect(actual[0].item.text).toBe(actual[1].item.text);
+    expect(actual[0].item.version).toBe(actual[1].item.version);
+    substituteEqualResult = true;
+    await expect(
+      repeated.detail(index, 1, new AbortController().signal),
+    ).rejects.toThrow("stale");
+    substituteEqualResult = false;
+    hold = true;
+    const stale = expect(
+      repeated.detail(index, 1, new AbortController().signal),
+    ).rejects.toThrow("stale");
+    await vi.advanceTimersByTimeAsync(0);
+    reader.close();
+    expect(pending?.signal?.aborted).toBe(true);
+    if (!pending) throw Error("missing pending detail");
+    pending.release();
+    await stale;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    reader.close();
+  }
 });

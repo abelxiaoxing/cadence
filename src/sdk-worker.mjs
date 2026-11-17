@@ -706,6 +706,9 @@ try {
           if (!capture.messageId) refuse("events", "event-projection-failed");
           manager.appendCustomEntry(BROWSER_COMMAND_ENTRY, {
             captureMessageId: capture.messageId,
+            ...(capture.resultCallId
+              ? { captureResultCallId: capture.resultCallId }
+              : {}),
             commandId: command,
             userId: recordedUser,
             ...(command === publicRequest.runId

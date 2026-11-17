@@ -26,6 +26,7 @@ import { sessionDirectory } from "../src/service/pi-sessions.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
+import type { CaptureFrame } from "../src/worker-public.mjs";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
 
 function fixture() {
@@ -1549,6 +1550,328 @@ it.each(
     expect(final.value.steps).toEqual(handed.value.steps);
     expect(check(state, "Recorded output", 3, cold).value.steps).toEqual(
       final.value.steps.slice(0, 3),
+    );
+  },
+);
+
+const independentExecutions = [
+  { label: "no declaration", names: [], name: "read", start: true },
+  { label: "end without start", names: [], name: "read", start: false },
+  {
+    label: "duplicate declarations",
+    names: ["read", "read"],
+    name: "read",
+    start: true,
+  },
+  {
+    label: "duplicate IDs with different names",
+    names: ["read", "write"],
+    name: "write",
+    start: true,
+  },
+  {
+    label: "unstarted declaration",
+    names: ["read"],
+    name: "read",
+    start: false,
+  },
+  {
+    label: "long-name display collision",
+    names: ["n".repeat(127)],
+    name: "n".repeat(128),
+    start: true,
+  },
+  {
+    label: "redacted display collision",
+    names: ["lookup-secret-one"],
+    name: "lookup-secret-two",
+    start: true,
+    secrets: ["secret-one", "secret-two"],
+  },
+];
+it.each(
+  independentExecutions.flatMap((test) =>
+    ["final-first", "marker-first"].flatMap((order) =>
+      [false, true].map((isError) => ({ ...test, order, isError })),
+    ),
+  ),
+)(
+  "independent execution $label/$order/isError=$isError keeps its first identity through durable and cold reads",
+  async ({ names, name, start, secrets = [], order, isError }) => {
+    const f = fixture(),
+      saved = writeSession(f, [
+        { role: "user", content: [{ type: "text", text: "Question" }] },
+      ]),
+      commandId = f.command(saved.id, "running", saved.entries[0]);
+    f.secrets(secrets);
+    let leaf = saved.entries[0],
+      serial = 2;
+    const append = (type: string, fields: Record<string, unknown>) => {
+      const id = (serial++).toString(16).padStart(8, "0");
+      appendFileSync(
+        saved.path,
+        `${JSON.stringify({ type, id, parentId: leaf, timestamp: new Date(1_800_000_000_000).toISOString(), ...fields })}\n`,
+      );
+      leaf = id;
+    };
+    const mark = (
+      captureMessageId?: string,
+      captureResultCallId?: string | null,
+    ) =>
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId,
+          userId: saved.entries[0],
+          ...(captureMessageId ? { captureMessageId } : {}),
+          ...(captureResultCallId ? { captureResultCallId } : {}),
+        },
+      });
+    mark();
+    const capture = new LiveCapture(() => secrets),
+      frames: CaptureFrame[] = [];
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          const frame = JSON.parse(String(chunk));
+          frames.push(frame);
+          capture.accept(frame);
+          done();
+        },
+      }),
+      () => {
+        throw Error("capture failed");
+      },
+    );
+    const sdk = new SdkCapture(emitter, secrets),
+      live = goLive(f, commandId, capture);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    const declaration = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Before" },
+        ...names.map((name) => ({
+          type: "toolCall",
+          id: "source-call",
+          name,
+          arguments: {},
+        })),
+        { type: "text", text: "After" },
+      ],
+    };
+    await sdk.event({ type: "message_start", message: declaration });
+    const declarationId = sdk.messageId!;
+    await sdk.event({ type: "message_end", message: declaration });
+    append("message", { message: declaration });
+    mark(declarationId);
+    let viewLeaf: string | null = null,
+      beforeTail: number | null = null;
+    const paths = [
+      saved.path,
+      f.records.path(commandId, "accepted.json"),
+      f.records.path(commandId, "state.json"),
+      f.records.indexPath(saved.id),
+    ];
+    const read = (reader = f.records, before: number | null = null) => {
+      const original = paths.map((path) => readFileSync(path));
+      const value = decodeWorkbenchResult(
+        reader.turnSteps(saved.id, viewLeaf, 0, before ?? beforeTail),
+      );
+      if (value.kind !== "conversation-turn") throw Error("turn");
+      const items = value.steps.map((step, index) => {
+        if (!step.parts) return { ...step, args: "" };
+        const detail = decodeWorkbenchResult(
+          reader.step(saved.id, viewLeaf, value.turn.id, index, 0),
+        );
+        if (detail.kind !== "conversation-step") throw Error("step");
+        expect(detail.item).toMatchObject({
+          renderId: step.renderId,
+          state: step.state,
+          version: step.version,
+        });
+        return detail.item;
+      });
+      expect(paths.map((path) => readFileSync(path))).toEqual(original);
+      for (const secret of secrets)
+        expect(JSON.stringify([value, items])).not.toContain(secret);
+      return { value, items };
+    };
+    const declared = read();
+    const check = (state: string, output: string, reader = f.records) => {
+      const observed = read(reader);
+      expect(observed.items.map((item) => item.role)).toEqual([
+        "user",
+        "assistant",
+        ...names.map(() => "tool"),
+        "assistant",
+        "tool",
+      ]);
+      expect(observed.items.slice(1, -1).map((item) => item.renderId)).toEqual(
+        declared.items.slice(1).map((item) => item.renderId),
+      );
+      for (const item of observed.items.slice(2, 2 + names.length)) {
+        expect(item).toMatchObject({
+          state: live.state.status === "running" ? "pending" : "unavailable",
+          error: false,
+          text: "",
+        });
+      }
+      expect(observed.items.at(-1)).toMatchObject({
+        state,
+        error: state === "failed",
+        text: output,
+      });
+      return observed;
+    };
+    const event = { toolCallId: "source-call", toolName: name };
+    let firstRenderId: string | undefined;
+    if (start) {
+      await sdk.event({ type: "tool_execution_start", ...event, args: {} });
+      firstRenderId = check("running", "").items.at(-1)!.renderId;
+      for (const text of ["First update", "Other update"]) {
+        const previous = read();
+        await sdk.event({
+          type: "tool_execution_update",
+          ...event,
+          partialResult: { content: [{ type: "text", text }] },
+        });
+        const updated = check("running", text);
+        expect(updated.value.steps.at(-1)!.parts).toBe(
+          previous.value.steps.at(-1)!.parts,
+        );
+        expect(updated.value.steps.at(-1)!.version).not.toBe(
+          previous.value.steps.at(-1)!.version,
+        );
+      }
+    }
+    const result = { content: [{ type: "text", text: "Recorded output" }] };
+    await sdk.event({ type: "tool_execution_end", ...event, isError, result });
+    const end = frames.findLast(
+      (frame) => frame.event.kind === "tool-end",
+    )!.event;
+    if (end.kind !== "tool-end") throw Error("end");
+    expect(end.declaration).toBeNull();
+    const state = isError ? "failed" : "completed",
+      first = check(state, "Recorded output");
+    expect(first.items.at(-1)!.renderId).toBe(`call:${end.callId}`);
+    if (start) expect(first.items.at(-1)!.renderId).toBe(firstRenderId);
+    const resultMessage = { role: "toolResult", ...event, isError, ...result };
+    await sdk.event({ type: "message_start", message: resultMessage });
+    const captureMessageId = sdk.messageId!,
+      captureResultCallId = sdk.resultCallId;
+    const finish = () =>
+      sdk.event({ type: "message_end", message: resultMessage });
+    if (order === "final-first") await finish();
+    append("message", { message: resultMessage });
+    expect(check(state, "Recorded output").value.steps).toEqual(
+      first.value.steps,
+    );
+    mark(captureMessageId, captureResultCallId);
+    const handed = check(state, "Recorded output");
+    expect(handed.items.at(-1)!.renderId).toBe(first.items.at(-1)!.renderId);
+    expect(captureResultCallId).toBe(end.callId);
+    if (order === "marker-first") await finish();
+    expect(check(state, "Recorded output").value.steps).toEqual(
+      handed.value.steps,
+    );
+    expect(read(f.records, handed.value.steps.length - 1).value.steps).toEqual(
+      handed.value.steps.slice(0, -1),
+    );
+    // Add a real later message so the independent result is also read on an
+    // earlier step page, not merely omitted from a page of declarations.
+    const tail = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Later answer" }],
+    };
+    await sdk.event({ type: "message_start", message: tail });
+    const tailCaptureId = sdk.messageId!;
+    await sdk.event({ type: "message_end", message: tail });
+    append("message", { message: tail });
+    mark(tailCaptureId);
+    expect(read().value.steps.at(-1)).toMatchObject({
+      role: "assistant",
+      text: "Later answer",
+    });
+    beforeTail = handed.value.steps.length;
+    expect(check(state, "Recorded output").value.steps).toEqual(
+      handed.value.steps,
+    );
+    expect(read().value.turn.steps).toBe(beforeTail + 1);
+    if (order === "marker-first") {
+      // The next delivered user message makes this result an earlier turn.
+      // Its verified result-message identity must suppress the old execution
+      // in the current live tail, without matching source/name or body text.
+      viewLeaf = leaf;
+      const inputId = randomUUID(),
+        message = { role: "user", content: [{ type: "text", text: "Next" }] };
+      const inputCommand = {
+        kind: "conversation-input" as const,
+        commandId: inputId,
+        conversationId: saved.id,
+        turnId: commandId,
+        epoch: live.epoch,
+        mode: "steer" as const,
+        text: "Next",
+      };
+      const accepted = {
+        ...live.accepted,
+        command: inputCommand,
+        offset: readFileSync(saved.path).length,
+      };
+      const inputStatePath = f.records.path(inputId, "state.json");
+      f.files.create(inputStatePath, JSON.stringify(live.state));
+      live.inputs.push({
+        commandId: inputId,
+        accepted,
+        state: { ...live.state },
+        stateFile: f.files.read(inputStatePath, 16 * 1024)!,
+        sent: true,
+        withdrawn: false,
+      });
+      await sdk.event({ type: "message_start", message });
+      const inputCaptureId = sdk.messageId!;
+      await sdk.event({ type: "message_end", message });
+      append("message", { message });
+      append("custom", {
+        customType: BROWSER_COMMAND_ENTRY,
+        data: {
+          commandId: inputId,
+          run: commandId,
+          userId: leaf,
+          captureMessageId: inputCaptureId,
+        },
+      });
+      const current = decodeWorkbenchResult(
+        f.records.turnSteps(saved.id, viewLeaf, 1, null),
+      );
+      expect(current).toMatchObject({
+        kind: "conversation-turn",
+        steps: [{ role: "user", text: "Next" }],
+      });
+      if (current.kind !== "conversation-turn") throw Error("turn");
+      expect(current.steps).toHaveLength(1);
+      expect(check(state, "Recorded output").value.steps).toEqual(
+        handed.value.steps,
+      );
+    }
+    live.state.status = "completed";
+    if (order === "final-first") check(state, "Recorded output");
+    f.active.delete(commandId);
+    writeFileSync(
+      f.records.path(commandId, "state.json"),
+      JSON.stringify({ ...live.state, user: saved.entries[0] }),
+    );
+    const cold = f.reconnect(),
+      head = decodeWorkbenchResult(cold.conversation(saved.id, null, null));
+    if (head.kind !== "conversation") throw Error("conversation");
+    viewLeaf = head.leaf;
+    const final = check(state, "Recorded output", cold);
+    expect(final.items.at(-1)!.renderId).toBe(first.items.at(-1)!.renderId);
+    expect(read(cold, final.value.steps.length - 1).value.steps).toEqual(
+      final.value.steps.slice(0, -1),
     );
   },
 );

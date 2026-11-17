@@ -9367,13 +9367,17 @@ function commandMarker(entry) {
     "commandId",
     "userId",
     ...Object.hasOwn(value ?? {}, "run") ? ["run"] : [],
-    ...Object.hasOwn(value ?? {}, "captureMessageId") ? ["captureMessageId"] : []
+    ...Object.hasOwn(value ?? {}, "captureMessageId") ? ["captureMessageId"] : [],
+    ...Object.hasOwn(value ?? {}, "captureResultCallId") ? ["captureResultCallId"] : []
   ]);
+  if (d.captureResultCallId !== undefined && d.captureMessageId === undefined)
+    throw new ContractError("corrupt-selected");
   return {
     commandId: decodeId(d.commandId),
     userId: decodeEntryId(d.userId),
     ...d.run === undefined ? {} : { run: decodeId(d.run) },
-    ...d.captureMessageId === undefined ? {} : { captureMessageId: decodeId(d.captureMessageId) }
+    ...d.captureMessageId === undefined ? {} : { captureMessageId: decodeId(d.captureMessageId) },
+    ...d.captureResultCallId === undefined ? {} : { captureResultCallId: decodeId(d.captureResultCallId) }
   };
 }
 function captureLinks(entries2) {
@@ -9390,14 +9394,22 @@ function captureLinks(entries2) {
       continue;
     const first = commands.get(marker2.commandId);
     const parent = entry.parentId ? byId.get(entry.parentId) : undefined;
-    if (!parent || parent.pos >= entry.pos || parent.type !== "message" || !["user", "assistant", "toolResult"].includes(role2(parent)) || marker2.userId !== user || !first && entry.parentId !== marker2.userId || first && (first.userId !== marker2.userId || first.run !== marker2.run) || marker2.run === marker2.commandId)
+    if (!parent || parent.pos >= entry.pos || parent.type !== "message" || !["user", "assistant", "toolResult"].includes(role2(parent)) || marker2.userId !== user || !first && entry.parentId !== marker2.userId || first && (first.userId !== marker2.userId || first.run !== marker2.run) || marker2.run === marker2.commandId || marker2.captureResultCallId !== undefined && role2(parent) !== "toolResult")
       throw new ContractError("corrupt-selected");
     commands.set(marker2.commandId, marker2);
     if (marker2.captureMessageId) {
       if (ids.has(marker2.captureMessageId) || links.has(parent.id))
         throw new ContractError("corrupt-selected");
       ids.add(marker2.captureMessageId);
-      links.set(parent.id, marker2.captureMessageId);
+      if (marker2.captureResultCallId) {
+        if (ids.has(marker2.captureResultCallId))
+          throw new ContractError("corrupt-selected");
+        ids.add(marker2.captureResultCallId);
+      }
+      links.set(parent.id, {
+        messageId: marker2.captureMessageId,
+        ...marker2.captureResultCallId ? { resultCallId: marker2.captureResultCallId } : {}
+      });
     }
   }
   return links;
@@ -9488,9 +9500,11 @@ class ParsedSession {
       if (entry.type === "custom" && own2(entry.raw, "customType") === BROWSER_COMMAND_ENTRY) {
         const data = own2(entry.raw, "data");
         const d = data && typeof data === "object" && !Array.isArray(data) ? data : {};
-        const captureId = own2(d, "captureMessageId");
-        if (typeof captureId === "string")
-          this.captureOccurrences.set(captureId, (this.captureOccurrences.get(captureId) ?? 0) + 1);
+        for (const field of ["captureMessageId", "captureResultCallId"]) {
+          const captureId = own2(d, field);
+          if (typeof captureId === "string")
+            this.captureOccurrences.set(captureId, (this.captureOccurrences.get(captureId) ?? 0) + 1);
+        }
         const commandId = own2(d, "commandId");
         if (typeof commandId === "string") {
           const boundary = {
@@ -9536,9 +9550,10 @@ class ParsedSession {
     return this;
   }
   validateCaptures(entries2) {
-    for (const id of captureLinks(entries2).values())
-      if (this.captureOccurrences.get(id) !== 1)
-        throw new ContractError("corrupt-selected");
+    for (const link of captureLinks(entries2).values())
+      for (const id of [link.messageId, link.resultCallId])
+        if (id !== undefined && this.captureOccurrences.get(id) !== 1)
+          throw new ContractError("corrupt-selected");
   }
   current() {
     return this.entries.at(-1)?.id ?? null;
@@ -9750,7 +9765,7 @@ function turnItems(entries2, secrets) {
     state: error ? "failed" : "completed"
   });
   for (const entry of entries2) {
-    const captureId = links.get(entry.id);
+    const link = links.get(entry.id), captureId = link?.messageId;
     const renderId = (index) => captureId ? `capture:${captureId}:${index}` : `pi:${entry.id}:${index}`;
     const m = message(entry);
     if (m) {
@@ -9842,7 +9857,7 @@ function turnItems(entries2, secrets) {
         const id = own2(m, "toolCallId"), name = own2(m, "toolName");
         const output = sanitizeText(contentText(own2(m, "content"), omitted), secrets);
         const call = typeof id === "string" ? tools.get(id) : undefined;
-        if (call && call.rawName === (typeof name === "string" ? name : "tool")) {
+        if (!link?.resultCallId && call && call.rawName === (typeof name === "string" ? name : "tool")) {
           call.item.text = output;
           call.item.error = own2(m, "isError") === true;
           call.item.state = call.item.error ? "failed" : "completed";
@@ -9850,7 +9865,7 @@ function turnItems(entries2, secrets) {
             tools.delete(id);
         } else {
           const orphan = tool(typeof id === "string" && id ? id : entry.id, typeof name === "string" ? name : "tool", "", output, own2(m, "isError") === true);
-          orphan.renderId = renderId(0);
+          orphan.renderId = link?.resultCallId ? `call:${link.resultCallId}` : renderId(0);
         }
       } else if (kind === "bashExecution") {
         const command = own2(m, "command"), output = own2(m, "output"), code = own2(m, "exitCode");
@@ -9868,7 +9883,7 @@ function turnItems(entries2, secrets) {
   }
   const first = entries2.find(isUser) ?? entries2[0];
   return {
-    captureMessages: [...links.values()],
+    captureMessages: [...links.values()].map((link) => link.messageId),
     id: first?.id ?? "",
     entry: entries2.at(-1)?.id ?? null,
     parent: first?.parentId ?? null,
@@ -32874,6 +32889,10 @@ class LiveCapture {
           for (const item of stale.blocks.values())
             item.text = item.args = "";
       }
+    } else if (e.kind === "message-start" && e.role === "tool-result") {
+      const tool = e.resultCallId ? this.tools.get(e.resultCallId) : undefined;
+      if (tool)
+        tool.resultMessageId = e.messageId;
     } else if (e.kind === "thinking-activity") {
       const item = this.block(e.messageId, e.index, "thinking");
       if (item)
@@ -32888,11 +32907,9 @@ class LiveCapture {
         tool.item = item;
       }
       tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
-      tool.source = e.source.disposition === "observed" ? e.source.value ?? undefined : undefined;
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
       tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
-      tool.source = e.source.disposition === "observed" ? e.source.value ?? undefined : undefined;
       if (!e.declaration && !this.order.some((row) => ("callId" in row) && row.callId === e.callId))
         this.order.push({ callId: e.callId });
       tool.item.state = e.kind === "tool-start" ? "running" : e.isError ? "failed" : "completed";
@@ -32990,12 +33007,10 @@ class LiveCapture {
     const previous = new Set(earlier.map((item) => item.renderId));
     const changing = out.findIndex((item) => ["pending", "running", "streaming"].includes(item.state ?? ""));
     let stable = changing < 0 ? out.length : changing;
-    const matchedCalls = new Set;
-    for (const [callId, tool] of this.tools) {
-      const matches = out.filter((item2) => item2.role === "tool" && (item2.renderId === tool.item.renderId || tool.item.renderId === `call:${callId}` && tool.source && item2.id === tool.source && item2.name === tool.item.name));
+    for (const tool of this.tools.values()) {
+      const matches = out.filter((item2) => item2.role === "tool" && item2.renderId === tool.item.renderId);
       if (matches.length !== 1)
         continue;
-      matchedCalls.add(callId);
       const item = matches[0];
       if (item.state !== "pending" && item.state !== "running")
         continue;
@@ -33008,9 +33023,14 @@ class LiveCapture {
     for (const row of this.order) {
       if ("messageId" in row && written.has(row.messageId))
         continue;
+      if ("callId" in row) {
+        const result = this.tools.get(row.callId)?.resultMessageId;
+        if (result && written.has(result))
+          continue;
+      }
       const blocks = "messageId" in row ? [...this.messages.get(row.messageId)?.blocks.entries() ?? []].sort(([a], [b]) => a - b).map(([, item]) => item) : [this.tool(row.callId).item];
       for (const item of blocks) {
-        if (previous.has(item.renderId) || "callId" in row && matchedCalls.has(row.callId) || out.some((existing) => existing.renderId === item.renderId))
+        if (previous.has(item.renderId) || out.some((existing) => existing.renderId === item.renderId))
           continue;
         stable = Math.min(stable, out.length);
         out.push({ ...item });
@@ -35259,7 +35279,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "d408755bb06229d0e5de5ddf1688b313c4b0c7fcd0ebba5811d3d3d6d4f1c4c6",
+  build: "ef4ec1cdcde7f08cfbf71bb084c7678cdd5a6ed7a19dc4e8471e01fbaac0455b",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

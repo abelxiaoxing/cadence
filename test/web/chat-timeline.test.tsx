@@ -8,18 +8,20 @@ import {
   type ReactNode,
 } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import type {
-  ChatStep,
-  ChatTreeNode,
-  ChatTurn,
-  WorkbenchRead,
-  WorkbenchResult,
+import {
+  type ChatStep,
+  type ChatTreeNode,
+  type ChatTurn,
+  decodeWorkbenchResult,
+  type WorkbenchRead,
+  type WorkbenchResult,
 } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
-import type {
-  LoadedTurn,
-  TurnSource,
+import {
+  ConversationReader,
+  type LoadedTurn,
+  type TurnSource,
 } from "../../web/src/client/conversation-reader";
 import { useConversation } from "../../web/src/client/use-conversation";
 import { useWorkbench } from "../../web/src/client/use-workbench";
@@ -38,6 +40,16 @@ import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
 import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import {
+  type IndependentCase,
+  type IndependentCheckpoint,
+  independentFixtureIds,
+  independentRead,
+  independentResults,
+  independentScenarios,
+  independentTimeline,
+  type TimelineOrder,
+} from "../helpers/runtime-timeline.ts";
 import { transport } from "./fixtures";
 
 const hooks = vi.hoisted(() => ({
@@ -1732,4 +1744,309 @@ it("versions, question tracking/jump pin, workflow placement, edit/continue and 
   );
   required(view.rows[0].view.props.onVersion)("pi-first", 1);
   expect(f.conversation.choose).toHaveBeenCalledWith("alternate-leaf", 0);
+});
+
+// This consumes the backend-checked shared contract through the real reader.
+// The workspace's observation hook is controlled, but no LoadedTurn or detail
+// closure is fabricated: all rows and lazy reads originate in ConversationReader.
+async function independentViewFixture(
+  kind: IndependentCase,
+  order: TimelineOrder,
+  terminal: IndependentCheckpoint["status"] = "completed",
+) {
+  vi.useFakeTimers();
+  const ids = independentFixtureIds(),
+    points = independentTimeline(order, terminal);
+  let snapshot = independentResults(ids, kind, points[0]);
+  const requests: {
+    read: WorkbenchRead;
+    signal?: AbortSignal;
+    value: WorkbenchResult;
+    replied: boolean;
+    reply(): void;
+  }[] = [];
+  const client = new ServiceClient(
+    transport({
+      workbenchRead: (read, signal) => {
+        const value = decodeWorkbenchResult(independentRead(snapshot, read));
+        if (read.kind !== "conversation-step")
+          return Promise.resolve({ kind: "ok", value });
+        return new Promise((resolve) =>
+          requests.push({
+            read,
+            signal,
+            value,
+            replied: false,
+            reply() {
+              expect(this.replied).toBe(false);
+              this.replied = true;
+              resolve({ kind: "ok", value });
+            },
+          }),
+        );
+      },
+    }),
+  );
+  let reader = new ConversationReader(client, ids.conversation, () => {});
+  reader.setActive(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const f = workspaceFixture(reader.view().turns);
+  const orderedSteps = (node: ReactNode): ChatStep[] => {
+    if (Array.isArray(node)) return node.flatMap(orderedSteps);
+    if (!isValidElement<{ children?: ReactNode; step?: ChatStep }>(node))
+      return [];
+    if (node.type === ToolStep || node.type === StepText)
+      return [required(node.props.step)];
+    return orderedSteps(node.props.children);
+  };
+  const draw = () => {
+    Object.assign(f.conversation, reader.view());
+    const rows = f.draw().rows;
+    const { outer, view } = required(
+      rows.find(
+        (r) => r.view.props.turn.renderId === `command:${ids.command}:user`,
+      ),
+    );
+    const rowPath = `row:${outer.key}/view:${view.key}`;
+    const tree = child(rowPath, () => {
+      const body = (
+        ChatTurnView as unknown as {
+          type(p: ComponentProps<typeof ChatTurnView>): ReactNode;
+        }
+      ).type(view.props);
+      commit();
+      return body;
+    });
+    const tools = elements<ComponentProps<typeof ToolStep>>(tree, ToolStep).map(
+      (element) => {
+        const path = `${rowPath}/tool:${element.key}`;
+        return child(path, () => {
+          const body = ToolStep(element.props);
+          commit();
+          return {
+            path,
+            step: element.props.step,
+            head: required(
+              elements<ComponentProps<typeof CollapsibleHead>>(
+                body,
+                CollapsibleHead,
+              )[0],
+            ).props,
+            output: elements<{ children?: ReactNode }>(body, "pre").map(
+              (pre) => pre.props.children,
+            ),
+          };
+        });
+      },
+    );
+    expect(orderedSteps(tree).map((s) => s.renderId)).toEqual(
+      snapshot.turn.steps.map((s) => s.renderId),
+    );
+    return { rowPath, tools, rows, turn: view.props.turn };
+  };
+  return {
+    ids,
+    points,
+    requests,
+    draw,
+    tool: () =>
+      required(
+        draw().tools.find((t) => t.step.renderId === `call:${ids.execution}`),
+      ),
+    pending: () =>
+      required(requests.findLast((r) => !r.replied && !r.signal?.aborted)),
+    async observe(point: IndependentCheckpoint) {
+      snapshot = independentResults(ids, kind, point);
+      if (point.action === "reconnect") {
+        reader.close();
+        reader = new ConversationReader(client, ids.conversation, () => {});
+        reader.setActive(true);
+      } else reader.refresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reader.view().error).toBe("");
+    },
+    async earlier() {
+      reader.loadEarlier();
+      await vi.advanceTimersByTimeAsync(0);
+    },
+    close() {
+      reader.close();
+    },
+  };
+}
+
+it.each(independentScenarios)(
+  "$kind/$order/$terminal: actual reader and ChatTurnView/ToolStep keep an opened independent execution across handoff, equal-part updates, final reads, history and cold observation",
+  async ({ kind, order, terminal }) => {
+    const f = await independentViewFixture(kind, order, terminal);
+    let path = "",
+      visible = "",
+      priorReadCount = 0;
+    try {
+      const rowPath = f.draw().rowPath;
+      expect(f.requests).toHaveLength(0);
+      for (const point of f.points.slice(1)) {
+        await f.observe(point);
+        const drawn = f.draw();
+        expect(drawn.rowPath).toBe(rowPath);
+        expect(drawn.tools).toHaveLength(
+          (kind === "ambiguous" ? 2 : 0) + 1 + (point.repeated ? 1 : 0),
+        );
+        let tool = f.tool();
+        if (point.action === "tool-start") {
+          expect(tool.head.open).toBe(false);
+          expect(f.requests).toHaveLength(0);
+          path = tool.path;
+          tool.head.onToggle();
+          tool = f.tool();
+        }
+        expect(tool.path, point.action).toBe(path);
+        expect(tool.head.open, point.action).toBe(true);
+        expect(tool.step.parts).toBe(1);
+        if (visible) expect(tool.output, point.action).toContain(visible);
+        if (
+          [
+            "tool-first",
+            "tool-later",
+            "tool-end",
+            "result-mark",
+            "reply-end",
+            "reconnect",
+          ].includes(point.action)
+        )
+          expect(f.requests.length, point.action).toBeGreaterThan(
+            priorReadCount,
+          );
+        // Complete only the currently wanted request, retaining the displayed
+        // prior snapshot above while the same-part revision/final read waits.
+        const pending = f.requests.findLast(
+          (r) => !r.replied && !r.signal?.aborted,
+        );
+        if (pending) {
+          pending.reply();
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        visible = point.output;
+        if (visible) expect(f.tool().output).toContain(visible);
+        expect(
+          f.requests.every(
+            (r) =>
+              r.value.kind === "conversation-step" &&
+              r.value.item.renderId === `call:${f.ids.execution}`,
+          ),
+        ).toBe(true);
+        expect(
+          f
+            .draw()
+            .tools.filter((t) => t.step.renderId !== `call:${f.ids.execution}`)
+            .every((t) => !t.head.open),
+        ).toBe(true);
+        if (point.action === "result-mark") {
+          await f.earlier();
+          expect(f.draw().rows).toHaveLength(4);
+          expect(f.tool().path).toBe(path);
+          expect(f.tool().head.open).toBe(true);
+          expect(f.tool().output).toContain(visible);
+        }
+        if (point.repeated) {
+          const executions = f
+            .draw()
+            .tools.filter((t) => t.step.renderId?.startsWith("call:"));
+          expect(executions.map((t) => t.step.renderId)).toEqual([
+            `call:${f.ids.execution}`,
+            `call:${f.ids.repeatExecution}`,
+          ]);
+          expect(executions[0].step.version).toBe(executions[1].step.version);
+        }
+        priorReadCount = f.requests.length;
+      }
+      const repeated = required(
+        f
+          .draw()
+          .tools.find(
+            (t) => t.step.renderId === `call:${f.ids.repeatExecution}`,
+          ),
+      );
+      repeated.head.onToggle();
+      f.draw();
+      expect(f.requests).toHaveLength(priorReadCount + 1);
+      const duplicateRead = f.pending();
+      expect(duplicateRead.value).toMatchObject({
+        kind: "conversation-step",
+        item: {
+          renderId: `call:${f.ids.repeatExecution}`,
+          text: "final output",
+        },
+      });
+      duplicateRead.reply();
+      await vi.advanceTimersByTimeAsync(0);
+      const executions = f
+        .draw()
+        .tools.filter((t) => t.step.renderId?.startsWith("call:"));
+      expect(executions.map((t) => t.output)).toEqual([
+        ["final output"],
+        ["final output"],
+      ]);
+      for (const tool of executions) tool.head.onToggle();
+      priorReadCount = f.requests.length;
+      expect(f.tool().head.open).toBe(false);
+      await f.observe(required(f.points.at(-1)));
+      expect(f.tool().head.open).toBe(false);
+      expect(f.requests).toHaveLength(priorReadCount);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it("an independent tool's late revision and retired-conversation replies cannot replace the currently opened output", async () => {
+  const old = await independentViewFixture("ambiguous", "marker-first");
+  let current: Awaited<ReturnType<typeof independentViewFixture>> | undefined;
+  const point = (action: IndependentCheckpoint["action"]) =>
+    required(old.points.find((p) => p.action === action));
+  try {
+    await old.observe(point("tool-first"));
+    old.tool().head.onToggle();
+    old.tool();
+    const first = old.pending();
+    first.reply();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.tool().output).toContain("first output");
+    await old.observe(point("tool-later"));
+    expect(old.tool().output).toContain("first output");
+    const staleRevision = old.pending();
+    await old.observe(point("tool-end"));
+    expect(old.tool().output).toContain("first output");
+    expect(staleRevision.signal?.aborted).toBe(true);
+    const final = old.pending();
+    final.reply();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.tool().output).toContain("final output");
+    staleRevision.reply();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.tool().output).toContain("final output");
+    await old.observe(point("result-mark"));
+    old.tool();
+    const retired = old.pending();
+    old.close();
+    expect(retired.signal?.aborted).toBe(true);
+    current = await independentViewFixture("undeclared", "final-first");
+    await current.observe(
+      required(current.points.find((p) => p.action === "tool-first")),
+    );
+    expect(current.tool().head.open).toBe(false);
+    expect(current.requests).toHaveLength(0);
+    current.tool().head.onToggle();
+    current.tool();
+    current.pending().reply();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.tool().output).toContain("first output");
+    retired.reply();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.tool().output).toContain("first output");
+    expect(current.tool().output).not.toContain("final output");
+  } finally {
+    old.close();
+    current?.close();
+  }
 });

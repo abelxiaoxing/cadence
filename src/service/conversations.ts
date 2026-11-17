@@ -183,7 +183,7 @@ export class LiveCapture {
   private readonly order: ({ messageId: string } | { callId: string })[] = [];
   private readonly tools = new Map<
     string,
-    { item: ChatItem; source?: string }
+    { item: ChatItem; resultMessageId?: string }
   >();
   private readonly details = new Map<
     string,
@@ -273,6 +273,11 @@ export class LiveCapture {
         if (stale)
           for (const item of stale.blocks.values()) item.text = item.args = "";
       }
+    } else if (e.kind === "message-start" && e.role === "tool-result") {
+      // The adapter proved this join using private source identities. Consume
+      // it even if the result has no readable body; never rejoin display names.
+      const tool = e.resultCallId ? this.tools.get(e.resultCallId) : undefined;
+      if (tool) tool.resultMessageId = e.messageId;
     } else if (e.kind === "thinking-activity") {
       const item = this.block(e.messageId, e.index, "thinking");
       if (item)
@@ -292,17 +297,9 @@ export class LiveCapture {
         tool.item = item;
       }
       tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
-      tool.source =
-        e.source.disposition === "observed"
-          ? (e.source.value ?? undefined)
-          : undefined;
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const tool = this.tool(e.callId);
       tool.item.name = sanitizeText(e.name, this.secrets()).slice(0, 128);
-      tool.source =
-        e.source.disposition === "observed"
-          ? (e.source.value ?? undefined)
-          : undefined;
       if (
         !e.declaration &&
         !this.order.some((row) => "callId" in row && row.callId === e.callId)
@@ -458,19 +455,11 @@ export class LiveCapture {
       ["pending", "running", "streaming"].includes(item.state ?? ""),
     );
     let stable = changing < 0 ? out.length : changing;
-    const matchedCalls = new Set<string>();
-    for (const [callId, tool] of this.tools) {
+    for (const tool of this.tools.values()) {
       const matches = out.filter(
-        (item) =>
-          item.role === "tool" &&
-          (item.renderId === tool.item.renderId ||
-            (tool.item.renderId === `call:${callId}` &&
-              tool.source &&
-              item.id === tool.source &&
-              item.name === tool.item.name)),
+        (item) => item.role === "tool" && item.renderId === tool.item.renderId,
       );
       if (matches.length !== 1) continue;
-      matchedCalls.add(callId);
       const item = matches[0];
       if (item.state !== "pending" && item.state !== "running") continue;
       item.text = tool.item.text;
@@ -481,6 +470,10 @@ export class LiveCapture {
     }
     for (const row of this.order) {
       if ("messageId" in row && written.has(row.messageId)) continue;
+      if ("callId" in row) {
+        const result = this.tools.get(row.callId)?.resultMessageId;
+        if (result && written.has(result)) continue;
+      }
       const blocks =
         "messageId" in row
           ? [...(this.messages.get(row.messageId)?.blocks.entries() ?? [])]
@@ -490,7 +483,6 @@ export class LiveCapture {
       for (const item of blocks) {
         if (
           previous.has(item.renderId) ||
-          ("callId" in row && matchedCalls.has(row.callId)) ||
           out.some((existing) => existing.renderId === item.renderId)
         )
           continue;

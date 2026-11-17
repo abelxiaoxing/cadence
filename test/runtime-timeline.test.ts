@@ -1,7 +1,13 @@
 // Genuine capture -> controlled Pi/command records -> closed public DTOs.
 // No browser, provider, owner process or service manager is started.
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { expect, it } from "vitest";
@@ -18,6 +24,10 @@ import { PrivateFiles } from "../src/service/private-files.ts";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import {
+  type IndependentIds,
+  independentResults,
+  independentScenarios,
+  independentTimeline,
   runtimeTimeline,
   type TimelineIds,
   timelineArgs,
@@ -28,7 +38,7 @@ import {
   timelineVersions,
 } from "./helpers/runtime-timeline.ts";
 
-function timelineFixture() {
+function timelineFixture(historyCount = 0) {
   const scratch = process.env.TMPDIR;
   if (!scratch) throw Error("TMPDIR required");
   const root = mkdtempSync(join(scratch, "runtime-timeline-"));
@@ -42,14 +52,15 @@ function timelineFixture() {
     store: { root: cwd },
   } as unknown as ServiceCoordination;
   const active = new Map<string, LiveTurn>();
-  const records = new ConversationRecords({
+  const options = {
     coordination,
     cwd,
     agentDir,
     active,
     assertCurrent() {},
     secrets: () => [],
-  });
+  };
+  let records = new ConversationRecords(options);
   const id = randomUUID(),
     commandId = randomUUID();
   const directory = sessionDirectory(cwd, agentDir);
@@ -71,16 +82,34 @@ function timelineFixture() {
     leaf = id;
     return id;
   };
+  const history = Array.from({ length: historyCount }, () => ({
+    user: append("message", {
+      message: { role: "user", content: [{ type: "text", text: "Question" }] },
+    }),
+    assistant: append("message", {
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: timelineText }],
+      },
+    }),
+  }));
+  const parent = leaf,
+    offset = statSync(path).size;
   const user = append("message", {
     message: { role: "user", content: [{ type: "text", text: "Question" }] },
   });
-  const mark = (captureMessageId?: string) =>
+  const mark = (
+    captureMessageId?: string,
+    captureResultCallId?: string | null,
+  ) =>
     append("custom", {
       customType: BROWSER_COMMAND_ENTRY,
       data: {
         commandId,
         userId: user,
         ...(captureMessageId ? { captureMessageId } : {}),
+        ...(captureResultCallId ? { captureResultCallId } : {}),
       },
     });
   mark();
@@ -91,7 +120,7 @@ function timelineFixture() {
       kind: "send",
       commandId,
       conversationId: id,
-      head: null,
+      head: parent,
       text: "Question",
       model: {
         epoch: randomUUID(),
@@ -102,8 +131,8 @@ function timelineFixture() {
     },
     at: 1,
     session: id,
-    parent: null,
-    offset: 0,
+    parent,
+    offset,
   });
   const state = {
     status: "running" as const,
@@ -173,6 +202,7 @@ function timelineFixture() {
   };
   return {
     ids,
+    history,
     sdk,
     emitter,
     append,
@@ -205,13 +235,17 @@ function timelineFixture() {
       else throw Error("unexpected read");
       return decodeWorkbenchResult(value);
     },
-    settle() {
+    settle(status: "completed" | "failed" | "canceled" = "completed") {
       active.delete(commandId);
       writeFileSync(
         records.path(commandId, "state.json"),
-        JSON.stringify({ ...state, status: "completed" }),
+        JSON.stringify({ ...state, status }),
       );
       records.closeReads();
+    },
+    reconnect() {
+      records.closeReads();
+      records = new ConversationRecords({ ...options, active: new Map() });
     },
     close() {
       records.closeReads();
@@ -481,6 +515,231 @@ it.each(timelineOrders)(
       expect(versions.get(timelineVersions["later output"])).not.toBe(
         versions.get(timelineVersions["final output"]),
       );
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each(independentScenarios)(
+  "$kind/$order/$terminal: independent executions satisfy the shared public timeline through unmarked Pi, terminal and overlay-free cold reads",
+  async ({ kind, order, terminal }) => {
+    const f = timelineFixture(3);
+    const ids: IndependentIds = {
+      ...f.ids,
+      execution: "",
+      repeatExecution: "",
+      history: f.history,
+    };
+    const declaration = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: timelineText },
+        ...(kind === "ambiguous"
+          ? [0, 1].map(() => ({
+              type: "toolCall",
+              id: ids.call,
+              name: "read",
+              arguments: {},
+            }))
+          : []),
+        { type: "text", text: timelineText },
+      ],
+    };
+    const result = { content: [{ type: "text", text: "final output" }] };
+    const event = { toolCallId: ids.call, toolName: "read" };
+    const resultMessage = {
+      role: "toolResult",
+      ...event,
+      isError: false,
+      ...result,
+    };
+    let resultMessageId = "";
+    const versions = new Map<string, string>();
+    const checkVersion = (
+      expected: string | undefined,
+      actual: string | undefined,
+    ) => {
+      expect(actual).toMatch(/^[a-f0-9]{64}$/);
+      if (!expected || !actual) throw Error("missing content version");
+      if (versions.has(expected)) expect(actual).toBe(versions.get(expected));
+      else {
+        expect([...versions.values()]).not.toContain(actual);
+        versions.set(expected, actual);
+      }
+    };
+    const checkTurn = (
+      expected: Extract<WorkbenchResult, { kind: "conversation-turn" }>,
+      before: number | null = null,
+    ) => {
+      const actual = f.read({
+        kind: "conversation-turn",
+        id: ids.conversation,
+        leaf: expected.leaf,
+        ordinal: expected.ordinal,
+        before,
+      });
+      if (actual.kind !== "conversation-turn") throw Error("turn");
+      const { at: _at, ...header } = expected.turn;
+      const { steps: _steps, ...coordinates } = expected;
+      expect(actual).toMatchObject({ ...coordinates, turn: header });
+      // Versions are equality/change tokens; all other public step fields are exact.
+      expect(actual.steps.map(({ version: _, ...s }) => s)).toEqual(
+        expected.steps.map(({ version: _, ...s }) => s),
+      );
+      actual.steps.forEach((s, i) => {
+        checkVersion(expected.steps[i].version, s.version);
+      });
+      expect(new Set(actual.steps.map((s) => s.renderId)).size).toBe(
+        actual.steps.length,
+      );
+      return actual;
+    };
+    let prior: ReturnType<typeof checkTurn> | undefined;
+    try {
+      for (const point of independentTimeline(order, terminal)) {
+        switch (point.action) {
+          case "declared":
+            await f.emitter.emit({ kind: "ready", requestProtocol: 2 });
+            await f.sdk.event({ type: "message_start", message: declaration });
+            ids.captureMessage = f.sdk.messageId!;
+            await f.sdk.event({ type: "message_end", message: declaration });
+            ids.assistant = f.append("message", { message: declaration });
+            f.mark(ids.captureMessage);
+            break;
+          case "tool-start": {
+            await f.sdk.event({
+              type: "tool_execution_start",
+              ...event,
+              args: {},
+            });
+            const frame = JSON.parse(f.frames.at(-1)!).event;
+            expect(frame).toMatchObject({
+              kind: "tool-start",
+              declaration: null,
+            });
+            ids.execution = frame.callId;
+            break;
+          }
+          case "tool-first":
+          case "tool-later":
+            await f.sdk.event({
+              type: "tool_execution_update",
+              ...event,
+              partialResult: {
+                content: [{ type: "text", text: point.output }],
+              },
+            });
+            break;
+          case "tool-end":
+            await f.sdk.event({
+              type: "tool_execution_end",
+              ...event,
+              isError: false,
+              result,
+            });
+            await f.sdk.event({
+              type: "message_start",
+              message: resultMessage,
+            });
+            resultMessageId = f.sdk.messageId!;
+            expect(f.sdk.resultCallId).toBe(ids.execution);
+            break;
+          case "result-final":
+            await f.sdk.event({ type: "message_end", message: resultMessage });
+            break;
+          case "result-write":
+            f.append("message", { message: resultMessage });
+            break;
+          case "result-mark":
+            ids.terminal = f.mark(resultMessageId, ids.execution);
+            break;
+          case "repeat-result": {
+            // A whole second execution/result fits between observations. Its
+            // identical result body MUST remain a distinct source occurrence.
+            const event = { toolCallId: "repeat-call", toolName: "read" };
+            await f.sdk.event({
+              type: "tool_execution_start",
+              ...event,
+              args: {},
+            });
+            await f.sdk.event({
+              type: "tool_execution_end",
+              ...event,
+              isError: false,
+              result,
+            });
+            const message = {
+              role: "toolResult",
+              ...event,
+              isError: false,
+              ...result,
+            };
+            await f.sdk.event({ type: "message_start", message });
+            const messageId = f.sdk.messageId!;
+            ids.repeatExecution = f.sdk.resultCallId!;
+            expect(ids.repeatExecution).not.toBe(ids.execution);
+            await f.sdk.event({ type: "message_end", message });
+            f.append("message", { message });
+            ids.terminal = f.mark(messageId, ids.repeatExecution);
+            break;
+          }
+          case "reply-end":
+            f.settle(terminal);
+            break;
+          case "reconnect":
+            f.reconnect();
+            break;
+        }
+        ids.sourceLeaf = f.sourceLeaf();
+        const expected = independentResults(ids, kind, point);
+        const head = f.read({
+          kind: "conversation",
+          id: ids.conversation,
+          leaf: null,
+          known: null,
+        });
+        const { updatedAt: _updatedAt, ...summary } = expected.head.summary!;
+        expect(head, point.action).toMatchObject({ ...expected.head, summary });
+        if (head.kind !== "conversation") throw Error("head");
+        expect(head.summary?.live).toEqual(expected.head.summary?.live);
+        const actual = checkTurn(expected.turn);
+        for (const history of expected.history) checkTurn(history);
+        for (const detail of expected.tools) {
+          const value = f.read({
+            kind: "conversation-step",
+            id: ids.conversation,
+            leaf: detail.leaf,
+            turnId: detail.turnId,
+            step: detail.step,
+            part: 0,
+          });
+          if (value.kind !== "conversation-step") throw Error("detail");
+          const { version, ...item } = detail.item;
+          expect(value).toEqual({
+            ...detail,
+            item: { ...item, version: versions.get(version!) },
+          });
+        }
+        if (
+          ["result-write", "result-final", "reconnect"].includes(point.action)
+        )
+          expect(actual.steps, point.action).toEqual(prior?.steps);
+        if (point.repeated) {
+          expect(
+            expected.tools
+              .filter((s) => s.item.text === "final output")
+              .map((s) => s.item.renderId),
+          ).toEqual([`call:${ids.execution}`, `call:${ids.repeatExecution}`]);
+          // The first execution also survives a genuine earlier-step-page read.
+          checkTurn(
+            { ...expected.turn, steps: expected.turn.steps.slice(0, -1) },
+            expected.turn.steps.length - 1,
+          );
+        }
+        prior = actual;
+      }
     } finally {
       f.close();
     }

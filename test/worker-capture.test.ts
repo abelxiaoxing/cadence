@@ -580,6 +580,17 @@ for (const sourceId of [undefined, null, "same-id", "unsafe source secret"])
         result: { content: [{ type: "text", text: "result" }] },
         isError: false,
       });
+      // Reuse is legal only after the matching result, not just tool-end.
+      const message = {
+        role: "toolResult",
+        toolCallId: sourceId,
+        toolName: "read",
+        content: [{ type: "text", text: "result" }],
+        isError: false,
+      };
+      await capture.event({ type: "message_start", message });
+      expect(capture.resultCallId).toBeNull(); // Declared, or unprovable raw ID.
+      await capture.event({ type: "message_end", message });
     }
     const events = raw
       .trimEnd()
@@ -1255,3 +1266,163 @@ it("thinking activity shares the existing unresolved capture window rather than 
     }),
   ).toThrow("capacity");
 });
+
+it.each([
+  "standalone",
+  "declared",
+  "missing source",
+  "different private name",
+  "ambiguous executions",
+  "retired declaration",
+  "matched reuse",
+  "unobserved execution reuse",
+  "retired result reuse",
+  "new user reuse",
+  "retired partial",
+])(
+  "result marker identity requires genuine unique independent execution: %s",
+  async (scenario) => {
+    const events: CaptureEvent[] = [];
+    const emitter = new CaptureEmitter(
+      randomUUID(),
+      new Writable({
+        write(chunk, _encoding, done) {
+          events.push(JSON.parse(String(chunk)).event);
+          done();
+        },
+      }),
+      () => {
+        throw Error("capture failed");
+      },
+    );
+    const capture = new SdkCapture(emitter, ["secret-one", "secret-two"]);
+    await emitter.emit({ kind: "ready", requestProtocol: 2 });
+    const raw = scenario === "missing source" ? undefined : "source-call";
+    const name = "lookup-secret-one";
+    const declare = async (toolName = name) => {
+      const message = {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: raw, name: toolName, arguments: {} }],
+      };
+      await capture.event({ type: "message_start", message });
+      expect(capture.resultCallId).toBeNull();
+      await capture.event({ type: "message_end", message });
+    };
+    const execute = async (start = true) => {
+      if (start)
+        await capture.event({
+          type: "tool_execution_start",
+          toolCallId: raw,
+          toolName: name,
+          args: {},
+        });
+      await capture.event({
+        type: "tool_execution_end",
+        toolCallId: raw,
+        toolName: name,
+        isError: false,
+        result: { content: [] },
+      });
+      const end = events.at(-1)!;
+      if (end.kind !== "tool-end") throw Error("tool end");
+      return end;
+    };
+    const result = async (toolName = name) => {
+      const message = {
+        role: "toolResult",
+        toolCallId: raw,
+        toolName,
+        isError: false,
+        content: [],
+      };
+      await capture.event({ type: "message_start", message });
+      const start = events.at(-1)!;
+      if (start.kind !== "message-start") throw Error("message start");
+      const bridge = capture.resultCallId;
+      expect(capture.messageId).toBe(start.messageId);
+      await capture.event({ type: "message_end", message });
+      expect(capture.resultCallId).toBeNull();
+      expect(capture.messageId).toBeNull();
+      return { start, bridge };
+    };
+    if (scenario === "retired declaration") await declare("lookup-secret-two");
+    if (
+      [
+        "declared",
+        "retired declaration",
+        "matched reuse",
+        "unobserved execution reuse",
+        "retired result reuse",
+        "new user reuse",
+      ].includes(scenario)
+    )
+      await declare();
+    if (scenario === "retired result reuse") {
+      const message = { role: "assistant", content: [], stopReason: "stop" };
+      await capture.event({ type: "message_start", message });
+      await capture.event({ type: "message_end", message });
+    }
+    if (
+      ["unobserved execution reuse", "retired result reuse"].includes(scenario)
+    ) {
+      expect(await result()).toMatchObject({
+        start: { resultCallId: null },
+        bridge: null,
+      });
+      await declare();
+    }
+    if (scenario === "new user reuse") {
+      const message = { role: "user", content: [] };
+      await capture.event({ type: "message_start", message });
+      await capture.event({ type: "message_end", message });
+      await declare();
+    }
+    if (scenario === "retired partial") {
+      const message = { role: "assistant", content: [], stopReason: "error" };
+      await capture.event({ type: "message_start", message });
+      await capture.event({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "toolcall_start",
+          contentIndex: 0,
+          partial: { content: [{ type: "toolCall", id: raw, name }] },
+        },
+      });
+      await capture.event({ type: "message_end", message });
+      await declare();
+    }
+    if (scenario === "matched reuse") {
+      const first = await execute();
+      const linked = await result();
+      expect(linked.start.resultCallId).toBe(first.callId);
+      expect(linked.bridge).toBeNull();
+      await declare();
+    }
+    const end = await execute(scenario !== "ambiguous executions");
+    if (scenario === "ambiguous executions") await execute(false);
+    const linked = await result(
+      scenario === "different private name" ? "lookup-secret-two" : name,
+    );
+    if (
+      [
+        "missing source",
+        "different private name",
+        "ambiguous executions",
+      ].includes(scenario)
+    ) {
+      expect(linked).toMatchObject({
+        start: { resultCallId: null },
+        bridge: null,
+      });
+    } else {
+      expect(linked.start.resultCallId).toBe(end.callId);
+      expect(linked.bridge).toBe(end.declaration ? null : end.callId);
+      expect(end.declaration === null).toBe(
+        ["standalone", "retired declaration"].includes(scenario),
+      );
+    }
+    expect(JSON.stringify(events)).not.toContain("secret-one");
+    expect(JSON.stringify(events)).not.toContain("secret-two");
+  },
+);
