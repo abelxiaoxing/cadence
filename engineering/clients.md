@@ -391,7 +391,7 @@ The run's earlier messages are by then ordinary turns of that branch, each ended
 A head read that names an earlier end of the live run follows it to the current one, so a client that chose the branch it sent from keeps the run in view; turn, step and image reads name their branch exactly.
 A listing never carries a tool's arguments or output or a thinking block's text, and keeps at most 16KiB of message text; the WebUI reads a tool's detail or a thinking block's text when its step is opened and a clipped message's rest when it is shown.
 Optional `renderId`, full-redacted-content `version` and explicit block `state` separate rendering identity, data revision and execution observations from turn/step/part read coordinates.
-The live turn header's `activity` is the last actual capture event kind and sequence (with a redacted tool name where applicable), not a progress estimate or execution receipt.
+The live turn header's `activity` is the last actual capture event kind and sequence, not a progress estimate or execution receipt; optional tool names follow the [read-time redaction contract](history.md#ordinary-conversation-records), not only capture-time sanitation.
 Terminal `!` commands, compaction and branch summaries and displayed extension messages are listed as steps.
 A readable thinking block is a step of its own role in its recorded place, read in full through the step-detail read like a tool's output; its signature is never returned.
 Thinking Pi stored unreadable (redacted, or a signature without text) and unsupported media are flagged as omitted.
@@ -515,6 +515,11 @@ Closing a detail or leaving its conversation retires pending reads, and stale re
 A thinking block starts folded and reads its text through the step-detail read when opened, shown as recorded; a live body-free activity placeholder is not expandable and hands off in place to readable Pi thinking under the same identity.
 No thinking body or signature is streamed, and a thinking block is neither answer text (it is not copied with the reply) nor evidence that an earlier tool call has a result.
 Ordinary replies render every received text snapshot immediately through stable Markdown prefix segments and an active tail, not an artificial character-paced catch-up animation.
+`segmentStream` parses the whole snapshot with the same CommonMark/GFM/dollar-and-backslash-math syntax as `MarkdownBody`, splitting only independent top-level roots; lists, quotes, indented/fenced code and math containers stay intact.
+From the first root containing a reference or definition (including nested definitions and footnotes), the remaining document is rendered together to preserve resolution, numbering, backlinks and one final footnote footer.
+Segments retain exact source slices, separators, indentation and line endings, keyed by real UTF-16 source offsets; new syntax may revise the dependent suffix, while unchanged prefixes remain memoized rather than being promised immutable forever.
+Ordinary `StreamMarkdown` uses the same `MarkdownBody` pipeline even for an incomplete fence, preserving its safe-link/media rules and code controls; streaming versus terminal status alone neither repartitions text nor switches renderers.
+The separate workflow stream renderer consumes the shared semantic segments but retains its existing pacer and plain open-fence preview; ordinary chat does not use that pacer.
 With explicit rendering metadata, the same block component and rendering identity survive preview/durable/terminal observations, independently of changing read coordinates and earlier-page positions.
 `ConversationReader` derives `LoadedTurn.renderId` from the user step's rendering identity; `ChatWorkspace` uses `turn.renderId ?? turn.header.id` on the outer Fragment around the entire turn, not only on its inner message/tool blocks.
 The row's `id` stays `turn.header.id`: `LazyMount` registration and measurement, `data-lazy-id`, jump pins, question tracking, branch versions and workflow placement use that read/navigation coordinate.

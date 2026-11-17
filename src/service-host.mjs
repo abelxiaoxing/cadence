@@ -15714,6 +15714,7 @@ class ConversationRecords {
       stable: items.length
     };
     const omitted = live2.capture?.omitted;
+    const activity2 = live2.capture?.activity;
     const turn = listTurn({
       id: chain[0]?.id ?? live2.commandId,
       entry: null,
@@ -15722,7 +15723,14 @@ class ConversationRecords {
       status: live2.state.status,
       notice: sanitizeText(live2.capture?.notice ?? "", secrets),
       ...live2.capture?.retry ? { retry: live2.capture.retry } : {},
-      ...live2.capture ? { activity: live2.capture.activity } : {},
+      ...activity2 ? {
+        activity: {
+          ...activity2,
+          ...activity2.name === undefined ? {} : {
+            name: clipText(sanitizeText(activity2.name, secrets), 128)
+          }
+        }
+      } : {},
       omitted: {
         thinking: written.omitted.thinking,
         media: written.omitted.media || !!omitted?.media,
@@ -35240,7 +35248,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "75a203bb2f0a950a4632ae121a40da548e72cb768d32633cfc02139ee3b549e7",
+  build: "1d9cdacfbc38a386f101531e20562236a7146730952df9eb18151ad32b34ee31",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

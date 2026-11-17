@@ -1,105 +1,107 @@
 /* Adapted from pi-web-ui/web/src/stream-markdown.ts @ e8bab487af208bc9a1ab60a821652323f598127f.
  * Copyright (c) 2026 xing-shuyin. MIT; see licenses/pi-web-ui-MIT.txt.
  * Cadence: scoped presentation only; see provenance/webui-reuse.json. */
-/**
- * Streaming markdown segmentation — the core of the prefix-cache renderer.
- *
- * Problem: during streaming, the accumulated text changes on EVERY delta, so a
- * memoized full-document <Markdown text={...}> re-parses (remark → rehype →
- * highlight.js) the whole growing string per frame — O(n²) cumulative work
- * that visibly janks long code-heavy replies.
- *
- * Solution: split the text into FROZEN segments (complete, append-only blocks)
- * plus one ACTIVE tail. Frozen segment text never changes again, so each is
- * rendered by its own memoized <ReactMarkdown> exactly ONCE; only the small
- * active tail re-parses. At message end the parent does ONE authoritative
- * full-document parse, so any segmentation imperfection is transient.
- *
- * Splitting rules (CommonMark-aware enough for live preview):
- *  - Split points are blank lines OUTSIDE fenced code blocks.
- *  - An unclosed ```/~~~ fence keeps everything after its opener in the tail
- *    (half-rendered code as markdown would flash horribly on close).
- *  - A blank line followed by a list marker does NOT split: CommonMark treats
- *    blank-line-separated items as one (loose) list — splitting would restart
- *    ordered numbering at 1.
- *  - Setext headings / forward link-reference definitions across splits are
- *    accepted imperfections; the final full parse corrects them.
- *
- * Pure and dependency-free (unit-tested from tsconfig.tests.json).
- */
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+import remarkBackslashMath from "./remark-backslash-math";
 
+/** The same CommonMark/GFM/math syntax as MarkdownBody (without its expensive
+ * HTML, KaTeX and highlighting stages). Boundaries come from the whole source
+ * tree, not blank-line guesses: lists, quotes, code and math stay intact.
+ * Reparse on content changes: new syntax can extend a container, close TeX
+ * delimiters or resolve earlier references. Only unchanged prefixes are cached;
+ * "frozen" is a rendering optimization, never a promise against new syntax. */
+const parser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkMath)
+  .use(remarkBackslashMath);
+
+type Block = ReturnType<typeof parser.parse>["children"][number];
+
+interface StreamSegment {
+  /** UTF-16 source offset, including indentation, not a trimmed-text count. */
+  start: number;
+  /** Exact source slice, including inter-block separators. */
+  text: string;
+}
 interface StreamSegments {
-  /** Complete blocks — render once via memoized Markdown, keyed by index. */
+  segments: StreamSegment[];
+  /** Exact source slices for the workflow renderer's existing prefix/pacer. */
   frozen: string[];
-  /** The trailing (possibly incomplete) block — re-parsed as it grows. */
   active: string;
-  /** True while `active` sits inside an unclosed fence — callers MUST NOT
-   *  syntax-highlight it (highlighting a growing block is O(n²) again). */
+  /** Only a standalone active fenced-code block may use a plain preview. */
   inFence: boolean;
 }
 
-const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
-const LIST_RE = /^\s{0,3}(?:[-*+]|\d{1,9}[.)])\s/;
-
-function isBlank(line: string): boolean {
-  return line.trim() === "";
+function needsDocumentContext(node: {
+  type: string;
+  children?: readonly { type: string }[];
+}): boolean {
+  // Definitions may live inside any container. Include references as well as
+  // definitions so the entire dependency region shares resolution, footnote
+  // numbering/backlinks and ONE footer at the document's end. All earlier
+  // top-level nodes are independent; keeping them separate preserves their
+  // components when a later definition first resolves an earlier reference.
+  return (
+    node.type === "definition" ||
+    node.type === "linkReference" ||
+    node.type === "imageReference" ||
+    node.type === "footnoteDefinition" ||
+    node.type === "footnoteReference" ||
+    (node.children?.some(needsDocumentContext) ?? false)
+  );
 }
 
-/** Fence marker of a line, or null when the line does not open/close a fence. */
-function fenceMarker(line: string): string | null {
-  const m = FENCE_RE.exec(line);
-  return m ? m[1] : null;
+/** This flag only preserves the workflow caller's no-highlight preview policy;
+ * it does NOT decide segmentation. The parser has already identified code. */
+function openFence(block: Block | undefined, source: string): boolean {
+  if (block?.type !== "code") return false;
+  const lines = source.split(/\r\n|\r|\n/);
+  const opener = /^ {0,3}(`{3,}|~{3,})/.exec(lines[0]);
+  if (!opener) return false; // Indented code, not a fence.
+  const marker = opener[1];
+  return !lines.slice(1).some((line) => {
+    const closer = /^ {0,3}(`{3,}|~{3,})[\t ]*$/.exec(line);
+    return (
+      closer && closer[1][0] === marker[0] && closer[1].length >= marker.length
+    );
+  });
 }
 
-/**
- * Segment streaming markdown into frozen prefix + active tail.
- */
+/** Partition the original source at independently parseable top-level roots.
+ * From the first document-dependent root onward, conservatively parse together.
+ * Every delimiter/indent/CRLF is retained, so legacy callers summing these
+ * strings' lengths also get real source offsets. Terminal state is irrelevant. */
 export function segmentStream(text: string): StreamSegments {
-  const lines = text.split("\n");
-  const frozen: string[] = [];
-  let current: string[] = [];
-  let fence: string | null = null; // opening marker of the open fence
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (fence !== null) {
-      // Inside a fence: everything belongs to the same segment until the
-      // matching closer (same char, at least as long) appears.
-      const marker = fenceMarker(line);
-      if (marker && marker[0] === fence[0] && marker.length >= fence.length) {
-        fence = null;
-      }
-      current.push(line);
-      continue;
-    }
-
-    const marker = fenceMarker(line);
-    if (marker && !isBlank(line)) {
-      fence = marker;
-      current.push(line);
-      continue;
-    }
-
-    if (isBlank(line)) {
-      // Candidate split point — BUT not when the next content line is a
-      // list item (loose lists must stay in one segment).
-      let j = i;
-      while (j < lines.length && isBlank(lines[j])) j++;
-      const nextIsList = j < lines.length && LIST_RE.test(lines[j]);
-      if (!nextIsList && current.length > 0) {
-        frozen.push(current.join("\n"));
-        current = [];
-        continue;
-      }
-      current.push(line);
-      continue;
-    }
-
-    current.push(line);
+  const { children } = parser.parse(text);
+  const starts = text ? [0] : [];
+  for (let i = 0; i < children.length; i++) {
+    const node = children[i];
+    const point = node.position?.start;
+    // Start at the source LINE boundary: dropping indentation changes code,
+    // list and math semantics. The first slice also retains leading blanks.
+    if (i > 0 && point?.offset !== undefined)
+      starts.push(point.offset - (point.column - 1));
+    if (needsDocumentContext(node)) break;
   }
-
-  return { frozen, active: current.join("\n"), inFence: fence !== null };
+  const segments = starts.map((start, i) => ({
+    start,
+    text: text.slice(start, starts[i + 1]),
+  }));
+  const active = segments.at(-1)?.text ?? "";
+  const last = children.at(-1);
+  const inFence =
+    segments.length === children.length &&
+    openFence(last, text.slice(last?.position?.start.offset));
+  return {
+    segments,
+    frozen: segments.slice(0, -1).map((part) => part.text),
+    active,
+    inFence,
+  };
 }
 
 /**

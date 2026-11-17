@@ -4,9 +4,11 @@
 
 The browser's pi-web-ui adaptations retain `Copyright (c) 2026 xing-shuyin` and the complete original MIT text in `licenses/pi-web-ui-MIT.txt`.
 Ordinary conversations reuse its stable rendering-identity, Markdown prefix/tail and user-intent scrolling patterns; `web/src/components/StreamMarkdown.tsx` adapts the already pinned prefix renderer without its character-paced snapshot replay.
-Cadence supplies capture-to-Pi ownership correlation, finite reads and separate runtime observations rather than importing the upstream executor or position-based association.
-`provenance/webui-reuse.json` pins current adaptation/integration bodies; existing upstream source and license pins stay unchanged.
-These sources ship inside the canonical browser assets, not as new standalone package members.
+Cadence's shared segmenter now uses the existing Markdown syntax parser to preserve container and document-reference semantics, exact source slices and source-position keys; ordinary chat uses the same safe renderer before and after settlement, while the separate workflow renderer retains its pacer/preview policy.
+Cadence supplies capture-to-Pi ownership correlation, finite reads, read-time activity-name sanitation and separate runtime observations rather than importing the upstream executor or position-based association.
+`provenance/webui-reuse.json` pins current adaptation/integration bodies; existing upstream source and license pins stay unchanged and do not claim that a current upstream working file is the originally pinned revision.
+Controlled capture/reader tests, semantic HTML SSR comparisons and component-tree identity assertions are not mounted React DOM, real-browser interaction or performance qualification; regression ownership and evidence limits are in `engineering/verification.md`.
+The browser adaptation sources ship inside the canonical browser assets, not as new standalone package members.
 
 `licenses/bundled-web.txt` contains full original notices with stable labeled boundaries: React/DOM/scheduler; react-icons and the selected Feather family; unified/Markdown/HTML utilities; highlight.js; KaTeX code; vis-timeline and the versions actually embedded by its standalone build.
 KaTeX's 60 emitted TTF/WOFF/WOFF2 fonts retain their original bytes and separate SIL OFL1.1 plus reserved-family copyright notices.

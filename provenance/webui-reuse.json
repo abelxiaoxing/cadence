@@ -116,13 +116,14 @@
       "destinations": [
         "web/src/components/rich/Markdown.tsx",
         "web/src/components/rich/StreamMarkdown.tsx",
+        "web/src/components/StreamMarkdown.tsx",
         "web/src/rich/stream-markdown.ts",
         "web/src/rich/code-lines.ts",
         "web/src/rich/remark-backslash-math.ts",
         "web/src/components/rich/CopyButton.tsx",
         "web/src/rich/use-copy-feedback.ts"
       ],
-      "modifications": "Direct Markdown/math/highlight/code-lines and streaming segmentation/smoothing modules. Remove executable fence/widget registration and pi-file paths. Safe link policy; omit images/media; optional raw HTML sanitized before nontrusted KaTeX/highlighting. Copy fallback restores focus and removes temporary DOM in finally. Streaming renderer is ported, not a claim of a live-text channel absent from current service projections."
+      "modifications": "Direct Markdown/math/highlight/code-lines and streaming segmentation/smoothing modules. Remove executable fence/widget registration and pi-file paths. Safe link policy; omit images/media; optional raw HTML sanitized before nontrusted KaTeX/highlighting. Copy fallback restores focus and removes temporary DOM in finally. Cadence's shared segmenter now uses the existing CommonMark/GFM/math parser for exact source slices and real source-offset identities, retaining containers and a shared suffix for document references and footnotes. Ordinary StreamMarkdown renders received snapshots immediately through MarkdownBody without the character pacer or a terminal-state renderer swap; only unchanged prefixes are memoized, since arriving syntax may revise the dependent suffix. The separate workflow renderer retains its existing pacer and plain open-fence preview. These are local adaptations of the pinned sources, not newly copied current upstream bodies."
     },
     {
       "id": "review",
@@ -485,7 +486,7 @@
     "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
     "web/src/rich/code-lines.ts": "d0b58279669bfe675df638b10735211ff175ef4e8fb1a6a8ff1279f41e79081e",
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
-    "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
+    "web/src/rich/stream-markdown.ts": "3cd345342952bc44feace9d4d2fd055935c7464beefeb33616bd7a7a0895fc62",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
     "web/src/styles.css": "f533ce38e60e0546ee6fb01371ca6abd6b4467e26cd7c7129c3840a71a7f5715",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
@@ -504,7 +505,7 @@
     "test/web/lazy-window.test.tsx": "2e6b490de62db5353fd880c2d4ede255768c6b0b320927c656ff0e467859f5cf",
     "test/web/observation.test.tsx": "93912d8fdb2ddad5ee55b9fd64837017aad54c9dbccab5064268ec7d55f0a148",
     "test/web/presentation.test.tsx": "b56c150469654c243e7a42d073a6a3a79149e5b388c36fa68384024a078b9ab5",
-    "test/web/stream-markdown.test.tsx": "9e38d22441b4a9b352bb87ffd70ddd9ba6096b6361842f9451c820ff0cc18e7b",
+    "test/web/stream-markdown.test.tsx": "4d0c6995fa6bc3ec81ebb20eccdcfe4a214404b1293c474c8abe3a7d00075cae",
     "test/web/swipe-drawer.test.tsx": "578069233ef78b985bea3668cdbe31f17236a6b7ca6216ec8da3efdceae9b27d",
     "web/build-vis-style.ts": "37e9c8259d75b9b5322d5108ac57e3e51d5ce1212d649f0f0d282f919c72a8c3",
     "web/src/client/build-identity.ts": "db7c732a5672a3fa3ab7b3cbfd7faab9d49cef3516fee5c619c22829bc02a1a3",
@@ -574,7 +575,7 @@
     "src/service/pi-sessions.ts": "1d8d5fbf92d1f68bc7cc4b7a03546c38c5ab8ddb627f3ef0648280f38ef53be9",
     "src/service/turn-capture.ts": "f1c869c1ec30bd35dd6348d86322f70c0cef4398fca0ad9be6e102a758f902c2",
     "test/pi-sessions.test.ts": "da4cc7e1f334ca29d426d1f9faa8d0d1b23fa35777c842cee7ca2e70893eaad4",
-    "src/service/conversation-records.ts": "9ab9cda7893a904a7b5b6e673ea287d1210c771ff4a20bbfd3465254fdf756ec",
+    "src/service/conversation-records.ts": "fc229c31f898e33a3d5b69af473fab282f0d4b64c57995ffc0f0215f0867b3fd",
     "src/service/conversation-controls.ts": "f652c47ad1d0c8191793250791c9fdc91f617c95432a7782dc3f2b065b923e88",
     "src/service/gateway-conversations.ts": "e35c8de0f2d80d170bafcbb01dc19f409309c7516ca7e73759f6fdd6c53a4cc6",
     "test/gateway-conversations.test.ts": "9a2bd35bf2aef29a5ffb0d64dc6881215574e854fc1ab22bdef1f994f64a9e66",
@@ -585,7 +586,7 @@
     "test/gateway-send.test.ts": "36a30e94f3841a9e2eedbe482bb84db070556bbae6f26a835d455670cdd35ff1",
     "test/web/conversation-send.test.tsx": "0cd5e8d3e0e5d5ea7759d75a67303a4086f9e61e5c839af14beef50fbcbf27ee",
     "test/web/send-observation.test.tsx": "8fb89a59923bd3ffdda9caa4b7ffb6a457470936c324df471ccd918060f88208",
-    "test/conversation-records.test.ts": "417359908743599446a9fdd81effd3b153e6c0c16b1d9b9545caae59de636239",
+    "test/conversation-records.test.ts": "756f804203a2b3b92d208d899aab749cdd3079e9af986813b2d6348b027fe20e",
     "test/conversation-retirement.test.ts": "680e8110a30495fb1b7d915471b5da9d046f1554d99b40be300ed891a0c9b9e8",
     "src/image-content.mjs": "993d203282eed4d2104fe971c691b0bf51a3ca031e1275c91667cf56a4b808d1",
     "src/image-content.d.mts": "15895be7b1804528c2f8a9be22fea00e4b299a4fe24ba81f6dfda9d8cbd04e02",
@@ -692,16 +693,17 @@
     "web/src/client/latency.ts": "ad8ab548d492b7ddcae92014ede3ae507ec095f14059d32c4aa8c5d799391f86",
     "web/src/layout/CacheStatus.tsx": "fd8f4a371bc340ffb87a4ebc2dadef30c6a196a3c08e4444ba70d3b7032c5ab4",
     "test/web/statusbar.test.tsx": "4dabd3b30e44ed5b888a5fa5947c258305fbb1c8a22802cc941d9b524bfcb07f",
-    "web/src/components/StreamMarkdown.tsx": "e44e50174252f329ec0477e9c21d512c97df6061d0cbd1aebea30ccfc175f657",
+    "web/src/components/StreamMarkdown.tsx": "1d8d579285d686f862fe40010a9eed094d053d1da0883cf4027427d0f4118a23",
     "web/src/components/workspace/turn-source.ts": "0dcc746257a6755a7cc240caeaa17891cc13c3f6abddfe81d0d6a98099db4837",
     "web/src/components/workspace/RuntimeObservation.tsx": "0598fa98e45ffabec0d9c074d3102e7a8152d10acdaaaaa12ac8bbdf191b3c35",
-    "test/web/chat-timeline.test.tsx": "dda319b8699e0b419e4e05a3edcb5e6dc1ae5a83bcea66628bf6467274dce1e1",
+    "test/web/chat-timeline.test.tsx": "0e9f2b17f6951b9d5f5b3a2ef59f8575fd31e4a68ae8b0e12eaa988c028a4be4",
     "test/web/runtime-observation.test.tsx": "a0d8c353a27753c6dcda69cf889fd312b6b48e4e9c401c5ff5410082a68e9524",
     "test/web/workflow-agent.test.tsx": "9d090f8368e288de286041b8f5d7ef5816e53a18192848e7e3a4190f7bd9cdf2",
     "test/runtime-timeline.test.ts": "37854a1cc1f63c2d1426ad7bac9f1311e345632c48e33505b7ea84d92c141c5b",
     "test/helpers/runtime-timeline.ts": "ea2a95f8a1111b41719ed365f05cf2b5e076ab976af1486ac2ed7faf355ae5c7",
-    "web/dist/assets/cadence.js": "dd20cdb879f5bfa0324a7a8b9f0fc6e06103deee9aef498b05cc0edb8ec7fef6",
-    "web/dist/manifest.json": "244c84dd93183dc1d7e7037dc438dbbcfbc051de00fbf1c7dd3e09df43c0c0a2"
+    "web/dist/assets/cadence.js": "52b104c6991cdbbf26b675c9ab8b5cad8fc3b3d02324b2688c1a72224dabc046",
+    "web/dist/assets/markdown.js": "6a36e89e7124a36afa87e8b3a6cdc20a26b50c66d74c39f08e30407bf367e706",
+    "web/dist/manifest.json": "2a673952c31664bf9313586bc3db412745c55cda718e004eb366c67556eae6f0"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -1079,6 +1081,11 @@
       "id": "ordinary-timeline-workspace-wiring",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned wiring repair within the existing MIT-adapted conversation and lazy-window presentation: the outer turn Fragment uses the reader's renderId (recorded-id fallback for legacy history), while lazy measurements, navigation, workflow placement and Send anchors retain their read coordinates. The main conversation passes its current-intent keepEnd callback into the existing row/container ResizeObserver, sharing the composer resize rule without forcing scrolled-up readers to the bottom. ChatWorkspace and chat-timeline destination pins are refreshed; the canonical Node builder regenerates web/dist, and the changed cadence.js plus its complete asset manifest are pinned here. Shipped names are unchanged, so the independently enumerated package member list is unchanged. New element-tree, controlled-hook and synthetic-resize regressions cover the actual workspace call sites, not React DOM reconciliation or real-browser scrolling. Existing upstream source/license pins and historical evidence, including prior qualification limits, remain unchanged; new-candidate checks and independent Agent review are separate."
+    },
+    {
+      "id": "ordinary-activity-read-redaction-and-markdown-semantics",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned review repairs: ConversationRecords clones live activity metadata and reapplies the read's current/last-known secret literals to optional tool names before UTF-8-safe wire clipping, without changing capture or retained bytes. The shared Markdown segmenter replaces preview-only blank-line guesses with the existing syntax parser, exact source slices and real offsets; containers stay whole and the reference/footnote-dependent suffix shares one parse. Ordinary chat keeps MarkdownBody and stable source-position keys across active/frozen and durable/terminal observations, with no character replay; the workflow caller retains its pacer/preview policy. Controlled private-file/decoder tests, semantic HTML SSR comparisons and actual chat-path component-tree assertions cover these contracts, not mounted React DOM, browser interaction or performance. Affected destination pins are refreshed, including the changed cadence.js and markdown.js bodies and full manifest; canonical builders regenerate service/operator outputs and the Node web build. Exact emitted asset names and references agree with the independent package-member list, which remains unchanged. Existing upstream source/license pins, original MIT bytes and historical evidence remain unchanged; this update is not new-candidate gate or independent Agent review approval."
     }
   ],
   "testAdaptations": [
