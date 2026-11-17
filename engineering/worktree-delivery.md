@@ -66,7 +66,8 @@ Host tools and Git filters are not an OS sandbox.
 ## Original lifetimes and shared repository coordination
 
 Linked worktrees share refs even when their checkout roots differ.
-Recorded Git mutation groups take a lease keyed by the common directory, after the existing checkout permit.
+Recorded Git mutation groups take a lease keyed by the common directory, after the checkout permit when the stage touches the target.
+Isolated implementation holds its workspace reservation, not a target checkout permit, so other candidates can start and deliver while it works.
 They never hold that short lease while waiting for a worker, check, model or another checkout.
 The account registry's short lock is not held across Git/model execution.
 Lease wait and active-resource bounds live in `repository-coordination.ts`; no live lease expires by age.
@@ -114,10 +115,16 @@ It merges the fixed candidate OID using the existing noninterruptible `merge --f
 Unknown results never trigger replay.
 
 The original approved binding is immutable.
-Only this run's independently confirmed merges advance its integration baseline; external target movement, a branch switch or overlapping user edits block delivery and preserve the candidate.
+Before its first delivery, only a verified sibling on the same branch whose own post-checks passed may advance a pending run's in-memory frontier.
+Under exclusive checkout access, the candidate merges that frontier without rewriting either history, moves its own diff base to the sibling commit, and repeats checks and automatic Agent review before knowledge maintenance and publication.
+Managed knowledge is curated only after refresh under that same exclusive permit: independent implementations must not conflict merely because both deliveries maintain the shared store.
+The candidate scope and Review's fixed-revision evidence therefore exclude incorporated sibling paths; overlapping writes or any changed `AGENTS.md` refuse the refresh.
+External target movement, a branch switch or overlapping user edits block delivery and preserve the candidate; a merge conflict is retained without automatic resolution.
+Only this run's independently confirmed merges advance its post-merge recovery baseline.
 Post-merge failures keep the actual merge and checks visible.
 Recovery edits the same owned candidate, invalidates acceptance and reruns checks/review; another merge is allowed only while the target still equals this run's last confirmed delivery.
 The user's unrelated index is never committed, and no automatic rebase, force update, reset or rollback is attempted.
+Failed or unknown post-checks never advance a sibling frontier; restart retains no resumable in-memory frontier.
 Ignored/dirty generated workflow notes retain their separate expected-byte publication rules and are not claimed to belong to the accepted Git candidate.
 
 `DeliveryObservation` separates preparation/workspace state, current candidate acceptance, actual integration, post-checks and cleanup.
@@ -137,6 +144,8 @@ Restart marks incomplete stages unknown without resuming implementation, commits
 - `workflow-delivery-runtime`: adaptive owner plus delivery controller with controlled native/worker ports; partial work, recovery beyond old quotas, verified knowledge, exact final acceptance, post-merge repair, changed targets and cancellation.
 - `workflow-delivery-admission`: proposal/receipt persistence and bound target; the longer full admission case remains slow.
 - `repository-coordination`, `repository-recovery`: original-operation leases, managed-owner refusal and exact-epoch archive/recovery boundaries.
+- `workflow-delivery-runtime`: overlapping implementations and delivery while a sibling still works, refresh-before-curation ordering, final guidance and post-check branch/HEAD fences (controlled ports).
+- `workflow-parallel`: successful-sibling frontier advancement, real Git candidate merge and fresh acceptance, external/overlapping/guidance refusal (slow diagnostic).
 - `change-tools`, `worker-toolkit`, `workflow-runtime`: readonly fixed-revision capabilities, complete review interpretation and original-resource lifetime.
 - Native/Web workflow tests retain separate client approval, execution context and display contracts.
 

@@ -127,7 +127,9 @@ Cross-worktree verification streams file bytes, including large files under dire
 Cancellation joins the current read/close instead of abandoning it.
 Source changes during checks require verification of the resulting bytes; changes during readonly review refuse stale evidence.
 Project knowledge is maintained from actual implemented behavior and evidence, not copied from proposal prose; its ownership and context policy are in [project knowledge](project-knowledge.md).
+For local delivery, it follows sibling refresh under exclusive checkout access, so shared-store curation builds on already-delivered knowledge instead of producing competing edits before refresh.
 Local-merge verification rounds first commit the approved candidate changes, then bind real checks and Agent review to that exact commit/tree and source identity.
+After a verified sibling merge, the candidate diff base is that sibling commit: incorporated sibling paths are not attributed to this run, while its own complete diff still passes scope, checks and fixed-base Agent review.
 Delivery notes and knowledge changes are included before final acceptance; new edits invalidate earlier acceptance.
 Local-merge candidates receive another verification after delivery notes, before fast-forward integration.
 Post-merge failures preserve the real merge: any repair happens in the owned candidate, is checked/reviewed there and fast-forwards the unchanged target again.
@@ -145,8 +147,10 @@ The first settled review-step snapshot already contains its verdict, never a tem
 Workflow delivery notes are written before the final candidate checks and say they are not a verification result.
 The stored plan preserves the complete readable agreement as literal text in a collision-safe Markdown fence; user/model examples and command syntax never become document markup.
 Changed-path lists are also literal, and the owner's note headings, lists and prose follow the project's Markdown rules without excluding generated documents from checks.
-Integration rechecks only the target branch, HEAD and the declared/committed targets; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
-Unmodified guidance is not part of the dirty check; explicitly approved knowledge write targets are.
+Integration rechecks the target branch, current verified frontier/HEAD, declared/committed targets and root `AGENTS.md` identity after final candidate checks; unrelated checkout edits do not block it, and `merge --ff-only` refuses genuine overlap.
+Only successful post-merge checks advance matching pending siblings.
+Verified sibling knowledge can join a non-overlapping candidate through the refresh above; changed instructions or external drift cannot.
+Explicitly approved knowledge write targets remain part of the dirty check.
 Generated workflow notes travel in the candidate only when the fast-forward can deliver them, otherwise (ignored, untracked or dirty destination) they are written after the merge with an expected-bytes check.
 Local-merge plans refuse declared write targets that Git ignores (`invalid`, naming them), since a commit could not carry them; before a worktree is removed, any leftover file anywhere in it, ignored ones included, retains it.
 Successful post-merge checks and exact owned/delivered candidate evidence are prerequisites for cleanup; the named branch remains.

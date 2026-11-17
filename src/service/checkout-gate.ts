@@ -1,10 +1,12 @@
-/** One exclusive checkout gate for current conversations and workflows.
+/** Fair reader/writer checkout gate for current conversations and workflows.
  * It owns no tasks, graphs, model choice, process launcher or history writer. */
 import { ContractError, decodeId } from "../service-contract.ts";
 import type { ServiceOwner } from "./owner.ts";
 
-/** Waiting requests only; one additional request may hold the checkout. */
+/** Waiting requests only; shared holders have a separate bounded reservation. */
 export const CHECKOUT_WAITERS = 16;
+export const CHECKOUT_READERS = 4;
+export type CheckoutAccess = "shared" | "exclusive";
 export interface CheckoutPermit {
   assertHeld(): void;
   /** Trusted execution calls this only after its ORIGINAL operations settle.
@@ -13,12 +15,13 @@ export interface CheckoutPermit {
 }
 interface Waiter {
   id: string;
+  access: CheckoutAccess;
   resolve(permit: CheckoutPermit): void;
   reject(error: unknown): void;
 }
 export class CheckoutGate {
   private readonly waiting: Waiter[] = [];
-  private holder: Waiter | null = null;
+  private readonly holders = new Set<Waiter>();
   private closed = false;
   constructor(
     private readonly owner: Pick<ServiceOwner, "state"> & {
@@ -32,24 +35,32 @@ export class CheckoutGate {
   }
   assertQuiescent(): void {
     this.assertOpen();
-    if (this.holder || this.waiting.length) throw new ContractError("conflict");
+    if (this.holders.size || this.waiting.length)
+      throw new ContractError("conflict");
   }
-  acquire(id: string, signal: AbortSignal): Promise<CheckoutPermit> {
+  acquire(
+    id: string,
+    signal: AbortSignal,
+    access: CheckoutAccess = "exclusive",
+  ): Promise<CheckoutPermit> {
     decodeId(id);
     this.assertOpen();
     if (signal.aborted) throw new ContractError("stale");
-    if (this.holder?.id === id || this.waiting.some((w) => w.id === id))
+    if ([...this.holders, ...this.waiting].some((w) => w.id === id))
       throw new ContractError("conflict");
     if (this.waiting.length >= CHECKOUT_WAITERS)
       throw new ContractError("capacity");
     const result = new Promise<CheckoutPermit>((resolve, reject) => {
       const abort = () => {
         const at = this.waiting.indexOf(waiter);
-        if (at >= 0)
+        if (at >= 0) {
           this.waiting.splice(at, 1)[0].reject(new ContractError("stale"));
+          this.pump();
+        }
       };
       const waiter: Waiter = {
         id,
+        access,
         resolve: (permit) => {
           signal.removeEventListener("abort", abort);
           resolve(permit);
@@ -69,31 +80,39 @@ export class CheckoutGate {
     this.closed = true;
     for (const w of this.waiting.splice(0))
       w.reject(new ContractError("quarantine"));
-    // The original holder remains held. Stop/quarantine is not a refund.
+    // Original holders remain held. Stop/quarantine is not a refund.
   }
   private pump(): void {
-    if (this.closed || this.holder || !this.waiting.length) return;
+    if (this.closed || !this.waiting.length) return;
     try {
       this.assertOpen();
     } catch {
       this.closeAdmission();
       return;
     }
-    const waiter = this.waiting.shift();
-    if (!waiter) return;
-    this.holder = waiter;
-    const assertHeld = () => {
-      this.assertOpen();
-      // Object identity prevents an old handle from releasing a reused ID.
-      if (this.holder !== waiter) throw new ContractError("stale");
-    };
-    waiter.resolve({
-      assertHeld,
-      release: () => {
-        assertHeld();
-        this.holder = null;
-        this.pump();
-      },
-    });
+    while (this.waiting.length) {
+      const waiter = this.waiting[0];
+      if (
+        this.holders.size >= CHECKOUT_READERS ||
+        [...this.holders].some((w) => w.access === "exclusive") ||
+        (waiter.access === "exclusive" && this.holders.size)
+      )
+        return;
+      this.waiting.shift();
+      this.holders.add(waiter);
+      const assertHeld = () => {
+        this.assertOpen();
+        // Object identity prevents an old handle from releasing a reused ID.
+        if (!this.holders.has(waiter)) throw new ContractError("stale");
+      };
+      waiter.resolve({
+        assertHeld,
+        release: () => {
+          assertHeld();
+          this.holders.delete(waiter);
+          this.pump();
+        },
+      });
+    }
   }
 }

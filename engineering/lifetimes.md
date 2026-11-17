@@ -6,9 +6,15 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 ## Conversation workflow lifetime
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
-They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
+Separate conversations may admit independent workflows in one checkout; one conversation has at most one accepted implementation, and the existing per-owner active-run bound still applies.
+Research holds shared checkout access until all original workers/auth/storage settle.
+Direct working-copy delivery and ordinary host-tool turns hold exclusive access through original settlement.
+A local-merge run starts exclusively through pinned-target validation, target preflight and stable-candidate creation, then releases the target checkout permit while its isolated implementation/check/review stages run.
+Its owner and workspace reservations still fence original operations; a shared checkout permit here would incorrectly block the next candidate's exclusive creation.
+It reacquires exclusive access for candidate refresh, shared project-knowledge maintenance, publication, fast-forward, post-merge checks and cleanup.
+The fair FIFO gate never lets readers bypass a waiting writer; cancellation removes a waiter, never a holder.
 Approved delivery also owns its workspace-specific temporary environments through actual cleanup settlement; failed or uncertain runs and owner restarts retain those resources, never reclaim them by age or replay their allocation (see [checks and review](checks-review.md#automatic-conversation-workflow)).
-Model-request recovery stays inside the original SDK session, without a total runtime deadline; its checkout gate remains held during abortable backoff.
+Model-request recovery stays inside the original SDK session, without a total runtime deadline; any checkout permit held by its stage remains held during abortable backoff.
 The SDK alone retries failed responses, retaining completed tool results and never repeating the user's Send, a tool operation or a whole workflow step.
 A workflow worker runs unattended, so its retry settings are Pi's with a floor (`UNATTENDED_RETRY` in `src/worker-model.mjs`: 12 retries, backoff capped at 5 min, about half an hour at Pi's base delay) unless the user turned retries off; a conversation turn, the coordinator's included, keeps Pi's own settings.
 A terminal model-request failure (recovery exhausted or nonretryable) ends delivery after actual cleanup, rather than starting a second network retry or provider-dependent diagnosis loop.
@@ -16,18 +22,22 @@ Its step, the run's notice and the worker's transcript say why: a fixed first li
 A research run is the one exception to never repeating a step: a question whose worker settled as failed is asked once more by a new worker, alone, after the run's other questions; nothing was changed by the first attempt, and a provider that refuses concurrent requests answers a lone one.
 An unknown closure, a timeout or a cancellation is never asked again.
 Unknown closure never releases the gate, and cleanup quarantine cannot be overwritten by a completed workflow status.
-Within that barrier the run's own workers may overlap: implementation assignments that are ready together run side by side in child worktrees of the stable candidate, up to the execution limit, and every started one is joined before the stage ends (see [worktree delivery](worktree-delivery.md)).
+Within that isolated candidate the run's own workers may overlap: implementation assignments that are ready together run side by side in child worktrees of the stable candidate, up to the execution limit, and every started one is joined before the stage ends (see [worktree delivery](worktree-delivery.md)).
 Assignments may share write paths; those never run together.
 Readonly questions within a research run may overlap.
 Each answer is recorded the moment it settles, under its step's investigation identity and under the step's own id, whatever becomes of the other questions; the run completes when any question was answered and its notice names the ones that were not.
 A run's Git steps are serialized among themselves before they take the shared repository lease.
 A local-merge candidate lives under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/integration` (0700, outside the private service namespace and checkout).
 The candidate is on one named task branch created only after approval; mode entry, research and clarification create no Git resources.
-Git mutation groups also hold a short common-directory lease after the checkout permit, never while waiting for workers or checks.
+Git mutation groups also hold a short common-directory lease, after the checkout permit for stages that require one, never while waiting for workers or checks.
 Managed candidate worktrees cannot start another owner; exact-owner healing releases coordination records without deleting retained Git artifacts.
 See [worktree delivery](worktree-delivery.md) for creation, exact acceptance and retention.
 Retained task worktrees from earlier releases remain untouched.
 Direct working-copy delivery serializes edits without Git mutation.
+Only a sibling's actual fast-forward followed by successful post-merge checks may advance a pending peer's in-memory integration frontier.
+The peer merges that verified frontier into its isolated candidate and repeats checks and automatic Agent review; it never rebases or automatically resolves a conflict.
+External HEAD/branch drift, overlapping writes or changed `AGENTS.md` refuse integration and retain the candidate.
+Failed or unknown deliveries advance no peer.
 The terminal is never an embedded executor.
 One fresh 120s grant binds the exact displayed version-3 delivery agreement, model source, project observation and owner epoch.
 The agreement explicitly allows service-owned diagnosis, remaining-work splitting and alternative implementations under its approved goal, decisions, acceptance and exact commands; route and repository write-scope revisions follow [checks and review](checks-review.md#automatic-conversation-workflow), never expand external authority.
@@ -184,7 +194,7 @@ A running owner that does not answer, a holder on another host and a PID that ca
 Stopping an unresponsive owner requires its recorded start identity; taking over a foreign or unidentifiable holder touches no process.
 Recovery never replays work: interrupted runs and turns settle as interrupted (`unknown`), worktrees and partial edits stay, and a new run needs fresh consent.
 
-Research runs share the exclusive checkout gate; one admitted run carries up to 32 questions, runs as many at once as the owner's execution limit allows (`parallelLimit`, `CADENCE_PARALLEL`), keeps asking the rest when a worker fails, starts no further question only after an error that is not a worker's settled failure (stale context, cancellation, unknown closure) and joins every started one before release.
+Research runs share readonly checkout access across conversations; one admitted run carries up to 32 questions, runs as many at once as the owner's execution limit allows (`parallelLimit`, `CADENCE_PARALLEL`), keeps asking the rest when a worker fails, starts no further question only after an error that is not a worker's settled failure (stale context, cancellation, unknown closure) and joins every started one before release.
 Queueing, repeated investigations and model/tool work have no total Agent deadline and need no renewal mechanism.
 Readonly investigations use Pi's standard file tools with explicit paths and default search roots (conversation cwd by default), never an arbitrary shell.
 Pi owns matching, ignore behavior and truncation; partial output is not exhaustive evidence or an atomic source snapshot.

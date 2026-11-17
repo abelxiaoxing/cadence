@@ -12,7 +12,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,system-service,launchd,login-run}.ts` | Single-owner composition, explicit project launch and generated system/user service definitions; management stays SDK-free |
 | `src/service/{coordination,private-files,owner}.ts`                                                        | Canonical overlap exclusion, exact locks and original-operation lifetime                                                   |
 | `src/service/{liveness,self-heal,process-ledger,recovery-log,doctor}.ts`                                   | Holder liveness evidence, startup self-healing, recovery log/archive and `cadence doctor`                                  |
-| `src/service/checkout-gate.ts`, `src/service/workflows.ts`                                                 | Exclusive checkout ownership and the sole current engineering orchestrator                                                 |
+| `src/service/checkout-gate.ts`, `src/service/workflows.ts`                                                 | Fair shared/exclusive checkout access and the sole current engineering orchestrator                                        |
 | `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`              | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy              |
 | `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                            | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it  |
 | `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts`     | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                        |
@@ -60,7 +60,7 @@ The gateway preparation route cannot carry message text, select a model or grant
 Directory entries retain distinct cwd identities even when they resolve to the same checkout owner; old root-keyed entries remain readable without migration.
 Preparation binds the original Send's conversation location independently of its directory-navigation entry; it never replaces that entry's identity.
 Only successfully prepared epochs join whole-workbench Stop; browsing an independently running owner never adopts it, and directory aliases are joined once per exact owner epoch.
-Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and checkout gate.
+Their original Stop lifetime and checkout access belong to the existing service owner and checkout gate; isolation and integration lifetimes are defined in [lifetimes](lifetimes.md).
 
 The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, explicit unchanged-plan revalidation, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
@@ -82,6 +82,8 @@ Its readonly directory validator is shared with the repository verification guar
 The readonly diagnostics path is `index → history-shell → native client → history/workflow readers`; it cannot create, approve, execute, check, review or select a model.
 `TaskActions`, `TaskScheduler`, `ActionAdmission`, the old graph executor and foreground `TaskController` are removed, along with their execution-only tests and prospective-plan helper.
 `Workbench`, `Workflows` and `Conversations` take `CheckoutGate` directly.
+Research shares bounded read access; isolated candidate work holds no target checkout permit.
+Candidate creation, direct writes and final delivery are exclusive, with FIFO writer fairness.
 A canceled waiter is removed; an aborted holder remains held until original settlement, and quarantine/Stop cannot refund it.
 `ServiceCoordination` owns a `CheckoutStore`, not task CRUD.
 Retained task readers/writers use an explicit `legacyTaskStore` adapter; current path/filesystem consumers import `workspace.ts` directly.

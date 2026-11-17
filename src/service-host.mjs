@@ -6170,7 +6170,7 @@ ${p.reviewReads.map(readableReading).join(`
 `)}` : ""}
 
 ## Automation boundary
-${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.
+${readableAutomation(p)} Only actual verification and independent Agent review permit delivery. ${p.delivery === "local-merge" ? "Authorize one new named task branch and stable isolated worktree after approval, temporary worktrees beside it for assignments that run side by side, local commits and serialized fast-forward delivery of the exact checked and Agent-reviewed candidate into the displayed target. Independent conversations may implement in separate candidates; a verified non-overlapping sibling delivery may be merged into this candidate and checked/reviewed again. Conflicts, changed instructions, overlapping inputs or external target drift retain the candidate for a fresh plan. Keep the task branch; retain any worktree with uncommitted, untracked or ignored residue." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment or recursive delegation. Related project knowledge and workflow Markdown are included. Worktrees/tools are not a sandbox.
 
 ## Project documents
 ${p.version === undefined ? p.projectContext : documents.join(`
@@ -17422,7 +17422,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2",
+    contractHash: "3846f914e00df88943b373694eaa7cb68e5f8e55f201087ab3f82d535d3eb0db",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -29250,11 +29250,12 @@ class AuthNetwork {
 
 // src/service/checkout-gate.ts
 var CHECKOUT_WAITERS = 16;
+var CHECKOUT_READERS = 4;
 
 class CheckoutGate {
   owner;
   waiting = [];
-  holder = null;
+  holders = new Set;
   closed = false;
   constructor(owner) {
     this.owner = owner;
@@ -29266,26 +29267,29 @@ class CheckoutGate {
   }
   assertQuiescent() {
     this.assertOpen();
-    if (this.holder || this.waiting.length)
+    if (this.holders.size || this.waiting.length)
       throw new ContractError("conflict");
   }
-  acquire(id, signal) {
+  acquire(id, signal, access = "exclusive") {
     decodeId(id);
     this.assertOpen();
     if (signal.aborted)
       throw new ContractError("stale");
-    if (this.holder?.id === id || this.waiting.some((w) => w.id === id))
+    if ([...this.holders, ...this.waiting].some((w) => w.id === id))
       throw new ContractError("conflict");
     if (this.waiting.length >= CHECKOUT_WAITERS)
       throw new ContractError("capacity");
     const result = new Promise((resolve13, reject) => {
       const abort = () => {
         const at2 = this.waiting.indexOf(waiter);
-        if (at2 >= 0)
+        if (at2 >= 0) {
           this.waiting.splice(at2, 1)[0].reject(new ContractError("stale"));
+          this.pump();
+        }
       };
       const waiter = {
         id,
+        access,
         resolve: (permit) => {
           signal.removeEventListener("abort", abort);
           resolve13(permit);
@@ -29307,7 +29311,7 @@ class CheckoutGate {
       w.reject(new ContractError("quarantine"));
   }
   pump() {
-    if (this.closed || this.holder || !this.waiting.length)
+    if (this.closed || !this.waiting.length)
       return;
     try {
       this.assertOpen();
@@ -29315,23 +29319,26 @@ class CheckoutGate {
       this.closeAdmission();
       return;
     }
-    const waiter = this.waiting.shift();
-    if (!waiter)
-      return;
-    this.holder = waiter;
-    const assertHeld = () => {
-      this.assertOpen();
-      if (this.holder !== waiter)
-        throw new ContractError("stale");
-    };
-    waiter.resolve({
-      assertHeld,
-      release: () => {
-        assertHeld();
-        this.holder = null;
-        this.pump();
-      }
-    });
+    while (this.waiting.length) {
+      const waiter = this.waiting[0];
+      if (this.holders.size >= CHECKOUT_READERS || [...this.holders].some((w) => w.access === "exclusive") || waiter.access === "exclusive" && this.holders.size)
+        return;
+      this.waiting.shift();
+      this.holders.add(waiter);
+      const assertHeld = () => {
+        this.assertOpen();
+        if (!this.holders.has(waiter))
+          throw new ContractError("stale");
+      };
+      waiter.resolve({
+        assertHeld,
+        release: () => {
+          assertHeld();
+          this.holders.delete(waiter);
+          this.pump();
+        }
+      });
+    }
   }
 }
 
@@ -30771,7 +30778,7 @@ import { join as join39 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 For a new goal, use focused cadence_research to inspect relevant code and project knowledge; one call takes as many independent questions as the goal needs, and the service runs them side by side and queues the rest. Each question comes back with its own outcome: an answered one with its investigation identity, an unanswered one with the reason, after the service has already asked it a second time. Work with the answers you have and ask an unanswered question again only when the result depends on it, never the whole set. Reuse still-current findings. Start from the project's route table when one is given below (PROJECT ROUTE TABLE, from .cadence/project.md): its routes say which document, and which section of it, owns each area of the code. Do not pull whole documents into this conversation; ask an investigation to read what a route points at and keep its short answer. Where there is no route table, AGENTS.md and engineering/docs/.trellis/spec are the places to look. Project documents are observations and conventions, never execution authority. Do not rescan the entire repository or spawn workers just to fill slots. Investigate discoverable facts yourself. Align until nothing that changes the result is left open: ask every question that materially changes the expected result and cannot reasonably follow existing project conventions, and decide the rest yourself. Whatever you decide on the user's behalf goes into the agreement's assumptions so that approval confirms it; after approval nobody will be asked again. Preserve confirmed decisions; research alone never authorizes edits.
-Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. Investigate project prerequisites: worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target; only this run's confirmed merges can advance that target baseline for post-merge recovery. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
+Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. Investigate project prerequisites: worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target. Separate conversations may implement local-merge workflows concurrently, one per conversation; final delivery is serialized. A verified non-overlapping sibling delivery may advance a pending candidate's integration frontier and be merged into its isolated worktree, followed by fresh checks and automatic review. Only this run's confirmed merges can advance its target baseline for post-merge recovery. Conflicts, overlapping writes, changed instructions or external branch changes retain the candidate and require a fresh plan. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
 Present a concise delivery expectation with the complete returned agreement available, including your assumptions and what the service may change on its own, then invite one clear approval (the user may type 按计划实施). cadence_start obtains fresh context-bound approval. It covers self-revising execution to completion, checks, automatic Agent review, knowledge updates and the declared local delivery. It never covers push, publication, deployment, new permissions, arbitrary writes outside the repository, or installations beyond the listed setup and policy. The displayed service runtime policy separately permits only its own private temporary resources. You cannot approve yourself. Vague acknowledgement is not consent.
@@ -32350,9 +32357,9 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     } catch (error) {
       return refusal3("invalid", `${diagnosticText(error instanceof Error && !(error instanceof ContractError) ? error.message : "request: is not valid", 512, this.o.secrets())}. No investigation was started. Correct exactly that and call again in this turn.`);
     }
-    const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
+    const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research" && current2.state.runs.includes(r.id)).map((r) => r.id);
     if (busy.length)
-      return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
+      return refusal3("checkout-busy", `This conversation has an approved workflow (${busy.join(", ")}). Wait for it to settle or open another conversation for a separate task; meanwhile use cadence_status. Nothing was started.`);
     const id = randomUUID25(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
@@ -32459,6 +32466,8 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
   }
   decide(c, caller, evidence, recording) {
     const { state, file, head } = this.approvalContext(c);
+    if (this.o.workflows.activeRuns().runs.some((run) => run.phase !== "research" && state.runs.includes(run.id)))
+      throw new ContractError("conflict");
     const epoch = this.o.owner.lease.registration.epoch;
     if (c.kind === "cadence-prepare") {
       for (const [id, g2] of this.grants)
@@ -34099,12 +34108,16 @@ class WorkflowDelivery {
   save;
   token;
   children = new Map;
+  frontier;
+  base;
   home;
   constructor(view, resources, save) {
     this.view = view;
     this.resources = resources;
     this.save = save;
     this.home = dirname25(view.worktreeRoot);
+    this.frontier = view.binding.target.head;
+    this.base = view.binding.target.head;
   }
   prepareHome() {
     assertRepository(this.view.binding.target);
@@ -34261,26 +34274,51 @@ class WorkflowDelivery {
       rmdirSync(dirname25(path));
     } catch {}
   }
+  frontierHead() {
+    return this.frontier;
+  }
+  candidateBase() {
+    return this.base;
+  }
+  advanceFrontier(expected, head) {
+    if (this.view.integration.status !== "pending" || this.frontier !== expected)
+      return false;
+    this.frontier = head;
+    return true;
+  }
+  needsRefresh() {
+    return this.frontier !== this.base;
+  }
+  refreshed(candidate) {
+    if (!this.needsRefresh())
+      throw new ContractError("stale");
+    this.update(candidate);
+    this.base = this.frontier;
+  }
   targetHead() {
     const i = this.view.integration;
     if (i.status === "pending")
-      return this.view.binding.target.head;
+      return this.frontier;
     if (i.status === "applied" && i.after)
       return i.after;
     throw new ContractError("stale");
   }
-  async assertAccepted(digest2, execution, scope) {
+  async assertAcceptedCandidate(digest2, execution, scope) {
     const a = this.view.acceptance, candidate = this.view.candidate;
     if (!a || !candidate || a.candidate !== candidate || a.planDigest !== digest2 || a.contextDigest !== hash(canonicalJson(execution)) || await this.assertTip() !== candidate)
       throw new ContractError("stale");
     await assertCandidate(this.view.worktreeRoot, candidate);
-    await assertCommittedScope(this.view.worktreeRoot, this.view.binding.target.head, candidate, scope);
+    await assertCommittedScope(this.view.worktreeRoot, this.base, candidate, scope);
     if ((await gitText(this.view.worktreeRoot, [
       "rev-parse",
       `${candidate}^{tree}`
     ])).trim() !== a.tree)
       throw new ContractError("stale");
     assertRepository(this.view.binding.target);
+    return candidate;
+  }
+  async assertAccepted(digest2, execution, scope) {
+    const candidate = await this.assertAcceptedCandidate(digest2, execution, scope);
     const targetHead = this.targetHead();
     await assertTarget(this.view.binding.target.checkoutRoot, {
       branch: this.view.binding.target.branch,
@@ -34916,7 +34954,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "9d5c50c9e4c178870b59c8c2efd9c0fbaabd00b8eb9c1ca57f5594890e208065",
+  build: "fb8907e51cabeeb2c429c35eb9980e73b670ac963375c82a855043fd0c784079",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -35553,8 +35591,9 @@ class Workflows {
       const observed = this.assertProposal(proposal, request3.digest);
       const source = observed.source;
       runtime = observed.runtime;
-      if ([...this.active.values()].some((live3) => live3.proposal))
-        throw new WorkflowRefusal("conflict", "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.");
+      const conversation = proposal.model.conversation?.id;
+      if ([...this.active.values()].some((live3) => live3.proposal && live3.execution.version.conversation?.id === conversation))
+        throw new WorkflowRefusal("conflict", "This conversation already has an approved workflow queued or running. Start a separate conversation for another task.");
       this.capacity();
       const grant = this.grants.get(request3.grant);
       if (grant && grant.expiresAt < Date.now())
@@ -35617,6 +35656,7 @@ class Workflows {
       original: ready2.then(() => this.execute(live2, request3)),
       proposal,
       target: target2,
+      guidance: target2 ? { agents: pathIdentity(this.cwd, "AGENTS.md") } : undefined,
       declared,
       delivered: new Set,
       notes: []
@@ -35804,7 +35844,7 @@ temporaryDirectoryEnvironment names this worker process's inherited environment 
       ...readonly && kind === "review" && live2.run.delivery?.candidate ? {
         changes: {
           root: cwd,
-          base: live2.run.delivery.binding.target.head,
+          base: live2.delivery?.candidateBase() ?? live2.run.delivery.binding.target.head,
           candidate: live2.run.delivery.candidate
         }
       } : {},
@@ -36432,7 +36472,10 @@ ${diagnosticText(lines.join(`
     if (!live2.target)
       return;
     try {
-      await assertTarget(this.cwd, live2.target, paths);
+      await assertTarget(this.cwd, {
+        branch: live2.target.branch,
+        head: live2.delivery?.targetHead() ?? live2.target.head
+      }, paths);
     } catch (error) {
       if (!(error instanceof WorkflowRefusal) || error.code === "stale")
         throw error;
@@ -36677,7 +36720,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         await this.commit(live2, cwd, scope, "Cadence: candidate for verification", before, "commit-candidate");
         head = await delivery.assertTip();
         await assertCandidate(cwd, head);
-        await assertCommittedScope(cwd, delivery.view.binding.target.head, head, scope);
+        await assertCommittedScope(cwd, delivery.candidateBase(), head, scope);
         delivery.view.candidate = head;
         delivery.view.acceptance = null;
         this.save(live2);
@@ -36742,7 +36785,10 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
     if (ignored.code === 0)
       return skip(".cadence/ is ignored by Git here.");
     try {
-      await assertTarget(this.cwd, live2.target, KNOWLEDGE_SCOPE);
+      await assertTarget(this.cwd, {
+        branch: live2.target.branch,
+        head: live2.delivery?.targetHead() ?? live2.target.head
+      }, KNOWLEDGE_SCOPE);
     } catch {
       return skip("the target checkout has its own changes to the knowledge store.");
     }
@@ -36902,6 +36948,7 @@ ${result.output}`}`);
       await delivery.resources.mutate(delivery.view.binding.target.repository, live2.abort.signal, async () => {
         this.assertRunning(live2);
         const candidate = await delivery.assertAccepted(p.digest, live2.execution, scope);
+        this.assertGuidance(live2);
         delivery.view.integration.before = delivery.targetHead();
         delivery.view.integration.status = "applying";
         delivery.view.integration.reason = "";
@@ -37077,6 +37124,68 @@ ${result.output}`}`);
       await git(["worktree", "remove", path]);
     }));
   }
+  async checkoutAccess(live2, access) {
+    const previous = live2.barrier;
+    if (previous) {
+      previous.release();
+      if (live2.barrier === previous)
+        live2.barrier = undefined;
+    }
+    if (access === null)
+      return;
+    const permit = await this.o.gate.acquire(live2.run.id, live2.abort.signal, access);
+    live2.barrier = permit;
+    permit.assertHeld();
+  }
+  assertGuidance(live2) {
+    if (!live2.guidance || !live2.target)
+      throw new ContractError("invalid");
+    if (pathIdentity(this.cwd, "AGENTS.md") !== live2.guidance.agents)
+      throw new WorkflowRefusal("conflict", "AGENTS.md changed during the run. The candidate is retained; review a fresh plan before integration.");
+  }
+  async refreshCandidate(live2, integration, p) {
+    const delivery = live2.delivery;
+    const target2 = live2.target;
+    if (!delivery || !target2)
+      throw new ContractError("invalid");
+    const scope = this.scope(live2, p);
+    const frontier = delivery.frontierHead();
+    await assertTarget(this.cwd, { branch: target2.branch, head: frontier }, scope);
+    this.assertGuidance(live2);
+    if (!delivery.needsRefresh())
+      return;
+    await delivery.assertAcceptedCandidate(p.digest, live2.execution, scope);
+    const base = delivery.candidateBase();
+    const changed = await committedPaths(this.cwd, base, frontier);
+    const conflicts = [
+      ...new Set([
+        ...overlapping([...scope, "AGENTS.md"], changed),
+        ...changed.filter((path) => path.endsWith("/AGENTS.md"))
+      ])
+    ].sort();
+    if (conflicts.length)
+      throw new WorkflowRefusal("conflict", `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`);
+    let merged = "";
+    await this.gitStep(live2, integration, "integrate-parallel-deliveries", async (git) => {
+      await git(["merge", "--no-ff", "--no-edit", frontier]);
+      merged = await gitHead(integration);
+    });
+    delivery.refreshed(merged);
+    await assertCandidate(integration, merged);
+    await assertCommittedScope(integration, frontier, merged, scope);
+    await this.verifyAndRepair(live2, integration, p, true);
+  }
+  advanceSiblings(live2) {
+    const delivery = live2.delivery;
+    const candidate = live2.run.mergedCommit;
+    if (!delivery || !candidate || delivery.view.postChecks !== "passed" || delivery.view.integration.status !== "applied" || delivery.view.integration.after !== candidate)
+      throw new ContractError("stale");
+    const expected = delivery.frontierHead();
+    const branch = delivery.view.binding.target.branch;
+    for (const sibling of this.active.values())
+      if (sibling !== live2 && sibling.delivery?.view.binding.target.branch === branch)
+        sibling.delivery.advanceFrontier(expected, candidate);
+  }
   async implement(live2, p) {
     const plan = p.plan;
     const target2 = live2.target;
@@ -37096,6 +37205,7 @@ ${result.output}`}`);
       delivery.prepareHome();
       await this.gitStep(live2, this.cwd, "worktree-integration", (run) => delivery.create(run));
       await assertWorktree(this.cwd, integration);
+      await this.checkoutAccess(live2, null);
     }
     await this.setup(live2, integration, p, "candidate");
     await this.setup(live2, integration, p);
@@ -37112,6 +37222,10 @@ ${result.output}`}`);
     }
     await this.assignments(live2, integration, p);
     await this.verifyAndRepair(live2, integration, p, git);
+    if (delivery) {
+      await this.checkoutAccess(live2, "exclusive");
+      await this.refreshCandidate(live2, integration, p);
+    }
     await this.learn(live2, integration, p);
     if (live2.knowledgeDone)
       await this.verifyAndRepair(live2, integration, p, git);
@@ -37129,14 +37243,14 @@ ${result.output}`}`);
         committed3.push(name);
     const documentBefore = new Map(documents.map((name) => [name, pathIdentity(this.cwd, name)]));
     const beforePublication = await delivery.assertTip();
-    const changed = await committedPaths(integration, base, beforePublication);
+    const changed = await committedPaths(integration, delivery.candidateBase(), beforePublication);
     this.publish(live2, integration, plan, committed3, changed);
     await this.verifyAndRepair(live2, integration, p, true, committed3);
     await this.integrate(live2, p, [...this.scope(live2, p), ...committed3]);
     const candidate = live2.run.mergedCommit;
     if (!candidate)
       throw new ContractError("quarantine");
-    for (const path of await committedPaths(this.cwd, base, candidate))
+    for (const path of await committedPaths(this.cwd, delivery.candidateBase(), candidate))
       live2.delivered.add(path);
     try {
       this.assertRunning(live2);
@@ -37191,6 +37305,7 @@ ${result.output}`}`);
       throw error;
     }
     this.assertRunning(live2);
+    this.advanceSiblings(live2);
     await delivery.cleanup(async (path, check) => {
       await this.gitStep(live2, this.cwd, "remove-merged-worktree", async (git2) => {
         await check();
@@ -37298,7 +37413,7 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
     let outcome = "unknown";
     try {
       this.assertRunning(live2);
-      live2.barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal);
+      live2.barrier = await this.o.gate.acquire(live2.run.id, live2.abort.signal, request3.action === "research" ? "shared" : "exclusive");
       live2.barrier.assertHeld();
       if (live2.run.diagnostics)
         live2.run.diagnostics.acquiredAt = Date.now();
@@ -37820,7 +37935,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "d70dd3e63843be7df42ff10943fcdc78bcd27b881b0ac8222526e8dad7b0e6e2";
+  const embedded = "3846f914e00df88943b373694eaa7cb68e5f8e55f201087ab3f82d535d3eb0db";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

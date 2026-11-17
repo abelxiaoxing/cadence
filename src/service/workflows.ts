@@ -28,7 +28,11 @@ import {
   safeDirectory,
   withinWorkspace,
 } from "../workspace.ts";
-import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
+import type {
+  CheckoutAccess,
+  CheckoutGate,
+  CheckoutPermit,
+} from "./checkout-gate.ts";
 import { managedActivity } from "./contracts/activity.ts";
 import {
   ContractError,
@@ -143,6 +147,7 @@ import {
   gitHead,
   gitRun,
   gitText,
+  overlapping,
   pathIdentity,
   safeWorkflowFile,
   snapshotChanges,
@@ -261,6 +266,8 @@ interface Live {
   delivery?: WorkflowDelivery;
   /** Target observed at admission (local-merge) or declared-target identity (working copy). */
   target?: { head: string; branch: string };
+  /** Root instructions approved at admission; sibling knowledge is reviewed separately. */
+  guidance?: { agents: string | null };
   declared?: string;
   delivered: Set<string>;
   notes: string[];
@@ -1129,12 +1136,19 @@ export class Workflows {
       const observed = this.assertProposal(proposal, request.digest);
       const source = observed.source;
       runtime = observed.runtime;
-      // A second plan would be checked against a checkout the first one changes;
-      // queued behind it, it could only end stale. Refused before the grant is used.
-      if ([...this.active.values()].some((live) => live.proposal))
+      // Independent conversations can work in isolated candidates. One
+      // conversation still has only one accepted implementation.
+      const conversation = proposal.model.conversation?.id;
+      if (
+        [...this.active.values()].some(
+          (live) =>
+            live.proposal &&
+            live.execution.version.conversation?.id === conversation,
+        )
+      )
         throw new WorkflowRefusal(
           "conflict",
-          "Another approved workflow is queued or running in this checkout. Approve this plan again after it settles.",
+          "This conversation already has an approved workflow queued or running. Start a separate conversation for another task.",
         );
       this.capacity();
       // Validated before use: a refusal leaves the grant (or another
@@ -1220,6 +1234,9 @@ export class Workflows {
       original: ready.then(() => this.execute(live, request)),
       proposal,
       target,
+      guidance: target
+        ? { agents: pathIdentity(this.cwd, "AGENTS.md") }
+        : undefined,
       declared,
       delivered: new Set(),
       notes: [],
@@ -1545,7 +1562,9 @@ export class Workflows {
         ? {
             changes: {
               root: cwd,
-              base: live.run.delivery.binding.target.head,
+              base:
+                live.delivery?.candidateBase() ??
+                live.run.delivery.binding.target.head,
               candidate: live.run.delivery.candidate,
             },
           }
@@ -2478,7 +2497,14 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
   private async assertAddable(live: Live, paths: string[]): Promise<void> {
     if (!live.target) return;
     try {
-      await assertTarget(this.cwd, live.target, paths);
+      await assertTarget(
+        this.cwd,
+        {
+          branch: live.target.branch,
+          head: live.delivery?.targetHead() ?? live.target.head,
+        },
+        paths,
+      );
     } catch (error) {
       // A moved target is not a question of scope: it ends the delivery.
       if (!(error instanceof WorkflowRefusal) || error.code === "stale")
@@ -2903,12 +2929,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         );
         head = await delivery.assertTip();
         await assertCandidate(cwd, head);
-        await assertCommittedScope(
-          cwd,
-          delivery.view.binding.target.head,
-          head,
-          scope,
-        );
+        await assertCommittedScope(cwd, delivery.candidateBase(), head, scope);
         delivery.view.candidate = head;
         delivery.view.acceptance = null;
         this.save(live);
@@ -3012,7 +3033,14 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     ]);
     if (ignored.code === 0) return skip(".cadence/ is ignored by Git here.");
     try {
-      await assertTarget(this.cwd, live.target, KNOWLEDGE_SCOPE);
+      await assertTarget(
+        this.cwd,
+        {
+          branch: live.target.branch,
+          head: live.delivery?.targetHead() ?? live.target.head,
+        },
+        KNOWLEDGE_SCOPE,
+      );
     } catch {
       return skip(
         "the target checkout has its own changes to the knowledge store.",
@@ -3291,6 +3319,9 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
             live.execution,
             scope,
           );
+          // Final candidate checks/review are asynchronous; refresh alone is
+          // not a fence against instructions changing before the target merge.
+          this.assertGuidance(live);
           delivery.view.integration.before = delivery.targetHead();
           delivery.view.integration.status = "applying";
           delivery.view.integration.reason = "";
@@ -3565,6 +3596,103 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       ),
     );
   }
+  /** Change access only after the previous original holder has settled its
+   * current stage. Cancellation while queued never releases another holder. */
+  private async checkoutAccess(live: Live, access: CheckoutAccess | null) {
+    const previous = live.barrier;
+    if (previous) {
+      previous.release();
+      if (live.barrier === previous) live.barrier = undefined;
+    }
+    if (access === null) return;
+    const permit = await this.o.gate.acquire(
+      live.run.id,
+      live.abort.signal,
+      access,
+    );
+    live.barrier = permit;
+    permit.assertHeld();
+  }
+  /** Approved instructions cannot drift while asynchronous work is running. */
+  private assertGuidance(live: Live): void {
+    if (!live.guidance || !live.target) throw new ContractError("invalid");
+    if (pathIdentity(this.cwd, "AGENTS.md") !== live.guidance.agents)
+      throw new WorkflowRefusal(
+        "conflict",
+        "AGENTS.md changed during the run. The candidate is retained; review a fresh plan before integration.",
+      );
+  }
+  /** Merge only verified sibling deliveries into the isolated candidate. This
+   * preserves both histories; conflicts retain the worktree without an
+   * automatic resolver, rebase, reset or target checkout mutation. */
+  private async refreshCandidate(
+    live: Live,
+    integration: string,
+    p: WorkflowProposal,
+  ) {
+    const delivery = live.delivery;
+    const target = live.target;
+    if (!delivery || !target) throw new ContractError("invalid");
+    const scope = this.scope(live, p);
+    const frontier = delivery.frontierHead();
+    await assertTarget(
+      this.cwd,
+      { branch: target.branch, head: frontier },
+      scope,
+    );
+    this.assertGuidance(live);
+    if (!delivery.needsRefresh()) return;
+    await delivery.assertAcceptedCandidate(p.digest, live.execution, scope);
+    const base = delivery.candidateBase();
+    const changed = await committedPaths(this.cwd, base, frontier);
+    const conflicts = [
+      ...new Set([
+        ...overlapping([...scope, "AGENTS.md"], changed),
+        ...changed.filter((path) => path.endsWith("/AGENTS.md")),
+      ]),
+    ].sort();
+    if (conflicts.length)
+      throw new WorkflowRefusal(
+        "conflict",
+        `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`,
+      );
+    let merged = "";
+    await this.gitStep(
+      live,
+      integration,
+      "integrate-parallel-deliveries",
+      async (git) => {
+        await git(["merge", "--no-ff", "--no-edit", frontier]);
+        merged = await gitHead(integration);
+      },
+    );
+    delivery.refreshed(merged);
+    await assertCandidate(integration, merged);
+    // From the new frontier, only this run's approved writes may remain.
+    await assertCommittedScope(integration, frontier, merged, scope);
+    await this.verifyAndRepair(live, integration, p, true);
+  }
+  /** A failed or unknown post-check never advances another candidate. */
+  private advanceSiblings(live: Live): void {
+    const delivery = live.delivery;
+    const candidate = live.run.mergedCommit;
+    if (
+      !delivery ||
+      !candidate ||
+      delivery.view.postChecks !== "passed" ||
+      delivery.view.integration.status !== "applied" ||
+      delivery.view.integration.after !== candidate
+    )
+      throw new ContractError("stale");
+    const expected = delivery.frontierHead();
+    const branch = delivery.view.binding.target.branch;
+    for (const sibling of this.active.values())
+      if (
+        sibling !== live &&
+        sibling.delivery?.view.binding.target.branch === branch
+      )
+        sibling.delivery.advanceFrontier(expected, candidate);
+  }
   private async implement(live: Live, p: WorkflowProposal) {
     const plan = p.plan;
     const target = live.target;
@@ -3585,6 +3713,11 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         delivery.create(run),
       );
       await assertWorktree(this.cwd, integration);
+      // Target setup and candidate creation ran exclusively. Isolated work
+      // holds no checkout permit: even a shared one would block the next
+      // conversation's exclusive candidate creation and serialize its work.
+      // The owner/workspace reservations still fence every original operation.
+      await this.checkoutAccess(live, null);
     }
     await this.setup(live, integration, p, "candidate");
     await this.setup(live, integration, p);
@@ -3604,6 +3737,13 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     }
     await this.assignments(live, integration, p);
     await this.verifyAndRepair(live, integration, p, git);
+    if (delivery) {
+      // Refresh before maintaining shared knowledge, so independently edited
+      // code does not conflict merely because both runs curate the same store.
+      // Hold exclusive access through knowledge, publication and post-checks.
+      await this.checkoutAccess(live, "exclusive");
+      await this.refreshCandidate(live, integration, p);
+    }
     await this.learn(live, integration, p);
     // Documentation is part of the candidate: review and checks bind its new bytes.
     if (live.knowledgeDone)
@@ -3631,14 +3771,22 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       documents.map((name) => [name, pathIdentity(this.cwd, name)]),
     );
     const beforePublication = await delivery.assertTip();
-    const changed = await committedPaths(integration, base, beforePublication);
+    const changed = await committedPaths(
+      integration,
+      delivery.candidateBase(),
+      beforePublication,
+    );
     this.publish(live, integration, plan, committed, changed);
     await this.verifyAndRepair(live, integration, p, true, committed);
     // What the candidate may contain is the scope as revisions left it.
     await this.integrate(live, p, [...this.scope(live, p), ...committed]);
     const candidate = live.run.mergedCommit;
     if (!candidate) throw new ContractError("quarantine");
-    for (const path of await committedPaths(this.cwd, base, candidate))
+    for (const path of await committedPaths(
+      this.cwd,
+      delivery.candidateBase(),
+      candidate,
+    ))
       live.delivered.add(path);
     try {
       this.assertRunning(live);
@@ -3742,6 +3890,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       throw error;
     }
     this.assertRunning(live);
+    this.advanceSiblings(live);
     await delivery.cleanup(async (path, check) => {
       await this.gitStep(
         live,
@@ -3903,7 +4052,11 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     let outcome: WorkflowRun["status"] = "unknown";
     try {
       this.assertRunning(live);
-      live.barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
+      live.barrier = await this.o.gate.acquire(
+        live.run.id,
+        live.abort.signal,
+        request.action === "research" ? "shared" : "exclusive",
+      );
       live.barrier.assertHeld();
       if (live.run.diagnostics) live.run.diagnostics.acquiredAt = Date.now();
       if (live.proposal) {

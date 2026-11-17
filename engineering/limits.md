@@ -53,7 +53,7 @@ The default `httpIdleTimeoutMs: 0` uses Pi 1.5.0's public disabled setting; an e
 `src/sdk-worker.mjs` uses the admitted value for its owned direct/proxy Undici header/body timeouts.
 Pi internally maps that setting to its maximum provider-request timer, so this is not proof of unlimited provider latency or a removal of upstream SDK/proxy policies.
 This does not extend an upstream proxy's timeout, reconnect an ended stream or promise a maximum total latency of only the summed backoff.
-At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
+At most four workflows are active, with one approved implementation per conversation; retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
 The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other recorded in-run Git commands also have no default execution timeout; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
 A declared directory's identity hashes up to 20,000 entries; a larger one is refused as `invalid` with a request for narrower paths.
 Run snapshots allow 384KiB and 256 recent status steps.
@@ -73,7 +73,8 @@ Control records are bounded at 384KiB and project the most recent 200 workflow l
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
 The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.
 
-The current checkout gate permits one holder and at most 16 waiting operations (`CHECKOUT_WAITERS` in `src/service/checkout-gate.ts`).
+The checkout gate permits four shared holders (`CHECKOUT_READERS`) or one exclusive holder, plus at most 16 waiting operations (`CHECKOUT_WAITERS` in `src/service/checkout-gate.ts`).
+FIFO readers cannot bypass a waiting writer.
 Waiting cancellation releases only that queue entry; holder abort/Stop/quarantine never releases an uncertain original.
 
 Workflow history reads at most 200 directory entries per quantum and returns at most 20 summaries per page, retaining 21 candidate IDs per scan (`WORKFLOW_LIMITS.historyScanEntries`, `historyPage`).
@@ -147,7 +148,7 @@ A timed-out child uses the existing `LIMITS.terminateGraceMs` and `LIMITS.unconf
   OAuth preparation and writeback stay owner-owned; each request re-resolves the pinned source over private IPC, with a two-minute request validity margin rather than whole-worker validity.
   External identity/source replacement refuses; no refresh retry layer is added.
 - **Retained:** one SDK request-retry layer (Pi-configured retries per failed model response, not thought rounds), consent/read/write scopes, exact candidates, real checks and independent Agent Review; frame/detail/live-queue bounds, real storage/free-space errors, connection establishment checks and post-cancel TERM/KILL/unknown timers.
-  Checkout serialization is unchanged.
+  Target writes remain serialized; research shares bounded read access and isolated candidates hold their own workspace reservations instead of a target permit.
   Readonly Git admission/evidence budgets bound observations, not an Agent's lifetime or an accepted Git mutation.
 - **Separate prerequisites:** fully paged Pi history/tree storage requires an appropriate public SDK session interface; provider/SDK transport policies and real OAuth/provider behavior require their own qualification.
   No service restart, workflow replay or history deletion substitutes for these prerequisites.

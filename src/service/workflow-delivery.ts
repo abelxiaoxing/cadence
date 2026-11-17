@@ -106,6 +106,9 @@ export class WorkflowDelivery {
   private token: string | undefined;
   /** Reservation of each live child worktree, by its path. */
   private readonly children = new Map<string, string>();
+  /** In-memory only: interrupted deliveries are never resumed after restart. */
+  private frontier: string;
+  private base: string;
   readonly home: string;
   constructor(
     readonly view: DeliveryObservation,
@@ -113,6 +116,8 @@ export class WorkflowDelivery {
     private readonly save: () => void,
   ) {
     this.home = dirname(view.worktreeRoot);
+    this.frontier = view.binding.target.head;
+    this.base = view.binding.target.head;
   }
   prepareHome(): void {
     assertRepository(this.view.binding.target);
@@ -316,15 +321,45 @@ export class WorkflowDelivery {
       /* Only remove an already empty directory. */
     }
   }
-  /** Only a confirmed merge by THIS run advances the delivery baseline. The
-   * immutable approved target stays intact, and unknown effects never replay. */
+  /** The verified sibling delivery this pending candidate must incorporate.
+   * The immutable approved target remains in the binding for observation. */
+  frontierHead(): string {
+    return this.frontier;
+  }
+  /** Diff base for this run's own changes, excluding incorporated siblings. */
+  candidateBase(): string {
+    return this.base;
+  }
+  /** Only a successful sibling post-check advances a pending delivery. */
+  advanceFrontier(expected: string, head: string): boolean {
+    if (
+      this.view.integration.status !== "pending" ||
+      this.frontier !== expected
+    )
+      return false;
+    this.frontier = head;
+    return true;
+  }
+  needsRefresh(): boolean {
+    return this.frontier !== this.base;
+  }
+  /** Record an owner-created candidate merge; acceptance must be rebuilt. */
+  refreshed(candidate: string): void {
+    if (!this.needsRefresh()) throw new ContractError("stale");
+    this.update(candidate);
+    this.base = this.frontier;
+  }
+  /** A confirmed merge by this run advances its target expectation. Before
+   * that, only verified sibling post-checks advance the pending frontier. */
   targetHead(): string {
     const i = this.view.integration;
-    if (i.status === "pending") return this.view.binding.target.head;
+    if (i.status === "pending") return this.frontier;
     if (i.status === "applied" && i.after) return i.after;
     throw new ContractError("stale");
   }
-  async assertAccepted(
+  /** Validate candidate evidence without requiring a new sibling frontier to
+   * be its ancestor yet; refresh uses this before merging that frontier. */
+  async assertAcceptedCandidate(
     digest: string,
     execution: ExecutionContext,
     scope: string[],
@@ -343,7 +378,7 @@ export class WorkflowDelivery {
     await assertCandidate(this.view.worktreeRoot, candidate);
     await assertCommittedScope(
       this.view.worktreeRoot,
-      this.view.binding.target.head,
+      this.base,
       candidate,
       scope,
     );
@@ -357,6 +392,18 @@ export class WorkflowDelivery {
     )
       throw new ContractError("stale");
     assertRepository(this.view.binding.target);
+    return candidate;
+  }
+  async assertAccepted(
+    digest: string,
+    execution: ExecutionContext,
+    scope: string[],
+  ): Promise<string> {
+    const candidate = await this.assertAcceptedCandidate(
+      digest,
+      execution,
+      scope,
+    );
     const targetHead = this.targetHead();
     await assertTarget(
       this.view.binding.target.checkoutRoot,

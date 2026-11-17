@@ -40,7 +40,7 @@ When the record cannot be read or kept, its bytes are left as they are, the run 
 
 ## What a worker reads first
 
-Each worker launch observes the documents afresh, before launching the pinned worker under the checkout gate, and `projectKnowledge` composes them in this order:
+Each worker launch observes the documents afresh in its fixed workspace, under the stage's checkout permit or isolated workspace reservation, and `projectKnowledge` composes them in this order:
 
 1. the route table, whole;
 2. what the version-3 agreement names for this reader (`WorkflowTask.reads` for an assignment, `reviewReads` for the review): a document, or one section of it, each with its reason;
@@ -79,6 +79,7 @@ It merges, adds or drops each lesson; finding nothing reusable is a valid no-cha
 When space is needed it removes, in order: entries whose anchors no longer resolve, duplicates and superseded entries, entries now guaranteed by a test or type, routes nothing has needed for a long time with the entries only they lead to and entries about code that no longer matters, and only then shortens wording without dropping a condition.
 With no route table yet, the first delivery creates one that routes the areas it touched to the existing documents that own them.
 Parallel assignments never edit knowledge; only this one assignment does, in the candidate.
+Independent deliveries curate serially, after incorporating verified sibling changes under exclusive target checkout access (see [worktree delivery](worktree-delivery.md#integration-recovery-and-retention)).
 
 The store must pass `lintKnowledge` before the step ends; a failure is a settled failure of that step and goes through recovery like any other.
 Knowledge changes are then covered by the checks and the independent readonly Agent review of the combined candidate, which is told to judge them: additions short, specific and anchored; removals stale, duplicated, guaranteed by a test or compressed without losing a condition.
