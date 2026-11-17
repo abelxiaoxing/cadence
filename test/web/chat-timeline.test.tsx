@@ -11,8 +11,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import type {
   ChatStep,
   ChatTreeNode,
+  ChatTurn,
+  WorkbenchRead,
+  WorkbenchResult,
 } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
+import { ServiceClient } from "../../src/service-client.ts";
 import type {
   LoadedTurn,
   TurnSource,
@@ -31,11 +35,10 @@ import {
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
-import {
-  recordedTurn,
-  useStepDetail,
-} from "../../web/src/components/workspace/turn-source";
+import { useStepDetail } from "../../web/src/components/workspace/turn-source";
+import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
 import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import { transport } from "./fixtures";
 
 const hooks = vi.hoisted(() => ({
   cursor: 0,
@@ -463,49 +466,6 @@ it("conversation navigation hides the previous observation and its actions befor
   );
 });
 
-it("workflow retained tool text refreshes with the same parts and without new presentation metadata", async () => {
-  const snapshot = (text: string, status: "running" | "failed") =>
-    recordedTurn({
-      id: "child",
-      epoch: "epoch",
-      status,
-      notice: "",
-      omitted: { thinking: false, media: false, other: false },
-      items: [
-        {
-          id: "call",
-          role: "tool",
-          name: "bash",
-          args: "{}",
-          text,
-          error: false,
-        },
-      ],
-    });
-  const first = snapshot("first output", "running");
-  render(() => useStepDetail(first, 0, first.steps[0], true));
-  commit();
-  await settle();
-  expect(
-    render(() => useStepDetail(first, 0, first.steps[0], true)).value?.text,
-  ).toBe("first output");
-  const next = snapshot("later output", "running");
-  expect(next.steps[0].parts).toBe(first.steps[0].parts);
-  render(() => useStepDetail(next, 0, next.steps[0], true));
-  commit();
-  await settle();
-  expect(
-    render(() => useStepDetail(next, 0, next.steps[0], true)).value?.text,
-  ).toBe("later output");
-  const final = snapshot("final output despite failed reply", "failed");
-  render(() => useStepDetail(final, 0, final.steps[0], true));
-  commit();
-  await settle();
-  expect(
-    render(() => useStepDetail(final, 0, final.steps[0], true)).value?.text,
-  ).toBe("final output despite failed reply");
-});
-
 function required<T>(value: T | null | undefined): T {
   if (value === undefined || value === null)
     throw new Error("Missing fixture element or callback");
@@ -523,6 +483,426 @@ function elements<P = { children?: ReactNode }>(
     ...elements<P>(node.props.children, type),
   ];
 }
+// The real workflow component owns recordedTurn and the detail closure. Only
+// transport replies and hook scheduling are controlled here; no backend import,
+// persisted-file claim, or hand-written replacement detail function.
+function workflowAgentFixture() {
+  vi.useFakeTimers();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const runId = crypto.randomUUID(),
+    epoch = crypto.randomUUID();
+  const childId = crypto.randomUUID(),
+    callId = crypto.randomUUID();
+  const requests: {
+    client: number;
+    read: WorkbenchRead;
+    signal?: AbortSignal;
+    replied: boolean;
+    reply(value: WorkbenchResult): void;
+  }[] = [];
+  let clientSequence = 0;
+  const makeClient = () => {
+    const id = ++clientSequence;
+    return new ServiceClient(
+      transport({
+        workbenchRead: (read, signal) =>
+          new Promise((resolve) => {
+            requests.push({
+              client: id,
+              read,
+              signal,
+              replied: false,
+              reply(value) {
+                expect(this.replied).toBe(false);
+                this.replied = true;
+                resolve({ kind: "ok", value });
+              },
+            });
+          }),
+      }),
+    );
+  };
+  const props: ComponentProps<typeof WorkflowAgentView> = {
+    client: makeClient(),
+    agent: { runId, stepId: "agent", label: "fixture" },
+    backLabel: "Back",
+    onBack() {},
+    onOpenAgent() {},
+  };
+  const run = (
+    status: WorkflowRun["steps"][number]["status"] = "running",
+  ): WorkbenchResult => ({
+    kind: "workflow",
+    commandId: null,
+    response: {
+      type: "run",
+      run: {
+        id: props.agent.runId,
+        epoch,
+        goal: "Fixture workflow",
+        status: "running",
+        phase: "research",
+        notice: "",
+        mergedCommit: null,
+        humanReviewed: false,
+        steps: [
+          {
+            id: required(props.agent.stepId),
+            childRunId: childId,
+            kind: "research",
+            status,
+            text: "",
+            exitCode: null,
+            truncated: false,
+          },
+        ],
+      },
+    },
+  });
+  const snapshot = (
+    text: string,
+    status: ChatTurn["status"] = "running",
+    state: "running" | "completed" | "failed" = "running",
+  ): WorkbenchResult => ({
+    kind: "workflow-transcript",
+    runId: props.agent.runId,
+    stepId: required(props.agent.stepId),
+    turn: {
+      id: childId,
+      epoch,
+      status,
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+      items: [
+        {
+          id: callId,
+          role: "tool",
+          name: "bash",
+          args: "{}",
+          text,
+          state,
+          error: state === "failed",
+        },
+      ],
+    },
+  });
+  const reads = (kind: WorkbenchRead["kind"]) =>
+    requests.filter((request) => request.read.kind === kind);
+  const pending = (kind: WorkbenchRead["kind"]) =>
+    required(
+      reads(kind).findLast(
+        (request) => !request.replied && !request.signal?.aborted,
+      ),
+    );
+  let activePath = "";
+  const draw = () => {
+    const wrapper = render(() => WorkflowAgentView(props));
+    commit();
+    const path = `workflow:${wrapper.key}`;
+    if (activePath && path !== activePath) {
+      // Retire the child scopes because the real parent supplied a new key.
+      // This explicitly models unmount cleanup; it is not DOM reconciliation.
+      for (const [key, scope] of children) {
+        if (key === activePath || key.startsWith(`${activePath}/`)) {
+          for (const cell of scope.cells) cell.cleanup?.();
+          children.delete(key);
+        }
+      }
+    }
+    activePath = path;
+    const tree = child(path, () => {
+      const body = (wrapper.type as (p: typeof props) => ReactNode)(
+        wrapper.props,
+      );
+      commit();
+      return body;
+    });
+    const view = elements<ComponentProps<typeof ChatTurnView>>(
+      tree,
+      ChatTurnView,
+    )[0];
+    const result = elements<{
+      children?: ReactNode;
+      "aria-expanded": boolean;
+      onClick(): void;
+    }>(tree, "button").find(
+      (button) => button.props.children === "Read retained step result",
+    )?.props;
+    let tool:
+      | {
+          path: string;
+          step: ChatStep;
+          head: ComponentProps<typeof CollapsibleHead>;
+          output: ReactNode[];
+        }
+      | undefined;
+    if (view) {
+      // Observe calls to the actual projection, without replacing its behavior.
+      if (!vi.isMockFunction(view.props.turn.detail))
+        vi.spyOn(view.props.turn, "detail");
+      const row = child(`${path}/turn:${view.key}`, () => {
+        const body = (
+          ChatTurnView as unknown as {
+            type(p: ComponentProps<typeof ChatTurnView>): ReactNode;
+          }
+        ).type(view.props);
+        commit();
+        return body;
+      });
+      const element = required(
+        elements<ComponentProps<typeof ToolStep>>(row, ToolStep)[0],
+      );
+      const toolPath = `${path}/turn:${view.key}/tool:${element.key}`;
+      tool = child(toolPath, () => {
+        const body = ToolStep(element.props);
+        commit();
+        return {
+          path: toolPath,
+          step: element.props.step,
+          head: required(
+            elements<ComponentProps<typeof CollapsibleHead>>(
+              body,
+              CollapsibleHead,
+            )[0],
+          ).props,
+          output: elements<{ children?: ReactNode }>(body, "pre").map(
+            (pre) => pre.props.children,
+          ),
+        };
+      });
+    }
+    return { tree, path, turn: view?.props.turn, tool, result };
+  };
+  return {
+    props,
+    makeClient,
+    run,
+    snapshot,
+    requests,
+    reads,
+    pending,
+    draw,
+    tool: () => required(draw().tool),
+  };
+}
+
+it.each(["completed", "failed", "canceled", "unknown"] as const)(
+  "WorkflowAgentView polls equal-part tool snapshots, keeps expanded output until refreshed, and reads a final %s snapshot",
+  async (status) => {
+    const f = workflowAgentFixture();
+    f.draw();
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(f.snapshot("first retained output"));
+    await vi.advanceTimersByTimeAsync(0);
+    const first = f.draw();
+    expect(first.tool?.head.open).toBe(false);
+    expect(first.turn?.detail).not.toHaveBeenCalled();
+    expect(f.reads("workflow-detail")).toHaveLength(0);
+    required(first.tool).head.onToggle();
+    expect(f.tool().head.open).toBe(true);
+    await settle();
+    expect(f.tool().output).toContain("first retained output");
+    expect(first.turn?.detail).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.reads("workflow-transcript")).toHaveLength(2);
+    expect(f.tool().output).toContain("first retained output");
+    expect(f.tool().head.open).toBe(true);
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(
+      f.snapshot("second retained output"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const second = f.draw();
+    expect(second.tool?.path).toBe(first.tool?.path);
+    expect(second.tool?.step.id).toBe(first.tool?.step.id);
+    expect(second.tool?.step.parts).toBe(1);
+    expect(second.tool?.step.parts).toBe(first.tool?.step.parts);
+    expect(second.tool?.step.version).toBeUndefined(); // Retained workflow format.
+    expect(second.tool?.head.open).toBe(true);
+    expect(second.tool?.output).toContain("first retained output");
+    await settle();
+    expect(f.tool().output).toContain("second retained output");
+    expect(f.tool().output).not.toContain("first retained output");
+    expect(second.turn?.detail).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    const obsolete = f.pending("workflow-transcript");
+    f.pending("workflow").reply(f.run(status));
+    await vi.advanceTimersByTimeAsync(0);
+    const ending = f.draw(); // live interval -> zero initiates the final read.
+    expect(ending.tool?.output).toContain("second retained output");
+    expect(ending.tool?.head.open).toBe(true);
+    expect(obsolete.signal?.aborted).toBe(true);
+    expect(f.reads("workflow-transcript")).toHaveLength(4);
+    f.pending("workflow-transcript").reply(
+      f.snapshot("final retained output", status, "completed"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const final = f.draw();
+    expect(final.tool?.path).toBe(first.tool?.path);
+    expect(final.tool?.step).toMatchObject({
+      id: first.tool?.step.id,
+      parts: 1,
+      state: "completed",
+    });
+    expect(final.turn?.header.status).toBe(status);
+    expect(final.tool?.head.open).toBe(true);
+    expect(final.tool?.output).toContain("second retained output");
+    await settle();
+    expect(f.tool().output).toContain("final retained output");
+    expect(final.turn?.detail).toHaveBeenCalledTimes(1);
+    obsolete.reply(f.snapshot("obsolete live output"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.tool().output).toContain("final retained output");
+    expect(f.tool().output).not.toContain("obsolete live output");
+    expect(f.reads("workflow-transcript")).toHaveLength(4);
+    expect(f.reads("workflow-detail")).toHaveLength(0);
+    f.tool().head.onToggle();
+    expect(f.tool().head.open).toBe(false);
+    expect(final.turn?.detail).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("closed workflow tool and step-result details remain lazy through updates and settlement", async () => {
+  const f = workflowAgentFixture();
+  f.draw();
+  f.pending("workflow").reply(f.run());
+  f.pending("workflow-transcript").reply(f.snapshot("unopened first output"));
+  await vi.advanceTimersByTimeAsync(0);
+  const first = f.draw();
+  expect(first.tool?.head.open).toBe(false);
+  expect(first.turn?.detail).not.toHaveBeenCalled();
+  required(first.tool).head.onToggle();
+  f.draw();
+  await settle();
+  expect(f.tool().output).toContain("unopened first output");
+  f.tool().head.onToggle();
+  expect(f.tool().head.open).toBe(false);
+  expect(first.turn?.detail).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  f.pending("workflow").reply(f.run());
+  f.pending("workflow-transcript").reply(f.snapshot("unopened second output"));
+  await vi.advanceTimersByTimeAsync(0);
+  const second = f.draw();
+  expect(second.tool?.output).toEqual([]);
+  expect(second.turn?.detail).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  f.pending("workflow").reply(f.run("failed"));
+  await vi.advanceTimersByTimeAsync(0);
+  f.draw();
+  f.pending("workflow-transcript").reply(
+    f.snapshot("unopened final output", "failed", "completed"),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  const final = f.draw();
+  expect(final.tool?.head.open).toBe(false);
+  expect(final.tool?.output).toEqual([]);
+  expect(final.turn?.detail).not.toHaveBeenCalled();
+  expect(f.reads("workflow-detail")).toHaveLength(0);
+});
+
+it.each(["client", "run", "step"] as const)(
+  "workflow %s navigation retires the actual polling and expanded tool/result lifetimes; late reads cannot write back",
+  async (change) => {
+    const f = workflowAgentFixture();
+    f.draw();
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(f.snapshot("old tool output"));
+    await vi.advanceTimersByTimeAsync(0);
+    const old = f.draw();
+    required(old.tool).head.onToggle();
+    required(old.result).onClick();
+    f.draw();
+    await settle();
+    expect(f.tool().output).toContain("old tool output");
+    f.pending("workflow-detail").reply({
+      kind: "file",
+      path: "step.txt",
+      limited: false,
+      text: "old step result",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    const obsolete = f.requests.filter((request) => !request.replied);
+    expect(obsolete.map((request) => request.read.kind).sort()).toEqual([
+      "workflow",
+      "workflow-detail",
+      "workflow-transcript",
+    ]);
+    // Capture old response identities before navigating; the call id/child id
+    // intentionally collide so only the component lifetime can isolate them.
+    const oldRun = f.run("failed"),
+      oldTranscript = f.snapshot("late old tool output");
+    if (change === "client") f.props.client = f.makeClient();
+    else
+      f.props.agent = {
+        ...f.props.agent,
+        ...(change === "run"
+          ? { runId: crypto.randomUUID() }
+          : { stepId: "other-agent" }),
+      };
+    const next = f.draw();
+    expect(next.path).not.toBe(old.path);
+    expect(next.turn).toBeUndefined();
+    expect(next.tool).toBeUndefined();
+    for (const request of obsolete) expect(request.signal?.aborted).toBe(true);
+    expect(f.pending("workflow-transcript").read).toEqual({
+      kind: "workflow-transcript",
+      id: f.props.agent.runId,
+      stepId: f.props.agent.stepId,
+    });
+    expect(f.pending("workflow-transcript").client).toBe(
+      change === "client" ? 2 : 1,
+    );
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(f.snapshot("current tool output"));
+    await vi.advanceTimersByTimeAsync(0);
+    const current = f.draw();
+    expect(current.tool?.head.open).toBe(false);
+    expect(current.result?.["aria-expanded"]).toBe(false);
+    expect(current.turn?.detail).not.toHaveBeenCalled();
+    required(current.tool).head.onToggle();
+    required(current.result).onClick();
+    f.draw();
+    f.pending("workflow-detail").reply({
+      kind: "file",
+      path: "step.txt",
+      limited: false,
+      text: "current step result",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    for (const request of obsolete)
+      request.reply(
+        request.read.kind === "workflow"
+          ? oldRun
+          : request.read.kind === "workflow-transcript"
+            ? oldTranscript
+            : {
+                kind: "file",
+                path: "step.txt",
+                limited: false,
+                text: "late old step result",
+              },
+      );
+    await vi.advanceTimersByTimeAsync(0);
+    const settled = f.draw();
+    expect(settled.tool?.output).toContain("current tool output");
+    expect(settled.tool?.output).not.toContain("late old tool output");
+    expect(settled.turn?.header.status).toBe("running");
+    expect(
+      elements<{ children?: ReactNode }>(settled.tree, "pre").map(
+        (pre) => pre.props.children,
+      ),
+    ).toEqual(["current step result"]);
+  },
+);
+
 function timelineRows(tree: ReactNode) {
   return elements(tree, Fragment).flatMap((outer) => {
     const lazy = elements<ComponentProps<typeof LazyMount>>(

@@ -34883,8 +34883,12 @@ class TurnCapture {
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const item = this.item(e.callId, "tool");
       this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-end")
+      if (e.kind === "tool-start")
+        item.state = "running";
+      else {
+        item.state = e.isError ? "failed" : "completed";
         item.error = e.isError;
+      }
     } else if (e.kind === "message-end") {
       const item = this.turn.items.find((i) => i.id === e.messageId && i.role === "assistant");
       if (item)
@@ -34907,7 +34911,14 @@ class TurnCapture {
         if (block.messageId === e.messageId)
           this.messageText.delete(id);
     }
-    if (["message-end", "tool-end", "model-retry", "worker-failure"].includes(e.kind))
+    if ([
+      "message-end",
+      "tool-start",
+      "tool-update",
+      "tool-end",
+      "model-retry",
+      "worker-failure"
+    ].includes(e.kind))
       this.save();
   }
 }
@@ -35248,7 +35259,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.10",
-  build: "1d9cdacfbc38a386f101531e20562236a7146730952df9eb18151ad32b34ee31",
+  build: "b4bd2bf531d1e840739c1875e454b63f373b7ded933e4f55be63be66412820f0",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

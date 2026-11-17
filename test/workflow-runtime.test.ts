@@ -2,9 +2,17 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { expect, it, vi } from "vitest";
 import { canonicalJson } from "../src/service/contracts/core.ts";
-import type { ChatTurn } from "../src/service/contracts/workbench.ts";
+import {
+  type ChatTurn,
+  decodeWorkbenchResult,
+} from "../src/service/contracts/workbench.ts";
+import type {
+  WorkflowRun,
+  WorkflowStep,
+} from "../src/service/contracts/workflow.ts";
 import {
   implementationReport,
   reviewReport,
@@ -13,7 +21,9 @@ import {
 } from "../src/service/workflow-report.ts";
 import { Workflows } from "../src/service/workflows.ts";
 import { runProcess } from "../src/subagent-process.ts";
+import { CaptureEmitter, SdkCapture } from "../src/worker-capture.mjs";
 import type { CaptureFrame } from "../src/worker-public.mjs";
+import { recordedTurn } from "../web/src/client/turn-source.ts";
 import { frame, message } from "./helpers/capture-frames.ts";
 
 const turn = (): ChatTurn => ({
@@ -306,6 +316,288 @@ it("workflow process results retain diagnostic tails beyond the legacy preview a
     truncated: true,
   });
   expect(Buffer.byteLength(expanded.output)).toBeLessThanOrEqual(256 * 1024);
+});
+
+/** Controlled retained bytes and parent status, not a running owner or service.
+ * The real reader decodes a fresh copy on every read; it never sees live items. */
+function transcriptReader(retained: ChatTurn, bytes: () => string | undefined) {
+  const step: WorkflowStep = {
+    id: "implementation",
+    childRunId: retained.id,
+    kind: "implementation",
+    status: "running",
+    text: "",
+    exitCode: null,
+    truncated: false,
+  };
+  const run: Pick<WorkflowRun, "id" | "epoch" | "status" | "steps"> = {
+    id: randomUUID(),
+    epoch: retained.epoch,
+    status: "running",
+    steps: [step],
+  };
+  const root = "unused";
+  const workflow = Object.assign(Object.create(Workflows.prototype), {
+    root,
+    o: {
+      secrets: () => [],
+      coordination: {
+        files: {
+          read(path: string) {
+            expect(path).toBe(
+              join(root, "runs", run.id, `transcripts/${retained.id}.json`),
+            );
+            const body = bytes();
+            return body === undefined
+              ? undefined
+              : { bytes: Buffer.from(body) };
+          },
+        },
+      },
+    },
+    view: (id: string) => {
+      expect(id).toBe(run.id);
+      return { kind: "workflow", response: { type: "run", run } };
+    },
+  }) as Workflows;
+  return {
+    run,
+    step,
+    read() {
+      const result = decodeWorkbenchResult(
+        workflow.transcript(run.id, step.id),
+      );
+      expect(result).toMatchObject({
+        kind: "workflow-transcript",
+        runId: run.id,
+        stepId: step.id,
+      });
+      if (result.kind !== "workflow-transcript")
+        throw Error("transcript expected");
+      return result.turn;
+    },
+  };
+}
+
+async function toolTranscriptFixture() {
+  const retained = turn();
+  const recorder = new WorkflowTranscript(retained, () => []);
+  const frames: CaptureFrame[] = [];
+  const saved: { event: CaptureFrame["event"]["kind"]; body: string }[] = [];
+  const reader = transcriptReader(retained, () => saved.at(-1)?.body);
+  const emitter = new CaptureEmitter(
+    retained.id,
+    new Writable({
+      write(chunk, _encoding, done) {
+        const frame = JSON.parse(String(chunk)) as CaptureFrame;
+        frames.push(frame);
+        // This is the production publication boundary, not a reference to the
+        // mutable turn. Chunks that do not request a save remain unobservable.
+        if (recorder.accept(frame))
+          saved.push({
+            event: frame.event.kind,
+            body: canonicalJson(retained),
+          });
+        done();
+      },
+    }),
+    () => {
+      throw Error("capture failed");
+    },
+  );
+  await emitter.emit({ kind: "ready", requestProtocol: 2 });
+  const sdk = new SdkCapture(emitter);
+  const call = { toolCallId: "raw-call", toolName: "read" };
+  return { ...reader, retained, frames, saved, sdk, call };
+}
+
+it("workflow tool-start publishes running state without any subsequent message", async () => {
+  const f = await toolTranscriptFixture();
+  expect(f.read()).toBeNull();
+  await f.sdk.event({
+    type: "tool_execution_start",
+    ...f.call,
+    args: { path: "file" },
+  });
+  const event = f.frames.at(-1)!.event;
+  if (event.kind !== "tool-start") throw Error("tool-start expected");
+  expect(f.saved.map((snapshot) => snapshot.event)).toEqual(["tool-start"]);
+  const observed = f.read()!;
+  expect(observed.status).toBe("running");
+  expect(observed.items).toEqual([
+    {
+      id: event.callId,
+      role: "tool",
+      name: "read",
+      args: '{"path":"file"}',
+      text: "",
+      error: false,
+      state: "running",
+    },
+  ]);
+  expect(observed.items[0]).not.toBe(f.retained.items[0]);
+  expect(f.frames.some(({ event }) => event.kind === "message-end")).toBe(
+    false,
+  );
+});
+
+it("workflow tool-update publishes complete replacement snapshots with equal parts before tool-end", async () => {
+  const f = await toolTranscriptFixture();
+  await f.sdk.event({ type: "tool_execution_start", ...f.call, args: {} });
+  const observations: ChatTurn[] = [];
+  for (const text of ["first", "later"].map(
+    (prefix) => `${prefix} ${"x".repeat(5000)}`,
+  )) {
+    const partialResult = { content: [{ type: "text", text }] };
+    await f.sdk.event({
+      type: "tool_execution_update",
+      ...f.call,
+      partialResult,
+    });
+    const observed = f.read();
+    expect(observed).not.toBeNull();
+    observations.push(observed!);
+    const source = recordedTurn(observed!);
+    expect(source.steps).toHaveLength(1);
+    expect(source.steps[0]).toMatchObject({
+      parts: 1,
+      state: "running",
+      error: false,
+    });
+    const detail = await source.detail(0, 1, new AbortController().signal);
+    expect(JSON.parse(detail.text)).toEqual(partialResult);
+    expect(observed!.items[0].text).toBe(canonicalJson(partialResult));
+  }
+  expect(observations[0].items[0].id).toBe(observations[1].items[0].id);
+  expect(JSON.parse(observations[0].items[0].text).content[0].text).toMatch(
+    /^first /,
+  );
+  expect(JSON.parse(observations[1].items[0].text).content[0].text).toMatch(
+    /^later /,
+  );
+  expect(JSON.parse(f.saved[0].body).items[0].text).toBe("");
+  expect(f.saved.map((snapshot) => snapshot.event)).toEqual([
+    "tool-start",
+    "tool-update",
+    "tool-update",
+  ]);
+  const updates = f.frames.filter(({ event }) => event.kind === "tool-update");
+  expect(updates).toHaveLength(2);
+  for (const { event } of updates) {
+    if (event.kind !== "tool-update") throw Error("tool-update expected");
+    expect(
+      f.frames.filter(
+        ({ event: part }) =>
+          part.kind === "detail-chunk" && part.detailId === event.detailId,
+      ).length,
+    ).toBeGreaterThan(1);
+  }
+  expect(
+    f.frames.some(
+      ({ event }) => event.kind === "tool-end" || event.kind === "message-end",
+    ),
+  ).toBe(false);
+});
+
+it("workflow tool success and failure follow their own tool-end by callId, not the parent outcome", async () => {
+  const f = await toolTranscriptFixture();
+  const calls = [f.call, { ...f.call, toolCallId: "other-raw-call" }];
+  for (const call of calls)
+    await f.sdk.event({ type: "tool_execution_start", ...call, args: {} });
+  const ids = f.frames.flatMap(({ event }) =>
+    event.kind === "tool-start" ? [event.callId] : [],
+  );
+  expect(new Set(ids).size).toBe(2);
+  // Same tool name, reverse settlement, and empty results: neither the name,
+  // output text nor parent success may manufacture a tool outcome.
+  await f.sdk.event({
+    type: "tool_execution_end",
+    ...calls[1],
+    result: { content: [] },
+    isError: true,
+  });
+  expect(
+    f.read()!.items.map(({ id, state, error }) => ({ id, state, error })),
+  ).toEqual([
+    { id: ids[0], state: "running", error: false },
+    { id: ids[1], state: "failed", error: true },
+  ]);
+  await f.sdk.event({
+    type: "tool_execution_end",
+    ...calls[0],
+    result: { content: [] },
+    isError: false,
+  });
+  const completed = f.read()!;
+  expect(f.run.status).toBe("running");
+  expect(completed.status).toBe("running");
+  expect(
+    completed.items.map(({ id, state, error }) => ({ id, state, error })),
+  ).toEqual([
+    { id: ids[0], state: "completed", error: false },
+    { id: ids[1], state: "failed", error: true },
+  ]);
+  f.run.status = "failed";
+  f.step.status = "failed";
+  expect(f.read()).toMatchObject({ status: "unknown", items: completed.items });
+  expect(f.saved.map((snapshot) => snapshot.event)).toEqual([
+    "tool-start",
+    "tool-start",
+    "tool-end",
+    "tool-end",
+  ]);
+});
+
+it.each(["canceled", "unknown", "failed", "completed"] as const)(
+  "a %s parent without tool-end does not publish tool success",
+  async (status) => {
+    const f = await toolTranscriptFixture();
+    await f.sdk.event({ type: "tool_execution_start", ...f.call, args: {} });
+    await f.sdk.event({
+      type: "tool_execution_update",
+      ...f.call,
+      partialResult: {
+        content: [{ type: "text", text: "Output is not completion" }],
+      },
+    });
+    f.run.status = status;
+    f.step.status = status;
+    const observed = f.read();
+    expect(observed).not.toBeNull();
+    expect(observed!.status).toBe("unknown");
+    expect(observed!.items[0]).toMatchObject({
+      state: "running",
+      error: false,
+    });
+    expect(observed!.items[0].text).toContain("Output is not completion");
+    expect(f.frames.some(({ event }) => event.kind === "tool-end")).toBe(false);
+  },
+);
+
+it("legacy workflow tools stay readable without inferred state or association and without rewriting bytes", () => {
+  const retained = turn();
+  retained.status = "completed";
+  retained.items = ["old-call-a", "old-call-b"].map((id) => ({
+    id,
+    role: "tool",
+    name: "read",
+    args: "{}",
+    text: "Identical retained result",
+    error: false,
+  }));
+  const bytes = canonicalJson(retained);
+  const f = transcriptReader(retained, () => bytes);
+  f.run.status = "completed";
+  f.step.status = "completed";
+  expect(f.read()).toEqual(retained);
+  f.run.status = "failed";
+  expect(f.read()!.items).toEqual(retained.items);
+  for (const item of f.read()!.items) {
+    expect(item).not.toHaveProperty("state");
+    expect(item).not.toHaveProperty("renderId");
+    expect(item).not.toHaveProperty("version");
+  }
+  expect(canonicalJson(retained)).toBe(bytes);
 });
 
 it("transcript overflow keeps a labelled prefix and still selects the sanitized final message", () => {

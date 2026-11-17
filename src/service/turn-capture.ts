@@ -130,7 +130,11 @@ export class TurnCapture {
     } else if (e.kind === "tool-start" || e.kind === "tool-end") {
       const item = this.item(e.callId, "tool");
       this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
-      if (e.kind === "tool-end") item.error = e.isError;
+      if (e.kind === "tool-start") item.state = "running";
+      else {
+        item.state = e.isError ? "failed" : "completed";
+        item.error = e.isError;
+      }
     } else if (e.kind === "message-end") {
       const item = this.turn.items.find(
         (i) => i.id === e.messageId && i.role === "assistant",
@@ -161,10 +165,17 @@ export class TurnCapture {
     if (e.kind === "message-end")
       for (const [id, block] of this.messageText)
         if (block.messageId === e.messageId) this.messageText.delete(id);
+    // tool-update follows its complete, validated update-snapshot detail.
+    // Publish once per snapshot, not once per raw chunk or only at tool-end.
     if (
-      ["message-end", "tool-end", "model-retry", "worker-failure"].includes(
-        e.kind,
-      )
+      [
+        "message-end",
+        "tool-start",
+        "tool-update",
+        "tool-end",
+        "model-retry",
+        "worker-failure",
+      ].includes(e.kind)
     )
       this.save();
   }
