@@ -116,6 +116,11 @@ import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { QuestionRail } from "./QuestionRail";
+import {
+  RuntimeObservation,
+  runtimeConnection,
+  runtimeWorkflow,
+} from "./RuntimeObservation";
 import { useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
 import {
@@ -124,12 +129,24 @@ import {
   placeWorkflows,
   RUN_WINDOW,
   WorkflowLine,
-  workflowActivity,
-  workflowLive,
 } from "./WorkflowPanel";
 
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+
+/** Preserve the existing 80px intent boundary; content growth is not itself
+ * permission to resume following a reader who scrolled up. */
+export function followsLatest(
+  el: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight">,
+): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
+export function followLatest(
+  el: Pick<HTMLElement, "scrollHeight" | "scrollTop"> | null,
+  following: boolean,
+): void {
+  if (following && el) el.scrollTop = el.scrollHeight;
+}
 /** What the open conversation tells the statusbar: observations only. */
 export interface ConversationActivity {
   id: string;
@@ -740,8 +757,7 @@ export function ChatWorkspace({
       acts.current.followAnchor();
       onChanged();
     }
-    if (stick.current && scroll.current)
-      scroll.current.scrollTop = scroll.current.scrollHeight;
+    followLatest(scroll.current, stick.current);
   }, [
     summary,
     turns,
@@ -896,15 +912,39 @@ export function ChatWorkspace({
     () => placeWorkflows(turns, flows.runs.values(), earlier),
     [turns, flows.runs, earlier],
   );
-  const activeRun = [...flows.runs.values()].filter(workflowLive).at(-1);
+  // Pausing retires the hook's watch list, not the bar's last known fact.
+  const lastRuntime = useRef<{
+    client: ServiceClient;
+    id: string;
+    run?: WorkflowRun;
+  }>({ client, id });
+  if (lastRuntime.current.client !== client || lastRuntime.current.id !== id)
+    lastRuntime.current = { client, id };
+  const runtimeRun = runtimeWorkflow(
+    watched,
+    flows.runs,
+    lastRuntime.current.run,
+  );
+  const runtimeRetained =
+    !!runtimeRun && flows.runs.get(runtimeRun.id) !== runtimeRun;
+  lastRuntime.current.run = runtimeRun;
+  const connection = runtimeConnection({
+    available,
+    status: modelAvailability.status,
+    observed,
+    readFailed:
+      !!conversation.error ||
+      !!workflow.error ||
+      flows.failed ||
+      flows.unreadable.size > 0,
+  });
   // A line that appears or settles (and may gain its reason) keeps a reader at
   // the end there; a live line's changing activity never moves the reader.
   const linesKey = [...flows.runs.values()]
     .map((run) => `${run.id}:${run.status}`)
     .join();
   useLayoutEffect(() => {
-    if (linesKey && stick.current && scroll.current)
-      scroll.current.scrollTop = scroll.current.scrollHeight;
+    if (linesKey) followLatest(scroll.current, stick.current);
   }, [linesKey]);
   const workflowLine = (run: WorkflowRun) => (
     <WorkflowLine
@@ -1590,21 +1630,6 @@ export function ChatWorkspace({
       return giveUp(t("That message could not be found in this conversation."));
     conversation.showFrom(ordinal);
   });
-  // The reply's own state. A completed reply and an idle Cadence conversation
-  // need no label: the mode is in the meta line and on the composer control.
-  const replyState = !summary
-    ? ""
-    : cadence
-      ? running
-        ? t("Discussing")
-        : settledBadly
-          ? tx(summary.status)
-          : state?.proposal
-            ? t("Awaiting plan approval")
-            : ""
-      : summary.status === "completed"
-        ? ""
-        : tx(summary.status);
   const imagesLocked =
     busy || awaitingModel || !!pending || !!running || attaching;
   const addImages = (files: File[]) => {
@@ -1672,8 +1697,7 @@ export function ChatWorkspace({
       ? questions.length - 1
       : questions.findIndex((question) => question.id === activeTurn);
   const keepEnd = useCallback(() => {
-    if (stick.current && scroll.current)
-      scroll.current.scrollTop = scroll.current.scrollHeight;
+    followLatest(scroll.current, stick.current);
   }, []);
   const strip = anchor ? (
     <div className="composer-anchor">
@@ -1802,21 +1826,11 @@ export function ChatWorkspace({
               {t("Show the latest")}
             </button>
           )}
-          {/* A live workflow is what this conversation is doing, whatever its
-              mode; beside it the reply's status stays only when that reply
-              ended badly or a plan awaits approval. */}
-          {activeRun && (
-            <span className="ep-state running" role="status">
-              {tx(workflowActivity(activeRun))}
-            </span>
+          {/* Reply and workflow observations stay together by the composer,
+              outside the scrolling transcript. Approval is a separate action. */}
+          {cadence && !running && !settledBadly && !!state?.proposal && (
+            <span className="ep-state">{t("Awaiting plan approval")}</span>
           )}
-          {summary &&
-            replyState &&
-            (!activeRun ||
-              settledBadly ||
-              (cadence && !running && !!state?.proposal)) && (
-              <span className={`ep-state ${summary.status}`}>{replyState}</span>
-            )}
         </div>
       </header>
       {contextRead.error && !canPrepareOnly && (
@@ -1844,8 +1858,7 @@ export function ChatWorkspace({
             const el = scroll.current;
             if (el && !hidden) {
               lastTop.current = el.scrollTop;
-              stick.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              stick.current = followsLatest(el);
               setAway(!stick.current);
               nearTop();
               trackActive();
@@ -2047,9 +2060,9 @@ export function ChatWorkspace({
             type="button"
             className="scroll-bottom"
             onClick={() => {
-              if (scroll.current)
-                scroll.current.scrollTop = scroll.current.scrollHeight;
               stick.current = true;
+              followLatest(scroll.current, true);
+              setAway(false);
             }}
           >
             <FiArrowDown aria-hidden="true" />
@@ -2071,6 +2084,13 @@ export function ChatWorkspace({
           />
         )}
       </div>
+      <RuntimeObservation
+        reply={summary?.status ?? conversation.attempt?.status}
+        workflow={watched.length ? (runtimeRun ?? null) : undefined}
+        connection={connection}
+        replyStale={!!conversation.error}
+        workflowStale={flows.failed || !!workflow.error || runtimeRetained}
+      />
       <ChatComposer
         inputRef={textarea}
         draft={draft}

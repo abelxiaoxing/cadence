@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  followLatest,
+  followsLatest,
+} from "../../web/src/components/workspace/ChatWorkspace";
 import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import { ResizeHandle } from "../../web/src/layout/ResizeHandle";
 import {
@@ -114,4 +119,62 @@ it("narrow windows clamp effective navigation without overwriting wide-window pr
       inspector: true,
     }).rightOverlay,
   ).toBe(false);
+});
+
+// Geometry fixtures exercise the actual intent/write helpers, not DOM scroll.
+it("keeps the 80px follow boundary, pauses on up-scroll, and follows growth only after returning", () => {
+  const viewport = { scrollHeight: 2000, clientHeight: 600, scrollTop: 1400 };
+  expect(followsLatest(viewport)).toBe(true);
+  viewport.scrollTop = 1321;
+  expect(followsLatest(viewport)).toBe(true);
+  viewport.scrollTop = 1320;
+  expect(followsLatest(viewport)).toBe(false);
+  viewport.scrollTop = 500;
+  let following = followsLatest(viewport);
+  for (const growth of [30, 240, 600]) {
+    // Text, images and expanded detail can all grow while reading earlier.
+    viewport.scrollHeight += growth;
+    followLatest(viewport, following);
+    expect(viewport.scrollTop).toBe(500);
+  }
+  viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
+  following = followsLatest(viewport);
+  expect(following).toBe(true);
+  viewport.scrollHeight += 200;
+  followLatest(viewport, following);
+  expect(viewport.scrollTop).toBe(viewport.scrollHeight);
+  // Explicit Latest also resumes following, but missing/unmounted views do nothing.
+  viewport.scrollTop = 200;
+  followLatest(viewport, true);
+  expect(viewport.scrollTop).toBe(viewport.scrollHeight);
+  expect(() => followLatest(null, true)).not.toThrow();
+});
+
+it("observation presentation is normal flow, wraps at narrow widths and never animates or overlays controls (source contract)", () => {
+  const css = readFileSync(
+    new URL("../../web/src/styles.css", import.meta.url),
+    "utf8",
+  );
+  const rules =
+    css.match(/\.runtime-observation[^{}]*\{[^{}]*\}/g)?.join("\n") ?? "";
+  expect(rules).toContain("flex-wrap: wrap");
+  expect(rules).toContain("min-width: 0");
+  expect(rules).toContain("max-width: 100%");
+  expect(rules).toContain("overflow-wrap: anywhere");
+  expect(rules).toContain("text-overflow: ellipsis");
+  expect(rules).not.toMatch(
+    /position:\s*(absolute|fixed)|z-index:|animation:|transition:|pointer-events:/,
+  );
+  // The strip has no timer, scroll callback or reduced-motion exception:
+  // repeated identical observations cannot produce a clock-driven parent render.
+  const component = readFileSync(
+    new URL(
+      "../../web/src/components/workspace/RuntimeObservation.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  expect(component).not.toMatch(
+    /setInterval\(|setTimeout\(|requestAnimationFrame\(|scrollTop\s*=/,
+  );
 });

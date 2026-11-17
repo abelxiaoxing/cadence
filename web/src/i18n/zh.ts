@@ -2,6 +2,39 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Runtime observation": "运行观察",
+  "Reply queued": "回复排队中",
+  "Reply running": "回复进行中",
+  "Reply ended": "回复已结束",
+  "Reply failed": "回复失败",
+  "Reply canceled": "回复已取消",
+  "Reply timed out": "回复超时",
+  "Reply outcome unknown": "回复结果未知",
+  "Waiting · no new progress observed": "等待中 · 暂未观察到新进展",
+  "Thinking activity observed": "已观察到思考活动",
+  "Thinking activity ended": "思考活动已结束",
+  "Thinking content unavailable": "思考内容不可用",
+  "Thinking content is not streamed. Readable recorded thinking can be opened after it is saved.":
+    "不传输思考正文；可读取的思考内容落盘后可展开查看。",
+  "Reply output observed": "已观察到回复输出",
+  "Tool running": "工具执行中",
+  "Tool result observed": "已观察到工具结果",
+  "Tool failure observed": "已观察到工具失败",
+  "Tool cancellation observed": "已观察到工具取消",
+  "Tool outcome unknown": "工具结果未知",
+  "Awaiting workflow observation": "等待工作流状态",
+  "Last observed": "上次观察状态",
+  "Observing current state": "正在观察当前状态",
+  "Waiting for current observations": "等待当前状态读取",
+  "Observation unavailable · waiting for current state":
+    "观察不可用 · 等待当前状态",
+  "Observation paused": "观察已暂停",
+  "Observation delayed · showing last known state":
+    "观察滞后 · 显示上次已知状态",
+  "Observation paused · showing last known state":
+    "观察已暂停 · 显示上次已知状态",
+  "History readable · live execution not connected":
+    "历史可读 · 未连接实时执行服务",
   "Incomplete model response": "未完成的模型响应",
   "Upstream interrupted. Retry {attempt}/{maxAttempts} is scheduled after {seconds}s; completed tool results are kept.":
     "上游响应中断，第 {attempt}/{maxAttempts} 次重试安排在 {seconds} 秒后；已完成的工具结果已保留。",
