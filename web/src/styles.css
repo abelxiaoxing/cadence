@@ -2172,8 +2172,10 @@ summary:focus-visible,
 
 /* ---- Dialogs (pi modal surface on native <dialog>) ---- */
 .action-dialog {
+  inset: 0;
   width: min(760px, calc(100vw - 24px));
   max-height: calc(100dvh - 48px);
+  margin: auto;
   padding: 0 20px;
   overflow: auto;
   border: 1px solid var(--glass-border);
