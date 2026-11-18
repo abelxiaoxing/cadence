@@ -399,7 +399,7 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     }
     for (const path of [
       "/app",
-      "/assets/main.js",
+      `/ui/${"a".repeat(64)}/assets/main.js`,
       "/api/v1/session",
       "/api/v1/details?request=%7Bbad",
       "/api/v1/export?request=%7Bbad",

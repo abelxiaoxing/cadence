@@ -1,5 +1,6 @@
 /* Adapted pi-web-ui Vite configuration; MIT (c) 2026 xing-shuyin.
  * Fixed local outputs; the builder independently audits names, bodies and closure. */
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -12,7 +13,35 @@ export default defineConfig({
   resolve: { preserveSymlinks: true },
   publicDir: false,
   envDir: false,
-  plugins: [tailwindcss(), react(), localVisStyles()],
+  plugins: [
+    tailwindcss(),
+    react(),
+    localVisStyles(),
+    {
+      name: "cadence-startup-recovery",
+      apply: "build",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "assets/start.js",
+          source: readFileSync(
+            new URL("./src/start.js", import.meta.url),
+            "utf8",
+          ),
+        });
+      },
+      transformIndexHtml: {
+        order: "post",
+        handler: () => [
+          {
+            tag: "script",
+            attrs: { src: "/assets/start.js" },
+            injectTo: "head-prepend" as const,
+          },
+        ],
+      },
+    },
+  ],
   build: {
     target: "es2022",
     outDir: "dist",

@@ -45,6 +45,12 @@ cadence.example.net {
 ```
 
 Audit any additional proxy-generated forwarding headers against the exact backend policy before use.
+Forward `/app`, `/assets/start.js`, `/ui/` and the API to the same Cadence instance, without shared caching or rewriting asset failures to the app HTML.
+For a stale page, compare the authenticated `/app` response's `X-Cadence-Web-Build` with the `/ui/<build>/assets/cadence.js` URL in that response and the browser's loaded module.
+An old entry served by a still-running process is not fixed by clearing browser data.
+Do not share cookies, access codes or full authenticated network traces.
+Recovery runs in the delivered page: if the proxy itself serves a 502 instead of the initial HTML, no Cadence script can retry from that document.
+Never enable proxy retries for all methods to compensate; a lost command response is not permission to repeat the command.
 HTTP and WebSocket upgrade must use the same authenticated route; no public backend bypass or insecure credential-bearing HTTP.
 This example does not install Caddy, provision DNS/certificates, change a firewall or deploy a service.
 

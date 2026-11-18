@@ -29,6 +29,51 @@ export function chatFromLocation(
 ): string | null {
   return projectRoute("", hash).chat;
 }
+// A native password form cannot see a fragment. Preserve only validated chat /
+// branch IDs on explicit sign-in, once in this tab and for the exact entry.
+const loginReturn = "cadence:login-return";
+function loginChatHash(hash: string) {
+  const { chat } = projectRoute("", hash);
+  if (!chat) return null;
+  const { leaf, selected } = activityRoute(hash, chat);
+  return branchHash(`#chat=${chat}${selected ? "&activity=1" : ""}`, leaf);
+}
+export function rememberLoginReturn() {
+  const hash = loginChatHash(location.hash);
+  try {
+    sessionStorage.removeItem(loginReturn);
+    if (
+      hash &&
+      location.pathname === "/app" &&
+      (!location.search || /^\?project=[a-f0-9]{64}$/.test(location.search))
+    )
+      sessionStorage.setItem(
+        loginReturn,
+        JSON.stringify([location.search, hash]),
+      );
+  } catch {
+    /* Sign-in still works without browser storage. */
+  }
+}
+export function restoreLoginReturn() {
+  try {
+    const saved = sessionStorage.getItem(loginReturn);
+    if (!saved) return;
+    sessionStorage.removeItem(loginReturn);
+    const [search, hash] = JSON.parse(saved);
+    if (
+      location.hash ||
+      location.pathname !== "/app" ||
+      search !== location.search ||
+      typeof hash !== "string"
+    )
+      return;
+    const target = loginChatHash(hash);
+    if (target) history.replaceState(history.state, "", target);
+  } catch {
+    /* A missing or invalid return must not prevent entry. */
+  }
+}
 export function projectPrefix(): string {
   const id = currentProject();
   return id ? `/projects/${id}` : "";

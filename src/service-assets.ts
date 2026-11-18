@@ -10,6 +10,7 @@ export const ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 export const ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
 const fixed = new Set([
   "index.html",
+  "assets/start.js",
   "assets/cadence.js",
   "assets/cadence.css",
   "assets/react.js",
@@ -21,6 +22,9 @@ const fixed = new Set([
 ]);
 const font =
   /^assets\/KaTeX_(?:AMS-Regular|Caligraphic-(?:Bold|Regular)|Fraktur-(?:Bold|Regular)|Main-(?:Bold|BoldItalic|Italic|Regular)|Math-(?:BoldItalic|Italic)|SansSerif-(?:Bold|Italic|Regular)|Script-Regular|Size[1-4]-Regular|Typewriter-Regular)\.(?:woff2|woff|ttf)$/;
+// Package member names remain fixed and audited; only the current build's
+// public URLs are installed in each authenticated server's exact asset map.
+export const webBuildBase = (buildId: string) => `/ui/${buildId}/`;
 export function assetMime(name: string): StaticAsset["contentType"] {
   if (!fixed.has(name) && !font.test(name))
     throw new Error("asset-name-refused");
@@ -176,7 +180,12 @@ export function loadWebAssets(
     )
       throw new Error("asset-body-refused");
     return {
-      path: a.name === "index.html" ? "/app" : `/${a.name}`,
+      path:
+        a.name === "index.html"
+          ? "/app"
+          : a.name === "assets/start.js"
+            ? `/${a.name}`
+            : `${webBuildBase(manifest.buildId)}${a.name}`,
       contentType: assetMime(a.name),
       bytes: body,
     };

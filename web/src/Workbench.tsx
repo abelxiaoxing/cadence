@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity } from "../../src/service/contracts/activity.ts";
-import {
-  decodeWorkbenchEntry,
-  type ExecutionPreparation,
-  type ProjectEntry,
-  type WorkbenchEntry,
+import type {
+  ExecutionPreparation,
+  ProjectEntry,
+  WorkbenchEntry,
 } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts";
@@ -35,9 +34,13 @@ import {
   selectActivity,
   selectDirectory,
 } from "./client/project-entry";
-import { currentProject } from "./client/project-route";
+import { currentProject, rememberLoginReturn } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { useActivity } from "./client/use-activity";
+import {
+  type EntryIssue,
+  observeWorkbenchEntry,
+} from "./client/workbench-entry";
 import type { ActivityListProps } from "./components/workspace/ActivityList";
 import { FolderSetup } from "./components/workspace/FolderSetup";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
@@ -69,7 +72,7 @@ export function Workbench() {
   const [picker, setPicker] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [openError, setOpenError] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<EntryIssue>();
   const [revision, refresh] = useState(0);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [restore, setRestore] = useState<{
@@ -92,30 +95,10 @@ export function Workbench() {
   }, []);
   useEffect(() => {
     void revision;
-    const abort = new AbortController();
-    void (async () => {
-      try {
-        const response = await fetch("/workbench/v1", {
-          credentials: "same-origin",
-          redirect: "error",
-          cache: "no-store",
-          signal: abort.signal,
-        });
-        const value = await read(response);
-        // A direct legacy project owner has no gateway route. No fallback for an
-        // authentication, network or corrupt-entry failure.
-        if (response.status === 400 && errorCode(value) === "invalid")
-          setEntry(null);
-        else if (!response.ok) setError(errorCode(value));
-        else {
-          setEntry(decodeWorkbenchEntry(value));
-          setError("");
-        }
-      } catch {
-        if (!abort.signal.aborted) setError("unavailable");
-      }
-    })();
-    return () => abort.abort();
+    return observeWorkbenchEntry((next) => {
+      setEntry(next);
+      setError(undefined);
+    }, setError);
   }, [revision]);
   useEffect(() => {
     const changed = () => {
@@ -291,6 +274,28 @@ export function Workbench() {
     if (project) rememberProject(project.id);
   }, [project]);
   if (entry === null) return <App />;
+  const entryNotice = error && (
+    <p role="status" className="banner-notice">
+      {error === "reconnecting"
+        ? t("Reconnecting to the workbench…")
+        : describeError(t, error)}{" "}
+      {error === "unauthenticated" ? (
+        <button
+          type="button"
+          onClick={() => {
+            rememberLoginReturn();
+            window.location.reload();
+          }}
+        >
+          {t("Sign in again")}
+        </button>
+      ) : (
+        <button type="button" onClick={() => refresh((n) => n + 1)}>
+          {t("Reload observation")}
+        </button>
+      )}
+    </p>
+  );
   const service = entry && serviceOpen && (
     <ServiceDialog
       epoch={entry.epoch}
@@ -343,6 +348,7 @@ export function Workbench() {
           }))}
           notices={
             <>
+              {entryNotice}
               {openError && <p role="alert">{openError}</p>}
               <RecoveryNotices
                 notices={entry.recoveries}
@@ -385,14 +391,7 @@ export function Workbench() {
               </p>
             )}
             {entry && <RecoveryNotices notices={entry.recoveries} />}
-            {error && (
-              <p role="alert" className="banner-notice">
-                {error}{" "}
-                <button type="button" onClick={() => refresh((n) => n + 1)}>
-                  {t("Reload observation")}
-                </button>
-              </p>
-            )}
+            {entryNotice}
             {selected && !project && entry && (
               <p role="alert" className="banner-notice">
                 {t(
