@@ -343,7 +343,7 @@ Backend cookies and native capabilities never reach the browser; proxied actions
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit execution preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
-It has light and dark glass colour schemes, both compiled into the one Tailwind stylesheet as `light-dark()` tokens, with local mesh/grid backgrounds, Cyan → Blue accents and text at WCAG AA: it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
+It has tiered light and dark glass colour schemes — strong glass for the shell (topbar, statusbar, composer, dialogs, popovers, drawers), lighter glass for content cards and stable opaque bases for dense reading surfaces such as code and tool output — both compiled into the one Tailwind stylesheet as `light-dark()` tokens, with local mesh/grid backgrounds, Cyan → Blue accents and text at WCAG AA: it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
 The script-free access page follows the system's scheme without storing a separate preference.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
