@@ -148,16 +148,6 @@ In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback t
 That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
 Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
 
-### Runtime observation
-
-`RuntimeObservation` sits in normal layout flow beside the composer, outside the scrolling transcript, with separate reply status, workflow phase/outcome and observation connection/freshness statements.
-It prefers the turn header's actual thinking/text/tool activity; absent or ended activity says waiting/no new progress, and a failed or paused observation labels retained facts as last observed rather than completing them.
-An event-free poll does not prove a stalled model or a disconnected tool.
-A reply ending, a tool result, `stable` and `agent_end` never establish workflow delivery success.
-No percentage, ETA or inferred stuck/success status is displayed.
-The compact bar wraps and bounds long tool names without an overlay or input/Stop lock; English and Chinese use the existing locale catalog.
-Source/SSR and controlled-state tests do not qualify actual narrow-screen layout, focus or pointer interactions.
-
 ## Browser
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
@@ -243,7 +233,9 @@ The model panel is usable before execution starts, including on the project-less
 The SDK-free gateway delegates to the fixed-purpose `src/model-preview.mjs` child; `model-preview.ts` constructs only Pi's offline model registry there, with a readonly credential snapshot, an in-memory model store and both network/availability refresh disabled.
 The child creates no owner, AgentSession, tools, project state, auth refresh or preference write and exits on completion, parent IPC loss or its total deadline.
 Identical concurrent inputs share one original through actual native close; no SDK runtime, credential snapshot or result cache remains in the gateway afterward.
-Reopening a preview picker reuses its already-read, source-scoped browser view; Refresh models explicitly reads it again, while live installation retains fresh catalog/version checks.
+Opening the picker reads the preview again, or asks the live owner to reload its local model catalog.
+Ordinary observations do not install a catalog.
+A successful changed catalog retires the old choice versions, not conversation preferences or tasks; an invalid read installs nothing.
 The preview and live owner share `model-catalog.ts` projection/validation, capability rules, credential redaction and limits; changed source files across discovery refuse the read.
 Preview choices are local draft intent, persisted with the conversation's text draft where browser storage works; folder setup uses the same explicit new-conversation handoff described above, not an existing/linked conversation.
 A stopped project's retained conversation model precedes the account default.
@@ -573,7 +565,7 @@ The right panel defaults to files; its History details inspector remains bound t
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
-The composer feedback follows [Runtime observation](#runtime-observation).
+Reply activity and workflow outcomes stay in the conversation; there is no separate runtime status strip above the composer.
 
 Native research/plan/start claim their shared conversation state synchronously before attachment or model awaits; a concurrent mutation in that generation refuses before dispatch, while status and explicit Cancel remain available.
 Each mutation carries its own claim through dispatch and response handling; navigation retires its admission authority without canceling its original, blocking a new generation or letting an old finally release a newer claim.
@@ -615,7 +607,8 @@ Limits and uncertainty windows live beside the constants in these modules.
 A failed/changed-epoch observation retains briefly unknown work, never fabricates completion; capacity, corrupt state and missing observations make the response partial, including empty responses.
 Discovery does not locate idle terminals, other hosts/accounts or another Pi configuration scope.
 
-The unified sidebar discovers never-selected working projects and preserves independent source rows while deduplicating project/session counts.
+The unified sidebar shows independent activity rows, including work in never-selected projects, without a visible heading, project/session totals or deduplication note.
+When there are no additional rows or observation warnings, discovery occupies no space.
 Only an explicit click remembers a directory and reads its session/branch; no background refresh navigates.
 A session whose first JSONL has not been flushed stays visibly history-unavailable, not a fabricated empty transcript, and cannot be sent to as a new session.
 Custom session-directory overrides that differ from the gateway's existing reader remain visible but cannot navigate history: the report's directory-scope hash must match the configured reader, and discovery never follows a reported session-file path.

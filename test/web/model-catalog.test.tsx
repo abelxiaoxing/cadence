@@ -165,6 +165,31 @@ it.each([
     expect(again.accept(catalog())).toBe(false);
   },
 );
+it("only an explicit picker read reloads models, even if the initial read is still pending", async () => {
+  const { client, requests } = fixture();
+  const live = ready();
+  const first = render(client, live);
+  commit();
+  expect(client.models).toHaveBeenLastCalledWith(
+    expect.any(AbortSignal),
+    false,
+  );
+  first.reread(true);
+  render(client, live);
+  commit();
+  expect(client.models).toHaveBeenLastCalledWith(expect.any(AbortSignal), true);
+  expect(requests[0].signal?.aborted).toBe(true);
+  requests[1].resolve({ kind: "ok", value: catalog() });
+  await settle();
+  expect(render(client, live).catalog).toEqual(catalog());
+  render(client, live, "another conversation");
+  commit();
+  expect(client.models).toHaveBeenLastCalledWith(
+    expect.any(AbortSignal),
+    false,
+  );
+});
+
 it("stopped to ready reads automatically using the same client, without a picker click or a Send", async () => {
   const { client, requests } = fixture();
   render(client, { status: "stopped" });

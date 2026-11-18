@@ -100,7 +100,7 @@ export class Workbench implements WorkbenchPort {
     this.workflows.closeHistory();
     this.conversations.records.closeReads();
   }
-  read(value: WorkbenchRead): WorkbenchResult {
+  read(value: WorkbenchRead): WorkbenchResult | Promise<WorkbenchResult> {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();
     switch (request.kind) {
@@ -109,6 +109,13 @@ export class Workbench implements WorkbenchPort {
           kind: request.kind,
           context: this.contexts.records.read(request.location).context,
         };
+      case "reload-conversation-models":
+        // Refuse an obsolete conversation location before changing owner state.
+        this.contexts.records.read(request.location);
+        return this.o.models.reloadCatalog().then(() => ({
+          kind: "conversation-models" as const,
+          catalog: this.contexts.catalog(request.location),
+        }));
       case "conversation-models":
         return {
           kind: request.kind,

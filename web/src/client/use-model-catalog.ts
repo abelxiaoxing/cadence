@@ -15,6 +15,13 @@ export type ModelAvailability =
         | "unavailable";
     };
 
+export interface CatalogClient {
+  models(
+    signal: AbortSignal,
+    reload: boolean,
+  ): ReturnType<ServiceClient["models"]>;
+}
+
 export interface ModelCatalogRead {
   catalog?: ModelCatalog;
   preview?: ModelPreview;
@@ -22,7 +29,7 @@ export interface ModelCatalogRead {
   loading: boolean;
   /** A captured read/choice may only report back into this same lifetime. */
   isCurrent(): boolean;
-  reread(): void;
+  reread(reload?: boolean): void;
   /** Install only a confirmed choice in the still-current catalog lifetime. */
   accept(catalog: ModelCatalog): boolean;
 }
@@ -31,7 +38,7 @@ export interface ModelCatalogRead {
  * model choice, polling or Send. Without execution, an optional independent
  * preview reader supplies only descriptors, never a synthetic owner version. */
 export function useModelCatalog(
-  client: Pick<ServiceClient, "models"> | null,
+  client: CatalogClient | null,
   availability: ModelAvailability,
   refresh: string,
   previewModels?: PreviewModels,
@@ -45,9 +52,14 @@ export function useModelCatalog(
       : undefined;
   const [revision, setRevision] = useState(0);
   const nextRevision = useRef(0);
+  const lifetime = useMemo(
+    () => ({ client, epoch, attachment, refresh, preview }),
+    [client, epoch, attachment, refresh, preview],
+  );
+  const reloadFor = useRef<typeof lifetime | null>(null);
   const scope = useMemo(
-    () => ({ client, epoch, attachment, refresh, revision, preview }),
-    [client, epoch, attachment, refresh, revision, preview],
+    () => ({ ...lifetime, revision, reload: reloadFor.current === lifetime }),
+    [lifetime, revision],
   );
   const latest = useRef(scope);
   latest.current = scope;
@@ -93,7 +105,7 @@ export function useModelCatalog(
     }
     if (!client) return () => abort.abort();
     void client
-      .models(abort.signal)
+      .models(abort.signal, scope.reload)
       .then((reply) => {
         if (!current()) return;
         if (reply.kind === "error")
@@ -114,8 +126,9 @@ export function useModelCatalog(
     error: value?.error,
     loading: (epoch !== null || !!preview) && !value,
     isCurrent,
-    reread() {
+    reread(reload = false) {
       if (!isCurrent()) return;
+      reloadFor.current = reload ? lifetime : null;
       // Invalidate synchronously, even before React renders the refresh.
       setRevision(++nextRevision.current);
     },

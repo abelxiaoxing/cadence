@@ -1222,3 +1222,7 @@ Test services and browsers were stopped after checks; production services were n
 No new paid-model workflow, native Windows/macOS or remote deployment qualification is claimed; the original real-model delivery and its independent Agent reviews remain the feature's prior evidence.
 The earlier extreme quoted-path Node/Vitest crash remains outside this login/UI change and is not claimed resolved.
 Publication requires the matching annotated tag's actual CI outcome and registry version, latest and artifact-digest confirmation.
+
+## 2.1.12 release candidate
+
+The Web model picker explicitly refreshes the local catalog; the workspace no longer displays a separate runtime observation bar. The workbench validates the conversation record before attempting the owner-wide reload. Canonical outputs and reuse pins were refreshed. Local `bun run verify` passed: 2,223 root tests and 574 Web tests, generated outputs, types, lint and real pack audit. No browser or live-provider qualification is claimed.

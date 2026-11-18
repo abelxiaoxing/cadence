@@ -23,6 +23,7 @@ export class OwnerModelChoice {
   private revision: number;
   private catalogId = randomUUID();
   private installing = false;
+  private generation: number;
   constructor(
     private readonly options: {
       owner: ServiceOwner;
@@ -36,6 +37,7 @@ export class OwnerModelChoice {
     if (choiceOwners.has(options.owner)) throw new ContractError("conflict");
     // Revision is scoped by the exact owner epoch, never by archived task policy.
     this.revision = 1;
+    this.generation = options.models.catalogGeneration;
     if (!Number.isSafeInteger(this.revision))
       throw new ContractError("capacity");
     choiceOwners.add(options.owner);
@@ -43,6 +45,11 @@ export class OwnerModelChoice {
   snapshot(): ModelChoiceState {
     this.options.owner.lease.assert();
     this.options.access.assertCurrent();
+    if (this.generation !== this.options.models.catalogGeneration) {
+      this.generation = this.options.models.catalogGeneration;
+      this.selection = null;
+      this.catalogId = randomUUID();
+    }
     return decodeModelChoiceState({
       version: {
         epoch: this.options.owner.lease.registration.epoch,
@@ -56,7 +63,8 @@ export class OwnerModelChoice {
   catalog(): ModelCatalog {
     const before = this.snapshot();
     const catalog = this.options.models.catalog();
-    if (before.selected) this.options.models.assertCurrent(before.selected);
+    if (before.selected)
+      this.options.models.assertCurrent(before.selected, "installed");
     if (canonicalJson(before) !== canonicalJson(this.snapshot()))
       throw new ContractError("stale");
     // Display only: Send alone installs a saved preference. An unreadable,

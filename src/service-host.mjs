@@ -6343,6 +6343,7 @@ function decodeWorkbenchRead(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
     case "conversation-context":
+    case "reload-conversation-models":
     case "conversation-models": {
       const o = closed(v, ["kind", "location"]);
       return { kind, location: decodeConversationLocation(o.location) };
@@ -15911,7 +15912,7 @@ class ConversationContexts {
         epoch: owner.epoch,
         accessGeneration: owner.accessGeneration,
         configRev: context.revision + 1,
-        catalogId: conversationIdentity(`cadence-context-version:${canonicalJson([this.seed, context, selected2?.sourceSelectionId ?? null])}`),
+        catalogId: conversationIdentity(`cadence-context-version:${canonicalJson([this.seed, this.o.models.catalogGeneration ?? 0, context, selected2?.sourceSelectionId ?? null])}`),
         conversation: { id: context.id, cwd: context.cwd }
       }
     };
@@ -15921,7 +15922,7 @@ class ConversationContexts {
     const { context } = this.records.read(location);
     const catalog = this.o.models.catalog();
     if (before.selected)
-      this.o.models.assertCurrent(before.selected);
+      this.o.models.assertCurrent(before.selected, "installed");
     if (canonicalJson(before) !== canonicalJson(this.snapshot(location)))
       throw new ContractError("stale");
     let remembered = context.model;
@@ -17058,7 +17059,7 @@ Content-Length: 0\r
           unavailable();
         return {
           kind: "ok",
-          value: a.workbench.read(decodeWorkbenchRead(input))
+          value: await a.workbench.read(decodeWorkbenchRead(input))
         };
       case "workbenchCommand": {
         if (!a.workbench)
@@ -17638,7 +17639,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "8801198e182c2457f2ff8feb9331db22d449f2b483c0befd08ce493b4db6fb4a",
+    contractHash: "103e212eee402600c29002528ccc3808b6fbe11ccee275a4d5f2a3d52576c520",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -29584,11 +29585,13 @@ class OwnerModelChoice {
   revision;
   catalogId = randomUUID23();
   installing = false;
+  generation;
   constructor(options) {
     this.options = options;
     if (choiceOwners.has(options.owner))
       throw new ContractError("conflict");
     this.revision = 1;
+    this.generation = options.models.catalogGeneration;
     if (!Number.isSafeInteger(this.revision))
       throw new ContractError("capacity");
     choiceOwners.add(options.owner);
@@ -29596,6 +29599,11 @@ class OwnerModelChoice {
   snapshot() {
     this.options.owner.lease.assert();
     this.options.access.assertCurrent();
+    if (this.generation !== this.options.models.catalogGeneration) {
+      this.generation = this.options.models.catalogGeneration;
+      this.selection = null;
+      this.catalogId = randomUUID23();
+    }
     return decodeModelChoiceState({
       version: {
         epoch: this.options.owner.lease.registration.epoch,
@@ -29610,7 +29618,7 @@ class OwnerModelChoice {
     const before = this.snapshot();
     const catalog = this.options.models.catalog();
     if (before.selected)
-      this.options.models.assertCurrent(before.selected);
+      this.options.models.assertCurrent(before.selected, "installed");
     if (canonicalJson(before) !== canonicalJson(this.snapshot()))
       throw new ContractError("stale");
     let remembered = null;
@@ -30089,6 +30097,11 @@ class OwnerModelContext {
   #loading = false;
   #tail = Promise.resolve();
   #generation = 0;
+  #reload;
+  #previousLiterals = [];
+  get catalogGeneration() {
+    return this.#generation;
+  }
   constructor(options) {
     this.#options = options;
     this.#launch = captureEnvironment(options.environment);
@@ -30107,11 +30120,11 @@ class OwnerModelContext {
       ...entry.selection
     }));
   }
-  assertCurrent(selection) {
+  assertCurrent(selection, source = "disk") {
     const selected2 = this.#selected.get(selection.sourceSelectionId);
     if (!selected2 || canonicalSelection(selected2.selection) !== canonicalSelection(selection))
       throw new ContractError("stale");
-    this.fresh(selected2);
+    this.fresh(selected2, false, source === "installed" ? this.catalogSource(true) : undefined);
   }
   redactionLiterals(selection) {
     const selected2 = this.#selected.get(selection.sourceSelectionId);
@@ -30143,20 +30156,26 @@ class OwnerModelContext {
       throw new ContractError("oversize");
     return [...new Set(literals)];
   }
-  viewRedactionLiterals() {
-    return this.catalogLiterals(this.readCatalogSource());
+  viewRedactionLiterals(source = "installed") {
+    this.#options.owner.lease.assert();
+    if (!this.#source || !this.#snapshot)
+      throw new ContractError("unavailable");
+    const current2 = source === "text" ? readPiSnapshot(this.#source) : undefined;
+    const { auth, credentials } = current2 ?? readPiAuth(this.#source);
+    const installed = snapshotLiterals({ ...this.#snapshot, auth, credentials }, this.#launch, [...this.#previousLiterals, ...this.#options.network?.literals ?? []]);
+    return current2 && !sameModels(current2, this.#snapshot) ? snapshotLiterals(current2, this.#launch, installed) : installed;
   }
   get loading() {
     return this.#loading;
   }
   catalog() {
     try {
-      const current2 = this.catalogSource();
+      const current2 = this.catalogSource(true);
       const runtime = this.#runtime;
       if (!runtime || !this.#thinking)
         throw new ContractError("unavailable");
       const catalog = projectModelCatalog(runtime, this.#thinking, current2, this.catalogLiterals(current2), (input, snapshot) => this.validateModel(input, snapshot));
-      const after = this.catalogSource();
+      const after = this.catalogSource(true);
       if (after.auth.identity !== current2.auth.identity || after.auth.stamp !== current2.auth.stamp)
         throw new ContractError("stale");
       return catalog;
@@ -30164,23 +30183,67 @@ class OwnerModelContext {
       throw new ContractError(error instanceof ContractError ? error.code : "corrupt-selected");
     }
   }
-  catalogSource() {
+  catalogSource(installedOnly = false) {
     this.alive();
-    return this.readCatalogSource();
-  }
-  readCatalogSource() {
-    this.#options.owner.lease.assert();
     if (this.#loading || !this.#runtime || !this.#snapshot || !this.#source || !this.#thinking)
       throw new ContractError("unavailable");
     if (this.#runtime.getError())
       throw new ContractError("corrupt-selected");
+    if (installedOnly)
+      return { ...this.#snapshot, ...readPiAuth(this.#source) };
     const current2 = readPiSnapshot(this.#source);
     if (!sameModels(this.#snapshot, current2))
       throw new ContractError("stale");
     return current2;
   }
   catalogLiterals(snapshot) {
-    return snapshotLiterals(snapshot, this.#launch, this.#options.network?.literals ?? []);
+    return snapshotLiterals(snapshot, this.#launch, this.#options.network?.literals);
+  }
+  async reloadCatalog() {
+    this.alive();
+    if (this.#reload)
+      return this.#reload;
+    const source = this.#source, installed = this.#snapshot;
+    if (!source || !installed || this.#loading)
+      throw new ContractError("unavailable");
+    const before = readPiSnapshot(source);
+    if (sameModels(installed, before))
+      return;
+    this.#reload = (async () => {
+      const runtime = await this.createRuntime(source);
+      this.alive();
+      const after = readPiSnapshot(source);
+      if (!sameModels(before, after) || before.auth.stamp !== after.auth.stamp || before.auth.identity !== after.auth.identity || this.#snapshot !== installed)
+        throw new ContractError("stale");
+      const previous = snapshotLiterals(installed, this.#launch, this.#previousLiterals);
+      snapshotLiterals(after, this.#launch, previous);
+      this.#previousLiterals = previous;
+      this.#runtime = runtime;
+      this.#snapshot = after;
+      this.#selected.clear();
+      this.#retained.clear();
+      ++this.#generation;
+    })();
+    try {
+      await this.#reload;
+    } finally {
+      this.#reload = undefined;
+    }
+  }
+  async createRuntime(source) {
+    const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+    const { InMemoryModelsStore } = await import("@earendil-works/pi-ai");
+    const runtime = await ModelRuntime.create({
+      authPath: source.authPath,
+      modelsPath: source.modelsPath,
+      modelsStore: new InMemoryModelsStore,
+      allowModelNetwork: false,
+      refreshOnCreate: false
+    });
+    const refused2 = runtime.getError();
+    if (refused2)
+      throw sdkRefusal(refused2);
+    return runtime;
   }
   replaceSelection(input, beforeInstall) {
     this.#options.owner.assertQuiescent();
@@ -30227,7 +30290,7 @@ class OwnerModelContext {
   }
   async load() {
     this.alive();
-    if (this.#loading || this.#pending)
+    if (this.#loading || this.#pending || this.#reload)
       throw new ContractError("capacity");
     const existing = runtimeOwners.get(this.#options.owner);
     if (existing && existing !== this)
@@ -30243,26 +30306,16 @@ class OwnerModelContext {
       const source = piSource(this.#options.agentDir, this.#options.home, this.#options.cwd, this.#launch);
       const before = readPiSnapshot(source);
       const pi = await import("@earendil-works/pi-coding-agent");
-      const { ModelRuntime } = pi;
-      const { InMemoryModelsStore, getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
+      const { getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
       if (this.#options.network)
         await this.#options.network.initialize();
       this.alive();
       const ready2 = readPiSnapshot(source);
       if (ready2.auth.identity !== before.auth.identity || !sameModels(before, ready2))
         throw new ContractError("stale");
-      const runtime = await ModelRuntime.create({
-        authPath: source.authPath,
-        modelsPath: source.modelsPath,
-        modelsStore: new InMemoryModelsStore,
-        allowModelNetwork: false,
-        refreshOnCreate: false
-      });
+      const runtime = await this.createRuntime(source);
       this.alive();
       const after = readPiSnapshot(source);
-      const refused2 = runtime.getError();
-      if (refused2)
-        throw sdkRefusal(refused2);
       if (after.auth.identity !== ready2.auth.identity || !sameModels(ready2, after))
         throw new ContractError("stale");
       this.#source = source;
@@ -30325,11 +30378,13 @@ class OwnerModelContext {
       throw new ContractError("unavailable");
     return validateCatalogModel(this.#runtime, this.#thinking, input, current2, this.#launch, this.catalogLiterals(current2));
   }
-  fresh(selected2, resolvingOAuth = false) {
+  fresh(selected2, resolvingOAuth = false, installed) {
     this.alive();
+    if (this.#selected.get(selected2.selection.sourceSelectionId) !== selected2)
+      throw new ContractError("stale");
     if (!this.#source || !this.#snapshot || !this.#runtime)
       throw new ContractError("unavailable");
-    const snapshot = readPiSnapshot(this.#source);
+    const snapshot = installed ?? readPiSnapshot(this.#source);
     if (this.#runtime.getError() || this.#runtime.getRegisteredNativeProvider(selected2.selection.provider) || this.#runtime.getRegisteredProviderConfig(selected2.selection.provider))
       throw new ContractError("stale");
     const model2 = this.#runtime.getModel(selected2.selection.provider, selected2.selection.model);
@@ -35278,8 +35333,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.11",
-  build: "9dd6139a141df55410936ada8c9074dfe1665ddc528d87d96d3b36a8aed95266",
+  version: "2.1.12",
+  build: "76dee9ed5af2b1aa3aa9dad7bc8e3a0c97fc19729bf31b3eb3c63b4094f5db79",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37879,6 +37934,12 @@ class Workbench {
           kind: request3.kind,
           context: this.contexts.records.read(request3.location).context
         };
+      case "reload-conversation-models":
+        this.contexts.records.read(request3.location);
+        return this.o.models.reloadCatalog().then(() => ({
+          kind: "conversation-models",
+          catalog: this.contexts.catalog(request3.location)
+        }));
       case "conversation-models":
         return {
           kind: request3.kind,
@@ -38260,7 +38321,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "8801198e182c2457f2ff8feb9331db22d449f2b483c0befd08ce493b4db6fb4a";
+  const embedded = "103e212eee402600c29002528ccc3808b6fbe11ccee275a4d5f2a3d52576c520";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -38426,11 +38487,11 @@ async function createServiceHost(value, sourceBuild, lifetime) {
       owner.registerRuntime(() => gate.closeAdmission(), {
         assertQuiescent: () => gate.assertQuiescent()
       });
-    const ownerLiterals = () => [
+    const ownerLiterals = (workspace = false) => [
       ...access.redactionLiterals(),
       native.capability,
       ...network.literals,
-      ...models2.viewRedactionLiterals()
+      ...models2.viewRedactionLiterals(workspace ? "installed" : "text")
     ];
     workbench = !sourceBuild?.deferRuntime ? new Workbench({
       coordination: c,
@@ -38470,13 +38531,13 @@ async function createServiceHost(value, sourceBuild, lifetime) {
         };
       },
       workspace: () => {
-        const before = ownerLiterals();
+        const before = ownerLiterals(true);
         const view = {
           rootLabel: diagnosticText(sanitizeText(c.store.root, before), 4096),
           models: models2.observe(),
           context: unavailable2(null)
         };
-        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals(true)))
           throw new ContractError("stale");
         return view;
       },

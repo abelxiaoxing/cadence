@@ -92,6 +92,7 @@ import {
 } from "../../client/project-route";
 import { useConversation } from "../../client/use-conversation";
 import {
+  type CatalogClient,
   type ModelAvailability,
   useModelCatalog,
 } from "../../client/use-model-catalog";
@@ -116,12 +117,6 @@ import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { QuestionRail } from "./QuestionRail";
-import {
-  RuntimeObservation,
-  runtimeActivity,
-  runtimeConnection,
-  runtimeWorkflow,
-} from "./RuntimeObservation";
 import { useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
 import {
@@ -350,11 +345,13 @@ export function ChatWorkspace({
       : undefined;
   const contextKnown = !!context && !contextRead.error;
   const locationCwd = context?.cwd ?? initialCwd;
-  const modelClient = useMemo<Pick<ServiceClient, "models" | "chooseModel">>(
+  const modelClient = useMemo<
+    CatalogClient & Pick<ServiceClient, "chooseModel">
+  >(
     () => ({
-      models: (signal) =>
+      models: (signal, reload) =>
         locationCwd
-          ? client.models(signal, { id, cwd: locationCwd })
+          ? client.models(signal, { id, cwd: locationCwd }, reload)
           : Promise.resolve({
               kind: "error",
               error: publicError("unavailable"),
@@ -388,7 +385,7 @@ export function ChatWorkspace({
     setResume(false);
   };
   const openModels = (open: boolean, reason?: "chosen") => {
-    if (open && !modelRead.preview && !modelRead.loading) modelRead.reread();
+    if (open) modelRead.reread(true);
     else if (!open && reason !== "chosen") clearModelWait();
     setModelOpen(open);
   };
@@ -924,32 +921,6 @@ export function ChatWorkspace({
     () => placeWorkflows(turns, flows.runs.values(), earlier),
     [turns, flows.runs, earlier],
   );
-  // Pausing retires the hook's watch list, not the bar's last known fact.
-  const lastRuntime = useRef<{
-    client: ServiceClient;
-    id: string;
-    run?: WorkflowRun;
-  }>({ client, id });
-  if (lastRuntime.current.client !== client || lastRuntime.current.id !== id)
-    lastRuntime.current = { client, id };
-  const runtimeRun = runtimeWorkflow(
-    watched,
-    flows.runs,
-    lastRuntime.current.run,
-  );
-  const runtimeRetained =
-    !!runtimeRun && flows.runs.get(runtimeRun.id) !== runtimeRun;
-  lastRuntime.current.run = runtimeRun;
-  const connection = runtimeConnection({
-    available,
-    status: modelAvailability.status,
-    observed,
-    readFailed:
-      !!conversation.error ||
-      !!workflow.error ||
-      flows.failed ||
-      flows.unreadable.size > 0,
-  });
   // A line that appears or settles (and may gain its reason) keeps a reader at
   // the end there; a live line's changing activity never moves the reader.
   const linesKey = [...flows.runs.values()]
@@ -1835,8 +1806,6 @@ export function ChatWorkspace({
               {t("Show the latest")}
             </button>
           )}
-          {/* Reply and workflow observations stay together by the composer,
-              outside the scrolling transcript. Approval is a separate action. */}
           {cadence && !running && !settledBadly && !!state?.proposal && (
             <span className="ep-state">{t("Awaiting plan approval")}</span>
           )}
@@ -2093,14 +2062,6 @@ export function ChatWorkspace({
           />
         )}
       </div>
-      <RuntimeObservation
-        reply={summary?.status ?? conversation.attempt?.status}
-        activity={runtimeActivity(lastTurn)}
-        workflow={watched.length ? (runtimeRun ?? null) : undefined}
-        connection={connection}
-        replyStale={!!conversation.error}
-        workflowStale={flows.failed || !!workflow.error || runtimeRetained}
-      />
       <ChatComposer
         inputRef={textarea}
         draft={draft}

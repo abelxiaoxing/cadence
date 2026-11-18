@@ -2,39 +2,11 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Runtime observation": "运行观察",
-  "Reply queued": "回复排队中",
-  "Reply running": "回复进行中",
-  "Reply ended": "回复已结束",
-  "Reply failed": "回复失败",
-  "Reply canceled": "回复已取消",
-  "Reply timed out": "回复超时",
-  "Reply outcome unknown": "回复结果未知",
-  "Waiting · no new progress observed": "等待中 · 暂未观察到新进展",
   "Thinking activity observed": "已观察到思考活动",
   "Thinking activity ended": "思考活动已结束",
   "Thinking content unavailable": "思考内容不可用",
   "Thinking content is not streamed. Readable recorded thinking can be opened after it is saved.":
     "不传输思考正文；可读取的思考内容落盘后可展开查看。",
-  "Reply output observed": "已观察到回复输出",
-  "Tool running": "工具执行中",
-  "Tool result observed": "已观察到工具结果",
-  "Tool failure observed": "已观察到工具失败",
-  "Tool cancellation observed": "已观察到工具取消",
-  "Tool outcome unknown": "工具结果未知",
-  "Awaiting workflow observation": "等待工作流状态",
-  "Last observed": "上次观察状态",
-  "Observing current state": "正在观察当前状态",
-  "Waiting for current observations": "等待当前状态读取",
-  "Observation unavailable · waiting for current state":
-    "观察不可用 · 等待当前状态",
-  "Observation paused": "观察已暂停",
-  "Observation delayed · showing last known state":
-    "观察滞后 · 显示上次已知状态",
-  "Observation paused · showing last known state":
-    "观察已暂停 · 显示上次已知状态",
-  "History readable · live execution not connected":
-    "历史可读 · 未连接实时执行服务",
   "Incomplete model response": "未完成的模型响应",
   "Upstream interrupted. Retry {attempt}/{maxAttempts} is scheduled after {seconds}s; completed tool results are kept.":
     "上游响应中断，第 {attempt}/{maxAttempts} 次重试安排在 {seconds} 秒后；已完成的工具结果已保留。",
@@ -175,16 +147,9 @@ export const zh = {
   "History configuration differs. Activity remains observe-only.":
     "历史读取配置不同。此活动仅供观察。",
   "Discovered session": "发现的会话",
-  "Owner work already listed below is not duplicated here.":
-    "下方已经列出的 owner 工作不在此重复显示。",
   "Active Pi work": "Pi 活动工作",
-  "{projects} projects · {sessions} sessions":
-    "{projects} 个项目 · {sessions} 个会话",
   "Activity observation is partial. Missing work is not known to have finished.":
     "活动观察不完整。未显示的工作不代表已经结束。",
-  "Discovering active work…": "正在发现活动工作…",
-  "No active work observed. Idle terminals and owners are not listed.":
-    "未观察到活动工作。空闲终端和 owner 不列入此处。",
   "Unattributed work": "无法归属的工作",
   "Terminal turn (observe only)": "终端回合（只读观察）",
   "Owner turn": "Owner 回合",
@@ -742,10 +707,10 @@ export const zh = {
     "模型目录超出容量；不能从不完整的列表中选择。",
   "{error}. No automatic replacement or retry.":
     "{error}。不会自动替换或重试。",
-  "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json.":
-    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后需重启服务。",
-  "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json.":
-    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后需重启服务。",
+  "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.":
+    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后重新打开模型选择器。",
+  "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.":
+    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后重新打开模型选择器。",
   "Model catalog unavailable ({code}); no model is selectable. No automatic retry.":
     "模型目录不可用（{code}）；无法选择任何模型。不会自动重试。",
   "Choice response unconfirmed; observe catalog before another explicit choice.":
@@ -1179,8 +1144,8 @@ export const zh = {
   "Not supported": "不支持",
   "Used when you send": "发送时启用",
   "No matching models.": "没有匹配的模型。",
-  "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.":
-    "还没有配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供方，然后重启服务。",
+  "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.":
+    "还没有配置模型。请在 Pi 的 models.json 或 auth.json 中添加提供方，然后重新打开模型选择器。",
   "Thinking level: {level}": "思考级别：{level}",
   Thinking: "思考",
   "The model list could not be read ({code}).": "无法读取模型列表（{code}）。",

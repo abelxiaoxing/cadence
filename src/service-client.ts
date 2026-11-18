@@ -233,11 +233,15 @@ export class ServiceClient {
   async models(
     signal?: AbortSignal,
     location?: ConversationLocation,
+    reload = false,
   ): Promise<Reply<ModelCatalog>> {
     try {
       if (location) {
         const reply = await this.workbenchRead(
-          { kind: "conversation-models", location },
+          {
+            kind: reload ? "reload-conversation-models" : "conversation-models",
+            location,
+          },
           signal,
         );
         if (reply.kind === "error") return reply;

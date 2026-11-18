@@ -877,7 +877,7 @@ export class ServiceHttpServer {
         if (!a.workbench) unavailable();
         return {
           kind: "ok",
-          value: a.workbench.read(decodeWorkbenchRead(input)),
+          value: await a.workbench.read(decodeWorkbenchRead(input)),
         };
       case "workbenchCommand": {
         if (!a.workbench) unavailable();

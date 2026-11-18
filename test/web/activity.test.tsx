@@ -49,7 +49,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-it("SSR deduplicates project/session counts but preserves simultaneous terminal instances and owner workflow sources", () => {
+it("shows distinct terminal and owner rows without a visible heading, counts or explanatory copy", () => {
   const value = discovery([
     activity(),
     activity(),
@@ -65,7 +65,7 @@ it("SSR deduplicates project/session counts but preserves simultaneous terminal 
       <ActivityList value={value} error="" opening={false} onOpen={() => {}} />
     </LocaleProvider>,
   );
-  expect(html).toContain("1 projects · 1 sessions");
+  expect(html).not.toMatch(/>Active Pi work<|projects ·|not duplicated/);
   expect(html.match(/Terminal turn \(observe only\)/g)).toHaveLength(2);
   expect(html).toContain("Owner workflow");
   expect(html).toContain("recovering");
@@ -94,7 +94,22 @@ it("partial empty observation never claims everything finished; Chinese text and
       />
     </LocaleProvider>,
   );
-  expect(empty).not.toContain("No active work observed");
+  expect(empty).toContain("Activity observation is partial");
+});
+it("leaves no sidebar block while loading, when empty or when every row is already in Running work", () => {
+  const flow = activity({ source: "workflow", epoch, instance: null });
+  for (const value of [undefined, discovery([]), discovery([flow])]) {
+    const html = renderToStaticMarkup(
+      <ActivityList
+        value={value}
+        represented={[activityKey("/project", "workflow", flow.id, epoch)]}
+        error=""
+        opening={false}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toBe("");
+  }
 });
 it("a failed observation marks retained work unknown and bounds its lifetime without inventing historical success", () => {
   const value = discovery();

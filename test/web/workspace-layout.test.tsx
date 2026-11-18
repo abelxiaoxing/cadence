@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -148,33 +147,4 @@ it("keeps the 80px follow boundary, pauses on up-scroll, and follows growth only
   followLatest(viewport, true);
   expect(viewport.scrollTop).toBe(viewport.scrollHeight);
   expect(() => followLatest(null, true)).not.toThrow();
-});
-
-it("observation presentation is normal flow, wraps at narrow widths and never animates or overlays controls (source contract)", () => {
-  const css = readFileSync(
-    new URL("../../web/src/styles.css", import.meta.url),
-    "utf8",
-  );
-  const rules =
-    css.match(/\.runtime-observation[^{}]*\{[^{}]*\}/g)?.join("\n") ?? "";
-  expect(rules).toContain("flex-wrap: wrap");
-  expect(rules).toContain("min-width: 0");
-  expect(rules).toContain("max-width: 100%");
-  expect(rules).toContain("overflow-wrap: anywhere");
-  expect(rules).toContain("text-overflow: ellipsis");
-  expect(rules).not.toMatch(
-    /position:\s*(absolute|fixed)|z-index:|animation:|transition:|pointer-events:/,
-  );
-  // The strip has no timer, scroll callback or reduced-motion exception:
-  // repeated identical observations cannot produce a clock-driven parent render.
-  const component = readFileSync(
-    new URL(
-      "../../web/src/components/workspace/RuntimeObservation.tsx",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  expect(component).not.toMatch(
-    /setInterval\(|setTimeout\(|requestAnimationFrame\(|scrollTop\s*=/,
-  );
 });
