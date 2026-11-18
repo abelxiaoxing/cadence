@@ -60,6 +60,9 @@
 .design-track small {
   grid-column: 2;
 }
+.design-custom input:not(:focus) {
+  border-color: var(--control-fg);
+}
 .design-custom.chosen {
   border-inline-start: 2px solid var(--focus);
   padding-inline-start: 8px;

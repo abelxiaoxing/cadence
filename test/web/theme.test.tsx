@@ -59,13 +59,14 @@ function collectRules(sheet: Container, scope = "") {
     if (node.type === "atrule")
       collectRules(node, `${scope}@${node.name} ${node.params} / `);
     if (node.type !== "rule") continue;
-    const key = scope + selectorKey(node.selector);
+    const selectors = new Set([node.selector, ...node.selectors]);
     for (const d of node.nodes)
       if (d.type === "decl")
-        declarations.set(
-          `${key} { ${d.prop} }`,
-          d.value.replace(/\s+/g, " ").trim(),
-        );
+        for (const selector of selectors)
+          declarations.set(
+            `${scope}${selectorKey(selector)} { ${d.prop} }`,
+            d.value.replace(/\s+/g, " ").trim(),
+          );
   }
 }
 for (const css of SHEETS) collectRules(parse(css));
@@ -354,6 +355,54 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         );
     },
   );
+  it("distinguishes an empty Other idea from both its card and its fill before focus", () => {
+    const ink = ruleColor(
+      ".design-custom input:not(:focus)",
+      "border-color",
+      scheme,
+    );
+    const controls = ":where(input, select, textarea)";
+    expect(declaration(controls, "border")).toMatch(/^1px solid /);
+    const card = over(
+      ruleColor(".workflow-plan", "background", scheme),
+      ruleColor("body", "background", scheme),
+    );
+    for (const outside of [card, over(color("--grain", scheme), card)]) {
+      const fill = over(ruleColor(controls, "background", scheme), outside);
+      for (const side of [outside, fill])
+        expect(contrast(ink, side)).toBeGreaterThanOrEqual(GRAPHIC);
+    }
+    expect(declaration("input:focus-visible", "outline")).toBe(
+      "2px solid var(--accent)",
+    );
+  });
+  it.each([
+    ".model-popover",
+    ".mention-menu",
+    ".view-menu-items",
+    ".more-menu-items",
+    ".img-lightbox-panel",
+  ])("%s uses the raised menu material with an opaque fallback", (panel) => {
+    const plate = panel === ".model-popover" ? `${panel}::before` : panel;
+    expect(declaration(panel, "border")).toBe("1px solid var(--glass-border)");
+    expect(declaration(panel, "border-top-color")).toBe(
+      "var(--glass-border-top)",
+    );
+    expect(declaration(panel, "box-shadow")).toContain("var(--shadow-3)");
+    expect(declaration(plate, "backdrop-filter")).toBe("var(--glass-filter)");
+    expect(declaration(plate, "background-image")).toBe("var(--grain-image)");
+    expect(declaration(plate, "background-size")).toBe("var(--grain-size)");
+    expect(ruleColor(plate, "background", scheme)[3]).toBeGreaterThanOrEqual(
+      0.95,
+    );
+    expect(
+      ruleColor(
+        `@supports not (backdrop-filter: blur(1px)) / ${plate}`,
+        "background",
+        scheme,
+      )[3],
+    ).toBe(1);
+  });
   it("does not fade the disabled model's label and reason as a group", () => {
     expect(declaration(".model-option:disabled", "opacity")).toBe("1");
     const menu = over(

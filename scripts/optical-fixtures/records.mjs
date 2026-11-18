@@ -76,6 +76,7 @@ const uncertain = {
   ],
 };
 // Only this conversation publishes a retained child to the navigation dock.
+export const dockResult = "  Facet samples:\n\tsilver  \n\n  quartz\n";
 export const dockRun = {
   ...run,
   id: randomUUID(),
@@ -413,6 +414,10 @@ export function readRecord(q) {
       return { kind, runs: [] };
     case "workflow-history":
       return { kind, entries: [{ id: runId, run }], next: null };
+    case "workflow-detail":
+      return id === dockRun.id && q.stepId === dockRun.steps[0].id
+        ? { kind: "file", path: "facet.txt", text: dockResult, limited: false }
+        : null;
     case "workflow-transcript":
       return id === dockRun.id && q.stepId === dockRun.steps[0].id
         ? { kind, runId: id, stepId: q.stepId, turn: null }

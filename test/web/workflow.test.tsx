@@ -23,6 +23,7 @@ import {
   WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
 import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
+import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import {
   AssignmentBoard,
   DeliveryDetails,
@@ -1091,4 +1092,23 @@ it("the Web design card shows active questions, option costs, recommendation, cu
   expect(render(selected)).toContain("How much blur?");
   expect(render(selected)).toContain("Design submitted");
   expect(render(selected)).not.toContain("Confirm implementation");
+});
+
+it("labels the displayed bounded file and its copy action in the selected locale", () => {
+  const html = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <RetainedStepResult
+        file={{
+          kind: "file",
+          path: "result",
+          text: "  bounded result\n",
+          limited: true,
+        }}
+      />
+    </LocaleProvider>,
+  );
+  expect(html).toContain('aria-label="复制输出"');
+  expect(html).toContain("步骤结果");
+  expect(html).toContain("预览已截断。");
+  expect(html).toContain("  bounded result\n</pre>");
 });

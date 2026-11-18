@@ -2690,10 +2690,7 @@ summary:focus-visible,
   z-index: 60;
   width: 180px;
   padding: 5px;
-  border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px var(--shadow-2);
 }
 .view-menu-items button {
   display: flex;
@@ -2705,6 +2702,7 @@ summary:focus-visible,
   text-transform: capitalize;
 }
 .view-menu-items button[aria-pressed="true"] {
+  box-shadow: inset 2px 0 var(--accent);
   color: var(--accent-text);
   background: var(--accent-soft);
 }
@@ -3625,10 +3623,7 @@ summary:focus-visible,
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 6px;
-  border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--bg-elev2);
-  box-shadow: 0 -6px 24px var(--shadow-2);
 }
 .mention-menu-hint {
   display: flex;
@@ -5058,11 +5053,17 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   width: 340px;
   max-height: min(460px, 62vh);
-  border: 1px solid var(--glass-border);
   border-radius: 16px;
+  overflow: hidden;
+}
+.model-popover,
+.mention-menu,
+.view-menu-items,
+.more-menu-items,
+.img-lightbox-panel {
+  border: 1px solid var(--glass-border);
   border-top-color: var(--glass-border-top);
   box-shadow: 0 16px 40px var(--shadow-3);
-  overflow: hidden;
 }
 .model-popover::before {
   content: "";
@@ -5071,6 +5072,12 @@ button.file-item:hover:not(:disabled),
   inset: 0;
   pointer-events: none;
   border-radius: inherit;
+}
+.model-popover::before,
+.mention-menu,
+.view-menu-items,
+.more-menu-items,
+.img-lightbox-panel {
   background: var(--menu-bg);
   background-image: var(--grain-image);
   background-size: var(--grain-size);
@@ -5296,12 +5303,7 @@ button.link:hover:not(:disabled) {
   z-index: 60;
   width: 260px;
   padding: 5px;
-  border: 1px solid var(--glass-border);
   border-radius: 14px;
-  background: var(--menu-solid-bg);
-  border-top-color: var(--glass-border-top);
-  box-shadow: 0 16px 40px var(--shadow-2);
-  backdrop-filter: var(--glass-filter);
 }
 .more-menu-items button {
   display: flex;
@@ -5442,10 +5444,7 @@ button.link:hover:not(:disabled) {
   max-width: 100%;
   max-height: 100%;
   padding: 6px;
-  border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--bg-elev);
-  box-shadow: 0 18px 48px -14px var(--shadow-3);
 }
 .img-lightbox-toolbar {
   display: flex;
@@ -5612,8 +5611,11 @@ button.link:hover:not(:disabled) {
   .statusbar,
   .chat-composer,
   .action-dialog,
-  .model-popover,
+  .model-popover::before,
+  .mention-menu,
+  .view-menu-items,
   .more-menu-items,
+  .img-lightbox-panel,
   .panel-drawer {
     background: var(--bg-elev);
   }

@@ -7,6 +7,7 @@ import { useFollowResize } from "../../transcript/use-lazy-window";
 import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
+import { RetainedStepResult } from "./RetainedStepResult";
 import { recordedTurn } from "./turn-source";
 import { WorkflowCard } from "./WorkflowPanel";
 
@@ -188,7 +189,7 @@ function AgentView({
                 {t("Read retained step result")}
               </button>
               {detail && result.value?.kind === "file" && (
-                <pre className="workflow-detail">{result.value.text}</pre>
+                <RetainedStepResult file={result.value} />
               )}
               {detail && result.error && <p role="alert">{result.error}</p>}
             </section>
