@@ -6434,6 +6434,17 @@ var RUN_INPUTS = 32;
 var WAITING_INPUTS = 8;
 var PENDING_TEXT_BYTES = 256;
 var UNDELIVERED_TEXT_BYTES = 2 * CONVERSATION_SEND_BYTES;
+var workflowTurnStatuses = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+var CHAT_STATUSES = ["starting", ...workflowTurnStatuses];
+var isLiveChatStatus = (status) => status === "starting" || status === "queued" || status === "running";
 var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
@@ -6492,15 +6503,6 @@ function decodeChatCursor(value) {
   const o = closed(value, ["id", "updatedAt"]);
   return { id: decodeSessionId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
-var statuses = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown"
-];
 function decodeWorkbenchRead(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
@@ -6938,7 +6940,7 @@ function decodeChatTurn(v) {
     ...o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) },
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, workflowTurnStatuses),
     notice: text(o.notice, 1024),
     ...transcript ? { transcript: { pages: integer(transcript.pages, 0) } } : {},
     omitted: {
@@ -7099,7 +7101,7 @@ function decodeChatTurnHeader(v) {
     entry: nullable(o.entry, decodeEntryId),
     ...o.parent === undefined ? {} : { parent: nullable(o.parent, decodeEntryId) },
     at: integer(o.at, 0),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024),
     omitted: {
       thinking: bool(omitted.thinking),
@@ -7130,7 +7132,7 @@ function decodeChatSummary(v) {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
     leaf: nullable(o.leaf, decodeEntryId),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     updatedAt: integer(o.updatedAt, 0),
     origin: oneOf(o.origin, ["terminal", "webui"]),
     ...has("cadence") ? { cadence: bool(o.cadence) } : {},
@@ -7148,7 +7150,7 @@ function decodeChatAttempt(v) {
   return {
     commandId: decodeId(o.commandId),
     text: text(o.text, 16 * 1024),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024)
   };
 }
@@ -8572,6 +8574,7 @@ class CheckoutStore {
 // src/service/contracts/activity.ts
 var ACTIVITY_PHASES = [
   "turn",
+  "starting",
   "queued",
   "running",
   "research",
@@ -15303,9 +15306,8 @@ var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Noth
 var NOT_DELIVERED = "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.";
 var UNOBSERVED = "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
 var WITHDRAWN = "Withdrawn before it was delivered.";
-var LIVE = ["queued", "running"];
 function settledSteps(turn) {
-  if (LIVE.includes(turn.status) || !turn.items.some((item) => ["pending", "running", "streaming"].includes(item.state ?? "")))
+  if (isLiveChatStatus(turn.status) || !turn.items.some((item) => ["pending", "running", "streaming"].includes(item.state ?? "")))
     return turn;
   return {
     ...turn,
@@ -15364,20 +15366,11 @@ function decodeAccepted(value) {
     offset: integer(o.offset, 0)
   };
 }
-var statuses2 = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown"
-];
 function decodeState(value) {
   const o = closed(value, ["status", "notice", "omitted", "user"]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   return {
-    status: oneOf(o.status, statuses2),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 4096),
     omitted: {
       thinking: omitted.thinking === true,
@@ -15461,7 +15454,7 @@ class ConversationRecords {
     if (value === undefined)
       throw new ContractError("corrupt-selected");
     const decoded2 = decodeState(value);
-    const state = LIVE.includes(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
+    const state = isLiveChatStatus(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
     if (this.states.size >= COMMAND_STATES)
       this.states.clear();
     this.states.set(commandId, { key: key2, state });
@@ -15596,7 +15589,10 @@ class ConversationRecords {
     const run = this.recordedRun(id);
     return run ? {
       commandId: run.commandId,
-      settled: ![run, ...run.inputs].some((message2) => ["queued", "running", "unknown"].includes(this.state(message2.commandId).status))
+      settled: ![run, ...run.inputs].some((message2) => {
+        const { status } = this.state(message2.commandId);
+        return status === "unknown" || isLiveChatStatus(status);
+      })
     } : null;
   }
   summary(id, live2, archived = this.archived(id)) {
@@ -15949,7 +15945,7 @@ class ConversationRecords {
     });
     return {
       turn: { ...settledSteps(turn), execution: live2.execution },
-      stable: LIVE.includes(live2.state.status) ? extended.stable : turn.steps.length
+      stable: isLiveChatStatus(live2.state.status) ? extended.stable : turn.steps.length
     };
   }
   turnSteps(id, leaf, ordinal, before) {
@@ -17850,7 +17846,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17",
+    contractHash: "33292110530233090849e118094f76ec8c12a127b3f73f69fd8f6015f03efb4c",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -33560,7 +33556,7 @@ class Conversations {
       epoch: live2.epoch,
       now: Date.now(),
       leaf: live2.accepted.parent,
-      phase: live2.abort.signal.aborted ? "stopping" : live2.state.status === "queued" ? "queued" : live2.state.status === "running" ? "running" : "settling"
+      phase: live2.abort.signal.aborted ? "stopping" : isLiveChatStatus(live2.state.status) ? live2.state.status : "settling"
     }));
   }
   constructor(o) {
@@ -33704,7 +33700,7 @@ class Conversations {
       epoch: input.model.epoch,
       title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
       state: {
-        status: "queued",
+        status: control ? "queued" : "starting",
         notice: "",
         omitted: { thinking: false, media: false, other: false },
         user: null
@@ -33975,7 +33971,6 @@ class Conversations {
   async run(live2, control) {
     const { accepted: accepted2, abort, state } = live2;
     const commandId = live2.commandId;
-    let barrier;
     let authSettled;
     let uncertain = false;
     let native = {
@@ -33996,6 +33991,7 @@ class Conversations {
     };
     const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
     try {
+      this.o.owner.lease.assert();
       if (!current2())
         throw new ContractError("stale");
       if (control?.reply) {
@@ -34003,12 +33999,6 @@ class Conversations {
         state.notice = control.reply;
         return { status: "settled" };
       }
-      if (!control) {
-        barrier = await this.o.gate.acquire(commandId, abort.signal);
-        barrier.assertHeld();
-      }
-      if (!current2())
-        throw new ContractError("stale");
       const selected2 = live2.execution.model;
       if (!selected2)
         throw new ContractError("stale");
@@ -34135,8 +34125,6 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       }
       if (uncertain)
         this.o.owner.quarantine();
-      else if (this.o.owner.state === "idle")
-        barrier?.release();
       for (const input of live2.inputs)
         this.inputs.delete(input.commandId);
       this.active.delete(commandId);
@@ -35774,7 +35762,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
+  build: "cc38a41f120d6df83c4cec14f6418821e53b42354e0563f0cd7f72b470b3b73f",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38362,9 +38350,14 @@ class Workbench {
   opening = new Map;
   constructor(o) {
     this.o = o;
-    this.conversations = new Conversations(o);
+    const { gate, ...common } = o;
+    this.conversations = new Conversations(common);
     this.contexts = this.conversations.contexts;
-    this.workflows = new Workflows({ ...o, contexts: this.contexts });
+    this.workflows = new Workflows({
+      ...common,
+      gate,
+      contexts: this.contexts
+    });
     this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -38794,7 +38787,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17";
+  const embedded = "33292110530233090849e118094f76ec8c12a127b3f73f69fd8f6015f03efb4c";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

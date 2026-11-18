@@ -188,10 +188,6 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   SSR markup and pure functions exercise no key press, focus or real owner.
 - `conversation-input`, `worker-inputs`, `pi-sessions`, `pi-sdk-baseline`, `workbench-send-admission`, `service-conversation-inputs`: messages sent into a running reply.
   `conversation-input` runs the owner against a stand-in worker (durable record before hand-over, hand-over only to a listening worker, bounds, withdrawal, settlement of delivered, undelivered and unknown messages, the startup rule, run-bound plan approval); `worker-inputs` runs the worker's sequencing against the installed SDK's real `AgentSession` with a controlled provider reply (a steer after the running tool call, queued prompts after a normal end, nothing after a failure or stop, one final capture frame after several prompts).
-  For ordinary Send concurrency, hold one session's worker open while a second on the same checkout starts, executes and settles first.
-  Also hold a workflow's exclusive checkout permit across an ordinary turn.
-  Observe worker events and original settlement, not just acceptance receipts or elapsed time.
-  Keep same-session exclusion, capacity refusal without a turn, per-turn cancellation and owner Stop joining all originals separate from checkout coordination.
   `pi-sdk-baseline` pins the two Pi behaviours that sequencing rests on: a steer is queued only into a running reply, and Pi continues a failed reply into a queued one unless the queue is cleared as `agent_end` is reported.
   `service-conversation-inputs` is slow: a generated owner, its real worker and Pi's session file over HTTP, and a real coordinator turn whose plan stays approvable after a message was sent into it; the stand-in and in-process fixtures do not qualify a real provider or the child's IPC.
 - `conversation-images`, `service-conversation-images`, `test/web/images.test.tsx` plus `pi-sessions`/`gateway-conversations`: chunked image uploads without count/size quotas, exact Send/caller binding, SDK images through the private pipe, model capability refusal, readonly history/branch/media projection, image-only Send, upload failure and retained preview projection.
@@ -248,6 +244,16 @@ Real-browser automation has been removed, not replaced by a claim that unit test
   Controlled observations do not qualify real browsers, providers or production services.
 - `agent-lifetime`, `worker-auth`, `worker-model`, `lightweight-process-diff`: virtual time past the old deadline for each worker route, multi-round SDK investigation, bridge detach versus explicit cancel, automatic compaction/final selection, request-bound owner OAuth renewal and original-write joins, bounded settled capture state and redacted log truncation.
   These use controlled native/auth/provider ports, not live services or paid providers.
+
+### Ordinary Send admission
+
+`test/conversation-input.test.ts` holds session A's stand-in worker open and takes the same exclusive permit used by workflows.
+It reads B's first `state.json` before its run begins, then holds auth preparation open to check that the head, turn and activity all show `starting` without assistant output.
+B must then launch, write its reply and settle before A ends or the permit is released; acceptance receipts and elapsed time cannot establish that ordering.
+The same fixture checks same-session and capacity refusals without a new turn, per-turn cancellation and owner Stop waiting for auth settlement and native close.
+`test/conversation-records.test.ts` checks interruption against the untouched state file, separately from an owner's recorded unknown closure.
+On the Web side, `test/web/conversation-reader.test.tsx` polls from startup to the first answer with localized transcript markup; `test/web/chat-timeline.test.tsx` drives the workspace's in-reply input, Stop and draft handling after a definite refusal or an uncertain Send.
+These are controlled worker, reader and view fixtures, not a live provider or mounted browser.
 
 ## Builds and packaging
 
