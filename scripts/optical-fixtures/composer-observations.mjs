@@ -196,6 +196,142 @@ export async function observeUnknownMode({
   }
 }
 
+// The gradient is centered in the range's wide hit box. Sample its interior,
+// not the range track, rounded ends, or the capsule's 1px top border.
+function gripFrame() {
+  return opticalProbe.stableFrames(() => {
+    const grip = document.querySelector(
+        ".chat-workspace:not([hidden]) > .chat-composer > input.composer-resize[type=range]",
+      ),
+      rect = grip.getBoundingClientRect(),
+      css = getComputedStyle(grip),
+      [w, h] = css.backgroundSize.split(" ").map(parseFloat),
+      cx = rect.left + rect.width / 2,
+      cy = rect.top + rect.height / 2,
+      above = Math.floor(cy - h / 2) - 1,
+      below = Math.ceil(cy + h / 2);
+    const top = grip.form.getBoundingClientRect().top;
+    if (
+      !(
+        rect.width > w &&
+        w === 48 &&
+        h === 4 &&
+        above < top &&
+        below >= top + grip.form.clientTop
+      )
+    )
+      throw Error(
+        `Missing short mark across capsule edge: ${css.backgroundSize}`,
+      );
+    const points = [-1, 0, 1].flatMap((i) => {
+      const x = Math.floor(cx + (i * w) / 3),
+        ink = [x, Math.floor(cy)];
+      if (document.elementFromPoint(...ink) !== grip)
+        throw Error("Obstructed composer grip");
+      return [
+        ["above", above],
+        ["below", below],
+      ].map(([side, y]) => ({
+        name: `${side} at x=${x}`,
+        x,
+        y,
+        ink,
+        expectedInk: css.color,
+        min: 3,
+        record: true,
+      }));
+    });
+    return {
+      route: location.pathname + location.search + location.hash,
+      hasMessage: !!document.querySelector(
+        ".chat-workspace:not([hidden]) .chat-turn .msg-assistant",
+      ),
+      theme:
+        document.documentElement.dataset.theme ??
+        (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"),
+      touchPoints: navigator.maxTouchPoints,
+      hoverNone: matchMedia("(hover: none)").matches,
+      formHovered: grip.form.matches(":hover"),
+      hovered: grip.matches(":hover"),
+      focused: grip.matches(":focus"),
+      active: grip.matches(":active"),
+      rect: rect.toJSON(),
+      top,
+      points,
+    };
+  }, "composer grip");
+}
+
+export async function observeComposerGrip({
+  width,
+  theme,
+  route,
+  send,
+  run,
+  parkPointer,
+  screenshot,
+  rows,
+}) {
+  const touch = width <= 900;
+  const row = {
+    width,
+    theme,
+    state: touch ? "touch at rest" : "form hover",
+    png: `grip-${theme}-${width}.png`,
+  };
+  rows.push(row);
+  await parkPointer();
+  try {
+    if (touch)
+      await send("Emulation.setTouchEmulationEnabled", {
+        enabled: true,
+        maxTouchPoints: 1,
+      });
+    else {
+      const point = await run(() => {
+        const r = document
+          .querySelector(".chat-composer textarea")
+          .getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      row.pointer = point;
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
+    }
+    const before = await run(gripFrame);
+    row.geometry = before;
+    assert.equal(before.route, route);
+    assert.equal(before.hasMessage, true);
+    assert.equal(before.theme, theme);
+    if (touch) {
+      assert.equal(before.touchPoints, 1);
+      assert.equal(before.hoverNone, true);
+    }
+    assert.equal(before.formHovered, !touch);
+    assert.deepEqual(
+      [before.hovered, before.focused, before.active],
+      [false, false, false],
+    );
+    const png = await screenshot(row.png);
+    assert.deepEqual(await run(gripFrame), before);
+    const { frame, readings, worst, failures } = await run(
+      contrastPixels,
+      png,
+      before.points,
+      {},
+    );
+    Object.assign(row, { frame, readings, worst });
+    assert.deepEqual(frame.bitmap, [width, touch ? 820 : 900]);
+    assert.deepEqual(frame.bitmap, frame.viewport);
+    assert.equal(frame.dpr, 1);
+    assert.equal(readings.length, 6);
+    assert.deepEqual(failures, []);
+  } finally {
+    if (touch)
+      await send("Emulation.setTouchEmulationEnabled", { enabled: false });
+    await parkPointer();
+  }
+}
+
 // Drive head/turn polls, not the DOM attribute under test. Notice identifies
 // the delivered turn version even when two successive expectations are off.
 export async function observeComposerFlow({

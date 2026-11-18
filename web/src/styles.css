@@ -3507,8 +3507,13 @@ summary:focus-visible,
   transition: none;
   box-shadow: none;
 }
+@media (hover: none) {
+  .composer-resize {
+    color: var(--control-fg);
+  }
+}
 :where(.chat-composer:hover) > .composer-resize {
-  color: var(--border);
+  color: var(--control-fg);
 }
 .composer-resize:hover,
 .composer-resize:focus-visible,
@@ -4893,9 +4898,6 @@ button.file-item:hover:not(:disabled),
   }
   .branch-act:disabled {
     opacity: 0.35;
-  }
-  .composer-resize {
-    color: var(--border);
   }
   /* Room for a finger; the date gives way to the message. */
   .branch-row time {

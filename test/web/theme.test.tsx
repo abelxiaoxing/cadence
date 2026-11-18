@@ -3,6 +3,7 @@
 // Adapted from pi-web-ui tests/unit/theme-text-contrast.test.ts and
 // tests/helpers/theme-contrast.ts @ b627452c; MIT (c) 2026 xing-shuyin.
 import { readFileSync } from "node:fs";
+import { type Container, parse } from "postcss";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyTheme,
@@ -50,26 +51,29 @@ const selectorKey = (s: string) =>
     .replace(/\s+/g, " ")
     .replace(/\( | \)/g, (s) => s.trim())
     .replace(/\s*([,>])\s*/g, "$1");
-const rules = SHEETS.flatMap((css) =>
-  [...withoutComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
-    ([, selector, body]) => ({
-      selector: selectorKey(selector),
-      declarations: body.split(";").map((s) =>
-        s
-          .trim()
-          .replace(/\s*:\s*/, ":")
-          .replace(/\s+/g, " "),
-      ),
-    }),
-  ),
-).reverse();
-function declaration(selector: string, property: string): string {
-  for (const rule of rules) {
-    if (rule.selector !== selectorKey(selector)) continue;
-    const line = rule.declarations.find((s) => s.startsWith(`${property}:`));
-    if (line) return line.slice(property.length + 1).trim();
+// Keep at-rule ancestry in the key: a base rule and its no-hover override
+// are different paint states, even when they have exactly the same selector.
+const declarations = new Map<string, string>();
+function collectRules(sheet: Container, scope = "") {
+  for (const node of sheet.nodes ?? []) {
+    if (node.type === "atrule")
+      collectRules(node, `${scope}@${node.name} ${node.params} / `);
+    if (node.type !== "rule") continue;
+    const key = scope + selectorKey(node.selector);
+    for (const d of node.nodes)
+      if (d.type === "decl")
+        declarations.set(
+          `${key} { ${d.prop} }`,
+          d.value.replace(/\s+/g, " ").trim(),
+        );
   }
-  throw new Error(`Missing ${selector} { ${property} }`);
+}
+for (const css of SHEETS) collectRules(parse(css));
+function declaration(selector: string, property: string): string {
+  const key = `${selectorKey(selector)} { ${property} }`;
+  const value = declarations.get(key);
+  if (value === undefined) throw new Error(`Missing ${key}`);
+  return value;
 }
 function ruleColor(selector: string, property: string, scheme: Scheme): Rgba {
   const value = declaration(selector, property);
@@ -270,7 +274,11 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     for (const surface of [
       selected,
       wing,
-      ruleColor(".drawer-right .rp-tabs", "background", scheme),
+      ruleColor(
+        "@media (min-width: 901px) / .drawer-right .rp-tabs",
+        "background",
+        scheme,
+      ),
     ])
       expect(
         contrast(color("--accent", scheme), surface),
@@ -281,7 +289,8 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     expect(declaration(disabled, "opacity")).toBe("1");
     expect(declaration(".mode-toggle", "background")).toBe("transparent");
     const material = ".chat-composer";
-    const plate = ".chat-workspace:has(> .chat-composer)::after";
+    const plate =
+      "@supports (anchor-scope: --composer) and (backdrop-filter: blur(1px)) / .chat-workspace:has(> .chat-composer)::after";
     expect(declaration(plate, "pointer-events")).toBe("none");
     expect(declaration(plate, "backdrop-filter")).toBe("var(--glass-filter)");
     expect(declaration(plate, "position-anchor")).toBe(
@@ -307,13 +316,44 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         expect(
           contrast(ruleColor(selector, "color", scheme), surface),
         ).toBeGreaterThanOrEqual(AA);
-      const grip =
-        ".composer-resize:hover, .composer-resize:focus-visible, .composer-resize:active";
-      expect(
-        contrast(ruleColor(grip, "color", scheme), surface),
-      ).toBeGreaterThanOrEqual(GRAPHIC);
     }
   });
+  it.each([
+    ["touch at rest", "@media (hover: none) / .composer-resize"],
+    [
+      "only the form hovered",
+      ":where(.chat-composer:hover) > .composer-resize",
+    ],
+    [
+      "direct interaction",
+      ".composer-resize:hover, .composer-resize:focus-visible, .composer-resize:active",
+    ],
+  ])(
+    "distinguishes the short composer grip on both sides: %s",
+    (_, selector) => {
+      expect(declaration(".composer-resize", "color")).toBe("transparent");
+      const ink = ruleColor(selector, "color", scheme);
+      // The centered mark straddles the top edge: shadow on reading canvas
+      // above, translucent capsule (possibly a grain fleck) below.
+      const canvas = ruleColor("body", "background", scheme);
+      const capsule = over(
+        ruleColor(".chat-composer", "background", scheme),
+        canvas,
+      );
+      for (const surface of [
+        canvas,
+        over(
+          color("--glass-shadow", scheme),
+          over(color("--primary-glow", scheme), canvas),
+        ),
+        capsule,
+        over(color("--grain", scheme), capsule),
+      ])
+        expect(contrast(over(ink, surface), surface)).toBeGreaterThanOrEqual(
+          GRAPHIC,
+        );
+    },
+  );
   it("does not fade the disabled model's label and reason as a group", () => {
     expect(declaration(".model-option:disabled", "opacity")).toBe("1");
     const menu = over(

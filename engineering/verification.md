@@ -638,6 +638,45 @@ These are sampled compositor frames, not continuous video or a guarantee that a 
 No live workspace, hardware-GPU comparison, non-Chromium fallback run, performance windows or full qualification rerun is claimed here.
 The owner's final `qualify-optical` and `verify` results and independent review must bind the actual delivery candidate.
 
+### Composer height grip at rest
+
+The native range has no visible track or thumb.
+Its short mark must contrast with **both** the reading surface above the capsule and the glass below it, before someone finds and focuses the range.
+`theme.test.tsx` looks up the no-hover media rule separately from the base rule, form-hover reveal and direct hover/focus/active rule.
+Against the old `--border`, the touch and form-hover tests failed in **both** schemes (1.550:1 Alabaster and 2.064:1 Obsidian even on the bare canvas).
+Only the resting ink changed to `--control-fg`; the direct interaction still widens the mark and manual height keeps its dot.
+
+**Local build comparison.**
+In this integration worktree on pre-repair HEAD `0160bee`, `bun run build:web` produced `cac0cdd54b92d7eff921225f2cfe24ac0e0e212150301e4d995ce3ab169d9553`.
+The `composerGrip` probe ran against the unchanged `60ed592b4fe2` and repaired builds with installed headless Chrome 151.0.7922.34, a fresh profile per matrix, DPR 1 and the synthetic selected project's `reading` conversation with a rendered assistant message.
+At 320 and 390px, CDP enabled one touch point; `(hover: none)` matched and neither form nor grip was hovered.
+At 1440px the mouse moved to (850,781.5) inside the textarea: the form was hovered, the grip was not.
+This headless host reports `(hover: none)` even without touch emulation; the equally specific form-hover rule follows that default.
+The grip was neither focused nor pressed in any capture.
+The probe disables its touch override and parks the pointer on exit.
+
+Each view supplied one unmodified PNG, bound to the same range geometry and input state before and after capture.
+At each x, the probe requires the mark's ink inside the 48×4px gradient, then compares that **painted pixel** independently to the first clear row on either side.
+A missing mark or either ratio below 3:1 fails.
+Coordinates below are pixels from the viewport's top left; the range hit box remained 14px tall.
+
+| Viewport | Hit width | Sample x positions | y above / ink / below |
+| -------- | --------: | ------------------ | --------------------- |
+| 320×820  |       254 | 144, 160, 176      | 588 / 591 / 593       |
+| 390×820  |       324 | 179, 195, 211      | 646 / 649 / 651       |
+| 1440×900 |       782 | 834, 850, 866      | 745 / 748 / 750       |
+
+| Scheme    | Repaired ink RGB | Above RGB   | Below RGB   | Above / below contrast | Worst with old ink |
+| --------- | ---------------- | ----------- | ----------- | ---------------------- | ------------------ |
+| Obsidian  | 138,147,162      | 7,8,10      | 19,20,24    | 6.465 / **5.939**      | 1.920              |
+| Alabaster | 94,102,117       | 231,232,234 | 252,252,253 | **4.714** / 5.637      | 1.379              |
+
+All six baseline frames failed contrast; all 36 paired readings in the six repaired frames met 3:1.
+The retained `summary.json` and PNGs are under `$TMPDIR/grip-matrix-9TaTGzbB/{evidence-uNFCkB,evidence-hNHraA}` respectively.
+These are point samples with emulated input, not a physical touchscreen, hardware mouse or cross-browser qualification.
+No interaction or compositor conclusion is inferred from the source-only tests.
+This grip-only run does not replace the separate unavailable-mode `ready` and `stable` glyph observations, the owner's two checks on the final candidate, or independent review.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
