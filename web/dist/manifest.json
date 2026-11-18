@@ -1,13 +1,13 @@
 {
   "schema": "cadence-web-assets/1",
-  "sourceHash": "9271a776345995fba19e521a5a39aeb66e3436cb674e9a8d43185ef19c136fd9",
+  "sourceHash": "e8822ff526331c4a9af93749ebcae3858b25c6c79ae42a578998b0f0154a6be4",
   "contractHash": "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17",
-  "buildId": "942a0c65d1f718f49a9cd17450d87bca92d4d486e7050859021820db9999b095",
+  "buildId": "cd58df811fc7bea6ff2cb0825093eed3262eddfd78ea76b238903b520bac4074",
   "assets": [
     {
       "name": "assets/cadence.css",
-      "bytes": 177290,
-      "sha256": "c8dc1fbe285c90c4d2907024b0db4667dfe3bea9672467e87737e5aa1045cd6e",
+      "bytes": 181370,
+      "sha256": "a073a28f6000b083406fd77c57075c5a6740361ae5248e08b6a39448f2696ebb",
       "references": [
         "assets/KaTeX_AMS-Regular.ttf",
         "assets/KaTeX_AMS-Regular.woff",
@@ -73,8 +73,8 @@
     },
     {
       "name": "assets/cadence.js",
-      "bytes": 527372,
-      "sha256": "473254ae0aadd079846df97eea0a605dba843286cb7b821f12d01865a4069318",
+      "bytes": 529062,
+      "sha256": "885ba163724ccd5511154517a7b1879c924648b726caea4249f8f7179981c2e2",
       "references": [
         "assets/markdown.js",
         "assets/react.js",
@@ -466,6 +466,12 @@
       "references": []
     },
     {
+      "name": "assets/start.js",
+      "bytes": 2485,
+      "sha256": "2c4e8fd785b4c78fac1bc080c231285d8dedf8d03c5cf118db044ce2ac94928a",
+      "references": []
+    },
+    {
       "name": "assets/timeline-client.js",
       "bytes": 21599,
       "sha256": "60320f5b032eb9a4d443e01f932f4721cbf6d2f9d785cdebf19452a26d38007e",
@@ -490,14 +496,15 @@
     },
     {
       "name": "index.html",
-      "bytes": 735,
-      "sha256": "8f7f8ccac2056653927f045a9e8a0f1473291fa2a989861fee2e45bcde6dceaa",
+      "bytes": 1298,
+      "sha256": "ce704f39336bf9e6408785496bd6704258848919035739e7c7cd04f2295b50c7",
       "references": [
         "assets/cadence.css",
         "assets/cadence.js",
         "assets/markdown.js",
         "assets/react.js",
         "assets/rolldown-runtime.js",
+        "assets/start.js",
         "assets/vis-timeline.css"
       ]
     }

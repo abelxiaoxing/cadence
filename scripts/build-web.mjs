@@ -17,6 +17,7 @@ import {
   assetMime,
   decodeAssetManifest,
   loadWebAssets,
+  webBuildBase,
 } from "../src/service-assets.ts";
 import { auditNotices } from "./audit-notices.mjs";
 import { browserIdentity, digest, inputFiles } from "./build-identity.mjs";
@@ -34,6 +35,7 @@ if (process.argv[2] === "--produce") {
   const outputs = await build({
     ...config,
     configFile: false,
+    base: webBuildBase(identity.buildId),
     cacheDir: join(dirname(outDir), "vite-cache"),
     define: { __CADENCE_BUILD__: JSON.stringify(identity) },
     build: { ...config.build, outDir, write: false },
@@ -88,9 +90,11 @@ if (process.argv[2] === "--produce") {
       if (/^(?:data:|https?:|\/\/|#)/.test(ref))
         throw new Error("nonlocal-asset-reference");
       refs.add(
-        ref.startsWith("/")
-          ? ref.slice(1)
-          : posix.normalize(posix.join(posix.dirname(name), ref)),
+        ref.startsWith(webBuildBase(identity.buildId))
+          ? ref.slice(webBuildBase(identity.buildId).length)
+          : ref === "/assets/start.js"
+            ? "assets/start.js"
+            : posix.join(posix.dirname(name), ref),
       );
     }
     references.set(name, [...refs].sort());

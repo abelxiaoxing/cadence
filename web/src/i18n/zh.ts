@@ -591,6 +591,8 @@ export const zh = {
   "No execution result is inferred. Reconnect to observe the owner; accepted work continues.":
     "不会推断任何执行结果。重新连接以观察所有者服务；已接受的工作会继续进行。",
   "Reload observation": "重新加载观察",
+  "Reconnecting to the workbench…": "正在重新连接工作台…",
+  "Sign in again": "重新登录",
 
   // Conversation-first workspace
   "Build information": "构建信息",

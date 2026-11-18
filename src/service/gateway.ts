@@ -1327,6 +1327,7 @@ export async function createGateway(
             [...url.searchParams.keys()].join() === "project"));
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset) throw new ContractError("invalid");
+      if (app) res.setHeader("X-Cadence-Web-Build", build.assets.buildId);
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {

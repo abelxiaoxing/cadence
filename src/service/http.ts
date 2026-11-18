@@ -234,7 +234,7 @@ export class ServiceHttpServer {
     for (const asset of options.assets ?? []) {
       total += asset.bytes.byteLength;
       if (
-        !/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(
+        !/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(
           asset.path,
         ) ||
         this.assets.has(asset.path) ||
@@ -587,6 +587,11 @@ export class ServiceHttpServer {
         if (!asset || req.method !== "GET") throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
+        if (target === "/app" && this.options.build)
+          res.setHeader(
+            "X-Cadence-Web-Build",
+            this.options.build.assets.buildId,
+          );
         if (target !== "/app") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);

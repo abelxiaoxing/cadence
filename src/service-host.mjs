@@ -5117,6 +5117,7 @@ var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
 var fixed = new Set([
   "index.html",
+  "assets/start.js",
   "assets/cadence.js",
   "assets/cadence.css",
   "assets/react.js",
@@ -5127,6 +5128,7 @@ var fixed = new Set([
   "assets/vis-timeline.css"
 ]);
 var font = /^assets\/KaTeX_(?:AMS-Regular|Caligraphic-(?:Bold|Regular)|Fraktur-(?:Bold|Regular)|Main-(?:Bold|BoldItalic|Italic|Regular)|Math-(?:BoldItalic|Italic)|SansSerif-(?:Bold|Italic|Regular)|Script-Regular|Size[1-4]-Regular|Typewriter-Regular)\.(?:woff2|woff|ttf)$/;
+var webBuildBase = (buildId) => `/ui/${buildId}/`;
 function assetMime(name) {
   if (!fixed.has(name) && !font.test(name))
     throw new Error("asset-name-refused");
@@ -5227,7 +5229,7 @@ function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.
     if (!body || body.length !== a.bytes || createHash6("sha256").update(body).digest("hex") !== a.sha256)
       throw new Error("asset-body-refused");
     return {
-      path: a.name === "index.html" ? "/app" : `/${a.name}`,
+      path: a.name === "index.html" ? "/app" : a.name === "assets/start.js" ? `/${a.name}` : `${webBuildBase(manifest.buildId)}${a.name}`,
       contentType: assetMime(a.name),
       bytes: body
     };
@@ -16783,7 +16785,7 @@ class ServiceHttpServer {
     let total = 0;
     for (const asset of options.assets ?? []) {
       total += asset.bytes.byteLength;
-      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
+      if (!/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
         throw new ContractError("invalid");
       this.assets.set(asset.path, {
         ...asset,
@@ -17079,6 +17081,8 @@ Content-Length: 0\r
           throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
+        if (target === "/app" && this.options.build)
+          res.setHeader("X-Cadence-Web-Build", this.options.build.assets.buildId);
         if (target !== "/app") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);
@@ -18747,6 +18751,8 @@ Content-Length: 0\r
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset)
         throw new ContractError("invalid");
+      if (app)
+        res.setHeader("X-Cadence-Web-Build", build2.assets.buildId);
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {
@@ -35774,7 +35780,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
+  build: "d9a0019ccf1b178a96eb81d7ca9ddd77d640923e246cc2f6377fa96b59c0457a",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

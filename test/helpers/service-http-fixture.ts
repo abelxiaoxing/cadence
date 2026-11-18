@@ -188,7 +188,7 @@ export async function httpFixture(
         contentType: "text/html; charset=utf-8",
       },
       {
-        path: "/assets/main.js",
+        path: `/ui/${"a".repeat(64)}/assets/main.js`,
         bytes: Buffer.from("/* fixed fixture */"),
         contentType: "text/javascript; charset=utf-8",
       },

@@ -55,14 +55,21 @@ export function observeActivity(
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   let value: ActivityDiscovery | undefined;
+  let announcedEpoch: string | undefined;
   const tick = async () => {
     try {
       const next = await read(abort.signal);
       if (abort.signal.aborted) return;
       if (next.epoch !== epoch) {
-        changedEpoch();
+        // The entry GET owns its retry. Re-announcing every poll aborts a
+        // slow entry read before it can finish after a gateway restart.
+        if (next.epoch !== announcedEpoch) {
+          announcedEpoch = next.epoch;
+          changedEpoch();
+        }
         throw new Error("stale");
       }
+      announcedEpoch = undefined;
       value = next;
       publish(value, "");
     } catch (error) {

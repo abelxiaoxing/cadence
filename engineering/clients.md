@@ -179,10 +179,17 @@ The closed `/workbench/v1/prepare-send` and `/workbench/v1/prepare-plan` routes 
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh authenticated attachment.
 Build fingerprints are diagnostic metadata, not access or operation gates: different or absent client builds never disable history, activity, model selection, directory changes, Send or service controls.
 Requests still have to express a supported operation; no capability is inferred from a build header, and a browser cannot become a native caller by naming one.
-Connection and build changes never reload the browser or resend work; text drafts and unsent images stay in the current tab.
+Connection and build changes never reload a mounted conversation or resend work; text drafts and unsent images stay in the current tab.
+The initial workbench GET has a bounded read and retries transient failures with capped backoff; going online wakes a pending retry.
+Only the direct owner's explicit invalid-route reply selects its standalone UI.
+Authentication refusals stop retrying; explicit sign-in keeps validated chat/branch IDs for a one-time return to the same entry.
+The authenticated, uncached document names one build in every module, stylesheet and font URL.
+Its dependency-free startup script has a stable revalidated URL so a replaced build can still report a failed entry module.
+Before mounting only, an authenticated fresh document announcing a different build permits one guarded reload of the same address; auth failure, blocked tab storage, a failed recovery chain or the same build leaves a manual retry.
+No failed API request triggers navigation.
 The service dialog lists the project and identity of each affected workflow or conversation.
 The version button confirms an upgrade, and restart keeps its own confirmation.
-Only the requesting page reloads automatically, after observing its own successful upgrade and the target version serving; no command is replayed.
+For a mounted page, only the requesting page reloads automatically, after observing its own successful upgrade and the target version serving; no command is replayed.
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
