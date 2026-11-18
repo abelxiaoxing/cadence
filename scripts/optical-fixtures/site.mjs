@@ -45,7 +45,7 @@ export function fixture(root) {
   const build = { contractHash: identity.contractHash, assets: identity };
   const failures = [];
   const stepReads = [];
-  let directoryGate, entryGate;
+  let directoryGate, fileGate, entryGate;
   const snapshot = (scope) => ({
     protocol: 1,
     storeId,
@@ -208,6 +208,11 @@ export function fixture(root) {
       )
         return json({ kind: "error", error: publicError("stale") });
       const v = readRecord(q);
+      if (q.kind === "file" && fileGate?.path === q.path && v) {
+        fileGate.resolve(() => ok(v));
+        fileGate = undefined; // Hold one response, not every read of this path.
+        return;
+      }
       if (v?.kind === "cadence-conversation" && q.id === degradedMode.id)
         return ok({ ...v, state: { ...v.state, notice: degradedMode.notice } });
       if (q.kind === "conversation-step") {
@@ -279,6 +284,27 @@ export function fixture(root) {
       return () => {
         entryGate.resolve();
         entryGate = undefined;
+      };
+    },
+    holdFile(path) {
+      const gate = Promise.withResolvers();
+      fileGate = { path, resolve: gate.resolve };
+      return async () => {
+        // Wait for the actual matching GET, not a latency chosen for the UI.
+        let timeout;
+        try {
+          return await Promise.race([
+            gate.promise,
+            new Promise((_, reject) => {
+              timeout = setTimeout(
+                () => reject(Error(`Missing preview request: ${path}`)),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
       };
     },
     holdDirectory(path) {

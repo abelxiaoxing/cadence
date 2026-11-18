@@ -3,7 +3,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { WorkbenchResult } from "../../src/service/contracts/workbench.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { CadenceModeButton } from "../../web/src/components/workspace/CadenceModeButton";
-import { FilesPanel } from "../../web/src/components/workspace/FilesPanel";
+import {
+  FilePreview,
+  FilesPanel,
+} from "../../web/src/components/workspace/FilesPanel";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { transport } from "./fixtures";
 
@@ -105,7 +108,7 @@ it("files name the conversation directory rather than claiming the host root, an
   const absent = renderFiles(false);
   expect(absent).toContain("The conversation folder has not been observed.");
   expect(absent).toMatch(/aria-label="Refresh files" disabled=""/);
-  expect(absent).not.toMatch(/>\/<|No visible files/);
+  expect(absent).not.toMatch(/>\/<|No visible files|Reading|file-preview/);
   const stopped = renderFiles(false, { id: "chat", cwd: "/project/subdir" });
   expect(stopped).toContain("Conversation folder:");
   expect(stopped).toContain("/project/subdir");
@@ -181,5 +184,60 @@ it.each(["en", "zh"] as const)(
             "Copy path src",
           ],
     );
+  },
+);
+
+// The browser fixture exercises pending responses through the real row click.
+it.each(["en", "zh"] as const)(
+  "%s: preview reports an actual read, including refresh with retained text",
+  (locale) => {
+    const path = "notes.txt";
+    const file = {
+      kind: "file" as const,
+      path,
+      text: "retained specimen",
+      limited: true,
+    };
+    const render = (
+      loading: boolean,
+      value?: typeof file,
+      error?: string,
+      selected: string | null = path,
+    ) =>
+      renderToStaticMarkup(
+        <LocaleProvider initial={locale}>
+          <FilePreview
+            path={selected}
+            preview={{ loading, value, error }}
+            onClose={() => {}}
+          />
+        </LocaleProvider>,
+      );
+    const reading = locale === "en" ? "Reading…" : "读取中…";
+    const pending = render(true);
+    expect(pending).toContain(`<p role="status">${reading}</p>`);
+    expect(pending).toContain('title="notes.txt"');
+    expect(pending).toContain(
+      `aria-label="${locale === "en" ? "Close preview" : "关闭预览"}"`,
+    );
+    expect(pending).not.toContain('class="codeblock"');
+    const refreshing = render(true, file);
+    expect(refreshing).toContain(reading);
+    expect(refreshing).toContain(file.text);
+    const done = render(false, file);
+    expect(done).toContain(file.text);
+    expect(done).toContain('class="inspector-note"');
+    expect(done).not.toContain(reading);
+    const empty = render(false, { ...file, text: "", limited: false });
+    expect(empty).toContain('class="codeblock"');
+    expect(empty).not.toMatch(/role="status"|role="alert"|inspector-note/);
+    const failed = render(false, undefined, "stale");
+    expect(failed).toContain('role="alert"');
+    expect(failed).not.toContain(reading);
+    const changed = render(true, file, undefined, "next.txt");
+    expect(changed).toContain('title="next.txt"');
+    expect(changed).toContain(reading);
+    expect(changed).not.toContain(file.text);
+    expect(render(false, file, undefined, null)).toBe("");
   },
 );
