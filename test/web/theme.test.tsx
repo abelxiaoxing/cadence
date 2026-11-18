@@ -197,7 +197,7 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ).toBe("-4px");
     const canvas = ruleColor("body", "background", scheme);
     const composer = over(
-      ruleColor(".chat-composer::after", "background", scheme),
+      ruleColor(".chat-composer", "background", scheme),
       canvas,
     );
     for (const surface of [canvas, composer]) {
@@ -276,12 +276,20 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(color("--accent", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
-  it("keeps disabled mode text readable on the input capsule", () => {
+  it("keeps the disabled mode label, model and placeholder readable on the input capsule", () => {
     const disabled = ".mode-toggle:disabled";
     expect(declaration(disabled, "opacity")).toBe("1");
     expect(declaration(".mode-toggle", "background")).toBe("transparent");
-    const material = ".chat-composer::after";
-    expect(declaration(material, "pointer-events")).toBe("none");
+    const material = ".chat-composer";
+    const plate = ".chat-workspace:has(> .chat-composer)::after";
+    expect(declaration(plate, "pointer-events")).toBe("none");
+    expect(declaration(plate, "backdrop-filter")).toBe("var(--glass-filter)");
+    expect(declaration(plate, "position-anchor")).toBe(
+      declaration(material, "anchor-name"),
+    );
+    expect(Number(declaration(plate, "z-index"))).toBeLessThan(
+      Number(declaration(material, "z-index")),
+    );
     expect(declaration(material, "background-image")).toBe(
       "var(--grain-image)",
     );
@@ -289,10 +297,22 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       ruleColor(material, "background", scheme),
       ruleColor("body", "background", scheme),
     );
-    for (const surface of [capsule, over(color("--grain", scheme), capsule)])
+    for (const surface of [capsule, over(color("--grain", scheme), capsule)]) {
+      for (const selector of [
+        disabled,
+        ".model-trigger",
+        ".model-trigger.empty",
+        "input::placeholder,textarea::placeholder",
+      ])
+        expect(
+          contrast(ruleColor(selector, "color", scheme), surface),
+        ).toBeGreaterThanOrEqual(AA);
+      const grip =
+        ".composer-resize:hover, .composer-resize:focus-visible, .composer-resize:active";
       expect(
-        contrast(ruleColor(disabled, "color", scheme), surface),
-      ).toBeGreaterThanOrEqual(AA);
+        contrast(ruleColor(grip, "color", scheme), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+    }
   });
   it("does not fade the disabled model's label and reason as a group", () => {
     expect(declaration(".model-option:disabled", "opacity")).toBe("1");
