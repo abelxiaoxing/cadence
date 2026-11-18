@@ -71,9 +71,9 @@ Conversation-control records have no retained-directory admission cap; the bound
 The bridge refuses requests/replies above 384KiB (`LIMITS.coordinatorBytes`: a plan at its 256KiB bound, or every answer of a full research run) with the fixed code `oversize`; an investigation returns 4KiB of each answer (`ANSWER_BYTES` in `conversation-workflow.ts`), and status and evidence previews label truncation and omitted steps.
 Control records are bounded at 384KiB and project the most recent 200 workflow links; links remain independently retained, without a lifetime attempt cap or history eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
-The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.
+The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier for delegated research.
 
-The checkout gate permits four shared holders (`CHECKOUT_READERS`) or one exclusive holder, plus at most 16 waiting operations (`CHECKOUT_WAITERS` in `src/service/checkout-gate.ts`).
+The workflow checkout gate permits four shared holders (`CHECKOUT_READERS`) or one exclusive holder, plus at most 16 waiting operations (`CHECKOUT_WAITERS` in `src/service/checkout-gate.ts`).
 FIFO readers cannot bypass a waiting writer.
 Waiting cancellation releases only that queue entry; holder abort/Stop/quarantine never releases an uncertain original.
 
@@ -104,6 +104,7 @@ The WebUI keeps four reads in flight per conversation.
 Workbench read replies of at least 1KiB are gzip-compressed when the request accepts it; session replies never are.
 A live browser turn's preview keeps at most 64KiB per streamed message or tool output (labelled when clipped), for its eight most recent messages and eight most recent tools, and 64 open details; the rest is read from the session once Pi writes it (`src/service/conversations.ts`).
 A session's index names its last 64 browser messages; the owner caches 512 message states and admits eight browser runs at a time, one per session.
+Starting turns count toward this limit; a Send refused at capacity is not recorded as a turn or queued for later.
 A running reply takes at most `RUN_INPUTS` (32) further messages, withdrawn ones included, so a run with its own message stays within that index, and at most `WAITING_INPUTS` (8) of them may be undelivered at a time; each has the Send text bound and passes the free-space floor (`src/service/contracts/workbench.ts`, `src/service/conversations.ts`).
 A head read states at most `PENDING_TEXT_BYTES` (256) encoded bytes of a waiting message and `UNDELIVERED_TEXT_BYTES` (32KiB) of an undelivered one, at most eight of each.
 One owner-to-worker message is at most `workerRequestBytes` (128KiB) and the worker holds what it is handed in memory only (`src/subagent-process.ts`, `src/worker-inputs.mjs`).
@@ -148,7 +149,7 @@ A timed-out child uses the existing `LIMITS.terminateGraceMs` and `LIMITS.unconf
   OAuth preparation and writeback stay owner-owned; each request re-resolves the pinned source over private IPC, with a two-minute request validity margin rather than whole-worker validity.
   External identity/source replacement refuses; no refresh retry layer is added.
 - **Retained:** one SDK request-retry layer (Pi-configured retries per failed model response, not thought rounds), consent/read/write scopes, exact candidates, real checks and independent Agent Review; frame/detail/live-queue bounds, real storage/free-space errors, connection establishment checks and post-cancel TERM/KILL/unknown timers.
-  Target writes remain serialized; research shares bounded read access and isolated candidates hold their own workspace reservations instead of a target permit.
+  Workflows serialize their target writes; research shares bounded read access and isolated candidates hold their own workspace reservations instead of a target permit.
   Readonly Git admission/evidence budgets bound observations, not an Agent's lifetime or an accepted Git mutation.
 - **Separate prerequisites:** fully paged Pi history/tree storage requires an appropriate public SDK session interface; provider/SDK transport policies and real OAuth/provider behavior require their own qualification.
   No service restart, workflow replay or history deletion substitutes for these prerequisites.

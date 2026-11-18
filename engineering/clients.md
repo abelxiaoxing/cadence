@@ -321,7 +321,7 @@ The composer (`ChatComposer.tsx`) edits the conversation's draft and holds no me
 Up and Down on the first and last visual line recall the prompts this tab sent in the checkout (Escape returns to the draft), and an `@` typed there opens a popup that completes a path one folder at a time from the bounded Files listing and inserts the same path reference as the Files pane; none of these sends, reads a file's contents or starts anything.
 The question rail at the transcript's right edge has one numbered bar per user message of the branch shown, opens on hover or focus, is one arrow-key group and is absent on phones.
 Plans use a neutral decision card, not the error-banner style; unavailable approval explains its blocking observation/turn/attempt without changing any admission gate.
-The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only queued or running replies, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
+The left sidebar provides New conversation alongside running and retained conversations, terminal and browser alike, each row's icon naming where it started; Running work holds only active replies, including ones still starting, and the open conversation stays highlighted in history once its reply settles, where the count includes conversations.
 A conversation row is its title and last-modified time; a second line appears only for a live workflow's phase or a reply that is not simply completed.
 A history row also offers Rename and Archive (`ConversationRow.tsx`), revealed on hover or focus and always shown on touch screens; a row under Running work offers neither.
 Rename turns the row into a field: Enter or Save requests the name, Escape or leaving the row keeps the recorded one, an emptied field clears the name so the first message titles the conversation again, and a name over the limit is refused in the browser.
@@ -392,12 +392,14 @@ The owner never rewrites, repairs or deletes a session file; its own private `se
 A message sent into a running reply has the same record with that reply's command in place of an entry to continue; the auth journal and native closure are the reply's.
 Archiving is the owner's own record too: `conversation-archive` writes or removes `service-v1/conversations-v1/archive/<session>.json`, whose presence is the whole fact, and never moves, rewrites or deletes the session file, so `pi -r` still lists the session.
 The record covers the checkout: one owner lists every same-checkout session, and other checkouts are unaffected.
-Their tools operate on the host, not in a sandbox.
-Each turn holds the checkout's exclusive gate, excluding research, direct delivery edits and final integration on that checkout.
-Work in isolated candidates may proceed concurrently; leaving a tab only detaches.
-An active turn retains independent interruption authority; explicit Cancel or Stop signals the worker, which aborts its Pi session first so the session records the interrupted reply as Pi does.
-Access-token rotation revokes viewers, not admitted queued turns.
-Each admitted turn/workflow records its original execution context; queue release and later workers never consult a mutable conversation/owner picker to replace it.
+Ordinary turns in different Pi sessions can run concurrently on the same checkout, even when a workflow holds its exclusive permit.
+Their tools operate on the host and can overwrite each other's edits.
+An ordinary turn's first durable state is `starting`: the owner has accepted it and is preparing the worker, including auth.
+This is an active, cancellable turn, not a checkout wait or evidence of model output; `running` follows preparation.
+Leaving a tab only detaches; Cancel targets that turn alone, while owner Stop signals all its turns.
+A signalled worker aborts its Pi session first so the session records the interrupted reply as Pi does.
+Access-token rotation revokes viewers, not admitted turns.
+Each admitted turn/workflow records its original execution context; later workers never consult a mutable conversation/owner picker to replace it.
 File views follow the retained conversation cwd, and directory navigation does not rewrite that cwd; choosing a different folder opens a separate conversation context.
 The UI labels recorded context as fixed at admission, not as proof that tools ran.
 Older records without a snapshot stay readable without invented model/directory evidence.
@@ -405,7 +407,7 @@ A Send names the entry it continues: the composer's anchor when one is set, else
 The owner admits one browser run per session at a time; a terminal may write the same session meanwhile, and a message continuing an entry the session has since moved past starts a new branch, never a conflict or a rewrite.
 While a run's reply is in progress, `conversation-input` sends it a further message, bound to that run and owner epoch and without a head, model or image: `steer` is handed to Pi at once and reaches the model at Pi's next opportunity (after the tool calls in progress, before its next request), and `queue` waits in the worker and becomes its next prompt once the reply has ended normally.
 The owner records such a message durably before its worker hears of it and hands it over only once the worker's ready frame shows it listening; the worker tells Pi's deliveries apart by the order it handed the messages over, never by their text.
-It is no admission of its own: the run keeps its checkout gate, admitted directory and model, one worker and one native settlement across every message, and Cancel or Stop name the run and end all of it.
+It is no admission of its own: the run keeps its admitted directory and model, one worker and one native settlement across every message; stopping the run ends all of it.
 Nothing about a waiting message outlives that worker.
 A reply that fails for good or is stopped delivers nothing further (the worker takes back what Pi still holds before Pi can continue into it), a reply ending just as a message arrives may leave it behind, and each such message is recorded as not delivered: nothing sends it again.
 `conversation-input-cancel` withdraws a message Pi has not been given, at once while only the owner holds it and otherwise when the worker confirms it was still waiting; one Pi holds or has delivered refuses as a `conflict` that changes nothing.
@@ -422,7 +424,8 @@ The thinking flag a live capture records for its message stays in that record bu
 Body-free thinking activity carries only its occurrence, real content index and phase; it occupies the same timeline position as a later readable Pi block, or ends explicitly unavailable without a fake detail affordance.
 A failed or interrupted turn stays in the session with Pi's own error or abort record; the next explicit Send continues the branch, where Pi skips errored replies and closes orphaned tool calls.
 A restart never resumes pending turns.
-A turn the previous owner's death cut short (still recorded queued or running) is reported as interrupted and does not keep the next owner from starting, because host startup has already stopped that owner's workers by exact identity; a turn whose closure an owner itself recorded as unknown keeps fences and refuses startup.
+After the previous owner's death, a turn still recorded as `starting`, `running` or historically `queued` reads as interrupted (`unknown`); the read does not rewrite its record.
+It does not prevent startup once the previous owner's workers have been stopped by exact identity; an unconfirmed native closure still does.
 A message sent into a reply shares that reply's worker and follows it in both cases: left queued by a dead owner it is interrupted, and an unknown closure of the reply leaves it unknown too and refuses startup even when the session's newest record is such a message.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader or prompt composer.
 SDK-native automatic compaction is enabled, and terminal `/compact` entries are honoured when continued; original history is retained.
@@ -461,12 +464,12 @@ A chat image, recorded or still an unsent draft, opens enlarged in a modal viewe
 No session paths or remote image URLs are returned, and no session is rewritten.
 Timeline loading and resize-follow behavior are defined under [Scroll intent](#scroll-intent).
 A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
-It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
+It polls the small head every second while a turn is active (including `starting`), every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
 The branch shown (the view) and the entry the next message continues (the anchor) are separate: the view is chosen from one `conversation-tree` read for the branch shown (Pi's `/tree`, user messages only; made again when that branch gains or changes a message, not for each entry of a reply), which feeds the inspector's Branches tab, a version pager on each message where the session forks (the user messages that follow the same earlier one) and the question rail; choosing any of them only reads.
 The anchor is the end of the view unless one is set: "Edit and resend" on a user message sets it to the entry that message continued, loads the message's text into the composer and reads its images back as bytes into the in-memory draft, and "Continue from here" on a turn's last message sets it to that turn's end with an empty draft.
 The turns the new message will not have in its context stay shown, dimmed under a divider that says so, and a strip above the composer names what is rewritten or continued, states that only the conversation is rewound (files on disk are untouched) and has Cancel, which restores the draft set aside; an accepted Send restores it too and follows the new branch as the latest.
-An anchor is kept with the conversation's draft in sessionStorage, is released when another branch is chosen, and is not offered while a reply is queued or running; a service that predates the turn's `parent` leaves a rewrite only where the previous shown turn's end can stand in, never for a first message.
+An anchor is kept with the conversation's draft in sessionStorage, is released when another branch is chosen, and is not offered while a reply is active; a service that predates the turn's `parent` leaves a rewrite only where the previous shown turn's end can stand in, never for a first message.
 Nothing is moved or deleted, and setting or cancelling an anchor sends nothing.
 While a terminal holds a session, its extension notices entries it did not write (a name recorded from the browser is not one) and suggests `/resume`; a message sent there first continues from where the terminal is, as a new branch.
 Pre-Pi Cadence conversations are no longer supported.
@@ -569,7 +572,7 @@ The line "Thinking that could not be read is not shown" appears only for the `om
 A failed or incomplete assistant attempt is its own labelled block, never joined to the answer.
 The turn's meta line gives its recorded start time and the model fixed at admission; the admitted directory opens from that model label, and a record without a snapshot shows neither.
 Each message has an action bar, revealed on hover or focus and always shown on touch screens: it copies the message (for a reply, its answer text in recorded order, without thinking blocks, tool cards or failed attempts); the user's message also offers "Edit and resend" where the entry it continued is known, and the last message of an earlier settled turn (the reply when there is one) offers "Continue from here".
-Neither anchor action is offered while a reply is queued or running or a Send is in flight, and a reply still being written has no bar.
+Neither anchor action is offered while a reply is active or a Send is in flight, and a reply still being written has no bar.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.
@@ -606,7 +609,7 @@ The normal 30-day recovery archive policy applies to archived dead reports.
 No report is execution authority or a checkout lock.
 
 `activity-discovery.ts` combines those reports with the registry's authenticated owner summaries, regardless of their build fingerprints.
-Owner summaries project original in-memory turn/workflow lifetimes without reading history or creating viewer attachments; queued, recovery, Stop and settlement remain separate phases.
+Owner summaries project original in-memory turn/workflow lifetimes without reading history or creating viewer attachments; ordinary turn startup, workflow queueing, recovery, Stop and settlement remain distinct.
 A summary is complete only for a healthy owner whose original accepted-work count matches the projected roster; quarantine or an unprojected original cannot prove absence.
 The admitted execution context alone supplies conversation/cwd attribution; missing context stays unattributed.
 Candidate worktrees remain execution locations of their original owner; native reports inside the managed namespace cannot create a second project.
