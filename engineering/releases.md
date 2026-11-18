@@ -1235,3 +1235,15 @@ No browser or live-provider qualification is claimed.
 
 The 2.1.12 CI gate refused the release note's Markdown formatting before the publish job ran.
 This candidate corrects the note without moving the earlier tag.
+
+## 2.2.0 release candidate
+
+Native Pi and the WebUI share a revisioned design draft with editable batch choices and separate approval of the exact implementation plan.
+The coordinator can verify named source lines, Git placement and dependency entries directly, and recheck the citations of earlier investigations.
+Delivery assembles code, project knowledge and workflow notes before checks and independent Agent review of the exact candidate.
+The light and dark WebUI themes use glass surfaces for navigation and controls, with readable code and tool output, a narrow-screen blur budget and a more opaque action menu.
+
+Two local deliveries with the configured `abel/LocalModel` produced the theme and its follow-up menu correction.
+Each passed independent Agent review and post-merge verification.
+Chromium inspection covered light and dark desktop layouts, code previews, real conversation and workflow views, and a 390px viewport.
+The combined acceptance commit was `592aadca841e23c490046dec39dc2d1880cd0273`.

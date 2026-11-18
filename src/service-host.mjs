@@ -35721,7 +35721,7 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.1.13",
+  version: "2.2.0",
   build: "ddf9e9d35a3a7b928845d9b7bf1c122aa355e11810dc0066577290956bf6c793",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
