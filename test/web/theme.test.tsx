@@ -197,7 +197,7 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ).toBe("-4px");
     const canvas = ruleColor("body", "background", scheme);
     const composer = over(
-      ruleColor(".chat-composer", "background", scheme),
+      ruleColor(".chat-composer::after", "background", scheme),
       canvas,
     );
     for (const surface of [canvas, composer]) {
@@ -256,8 +256,13 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     const disabled = ".mode-toggle:disabled";
     expect(declaration(disabled, "opacity")).toBe("1");
     expect(declaration(".mode-toggle", "background")).toBe("transparent");
+    const material = ".chat-composer::after";
+    expect(declaration(material, "pointer-events")).toBe("none");
+    expect(declaration(material, "background-image")).toBe(
+      "var(--grain-image)",
+    );
     const capsule = over(
-      ruleColor(".chat-composer", "background", scheme),
+      ruleColor(material, "background", scheme),
       ruleColor("body", "background", scheme),
     );
     for (const surface of [capsule, over(color("--grain", scheme), capsule)])
