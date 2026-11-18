@@ -50,6 +50,8 @@
     rgba(214, 221, 234, 0.045)
   );
   --green-soft: light-dark(rgba(75, 104, 83, 0.1), rgba(137, 177, 147, 0.1));
+  --word-add-bg: light-dark(rgba(75, 104, 83, 0.14), rgba(137, 177, 147, 0.16));
+  --word-del-bg: light-dark(rgba(125, 63, 72, 0.14), rgba(209, 151, 161, 0.16));
   --red-soft: light-dark(rgba(125, 63, 72, 0.08), rgba(209, 151, 161, 0.08));
   --shadow-1: light-dark(rgba(29, 31, 39, 0.07), rgba(0, 0, 0, 0.22));
   --shadow-2: light-dark(rgba(29, 31, 39, 0.12), rgba(0, 0, 0, 0.34));

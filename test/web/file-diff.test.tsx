@@ -114,6 +114,7 @@ describe("file-diff parser and model", () => {
     expect(data).toMatchObject({
       filePath: "README.md",
       isWrite: true,
+      content,
       additions: 3,
       deletions: 0,
     });
@@ -182,7 +183,10 @@ describe("file change card", () => {
         data={parsed("write", { path: "a.yaml", content: "a: 1\n" })}
       />,
     );
-    expect(write).toContain("Requested content");
+    expect(write).toContain(">Requested content</span>");
+    expect(write).toContain(
+      'aria-label="Copy full retained field · Requested content"',
+    );
     expect(write).toContain('<span class="add">+1</span>');
     expect(write).not.toContain('class="del"');
     expect(write).not.toContain("diff-hunk-header");
@@ -195,6 +199,7 @@ describe("file change card", () => {
     expect(failed).toContain('<div class="file-diff-card is-err">');
     expect(failed).toContain("Error recorded: requested, not applied");
     expect(failed).not.toContain("Requested change<");
+    expect(failed).not.toContain("write-copy");
     expect(
       renderToStaticMarkup(
         <FileChangeCard data={parsed("write", { path: "", content: "" })} />,

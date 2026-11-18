@@ -154,3 +154,92 @@ it("carries the observed tool name into the shared list, legend and lane palette
     message.kind === "segs" && message.segs.map((s) => s.meta?.tool),
   ).toEqual(["read", "write", "read"]);
 });
+
+it("attributes updates only to a unique named endpoint on this page for the same epoch, run, worker and call", () => {
+  type Capture = Extract<HistoryRecord, { kind: "capture-fact" }>;
+  const link = { taskId: id(), runId: id(), childRunId: id(), epoch: id() };
+  const other = { ...link, childRunId: id() };
+  const shared = id(),
+    noName = id(),
+    conflict = id();
+  const facts: Capture[] = [];
+  const fact = (event: Capture["capture"]["event"], scope = link) => {
+    const n = facts.length + 1;
+    facts.push({
+      kind: "capture-fact",
+      committedSeq: String(n),
+      recordId: id(),
+      link: scope,
+      capture: {
+        event,
+        source: { first: n, last: n, firstObservedMs: n, lastObservedMs: n },
+      },
+    });
+  };
+  const source = { disposition: "unavailable" as const, value: null };
+  const start = (callId: string, name: string) => ({
+    kind: "tool-start" as const,
+    callId,
+    name,
+    argsDetailId: null,
+    declaration: null,
+    source,
+  });
+  const end = (callId: string, name: string) => ({
+    kind: "tool-end" as const,
+    callId,
+    name,
+    resultDetailId: id(),
+    declaration: null,
+    source,
+    isError: false,
+    association: "execution-only" as const,
+    startObserved: true,
+  });
+  const update = (callId: string) => ({
+    kind: "tool-update" as const,
+    callId,
+    semantics: "snapshot" as const,
+    detailId: id(),
+  });
+  fact(start(shared, "read"));
+  fact(update(shared));
+  fact(end(shared, "read"));
+  fact(update(shared), other); // Only the later end is loaded.
+  fact(end(shared, "write"), other);
+  fact(update(shared), { ...link, epoch: id() });
+  fact(update(shared), { ...link, runId: id() });
+  fact(update(noName));
+  fact(start(conflict, "read"));
+  fact(update(conflict));
+  fact(end(conflict, "write"));
+  const original = structuredClone(facts);
+  const bridge = timelineBridge(
+    link.taskId,
+    facts,
+    () => {},
+    () => {},
+  );
+  const messages: TimelineData[] = [];
+  bridge.onData((data) => messages.push(data));
+  bridge.readSegments(link.taskId);
+  const message = messages[0];
+  if (message.kind !== "segs") throw Error("missing-segments");
+  expect(message.segs.map((s) => s.meta?.tool)).toEqual([
+    "read",
+    "read",
+    "read",
+    "write",
+    "write",
+    undefined,
+    undefined,
+    undefined,
+    "read",
+    undefined,
+    "write",
+  ]);
+  expect(message.segs.map((s) => s.key)).toEqual(
+    original.map((f) => f.recordId),
+  );
+  expect(facts).toEqual(original);
+});

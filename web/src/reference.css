@@ -1155,14 +1155,14 @@
 }
 
 .char-add {
-  background: color-mix(in srgb, var(--green) 30%, transparent);
+  background: var(--word-add-bg);
   border-radius: 2px;
   padding: 0 2px;
   font-weight: 600;
 }
 
 .char-del {
-  background: color-mix(in srgb, var(--red) 30%, transparent);
+  background: var(--word-del-bg);
   border-radius: 2px;
   padding: 0 2px;
   text-decoration: line-through;

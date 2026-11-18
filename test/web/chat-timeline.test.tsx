@@ -35,9 +35,11 @@ import {
   ToolStep,
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
+import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
+import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
 import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
 import {
@@ -1184,6 +1186,50 @@ function workspaceFixture(turns: LoadedTurn[]) {
     observers: Observer.all,
   };
 }
+
+it.each(["failed", "canceled"] as const)(
+  "an unsaved first %s attempt is a reading scene, not an empty Hero",
+  (status) => {
+    const f = workspaceFixture([]);
+    Object.assign(f.conversation, {
+      summary: null,
+      count: 0,
+      leaf: null,
+      branches: 0,
+    });
+    expect(elements(f.draw().tree, ChatWelcome)).toHaveLength(1);
+    const attempt = {
+      commandId: "first",
+      status,
+      text: "First specimen",
+      notice: "Not saved",
+    };
+    f.conversation.attempt = attempt;
+    const { tree } = f.draw();
+    expect(elements(tree, ChatWelcome)).toHaveLength(0);
+    expect(
+      elements(tree, "p").some((el) => el.props.children === attempt.text),
+    ).toBe(true);
+    expect(
+      elements(tree, "span").some((el) => el.props.children === status),
+    ).toBe(true);
+    f.conversation.attempt = null;
+    f.conversation.undelivered = [attempt];
+    const recovery = f.draw().tree;
+    expect(elements(recovery, ChatWelcome)).toHaveLength(0);
+    const waiting = elements<ComponentProps<typeof WaitingMessages>>(
+      recovery,
+      WaitingMessages,
+    )[0].props;
+    expect(waiting.undelivered).toEqual([attempt]);
+    expect(waiting.onRestore).toBeTypeOf("function");
+    f.conversation.undelivered = [];
+    f.conversation.pending = [
+      { commandId: "waiting", text: "Next specimen", mode: "queue" },
+    ];
+    expect(elements(f.draw().tree, ChatWelcome)).toHaveLength(0);
+  },
+);
 
 it("ChatWorkspace keeps outer row identities through Pi handoff, inserted blocks, settlement, re-observation and earlier pages, without merging equal bodies", () => {
   const preview = loaded("command", "command:user", 1);

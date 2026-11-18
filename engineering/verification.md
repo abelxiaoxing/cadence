@@ -65,10 +65,15 @@ It checks the browser build identity and asset digests, serves synthetic public 
 No provider, execution command, installation, auth submission or user profile participates.
 `OPTICAL_CHROME` may name an already-installed executable.
 Use the same private temporary environment as for `verify`.
-The script prints the path of `summary.json` under that scope: branch, pre-commit HEAD and browser identity, viewports, geometry, reachable control centers, contrast samples, draw counts, frame windows and paint attribution.
+The script prints the directory containing `summary.json` under that scope: branch, HEAD and canonical browser build identity, viewports, geometry, contrast samples, draw counts, frame windows and paint attribution.
+For the design submission, implementation/confirmation and code/tool controls, `controls` records the actual button after scrolling and stable layout: name, four edges and size, viewport, intersections with clipping ancestors, disabled state, center and four inset edge hits.
+Enabled buttons must receive visible focus via Tab; disabled ones have no keyboard-operability claim.
+No submit or confirmation is activated.
+The requested-write copy uses Space and a write-only receiver inside the disposable document, never the system clipboard.
+A single-line edit is measured in the opened tool card, separately from the artifact diff; absent added or deleted word samples or ordinary text below 4.5:1 fail the observation.
 A missing browser, unavailable draw scenario or failed observation is not a pass.
 
-### Optical candidate observation
+### Earlier optical build (historical observation)
 
 On branch `cadence/git-worktree-cadence-spatial-optical-craft-webui-b4181761-740f-4805-8c68-3d948841cbe3`, candidate build `6b29c6567c5d9ffc3ae9829bfc77103018dad4f4330acf0a9ea22e59ae3cabc3` was observed before the owner's delivery commit (base `f625cfc1a85e2ee2453bdcdd5836ffe364bd8c06`).
 Headless Chrome 151.0.7922.34, Linux, ANGLE Vulkan/SwiftShader, DPR 1; **software** WebGL, not physical GPU or phone qualification.
@@ -101,6 +106,33 @@ Scrolling and incremental reading had zero ambient draws.
 Growth followed the bottom, up-scroll held its position and Latest returned to the end.
 DevTools Paint node IDs describe paint roots, not exact glyph rasterization or compositor/GPU energy.
 No deployment, real credentials, live model workloads, device battery life, physical mobile browser or hardware GPU was tested.
+
+### Review repair: observations on the rebuilt candidate
+
+The earlier 125 scenes above do not qualify these repairs.
+In the same integration worktree and branch, rebuilt WebUI `8caaa40ee1f40c9ed407552bd64b3c01a21438b887e8837b2f46d77ffdb48da0` was observed over pre-commit HEAD `29b90eacafe5de09aee55af568e904f93f481b63` (`optical-evidence-AoCIa6/summary.json` under the run's temporary root).
+This identifies the measured bytes, not an accepted delivery commit.
+Headless Chrome 151.0.7922.34, DPR 1, ANGLE/Vulkan SwiftShader; dark and light at 320×820, 390×820 and 1440×900.
+The new report contains 143 scene audits and 13,156 visible text samples, including system light/dark initial and error password forms and the additional forced-colors retry.
+
+- On all six empty-to-failed-first-attempt switches the transcript kept the attempt and its notice without a Hero, at final opacity 0.07 and zero draws in 1.25s.
+- All 42 critical button observations retained the full rectangle through viewport and clipping ancestors, passed center and four edge hits and received keyboard focus (all enabled in these samples).
+  At 320px the design submit wrapped within x=33–277 (244×57px); implementation and confirmation measured about 140×28 and 166×28px.
+  No Send, approval or execution was triggered.
+  With only 400 rows displayed, Space on the write-body copy delivered exactly 3,962 characters (407 lines including the final newline) to the controlled receiver in all six cases.
+- The chat viewport client/scroll widths matched at 310/380/1170px; the 2147px code line scrolled inside 276/346/788px clients.
+  Unknown run and check statuses appeared separately in the header and expandable summary.
+  Read start/update/end chips matched their lane blocks: RGB(154,200,183) dark and RGB(56,103,86) light; the independent write swatch differed in both schemes.
+- Requested edit, foreground over sampled word background (RGB): dark `opal` (163,200,173) over (40,49,45) **7.287:1**, deleted `silver` (227,166,174) over (54,41,46) **6.827:1**; light `opal` (53,94,74) over (206,213,208) **4.929:1**, deleted `silver` (132,63,80) over (219,206,210) **4.904:1**.
+  The lowest sampled ordinary text in each theme was the tool card's language label: dark (138,147,162) over (34,36,41) **5.010:1**; light (94,102,117) over (226,227,231) **4.507:1**.
+  Lowest sampled focus/indicator: **5.870:1** (light composer).
+
+At 1440×900, same 2.6s windows in on/off/off/on order: p50 was 16.7ms throughout and no measured frame exceeded 50ms.
+Idle p95 was 16.7/33.4/33.4/16.7ms; scroll 16.7/16.7/16.8/16.8ms; increment 16.8/16.7/16.8/16.8ms.
+Idle showed occasional document/menu paints; scroll also painted Latest; increment paints included transcript/text/code roots and footer in both conditions, with no reading-scene ambient draws.
+Streaming stayed at the bottom, up-scroll held on growth and Latest returned to the end.
+The 480×300 Hero buffer drew 26 times in a separate 1.25s window and 25 after context restoration; reduced motion, explicit off and lost context each drew zero, as did the actually hidden tab in 1s.
+These are compositor point samples and short local frame windows, not exhaustive contrast or energy measurements; no physical phone, hardware GPU, screen reader, live provider, authentication submission or deployment was tested.
 
 ## Development practice
 

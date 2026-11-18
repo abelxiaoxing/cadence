@@ -21,15 +21,14 @@ export interface DiffHunk {
   added: number;
   lines: DiffLine[];
 }
-export interface FileDiffData {
+export type FileDiffData = {
   filePath: string;
-  isWrite: boolean;
   language: string;
   additions: number;
   deletions: number;
   /** An edit's replacements in recorded order; a write's content as one hunk. */
   hunks: DiffHunk[];
-}
+} & ({ isWrite: true; content: string } | { isWrite: false });
 
 /** File extension to a highlight.js language of the bundled (lowlight common)
  * set, so the same name labels a change and fences a preview. */
@@ -223,6 +222,7 @@ export function parseFileMutationArgs(
     return {
       ...base,
       isWrite: true,
+      content: args.content,
       additions: lines.length,
       deletions: 0,
       hunks: [

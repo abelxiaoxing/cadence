@@ -134,6 +134,7 @@ A command-to-Pi handoff can therefore update those coordinates without replacing
 Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
 The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
 An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
+The initial change preview shows up to 400 lines; the write-body copy button takes the complete recorded `content`, including its final line break, not those displayed lines, the path or the tool output.
 Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
 Neither a later assistant message, a stable step nor reply completion proves a tool result; old history without explicit state stays neutral unless it records an error.
 This rule also applies to workflow subagent cards: completed/failed tool observations survive a failed or canceled reply, while a pending/running call without a result becomes neutral once the reply ends, never an endless spinner or inferred success.
@@ -350,6 +351,7 @@ Mineral Alabaster and Obsidian Optical follow the system until the theme chip se
 `web/src/optical-tokens.css` supplies the palette, rims, recessed code surfaces, reading measure and material tiers, including history trace swatches.
 In More, **Ambient light** switches the decorative field off or on without changing a conversation.
 The shared shell draws a single low-resolution WebGL pass only for a visible empty Hero; reading uses a subdued static layer.
+A selected conversation with no durable turn still uses the reading scene when its head reports an attempt, waiting input or an undelivered message; the body, status and applicable recovery action remain in the transcript.
 Hidden tabs and reduced motion suspend the clock.
 A missing context leaves the CSS material in place.
 The script-free access page follows the system's scheme without storing a separate preference.
@@ -515,6 +517,8 @@ App preserves the existing attachment through uncertainty, labels retained work 
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch.
+On the loaded history page, a tool update takes its list and lane swatch from an explicitly named start or end with the same epoch, run, child and call ID.
+An update with no matching name or disagreeing endpoints stays unassigned; the bridge never edits the raw event, clock or position.
 The browser is conversation-first, including before any project is selected: ordinary chat and explicitly enabled Cadence conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
 The empty entry has no project welcome screen or Create shortcut; its one central action, Choose a folder…, offers nonactivating selection, and its sidebar has no separate New conversation entry.
 The bottom-right folder control is always present, and its picker lists recent projects.
@@ -554,6 +558,7 @@ Its steps, checks, delivery and diagnostics are not in the chat: the line opens 
 That view leads with every recorded deviation (what could not be met, why, what was delivered instead, the checks it set aside and its revision), then a board of the current route's assignments from the run's own list: each one's state as an icon and a word, what it waits for, its own worktree when it ran beside others (integrated, kept for inspection with its path) and the listed steps that carry its ID.
 An assignment a route revision added, rewrote or dropped says which revision did; a dropped one is `superseded`, struck through and counted apart, never as waiting.
 It also states the number of route revisions and the paths they added to the write scope.
+The run header shows its phase beside its own status capsule; each expandable step summary shows the step identifier and its own status capsule, including `unknown` without inferring any task state.
 A check step that a recorded deviation set aside is labelled as set aside beside its failed status, and the acceptance line then says how many checks were set aside instead of that the checks passed.
 The label comes from the acceptance record, or for a direct working-copy delivery from the verified round whose failed check a deviation names; an earlier failure of the same check stays a plain failure.
 These views open in the center over the conversation, which stays mounted (draft, scroll and observations) behind them.
