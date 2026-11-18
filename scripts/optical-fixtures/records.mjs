@@ -130,7 +130,7 @@ const steps = (id) =>
     ["tool", ""],
     [
       "assistant",
-      `Specimen notes.\n\n${Array.from({ length: id === "stream" ? feed.increment : 1 }, (_, i) => `Sample ${i + 1}.`).join("\n\n")}`,
+      `Specimen notes.\n\n${Array.from({ length: id === "stream" ? feed.increment : id === "expand" ? 5 : 1 }, (_, i) => `Sample ${i + 1}.`).join("\n\n")}`,
     ],
   ].map(([role, text], i) => ({
     id: `step-${i}`,

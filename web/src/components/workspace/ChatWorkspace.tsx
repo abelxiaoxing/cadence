@@ -687,8 +687,16 @@ export function ChatWorkspace({
     lastTop = useRef(0);
   const stick = useRef(true),
     [away, setAway] = useState(false);
+  // A scroll event for our own write can arrive after the row has grown
+  // again (opening placeholder → loaded detail), before its resize observer.
+  // Match the clamped offset, not the now obsolete distance from the end.
+  const followedTop = useRef<number | null>(null);
   const keepEnd = useCallback(() => {
-    followLatest(scroll.current, stick.current);
+    const el = scroll.current;
+    if (el && stick.current) {
+      followLatest(el, true);
+      followedTop.current = el.scrollTop;
+    }
   }, []);
   // `display: none` drops the scroll offset; restore it when the view returns.
   useLayoutEffect(() => {
@@ -775,8 +783,9 @@ export function ChatWorkspace({
       acts.current.followAnchor();
       onChanged();
     }
-    followLatest(scroll.current, stick.current);
+    keepEnd();
   }, [
+    keepEnd,
     summary,
     turns,
     pending,
@@ -944,8 +953,8 @@ export function ChatWorkspace({
     .map((run) => `${run.id}:${run.status}`)
     .join();
   useLayoutEffect(() => {
-    if (linesKey) followLatest(scroll.current, stick.current);
-  }, [linesKey]);
+    if (linesKey) keepEnd();
+  }, [linesKey, keepEnd]);
   const workflowLine = (run: WorkflowRun) => (
     <WorkflowLine
       key={run.id}
@@ -1896,7 +1905,9 @@ export function ChatWorkspace({
             const el = scroll.current;
             if (el && !hidden) {
               lastTop.current = el.scrollTop;
-              stick.current = followsLatest(el);
+              if (!stick.current || lastTop.current !== followedTop.current)
+                stick.current = followsLatest(el);
+              followedTop.current = null;
               setAway(!stick.current);
               nearTop();
               trackActive();
@@ -2123,7 +2134,7 @@ export function ChatWorkspace({
             className="scroll-bottom"
             onClick={() => {
               stick.current = true;
-              followLatest(scroll.current, true);
+              keepEnd();
               setAway(false);
             }}
           >

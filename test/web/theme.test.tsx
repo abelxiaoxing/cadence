@@ -149,6 +149,27 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       }
     expect(failures).toEqual([]);
   });
+  it("keeps the shared resting copy stroke visible on message and tool surfaces", () => {
+    const rule = /\.chead-copy,\s*\.msg-text-copy \{([^}]+)/.exec(
+      source("reference.css"),
+    )?.[1];
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/background: transparent;/);
+    const ink = /color: var\((--[\w-]+)\);/.exec(rule ?? "")?.[1];
+    if (!ink) throw new Error("Missing shared copy foreground");
+    const opacity = Number(/opacity: ([^;]+);/.exec(rule ?? "")?.[1] ?? 1);
+    const [r, g, b, alpha] = color(ink, scheme);
+    const page = color("--bg", scheme);
+    for (const surface of [
+      page,
+      over(color("--card-bg", scheme), page),
+      color("--bg-elev2", scheme),
+    ]) {
+      expect(
+        contrast(over([r, g, b, alpha * opacity], surface), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+    }
+  });
   it("keeps the requested edit readable from the diff body through each tinted row and changed word", () => {
     for (const [ink, tint, mark] of [
       ["--green", "--green-soft", "--word-add-bg"],

@@ -10,6 +10,9 @@ import {
   contrastPixels,
   dimensions,
   frameWindow,
+  readingPosition,
+  restingCopySample,
+  stableFrames,
   textSamples,
 } from "./optical-fixtures/measure.mjs";
 import {
@@ -20,6 +23,7 @@ import {
   writeContent,
 } from "./optical-fixtures/records.mjs";
 import { fixture } from "./optical-fixtures/site.mjs";
+import { openTool } from "./optical-fixtures/tool-card.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -37,6 +41,8 @@ const report = {
   attempts: [],
   palettes: [],
   copies: [],
+  copyIndicators: [],
+  toolCards: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
     encoding: "utf8",
@@ -58,7 +64,7 @@ try {
   const { evaluate: ev, send } = b;
   const run = (fn, ...args) => ev(`(${fn})(${args.map(q).join(",")})`);
   await send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.opticalProbe={draws:0};const draw=WebGLRenderingContext.prototype.drawArrays;WebGLRenderingContext.prototype.drawArrays=function(...args){if(this.canvas.closest('.optical-field'))opticalProbe.draws++;return draw.apply(this,args);};`,
+    source: `window.opticalProbe={draws:0,stableFrames:${stableFrames}};const draw=WebGLRenderingContext.prototype.drawArrays;WebGLRenderingContext.prototype.drawArrays=function(...args){if(this.canvas.closest('.optical-field'))opticalProbe.draws++;return draw.apply(this,args);};`,
   });
   const wait = async (expr) => {
     for (let i = 0; i < 70; i++) {
@@ -67,9 +73,7 @@ try {
       } catch {}
       await sleep(75);
     }
-    throw Error(
-      `Not observed: ${expr}; ${await ev("document.body.innerText.slice(-350)")}`,
-    );
+    throw Error(`Not observed: ${expr}`);
   };
   const go = async (path, selector) => {
     await send("Page.navigate", { url: "about:blank" });
@@ -77,18 +81,20 @@ try {
     await wait(`document.querySelector(${q(selector)})`);
   };
   const chat = (id) => `/app?project=${project}#chat=${id}`;
+  const viewport = (width, height = width > 900 ? 900 : 820) =>
+    send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
   const layout = async (
     width,
     theme,
     motion = "no-preference",
     forced = "none",
   ) => {
-    await send("Emulation.setDeviceMetricsOverride", {
-      width,
-      height: width > 900 ? 900 : 820,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
+    await viewport(width);
     await send("Emulation.setEmulatedMedia", {
       features: [
         { name: "prefers-color-scheme", value: theme },
@@ -207,6 +213,38 @@ try {
     return row;
   };
   let width, theme;
+  const expand = async (id, tool, path, position) => {
+    const row = { width, theme, id, tool, path, position };
+    report.toolCards.push(row);
+    await openTool({ ev, run, send, wait, site, row, route: chat(id) });
+    return row;
+  };
+  const copyIndicators = async (selector) => {
+    // No hover/focus reveal: move the real pointer outside the card, and
+    // sample before Tab reaches the control. Require both screenshot samples.
+    await run(buttonGeometry, selector);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
+    const point = await run(restingCopySample, selector);
+    const capture = async (point) => {
+      assert.ok(point, `Missing ${selector} indicator sample`);
+      const png = await send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+      });
+      const observed = await run(contrastPixels, png.data, [point]);
+      report.copyIndicators.push({ width, theme, selector, ...observed.worst });
+      assert.deepEqual(observed.failures, []);
+    };
+    await capture(point);
+    assert.deepEqual(await run(restingCopySample, selector), point);
+    const control = await observeButton("copy indicator focus", selector);
+    assert.equal(control.keyboardFocus, true);
+    const focusPoint = (await run(textSamples)).find(
+      (p) => p.name === "BUTTON focus",
+    );
+    await capture(focusPoint);
+    assert.ok(await ev(`document.activeElement.matches(${q(selector)})`));
+  };
   const audit = async (scene, selectors) => {
     await sleep(250);
     const geometry = await run(dimensions, selectors);
@@ -262,7 +300,12 @@ try {
     if (scene === "requested edit") {
       for (const mark of ["char-add", "char-del"]) {
         const sample = contrast.words[mark];
-        if (!sample || sample.ratio < 4.5)
+        const word = mark === "char-add" ? "opal" : "silver";
+        if (
+          !sample ||
+          sample.name !== `SPAN.${mark}: ${word}` ||
+          sample.ratio < 4.5
+        )
           problems.push({
             width,
             theme,
@@ -405,8 +448,7 @@ try {
       await click(".code-caption button:first-child");
       assert.ok(await ev(`document.querySelector('.codeblock pre').hidden`));
       await click(".code-caption button:first-child");
-      await click(".chead-main");
-      await wait(`document.querySelector('.toolcall-output pre')`);
+      await expand("reading", "read", "material.ts");
       await scrollTo(".toolcall-output-label");
       await audit("tool output", [
         ".chat-turn",
@@ -423,16 +465,61 @@ try {
         ".img-lightbox-toolbar",
       ]);
       await press("Escape", 27);
-      await go(chat("edit"), ".chead-main");
-      await click(".chead-main");
-      await scrollTo(".file-diff-body .char-add");
+      for (const position of ["bottom", "away"]) {
+        await go(chat("expand"), ".toolcall-head");
+        await wait(
+          `(()=>{const e=document.querySelector('.chat-messages');return e.scrollTop>0 && e.scrollHeight-e.clientHeight-e.scrollTop<3})()`,
+        );
+        if (position === "away") {
+          const { hit } = await run(
+            buttonGeometry,
+            ".toolcall-head .chead-main",
+            false,
+          );
+          assert.ok(hit.center.hit);
+          await send("Input.dispatchMouseEvent", {
+            type: "mouseWheel",
+            x: hit.center.x,
+            y: hit.center.y,
+            deltaX: 0,
+            deltaY: -144,
+          });
+          await wait(`document.querySelector('.scroll-bottom')`);
+        }
+        const row = await expand("expand", "read", "material.ts", position);
+        if (position === "away") {
+          await click(".scroll-bottom");
+          await wait(`!document.querySelector('.scroll-bottom')`);
+          const position = () =>
+            ev(`opticalProbe.stableFrames(${readingPosition}, 'Latest')`);
+          row.latest = await position();
+          assert.ok(row.latest.bottom < 3, "Latest did not reach the end");
+          // A jump to the old end is not proof of resumed follow. Change the
+          // real viewport, not the transcript or its scrollTop, and check again.
+          await viewport(width, (width > 900 ? 900 : 820) - 96);
+          row.afterResize = await position();
+          assert.ok(row.afterResize.clientHeight < row.latest.clientHeight);
+          assert.ok(
+            row.afterResize.bottom < 3,
+            "Latest did not resume following",
+          );
+          await viewport(width);
+        }
+      }
+      await go(chat("edit"), ".toolcall-head");
+      if (width === 1440) {
+        await copyIndicators(".toolcall-head .chead-copy");
+        await copyIndicators(".msg-part:last-child .msg-text-copy");
+      }
+      await expand("edit", "edit", "material.ts");
+      await scrollTo("[data-optical-tool] .file-diff-body .char-add");
       await audit("requested edit", [
         ".file-diff-body",
         ".char-add",
         ".char-del",
       ]);
-      await go(chat("write"), ".chead-main");
-      await click(".chead-main");
+      await go(chat("write"), ".toolcall-head");
+      await expand("write", "write", "requested.txt");
       await wait(`document.querySelector('.write-copy')`);
       assert.equal(
         await ev(`document.querySelectorAll('.diff-line-row.add').length`),
