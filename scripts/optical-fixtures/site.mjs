@@ -46,6 +46,7 @@ export function fixture(root) {
   const build = { contractHash: identity.contractHash, assets: identity };
   const failures = [];
   const stepReads = [];
+  const detailReads = [];
   let directoryGate, fileGate, entryGate;
   const snapshot = (scope) => ({
     protocol: 1,
@@ -216,6 +217,7 @@ export function fixture(root) {
         flowCase.failTurn
       )
         return json({ kind: "error", error: publicError("stale") });
+      if (q.kind === "workflow-detail") detailReads.push(q);
       const v = readRecord(q);
       if (q.kind === "file" && fileGate?.path === q.path && v) {
         fileGate.resolve(() => ok(v));
@@ -288,6 +290,7 @@ export function fixture(root) {
     build: identity,
     failures,
     stepReads,
+    detailReads,
     holdWorkbenchEntry() {
       entryGate = Promise.withResolvers();
       return () => {

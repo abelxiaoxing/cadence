@@ -10,6 +10,11 @@ import {
   observeComposerGrip,
   observeUnknownMode,
 } from "./optical-fixtures/composer-observations.mjs";
+import {
+  observeOpenMaterial,
+  observeOtherIdea,
+  observeRetainedCopy,
+} from "./optical-fixtures/detail-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import {
   contrastPixels,
@@ -270,7 +275,7 @@ try {
   // browser permission or platform clipboard participates in the assertion.
   const observeCopy = async (source, selector, label, expected, facts = {}) => {
     await ev(
-      `opticalProbe.received=[]; Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{opticalProbe.received.push(text)}}})`,
+      `if (!opticalProbe.received) Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{opticalProbe.received.push(text)}}}); opticalProbe.received=[]`,
     );
     const copy = await observeButton(`${source} copy`, selector, label);
     assert.equal(copy.keyboardFocus, true);
@@ -684,6 +689,7 @@ try {
       await press("Escape", 27);
       await click(".more-menu summary");
       await audit("menu", [".more-menu-items"]);
+      await picker("more-material", observeOpenMaterial, ".more-menu-items");
       await click('.more-menu-items [aria-label="Cadence service"]');
       await wait(`document.querySelector('dialog[open]')`);
       await audit("service", ["dialog", "dialog header", "dialog footer"]);
@@ -705,6 +711,7 @@ try {
       await send("Input.insertText", { text: "@" });
       await wait(`document.querySelector('.mention-item')`);
       await audit("path suggestions", [".mention-menu", ".mention-item"]);
+      await picker("mention-material", observeOpenMaterial, ".mention-menu");
       await press("Escape", 27);
       await press("Backspace", 8);
       await click(".inspector-toggle");
@@ -823,6 +830,11 @@ try {
         ".img-lightbox-panel",
         ".img-lightbox-toolbar",
       ]);
+      await picker(
+        "lightbox-material",
+        observeOpenMaterial,
+        ".img-lightbox-panel",
+      );
       await press("Escape", 27);
       for (const position of ["bottom", "away"]) {
         await go(chat("expand"), ".toolcall-head");
@@ -913,6 +925,7 @@ try {
         ".design-track",
         ".design-track label",
       ]);
+      await picker("other-idea", observeOtherIdea);
       await observeButton(
         "submit design",
         ".design-card > button:last-child",
@@ -1029,6 +1042,9 @@ try {
       await click(".view-menu summary");
       await click(".view-menu-items button", "timeline");
       await wait(`document.querySelector('.rtr-chip.rtr-tc-read')`);
+      await click(".view-menu summary");
+      await picker("view-material", observeOpenMaterial, ".view-menu-items");
+      await press("Escape", 27);
       await scrollTo(".rtr-list");
       await audit("history", [
         ".workspace-content",
@@ -1166,6 +1182,11 @@ try {
         capture,
         rows: report.selectedRows,
         workflowRows: report.workflowRows,
+        readStep: (subagent) =>
+          observeRetainedCopy(
+            { run, click, wait, observeCopy, site },
+            subagent,
+          ),
         filePreviewReads: report.filePreviewReads,
         observeButton,
       });

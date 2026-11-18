@@ -39,10 +39,14 @@ import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
+import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
 import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
-import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import {
+  WorkflowCard,
+  WorkflowLine,
+} from "../../web/src/components/workspace/WorkflowPanel";
 import { translate } from "../../web/src/i18n/locale";
 import {
   type IndependentCase,
@@ -775,6 +779,109 @@ function workflowAgentFixture() {
   };
 }
 
+// Inspect the shared renderer reached from each real view, including the text
+// handed to CopyButton (not a copy of the preview or a separate fetch).
+function displayedFiles(tree: ReactNode) {
+  return elements<ComponentProps<typeof RetainedStepResult>>(
+    tree,
+    RetainedStepResult,
+  ).map(({ props }) => {
+    const body = RetainedStepResult(props);
+    const buttons = elements<ComponentProps<typeof CopyButton>>(
+      body,
+      CopyButton,
+    );
+    const pre = elements(body, "pre");
+    expect(pre).toHaveLength(1);
+    expect(elements(pre[0], CopyButton)).toHaveLength(0);
+    expect(buttons.map((b) => [b.props.label, b.props.text])).toEqual([
+      ["Copy output", pre[0].props.children],
+    ]);
+    return pre[0].props.children;
+  });
+}
+
+it("the overview offers the selected step's returned file only, not its preview or a late read", async () => {
+  const f = workflowAgentFixture();
+  const props = { client: f.props.client, id: f.props.agent.runId };
+  const wrapper = WorkflowCard(props);
+  const draw = () => {
+    const tree = render(() =>
+      (wrapper.type as (p: typeof props) => ReactNode)(props),
+    );
+    commit();
+    return tree;
+  };
+  draw();
+  const reply = f.run();
+  if (reply.kind !== "workflow" || reply.response.type !== "run")
+    throw Error("run fixture");
+  const steps = reply.response.run.steps;
+  steps[0].text = "First preview";
+  steps.push({ ...steps[0], id: "second", text: "Second preview" });
+  f.pending("workflow").reply(reply);
+  await settle();
+  const read = (tree: ReactNode, index: number) =>
+    elements<{ children: ReactNode; onClick(): void }>(tree, "button")
+      .filter((b) => b.props.children === "Read retained step result")
+      [index].props.onClick();
+  const closed = draw();
+  expect(f.reads("workflow-detail")).toHaveLength(0);
+  expect(displayedFiles(closed)).toEqual([]);
+  read(closed, 0);
+  const pending = draw();
+  const old = f.pending("workflow-detail");
+  expect(displayedFiles(pending)).toEqual([]);
+  read(pending, 1);
+  expect(displayedFiles(draw())).toEqual([]);
+  expect(old.signal?.aborted).toBe(true);
+  const next = f.pending("workflow-detail");
+  expect(next.read).toEqual({
+    kind: "workflow-detail",
+    id: props.id,
+    stepId: "second",
+  });
+  const text = "  second file\n\tfinal line  \n";
+  next.reply({ kind: "file", path: "second.txt", limited: false, text });
+  old.reply({ kind: "file", path: "first.txt", limited: false, text: "late" });
+  await settle();
+  expect(displayedFiles(draw())).toEqual([text]);
+  expect(f.reads("workflow-detail")).toHaveLength(2);
+});
+
+it("an open subagent result copies the current file including its final refresh; folding removes it", async () => {
+  const f = workflowAgentFixture();
+  f.draw();
+  f.pending("workflow").reply(f.run());
+  await settle();
+  const closed = f.draw();
+  expect(displayedFiles(closed.tree)).toEqual([]);
+  required(closed.result).onClick();
+  expect(displayedFiles(f.draw().tree)).toEqual([]);
+  const file = {
+    kind: "file" as const,
+    path: "result",
+    limited: false,
+    text: "  first  \n",
+  };
+  f.pending("workflow-detail").reply(file);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(displayedFiles(f.draw().tree)).toEqual([file.text]);
+  const obsolete = f.pending("workflow-detail");
+  f.pending("workflow").reply(f.run("failed"));
+  await settle();
+  f.draw();
+  expect(obsolete.signal?.aborted).toBe(true);
+  const text = "  failed step\n\tfinal result  \n";
+  f.pending("workflow-detail").reply({ ...file, text });
+  await settle();
+  const final = f.draw();
+  expect(displayedFiles(final.tree)).toEqual([text]);
+  required(final.result).onClick();
+  expect(displayedFiles(f.draw().tree)).toEqual([]);
+  expect(f.reads("workflow-detail")).toHaveLength(3);
+});
+
 it.each(["completed", "failed", "canceled", "unknown"] as const)(
   "WorkflowAgentView polls equal-part tool snapshots, keeps expanded output until refreshed, and reads a final %s snapshot",
   async (status) => {
@@ -978,11 +1085,7 @@ it.each(["client", "run", "step"] as const)(
     expect(settled.tool?.output).toContain("current tool output");
     expect(settled.tool?.output).not.toContain("late old tool output");
     expect(settled.turn?.header.status).toBe("running");
-    expect(
-      elements<{ children?: ReactNode }>(settled.tree, "pre").map(
-        (pre) => pre.props.children,
-      ),
-    ).toEqual(["current step result"]);
+    expect(displayedFiles(settled.tree)).toEqual(["current step result"]);
   },
 );
 

@@ -498,6 +498,7 @@ async function selectRows(
     capture,
     rows,
     workflowRows,
+    readStep,
     filePreviewReads,
     observeButton,
   },
@@ -597,6 +598,7 @@ async function selectRows(
           await wait(
             `${query(`${toggle}[aria-expanded="false"]`)} && ${query(`${wing}[inert]:not(.open)`)}`,
           );
+        if (workflow) await readStep(i === 1);
         await open(); // Selecting a conversation, run or child dismisses the compact drawer.
       }
       await parkPointer();

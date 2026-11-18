@@ -32,6 +32,7 @@ import {
 import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { HalfRingSpinner } from "./ChatSteps";
+import { RetainedStepResult } from "./RetainedStepResult";
 
 const LIVE = ["queued", "running"];
 export const workflowLive = (run: WorkflowRun) => LIVE.includes(run.status);
@@ -631,7 +632,7 @@ function WorkflowCardView({
             {t("Read retained step result")}
           </button>
           {detail === step.id && result.value?.kind === "file" && (
-            <pre className="workflow-detail">{result.value.text}</pre>
+            <RetainedStepResult file={result.value} />
           )}
           {detail === step.id && result.error && (
             <p role="alert">{result.error}</p>

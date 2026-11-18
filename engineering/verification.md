@@ -677,6 +677,49 @@ These are point samples with emulated input, not a physical touchscreen, hardwar
 No interaction or compositor conclusion is inferred from the source-only tests.
 This grip-only run does not replace the separate unavailable-mode `ready` and `stable` glyph observations, the owner's two checks on the final candidate, or independent review.
 
+### Empty design answer, open menus and retained step results
+
+The earlier owner observation (`optical-evidence-yGB0is`, HEAD `3712df19`, build `cac0cdd54b92`) passed 143 scene audits but did not sample the empty custom answer, check the four open frames' material, or copy a retained step file.
+The repair's targeted matrix is `$TMPDIR/detail-evidence-VydTU4/summary.json` on the same task branch and integration worktree, over pre-commit HEAD `3712df19`.
+`bun run build:web` produced `6764640acb2a6576d371383daa43b5de62adc6db8ac16c3c3294fc7c33947250`.
+Installed headless Chrome 151.0.7922.34, fresh profile, DPR 1, both system schemes at 320×820, 390×820 and 1440×900; only local synthetic projections were served.
+
+The 36 unmodified viewport PNGs provide 126 comparisons.
+On the actual design card, the enabled, editable “Other idea” contained the empty string, with the pointer elsewhere.
+Three straight-edge pixels (¼, ½, ¾ of its width, outside the corner radii) were each compared with the card outside and the fill inside in the **same frame**.
+Tab from the checked radio reached an independent outline without editing or submitting.
+For the four open frames the probe records computed translucent base, static grain, top and side border colours, shadow and backdrop filter; sampled label ink and indicators come from the actual screenshot, not those declarations.
+The menu frame and tested button were hit at their edges.
+ArrowDown moved the `@` selection without leaving the editor; Tab reached Ambient light, the first view option and Zoom out.
+The visible current-view stroke remained on Timeline while the first option had focus.
+Worst observed contrast ratios (across the three widths per scheme):
+
+| Painted ink / backing                                    | Obsidian                       | Alabaster                    |
+| -------------------------------------------------------- | ------------------------------ | ---------------------------- |
+| Other idea border / card, fill; Tab outline / card       | 5.783, 5.818; 11.568           | 5.589, 5.682; 10.378         |
+| Mention name; selected stroke / row, menu                | 10.282; 10.157, 11.221         | 9.515; 9.430, 10.558         |
+| Timeline label; selected stroke / row, menu; Tab outline | 10.157; 10.182, 11.105; 11.221 | 9.497; 9.515, 10.475; 10.558 |
+| Ambient light label, on glyph; Tab outline               | 5.552, 5.552; 11.221           | 5.637, 5.637; 10.558         |
+| Attached image title; Zoom out outline                   | 5.610; 11.221                  | 5.589; 10.378                |
+
+The input was 244×37.19, 314×37.19 and 756×32.84 CSS px in viewport order.
+The mention frame was 302, 372 and 830px wide; Details 180px, More 260px and the fixture lightbox 164.16px at all widths.
+`pickerStates[].frames` binds samples to the unchanged geometry across each capture; `controls` includes copy-button bounds, ancestor clipping and five hit points.
+
+For the synthetic `dockRun` and its `facet` step alone, `workflow-detail` returns a 37-character multiline file distinct from the preview.
+From both the overview and child view, opening then pressing Tab and Space on Copy wrote **exactly once**, preserving indentation, trailing spaces, blank line and final newline, to the document-local write-only receiver.
+All 12 copy controls were 32.5×28 CSS px, fully visible, with no extra detail read; the preview and folded state offered no visible file-copy action.
+`detail-evidence-ajU167` additionally exercised the compact navigation-row sequence with both result reads before reopening the drawer (dark/320 only).
+Earlier targeted probes `detail-evidence-EmPOK9` and `detail-evidence-t66c5e` stopped before completing the matrix: they recorded a changing mention border, missing sample geometry or an unreachable image/dock target.
+Those frames are not counted as passes.
+
+**Regression owners:** `test/web/theme.test.tsx` checks the component selectors, grain over card, input fill and opaque no-filter declarations.
+`test/web/chat-timeline.test.tsx` drives `WorkflowCard` and `WorkflowAgentView` through controlled reads: closed/pending files are not copyable, the selected response supplies both the body and copy prop, and a late response or failed-step final refresh cannot turn the preview into a result.
+`test/web/workflow.test.tsx` checks the localized copy label and bounded-file notice by SSR.
+These tests are not pixel or clipboard evidence.
+The browser samples are not a physical phone, a platform clipboard, a non-Chromium/no-filter engine or a live workflow executor.
+This targeted run did not repeat the performance windows or the full candidate gate; the owner's final checks and independent review are separate.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

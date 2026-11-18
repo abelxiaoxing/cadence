@@ -4,7 +4,7 @@ import { cwd, lockedReply, recentFolder } from "./records.mjs";
 
 // One unmodified viewport PNG per state. Never discard an inconvenient frame:
 // a change across the capture or missing paint is a failure, not a retry.
-async function painted(probe, row, state, locate) {
+export async function painted(probe, row, state, locate) {
   const { run, screenshot, width, theme } = probe;
   const before = await locate();
   const file = `${row.scene}-${theme}-${width}-${state}.png`;
