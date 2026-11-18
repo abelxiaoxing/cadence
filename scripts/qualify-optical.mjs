@@ -28,6 +28,10 @@ import {
   observeSelectedRows,
 } from "./optical-fixtures/panel-observations.mjs";
 import {
+  observeLockedLevels,
+  observeRecentFolders,
+} from "./optical-fixtures/picker-observations.mjs";
+import {
   leading,
   observeFieldFind,
   observeLiveFocus,
@@ -72,6 +76,7 @@ const report = {
   toolCards: [],
   drawerGestures: [],
   directoryReads: [],
+  pickerStates: [],
   leading: [],
   fieldFind: [],
   searchNavigation: [],
@@ -403,6 +408,41 @@ try {
   };
   const parkPointer = () =>
     send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
+  const screenshot = async (name) => {
+    const { data } = await send("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    await writeFile(join(reportDir, name), Buffer.from(data, "base64"), {
+      flag: "wx",
+    });
+    return data;
+  };
+  const picker = async (scene, observe, ...args) => {
+    const row = { width, theme, scene, frames: [] };
+    report.pickerStates.push(row);
+    try {
+      await observe(
+        {
+          width,
+          theme,
+          run,
+          go,
+          chat,
+          click,
+          wait,
+          parkPointer,
+          press,
+          screenshot,
+        },
+        row,
+        ...args,
+      );
+    } catch (error) {
+      row.failure = String(error);
+      problems.push({ width, theme, scene, failure: row.failure });
+    }
+  };
   const recordState = (state, selector, observed, detail) => {
     assert.ok(observed?.samples, `No ${state} sample: ${selector}`);
     const row = {
@@ -616,6 +656,7 @@ try {
         ".cwd-picker-list",
         "dialog footer",
       ]);
+      await picker("folder-first", observeRecentFolders, false);
       await observeDirectory();
       await press("Escape", 27);
       assert.ok(
@@ -637,6 +678,8 @@ try {
         ".composer-toolbar",
         ".conversation-header",
       ]);
+      await picker("project-folders", observeRecentFolders, true);
+      await press("Escape", 27);
       await click(".more-menu summary");
       await audit("menu", [".more-menu-items"]);
       await click('.more-menu-items [aria-label="Cadence service"]');
@@ -724,6 +767,7 @@ try {
           width,
           theme,
         });
+      await picker("locked-thinking", observeLockedLevels);
       await observeQuestions();
       await observeLeading(
         "chat",
@@ -1088,16 +1132,7 @@ try {
         go,
         chat,
         wait,
-        screenshot: async (name) => {
-          const { data } = await send("Page.captureScreenshot", {
-            format: "png",
-            captureBeyondViewport: false,
-          });
-          await writeFile(join(reportDir, name), Buffer.from(data, "base64"), {
-            flag: "wx",
-          });
-          return data;
-        },
+        screenshot,
         run,
         rows: report.unknownMode,
         problems,

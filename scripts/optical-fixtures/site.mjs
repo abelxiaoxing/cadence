@@ -21,6 +21,7 @@ import {
   historyMessage,
   project,
   readRecord,
+  recentFolder,
   searchPage,
   storeId,
   workspaceId,
@@ -127,7 +128,15 @@ export function fixture(root) {
           epoch,
           csrf,
           home: cwd,
-          projects: [{ id: project, path: cwd, cwd, epoch }],
+          projects: [
+            { id: project, path: cwd, cwd, epoch },
+            {
+              id: "e".repeat(64),
+              path: recentFolder,
+              cwd: recentFolder,
+              epoch: null,
+            },
+          ],
           recoveries: [],
           build,
         });

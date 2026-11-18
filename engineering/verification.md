@@ -545,6 +545,40 @@ These targeted observations do not qualify a physical phone, hardware GPU, live 
 For the six theme/viewport pairs, draw counts, incremental follow/up-scroll/Latest and performance windows, use only the owner's **new** `qualify-optical` report on the final candidate.
 The earlier build reports above are not results for this one.
 
+### Recent folders and reply-locked thinking levels
+
+`pickerStates` in the optical report targets two cases the general text audit cannot establish: a current project after focus leaves it, and labels on native disabled buttons (excluded by that audit).
+In first-use setup, both recent paths must exist but neither may have `aria-current` or the leading mark.
+In the selected project the statusbar opens the chooser; browsing `specimen/facets` changes the Open target, **not** the mark on `specimen`.
+Tab visits both enabled rows with a separate visible outline, then leaves for the breadcrumbs.
+No recent folder is opened.
+In a separate running-reply conversation, opening the composer model picker reads `optical` with Low, Medium and High offered.
+Only Medium is pressed; all three are natively disabled and the lock notice is visible.
+Tab goes from model search to Stop and Shift+Tab returns, without activating either control.
+
+**Targeted observation:** `picker-evidence-ZPblIa/summary.json` in the run temporary root, canonical build `a5bc3bf6ab8ca00bece76dce61bc270715d11a84f6b6e6198fe996aaef269865` over pre-commit HEAD `d5d52ff1` in the integration worktree.
+Installed headless Chrome 151.0.7922.34, DPR 1, synthetic loopback data, both system schemes at 320×820, 390×820 and 1440×900.
+The 18 picker observations retain 42 unmodified viewport PNGs and 294 comparisons.
+The pointer was outside the controls; each capture was bracketed by matching semantics, hit tests and geometry, without retrying the screenshot.
+The folder mark is sampled across its width near both ends and the middle, against the adjacent row, section card and dialog padding.
+Thinking level text uses actual glyph ink and backing inside each button; the selected border is sampled against its face and the menu.
+`pickerStates[].frames` records each PNG, folder/button rectangles, sample coordinates, RGBs and ratios.
+Worst observed ratios (rounded):
+
+| Indicator or text                    | Obsidian             | Alabaster           |
+| ------------------------------------ | -------------------- | ------------------- |
+| Mark at rest, on row / card / dialog | 10.513/11.458/11.221 | 9.346/10.378/10.378 |
+| Folder path / keyboard focus         | 5.728/10.513         | 5.589/9.346         |
+| Low / Medium / High                  | 5.887/10.157/5.887   | 5.541/9.515/5.541   |
+| Lock notice                          | 5.547                | 5.637               |
+| Medium border, on button / menu      | 10.271/11.211        | 9.515/10.558        |
+
+The earlier targeted probe required a dialog hit in the section padding and, in three sessions, could no longer find the earlier model label at click time; `picker-evidence-mf2cyQ` records those failures.
+The revised probe locates the trigger by the live reply lock and tests the installed selection inside the open picker.
+`theme.test.tsx` separately computes contrast from the stylesheet rules and their backing layers; it does not measure DOM focus or painted pixels.
+These picker observations did not send a message, choose a model, use a live provider, qualify a physical device or repeat the performance windows.
+The full candidate checks and independent review remain the owner's evidence.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

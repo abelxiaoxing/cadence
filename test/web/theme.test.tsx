@@ -216,9 +216,9 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(selector, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
-  it("marks selected sessions, files and workflow items inside the row, independent of keyboard focus", () => {
-    const row =
-      ":is(.session-item.active, .file-item.selected, .agent-dock-run > .active)";
+  it("marks selected sessions, files, workflow items and the current recent folder independently of keyboard focus", () => {
+    const current = '.cwd-recent-list > button[aria-current="true"]';
+    const row = `:is(.session-item.active, .file-item.selected, .agent-dock-run > .active, ${current})`;
     const marker = `${row}::before`;
     expect(declaration(row, "position")).toBe("relative");
     expect(declaration(marker, "content")).toBe('""');
@@ -233,6 +233,30 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       expect(
         contrast(color("--accent", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
+    expect(
+      declaration(".cwd-recent-list > button:focus-visible", "outline-offset"),
+    ).toBe("-2px");
+    const dialog = over(
+      ruleColor(".action-dialog", "background", scheme),
+      over(color("--scrim", scheme), color("--bg", scheme)),
+    );
+    expect(declaration(".action-dialog > section", "background")).toBe(
+      "var(--card-bg, var(--bg-elev))",
+    );
+    for (const panel of [dialog, over(color("--grain", scheme), dialog)]) {
+      const backing = over(color("--card-bg", scheme), panel);
+      const selected = over(ruleColor(current, "background", scheme), backing);
+      for (const face of [panel, backing, selected])
+        expect(
+          contrast(color("--accent", scheme), face),
+        ).toBeGreaterThanOrEqual(GRAPHIC);
+      expect(
+        contrast(ruleColor(current, "color", scheme), selected),
+      ).toBeGreaterThanOrEqual(AA);
+      expect(
+        contrast(ruleColor(":where(button)", "color", scheme), backing),
+      ).toBeGreaterThanOrEqual(AA);
+    }
   });
   it("underlines only the current panel independently of hover and focus", () => {
     const current = '.rp-tab:is([aria-pressed="true"], [aria-current="true"])';
@@ -280,6 +304,33 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       expect(
         contrast(ruleColor(selector, "color", scheme), menu),
       ).toBeGreaterThanOrEqual(AA);
+  });
+  it("keeps every locked thinking level readable and outlines the pressed level on its menu", () => {
+    const pressed = '.model-thinking button[aria-pressed="true"]';
+    expect(declaration(".model-thinking button:disabled", "opacity")).toBe("1");
+    expect(declaration(":where(button)", "background")).toBe(
+      "var(--chip-bg, var(--bg-elev2))",
+    );
+    const menu = over(
+      ruleColor(".model-popover::before", "background", scheme),
+      color("--bg", scheme),
+    );
+    for (const backing of [menu, over(color("--grain", scheme), menu)]) {
+      const face = over(ruleColor(pressed, "background", scheme), backing);
+      expect(
+        contrast(ruleColor(pressed, "color", scheme), face),
+      ).toBeGreaterThanOrEqual(AA);
+      expect(
+        contrast(
+          ruleColor(":where(button)", "color", scheme),
+          over(color("--chip-bg", scheme), backing),
+        ),
+      ).toBeGreaterThanOrEqual(AA);
+      for (const side of [backing, face])
+        expect(
+          contrast(ruleColor(pressed, "border-color", scheme), side),
+        ).toBeGreaterThanOrEqual(GRAPHIC);
+    }
   });
   it("marks the active search option with a solid stroke against the dialog and row", () => {
     expect(declaration(".gs-item", "border-inline-start")).toBe(

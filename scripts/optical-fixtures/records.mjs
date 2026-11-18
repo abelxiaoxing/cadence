@@ -8,6 +8,7 @@ import { PNG } from "../../test/helpers/images.ts";
 import { plan } from "../../test/helpers/workflow-plan.ts";
 export const project = "b".repeat(64),
   cwd = "/optical/specimen",
+  recentFolder = `${cwd}/facets`,
   epoch = randomUUID(),
   storeId = randomUUID(),
   workspaceId = randomUUID(),
@@ -147,6 +148,27 @@ export const catalog = {
     },
   ],
 };
+// Only this live conversation has an installed model and multiple offered levels.
+export const lockedReply = "locked-levels";
+const lockedModel = {
+  provider: "fixture",
+  model: "optical",
+  api: "openai-completions",
+  thinking: "medium",
+};
+const lockedCatalog = {
+  ...catalog,
+  selected: { ...lockedModel, sourceSelectionId: randomUUID() },
+  entries: [
+    {
+      ...catalog.entries[0],
+      thinking: ["low", "medium", "high"].map((level) => ({
+        level,
+        selectable: true,
+      })),
+    },
+  ],
+};
 export const controlContext = (taskId = null) => ({
   status: "unavailable",
   workspaceId,
@@ -181,13 +203,19 @@ export const flowCase = {
 const isRunning = (id) =>
   id === "stream" ||
   id === "live-input" ||
+  id === lockedReply ||
   (id === "optical-flow" && flowCase.phase !== "settled");
+const lockedLive = { epoch, commandId: randomUUID() };
 const summary = (id) => ({
   id,
   title: `Optical · ${id}`,
   leaf: id === "questions" ? questions.at(-1).entry : leaf,
   status: isRunning(id) ? "running" : "completed",
-  ...(id === "live-input" ? { live: liveReply } : {}),
+  ...(id === "live-input"
+    ? { live: liveReply }
+    : id === lockedReply
+      ? { live: lockedLive }
+      : {}),
   origin: "webui",
   updatedAt: 1,
 });
@@ -250,16 +278,22 @@ export function readRecord(q) {
     case "conversation-context":
       return {
         kind,
-        context: { id: q.location.id, cwd, revision: 1, model: null },
+        context: {
+          id: q.location.id,
+          cwd,
+          revision: 1,
+          model: q.location.id === lockedReply ? lockedModel : null,
+        },
       };
     case "reload-conversation-models":
     case "conversation-models":
       return {
         kind: "conversation-models",
         catalog: {
-          ...catalog,
+          ...(q.location.id === lockedReply
+            ? lockedCatalog
+            : { ...catalog, selected: null }),
           version: { ...version, conversation: q.location },
-          selected: null,
         },
       };
     case "conversations":

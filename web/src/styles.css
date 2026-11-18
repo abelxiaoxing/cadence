@@ -875,13 +875,19 @@ summary:focus-visible,
 }
 /* A solid leading mark sits inside the row padding; the keyboard outline and
  * trailing actions have their own space. Selection changes no dimensions. */
-:is(.session-item.active, .file-item.selected, .agent-dock-run > .active) {
+:is(
+  .session-item.active,
+  .file-item.selected,
+  .agent-dock-run > .active,
+  .cwd-recent-list > button[aria-current="true"]
+) {
   position: relative;
 }
 :is(
   .session-item.active,
   .file-item.selected,
-  .agent-dock-run > .active
+  .agent-dock-run > .active,
+  .cwd-recent-list > button[aria-current="true"]
 )::before {
   content: "";
   position: absolute;
@@ -4242,7 +4248,11 @@ button.file-item:hover:not(:disabled),
   background: transparent;
   padding: 6px 8px;
 }
-.cwd-recent-list > button[aria-current] {
+.cwd-recent-list > button:focus-visible {
+  /* Keep the ring inside the scrolling list, separate from the leading mark. */
+  outline-offset: -2px;
+}
+.cwd-recent-list > button[aria-current="true"] {
   color: var(--accent-text);
   background: var(--accent-soft);
 }
@@ -5166,6 +5176,9 @@ button.file-item:hover:not(:disabled),
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11.5px;
+}
+.model-thinking button:disabled {
+  opacity: 1;
 }
 .model-thinking button[aria-pressed="true"] {
   border-color: var(--accent-strong);
