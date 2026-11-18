@@ -1,6 +1,7 @@
 /** Readiness is separate from conversation/history identity. This observation
  * never opens a folder, allocates an owner attachment or sends a message. */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { abortScope } from "../../../src/abort-scope.ts";
 import {
   decodeProjectObservation,
   type ProjectObservation,
@@ -41,49 +42,55 @@ export function useProjectObservation(
     selectedEpoch?: string | null;
   }>({});
   useEffect(() => {
-    void revision;
-    void selectedEpoch;
     if (!id) return;
     const version = ++serial.current;
     const abort = new AbortController();
     const current = () => !abort.signal.aborted && serial.current === version;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (observed?: ProjectObservation, error?: string) => {
+      if (!current()) return;
+      setState((previous) => ({
+        id,
+        revision,
+        selectedEpoch,
+        ...projectObservationResult(
+          previous.id === id ? previous.value : undefined,
+          observed,
+          error,
+        ),
+      }));
+      if (error !== "unauthenticated" && error !== "forbidden")
+        timer = setTimeout(() => void load(), 5000);
+    };
     const load = async () => {
       if (!current()) return;
+      const attempt = abortScope([abort.signal], 10000);
+      // Retire a timed-out read and resume polling even if its promise settles
+      // late. Lifecycle cancellation instead fails current() and posts nothing.
+      const timedOut = () => finish(undefined, "timeout");
+      attempt.signal.addEventListener("abort", timedOut, { once: true });
       try {
         const response = await fetch(`/workbench/v1/projects/${id}`, {
           credentials: "same-origin",
           redirect: "error",
           cache: "no-store",
-          signal: abort.signal,
+          signal: attempt.signal,
         });
+        if (attempt.signal.aborted) return;
         const value = await readJson(response);
+        if (attempt.signal.aborted) return;
         if (!response.ok) throw new Error(errorCode(value));
-        const observed = decodeProjectObservation(value);
-        if (current())
-          setState((previous) => ({
-            id,
-            revision,
-            selectedEpoch,
-            ...projectObservationResult(
-              previous.id === id ? previous.value : undefined,
-              observed,
-            ),
-          }));
+        finish(decodeProjectObservation(value));
       } catch (error) {
-        if (current())
-          setState((previous) => ({
-            id,
-            revision,
-            selectedEpoch,
-            ...projectObservationResult(
-              previous.id === id ? previous.value : undefined,
-              undefined,
-              error instanceof Error ? error.message : "unavailable",
-            ),
-          }));
+        if (!attempt.signal.aborted)
+          finish(
+            undefined,
+            error instanceof Error ? error.message : "unavailable",
+          );
+      } finally {
+        attempt.signal.removeEventListener("abort", timedOut);
+        attempt.dispose();
       }
-      if (current()) timer = setTimeout(() => void load(), 5000);
     };
     void load();
     return () => {
