@@ -6,13 +6,25 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { decodeProjectObservation } from "../src/service/contracts/gateway.ts";
+import {
+  decodeProjectAssociation,
+  PROJECT_ASSOCIATION_HEADER,
+} from "../src/service/contracts/workbench.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { createGateway } from "../src/service/gateway.ts";
 import { hash } from "../src/service/private-files.ts";
 import { request } from "./helpers/service-http-fixture.ts";
 import { sourceBuild } from "./helpers/source-build.ts";
 
-it("token-authenticated gateway ignores builds and recovers a failed same-epoch binding without preparing work", async () => {
+// This gateway is not supervised, even when the test runner itself is. No
+// cgroup inspection or service-manager lookup is part of the HTTP fixture.
+vi.mock("../src/service/maintenance.ts", async (original) => ({
+  ...(await original<typeof import("../src/service/maintenance.ts")>()),
+  supervisingUnit: () => undefined,
+}));
+
+it("separates owner liveness from session association and recovers a failed same-epoch binding without preparing work", async () => {
   const dir = mkdtempSync(join(tmpdir(), "gateway-availability-"));
   const stateHome = join(dir, "state"),
     agentDir = join(dir, "agent"),
@@ -22,6 +34,7 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
   const c = new ServiceCoordination(project, stateHome);
   let capability = "",
     epoch = "",
+    statusAvailable = true,
     bootstraps = 0;
   const allocations = new Set<string>();
   const owner = createServer((req, res) => {
@@ -43,7 +56,9 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
     }
     if (req.url === "/local/v1/admin/status") {
       expect(req.headers["x-cadence-local"]).toBe(capability);
-      return reply({ kind: "ok", value: { status: "alive", epoch } });
+      return statusAvailable
+        ? reply({ kind: "ok", value: { status: "alive", epoch } })
+        : reply({ kind: "error" }, 503);
     }
     if (req.url === "/local/v1/admin/activity") {
       expect(req.headers["x-cadence-local"]).toBe(capability);
@@ -150,14 +165,51 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
     const selected = JSON.parse(select.text).project;
     expect(selected.epoch).toBeNull();
     expect(gateway.store.associatedProjects()).toEqual([]);
+    const projectPath = `/workbench/v1/projects/${selected.id}`;
+    const observe = async () => {
+      const response = await request(gateway!.endpoint, projectPath, {
+        headers,
+      });
+      expect(response.status).toBe(200);
+      return {
+        ...decodeProjectObservation(JSON.parse(response.text)),
+        association: decodeProjectAssociation(
+          response.headers[PROJECT_ASSOCIATION_HEADER],
+        ),
+      };
+    };
+    const denied = await request(gateway.endpoint, projectPath);
+    expect(denied.status).toBe(401);
+    expect(denied.headers[PROJECT_ASSOCIATION_HEADER]).toBeUndefined();
+    const attachment = randomUUID();
+    const session = () =>
+      request(gateway!.endpoint, `/projects/${selected.id}/api/v1/session`, {
+        headers: { ...headers, "X-Cadence-Attachment": attachment },
+      });
+    expect(await observe()).toMatchObject({
+      status: "running",
+      epoch,
+      association: "unassociated",
+    });
+    const refused = await session();
+    expect(refused.status).not.toBe(200);
+    expect(JSON.parse(refused.text)).toMatchObject({
+      kind: "error",
+      error: { code: "unavailable", effect: "none" },
+    });
+    expect(allocations.size).toBe(0);
+    expect(bootstraps).toBe(0);
     const readPath = `/projects/${selected.id}/api/v1/workbench/read?request=${encodeURIComponent(JSON.stringify({ kind: "conversations" }))}`;
     expect(
       (await request(gateway.endpoint, readPath, { headers })).status,
     ).not.toBe(200);
     // Same owner and epoch: the rejected bootstrap must not poison future reads.
-    expect(
-      (await request(gateway.endpoint, readPath, { headers })).status,
-    ).toBe(200);
+    const history = await request(gateway.endpoint, readPath, { headers });
+    expect(history.status).toBe(200);
+    expect(JSON.parse(history.text)).toMatchObject({
+      kind: "ok",
+      value: { kind: "conversations" },
+    });
     expect(bootstraps).toBe(2);
     const builds: Record<string, string>[] = [
       {},
@@ -176,6 +228,19 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
     expect(gateway.store.associatedProjects()).toEqual([]);
     // Fixture association only: simulate a previously prepared owner, no Send.
     gateway.store.saveProject({ ...selected, epoch });
+    statusAvailable = false;
+    expect(await observe()).toMatchObject({
+      status: "unavailable",
+      epoch: null,
+      association: "associated",
+    });
+    statusAvailable = true;
+    expect(await observe()).toMatchObject({
+      status: "running",
+      epoch,
+      association: "associated",
+    });
+    expect(allocations.size).toBe(0);
     const prepare = async (route: string, location?: object, extra = {}) =>
       request(gateway!.endpoint, `/workbench/v1/${route}`, {
         method: "POST",
@@ -214,17 +279,7 @@ it("token-authenticated gateway ignores builds and recovers a failed same-epoch 
         )
       ).status,
     ).toBe(400);
-    const attachment = randomUUID();
-    const sessionPath = `/projects/${selected.id}/api/v1/session`;
-    for (let n = 0; n < 3; n++) {
-      expect(
-        (
-          await request(gateway.endpoint, sessionPath, {
-            headers: { ...headers, "X-Cadence-Attachment": attachment },
-          })
-        ).status,
-      ).toBe(200);
-    }
+    for (let n = 0; n < 3; n++) expect((await session()).status).toBe(200);
     expect([...allocations]).toEqual([attachment]);
     expect(bootstraps).toBe(3); // explicit preparation retires the prior routing binding
   } finally {

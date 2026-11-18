@@ -66,6 +66,7 @@ import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
+  PROJECT_ASSOCIATION_HEADER,
 } from "./contracts/workbench.ts";
 import { ConversationContextRecords } from "./conversation-contexts.ts";
 import { ServiceCoordination } from "./coordination.ts";
@@ -628,6 +629,9 @@ export async function createGateway(
     );
     return result;
   }
+  function isAssociated(id: string): boolean {
+    return store.associatedProjects().some((project) => project.id === id);
+  }
   function binding(id: string): Promise<Binding> {
     let project = store.projects().find((p) => p.id === id);
     if (!project) throw new ContractError("unavailable");
@@ -640,8 +644,7 @@ export async function createGateway(
       project = { ...project, epoch: local.epoch };
       // Merely reading a selected directory never adopts its owner's Stop
       // lifetime. Only Send preparation associates an exact epoch.
-      if (store.associatedProjects().some((p) => p.id === id))
-        store.saveProject(project);
+      if (isAssociated(id)) store.saveProject(project);
     }
     const previous = bindings.get(id);
     if (previous?.epoch === local.epoch) return previous.result;
@@ -992,10 +995,7 @@ export async function createGateway(
             return;
           }
         }
-        if (
-          route.operation === "session" &&
-          !store.associatedProjects().some((p) => p.id === project.id)
-        )
+        if (route.operation === "session" && !isAssociated(project.id))
           throw new ContractError("unavailable");
         const attachment = boundary.headers.get("x-cadence-attachment");
         if (
@@ -1181,7 +1181,7 @@ export async function createGateway(
           observed && typeof observed === "object" && "status" in observed
             ? observed.status
             : "unavailable";
-        reply(res, 200, {
+        const value = {
           kind: "project-observation",
           status:
             status === "alive"
@@ -1196,7 +1196,12 @@ export async function createGateway(
               ? observed.epoch
               : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null,
-        });
+        };
+        res.setHeader(
+          PROJECT_ASSOCIATION_HEADER,
+          isAssociated(project.id) ? "associated" : "unassociated",
+        );
+        reply(res, 200, value);
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {

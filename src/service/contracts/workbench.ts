@@ -48,6 +48,18 @@ import {
   type WorkflowRun,
 } from "./workflow.ts";
 
+/** Response header on an authenticated workbench project observation. Separate
+ * from the closed JSON body (owner status/epoch). An associated project may
+ * request a session when running; association alone is not an attachment. */
+export const PROJECT_ASSOCIATION_HEADER = "x-cadence-project-association";
+export function decodeProjectAssociation(value: unknown) {
+  // Older gateways do not report this fact. Missing evidence is neither a
+  // successful attachment nor proof that an owner is independent.
+  return value === null || value === undefined
+    ? "unknown"
+    : oneOf(value, ["associated", "unassociated"]);
+}
+
 export interface CadenceConversation {
   design?: DesignDraft;
   id: string;

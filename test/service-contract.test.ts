@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { decodeProjectAssociation } from "../src/service/contracts/workbench.ts";
 import {
   ProjectionTracker,
   ServiceClient,
@@ -22,6 +23,20 @@ import type {
 } from "../src/service-contract.ts";
 import * as facade from "../src/service-contract.ts";
 import * as worker from "../src/worker-public.mjs";
+
+it("requires explicit gateway evidence for project association independently of owner status", () => {
+  for (const value of ["associated", "unassociated"])
+    expect(decodeProjectAssociation(value)).toBe(value);
+  for (const absent of [null, undefined])
+    expect(decodeProjectAssociation(absent)).toBe("unknown");
+  for (const invalid of [
+    "running",
+    "",
+    "unavailable",
+    "associated, unassociated",
+  ])
+    expect(() => decodeProjectAssociation(invalid)).toThrow("invalid");
+});
 
 describe.each([
   { name: "service facade", contract: facade },
