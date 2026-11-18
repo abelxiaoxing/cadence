@@ -430,6 +430,15 @@ type WorkflowCardProps = {
   onChanged?(): void;
   onOpenAgent?(agent: WorkflowAgent): void;
 };
+export function WorkflowRunState({ run }: { run: WorkflowRun }) {
+  const { tx } = useT();
+  return (
+    <span>
+      {tx(run.phase)} ·{" "}
+      <span className={`workflow-status ${run.status}`}>{tx(run.status)}</span>
+    </span>
+  );
+}
 export function WorkflowCard(props: WorkflowCardProps) {
   // A different run must not inherit an archive cursor, stopped polling or a
   // selected step belonging to the previous run.
@@ -441,7 +450,7 @@ function WorkflowCardView({
   onChanged,
   onOpenAgent,
 }: WorkflowCardProps) {
-  const { t, tx } = useT();
+  const { t } = useT();
   const [poll, setPoll] = useState(1000);
   const [before, setBefore] = useState<number | undefined>();
   // Archived steps are immutable, but their run's status and Stop affordance
@@ -485,11 +494,7 @@ function WorkflowCardView({
     >
       <header>
         <strong>{run?.goal ?? t("Observing workflow")}</strong>
-        {run && (
-          <span className={`ep-state ${run.status}`}>
-            {tx(run.phase)} · {tx(run.status)}
-          </span>
-        )}
+        {run && <WorkflowRunState run={run} />}
       </header>
       {(page.error || history.error || error) && (
         <p role="alert">
@@ -710,7 +715,10 @@ export function WorkflowStepSummary({
   const { t, tx } = useT();
   return (
     <>
-      {`${tx(step.kind)} · ${workflowAgentLabel(step.id)} · ${tx(step.status)}`}
+      {`${tx(step.kind)} · ${workflowAgentLabel(step.id)} · `}
+      <span className={`workflow-status ${step.status}`}>
+        {tx(step.status)}
+      </span>
       {checkSetAside(run, step) && (
         <span className="workflow-set-aside">
           {t("set aside by a recorded deviation")}

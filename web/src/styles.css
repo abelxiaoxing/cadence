@@ -4421,6 +4421,7 @@ button.file-item:hover:not(:disabled),
     flex-direction: column;
   }
 }
+.workflow-status,
 .workflow-task-state {
   flex: none;
   display: inline-flex;
@@ -4435,17 +4436,23 @@ button.file-item:hover:not(:disabled),
     width: auto;
   }
 }
+.workflow-status.unknown {
+  color: var(--amber-text);
+}
 .workflow-task-state > svg {
   flex: none;
   width: 13px;
   height: 13px;
 }
+.workflow-status.running,
 .workflow-task-state.running {
   color: var(--accent-text);
 }
+.workflow-status.completed,
 .workflow-task-state.completed {
   color: var(--green);
 }
+.workflow-status.failed,
 .workflow-task-state.failed {
   color: var(--red-text);
 }

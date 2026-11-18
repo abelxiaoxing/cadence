@@ -149,6 +149,21 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       }
     expect(failures).toEqual([]);
   });
+  it("keeps the requested edit readable from the diff body through each tinted row and changed word", () => {
+    for (const [ink, tint, mark] of [
+      ["--green", "--green-soft", "--word-add-bg"],
+      ["--red-text", "--red-soft", "--word-del-bg"],
+    ]) {
+      const row = over(color(tint, scheme), color("--bg", scheme));
+      const word = over(color(mark, scheme), row);
+      expect(word).not.toEqual(row);
+      for (const surface of [row, word])
+        expect(
+          contrast(color(ink, scheme), surface),
+          mark,
+        ).toBeGreaterThanOrEqual(AA);
+    }
+  });
   it("keeps text readable on tinted rows, chips and bubbles", () => {
     const failures: string[] = [];
     // A tinted row, chip or bubble lies on the page or on a panel.

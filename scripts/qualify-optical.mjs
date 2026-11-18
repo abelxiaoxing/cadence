@@ -6,12 +6,19 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
 import {
+  buttonGeometry,
   contrastPixels,
   dimensions,
   frameWindow,
   textSamples,
 } from "./optical-fixtures/measure.mjs";
-import { feed, project, task } from "./optical-fixtures/records.mjs";
+import {
+  feed,
+  firstAttempt,
+  project,
+  task,
+  writeContent,
+} from "./optical-fixtures/records.mjs";
 import { fixture } from "./optical-fixtures/site.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
@@ -26,6 +33,10 @@ const site = fixture(root),
 const report = {
   candidate: site.build,
   hitTests: [],
+  controls: [],
+  attempts: [],
+  palettes: [],
+  copies: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
     encoding: "utf8",
@@ -132,9 +143,68 @@ try {
       await send("Input.dispatchKeyEvent", {
         type,
         key,
-        code: key,
+        code: key === " " ? "Space" : key,
         windowsVirtualKeyCode: code,
       });
+  };
+  const observeButton = async (role, selector, expected) => {
+    await wait(`document.querySelector(${q(selector)})`);
+    const geometry = await run(buttonGeometry, selector);
+    const row = {
+      width,
+      theme,
+      role,
+      selector,
+      ...geometry,
+      keyboardFocus: null,
+    };
+    report.controls.push(row);
+    if (expected) assert.equal(row.name, expected);
+    const { rect, visible } = row;
+    if (
+      !(rect.width && rect.height) ||
+      visible.width < rect.width - 0.01 ||
+      visible.height < rect.height - 0.01
+    )
+      problems.push({ width, theme, role, clipped: true });
+    if (row.disabled) return row;
+    if (Object.values(row.hit).some((p) => !p.hit))
+      problems.push({ width, theme, role, obstructed: true });
+    // Start just before the button, never focus the target programmatically.
+    // Tab must actually land on the enabled control. Do not activate an action.
+    await run((s) => {
+      const target = document.querySelector(s);
+      const prev = [
+        ...document.querySelectorAll(
+          "button,input,textarea,select,a[href],summary,[tabindex]",
+        ),
+      ].findLast(
+        (e) =>
+          e.compareDocumentPosition(target) &
+            Node.DOCUMENT_POSITION_FOLLOWING &&
+          !e.matches(":disabled") &&
+          !e.closest("[inert]") &&
+          e.tabIndex >= 0 &&
+          e.checkVisibility(),
+      );
+      prev?.focus({ preventScroll: true });
+    }, selector);
+    for (let i = 0; i < 12; i++) {
+      await press("Tab", 9);
+      if (
+        await ev(
+          `document.activeElement.matches(${q(selector)}) && document.activeElement.matches(':focus-visible')`,
+        )
+      ) {
+        row.keyboardFocus = true;
+        break;
+      }
+    }
+    if (!row.keyboardFocus) {
+      row.keyboardFocus = false;
+      problems.push({ width, theme, role, keyboardFocus: false });
+    }
+    return row;
   };
   let width, theme;
   const audit = async (scene, selectors) => {
@@ -187,7 +257,21 @@ try {
       worst: contrast.worst,
       indicator: indicators?.worst,
       samples: contrast.samples,
+      ...(scene === "requested edit" ? { words: contrast.words } : {}),
     });
+    if (scene === "requested edit") {
+      for (const mark of ["char-add", "char-del"]) {
+        const sample = contrast.words[mark];
+        if (!sample || sample.ratio < 4.5)
+          problems.push({
+            width,
+            theme,
+            scene,
+            mark,
+            sample: sample ?? "missing",
+          });
+      }
+    }
     if (contrast.failures.length)
       problems.push({ width, theme, scene, contrast: contrast.failures });
     for (const [s, g] of Object.entries(geometry)) {
@@ -277,6 +361,28 @@ try {
       ]);
       if (width <= 900) await press("Escape", 27);
       else await click(".inspector-toggle");
+      // The shell stays mounted for the empty → first unsaved attempt switch.
+      await wait(`document.querySelector('.chat-welcome')`);
+      await ev(`location.hash='chat=attempt'`);
+      await wait(
+        `document.querySelector('.chat-attempt-text')?.innerText===${q(firstAttempt.text)}`,
+      );
+      await wait(
+        `!document.querySelector('.chat-welcome') && document.querySelector('.optical-field').dataset.scene==='reading' && +getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
+      );
+      const { draws } = await run(frameWindow, 1250, false);
+      const attempt = await ev(
+        `({ opacity:+getComputedStyle(document.querySelector('.optical-field')).opacity, hero:!!document.querySelector('.chat-welcome'), body:document.querySelector('.chat-attempt').innerText })`,
+      );
+      report.attempts.push({ width, theme, draws, ...attempt });
+      assert.equal(draws, 0);
+      assert.ok(
+        !attempt.hero &&
+          attempt.opacity <= 0.08 &&
+          attempt.body.includes(firstAttempt.text) &&
+          attempt.body.includes(firstAttempt.status),
+      );
+      await audit("unsaved attempt", [".chat-attempt", ".chat-attempt-text"]);
       await go(chat("reading"), ".chat-turn");
       await wait(
         `+getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
@@ -294,6 +400,8 @@ try {
         ".codeblock pre",
         ".composer-toolbar",
       ]);
+      await observeButton("code fold", ".code-caption button:first-child");
+      await observeButton("code copy", ".code-caption .output-copy");
       await click(".code-caption button:first-child");
       assert.ok(await ev(`document.querySelector('.codeblock pre').hidden`));
       await click(".code-caption button:first-child");
@@ -306,6 +414,7 @@ try {
         ".toolcall-output-label",
         ".toolcall-output pre",
       ]);
+      await observeButton("tool output copy", ".toolcall-output .output-copy");
       await scrollTo(".chat-image-open");
       await click(".chat-image-open");
       await audit("lightbox", [
@@ -314,6 +423,41 @@ try {
         ".img-lightbox-toolbar",
       ]);
       await press("Escape", 27);
+      await go(chat("edit"), ".chead-main");
+      await click(".chead-main");
+      await scrollTo(".file-diff-body .char-add");
+      await audit("requested edit", [
+        ".file-diff-body",
+        ".char-add",
+        ".char-del",
+      ]);
+      await go(chat("write"), ".chead-main");
+      await click(".chead-main");
+      await wait(`document.querySelector('.write-copy')`);
+      assert.equal(
+        await ev(`document.querySelectorAll('.diff-line-row.add').length`),
+        400,
+      );
+      // Intercept only writeText in this disposable fixture document; never
+      // ask for permissions, touch the system clipboard, or read it back.
+      await ev(
+        `Object.defineProperty(navigator,'clipboard',{value:{writeText: async text=>{opticalProbe.received=text}}})`,
+      );
+      const copy = await observeButton(
+        "requested write copy",
+        ".file-diff-toolbar .write-copy",
+      );
+      assert.equal(copy.keyboardFocus, true);
+      await press(" ", 32);
+      assert.equal(await ev(`opticalProbe.received`), writeContent);
+      report.copies.push({
+        width,
+        theme,
+        source: "requested write",
+        characters: writeContent.length,
+        exact: true,
+        shownLines: 400,
+      });
       await go(chat("design"), ".design-track input:checked");
       await scrollTo(".design-track");
       await audit("design", [
@@ -322,11 +466,21 @@ try {
         ".design-track",
         ".design-track label",
       ]);
+      await observeButton(
+        "submit design",
+        ".design-card > button:last-child",
+        "Submit design and use recommendations for unanswered questions",
+      );
       await scrollTo(".plan-context");
       await audit("plan", [
         ".workflow-plan:not(.design-card)",
         ".plan-context",
       ]);
+      const planButton = ".workflow-plan:not(.design-card) > button.primary";
+      await wait(
+        `document.querySelector(${q(planButton)})?.textContent==='Implement this plan'`,
+      );
+      await observeButton("implement plan", planButton, "Implement this plan");
       await scrollTo(".workflow-line-open");
       await click(".workflow-line-open");
       await wait(`document.querySelector('.workflow-board')`);
@@ -335,6 +489,28 @@ try {
         ".workflow-card",
         ".workflow-board",
         ".workflow-task",
+      ]);
+      await go(chat("confirm"), ".workflow-plan");
+      await wait(
+        `document.querySelector(${q(planButton)})?.textContent==='Confirm implementation'`,
+      );
+      await observeButton(
+        "confirm implementation",
+        planButton,
+        "Confirm implementation",
+      );
+      await click(".workflow-line-open");
+      await scrollTo(".workflow-card summary .workflow-status.unknown");
+      for (const parent of ["header", "summary"])
+        assert.equal(
+          await ev(
+            `document.querySelector('.workflow-card ${parent} .workflow-status')?.textContent`,
+          ),
+          "unknown",
+        );
+      await audit("unknown workflow", [
+        ".workflow-card > header .workflow-status",
+        ".workflow-card summary .workflow-status",
       ]);
       await go(`/app?project=${project}#task=${task}`, ".view-menu");
       await click(".view-menu summary");
@@ -347,6 +523,20 @@ try {
         ".rtr-list",
         ".rtr-detail",
       ]);
+      await click(".act-fit");
+      await wait(`document.querySelectorAll('.vis-item.vis-range').length===4`);
+      const palette = await ev(
+        `(()=>{const items=[...document.querySelectorAll('.vis-item.vis-range')].sort((a,b)=>a.getBoundingClientRect().left-b.getBoundingClientRect().left);return [...document.querySelectorAll('.rtr-row')].map((row,i)=>({event:row.querySelector('.tt').textContent, tool:row.querySelector('.rtr-chip').textContent,chip:getComputedStyle(row.querySelector('.rtr-chip')).color,lane:getComputedStyle(items[i]).backgroundColor}))})()`,
+      );
+      report.palettes.push({ width, theme, palette });
+      assert.deepEqual(
+        palette.map((r) => r.tool),
+        ["read", "read", "read", "write"],
+      );
+      assert.ok(palette.every((r) => r.chip === r.lane));
+      assert.equal(palette[0].chip, palette[1].chip);
+      assert.equal(palette[1].chip, palette[2].chip);
+      assert.notEqual(palette[2].chip, palette[3].chip);
       if (
         !(await ev(
           `document.querySelector('.inspector-toggle').getAttribute('aria-expanded')==='true'`,

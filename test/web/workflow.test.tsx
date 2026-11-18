@@ -31,6 +31,7 @@ import {
   placeWorkflows,
   WorkflowAttemptSummary,
   WorkflowLine,
+  WorkflowRunState,
   WorkflowStepSummary,
 } from "../../web/src/components/workspace/WorkflowPanel";
 import { LocaleProvider } from "../../web/src/i18n/locale";
@@ -681,6 +682,18 @@ it("a completed delivery states its deviations on its line and leads its view wi
   expect(view(delivered, "zh")).toContain("与约定的偏离：2 处");
   expect(view(run())).toBe("");
 });
+it("shows unknown from the run and the step independently of phase and task state", () => {
+  const r = run({ status: "unknown", phase: "verifying" });
+  const probe = step("probe", "check", "unknown");
+  expect(renderToStaticMarkup(<WorkflowRunState run={r} />)).toContain(
+    'verifying · <span class="workflow-status unknown">unknown</span>',
+  );
+  expect(
+    renderToStaticMarkup(<WorkflowStepSummary run={run()} step={probe} />),
+  ).toBe(
+    'check · probe · <span class="workflow-status unknown">unknown</span>',
+  );
+});
 it("a check a deviation set aside reads as set aside and failed, never as passed", () => {
   const perf = step("perf-budget", "check", "failed");
   const unit = step("unit", "check", "completed");
@@ -728,10 +741,14 @@ it("a check a deviation set aside reads as set aside and failed, never as passed
       </LocaleProvider>,
     );
   expect(summary(accepted, perf)).toBe(
-    'check · perf-budget · failed<span class="workflow-set-aside">set aside by a recorded deviation</span>',
+    'check · perf-budget · <span class="workflow-status failed">failed</span><span class="workflow-set-aside">set aside by a recorded deviation</span>',
   );
-  expect(summary(accepted, earlier)).toBe("check · perf-budget · failed");
-  expect(summary(accepted, unit)).toBe("check · unit · completed");
+  expect(summary(accepted, earlier)).toBe(
+    'check · perf-budget · <span class="workflow-status failed">failed</span>',
+  );
+  expect(summary(accepted, unit)).toBe(
+    'check · unit · <span class="workflow-status completed">completed</span>',
+  );
   expect(summary(accepted, perf, "zh")).toContain("已被记录的偏离搁置");
   // A direct working-copy delivery has no acceptance record: its verification
   // lists the round, and only a failed check a deviation names is set aside.

@@ -4,11 +4,13 @@
  * Cadence: the body of an opened `edit` or `write` tool card, built from the
  * call's recorded arguments. It says what the call asked for and is never
  * compared with the file. No split or raw view, fullscreen portal, open-file
- * bridge, copy action or streaming state. */
+ * bridge or streaming state. Copy uses the complete requested write body. */
 import { useState } from "react";
 import { FiAlertCircle, FiFileText } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
 import type { DiffLine, FileDiffData } from "../../rich/file-diff";
+
+import { CopyButton } from "../rich/CopyButton";
 
 /** Lines rendered before the rest waits behind an explicit action: a recorded
  * `write` can hold megabytes. */
@@ -89,6 +91,13 @@ export function FileChangeCard({
               ? t("Requested content")
               : t("Requested change")}
         </span>
+        {data.isWrite && (
+          <CopyButton
+            text={data.content}
+            className="write-copy"
+            label={`${t("Copy full retained field")} · ${t("Requested content")}`}
+          />
+        )}
       </div>
       <div className="file-diff-body">
         {total === 0 ? (

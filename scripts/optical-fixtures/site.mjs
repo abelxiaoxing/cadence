@@ -39,7 +39,7 @@ export function fixture(root) {
     storeId,
     epoch,
     scope,
-    committedSeq: "3",
+    committedSeq: change.committedSeq,
     runs: [],
     context: controlContext(scope.id),
     horizon: {
@@ -48,7 +48,7 @@ export function fixture(root) {
         reader: "runs",
         storeId,
         scope,
-        snapshotSeq: "3",
+        snapshotSeq: change.committedSeq,
         after: null,
         limit: 50,
       },
@@ -168,7 +168,7 @@ export function fixture(root) {
         storeId,
         workspaceId,
         epoch,
-        committedSeq: "3",
+        committedSeq: change.committedSeq,
         rootLabel: cwd,
         context: controlContext(),
         models: [],
@@ -196,7 +196,7 @@ export function fixture(root) {
       });
     if (q?.reader)
       return ok({
-        request: { ...q, snapshotSeq: "3" },
+        request: { ...q, snapshotSeq: change.committedSeq },
         records:
           q.reader === "events"
             ? events

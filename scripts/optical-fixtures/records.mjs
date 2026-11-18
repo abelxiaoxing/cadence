@@ -52,6 +52,42 @@ const run = {
     after: [],
   })),
 };
+const uncertain = {
+  ...run,
+  id: randomUUID(),
+  status: "unknown",
+  phase: "verifying",
+  tasks: [],
+  steps: [
+    {
+      id: "verify-material",
+      kind: "check",
+      status: "unknown",
+      text: "No retained exit status",
+      exitCode: null,
+      truncated: false,
+    },
+  ],
+};
+const revalidated = randomUUID();
+export const firstAttempt = {
+  commandId: randomUUID(),
+  status: "failed",
+  text: "First specimen before Pi persistence.",
+  notice: "Message not saved.",
+};
+export const writeContent = Array.from(
+  { length: 407 },
+  (_, i) => `facet ${i + 1}\n`,
+).join("");
+const mutation = {
+  edit: {
+    path: "material.ts",
+    oldText: "const tone = silver;",
+    newText: "const tone = opal;",
+  },
+  write: { path: "requested.txt", content: writeContent },
+};
 export const catalog = {
   status: "complete",
   withheld: 0,
@@ -103,8 +139,8 @@ const steps = (id) =>
       : {}),
     role,
     text,
-    name: role === "tool" ? "read" : "",
-    target: role === "tool" ? "material.ts" : "",
+    name: role === "tool" ? (Object.hasOwn(mutation, id) ? id : "read") : "",
+    target: role === "tool" ? (mutation[id]?.path ?? "material.ts") : "",
     clipped: false,
     error: false,
     parts: role === "tool" ? 1 : 0,
@@ -112,6 +148,10 @@ const steps = (id) =>
   }));
 export function readRecord(q) {
   const { kind, id } = q;
+  const noSession = id === "empty" || id === "attempt";
+  const planned = id === "design" || id === "confirm";
+  const runs =
+    id === "design" ? [runId] : id === "confirm" ? [uncertain.id] : [];
   switch (kind) {
     case "conversation-image":
       return { kind, mimeType: "image/png", data: PNG, next: null };
@@ -141,13 +181,13 @@ export function readRecord(q) {
     case "conversation":
       return {
         kind,
-        summary: id === "empty" ? null : summary(id),
-        leaf: id === "empty" ? null : leaf,
+        summary: noSession ? null : summary(id),
+        leaf: noSession ? null : leaf,
         continues: true,
-        turns: id === "empty" ? 0 : 1,
-        branches: id === "empty" ? 0 : 1,
-        runs: id === "design" ? [runId] : [],
-        attempt: null,
+        turns: noSession ? 0 : 1,
+        branches: noSession ? 0 : 1,
+        runs,
+        attempt: id === "attempt" ? firstAttempt : null,
       };
     case "conversation-turn":
       return {
@@ -179,9 +219,9 @@ export function readRecord(q) {
         item: {
           id: "step-2",
           role: "tool",
-          name: "read",
+          name: mutation[id] ? id : "read",
           text: "Actual fixture output.\n".repeat(32),
-          args: '{"path":"material.ts"}',
+          args: JSON.stringify(mutation[id] ?? { path: "material.ts" }),
           error: false,
         },
       };
@@ -190,12 +230,18 @@ export function readRecord(q) {
         kind,
         state: {
           id,
-          enabled: id === "design",
+          enabled: planned,
           revision: 2,
           head: null,
-          proposal: id === "design" ? proposal : null,
+          proposal: planned
+            ? {
+                ...proposal,
+                model: { ...version, conversation: { id, cwd } },
+                ...(id === "confirm" ? { revalidatedFrom: revalidated } : {}),
+              }
+            : null,
           ...(id === "design" ? { design } : {}),
-          runs: id === "design" ? [runId] : [],
+          runs,
         },
       };
     case "conversation-tree":
@@ -205,7 +251,11 @@ export function readRecord(q) {
     case "workflow-history":
       return { kind, entries: [{ id: runId, run }], next: null };
     case "workflow":
-      return { kind, commandId: null, response: { type: "run", run } };
+      return {
+        kind,
+        commandId: null,
+        response: { type: "run", run: id === uncertain.id ? uncertain : run },
+      };
     case "files":
     case "directories":
       return {
@@ -232,7 +282,36 @@ export function readRecord(q) {
   }
 }
 const child = randomUUID();
-export const events = ["read", "write", "read"].map((name, i) => ({
+const callId = randomUUID();
+const start = (name, callId) => ({
+  kind: "tool-start",
+  callId,
+  declaration: null,
+  source: { disposition: "unavailable", value: null },
+  name,
+  argsDetailId: null,
+});
+export const events = [
+  start("read", callId),
+  {
+    kind: "tool-update",
+    callId,
+    semantics: "snapshot",
+    detailId: randomUUID(),
+  },
+  {
+    kind: "tool-end",
+    callId,
+    declaration: null,
+    source: { disposition: "unavailable", value: null },
+    name: "read",
+    association: "execution-only",
+    startObserved: true,
+    isError: false,
+    resultDetailId: randomUUID(),
+  },
+  start("write", randomUUID()),
+].map((event, i) => ({
   kind: "capture-fact",
   recordId: randomUUID(),
   committedSeq: String(i + 1),
@@ -244,14 +323,7 @@ export const events = ["read", "write", "read"].map((name, i) => ({
       firstObservedMs: i + 1,
       lastObservedMs: i + 1,
     },
-    event: {
-      kind: "tool-start",
-      callId: randomUUID(),
-      declaration: null,
-      source: { disposition: "unavailable", value: null },
-      name,
-      argsDetailId: null,
-    },
+    event,
   },
 }));
 
@@ -268,7 +340,7 @@ export const change = {
   kind: "owner-fact",
   observedMs: 3,
   recordId: randomUUID(),
-  committedSeq: "3",
+  committedSeq: String(events.length + 1),
   link: { epoch, operationId: randomUUID(), taskId: task, runId },
   fact: {
     kind: "changes",

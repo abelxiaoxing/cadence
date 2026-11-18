@@ -16,6 +16,12 @@ type FactRecord = Extract<
   HistoryRecord,
   { kind: "owner-fact" | "capture-fact" }
 >;
+type Capture = Extract<FactRecord, { kind: "capture-fact" }>;
+const callKey = (
+  { epoch, runId, childRunId }: Capture["link"],
+  callId: string,
+) => JSON.stringify([epoch, runId, childRunId, callId]);
+
 export function timelineBridge(
   scopeId: string,
   records: HistoryRecord[],
@@ -28,13 +34,30 @@ export function timelineBridge(
     (r): r is FactRecord =>
       r.kind === "owner-fact" || r.kind === "capture-fact",
   );
+  // Only named endpoints on this loaded page can identify an update. A
+  // conflicting pair leaves its updates anonymous, regardless of page order.
+  const names = new Map<string, string | null>();
+  for (const fact of facts) {
+    if (fact.kind !== "capture-fact") continue;
+    const event = fact.capture.event;
+    if (
+      (event.kind !== "tool-start" && event.kind !== "tool-end") ||
+      !event.name
+    )
+      continue;
+    const key = callKey(fact.link, event.callId);
+    if (!names.has(key)) names.set(key, event.name);
+    else if (names.get(key) !== event.name) names.set(key, null);
+  }
   const segments: TimelineSegment[] = facts.map((r, i) => {
     const kind = r.kind === "owner-fact" ? r.fact.kind : r.capture.event.kind;
     const event = r.kind === "capture-fact" ? r.capture.event : null;
     const tool =
       event?.kind === "tool-start" || event?.kind === "tool-end"
         ? event.name
-        : undefined;
+        : r.kind === "capture-fact" && event?.kind === "tool-update"
+          ? names.get(callKey(r.link, event.callId))
+          : undefined;
     const child = r.kind === "capture-fact" ? r.link.childRunId : null;
     const lane = kind.startsWith("tool")
       ? "tools"

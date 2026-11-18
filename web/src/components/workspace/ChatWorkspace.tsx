@@ -1921,6 +1921,9 @@ export function ChatWorkspace({
             conversation.count === 0 &&
             !turns.length &&
             conversation.summary === null &&
+            !conversation.attempt &&
+            conversation.pending.length === 0 &&
+            conversation.undelivered.length === 0 &&
             !conversation.error &&
             !activitySelected && (
               <ChatWelcome

@@ -128,6 +128,7 @@ export async function contrastPixels(png, points) {
   });
   let worst = null;
   const failures = new Map();
+  const words = {};
   for (const p of points) {
     const offset =
       (Math.floor(p.y * scale) * img.width + Math.floor(p.x * scale)) * 4;
@@ -171,6 +172,12 @@ export async function contrastPixels(png, points) {
       name: p.name,
       min: p.min,
     };
+    for (const mark of ["char-add", "char-del"])
+      if (
+        p.name.startsWith(`SPAN.${mark}:`) &&
+        (!words[mark] || ratio < words[mark].ratio)
+      )
+        words[mark] = observed;
     if (!worst || ratio < worst.ratio) worst = observed;
     if (
       ratio < p.min &&
@@ -178,7 +185,12 @@ export async function contrastPixels(png, points) {
     )
       failures.set(p.name, observed);
   }
-  return { samples: points.length, worst, failures: [...failures.values()] };
+  return {
+    samples: points.length,
+    worst,
+    words,
+    failures: [...failures.values()],
+  };
 }
 export function dimensions(selectors) {
   const geom = (el) => {
@@ -224,4 +236,105 @@ export async function frameWindow(ms, scroll) {
     over50: intervals.filter((x) => x > 50).length / intervals.length,
     draws: window.opticalProbe.draws - draws,
   };
+}
+
+// Scroll the control itself (including its nested scrollers). Measure the
+// border box, not just a center hit or the dimensions of its enclosing card.
+export async function buttonGeometry(selector) {
+  const el = document.querySelector(selector);
+  if (!(el instanceof HTMLButtonElement))
+    throw Error(`Missing button: ${selector}`);
+  el.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: "instant",
+  });
+  const box = (left, top, right, bottom) => ({
+    left,
+    top,
+    right,
+    bottom,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  });
+  const measure = () => {
+    const r = el.getBoundingClientRect();
+    const viewport = box(0, 0, innerWidth, innerHeight);
+    let left = Math.max(r.left, 0),
+      top = Math.max(r.top, 0),
+      right = Math.min(r.right, innerWidth),
+      bottom = Math.min(r.bottom, innerHeight);
+    const clips = [];
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const css = getComputedStyle(p),
+        x = css.overflowX !== "visible",
+        y = css.overflowY !== "visible";
+      if (!x && !y) continue;
+      const rect = p.getBoundingClientRect(),
+        px = rect.left + p.clientLeft,
+        py = rect.top + p.clientTop;
+      const clip = box(px, py, px + p.clientWidth, py + p.clientHeight);
+      if (x) {
+        left = Math.max(left, clip.left);
+        right = Math.min(right, clip.right);
+      }
+      if (y) {
+        top = Math.max(top, clip.top);
+        bottom = Math.min(bottom, clip.bottom);
+      }
+      clips.push({
+        ancestor: `${p.tagName}.${p.className}`,
+        x,
+        y,
+        clip,
+        intersection: box(left, top, right, bottom),
+      });
+    }
+    const midX = r.left + r.width / 2,
+      midY = r.top + r.height / 2;
+    const hit = Object.fromEntries(
+      Object.entries({
+        center: [midX, midY],
+        left: [r.left + 1, midY],
+        right: [r.right - 1, midY],
+        top: [midX, r.top + 1],
+        bottom: [midX, r.bottom - 1],
+      }).map(([side, [x, y]]) => [
+        side,
+        { x, y, hit: el.contains(document.elementFromPoint(x, y)) },
+      ]),
+    );
+    return {
+      name:
+        el.getAttribute("aria-label") ||
+        [...el.childNodes]
+          .filter(
+            (n) =>
+              !(
+                n instanceof Element && n.getAttribute("aria-hidden") === "true"
+              ),
+          )
+          .map((n) => n.textContent)
+          .join("")
+          .trim(),
+      disabled: el.matches(":disabled"),
+      rect: box(r.left, r.top, r.right, r.bottom),
+      viewport,
+      clips,
+      visible: box(left, top, right, bottom),
+      hit,
+    };
+  };
+  let last,
+    steady = 0;
+  for (let i = 0; i < 90; i++) {
+    await new Promise(requestAnimationFrame);
+    const reading = measure(),
+      json = JSON.stringify(reading);
+    if (json === last) {
+      if (++steady === 3) return reading;
+    } else steady = 0;
+    last = json;
+  }
+  throw Error(`Unstable button: ${selector}`);
 }
