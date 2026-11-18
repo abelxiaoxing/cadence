@@ -16,9 +16,8 @@ Source: this delivery, 2026-11-17
 
 Kind: pitfall
 
-Why: changing HOME alone cannot isolate an inherited service cgroup.
-The `managedServer` fixture calls the real CLI handler with injected `AutostartSystem` manager and cgroup ports, so the self-management refusal stays covered without calling the host service manager.
+Why: a temporary HOME does not isolate the caller's cgroup, so `managedServer` invokes the real CLI handler with a fixture `AutostartSystem` for both the cgroup observation and the manager it checks against.
 
-Anchors: `test/service-autostart.test.ts#managedServer`, `src/service/maintenance.ts#cgroupPath`
+Anchors: `test/service-autostart.test.ts#managedServer`, `src/service/maintenance.ts#insideUnit`
 
 Source: this delivery, 2026-11-17

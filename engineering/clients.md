@@ -280,7 +280,7 @@ The old task inspector is readonly content/check/change/review evidence, never a
 Browser conversations are the project's Pi sessions, shared with the terminal rather than imported (see [Ordinary conversations](#ordinary-conversations)).
 Shared history does not transfer native terminal grants, tool-restoration state or browser plan approval: mode and confirmation authority remain per surface.
 All of this works without a live Pi terminal.
-A lost Send is acknowledged only by its original command ID, not by an unrelated terminal append advancing the leaf.
+A lost Send is acknowledged only by its original command ID, not by an unrelated terminal append advancing the leaf or another tab's live reply; the pending draft cannot be steered or queued into that reply.
 A definite pre-acceptance Send refusal preserves the draft and permits another explicit Send or mode exit; it does not pin an impossible pending turn.
 A token grants workspace access, not action consent.
 Ordinary Send binds its exact text, session entry it continues, conversation/cwd, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
@@ -395,7 +395,8 @@ The record covers the checkout: one owner lists every same-checkout session, and
 Ordinary turns in different Pi sessions can run concurrently on the same checkout, even when a workflow holds its exclusive permit.
 Their tools operate on the host and can overwrite each other's edits.
 An ordinary turn's first durable state is `starting`: the owner has accepted it and is preparing the worker, including auth.
-This is an active, cancellable turn, not a checkout wait or evidence of model output; `running` follows preparation.
+This is an active, cancellable turn even before Pi writes a user entry; neither `starting` nor the switch to `running` after auth is evidence of model output.
+A coordinator Send still begins `queued`; workflow transcript statuses and the queue for further messages inside one reply are separate from ordinary Send startup.
 Leaving a tab only detaches; Cancel targets that turn alone, while owner Stop signals all its turns.
 A signalled worker aborts its Pi session first so the session records the interrupted reply as Pi does.
 Access-token rotation revokes viewers, not admitted turns.
