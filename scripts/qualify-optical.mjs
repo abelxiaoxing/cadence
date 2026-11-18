@@ -5,6 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
+import { observeComposerFlow } from "./optical-fixtures/composer-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import {
   contrastPixels,
@@ -21,6 +22,7 @@ import {
 import {
   observeDisabledModels,
   observePanelTabs,
+  observeSelectedRows,
 } from "./optical-fixtures/panel-observations.mjs";
 import {
   leading,
@@ -71,6 +73,8 @@ const report = {
   fieldFind: [],
   searchNavigation: [],
   panelTabs: [],
+  selectedRows: [],
+  composerFlow: [],
   disabledModels: [],
   artifactFind: [],
   controlFocus: [],
@@ -1066,6 +1070,35 @@ try {
       });
       if (width <= 900) await press("Escape", 27);
       else await click(".inspector-toggle");
+      await observeSelectedRows({
+        width,
+        theme,
+        go,
+        chat,
+        click,
+        wait,
+        ev,
+        run,
+        parkPointer,
+        press,
+        send,
+        capture,
+        rows: report.selectedRows,
+      });
+      if (width > 900)
+        await observeComposerFlow({
+          width,
+          theme,
+          go,
+          chat,
+          layout,
+          click,
+          press,
+          send,
+          wait,
+          run,
+          rows: report.composerFlow,
+        });
       // Start the next folder-first observation in this disposable origin only.
       await ev(`localStorage.removeItem('cadence-last-project')`);
     }

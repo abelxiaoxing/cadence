@@ -228,7 +228,20 @@ export async function contrastPixels(png, points) {
         (Math.floor(p.ink[1] * scale) * img.width +
           Math.floor(p.ink[0] * scale)) *
         4;
-      p.fg = `rgb(${img.data.slice(i, i + 3).join(",")})`;
+      const pixel = img.data.slice(i, i + 3);
+      if (p.expectedInk) {
+        canvas.fillStyle = p.expectedInk;
+        canvas.fillRect(0, 0, 1, 1);
+        const expected = canvas.getImageData(0, 0, 1, 1).data;
+        if (
+          pixel.length !== 3 ||
+          pixel.some((v, c) => Math.abs(v - expected[c]) > 3)
+        )
+          throw Error(
+            `Missing painted ${p.name}: ${pixel} instead of ${p.expectedInk}`,
+          );
+      }
+      p.fg = `rgb(${pixel.join(",")})`;
       p.alpha = 1;
     }
     canvas.clearRect(0, 0, 1, 1);

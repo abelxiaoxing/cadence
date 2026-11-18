@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import { AUTH_PAGE_CSP, renderAuthPage } from "../../src/service/auth-page.ts";
+import { publicError } from "../../src/worker-public.mjs";
 import { browserIdentity, digest } from "../build-identity.mjs";
 import {
   artifactPage,
@@ -16,6 +17,7 @@ import {
   events,
   fieldPage,
   fieldTask,
+  flowCase,
   historyMessage,
   project,
   readRecord,
@@ -191,6 +193,12 @@ export function fixture(root) {
       return ok({ storeId, workspaceId, epoch, status: "complete", runs: [] });
     if (p.endsWith("/snapshot")) return ok(snapshot(q));
     if (p.endsWith("/workbench/read")) {
+      if (
+        q.kind === "conversation-turn" &&
+        q.id === "optical-flow" &&
+        flowCase.failTurn
+      )
+        return json({ kind: "error", error: publicError("stale") });
       const v = readRecord(q);
       if (q.kind === "conversation-step") {
         const { id, leaf, turnId, step, part } = q;

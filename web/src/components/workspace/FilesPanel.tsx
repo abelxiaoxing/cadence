@@ -315,6 +315,7 @@ export function FilesPanel({
             <button
               type="button"
               className="file-main"
+              aria-current={selected === entry.path ? "true" : undefined}
               title={entry.path}
               onClick={() =>
                 entry.directory ? open(entry.path) : setSelected(entry.path)

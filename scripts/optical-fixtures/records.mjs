@@ -147,7 +147,12 @@ const questions = [
   },
 ];
 const liveReply = { epoch, commandId: randomUUID() };
-const isRunning = (id) => id === "stream" || id === "live-input";
+// Change only the dedicated composer specimen, never a timing/scroll input.
+export const flowCase = { phase: "thinking", failTurn: false, sequence: 0 };
+const isRunning = (id) =>
+  id === "stream" ||
+  id === "live-input" ||
+  (id === "optical-flow" && flowCase.phase !== "settled");
 const summary = (id) => ({
   id,
   title: `Optical · ${id}`,
@@ -243,7 +248,18 @@ export function readRecord(q) {
       };
     case "conversation-turn": {
       const question = id === "questions" ? questions[q.ordinal] : null;
-      const items = steps(id, question);
+      const flow = id === "optical-flow";
+      const items = steps(
+        id,
+        flow
+          ? {
+              id: leaf,
+              entry: "00000002",
+              text: "Read the sample.",
+              reply: "Retained optical specimen.",
+            }
+          : question,
+      );
       return {
         kind,
         conversationId: id,
@@ -257,7 +273,12 @@ export function readRecord(q) {
             : {}),
           at: q.ordinal + 1,
           status: summary(id).status,
-          notice: "",
+          ...(flow && isRunning(id)
+            ? {
+                activity: { kind: flowCase.phase, sequence: flowCase.sequence },
+              }
+            : {}),
+          notice: flow ? `Observation: ${flowCase.phase}` : "",
           omitted: { thinking: false, media: false, other: false },
           steps: items.length,
           stable: isRunning(id) ? items.length - 1 : items.length,
@@ -360,6 +381,9 @@ export function readRecord(q) {
         entries: [
           { name: "facets", path: "facets", directory: true },
           { name: "material.ts", path: "material.ts", directory: false },
+          ...(q.location?.id === "design"
+            ? [{ name: "optics.ts", path: "optics.ts", directory: false }]
+            : []),
         ],
       };
     case "file":

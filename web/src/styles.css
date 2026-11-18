@@ -871,9 +871,21 @@ summary:focus-visible,
   background: var(--bg-elev2);
   color: var(--text);
 }
+/* A solid leading mark sits inside the row padding; the keyboard outline and
+ * trailing actions have their own space. Selection changes no dimensions. */
+:is(.session-item.active, .file-item.selected) {
+  position: relative;
+}
+:is(.session-item.active, .file-item.selected)::before {
+  content: "";
+  position: absolute;
+  inset-block: 6px;
+  inset-inline-start: 2px;
+  border-inline-start: 3px solid var(--accent);
+  pointer-events: none;
+}
 .session-item.active,
 .session-item.active:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
   color: var(--text);
 }

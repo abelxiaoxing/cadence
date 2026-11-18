@@ -343,6 +343,46 @@ A preceding run did not observe the page becoming hidden when activating an unre
 The probe now opens a sibling tab from the measured page and requires `document.hidden` before counting background draws.
 These short observations do not qualify hardware GPUs, physical phones, live providers or the owner's post-commit checks and independent review.
 
+### Retained turns, composer mode and current navigation rows
+
+`optical-evidence-j679hv/summary.json` in the run temporary root records canonical `bun run build:web` build `fa5f00c6cf357f504baf6e9af9849d482b4d87d30576e681d2e50c9dcb3844da`, over pre-commit HEAD `5aa12a4d795c1e2f4bc516c27281da228921ac70` in the same integration worktree and task branch.
+These measurements are from that build: installed Chrome 151.0.7922.34, synthetic loopback fixture, disposable profile, ANGLE/Vulkan SwiftShader, DPR 1.
+
+- **Current activity (`composerFlow`):** At 1440×900 in each theme, a successful thinking observation set `data-flow` and ran one `prism-flow` animation on the input capsule.
+  A failed turn read then left the same thinking turn visible: the assistant paragraph still passed a text-range hit test, the unsent draft was unchanged, but the attribute was absent, `::before` reported `animation-name: none` and no flow animation was running.
+  A successful tool read restored flow; reduced motion kept the indication static, and restoring motion brought back one animation.
+  Waiting, text and settlement showed none, with another positive thinking observation immediately before settlement.
+  The separate `chat-timeline` component regression covers paused reads, unavailable/replaced execution attachments and the requirement for a new head after reconnect; this browser fixture induced a read failure, not a live-owner restart.
+- **Mode uncertainty:** English and Chinese component tests cross a failed mode read with retained on/armed intent and check the actual composer hint and native disabled button (text, class, accessible name and title).
+  An ordinary message does not require an affirmative Cadence observation, and no toggle, design edit or design submission grants implementation approval.
+- **Navigation (`selectedRows`):** In both themes at 320×820, 390×820 and 1440×900, the probe opened `reading` then `design`, and `material.ts` then `optics.ts`, using the visible navigation and file controls.
+  It reopened compact conversation drawers after selection.
+  The solid leading mark moved with `aria-current`; active and inactive controls kept their widths.
+  The probe measured each selected row at rest, with the other row hovered, and with the current button keyboard-focused.
+  All four file actions remained Tab-reachable and hit-testable without activation.
+  Across 72 selection states, three points inside the mark were sampled on unmodified compositor captures and compared separately to the row and wing at the same height (432 comparisons, each required ≥3:1).
+  The ink must match the painted stroke, not an outline coordinate.
+  The 24 focused states additionally sampled the separate outer outline against the wing.
+
+Worst measured marker ratios by adjacent surface (RGB triplets give **ink on backing**):
+
+| Theme / control     | Marker on row                      | Marker on wing            | Separate focus on wing |
+| ------------------- | ---------------------------------- | ------------------------- | ---------------------- |
+| Obsidian / session  | 10.782:1 (203,208,216 on 28,30,33) | 11.775:1 (on 20,21,25)    | 11.775:1               |
+| Obsidian / file     | 10.380:1 (203,208,216 on 32,33,37) | 11.312:1 (on 25,25,29)    | 11.336:1               |
+| Alabaster / session | 9.263:1 (57,62,72 on 238,238,240)  | 10.289:1 (on 250,250,251) | 10.289:1               |
+| Alabaster / file    | 8.939:1 (57,62,72 on 234,234,237)  | 9.944:1 (on 246,246,248)  | 9.944:1                |
+
+The lowest selection ratio was the light `material.ts` row at rest at 1440px.
+The lowest general text samples across 143 scene audits were the 320px requested-edit language labels: dark **5.010:1**, light **4.507:1**.
+The 12 desktop frame windows all had p50 16.7ms and 0% of intervals >50ms.
+In on/off/off/on order, p95 was 16.7ms throughout at idle, 16.8/16.8/16.7/16.8ms scrolling and 16.7/16.7/16.8/16.7ms with increments.
+Only idle-on drew ambient frames in those windows; scroll paints included Latest and increments painted message, code, transcript and footer with either preference.
+The separate 1.25s Hero windows counted 25 draws and 25 after restoration; loss, hidden, reduced motion and explicit off counted zero.
+An initial probe left the synthetic project selected before the next folder-first case; row and flow checks now run before the existing disposable-origin last-project cleanup.
+The final run reported no problems or unavailable scenes.
+No hardware GPU, physical phone, live provider, actual service restart or post-commit owner review is claimed.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
