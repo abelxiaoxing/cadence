@@ -4434,6 +4434,23 @@ button.file-item:hover:not(:disabled),
   @apply backdrop-blur-xl;
   overflow-wrap: anywhere;
 }
+.design-card nav,
+.design-card fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.design-card fieldset {
+  flex-direction: column;
+  margin-block: 12px;
+}
+.design-card label small {
+  display: block;
+}
+.design-card button[aria-current="step"] {
+  border-color: var(--accent);
+}
 .workflow-plan .primary {
   margin-top: 12px;
 }

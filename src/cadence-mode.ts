@@ -17,14 +17,32 @@ import {
 import { Type } from "typebox";
 import { CADENCE_INSTRUCTIONS as INSTRUCTIONS } from "./cadence-instructions.ts";
 import { CadencePreferences } from "./cadence-preferences.ts";
-import { PLAN_PARAMETERS, RESEARCH_PARAMETERS } from "./coordinator-tools.mjs";
+import {
+  DESIGN_PARAMETERS,
+  KNOWLEDGE_PARAMETERS,
+  PLAN_PARAMETERS,
+  RESEARCH_PARAMETERS,
+} from "./coordinator-tools.mjs";
 import {
   departure,
   NativeConnection,
   projectStopCommand,
 } from "./native-client.ts";
+import {
+  answerText,
+  available,
+  type DesignDraft,
+  decodeDesign,
+  designSummary,
+  newDesign,
+  recommendsDesign,
+  reviseDesign,
+} from "./service/contracts/design.ts";
 import { decodeSessionId } from "./service/contracts/models.ts";
-import type { ChatTurn } from "./service/contracts/workbench.ts";
+import {
+  type ChatTurn,
+  decodeKnowledgeLookup,
+} from "./service/contracts/workbench.ts";
 import {
   investigationId,
   readableDelivery,
@@ -59,6 +77,8 @@ export { CADENCE_MODE_ENTRY };
 const CONTEXT = "cadence-mode-context";
 const READY = "cadence-mode-ready";
 const TOOLS = [
+  "cadence_design",
+  "cadence_knowledge",
   "cadence_research",
   "cadence_plan",
   "cadence_start",
@@ -77,6 +97,7 @@ export const DIALOG_SETTLE_MS = 250;
 const announcedOwners = new Set<string>();
 
 export interface CadenceModeState {
+  design?: DesignDraft;
   enabled: boolean;
   cwd: string;
   runId: string | null;
@@ -114,7 +135,17 @@ export function restoreCadenceMode(
       state = idle();
       continue;
     }
+    let design: DesignDraft | undefined;
+    if (v.design) {
+      try {
+        design = decodeDesign(v.design);
+      } catch {
+        state = idle();
+        continue;
+      }
+    }
     state = {
+      ...(design ? { design } : {}),
       enabled: v.enabled,
       cwd,
       runId: v.runId,
@@ -836,6 +867,11 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     permission = undefined;
     const human = event.source === "interactive" && raw.consume(event.text);
     if (human) allowStart = true;
+    if (human && state.design && recommendsDesign(event.text)) {
+      state.design = reviseDesign(state.design, state.design.answers, true);
+      state.proposal = null;
+      persist();
+    }
     if (human && approved(event.text) && state.proposal)
       permission = {
         id: state.proposal.id,
@@ -852,7 +888,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTable(ctx)}`,
           message: {
             customType: CONTEXT,
-            content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}.`,
+            content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}. ${state.design ? "Design: " + JSON.stringify(state.design) : ""}`,
             display: false,
           },
         }
@@ -884,6 +920,75 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
         }
       : undefined,
   );
+  const editDesign = async (ctx: ExtensionContext, check: () => void) => {
+    for (;;) {
+      check();
+      const d = state.design;
+      if (!d) throw new ContractError("stale");
+      const valid = () => {
+        check();
+        if (state.design !== d) throw new ContractError("stale");
+      };
+      const rows = d.questions.filter((q) => available(q, d.answers));
+      const labels = rows.map(
+        (q) =>
+          `${q.question} · ${
+            answerText(
+              q,
+              d.answers.find((a) => a.question === q.id),
+            ) ?? "…"
+          }`,
+      );
+      const submit =
+        "Submit design (use recommendations for unanswered questions)";
+      const selected = await ctx.ui.select("Design choices", [
+        ...labels,
+        submit,
+      ]);
+      valid();
+      if (!selected) return false;
+      if (selected === submit) {
+        state.design = reviseDesign(d, d.answers, true);
+        state.proposal = null;
+        permission = undefined;
+        persist();
+        return true;
+      }
+      const q = rows[labels.indexOf(selected)];
+      if (!q) throw new ContractError("invalid");
+      const options = q.options.map(
+        (o) =>
+          `${o.label}${o.id === q.recommended ? " (recommended)" : ""} — ${o.cost}`,
+      );
+      const other = "Other idea…";
+      const picked = await ctx.ui.select(
+        `${q.question}\n${q.reason}\nAcceptance: ${q.acceptance}`,
+        [...options, other, "Back"],
+      );
+      valid();
+      if (!picked || picked === "Back") continue;
+      const a =
+        picked === other
+          ? {
+              question: q.id,
+              other:
+                (await ctx.ui.input(q.question, "Other idea"))?.trim() || "",
+            }
+          : { question: q.id, option: q.options[options.indexOf(picked)].id };
+      valid();
+      if ("other" in a && !a.other) continue;
+      state.design = decodeDesign(
+        reviseDesign(
+          d,
+          [...d.answers.filter((old) => old.question !== q.id), a],
+          false,
+        ),
+      );
+      state.proposal = null;
+      permission = undefined;
+      persist();
+    }
+  };
   pi.registerCommand("cadence", {
     description:
       "Enable Cadence for this conversation: /cadence [goal]. It stays on until you type 退出 Cadence / exit cadence or run /cadence exit.",
@@ -919,6 +1024,16 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       }
       engage();
       status();
+      if (args.trim() === "design" && state.design) {
+        const done = await changing(ctx, (claim) =>
+          editDesign(ctx, claim.assertCurrent),
+        );
+        if (done && state.design)
+          pi.sendUserMessage(designSummary(state.design), {
+            expandPromptTemplates: false,
+          });
+        return;
+      }
       pi.sendMessage(
         {
           customType: "cadence-mode",
@@ -939,6 +1054,52 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           },
           { triggerTurn: true },
         );
+    },
+  });
+  pi.registerTool({
+    name: "cadence_knowledge",
+    label: "Read project knowledge",
+    description:
+      "Read one current project Markdown source or heading without a research worker.",
+    parameters: KNOWLEDGE_PARAMETERS,
+    async execute(_id, input, _signal, _update, ctx) {
+      active(ctx);
+      const source = decodeKnowledgeLookup(input);
+      await connect(ctx, false);
+      const observed = value(
+        await client().workbenchRead({ kind: "project-knowledge", source }),
+      );
+      if (observed.kind !== "file" || observed.path !== "project-knowledge")
+        throw new ContractError("invalid");
+      return result(observed.text);
+    },
+  });
+  pi.registerTool({
+    name: "cadence_design",
+    label: "Design choices",
+    description:
+      "Show one editable batch of material product decisions, option costs, recommendations and acceptance. Wait for the user's batch submission.",
+    parameters: DESIGN_PARAMETERS,
+    async execute(_id, input, signal, _update, ctx) {
+      return changing(ctx, async (claim) => {
+        active(ctx);
+        const check = () => {
+          claim.assertCurrent();
+          if (signal?.aborted) throw new ContractError("stale");
+        };
+        check();
+        state.design = newDesign(randomUUID(), input, state.design);
+        state.proposal = null;
+        permission = undefined;
+        persist();
+        const submitted = await editDesign(ctx, check);
+        return result(
+          submitted && state.design
+            ? "User submitted the design. Publish the final plan.\n" +
+                designSummary(state.design)
+            : "Draft saved. The user can resume with /cadence design. End this turn.",
+        );
+      });
     },
   });
   pi.registerTool({
@@ -1033,6 +1194,10 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     parameters: PLAN_PARAMETERS,
     async execute(_id, input, _signal, _update, ctx) {
       // Refused by field name before anything is asked of the service.
+      if (state.design && !state.design.submitted)
+        throw new Error(
+          "Design choices are open. Wait for the user to submit /cadence design.",
+        );
       const plan = workflowPlanInput(input);
       return changing(ctx, async (claim) => {
         active(ctx);
@@ -1070,19 +1235,25 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           ],
           details: {
             plan: shown,
+            summary: `# ${response.proposal.plan.goal}\n\n${response.proposal.plan.decisions}\n\nAcceptance: ${response.proposal.plan.acceptance}\n\n${response.proposal.cwd} · ${response.proposal.display?.model ?? ""}\n${readableDelivery(response.proposal.delivery)}\nExpand the tool result for all assignments, setup and check commands.`,
             digest: response.proposal.digest,
             redacted,
           },
         };
       });
     },
-    renderResult(output) {
+    renderResult(output, options) {
       const d = output.details as
-        | { plan?: unknown; digest?: unknown; redacted?: unknown }
+        | {
+            plan?: unknown;
+            summary?: unknown;
+            digest?: unknown;
+            redacted?: unknown;
+          }
         | undefined;
       if (typeof d?.plan === "string" && typeof d.digest === "string")
         return planComponent(
-          `${d.plan}\nPlan identity: ${d.digest}\n${d.redacted === true ? "Credential-like text was redacted by the owner; this is exactly what would run.\n" : ""}Type 按计划实施 to approve these exact bytes, or keep discussing.`,
+          `${options.expanded || typeof d.summary !== "string" ? d.plan : d.summary}\nPlan identity: ${d.digest}\n${d.redacted === true ? "Credential-like text was redacted by the owner; this is exactly what would run.\n" : ""}Type 按计划实施 to approve these exact bytes, or keep discussing.`,
         );
       return new Text(
         diagnosticText(

@@ -103,6 +103,8 @@ it("coordinators expose only their owner bridge and close listeners without gain
   vi.stubGlobal("process", { ...process, send: vi.fn() });
   const kit = toolkit("research", resolve("."), { coordinator: true });
   expect(kit.sessionOptions.tools).toEqual([
+    "cadence_knowledge",
+    "cadence_design",
     "cadence_research",
     "cadence_plan",
     "cadence_status",

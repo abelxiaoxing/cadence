@@ -365,7 +365,9 @@ function fixture(mode = "pass") {
         seam.trees.get(root)!.head = "f".repeat(40);
     } else if (kind === "knowledge") {
       events.push("knowledge");
-      expect(prompt).toContain("controlled native evidence");
+      expect(prompt).toContain(
+        "Final candidate checks and independent review are pending",
+      );
       put(cwd, "knowledge.md", "Verified project fact with evidence");
       report = { status: "completed", summary: "Updated approved knowledge" };
     } else if (readonly) {
@@ -445,9 +447,10 @@ it("one named stable worktree combines implementation, verified knowledge and fi
   await f.execute();
   expect(f.workspaces).toEqual([f.d.worktreeRoot]);
   expect(f.d.taskBranch).toContain(f.run.id);
-  expect(f.events.indexOf("knowledge")).toBeGreaterThan(
-    f.events.indexOf("review"),
+  expect(f.events.indexOf("knowledge")).toBeLessThan(
+    f.events.indexOf("documents"),
   );
+  expect(f.counts().reviews).toBe(1);
   const notes = f.events.indexOf("documents"),
     merge = f.events.indexOf("merge");
   expect(f.events.slice(notes + 1, merge)).toEqual([

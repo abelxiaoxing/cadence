@@ -44,6 +44,7 @@
     "src/service/contracts/core.ts",
     "src/service/contracts/current.ts",
     "src/service/contracts/domain.ts",
+    "src/service/contracts/design.ts",
     "src/service/contracts/history.ts",
     "src/service/contracts/models.ts",
     "src/service/coordination.ts",

@@ -78,6 +78,7 @@
   "package/src/service/contracts/capture.ts",
   "package/src/service/contracts/core.ts",
   "package/src/service/contracts/current.ts",
+  "package/src/service/contracts/design.ts",
   "package/src/service/contracts/domain.ts",
   "package/src/service/contracts/history.ts",
   "package/src/service/contracts/models.ts",

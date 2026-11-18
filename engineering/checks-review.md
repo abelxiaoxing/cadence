@@ -106,7 +106,7 @@ Dependent assignments wait for completion.
 Unknown originals, Cancel and authority/storage failures stop new work.
 An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.
 A timed-out shell check is not automatically replayed because descendant/tool closure was not established.
-Checks and readonly Agent review still decide delivery.
+The owner assembles implementation, curated knowledge and deliverable notes before candidate checks and independent Agent review. Final verification and integration outcomes stay in owner records. Repairs and changed candidate identities require fresh evidence.
 Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
 Every declared check runs in every round.
 A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.

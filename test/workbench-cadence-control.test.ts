@@ -677,7 +677,14 @@ it("coordinators can read the retained answer past its preview without another i
   )[0];
   expect(question.text).not.toContain("requested conclusion");
   expect(question.result).toEqual({ runId: research.id, stepId });
-  let request = question.result;
+  const explicitFirst = { ...question.result, offset: 0, digest: "" };
+  const initial = await f.tool(turn, "cadence_status", explicitFirst);
+  expect(initial).toMatchObject({
+    offset: 0,
+    next: { digest: initial.digest },
+  });
+  expect(await f.tool(turn, "cadence_status", explicitFirst)).toEqual(initial);
+  let request: Record<string, unknown> = explicitFirst;
   let retained = "";
   let first: Record<string, unknown> | undefined;
   for (;;) {
@@ -710,6 +717,9 @@ it("coordinators can read the retained answer past its preview without another i
   expect(
     await f.tool(turn, "cadence_status", { ...question.result, offset: 1 }),
   ).toMatchObject({ refused: "invalid" });
+  expect(
+    await f.tool(turn, "cadence_status", { ...question.result, offset: 1 }),
+  ).toMatchObject({ restarted: true, offset: 0, next: first!.next });
   secrets.push("requested conclusion");
   expect(await f.tool(turn, "cadence_status", first!.next)).toMatchObject({
     refused: "changed-result",

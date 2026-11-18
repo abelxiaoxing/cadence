@@ -16,7 +16,11 @@ Active-branch session entries retain mode and the last observed run, not a reusa
 Session replacement restores normal tools before rebinding the new branch; compaction does not disable the mode.
 Entry and typed exact plan approval require fresh trusted/idle raw-terminal evidence; paste, quoted commands, RPC and extension-origin input cannot provide it.
 Planning tools expose coordinated readonly subagents, proposals and observations rather than uncoordinated edits.
-Both surfaces declare `cadence_research` and `cadence_plan` from one schema (`RESEARCH_PARAMETERS`, `PLAN_PARAMETERS` in `src/coordinator-tools.mjs`) that states shape only: no counts or sizes, so Pi's own argument check never turns a call down for a bound the model could not know.
+Product choices use one batch with stable question and option IDs, tradeoffs, recommendations, related acceptance and optional dependencies on earlier answers.
+Native Pi keeps the editable draft in its branch entries and resumes it with `/cadence design`. The browser owner retains it with its conversation revision and rejects stale edits.
+Selecting or revisiting a question requires no model turn. Submission sends the confirmed choices for the implementation card. Revising design retires the previous card. Execution uses the existing exact-plan approval on the originating surface.
+
+Both surfaces declare `cadence_knowledge`, `cadence_design`, `cadence_research` and `cadence_plan` from one schema (the parameter definitions in `src/coordinator-tools.mjs`) that states shape only: no counts or sizes, so Pi's own argument check never turns a call down for a bound the model could not know.
 The service completes and checks the call (`researchInput`, `workflowPlanInput` in `src/service/contracts/workflow.ts`): a plan field that may be empty may be left out, a question list loses its blank and repeated entries, and whatever cannot be accepted is refused as `<field>: <what it holds and what is accepted>`.
 The coordinator corrects that field and repeats the call in the same turn; nothing in the instructions or a notice lets it publish a reduced plan or ask the user to reply first.
 A reading names a recorded investigation by a completed research step's `investigation` value or by that step's own id; the browser checks that an answer is recorded under it before publishing, and a worker is told when one it was given is not.

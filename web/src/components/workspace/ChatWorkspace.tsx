@@ -4,6 +4,7 @@
  * Cadence: the branch shown (the view) and the entry the next message
  * continues (the anchor) are separate. Choosing a branch, a version or a
  * question only reads; an anchor only changes what the next Send names. */
+
 import {
   Fragment,
   useCallback,
@@ -20,6 +21,10 @@ import {
   FiGitBranch,
   FiMessageSquare,
 } from "react-icons/fi";
+import {
+  type DesignAnswer,
+  designSummary,
+} from "../../../../src/service/contracts/design.ts";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type {
   CadenceConversation,
@@ -116,6 +121,7 @@ import { useImageDraft } from "./ChatImages";
 import { turnParts } from "./ChatSteps";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
+import { DesignCard } from "./DesignCard";
 import { QuestionRail } from "./QuestionRail";
 import { useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
@@ -431,10 +437,20 @@ export function ChatWorkspace({
     available ? { kind: "cadence-conversation", id } : null,
     1000,
   );
-  const state =
+  const [editedState, setEditedState] =
+    useState<
+      import("../../../../src/service/contracts/workbench.ts").CadenceConversation
+    >();
+  const polledState =
     workflow.value?.kind === "cadence-conversation"
       ? workflow.value.state
       : undefined;
+  const state =
+    polledState &&
+    editedState?.id === id &&
+    editedState.revision > polledState.revision
+      ? editedState
+      : polledState;
   const cadence = state?.enabled === true;
   // Ordinary chat never depends on the Cadence record: a failed mode read
   // still allows an ordinary Send, which the owner refuses if Cadence is on.
@@ -1067,7 +1083,44 @@ export function ChatWorkspace({
       }
     }
   };
-  const send = async (override?: string, retained?: PendingSend) => {
+  const editDesign = async (answers: DesignAnswer[]) => {
+    if (!state?.design || decisionBusy.current) return;
+    const generation = sendGeneration.current;
+    decisionBusy.current = true;
+    setBusy(true);
+    try {
+      const response = await client.workbenchCommand({
+        kind: "cadence-design-edit",
+        commandId: crypto.randomUUID(),
+        conversationId: id,
+        revision: state.revision,
+        designId: state.design.id,
+        answers,
+      });
+      if (!alive.current || generation !== sendGeneration.current) return;
+      if (response.kind !== "ok") throw new Error(response.error.code);
+      if (
+        response.value.kind !== "cadence-conversation" ||
+        response.value.state.id !== id
+      )
+        throw new Error("stale");
+      setEditedState(response.value.state);
+    } catch (e) {
+      if (alive.current && generation === sendGeneration.current)
+        setError(e instanceof Error ? e.message : "unavailable");
+    } finally {
+      if (alive.current && generation === sendGeneration.current) {
+        decisionBusy.current = false;
+        setBusy(false);
+        workflow.refresh();
+      }
+    }
+  };
+  const send = async (
+    override?: string,
+    retained?: PendingSend,
+    submitDesign = false,
+  ) => {
     const message = retained?.text ?? override ?? draft;
     const images = retained?.images ?? (override ? [] : imageDraft.files);
     const exiting = retained
@@ -1184,13 +1237,15 @@ export function ChatWorkspace({
                 context?.model ??
                 modelRead.preview?.remembered ??
                 undefined)),
-          intent: exiting
-            ? "exit"
-            : cadence
-              ? "message"
-              : selecting
-                ? "enter"
-                : "ordinary",
+          intent: submitDesign
+            ? "design"
+            : exiting
+              ? "exit"
+              : cadence
+                ? "message"
+                : selecting
+                  ? "enter"
+                  : "ordinary",
         });
       if (retained) {
         if (
@@ -1963,6 +2018,17 @@ export function ChatWorkspace({
                 id: approving,
               })}
             </p>
+          )}
+          {state?.enabled && state.design && (
+            <DesignCard
+              key={state.design.id}
+              draft={state.design}
+              disabled={
+                busy || running || !canSend || !cadenceKnown || !!approving
+              }
+              onEdit={(answers) => void editDesign(answers)}
+              onSubmit={(d) => void send(designSummary(d), undefined, true)}
+            />
           )}
           {state?.enabled && state.proposal && (
             <PlanCard

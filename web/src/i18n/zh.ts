@@ -2,6 +2,15 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Design choices": "设计选项",
+  Questions: "问题",
+  Recommended: "推荐",
+  Acceptance: "验收",
+  "Other idea": "其他想法",
+  "Use this answer": "采用这项回答",
+  "Design submitted": "设计已提交",
+  "Submit design and use recommendations for unanswered questions":
+    "整批提交，未回答的问题采用推荐项",
   "Thinking activity observed": "已观察到思考活动",
   "Thinking activity ended": "思考活动已结束",
   "Thinking content unavailable": "思考内容不可用",
