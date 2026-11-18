@@ -1353,10 +1353,14 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
-            {activity && activity.runningSince !== null && (
+            {activity?.reply && (
               <WorkingStatus
-                since={activity.runningSince}
-                label={t("Working")}
+                since={activity.reply.since}
+                label={
+                  activity.reply.status === "running"
+                    ? t("Working")
+                    : tx(activity.reply.status)
+                }
               />
             )}
             {roster?.status === "complete"

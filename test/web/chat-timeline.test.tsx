@@ -13,11 +13,13 @@ import {
   type ChatTreeNode,
   type ChatTurn,
   decodeWorkbenchResult,
+  type WorkbenchCommand,
   type WorkbenchRead,
   type WorkbenchResult,
 } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { ServiceClient } from "../../src/service-client.ts";
+import { publicError, type Reply } from "../../src/service-contract.ts";
 import {
   ConversationReader,
   type LoadedTurn,
@@ -99,6 +101,7 @@ vi.mock("react", async (original) => {
         },
       ];
     },
+    useId: () => "fixture-id",
     useRef: (initial: unknown) => {
       const index = hooks.cursor++;
       hooks.cells[index] ??= { value: { current: initial } };
@@ -1019,7 +1022,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
     undelivered: [],
     runs: [],
     attempt: null,
-    count: Math.max(...turns.map((turn) => turn.ordinal)) + 1,
+    count: Math.max(-1, ...turns.map((turn) => turn.ordinal)) + 1,
     branches: 1,
     pinned: false,
     earlier: false,
@@ -1064,10 +1067,12 @@ function workspaceFixture(turns: LoadedTurn[]) {
         entries: [],
       },
     })),
-    workbenchCommand: vi.fn(async (_command: unknown) => ({
-      kind: "ok",
-      value: {},
-    })),
+    workbenchCommand: vi.fn(
+      async (command: WorkbenchCommand): Promise<Reply<WorkbenchResult>> => ({
+        kind: "ok",
+        value: { kind: "accepted", commandId: command.commandId },
+      }),
+    ),
   };
   // Controlled dimensions: scrollTop deliberately records the requested value,
   // not browser clamping, anchoring or event dispatch.
@@ -1087,6 +1092,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
       height: number;
     }
   >();
+  const onActivity = vi.fn();
   let tree: ReactNode;
   const draw = (hidden = false) => {
     tree = render(() =>
@@ -1094,6 +1100,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
         client: client as never,
         id: "chat",
         workspaceId: "workspace",
+        onActivity,
         initialCwd: "/project",
         enabled: true,
         hidden,
@@ -1179,11 +1186,147 @@ function workspaceFixture(turns: LoadedTurn[]) {
     conversation,
     client,
     storage,
+    onActivity,
     flushFrames,
     frames,
     observers: Observer.all,
   };
 }
+
+it("a starting turn is navigable, accepts only in-reply input, and Stop names that exact run", async () => {
+  vi.useFakeTimers();
+  const prior = loaded("prior", undefined, 0);
+  prior.header.status = "completed";
+  const start = loaded("admitted", undefined, 1);
+  start.header = {
+    ...start.header,
+    entry: null,
+    status: "starting",
+    steps: 1,
+    stable: 1,
+  };
+  start.steps = start.steps.slice(0, 1);
+  const f = workspaceFixture([prior, start]);
+  // The browser turn exists before Pi lists it in the branch tree.
+  workspace.nodes.pop();
+  const live = { commandId: start.header.id, epoch: "this-owner" };
+  Object.assign(required(f.conversation.summary), { status: "starting", live });
+  const initial = f.draw();
+  expect(initial.rail.questions.map((q) => q.id)).toEqual([
+    "prior",
+    "admitted",
+  ]);
+  expect(initial.rows[0].view.props.onContinue).toBeUndefined();
+  expect(initial.rows[0].view.props.onEdit).toBeUndefined();
+  expect(f.onActivity).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      reply: { status: "starting", since: start.header.at },
+    }),
+  );
+  for (const mode of ["steer", "queue"] as const) {
+    initial.composer.onDraft(mode);
+    const props = f.draw().composer;
+    expect(props.input?.enabled).toBe(true);
+    const tree = child("composer", () => ChatComposer(props));
+    const buttons = elements<ComponentProps<"button">>(tree, "button");
+    expect(buttons.some((b) => b.props.type === "submit")).toBe(false);
+    expect(
+      buttons.find((b) => b.props["aria-label"] === "Stop response")?.props
+        .disabled,
+    ).toBe(false);
+    const textarea = elements<{ onKeyDown(event: unknown): void }>(
+      tree,
+      "textarea",
+    )[0];
+    textarea.props.onKeyDown({
+      key: "Enter",
+      altKey: mode === "queue",
+      nativeEvent: {},
+      preventDefault() {},
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.client.workbenchCommand).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: "conversation-input",
+        mode,
+        text: mode,
+        conversationId: "chat",
+        turnId: live.commandId,
+        epoch: live.epoch,
+      }),
+    );
+  }
+  f.draw().composer.onStop();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.client.workbenchCommand).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kind: "interrupt",
+      conversationId: "chat",
+      turnId: live.commandId,
+      epoch: live.epoch,
+    }),
+  );
+  expect(f.client.workbenchCommand).toHaveBeenCalledTimes(3);
+});
+
+it.each(["none", "uncertain"] as const)(
+  "a Send with effect:%s keeps its draft; only a definite refusal unlocks it for editing",
+  async (effect) => {
+    vi.useFakeTimers();
+    const f = workspaceFixture([]);
+    f.conversation.summary = null;
+    f.conversation.leaf = null;
+    f.client.workbenchCommand.mockResolvedValueOnce({
+      kind: "error",
+      error: publicError(
+        effect === "none" ? "capacity" : "unavailable",
+        effect,
+      ),
+    });
+    f.draw().composer.onDraft("original draft");
+    f.draw().composer.onSend();
+    await vi.advanceTimersByTimeAsync(0);
+    const command = required(f.client.workbenchCommand.mock.calls[0]?.[0]);
+    expect(command).toMatchObject({ kind: "send", text: "original draft" });
+    const view = f.draw();
+    expect(view.rows).toHaveLength(0);
+    expect(view.composer.draft).toBe("original draft");
+    expect(view.composer.locked).toBe(effect !== "none");
+    const pending = "cadence:draft:workspace:chat:pending";
+    if (effect === "none") {
+      expect(f.storage.has(pending)).toBe(false);
+      expect(view.composer.canSend).toBe(true);
+      view.composer.onDraft("edited after refusal");
+      expect(f.draw().composer.draft).toBe("edited after refusal");
+    } else {
+      expect(f.storage.get(pending)).toBe(command.commandId);
+      expect(view.composer.canSend).toBe(false);
+      // Another tab's admission is not a receipt for this draft, nor a
+      // destination for it. Only observing its own command consumes the draft.
+      f.conversation.summary = {
+        id: "chat",
+        title: "Another reply",
+        leaf: null,
+        origin: "webui",
+        status: "starting",
+        updatedAt: 1,
+        live: { epoch: "owner", commandId: crypto.randomUUID() },
+      };
+      expect(f.draw().composer.input?.enabled).toBe(false);
+      expect(f.storage.get(pending)).toBe(command.commandId);
+      f.conversation.summary = {
+        ...required(f.conversation.summary),
+        live: { epoch: "owner", commandId: command.commandId },
+      };
+      f.draw();
+      expect(f.draw().composer.draft).toBe("");
+      expect(f.storage.has(pending)).toBe(false);
+    }
+    await vi.advanceTimersByTimeAsync(10000);
+    f.draw();
+    expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("ChatWorkspace keeps outer row identities through Pi handoff, inserted blocks, settlement, re-observation and earlier pages, without merging equal bodies", () => {
   const preview = loaded("command", "command:user", 1);

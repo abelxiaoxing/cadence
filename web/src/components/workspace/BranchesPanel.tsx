@@ -29,7 +29,7 @@ export interface BranchesView {
   loading: boolean;
   /** A branch was chosen instead of following the session's latest. */
   pinned: boolean;
-  /** No reply is queued or running: the anchor may be moved. */
+  /** No reply is live: the anchor may be moved. */
   canAct: boolean;
   /** Show a message in its branch; readonly. */
   onShow(node: ChatTreeNode): void;

@@ -911,6 +911,7 @@ summary:focus-visible,
 .session-state {
   font-family: inherit;
 }
+.session-state.starting,
 .session-state.running,
 .session-state.queued {
   color: var(--accent-text);

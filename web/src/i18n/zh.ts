@@ -1080,6 +1080,7 @@ export const zh = {
   "accepted-unallocated": "已接受未分配",
   active: "活动中",
   draining: "排空中",
+  starting: "正在启动",
   queued: "排队中",
   preparing: "准备中",
   running: "运行中",

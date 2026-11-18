@@ -16,6 +16,7 @@ import {
 } from "react-icons/fi";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
+import { unsettled } from "../../client/conversation-reader";
 import { useConversationHistory } from "../../client/use-conversation-history";
 import { usePage } from "../../history/use-page";
 import { type MessageKey, useT } from "../../i18n/locale";
@@ -407,9 +408,7 @@ export function TaskSidebar({
   };
   // Only live replies are "running"; the open conversation stays in history
   // (highlighted there) once its reply settles.
-  const liveChats = chats.filter(
-    (chat) => chat.status === "running" || chat.status === "queued",
-  );
+  const liveChats = chats.filter((chat) => unsettled(chat.status));
   const pastChats = chats.filter((chat) => !liveChats.includes(chat));
   // A conversation's live workflow is what it is doing, unless its reply ended
   // badly: that status stays (the workflow is listed under Running anyway).
@@ -424,12 +423,15 @@ export function TaskSidebar({
   // phase or a reply that is not simply completed. A row outside Running work
   // also offers its actions: rename and archive, or unarchive once archived.
   const chatRow = (chat: ChatSummary) => {
-    const live = chat.status === "running" || chat.status === "queued";
+    const live = unsettled(chat.status);
+    // A starting reply is independent of any linked workflow (the latter
+    // still has its own row), not an active coordinator discussion.
+    const replying = live && chat.status !== "starting";
     const flow =
-      live || chat.status === "completed" ? liveWorkflow(chat) : undefined;
+      replying || chat.status === "completed" ? liveWorkflow(chat) : undefined;
     const state = flow
       ? tx(workflowActivity(flow))
-      : chat.cadence && live
+      : chat.cadence && replying
         ? t("Discussing")
         : chat.status === "completed"
           ? ""
