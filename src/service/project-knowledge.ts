@@ -37,6 +37,8 @@ export const KNOWLEDGE_LIMITS = {
   sourceBytes: 4096,
   namedBytes: 8 * 1024,
   factLines: 12,
+  matchRows: 16,
+  matchBytes: 256,
   depth: 3,
 } as const;
 /** What the project and the agreement name for one reader, ahead of discovery. */
@@ -503,14 +505,28 @@ export function coordinatorKnowledge(
       return { path, notice: "Source absent, unsafe or unreadable." };
     }
     const lines = preview.text.split("\n");
-    const at = lines.findIndex((line) => line.includes(match));
-    if (at < 0)
+    const matches: { line: number; text: string }[] = [];
+    let matchingLines = 0;
+    for (const [i, line] of lines.entries()) {
+      if (!line.includes(match)) continue;
+      matchingLines++;
+      if (matches.length < KNOWLEDGE_LIMITS.matchRows)
+        matches.push({
+          line: i + 1,
+          text: Buffer.from(line.trim())
+            .subarray(0, KNOWLEDGE_LIMITS.matchBytes)
+            .toString("utf8")
+            .replace(/�$/u, ""),
+        });
+    }
+    if (!matches.length)
       return {
         path,
         match,
         limited: preview.limited,
         notice: "Literal not found in the observed source prefix.",
       };
+    const at = matches[0].line - 1;
     const first = Math.max(0, at - 2);
     const context = Buffer.from(
       lines.slice(first, at + KNOWLEDGE_LIMITS.factLines).join("\n"),
@@ -518,6 +534,8 @@ export function coordinatorKnowledge(
     return {
       path,
       line: at + 1,
+      matches,
+      matchingLines,
       firstLine: first + 1,
       match,
       digest: digest(preview.text),

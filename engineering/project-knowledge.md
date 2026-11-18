@@ -60,8 +60,11 @@ Documents can guide implementation but never grant permissions, skip mandatory c
 
 The coordinator keeps its own conversation small: the route table, up to its budget and sanitized, is the only project knowledge it is given with every turn (`routeTableBrief`, in the native system prompt and the browser coordinator's instructions, as data rather than instructions), and it reads routed documents or headings directly through `cadence_knowledge`.
 For a directly verifiable source fact, the same tool accepts a checkout-relative file and a literal match.
-It returns the first matching line number and nearby lines from the owner’s bounded, redacted file preview, with the digest of that observed prefix.
+It returns a bounded list of matching lines, their total count in the observed prefix, and the context around the first occurrence from the owner’s redacted preview.
 The response includes the observed source digest and truncation status.
+For worktree preparation, a coordinator can request Git branch and HEAD and inspect named checkout-relative dependency entries in one read.
+A leaf symlink is reported by kind without following it or exposing its destination.
+The exact plan checks Git identity and conflicts with its declared writes; unrelated dirty files do not require a clean checkout or a research worker.
 Every completed investigation is recorded under `workflows-v1/investigations/` by its step's child run identity, with the commit it was made at and a digest of each project file its answer cites (`citedFiles`, at most 32), so a later agreement can name it instead of having each worker explore again.
 The coordinator's summary of a research run shows that identity on each step.
 A worker is given a named investigation's answer only while every cited file still reads as recorded in its own working tree; otherwise it gets a pointer saying which files changed, without the stale answer.
