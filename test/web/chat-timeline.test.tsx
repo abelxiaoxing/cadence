@@ -1638,6 +1638,35 @@ it("registered row resize follows without a new observation, respects the 80px i
   expect(f.frames.size).toBe(0);
 });
 
+it("does not mistake a queued bottom-follow scroll for reader intent when lazy detail replaces its loading row", () => {
+  const f = workspaceFixture([loaded("pi-tool", undefined, 0)]);
+  const view = f.draw();
+  const row = f.rowAt("pi-tool");
+  // Model browser clamping and queued scroll delivery independently of RO.
+  let top = f.root.scrollHeight - f.root.clientHeight;
+  Object.defineProperty(f.root, "scrollTop", {
+    get: () => top,
+    set: (y: number) => {
+      top = Math.min(y, f.root.scrollHeight - f.root.clientHeight);
+    },
+  });
+  row.height += 48;
+  f.root.scrollHeight += 48;
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1448);
+  row.height += 428;
+  f.root.scrollHeight += 428;
+  view.scroll(); // The event for 1448 arrives after the detail layout.
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1876);
+  f.root.scrollTop -= 144; // A different offset really is the reader's scroll.
+  view.scroll();
+  f.root.scrollHeight += 300;
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1732);
+  expect(f.draw().latest).toBeTypeOf("function");
+});
+
 it("up-scroll survives hiding and earlier-page anchoring, while user return to the bottom restores resize following", () => {
   const recent = loaded("pi-recent", "command:recent", 1);
   const f = workspaceFixture([recent]);

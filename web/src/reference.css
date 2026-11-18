@@ -819,6 +819,14 @@
   font-size: 14px;
 }
 
+/* Keep the small workflow state off the grain and hover tint of its card. */
+.workflow-line-meta.ep-state {
+  --text-faint: var(--accent);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+
 .toolcall {
   margin: 8px 0;
   border: 1px solid var(--glass-card-border);
@@ -1254,27 +1262,16 @@ div.chead[role="button"]:focus-visible,
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--accent);
   font-family: inherit;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.35;
   @media (prefers-reduced-motion: no-preference) {
     transition:
-      opacity 0.15s ease,
       color 0.15s ease,
       background 0.15s ease;
   }
-}
-
-.chead:hover .chead-copy,
-.msg-text:hover .msg-text-copy,
-.chead-copy:hover,
-.msg-text-copy:hover,
-.chead-copy:focus-visible,
-.msg-text-copy:focus-visible {
-  opacity: 1;
 }
 
 .chead-copy:hover,
@@ -2497,8 +2494,6 @@ div.chead[role="button"]:focus-visible,
 }
 
 @media (hover: none) {
-  .msg-text-copy,
-  .chead-copy,
   .msg-action {
     opacity: 1;
   }

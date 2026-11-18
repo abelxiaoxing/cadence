@@ -34,6 +34,7 @@ export function fixture(root) {
   );
   const build = { contractHash: identity.contractHash, assets: identity };
   const failures = [];
+  const stepReads = [];
   const snapshot = (scope) => ({
     protocol: 1,
     storeId,
@@ -178,6 +179,17 @@ export function fixture(root) {
     if (p.endsWith("/snapshot")) return ok(snapshot(q));
     if (p.endsWith("/workbench/read")) {
       const v = readRecord(q);
+      if (q.kind === "conversation-step") {
+        const { id, leaf, turnId, step, part } = q;
+        const read = { id, leaf, turnId, step, part, result: "pending" };
+        stepReads.push(read);
+        res.once("finish", () => {
+          read.result =
+            v?.item?.name && res.statusCode === 200
+              ? v.item.name
+              : `HTTP ${res.statusCode}`;
+        });
+      }
       if (v) return ok(v);
     }
     if (p.endsWith("/details") && q?.recordId === artifact.recordId)
@@ -226,6 +238,7 @@ export function fixture(root) {
   return {
     build: identity,
     failures,
+    stepReads,
     async open() {
       server.listen(0, "127.0.0.1");
       await once(server, "listening");

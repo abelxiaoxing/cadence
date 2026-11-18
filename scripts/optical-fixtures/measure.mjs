@@ -240,15 +240,16 @@ export async function frameWindow(ms, scroll) {
 
 // Scroll the control itself (including its nested scrollers). Measure the
 // border box, not just a center hit or the dimensions of its enclosing card.
-export async function buttonGeometry(selector) {
+export async function buttonGeometry(selector, scroll = true) {
   const el = document.querySelector(selector);
   if (!(el instanceof HTMLButtonElement))
     throw Error(`Missing button: ${selector}`);
-  el.scrollIntoView({
-    block: "center",
-    inline: "nearest",
-    behavior: "instant",
-  });
+  if (scroll)
+    el.scrollIntoView({
+      block: "center",
+      inline: "nearest",
+      behavior: "instant",
+    });
   const box = (left, top, right, bottom) => ({
     left,
     top,
@@ -325,6 +326,10 @@ export async function buttonGeometry(selector) {
       hit,
     };
   };
+  return opticalProbe.stableFrames(measure, selector);
+}
+
+export async function stableFrames(measure, label) {
   let last,
     steady = 0;
   for (let i = 0; i < 90; i++) {
@@ -336,5 +341,66 @@ export async function buttonGeometry(selector) {
     } else steady = 0;
     last = json;
   }
-  throw Error(`Unstable button: ${selector}`);
+  throw Error(`Unstable layout: ${label}`);
+}
+
+// A fixed transcript, so a rendered block's ordinal identifies it through the
+// expansion. No scrolling, focusing, or DOM mutation during either reading.
+export function readingPosition() {
+  const pane = document.querySelector(".chat-messages");
+  const bounds = pane.getBoundingClientRect();
+  const blocks = [
+    ...pane.querySelectorAll(
+      ".md p,.md h3,.code-caption,.toolcall-output-label,.toolcall-output pre",
+    ),
+  ];
+  const index = blocks.findIndex((el) => {
+    const r = el.getBoundingClientRect();
+    return (
+      r.top >= bounds.top &&
+      r.bottom <= bounds.bottom &&
+      r.height > 0 &&
+      el.contains(document.elementFromPoint(r.left + 2, r.top + r.height / 2))
+    );
+  });
+  const anchor = blocks[index];
+  const head = pane.querySelector(".toolcall-head").getBoundingClientRect();
+  const { scrollTop, clientHeight, scrollHeight } = pane;
+  return {
+    scrollTop,
+    clientHeight,
+    scrollHeight,
+    bottom: scrollHeight - clientHeight - scrollTop,
+    anchor: anchor && {
+      index,
+      tag: anchor.tagName,
+      y: anchor.getBoundingClientRect().top - bounds.top,
+    },
+    headY: head.top - bounds.top,
+  };
+}
+
+// Sample the center of the copy glyph's straight rectangular stroke, not its
+// anti-aliased corners. The pixel immediately inside the rect is its material.
+export function restingCopySample(selector) {
+  const button = document.querySelector(selector);
+  const card = button.closest(".toolcall,.msg-text");
+  if (card.matches(":hover,:focus-within") || button.matches(":hover,:focus"))
+    throw Error(`Not at rest: ${selector}`);
+  const rect = button.querySelector("svg rect");
+  const box = rect.getBBox();
+  const point = new DOMPoint(box.x, box.y + box.height / 2).matrixTransform(
+    rect.getScreenCTM(),
+  );
+  const x = Math.floor(point.x),
+    y = Math.floor(point.y);
+  if (!button.contains(document.elementFromPoint(x, y)))
+    throw Error(`Hidden glyph: ${selector}`);
+  return {
+    name: `${selector} resting stroke`,
+    ink: [x, y],
+    x: x + 2,
+    y,
+    min: 3,
+  };
 }

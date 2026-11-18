@@ -70,7 +70,14 @@ For the design submission, implementation/confirmation and code/tool controls, `
 Enabled buttons must receive visible focus via Tab; disabled ones have no keyboard-operability claim.
 No submit or confirmation is activated.
 The requested-write copy uses Space and a write-only receiver inside the disposable document, never the system clipboard.
-A single-line edit is measured in the opened tool card, separately from the artifact diff; absent added or deleted word samples or ordinary text below 4.5:1 fail the observation.
+`toolCards` binds a disclosure to one synthetic route, tool name and target path, waits for a stable hit-tested button, then activates the folded head once with real pointer input.
+It records the event targets, before/after disclosure states and completed conversation-step read coordinates/result category, not the detail payload.
+The requested edit must contain both `opal` and `silver` inside that same card; both compositor word samples must reach 4.5:1 at each viewport/theme, independently of the artifact diff.
+`copyIndicators` measures a straight SVG stroke against the adjacent material with the pointer outside and no hover/focus, then the visible Tab outline for the same control; missing samples or ratios below 3:1 fail.
+The `expand` conversation does not stream: its folded head is already reachable both at the bottom and after wheeling up past 80px.
+Before activation and after real detail growth and stable frames, record the pane's scrollTop, client/scroll heights, bottom distance and first fully visible reading block/offset, without any corrective scrolling or focus between samples.
+Check Latest only after the up-scroll comparison: shorten the viewport after the click to distinguish resumed follow from a one-time jump.
+Incremental follow remains a separate observation.
 A missing browser, unavailable draw scenario or failed observation is not a pass.
 
 ### Earlier optical build (historical observation)
@@ -107,13 +114,15 @@ Growth followed the bottom, up-scroll held its position and Latest returned to t
 DevTools Paint node IDs describe paint roots, not exact glyph rasterization or compositor/GPU energy.
 No deployment, real credentials, live model workloads, device battery life, physical mobile browser or hardware GPU was tested.
 
-### Review repair: observations on the rebuilt candidate
+### First review repair (historical pre-commit observation)
 
 The earlier 125 scenes above do not qualify these repairs.
 In the same integration worktree and branch, rebuilt WebUI `8caaa40ee1f40c9ed407552bd64b3c01a21438b887e8837b2f46d77ffdb48da0` was observed over pre-commit HEAD `29b90eacafe5de09aee55af568e904f93f481b63` (`optical-evidence-AoCIa6/summary.json` under the run's temporary root).
 This identifies the measured bytes, not an accepted delivery commit.
+The later owner check on `c587ef71` stopped at light/390px without observing the edit: 111 scenes, no performance windows (`optical-evidence-VNyPN2`).
+The following *earlier* measurements do not override that failed check.
 Headless Chrome 151.0.7922.34, DPR 1, ANGLE/Vulkan SwiftShader; dark and light at 320×820, 390×820 and 1440×900.
-The new report contains 143 scene audits and 13,156 visible text samples, including system light/dark initial and error password forms and the additional forced-colors retry.
+The pre-commit report contains 143 scene audits and 13,156 visible text samples, including system light/dark initial and error password forms and the additional forced-colors retry.
 
 - On all six empty-to-failed-first-attempt switches the transcript kept the attempt and its notice without a Hero, at final opacity 0.07 and zero draws in 1.25s.
 - All 42 critical button observations retained the full rectangle through viewport and clipping ancestors, passed center and four edge hits and received keyboard focus (all enabled in these samples).
@@ -133,6 +142,30 @@ Idle showed occasional document/menu paints; scroll also painted Latest; increme
 Streaming stayed at the bottom, up-scroll held on growth and Latest returned to the end.
 The 480×300 Hero buffer drew 26 times in a separate 1.25s window and 25 after context restoration; reduced motion, explicit off and lost context each drew zero, as did the actually hidden tab in 1s.
 These are compositor point samples and short local frame windows, not exhaustive contrast or energy measurements; no physical phone, hardware GPU, screen reader, live provider, authentication submission or deployment was tested.
+
+### Detail-follow and copy contrast repair (local observation)
+
+On the same branch/worktree, `optical-evidence-rDzygp/summary.json` measured canonical build `8df3ab6e4e89bff7d49dd0b523517560d83d773a9e553e3b8ba8c439c18e9e4e` over pre-commit HEAD `c587ef71a75048652099a09d372e20bed1445892`.
+Headless Chrome 151.0.7922.34, DPR 1, SwiftShader; both themes at 320×820, 390×820 and 1440×900, plus the forced-colors password form.
+The run recorded 143 scene audits, 13,137 visible text samples and 46 button observations with no reported problems or unavailable scenarios.
+This is local evidence on these bytes, not owner acceptance, hardware GPU or physical-device qualification.
+
+- All six requested edit cards expanded on the first activation and rendered the two words after their matching lazy read.
+  Dark added/deleted: **7.287/6.827:1**; light: **4.929/4.904:1**.
+  A separate intermediate run found dark workflow status text at 4.490:1 over its grained card; the state now has a solid backing and stronger neutral ink.
+  The worst final small text was the diff language: **5.010:1** dark (138,147,162 on 34,36,41), **4.507:1** light (94,102,117 on 226,227,231).
+- Resting desktop tool-target copy: dark RGB(171,176,183) on (22,23,26), **8.216:1**; light (89,93,101) on (251,251,252), **6.389:1**.
+  Shared message copy: dark (170,174,182) on (9,10,13), **8.898:1**; light (87,92,101) on (244,245,247), **6.162:1**.
+  Their respective Tab outlines measured 11.568/10.378:1 and 12.776/9.839:1 (dark/light).
+- Opening the loading row had exposed a queued programmatic scroll event arriving *after* detail layout, leaving the previously following reader 428px from the end.
+  With the clamped follow offset distinguished from reader input, in both themes the detail added 476/451/451px at the three widths and bottom distance remained 0.
+  From 144px up, scrollTop stayed at 1357/983/591px respectively and the same visible heading stayed at y=26.03/43.17/15.22px inside the pane; Latest returned to 0 bottom distance and kept it there when the pane became 96px shorter in all six.
+- Empty Hero: 480×300, 26 draws in 1.25s and 25 after context restoration; lost, off, reduced and actually hidden each drew zero.
+  All six first attempts settled at opacity 0.07 with zero draws.
+  At 1440×900 (2.6s, on/off/off/on) p50 was 16.7ms in every window; p95 idle 16.8/33.4/33.4/16.8ms, scroll and increment both 16.8/16.8/16.7/16.8ms.
+  No frame exceeded 50ms; scrolling and increments had zero ambient draws.
+  Idle paints were occasional document/menu roots; scrolling also painted Latest; increment paints included transcript, text, code and footer in both conditions.
+  Paint roots are not glyph rasterization or power measurements; these short windows are not cross-device performance guarantees.
 
 ## Development practice
 
