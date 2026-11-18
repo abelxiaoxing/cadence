@@ -366,14 +366,21 @@ export type WorkbenchCommand =
       archived: boolean;
     }
   | { kind: "open-project"; commandId: string; path: string; epoch: string };
-export type ChatStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "canceled"
-  | "timeout"
-  | "unknown";
+/** A workflow transcript retains its own lifecycle; only an ordinary Send
+ * starts in preparation rather than queued. */
+const workflowTurnStatuses = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown",
+] as const;
+export const CHAT_STATUSES = ["starting", ...workflowTurnStatuses] as const;
+export type ChatStatus = (typeof CHAT_STATUSES)[number];
+export const isLiveChatStatus = (status: ChatStatus) =>
+  status === "starting" || status === "queued" || status === "running";
 export interface ChatImage {
   live?: true;
   /** Pi entry ID, or the admitted command ID until Pi flushes its user entry. */
@@ -418,7 +425,7 @@ export interface ChatTurn {
   retry?: ModelRetry;
   id: string;
   epoch: string;
-  status: ChatStatus;
+  status: (typeof workflowTurnStatuses)[number];
   items: ChatItem[];
   notice: string;
   /** Immutable full-transcript pages; items above are only the latest preview. */
@@ -752,15 +759,6 @@ export interface WorkbenchPort {
     },
   ): WorkbenchResult | Promise<WorkbenchResult>;
 }
-const statuses = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown",
-] as const;
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
@@ -1257,7 +1255,7 @@ export function decodeChatTurn(v: unknown): ChatTurn {
     ...(o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, workflowTurnStatuses),
     notice: text(o.notice, 1024),
     ...(transcript
       ? { transcript: { pages: integer(transcript.pages, 0) } }
@@ -1441,7 +1439,7 @@ function decodeChatTurnHeader(v: unknown): ChatTurnHeader {
       ? {}
       : { parent: nullable(o.parent, decodeEntryId) }),
     at: integer(o.at, 0),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024),
     omitted: {
       thinking: bool(omitted.thinking),
@@ -1473,7 +1471,7 @@ export function decodeChatSummary(v: unknown): ChatSummary {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
     leaf: nullable(o.leaf, decodeEntryId),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     updatedAt: integer(o.updatedAt, 0),
     origin: oneOf(o.origin, ["terminal", "webui"]),
     ...(has("cadence") ? { cadence: bool(o.cadence) } : {}),
@@ -1493,7 +1491,7 @@ function decodeChatAttempt(v: unknown): ChatAttempt {
   return {
     commandId: decodeId(o.commandId),
     text: text(o.text, 16 * 1024),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024),
   };
 }

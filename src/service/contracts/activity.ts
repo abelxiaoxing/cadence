@@ -15,6 +15,7 @@ import { decodeSessionId, type ExecutionContext } from "./models.ts";
 
 export const ACTIVITY_PHASES = [
   "turn",
+  "starting",
   "queued",
   "running",
   "research",

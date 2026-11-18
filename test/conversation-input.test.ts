@@ -1,4 +1,4 @@
-// Messages sent into a running reply, at the owner: admission, hand-over,
+// Independent Sends and messages sent into a running reply: admission, hand-over,
 // withdrawal, settlement and what a read shows. The SDK worker is replaced by
 // a stand-in that takes the owner's messages and writes the session as Pi and
 // the worker's boundaries would. The real worker and owner are
@@ -14,6 +14,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
+import { CheckoutGate } from "../src/service/checkout-gate.ts";
+import { decodeActivity } from "../src/service/contracts/activity.ts";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   decodeWorkbenchResult,
@@ -26,12 +28,11 @@ import {
   UNOBSERVED,
   WITHDRAWN,
 } from "../src/service/conversation-records.ts";
-import {
-  type ConversationControl,
-  Conversations,
-} from "../src/service/conversations.ts";
-import type { ServiceCoordination } from "../src/service/coordination.ts";
-import { PrivateFiles } from "../src/service/private-files.ts";
+import type { ConversationControl } from "../src/service/conversations.ts";
+import { ServiceCoordination } from "../src/service/coordination.ts";
+import { ServiceOwner } from "../src/service/owner.ts";
+import { Workbench } from "../src/service/workbench.ts";
+import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import type {
   launchConversation,
@@ -39,6 +40,7 @@ import type {
 } from "../src/subagent-process.ts";
 import type { RunResult } from "../src/task-types.ts";
 import type { CaptureFrame, NativeSettlement } from "../src/worker-public.mjs";
+import { coverage, deferred } from "./helpers/service-http-fixture.ts";
 
 type Launch = typeof launchConversation;
 const child = vi.hoisted(() => ({ launch: vi.fn() }));
@@ -57,6 +59,7 @@ class Standin {
   /** What the owner handed over, in order. */
   readonly received: WorkerInput[] = [];
   readonly result: Promise<RunResult>;
+  closeOnAbort = true;
   private connected = true;
   private close!: (result: RunResult) => void;
   private readonly file: string;
@@ -66,7 +69,7 @@ class Standin {
   private readonly prefix = randomUUID().slice(0, 4);
   constructor(
     session: Parameters<Launch>[1]["session"],
-    signal: AbortSignal,
+    readonly signal: AbortSignal,
     private readonly options: Parameters<Launch>[3],
     cwd: string,
   ) {
@@ -89,7 +92,9 @@ class Standin {
       return this.connected;
     });
     // Cancel and Stop reach the real worker as a signal; it closes canceled.
-    signal.addEventListener("abort", () => this.end("canceled"));
+    signal.addEventListener("abort", () => {
+      if (this.closeOnAbort) this.end("canceled");
+    });
   }
   private append(entry: Record<string, unknown>): string {
     const id = `${this.prefix}${(++this.written).toString(16).padStart(4, "0")}`;
@@ -200,10 +205,11 @@ const code = async (run: () => unknown) => {
 
 function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
   const cwd = join(root, "project"),
-    agentDir = join(root, "agent"),
-    directory = join(root, "service-v1");
-  for (const path of [cwd, agentDir, directory])
+    agentDir = join(root, "agent");
+  for (const path of [cwd, agentDir])
     mkdirSync(path, { recursive: true, mode: 0o700 });
+  const coordination = new ServiceCoordination(cwd, join(root, "state"));
+  mkdirSync(coordination.directory, { recursive: true, mode: 0o700 });
   const epoch = randomUUID();
   const version = {
     epoch,
@@ -218,58 +224,52 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
     api: "openai-completions" as const,
     thinking: "off" as const,
   };
-  const settled: Promise<{ status: string }>[] = [];
-  const owner = {
-    state: "idle" as "idle" | "quarantined",
-    lease: { assert() {}, registration: { epoch } },
-    trackConversation(original: Promise<{ status: string }>) {
-      settled.push(original);
+  const owner = new ServiceOwner(
+    { assert() {}, registration: { epoch }, phase() {}, release() {} } as never,
+    {
+      quiesce() {},
+      flush: async () => ({
+        status: "committed",
+        batch: {
+          committedSeq: "1",
+          details: [],
+          ownerDetails: [],
+          coverage: { ...coverage, omissions: [] },
+        },
+      }),
+      closeListener: async () => {},
     },
-    trackConversationProcess() {},
-    quarantine() {
-      owner.state = "quarantined";
-    },
-  };
+  );
+  const originals = vi.spyOn(owner, "trackConversation");
+  const gate = new CheckoutGate(owner);
+  owner.registerRuntime(() => gate.closeAdmission(), {
+    assertQuiescent: () => gate.assertQuiescent(),
+  });
+  const prepared = { status: "prepared", prepared: {} };
+  const prepareTracked = vi.fn(() => ({
+    settled: Promise.resolve(),
+    result: Promise.resolve(prepared),
+  }));
   let secrets: string[] = [];
-  let released = 0;
-  const conversations = new Conversations({
-    coordination: {
-      directory,
-      files: new PrivateFiles(root),
-      store: { root: cwd },
-    } as unknown as ServiceCoordination,
-    owner: owner as never,
+  const workbench = new Workbench({
+    coordination,
+    owner,
     models: {
       assertCurrent() {},
       workerSettings: () => undefined,
       catalog: () => ({ entries: [] }),
-      prepareTracked: () => ({
-        settled: Promise.resolve(),
-        result: Promise.resolve({ status: "prepared", prepared: {} }),
-      }),
+      prepareTracked,
     } as never,
-    choice: {} as never,
-    gate: {
-      acquire: async () => ({
-        assertHeld() {},
-        release() {
-          released++;
-        },
-      }),
-    } as never,
-    contexts: {
-      capture: () => ({ cwd, checkoutRoot: cwd, version, model: selected }),
-      records: {
-        read: (location: { id: string; cwd: string }) => ({
-          context: { ...location, revision: 0, model: null },
-        }),
-      },
-    } as never,
+    choice: { snapshot: () => ({ version, selected }) } as never,
+    gate,
     agentDir,
     cwd,
+    projectsEnabled: false,
+    hostUrl: new URL("../src/service-host.mjs", import.meta.url),
     secrets: () => secrets,
   });
-  const workers: Standin[] = [];
+  const conversations = workbench.conversations;
+  const launches = new Map<string, (worker: Standin) => void>();
   child.launch.mockImplementation(((
     _prepared,
     conversation,
@@ -277,18 +277,52 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
     options,
   ) => {
     const worker = new Standin(conversation.session, signal, options, cwd);
-    workers.push(worker);
+    launches.get(conversation.session.id)?.(worker);
     return worker.result;
   }) satisfies Launch);
   const records = conversations.records;
+  const message = (
+    conversationId: string,
+    text = "Start",
+    head: string | null = null,
+  ) => ({
+    kind: "send" as const,
+    commandId: randomUUID(),
+    conversationId,
+    head,
+    text,
+    model: version,
+  });
   return {
     root,
     conversations,
     records,
     owner,
     epoch,
-    settled,
-    released: () => released,
+    workbench,
+    gate,
+    holdPreparation() {
+      const entered = deferred(),
+        allow = deferred();
+      prepareTracked.mockImplementationOnce(() => {
+        entered.resolve();
+        return {
+          result: allow.promise.then(() => prepared),
+          settled: allow.promise,
+        };
+      });
+      return { entered: entered.promise, release: allow.resolve };
+    },
+    holdSettlement(settled: Promise<void>) {
+      prepareTracked.mockReturnValueOnce({
+        result: Promise.resolve(prepared),
+        settled,
+      });
+    },
+    message,
+    get settled() {
+      return originals.mock.calls.map(([original]) => original);
+    },
     secrets(value: string[]) {
       secrets = value;
     },
@@ -299,17 +333,20 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
       head: string | null = null,
       control?: ConversationControl,
     ) {
-      const commandId: string = randomUUID(),
-        launched = workers.length;
-      conversations.send(
-        { kind: "send", commandId, conversationId, head, text, model: version },
-        control,
-      );
-      for (let n = 0; n < 1000 && workers.length === launched; n++)
-        await turn();
-      const worker = workers[launched];
-      if (!worker) throw Error("worker not launched");
-      return { conversationId, commandId, worker };
+      const command = message(conversationId, text, head);
+      const launched = deferred<Standin>();
+      launches.set(conversationId, launched.resolve);
+      try {
+        if (control) conversations.send(command, control);
+        else await workbench.command(command);
+        return {
+          conversationId,
+          commandId: command.commandId,
+          worker: await launched.promise,
+        };
+      } finally {
+        launches.delete(conversationId);
+      }
     },
     input(
       run: { conversationId: string; commandId: string },
@@ -366,6 +403,150 @@ function fixture(root = mkdtempSync(join(tmpdir(), "conversation-input-"))) {
 }
 beforeEach(() => {
   child.launch.mockReset();
+});
+
+it("two sessions run independently even while a workflow holds exclusive checkout access", async () => {
+  const f = fixture();
+  const a = await f.start();
+  a.worker.ready();
+  a.worker.turn(a.commandId, "Start", undefined, null);
+  // The same gate the workbench supplies to workflows. A's worker is still
+  // open: it neither holds this permit nor waits for it to make progress.
+  const permit = await f.gate.acquire(
+    randomUUID(),
+    new AbortController().signal,
+    "exclusive",
+  );
+  const auth = f.holdPreparation();
+  const id = randomUUID();
+  const launchB = f.start(id, "Run B");
+  const [commandId] = f.records.index(id).commands;
+  const state = () => f.records.read(f.records.path(commandId, "state.json"));
+  // First durable state, before run()'s first microtask.
+  expect(state()).toMatchObject({ status: "starting", user: null });
+  await auth.entered;
+  expect(state()).toMatchObject({ status: "starting" });
+  const live = { commandId, epoch: f.epoch };
+  expect(
+    decodeWorkbenchResult(
+      await f.workbench.read({ kind: "conversation-active" }),
+    ),
+  ).toMatchObject({
+    entries: expect.arrayContaining([
+      expect.objectContaining({ id, status: "starting", live }),
+    ]),
+  });
+  expect(f.head(id)).toMatchObject({
+    summary: { status: "starting", live },
+    turns: 1,
+  });
+  const view = f.steps(id, null, 0);
+  expect(view).toMatchObject({
+    turn: { id: commandId, status: "starting" },
+    steps: [{ role: "user", text: "Run B" }],
+  });
+  expect(view.turn).not.toHaveProperty("activity");
+  expect(f.workbench.activity().map(decodeActivity)).toMatchObject([
+    { id: a.commandId, phase: "running" },
+    { id: commandId, phase: "starting" },
+  ]);
+  expect(f.records.latestRun(id)?.settled).toBe(false);
+  expect(child.launch).toHaveBeenCalledTimes(1);
+  auth.release();
+  const b = await launchB;
+  expect(state()).toMatchObject({ status: "running" });
+  b.worker.ready();
+  const user = b.worker.turn(b.commandId, "Run B");
+  b.worker.end();
+  expect(await f.settled[1]).toEqual({ status: "settled" });
+  expect(state()).toMatchObject({ status: "completed", user });
+  expect(f.head(a.conversationId)).toMatchObject({
+    summary: { status: "running", live: { commandId: a.commandId } },
+  });
+  permit.assertHeld();
+  permit.release();
+  a.worker.end();
+  await f.settled[0];
+});
+
+it("cancel targets just its session, including while its worker is still starting", async () => {
+  const f = fixture(),
+    a = await f.start();
+  const auth = f.holdPreparation();
+  const starting = f.message(randomUUID());
+  f.workbench.command(starting);
+  await auth.entered;
+  f.conversations.interrupt(
+    starting.conversationId,
+    starting.commandId,
+    f.epoch,
+  );
+  expect(f.workbench.activity().at(-1)?.phase).toBe("stopping");
+  auth.release();
+  await f.settled[1];
+  expect(child.launch).toHaveBeenCalledTimes(1);
+  expect(f.state(starting.commandId)).toMatchObject({ status: "canceled" });
+
+  const b = await f.start();
+  f.conversations.interrupt(b.conversationId, b.commandId, f.epoch);
+  await f.settled[2];
+  expect(b.worker.signal.aborted).toBe(true);
+  expect(f.state(b.commandId)).toMatchObject({ status: "canceled" });
+  expect(a.worker.signal.aborted).toBe(false);
+  a.worker.turn(a.commandId, "Start");
+  a.worker.end();
+  await f.settled[0];
+  expect(f.state(a.commandId).status).toBe("completed");
+});
+
+it("one live run per session and the owner limit refuse independent Sends without accepting or deferring them", async () => {
+  const f = fixture();
+  const refused = async (id: string, code: string) => {
+    const command = f.message(id);
+    const attempt = Promise.resolve().then(() => f.workbench.command(command));
+    await expect(attempt).rejects.toBeInstanceOf(UnacceptedConversationCommand);
+    await expect(attempt).rejects.toMatchObject({ code });
+    expect(f.conversations.attempted(id, command.commandId)).toBe(false);
+  };
+  const first = await f.start();
+  await refused(first.conversationId, "conflict");
+  const rest = await Promise.all(Array.from({ length: 7 }, () => f.start()));
+  await refused(randomUUID(), "capacity");
+  expect(f.owner.acceptedPending).toBe(8);
+  for (const run of [first, ...rest]) run.worker.end();
+  await f.owner.idle();
+  expect(f.settled).toHaveLength(8);
+  expect(child.launch).toHaveBeenCalledTimes(8);
+});
+
+it("owner Stop signals both workers and joins both originals, through auth settlement and native close", async () => {
+  const f = fixture();
+  const auth = deferred();
+  f.holdSettlement(auth.promise);
+  const a = await f.start(),
+    b = await f.start();
+  b.worker.closeOnAbort = false; // stop requested is not original native close
+  const stop = f.owner.stop();
+  for (const run of [a, b])
+    expect(run.worker.signal.reason).toMatchObject({
+      source: "service",
+      reason: "stop",
+      target: run.commandId,
+    });
+  expect(f.owner.acceptedPending).toBe(2);
+  auth.resolve();
+  await f.settled[0];
+  await turn(); // let owner accounting observe that original
+  expect(f.owner.state).toBe("stopping");
+  expect(f.owner.acceptedPending).toBe(1);
+  b.worker.end("canceled");
+  expect(await stop).toMatchObject({
+    state: "stopped",
+    settlement: "known",
+    pending: { process: 0, work: 0 },
+  });
+  for (const run of [a, b])
+    expect(f.state(run.commandId).status).toBe("canceled");
 });
 
 it("a message for a running reply is recorded before its worker hears of it, and is handed over only once the worker listens", async () => {
@@ -434,7 +615,7 @@ it("refusals admit nothing: an unknown, ended or stopping reply, another epoch, 
   run.worker.ready();
   const refused = async (
     expected: string,
-    target = run,
+    target: Parameters<typeof f.input>[0] = run,
     change: Parameters<typeof f.input>[3] = {},
   ) => {
     const commandId = randomUUID();
@@ -491,7 +672,7 @@ it("refusals admit nothing: an unknown, ended or stopping reply, another epoch, 
   // An owner that can no longer vouch for its work admits nothing.
   const last = await f.start();
   last.worker.ready();
-  f.owner.state = "quarantined";
+  f.owner.quarantine();
   await refused("quarantine", last);
   expect(await code(() => f.withdraw(last, randomUUID()))).toBe("quarantine");
 });
@@ -557,7 +738,6 @@ it("settlement records what Pi was given: delivered messages are turns, the newe
   const queuedUser = run.worker.turn(queued, "Queued", run.commandId);
   run.worker.end();
   expect(await f.settled[0]).toEqual({ status: "settled" });
-  expect(f.released()).toBe(1);
   // Earlier messages end as Pi recorded their replies; the newest one Pi was
   // given takes the run's outcome.
   expect(f.state(run.commandId)).toMatchObject({
@@ -674,7 +854,6 @@ it("a reply that fails or is stopped delivers nothing further, and says so for e
     attempt: { commandId: stopped.commandId, status: "canceled" },
     undelivered: [{ commandId: buffered, notice: NOT_DELIVERED }],
   });
-  expect(f.released()).toBe(2);
   expect(f.owner.state).toBe("idle");
 });
 
@@ -747,7 +926,7 @@ it("an unknown outcome with recorded native closure permits startup without chan
   const queued = f.input(run, "queue", "Not delivered");
   // A sibling storage/workflow failure may quarantine the owner even though
   // this conversation's own original process has confirmed its native close.
-  f.owner.state = "quarantined";
+  f.owner.quarantine();
   run.worker.end("canceled");
   expect(await f.settled[0]).toEqual({ status: "uncertain" });
   expect(f.state(run.commandId).status).toBe("unknown");
@@ -774,7 +953,6 @@ it("an unknown closure leaves every message of the run unknown and refuses the n
   run.worker.end("unknown");
   expect(await f.settled[0]).toEqual({ status: "uncertain" });
   expect(f.owner.state).toBe("quarantined");
-  expect(f.released()).toBe(0);
   expect(f.state(run.commandId).status).toBe("unknown");
   expect(f.state(steer)).toMatchObject({ status: "unknown", user: steered });
   expect(f.state(queued)).toMatchObject({ status: "unknown", user: null });
@@ -782,9 +960,7 @@ it("an unknown closure leaves every message of the run unknown and refuses the n
   expect(f.state(withdrawn).notice).toBe(WITHDRAWN);
   // The index ends with the withdrawn message: the run's closure still counts.
   expect(f.records.index(run.conversationId).commands.at(-1)).toBe(withdrawn);
-  expect(() => fixture(f.root).conversations.assertSettled()).toThrow(
-    "quarantine",
-  );
+  expect(() => fixture(f.root)).toThrow("quarantine");
 
   // An owner that died mid-reply never settled anything: its successor
   // starts, and reads the unfinished messages as interrupted.
@@ -831,13 +1007,18 @@ it("plan approval binds the run of the newest message: a coordinator turn takes 
     onTool: async () => ({}),
     settle: async () => {},
   };
-  const run = await f.start(randomUUID(), "Plan it", null, control);
+  const id = randomUUID();
+  const launch = f.start(id, "Plan it", null, control);
+  const [commandId] = f.records.index(id).commands;
+  expect(f.records.read(f.records.path(commandId, "state.json"))).toMatchObject(
+    { status: "queued" },
+  );
+  const run = await launch;
   run.worker.ready();
   // An ordinary conversation's message cannot join a coordinator turn.
   expect(await code(() => f.input(run, "steer", "Ordinary"))).toBe("conflict");
   const steer = f.input(run, "steer", "Also consider X", { coordinator: true }),
     queued = f.input(run, "queue", "Never delivered", { coordinator: true });
-  const id = run.conversationId;
   // Live: the run is the newest, and it is not settled.
   expect(f.records.latestRun(id)).toEqual({
     commandId: run.commandId,

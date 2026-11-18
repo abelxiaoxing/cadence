@@ -17,6 +17,7 @@ import type { ExecutionContext } from "./contracts/models.ts";
 import { decodeExecutionContext } from "./contracts/models.ts";
 import type { WorkbenchRead } from "./contracts/workbench.ts";
 import {
+  CHAT_STATUSES,
   type ChatAttempt,
   type ChatContext,
   type ChatCursor,
@@ -28,6 +29,7 @@ import {
   decodeEntryId,
   decodeSessionId,
   decodeWorkbenchCommand,
+  isLiveChatStatus,
   PENDING_TEXT_BYTES,
   STEP_READ,
   UNDELIVERED_TEXT_BYTES,
@@ -73,11 +75,10 @@ export const UNOBSERVED =
 /** A message its sender withdrew before Pi was given it; it is not reported
  * as undelivered. */
 export const WITHDRAWN = "Withdrawn before it was delivered.";
-const LIVE: ChatStatus[] = ["queued", "running"];
 /** Missing tool results never turn into success merely because the reply ended. */
 function settledSteps<T extends BuiltTurn>(turn: T): T {
   if (
-    LIVE.includes(turn.status) ||
+    isLiveChatStatus(turn.status) ||
     !turn.items.some((item) =>
       ["pending", "running", "streaming"].includes(item.state ?? ""),
     )
@@ -169,20 +170,11 @@ function decodeAccepted(value: unknown): Accepted {
     offset: integer(o.offset, 0),
   };
 }
-const statuses: ChatStatus[] = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown",
-];
 function decodeState(value: unknown): CommandState {
   const o = closed(value, ["status", "notice", "omitted", "user"]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   return {
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 4096),
     omitted: {
       thinking: omitted.thinking === true,
@@ -285,9 +277,8 @@ export class ConversationRecords {
     const value = this.read(path);
     if (value === undefined) throw new ContractError("corrupt-selected");
     const decoded = decodeState(value);
-    // Work that was queued or running when the owner stopped did not finish
-    // here; it is never resumed or reported complete.
-    const state = LIVE.includes(decoded.status)
+    // Work left active when the owner stopped is never resumed or reported complete.
+    const state = isLiveChatStatus(decoded.status)
       ? { ...decoded, status: "unknown" as const, notice: INTERRUPTED }
       : decoded;
     if (this.states.size >= COMMAND_STATES) this.states.clear();
@@ -297,9 +288,8 @@ export class ConversationRecords {
   /** Whether the recorded originals leave the worker's closure unconfirmed.
    * A quarantined owner can record an unknown outcome despite known native
    * closure; reading that fact never changes or replays the uncertain command.
-   * A command merely left queued or running was
-   * cut short by that owner's death; startup healing has stopped its workers
-   * before any reader exists, so that one is interrupted, not unknown. A
+   * A command merely left active was cut short by that owner's death. Startup
+   * healing stopped its workers, so that one is interrupted, not unknown. A
    * message sent into a reply shares that reply's worker, so its closure is
    * the reply's as well as its own. */
   closureUnknown(commandId: string): boolean {
@@ -471,11 +461,10 @@ export class ConversationRecords {
     return run
       ? {
           commandId: run.commandId,
-          settled: ![run, ...run.inputs].some((message) =>
-            ["queued", "running", "unknown"].includes(
-              this.state(message.commandId).status,
-            ),
-          ),
+          settled: ![run, ...run.inputs].some((message) => {
+            const { status } = this.state(message.commandId);
+            return status === "unknown" || isLiveChatStatus(status);
+          }),
         }
       : null;
   }
@@ -997,7 +986,7 @@ export class ConversationRecords {
     });
     return {
       turn: { ...settledSteps(turn), execution: live.execution },
-      stable: LIVE.includes(live.state.status)
+      stable: isLiveChatStatus(live.state.status)
         ? extended.stable
         : turn.steps.length,
     };
