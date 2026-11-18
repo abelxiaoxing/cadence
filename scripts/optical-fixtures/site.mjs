@@ -15,6 +15,9 @@ import {
   diffText,
   epoch,
   events,
+  fieldPage,
+  fieldTask,
+  historyMessage,
   project,
   readRecord,
   storeId,
@@ -216,15 +219,21 @@ export function fixture(root) {
           omissions: [],
         },
       });
+    if (p.endsWith("/details") && q) {
+      const page = fieldPage(q);
+      if (page) return ok(page);
+    }
     if (q?.reader)
       return ok({
         request: { ...q, snapshotSeq: change.committedSeq },
         records:
-          q.reader === "events"
-            ? events
-            : q.reader === "changes"
-              ? [change]
-              : [],
+          q.scope?.id === fieldTask && q.reader === "messages"
+            ? [historyMessage]
+            : q.reader === "events"
+              ? events
+              : q.reader === "changes"
+                ? [change]
+                : [],
         next: null,
         coverage: {
           observed: "complete",

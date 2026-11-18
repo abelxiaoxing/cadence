@@ -2,6 +2,7 @@
  * Copyright (c) 2026 xing-shuyin. MIT; see licenses/pi-web-ui-MIT.txt.
  * Cadence removes plugin fences, file-path access and automatic external resources. */
 import { type JSX, memo, type ReactNode, useState } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -118,6 +119,15 @@ function MdLink({ href, children }: JSX.IntrinsicElements["a"]) {
     <span>{children} [link unavailable]</span>
   );
 }
+// Only mounted, folded disclosures register an opener. Commit the one reveal
+// before the history reader measures its Range; no deferred jump can outlive
+// a new query, field page, or reader.
+const folded = new WeakMap<HTMLPreElement, () => void>();
+export function revealCodeMatch(range: Range) {
+  const pre = range.startContainer.parentElement?.closest("pre");
+  const open = pre && folded.get(pre);
+  if (open) flushSync(open);
+}
 function PlainCodeBlock({
   children,
   node: _node,
@@ -159,7 +169,21 @@ function PlainCodeBlock({
         </button>
         <CopyButton text={codeText(children)} className="output-copy" />
       </div>
-      <pre {...props} hidden={!expanded}>
+      <pre
+        {...props}
+        hidden={!expanded}
+        ref={
+          expanded
+            ? undefined
+            : (pre) => {
+                if (!pre) return;
+                folded.set(pre, () => setExpanded(true));
+                return () => {
+                  folded.delete(pre);
+                };
+              }
+        }
+      >
         {lines.map(({ nodes, key }, i) => (
           <div className="code-line" key={key}>
             {multi && (

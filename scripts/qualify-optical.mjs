@@ -7,8 +7,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import {
-  buttonGeometry,
   contrastPixels,
+  controlGeometry,
   dimensions,
   frameWindow,
   gutterSample,
@@ -19,8 +19,14 @@ import {
   textSamples,
 } from "./optical-fixtures/measure.mjs";
 import {
+  leading,
+  observeFieldFind,
+  observeLiveFocus,
+} from "./optical-fixtures/reader-observations.mjs";
+import {
   cwd,
   feed,
+  fieldTask,
   firstAttempt,
   project,
   task,
@@ -50,6 +56,9 @@ const report = {
   toolCards: [],
   drawerGestures: [],
   directoryReads: [],
+  leading: [],
+  fieldFind: [],
+  controlFocus: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
     encoding: "utf8",
@@ -151,18 +160,19 @@ try {
       });
     await sleep(80);
   };
-  const press = async (key, code) => {
+  const press = async (key, code, modifiers = 0) => {
     for (const type of ["keyDown", "keyUp"])
       await send("Input.dispatchKeyEvent", {
         type,
         key,
         code: key === " " ? "Space" : key,
         windowsVirtualKeyCode: code,
+        modifiers,
       });
   };
   const observeButton = async (role, selector, expected) => {
     await wait(`document.querySelector(${q(selector)})`);
-    const geometry = await run(buttonGeometry, selector);
+    const geometry = await run(controlGeometry, selector);
     const row = {
       width,
       theme,
@@ -220,6 +230,14 @@ try {
     return row;
   };
   let width, theme;
+  const observeLeading = async (surface, selector) => {
+    report.leading.push({
+      width,
+      theme,
+      surface,
+      ...(await leading({ run, scrollTo }, selector)),
+    });
+  };
   const expand = async (id, tool, path, position) => {
     const row = { width, theme, id, tool, path, position };
     report.toolCards.push(row);
@@ -229,7 +247,7 @@ try {
   const copyIndicators = async (selector) => {
     // No hover/focus reveal: move the real pointer outside the card, and
     // sample before Tab reaches the control. Require both screenshot samples.
-    await run(buttonGeometry, selector);
+    await run(controlGeometry, selector);
     await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
     const point = await run(restingCopySample, selector);
     const capture = async (point) => {
@@ -608,7 +626,26 @@ try {
           attempt.body.includes(firstAttempt.status),
       );
       await audit("unsaved attempt", [".chat-attempt", ".chat-attempt-text"]);
+      if (width > 900)
+        await observeLiveFocus({
+          go,
+          chat,
+          click,
+          wait,
+          press,
+          ev,
+          send,
+          run,
+          capture,
+          rows: report.controlFocus,
+          width,
+          theme,
+        });
       await observeQuestions();
+      await observeLeading(
+        "chat",
+        '.msg-text .md p:has(a[href="#specimen-notes"])',
+      );
       await go(chat("reading"), ".chat-turn");
       await wait(
         `+getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
@@ -655,7 +692,7 @@ try {
         );
         if (position === "away") {
           const { hit } = await run(
-            buttonGeometry,
+            controlGeometry,
             ".toolcall-head .chead-main",
             false,
           );
@@ -751,6 +788,18 @@ try {
         '.workflow-plan:not(.design-card) > .md p > a[href="#plan-notes"]',
         "plan notes",
       );
+      const plan = ".workflow-plan:not(.design-card)";
+      await observeLeading(
+        "plan",
+        `${plan} > .md p:has(a[href="#plan-notes"])`,
+      );
+      const agreement = `${plan} > details`;
+      await click(`${agreement} > summary`, "Complete delivery agreement");
+      await observeLeading(
+        "open agreement",
+        `${agreement}[open] > .md p:has(a[href="#plan-notes"])`,
+      );
+      await click(`${agreement} > summary`, "Complete delivery agreement");
       const planButton = ".workflow-plan:not(.design-card) > button.primary";
       await wait(
         `document.querySelector(${q(planButton)})?.textContent==='Implement this plan'`,
@@ -787,6 +836,26 @@ try {
         ".workflow-card > header .workflow-status",
         ".workflow-card summary .workflow-status",
       ]);
+      await go(
+        `/app?project=${project}#task=${fieldTask}`,
+        ".message-field .md p",
+      );
+      await observeLeading(
+        "history message",
+        ".message-field [data-retained-field] .md p",
+      );
+      await observeFieldFind({
+        go,
+        click,
+        wait,
+        press,
+        ev,
+        send,
+        run,
+        rows: report.fieldFind,
+        width,
+        theme,
+      });
       await go(`/app?project=${project}#task=${task}`, ".view-menu");
       await click(".view-menu summary");
       await click(".view-menu-items button", "timeline");
@@ -857,6 +926,10 @@ try {
         "artifact",
         '.fp-markdown-zoom > .md p > a[href="#artifact-notes"]',
         "artifact notes",
+      );
+      await observeLeading(
+        "artifact preview",
+        '.fp-markdown-zoom > .md p:has(a[href="#artifact-notes"])',
       );
       await previewMode("diff");
       await scrollTo(".scm-diff-line.add");

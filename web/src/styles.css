@@ -685,12 +685,21 @@ summary:focus-visible,
   touch-action: none;
   writing-mode: horizontal-tb;
 }
-.resize-handle:hover,
-.resize-handle:focus-visible {
+.resize-handle:hover:not(:focus-visible) {
   background:
     linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
   opacity: 0.55;
+}
+.resize-handle:focus-visible {
+  border-left: 2px solid var(--accent);
+  box-shadow: none;
+  transition: none;
   outline: none;
+}
+@media (forced-colors: active) {
+  .resize-handle:focus-visible {
+    border-color: Highlight;
+  }
 }
 .resize-handle::-webkit-slider-runnable-track {
   height: 100%;
@@ -3130,9 +3139,6 @@ summary:focus-visible,
 .chat-turn .msg-text.single .msg-text-copy {
   align-self: flex-end;
 }
-.chat-turn .msg-text .md {
-  line-height: var(--reading-leading);
-}
 .chat-turn .msg-text .md > :first-child {
   margin-top: 0;
 }
@@ -4870,6 +4876,11 @@ button.file-item:hover:not(:disabled),
 .chat-undelivered > button {
   margin-top: 4px;
 }
+/* Keep the running reply's bar on one paint layer. Adding the split buttons
+ * mid-draft must not rebuild a backdrop layer underneath keyboard focus. */
+.chat-composer:has(.composer-toolbar > .danger) {
+  backdrop-filter: none;
+}
 /* Beside Stop while a reply runs: queue behind it, or steer it. */
 .composer-split {
   display: inline-flex;
@@ -4892,9 +4903,17 @@ button.file-item:hover:not(:disabled),
   background: transparent;
   color: var(--accent-text);
 }
+.composer-split > .composer-queue {
+  border-radius: 16px 0 0 16px;
+}
 .composer-split > .composer-steer {
+  border-radius: 0 16px 16px 0;
   background: var(--accent);
   color: var(--on-accent);
+}
+.composer-split > button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
 }
 .composer-split > button > svg {
   width: 16px;
