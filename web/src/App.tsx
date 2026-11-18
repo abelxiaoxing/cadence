@@ -19,7 +19,6 @@ import {
   FiLayers,
   FiLink,
   FiMessageSquare,
-  FiServer,
   FiSquare,
   FiTool,
 } from "react-icons/fi";
@@ -82,18 +81,17 @@ import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
 import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
-import { WorkspaceNotice } from "./components/workspace/WorkspaceNotice";
+import {
+  accessRevoked,
+  WorkspaceConnection,
+} from "./components/workspace/WorkspaceNotice";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
 import { CacheStatus } from "./layout/CacheStatus";
 import { ContextStatus } from "./layout/ContextStatus";
-import {
-  ConnectionStatus,
-  StatusItem,
-  WorkingStatus,
-} from "./layout/StatusItem";
+import { StatusItem, WorkingStatus } from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
@@ -191,46 +189,101 @@ export function App({
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
   const execution = useProjectObservation(project?.id, project?.epoch);
-  const executionReady = !project || execution.readiness === "running";
+  const running = !!project && execution.readiness === "running";
+  const independent = running && execution.association === "unassociated";
+  const executionReady =
+    !project ||
+    (running &&
+      execution.association === "associated" &&
+      !!execution.value?.epoch);
   const executionStopped =
     !!project &&
     (execution.readiness === "stopped" ||
       execution.readiness === "not-started");
-  // A failed readiness read must not discard an existing safety attachment.
-  // Only a positive Stop or replacement epoch changes that lifetime.
-  const executionEpoch = useRef<string | null>(null);
-  if (executionReady && execution.value?.epoch)
-    executionEpoch.current = execution.value.epoch;
+  // Preserve a previously eligible safety viewer across an inconclusive read,
+  // not across a positive stop, lost association, or revoked access.
+  const eligible = useRef<{ selected: string | null; epoch: string }>(null);
+  if (project) {
+    if (executionReady && execution.value?.epoch)
+      eligible.current = {
+        selected: project.epoch,
+        epoch: execution.value.epoch,
+      };
+    else if (
+      eligible.current?.selected !== project.epoch ||
+      running ||
+      executionStopped ||
+      accessRevoked(execution.error)
+    )
+      eligible.current = null;
+  }
+  const executionEpoch = eligible.current?.epoch ?? null;
+  // Revocation ends this viewer, including any automatic epoch/scope handoff.
+  // Only re-entering the authenticated page starts another viewer lifetime.
+  const viewerRefusal = useRef<string | undefined>(undefined);
   const observeExecution =
-    !project ||
-    (!executionStopped && (executionReady || executionEpoch.current !== null));
+    !viewerRefusal.current && (!project || executionEpoch !== null);
   const workspace = useWorkspace(
     api,
     taskId ? { kind: "task", id: taskId } : null,
     !detached && observeExecution,
-    executionEpoch.current,
+    executionEpoch,
   );
-  // Presentation only: an empty first attachment is still loading, not stale.
-  // Once data or a failure was observed, a reset/reconnect must not look new.
+  if (observeExecution && accessRevoked(workspace.error))
+    viewerRefusal.current = workspace.error;
+  const [handoffs, setHandoffs] = useState(0);
+  const viewerWorkspaceId =
+    workspace.workspace?.workspaceId ?? workspace.activeRuns?.workspaceId;
+  const wrongWorkspace =
+    !!project &&
+    workspace.epoch === executionEpoch &&
+    !!execution.value?.workspaceId &&
+    !!viewerWorkspaceId &&
+    viewerWorkspaceId !== execution.value.workspaceId;
+  const attached =
+    observeExecution &&
+    !handoffs &&
+    !wrongWorkspace &&
+    workspace.attached &&
+    !accessRevoked(workspace.error) &&
+    (!project || workspace.epoch === executionEpoch);
+  const projectError =
+    execution.error ??
+    (execution.value?.status === "unavailable"
+      ? "unavailable"
+      : running && !executionReady && !independent
+        ? "Viewer access not confirmed"
+        : undefined);
+  // Resync invalidates freshness without diagnosing a failure. Keep the
+  // viewer's explicit cause separate from the current-data gate below.
+  const viewerError =
+    viewerRefusal.current ??
+    (observeExecution
+      ? (workspace.error ?? (wrongWorkspace ? "stale" : undefined))
+      : undefined);
   const initialViewer = useRef(true);
   if (
     workspace.workspace ||
     workspace.observation ||
-    workspace.error ||
-    workspace.transportStatus === "stale"
+    projectError ||
+    viewerError ||
+    independent ||
+    executionStopped
   )
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
   // history and drafts reachable; only an explicit user action can prepare execution.
   const projectObserved = !!(project && (execution.value || execution.error));
+  const signInRequired =
+    accessRevoked(projectError) || accessRevoked(viewerError);
   const conversationAvailable =
-    !detached && !!(workspace.workspace || projectObserved);
+    !detached && !signInRequired && !!(workspace.workspace || projectObserved);
   const chatWorkspace = useRef<string | null>(null);
   if (workspace.workspace || execution.value?.workspaceId)
     chatWorkspace.current =
       workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
   const preparation = (purpose: ExecutionPreparation) =>
-    onPrepareExecution
+    onPrepareExecution && !signInRequired
       ? async (
           signal: AbortSignal,
           location?: ConversationLocation,
@@ -243,9 +296,15 @@ export function App({
             progress,
           );
           if (signal.aborted) throw new Error("stale");
-          execution.prepared(epoch);
-          const observation = workspace.reconnect();
-          await workspace.whenReady(epoch, signal, observation);
+          // Even for the same epoch, the old viewer cannot release this wait.
+          setHandoffs((count) => count + 1);
+          try {
+            execution.prepared(epoch);
+            const observation = workspace.reconnect();
+            await workspace.whenReady(epoch, signal, observation);
+          } finally {
+            setHandoffs((count) => count - 1);
+          }
         }
       : undefined;
   const prepareSend = preparation("send");
@@ -322,16 +381,16 @@ export function App({
       ? projects.value.entries.find((entry) => entry.current)?.path
       : undefined) ??
     workspace.workspace?.rootLabel;
-  const observation = {
-    state: workspace.observation,
-    transportStatus: workspace.transportStatus,
-    error: workspace.error,
-    refresh: workspace.refresh,
-  };
-  const current =
-    observation.state?.snapshot.scope.kind === "task" &&
-    observation.state.snapshot.scope.id === taskId
-      ? observation.state.snapshot.context
+  // Scope/epoch selection can change before the previous observer's cleanup.
+  // Never borrow another task's snapshot (including just its watermark).
+  const candidate = workspace.observation?.snapshot;
+  const taskObservation =
+    candidate?.scope.kind === "task" &&
+    candidate.scope.id === taskId &&
+    candidate.storeId === workspace.workspace?.storeId &&
+    candidate.epoch === workspace.epoch &&
+    (!project || candidate.epoch === executionEpoch)
+      ? workspace.observation
       : undefined;
   const panels = usePanelLayout();
   const { closeDrawer } = panels;
@@ -509,7 +568,7 @@ export function App({
   };
   const snapshotSeq =
     selectedSnapshot ??
-    observation.state?.snapshot.committedSeq ??
+    taskObservation?.snapshot.committedSeq ??
     workspace.workspace?.committedSeq;
   const storeId = workspace.workspace?.storeId;
   const seed: ListRequest | null =
@@ -536,7 +595,7 @@ export function App({
           offset: 0,
         }
       : null;
-  const runs = current ? (observation.state?.snapshot.runs ?? []) : [];
+  const runs = taskObservation?.snapshot.runs ?? [];
   const resultTicket = lifetime.current.ticket();
   const result = (value: CommandObservation) => {
     setReceipt(value);
@@ -544,8 +603,7 @@ export function App({
       workspace.refresh();
   };
   const cancel = (runId: string) => {
-    if (canceling.has(runId) || !workspace.attached || !workspace.activeRuns)
-      return;
+    if (canceling.has(runId) || !attached || !workspace.activeRuns) return;
     const commandId = crypto.randomUUID(),
       epoch = workspace.activeRuns.epoch;
     setCanceling((prev) => new Set(prev).add(runId));
@@ -611,79 +669,46 @@ export function App({
     );
   const roster = workspace.activeRuns;
   const activeRuns = roster?.status === "complete" ? roster.runs : [];
+  // A matching HTTP workspace is not a current task subscription. In
+  // particular, render-time scope/epoch changes precede observer cleanup.
   const viewerFresh =
-    !detached &&
+    attached &&
+    !!workspace.epoch &&
+    workspace.workspace?.epoch === workspace.epoch &&
     !workspace.error &&
     workspace.transportStatus === "current" &&
-    (!observation.state || observation.state.connection === "current");
+    (taskId
+      ? taskObservation?.connection === "current"
+      : !workspace.observation);
   const observationFresh = executionReady && viewerFresh;
-  // What an owner-side action needs: an authenticated owner, freshly observed.
-  const actionsReady =
-    executionReady &&
-    !!workspace.workspace &&
-    workspace.attached &&
-    !workspace.error &&
-    viewerFresh;
-  const connecting =
-    initialViewer.current &&
-    !observation.state &&
-    !observation.error &&
-    !execution.error &&
-    (!project ||
-      (!execution.value && execution.readiness === "unknown") ||
-      execution.readiness === "running");
+  const connecting = initialViewer.current && !projectError && !viewerError;
   const modelAvailability: ModelAvailability = executionStopped
     ? {
         status:
           execution.readiness === "not-started" ? "not-started" : "stopped",
       }
-    : executionReady &&
-        viewerFresh &&
-        workspace.attached &&
-        workspace.epoch &&
-        (!project || execution.value?.epoch === workspace.epoch)
+    : observationFresh && workspace.epoch
       ? {
           status: "ready",
           epoch: workspace.epoch,
           attachmentVersion: workspace.attachmentVersion,
         }
-      : { status: connecting ? "connecting" : "unavailable" };
-  const connection = detached
-    ? "Viewer disconnected"
-    : connecting
-      ? "Connecting…"
-      : project && execution.readiness === "unknown"
-        ? "Project readiness unknown"
-        : project && execution.readiness === "stale"
-          ? "Project observation stale"
-          : executionStopped
-            ? "Ready to prepare execution"
-            : !viewerFresh
-              ? "Viewer observation stale"
-              : !workspace.workspace
-                ? "Viewer observation unavailable"
-                : (observation.state?.connection ??
-                  (taskId ? "Task snapshot not observed yet" : "Chat ready"));
-  const connectionDot = connecting
-    ? "busy"
-    : executionStopped
-      ? ""
-      : !observationFresh || !workspace.workspace
-        ? "error"
-        : observation.transportStatus !== "current"
-          ? "busy"
-          : !observation.state || observation.state.connection === "current"
-            ? "ok"
-            : "busy";
+      : {
+          status:
+            !projectError && !viewerError && !independent
+              ? "connecting"
+              : "unavailable",
+        };
+  const refreshConnection = () => {
+    if (observeExecution) workspace.refresh();
+    execution.refresh();
+  };
   return (
     <>
       <AppShell
         panels={panels}
         onOpenService={onOpenService}
-        onRefresh={() => {
-          workspace.refresh();
-          execution.refresh();
-        }}
+        onRefresh={refreshConnection}
         onDisconnect={() => {
           setSearchOpen(false);
           setExportOpen(false);
@@ -807,46 +832,12 @@ export function App({
         }
         notices={
           <>
-            {!workspace.workspace && activeRuns.length > 0 && (
-              <section
-                className="run-strip"
-                aria-label={t("Execution and cancellation")}
-              >
-                {activeRuns.map((r) => (
-                  <div className="run-strip-row" key={r.runId}>
-                    <span className="status-dot busy" aria-hidden="true" />
-                    <span className="run-strip-label">
-                      {tx(r.kind)} {r.runId} · {tx(r.stage)}
-                    </span>
-                    <button type="button" onClick={() => selectTask(r.taskId)}>
-                      {t("Open active task")}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      disabled={!workspace.attached || canceling.has(r.runId)}
-                      onClick={() => cancel(r.runId)}
-                    >
-                      <FiSquare aria-hidden="true" />
-                      {t("Cancel run — request stop")}
-                    </button>
-                  </div>
-                ))}
-              </section>
-            )}
             {notices}
-            <WorkspaceNotice
-              error={error}
-              projectObservationError={execution.error}
-              observationError={workspace.error}
-              unavailable={
-                !connecting && !executionStopped && !observationFresh
-              }
-              onRefresh={() => {
-                workspace.refresh();
-                execution.refresh();
-              }}
-            />
+            {error && (
+              <p className="banner-notice" role="alert">
+                {error}
+              </p>
+            )}
           </>
         }
         navigation={
@@ -854,12 +845,42 @@ export function App({
             {!conversationAvailable && (
               <aside className="panel panel-left lp-panel">
                 {discovery && <ActivityList {...discovery} />}
+                {activeRuns.length > 0 && (
+                  <section
+                    className="run-strip"
+                    aria-label={t("Execution and cancellation")}
+                  >
+                    {activeRuns.map((r) => (
+                      <div className="run-strip-row" key={r.runId}>
+                        <span className="status-dot busy" aria-hidden="true" />
+                        <span className="run-strip-label">
+                          {tx(r.kind)} {r.runId} · {tx(r.stage)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => selectTask(r.taskId)}
+                        >
+                          {t("Open active task")}
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          disabled={!attached || canceling.has(r.runId)}
+                          onClick={() => cancel(r.runId)}
+                        >
+                          <FiSquare aria-hidden="true" />
+                          {t("Cancel run — request stop")}
+                        </button>
+                      </div>
+                    ))}
+                  </section>
+                )}
                 <p className="panel-empty" role="status">
-                  {connecting
-                    ? t("Reading conversation history…")
-                    : t(
+                  {projectError || viewerError
+                    ? t(
                         "Conversation history could not be read. This is not an empty history.",
-                      )}
+                      )
+                    : t("Reading conversation history…")}
                 </p>
               </aside>
             )}
@@ -872,9 +893,9 @@ export function App({
                 taskId={taskId}
                 scope={scope}
                 runs={runs}
-                snapshot={observation.state?.snapshot.committedSeq}
+                snapshot={taskObservation?.snapshot.committedSeq}
                 activeRuns={workspace.activeRuns}
-                canCancel={workspace.attached}
+                canCancel={attached}
                 canceling={canceling}
                 onCancel={cancel}
                 chats={chatEntries}
@@ -927,7 +948,7 @@ export function App({
                 onConversation={selectChat}
                 onNewConversation={() => selectChat()}
                 actionsUnavailable={
-                  actionsReady
+                  observationFresh
                     ? ""
                     : executionStopped
                       ? t(
@@ -1046,17 +1067,11 @@ export function App({
                 }
                 prepareForSend={prepareSend}
                 prepareForPlan={preparePlan}
-                actionsReady={actionsReady}
+                actionsReady={observationFresh}
                 observe={summaryChanges}
                 available={conversationAvailable}
-                canInterrupt={workspace.attached}
-                enabled={
-                  prepareSend
-                    ? conversationAvailable
-                    : !!workspace.workspace &&
-                      workspace.attached &&
-                      !workspace.error
-                }
+                canInterrupt={attached}
+                enabled={prepareSend ? conversationAvailable : observationFresh}
                 modelAvailability={modelAvailability}
                 previewModels={previewModels}
                 initialDraft={
@@ -1067,8 +1082,7 @@ export function App({
                 onDraftApplied={() => onDraftApplied?.(chatId)}
                 onModelChanged={() => {
                   lifetime.current.depart();
-                  workspace.refresh();
-                  execution.refresh();
+                  refreshConnection();
                 }}
                 onChanged={() => {
                   chats.refresh();
@@ -1202,7 +1216,7 @@ export function App({
                             ))
                           ) : (
                             <p className="panel-empty">
-                              {current && observation.state
+                              {taskObservation
                                 ? t("No owner run projection in this snapshot.")
                                 : t(
                                     "No snapshot observed yet; absence is not proof of settlement.",
@@ -1323,24 +1337,35 @@ export function App({
         }
         status={
           <>
-            <ConnectionStatus
-              tip={t("Connection freshness is not execution outcome.")}
-              dot={connectionDot}
-              // A round trip describes a reachable service, not a connection
-              // still being made or one whose observation has gone stale.
-              latency={
-                connectionDot === "ok" || connectionDot === "" ? latency : null
+            <WorkspaceConnection
+              key={`${project?.id ?? "direct"}:${taskId ?? "chat"}`}
+              phase={
+                executionStopped
+                  ? execution.readiness === "not-started"
+                    ? "not-started"
+                    : "stopped"
+                  : independent
+                    ? "independent"
+                    : observationFresh
+                      ? taskId
+                        ? "task"
+                        : "chat"
+                      : connecting
+                        ? "connecting"
+                        : "updating"
               }
-            >
-              {tx(connection)}
-            </ConnectionStatus>
-            {project && (
-              <StatusItem tone="faint" icon={<FiServer />}>
-                {t("Execution service: {status}", {
-                  status: tx(execution.readiness),
-                })}
-              </StatusItem>
-            )}
+              projectStatus={project && execution.readiness}
+              projectError={projectError}
+              viewerError={viewerError}
+              retained={
+                !!workspace.workspace ||
+                (execution.readiness === "stale" &&
+                  !!execution.value &&
+                  execution.value.status !== "unavailable")
+              }
+              latency={latency}
+              onRefresh={refreshConnection}
+            />
             {activity && <ContextStatus usage={activity.context} />}
             {activity && <CacheStatus cache={activity.cache} />}
             {activity && activity.turns > 0 && (
@@ -1359,27 +1384,18 @@ export function App({
                 label={t("Working")}
               />
             )}
-            {roster?.status === "complete"
-              ? activeRuns.length > 0 && (
-                  <StatusItem tone="warn">
-                    {t(
-                      !observationFresh
-                        ? "Last observed: {count} active runs"
-                        : activeRuns.length === 1
-                          ? "{count} active run"
-                          : "{count} active runs",
-                      { count: activeRuns.length },
-                    )}
-                  </StatusItem>
-                )
-              : !connecting &&
-                !executionStopped && (
-                  <StatusItem tone="faint">
-                    {t(
-                      "Active roster unavailable; absence is not proof of settlement.",
-                    )}
-                  </StatusItem>
+            {roster?.status === "complete" && activeRuns.length > 0 && (
+              <StatusItem tone="warn">
+                {t(
+                  !observationFresh
+                    ? "Last observed: {count} active runs"
+                    : activeRuns.length === 1
+                      ? "{count} active run"
+                      : "{count} active runs",
+                  { count: activeRuns.length },
                 )}
+              </StatusItem>
+            )}
           </>
         }
         folder={

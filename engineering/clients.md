@@ -306,7 +306,9 @@ Its title states the figures with the percentage (a figure above the window as m
 The cache item (`web/src/layout/CacheStatus.tsx`) states the share of the session's input tokens read from the provider's prompt cache, from the head read's session totals, green from 70%, amber from 40% and red below; its title gives the read, written and uncached counts, and it is a dash while those totals state no input tokens.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
 The conversation header is one line: the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch count of a forked session (it opens the Branches tab) with the way back to the latest branch, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
-One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
+The connection item is an always-present keyboard disclosure.
+Its summary names the state in text; it expands upwards from the footer to show per-source diagnostics, a readonly refresh, or a sign-in action when access was revoked.
+No observation failure inserts a row above the conversation or task; unrelated operation errors remain separate.
 A transient local result is a toast under the topbar (`web/src/layout/toasts.ts`, browser-local): a copied link, a failed copy, or a refusal that reached no owner (a Send, image, rename or archive the browser itself refused, or one the owner answered with `effect:none`).
 An error toast stays until dismissed or until its conversation's next attempt, the others pause while hovered or focused; an unknown outcome, an owner-side effect (execution prepared, a Stop or approval reply) and every observation statement stay in place, never in a toast.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
@@ -501,12 +503,19 @@ History images keep one scope across all pages; parallel detail parts each dispo
 
 Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
 The chat hash also names a chosen branch (`leaf`): the conversation replaces it in place when the branch shown changes, which is no navigation, so a refresh shows that branch again and following the latest removes it.
-Project readiness, viewer freshness and actual work status are separate observations.
+The owner running, this gateway being associated with its project, and the viewer having current data are separate facts; none states the outcome of work.
+A running but unassociated owner is browse-only: the history stays readable without allocating viewer sessions, and browsing does not invoke execution preparation.
 A failed/unavailable readiness read retains earlier history identity but marks it stale/unknown; a pending re-observation or epoch change cannot make a retained value current.
 Positive stopped/not-started observations keep preparation guidance in the statusbar, not a global banner; explicit Send still displays its local preparation progress.
 Normal first observation and attachment waits show a neutral connecting status, not a stale warning or a ready claim, including after project readiness arrives but before the first viewer data.
-Once viewer data or a failure has been observed, resetting its attachment does not become a new quiet first load; unavailable, failed and retained stale observations remain visible.
-App preserves the existing attachment through uncertainty, labels retained work counts as last-observed, and keeps local, project and viewer errors visible together.
+After a first observation, a deliberate handoff or resync is updating, not a fault.
+A read refusal names its source, and a continuous wait with no current evidence is reported after the stale interval even if no error frame arrives.
+A positive observation, not another attempt, clears the last failure.
+`test/web/stale-banner.test.tsx` renders the actual App in English and Chinese with controlled viewer/project results and callback lifetimes.
+Together with the protocol fixture in `send-observation` this checks state and handler wiring, not a mounted browser, actual keyboard focus, viewport geometry or live service availability.
+App preserves a safety attachment through an inconclusive read of the same selection, not across an epoch handoff or an observed workspace identity mismatch.
+A revoked viewer cannot regain authority from a successful project read; the sign-in action reloads the authenticated entry, without preparing execution.
+Retained work counts are labelled as last-observed, and local, project and viewer errors remain visible together.
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch.

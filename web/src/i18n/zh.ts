@@ -75,6 +75,23 @@ export const zh = {
   "The context changed ({code}). Read the current state before trying this action again.":
     "上下文已变化（{code}）。请先读取当前状态，再决定是否重新操作。",
   "Observation status": "状态读取",
+  "Connection status: {state}": "连接状态：{state}",
+  "Updating state…": "正在更新状态…",
+  "Task up to date": "任务状态已更新",
+  "Execution stopped": "执行服务已停止",
+  "Execution not started": "执行服务尚未启动",
+  "Browsing only": "仅浏览",
+  "Last known state": "仅有上次读取的状态",
+  "Sign-in required": "需要重新登录",
+  "Sign in again": "重新登录",
+  "Viewer access not confirmed": "未能确认此入口可连接执行服务",
+  "No recent update from the task connection": "最近未收到任务实时连接的更新",
+  "The task connection closed": "任务实时连接已关闭",
+  stopped: "已停止",
+  "Waiting for current state from this connection.":
+    "正在等待此连接返回最新状态。",
+  "This owner is running independently. Browsing history does not connect it to this workbench.":
+    "执行服务正在独立运行。浏览历史不会将它关联到此工作台。",
   "Latest state unavailable.": "当前无法获取最新状态。",
   "Started work may still be running. No message is resent.":
     "已开始的工作可能仍在运行，不会重发消息。",

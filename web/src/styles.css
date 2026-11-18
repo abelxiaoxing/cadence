@@ -2105,7 +2105,7 @@ summary:focus-visible,
   white-space: nowrap;
 }
 
-/* ---- Banners under the topbar ---- */
+/* Safety controls in navigation while the full workspace is unavailable. */
 .run-strip {
   flex: none;
   display: flex;
@@ -5357,31 +5357,50 @@ button.link:hover:not(:disabled) {
   }
 }
 
-/* Observation uncertainty is not an operation failure or a plan decision. */
-.workspace-notice {
-  flex: none;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
-  background: var(--bg-elev);
-  color: var(--text-dim);
-  font-size: 12px;
+/* One reserved connection item. Its keyboard disclosure opens over the
+ * transcript, never in the flow of either the transcript or the footer. */
+.workspace-connection {
+  position: relative;
+  width: min(20em, 100%);
+  min-width: 0;
 }
-.workspace-notice-summary {
+.workspace-connection > summary {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  justify-content: space-between;
+  list-style: none;
+  cursor: pointer;
 }
-.workspace-notice-summary p {
-  flex: 1 1 260px;
-  margin: 0;
+.workspace-connection > summary::-webkit-details-marker {
+  display: none;
 }
-.workspace-notice details {
-  margin: 4px 0 0;
+.workspace-connection > summary:focus-visible {
+  outline: 2px solid var(--accent-strong);
 }
-.workspace-notice details p {
+.workspace-connection > summary > svg {
+  flex: none;
+}
+.connection-details {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  width: min(28em, calc(100vw - 16px));
+  max-height: 65vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--menu-solid-bg);
+  box-shadow: 0 6px 20px var(--shadow-2);
+  color: var(--text);
+  user-select: text;
+}
+.connection-details p {
   margin: 4px 0;
+}
+.connection-details button {
+  margin-top: 6px;
 }
 .composer-status {
   margin: 0;
