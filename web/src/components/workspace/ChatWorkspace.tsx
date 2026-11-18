@@ -23,7 +23,7 @@ import {
 } from "react-icons/fi";
 import {
   type DesignAnswer,
-  designSummary,
+  designMessage,
 } from "../../../../src/service/contracts/design.ts";
 import type { ConversationLocation } from "../../../../src/service/contracts/models.ts";
 import type {
@@ -33,6 +33,7 @@ import type {
   ChatSummary,
   ChatTreeNode,
 } from "../../../../src/service/contracts/workbench.ts";
+import { CONVERSATION_SEND_BYTES } from "../../../../src/service/contracts/workbench.ts";
 import type {
   WorkflowProposal,
   WorkflowRun,
@@ -2026,8 +2027,14 @@ export function ChatWorkspace({
               disabled={
                 busy || running || !canSend || !cadenceKnown || !!approving
               }
-              onEdit={(answers) => void editDesign(answers)}
-              onSubmit={(d) => void send(designSummary(d), undefined, true)}
+              onEdit={editDesign}
+              onSubmit={(d) =>
+                void send(
+                  designMessage(d, CONVERSATION_SEND_BYTES),
+                  undefined,
+                  true,
+                )
+              }
             />
           )}
           {state?.enabled && state.proposal && (

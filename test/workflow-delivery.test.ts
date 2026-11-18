@@ -124,7 +124,9 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
         });
         expect(prompt).toContain("native facts");
       } else if (kind === "knowledge") {
-        expect(prompt).toContain("real fixture check evidence");
+        expect(prompt).toContain(
+          "Final candidate checks and independent review are pending",
+        );
         writeFileSync(
           join(cwd, "knowledge.md"),
           "Verified fixture fact, with test reference.",
@@ -135,6 +137,7 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
         };
         text = JSON.stringify(report);
       } else if (readonly) {
+        expect(prompt).toContain("real fixture check evidence");
         reviews++;
         text = '{"approved":true,"summary":"inspected","blockingIssues":[]}';
       } else {
@@ -171,8 +174,8 @@ it("one admitted delivery recovers implement failure, preserves partial work, le
   expect(live.run.revision).toBe(1);
   expect(phases).toContain("recovering");
   expect(phases).toContain("learning");
-  expect(checks).toBe(3);
-  expect(reviews).toBe(3);
+  expect(checks).toBe(1);
+  expect(reviews).toBe(1);
   expect(readFileSync(join(cwd, "knowledge.md"), "utf8")).toContain("Verified");
   expect(owner.setup).toHaveBeenCalledTimes(2); // candidate, then per-worktree preparation
   expect(owner.publish).toHaveBeenCalledTimes(1);

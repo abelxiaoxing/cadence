@@ -190,6 +190,14 @@ export function designSummary(d: DesignDraft) {
     )
     .join("\n");
 }
+/** The turn retains its visible decisions where they fit. The owner keeps
+ * the full revision and exposes it to the coordinator in either case. */
+export function designMessage(d: DesignDraft, maximum: number) {
+  const summary = designSummary(d);
+  return new TextEncoder().encode(summary).length <= maximum
+    ? summary
+    : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
+}
 export const recommendsDesign = (s: string) =>
   /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(
     s.trim(),

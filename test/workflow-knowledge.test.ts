@@ -150,7 +150,9 @@ it("every delivery of a current agreement curates the store; the first one is as
     paths: [".cadence/project.md", ".cadence/knowledge"],
   });
   expect(f.prompts[0].prompt).toContain("There is no route table yet");
-  expect(f.prompts[0].prompt).toContain("native evidence");
+  expect(f.prompts[0].prompt).toContain(
+    "Final candidate checks and independent review are pending",
+  );
   expect(f.live.knowledgeDone).toBe(true);
   // From now on the store belongs to what this run commits and reviews.
   expect(f.owner.scope(f.live, f.proposal)).toEqual([
@@ -398,6 +400,10 @@ it("a recorded investigation is given only while the files it cites read as they
     { id },
   );
   // The checkout moved, but what the answer rests on did not: no caution.
+  expect(f.owner.investigationSummary(id)).toMatchObject({
+    sources: record.files,
+    answer: expect.stringContaining("write.ts"),
+  });
   const current = await f.owner.investigation(id, f.cwd);
   expect(current).toContain("Outputs are written by write.ts");
   expect(current).not.toContain("changed since");
@@ -425,6 +431,7 @@ it("a recorded investigation is given only while the files it cites read as they
   f.records.set(join(f.owner.root, "investigations", `${id}.json`), record);
   // The cited file changed: a worker gets a pointer, not the stale answer.
   f.put("a.txt", "rewritten\n");
+  expect(f.owner.investigationSummary(id)).not.toHaveProperty("answer");
   const stale = await f.owner.investigation(id, f.cwd);
   expect(stale).toContain("out of date: a.txt changed since it was made");
   expect(stale).toContain("Where are outputs written?");

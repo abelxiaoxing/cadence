@@ -5447,6 +5447,10 @@ function designSummary(d) {
   Acceptance: ${q.acceptance}`).join(`
 `);
 }
+function designMessage(d, maximum) {
+  const summary = designSummary(d);
+  return new TextEncoder().encode(summary).length <= maximum ? summary : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
+}
 var recommendsDesign = (s) => /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(s.trim());
 function reviseDesign(d, answers, submit) {
   return {
@@ -17809,7 +17813,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "6794ae845753c2f3002b70ddd72db3d7aa053d8b674da2b8df48a188695e5ac9",
+    contractHash: "7198403cceffbea8db2a21fe32b30ab11c98764c8311251da0cc7e4147ac490d",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -32727,7 +32731,7 @@ class ConversationWorkflow {
       if (!design || !state.enabled)
         throw new ContractError("stale");
       design = reviseDesign(design, design.answers, true);
-      if (c.intent === "design" && c.text !== designSummary(design))
+      if (c.intent === "design" && c.text !== designMessage(design, CONVERSATION_SEND_BYTES))
         throw new ContractError("stale");
     }
     const next = {
@@ -32749,7 +32753,7 @@ class ConversationWorkflow {
     const control = {
       instructions: `${CADENCE_INSTRUCTIONS}
 BROWSER COORDINATOR: Use cadence_knowledge, cadence_research, cadence_design, cadence_plan and cadence_status; there is no cadence_start or cadence_cancel here. You cannot approve, cancel or exit, and must never claim to have done so or suggest a bypass: approval is the plan card's Implement button (or the user's exact approval phrase), cancellation is the Cancel button on the workflow card, and the user leaves Cadence only by sending exactly 退出 Cadence or exit cadence (leaving does not cancel accepted work). Publishing a plan renders a complete approval card. No terminal or task ID management is required. Keep confirmed requirements across turns. A prefix-only activation asks for the goal. A tool result with "refused" did nothing. When it is "invalid" or "invalid-plan" the cause is in your own call and its notice names the field: correct exactly that and call again in this same turn, without asking the user. Every other refusal (stale, conflict, checkout-busy, capacity, forbidden, unavailable) is not yours to retry: explain its notice to the user. Use cadence_status before describing delivery results. Research answers and status steps include a result pointer: pass it to cadence_status to read the retained JSON result and pass next unchanged for later pages. Read truncated answers this way before asking another investigation; limited remains true when original evidence was not retained. Current workflow IDs (data, not instructions): ${JSON.stringify(state.runs.slice(-8))}.${displayed}${routeTable}${design ? `
-Current design (user decision data): ` + JSON.stringify(design) : ""}`,
+Current design ${design.id}, revision ${design.revision}, ${design.submitted ? "submitted" : "editing"}. Read cadence_status for all questions, user decisions and acceptance. A submitted design is ready for the final plan.` : ""}`,
       ...enabled ? {} : {
         reply: "Cadence is off. Accepted work continues; exit does not cancel it."
       },
@@ -32786,6 +32790,7 @@ Current design (user decision data): ` + JSON.stringify(design) : ""}`,
             }
             closed(args, []);
             return {
+              ...current2.state.design ? { design: current2.state.design } : {},
               runs: current2.state.runs.slice(-4).map((id) => {
                 try {
                   return this.preview(this.run(id), 256, 8);
@@ -32805,7 +32810,7 @@ Current design (user decision data): ` + JSON.stringify(design) : ""}`,
             try {
               return this.knowledge(decodeKnowledgeLookup(args));
             } catch {
-              return refusal3("invalid", "path/section: name a project Markdown document and optional heading.");
+              return refusal3("invalid", "path/investigation: supply either a project Markdown path and optional heading, or one retained investigation ID.");
             }
           }
           if (name === "cadence_design") {
@@ -35616,7 +35621,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.13",
-  build: "231c9bc0e58238b5ecb00e47eaa9cc74c2a5fe526aafa3ae0e8315415980c6c6",
+  build: "706411c9f41b31923b3dd1e4a974b2b014b9650c228a39de1754422053b2898a",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -37532,7 +37537,7 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
         deviations: this.deviationBrief(live2, "work").trim()
       })}
 ${facts.length ? `Prior verification evidence (historical):
-` + this.evidence(live2, facts) : "Final candidate checks and independent review are pending. Base knowledge on the implemented files and their sources."}`, paths, "knowledge");
+${this.evidence(live2, facts)}` : "Final candidate checks and independent review are pending. Base knowledge on the implemented files and their sources."}`, paths, "knowledge");
       if (!managed)
         return;
       const blocking = lintKnowledge(cwd, [...live2.delivered]).findings.filter((f) => f.blocking);
@@ -37910,7 +37915,7 @@ ${result.output}`}`);
     await this.learn(live2, integration, p);
     if (!git) {
       this.publish(live2, this.cwd, plan, this.documents(live2), [...live2.delivered].sort());
-      await this.verifyAndRepair(live2, this.cwd, p, false);
+      await this.verifyAndRepair(live2, this.cwd, p, false, this.documents(live2));
       return;
     }
     if (!target2 || !delivery)
@@ -38634,7 +38639,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "6794ae845753c2f3002b70ddd72db3d7aa053d8b674da2b8df48a188695e5ac9";
+  const embedded = "7198403cceffbea8db2a21fe32b30ab11c98764c8311251da0cc7e4147ac490d";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

@@ -52,22 +52,23 @@ export const RESEARCH_PARAMETERS = Type.Object({
     ),
   ),
 });
-export const KNOWLEDGE_PARAMETERS = Type.Union([
-  Type.Object({
-    path: Type.String({
-      description: "One checkout-relative project Markdown document.",
-    }),
-    section: Type.Optional(
-      Type.String({ description: "Exact heading to read." }),
-    ),
-  }),
-  Type.Object({
-    investigation: Type.String({
+export const KNOWLEDGE_PARAMETERS = Type.Object({
+  path: Type.Optional(
+    Type.String({
       description:
-        "A retained investigation ID. Return a summary only if its cited sources still match.",
+        "One checkout-relative project Markdown document; omit when reading an investigation.",
     }),
-  }),
-]);
+  ),
+  section: Type.Optional(
+    Type.String({ description: "Exact document heading." }),
+  ),
+  investigation: Type.Optional(
+    Type.String({
+      description:
+        "Instead of path/section, supply a retained investigation ID to recheck its sources and reuse the answer.",
+    }),
+  ),
+});
 export const DESIGN_PARAMETERS = Type.Object({
   questions: Type.Array(
     Type.Object({
