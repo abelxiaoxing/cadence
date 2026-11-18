@@ -167,7 +167,7 @@ it("the service routes report this copy and refuse a restart that is stale, unco
       version,
       unit: null,
       upgrade: "unsupported-install",
-      work: 0,
+      work: null,
       job: null,
     });
     const manifest = loadWebAssets().manifest;
@@ -194,7 +194,7 @@ it("the service routes report this copy and refuse a restart that is stale, unco
       action: "restart",
       from: version,
       to: null,
-      work: 0,
+      work: "a".repeat(64),
       epoch: state.epoch,
     };
     const code = (r: { body: { error?: { code: string } } }) =>
@@ -204,6 +204,7 @@ it("the service routes report this copy and refuse a restart that is stale, unco
     );
     expect(code(await request({ ...restart, from: "0.0.1" }))).toBe("stale");
     expect(code(await request({ ...restart, to: "9.9.9" }))).toBe("invalid");
+    expect(code(await request({ ...restart, work: 0 }))).toBe("invalid");
     expect(code(await request(restart))).toBe("unsupported-context");
     expect(
       g.store.files.read(g.store.path("maintenance.json")),

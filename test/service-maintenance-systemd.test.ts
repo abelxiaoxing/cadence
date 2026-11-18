@@ -32,6 +32,7 @@ import {
 } from "../src/service/autostart.ts";
 import { ownerControl } from "../src/service/cli.ts";
 import type { MaintenanceJob } from "../src/service/contracts/gateway.ts";
+import { decodeServiceEntry } from "../src/service/contracts/gateway.ts";
 import { GatewayStore } from "../src/service/gateway-store.ts";
 import { installedVersion } from "../src/service/maintenance.ts";
 import {
@@ -153,13 +154,15 @@ describe.skipIf(!enabled)("real systemd user manager", () => {
         await fetch(`${endpoint}/workbench/v1`, { headers })
       ).json()) as { epoch: string; csrf: string };
       const version = installedVersion(repository);
-      const service = await (
-        await fetch(`${endpoint}/workbench/v1/service`, { headers })
-      ).json();
+      const service = decodeServiceEntry(
+        await (
+          await fetch(`${endpoint}/workbench/v1/service`, { headers })
+        ).json(),
+      );
       expect(service).toMatchObject({
         version,
         unit: { name: unit, scope: "user" },
-        work: 0,
+        work: { items: [] },
         job: null,
       });
       const manifest = loadWebAssets().manifest;
@@ -180,7 +183,7 @@ describe.skipIf(!enabled)("real systemd user manager", () => {
           action: "restart",
           from: version,
           to: null,
-          work: 0,
+          work: service.work?.digest,
           epoch: workbench.epoch,
         }),
       });

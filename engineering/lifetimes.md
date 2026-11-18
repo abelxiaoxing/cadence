@@ -160,7 +160,11 @@ Startup refuses recovery while a ledger worker is live but unidentifiable or its
 Stopping a systemd unit ends every process in its cgroup, including a management command that one of the service's own tools started, however it was detached (`nohup`, `setsid`, double fork).
 The `server install|restart|stop|uninstall|upgrade` commands therefore compare `/proc/self/cgroup` with the unit's `ControlGroup` before any change, including the `.env` key append, and refuse inside it with `inside-service`; child-process cleanup is never weakened to make them survive.
 The WebUI's restart and upgrade run the same CLI outside that cgroup: the gateway proves its own unit (cgroup name, generated definition, `InvocationID` equal to its `INVOCATION_ID`, its own `.env`) and starts `systemd-run --collect` as `cadence[-NAME].maintenance.service`, whose fixed name admits one job at a time, with the environment the definition bakes plus the gateway's `HOME`.
-A request names the version, target, epoch and running-work count the browser confirmed; any difference is `stale`, and running work is named and stopped only by its orderly Stop.
+The browser confirms the version, target, workbench epoch and a digest of the listed project, owner epoch and work identities.
+The gateway builds the list from fresh, complete observations of the associated owners it would stop.
+Any change to the work before confirmation is `stale`, including replacement of work without a change in count.
+The transient job submits the same digest to the authenticated orderly Stop, after any upgrade download.
+If the gateway cannot confirm the digest at that point, the job declines to stop the unit.
 The job records its outcome in `maintenance.json` beside the workbench registration; a job that ends without reporting reads as `interrupted`, and the job's journal never carries the private link.
 An upgrade (Linux, a proven Pi/npm/Bun installation the account can write) resolves one exact version through its own package manager and prefetches both that and the previous version while the service still runs.
 Pi's user settings select npm or Bun; version pins and custom wrapper commands refuse, without any settings edit.

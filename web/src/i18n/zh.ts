@@ -1233,18 +1233,20 @@ export const zh = {
   "{version} is available, but this installation requires a manual update using its original installation method.":
     "{version} 可用，但当前安装需要按原安装方式手动更新。",
   "Upgrade to {version}": "升级到 {version}",
+  "Stop work and upgrade to {version}": "停止运行中的工作并升级到 {version}",
   "Restart service": "重启服务",
   "Restart Cadence?": "重启 Cadence？",
-  "Upgrade Cadence {from} to {to}?": "将 Cadence 从 {from} 升级到 {to}？",
-  "The service stops in order and starts again; this page waits and then reloads.":
-    "服务会按顺序停止并重新启动；此页面会等待完成后重新加载。",
-  "The package manager downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.":
-    "包管理器会在 Cadence 继续运行时下载 {to}；然后服务停止、安装 {to} 并重新启动。如果 {to} 未能就绪，会重新安装 {from}。",
+  "The service stops in order and starts again; this page waits for the result.":
+    "服务会有序停止并重新启动；此页面会等待重启结果。",
+  "Cadence downloads the update before stopping. If startup fails, it tries to restore the previous version. After a successful upgrade, this page reloads automatically; unsent images must be attached again.":
+    "Cadence 会先下载更新，再停止服务并安装。如果新版本未能启动，会尝试恢复旧版本。升级成功后页面会自动刷新；未发送的图片需要重新添加。",
   "{count} running workflows or conversations will be stopped.":
     "{count} 个正在运行的工作流或会话将被停止。",
+  "Conversation {id}": "会话 {id}",
+  "Cadence could not confirm which work would stop. Refresh the service status to continue.":
+    "Cadence 无法确认将停止的工作。请刷新服务状态后继续。",
   "Stop them and continue": "停止它们并继续",
   "Restart now": "立即重启",
-  "Upgrade now": "立即升级",
   "Stopping Cadence…": "正在停止 Cadence…",
   "Cadence is starting again…": "Cadence 正在重新启动…",
   "Downloading {to}, then stopping Cadence…":

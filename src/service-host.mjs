@@ -7695,10 +7695,6 @@ function decodeSocketInput(value) {
   return { kind, scope: decodeScope(o.scope) };
 }
 
-// src/service/activity-discovery.ts
-import { hostname as hostname5 } from "node:os";
-import { join as join9 } from "node:path";
-
 // src/worker-redaction.mjs
 var marker = "[redacted]";
 var sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|headers|env)$/i;
@@ -8159,6 +8155,10 @@ class DetailSanitizer {
     return this.write("", true);
   }
 }
+
+// src/service/activity-discovery.ts
+import { hostname as hostname5 } from "node:os";
+import { join as join9 } from "node:path";
 
 // src/service/activity-files.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
@@ -11925,6 +11925,7 @@ function decodeMaintenanceJob(value) {
 function canUpgrade(route) {
   return route === "npm" || route === "bun" || route === "pi-npm" || route === "pi-bun" || route === "npm-local" || route === "bun-local";
 }
+var MAINTENANCE_WORK_LIMIT = 256;
 
 // src/service/doctor.ts
 import { createInterface } from "node:readline";
@@ -14747,7 +14748,7 @@ class MaintenanceRecord {
     this.write({ ...job2, state, reason, version, endedAt: Date.now() });
   }
 }
-function launchJob(s, job2) {
+function launchJob(s, job2, confirmedWork) {
   const text2 = generatedUnit(s);
   if (typeof text2 !== "string")
     return false;
@@ -14770,7 +14771,9 @@ function launchJob(s, job2) {
     ...name ? ["--name", name] : [],
     ...job2.to ? ["--to", job2.to] : [],
     "--job",
-    job2.id
+    job2.id,
+    "--confirmed-work",
+    confirmedWork
   ], { stdio: "ignore", timeout: 20000 });
   return !result.error && result.status === 0;
 }
@@ -14910,10 +14913,10 @@ async function serviceStatus(c, diagnose = false) {
     };
   }
 }
-async function stopService(c) {
+async function stopService(c, confirmedWork) {
   let epoch;
   try {
-    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
+    const reply = closed(await nativeCall(c, "stop", false, confirmedWork ? { confirmedWork } : undefined), ["status", "epoch"]);
     if (reply.status !== "accepted")
       throw new ContractError("unavailable");
     epoch = decodeId(reply.epoch);
@@ -17823,6 +17826,10 @@ class ModelPreviewProcesses {
 }
 
 // src/service/gateway.ts
+function maintenanceWorkDigest(gatewayEpoch, work) {
+  const keys2 = work.map((identity) => canonicalJson(identity)).sort();
+  return hash(canonicalJson([gatewayEpoch, keys2]));
+}
 async function joinProjectStops(projects, stopProject) {
   const unconfirmed = [];
   const seen = new Set;
@@ -17843,7 +17850,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "1b833e54ac91fb9d8e570f43da35e3e2faf6c9e214bd9d1bd7cce19c2fe7f243",
+    contractHash: "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17989,17 +17996,53 @@ Content-Length: 0\r
   const commands = packageCommands(packageSystem);
   let route, requesting = false;
   async function associatedWork() {
-    const counts = await Promise.all([
-      ...new Map(store.associatedProjects().map((p) => [p.path, p])).values()
-    ].map(async (p) => {
-      try {
-        const observed = await serviceStatus(new ServiceCoordination(p.path, input.stateHome));
-        return observed && typeof observed === "object" && "status" in observed && observed.status === "alive" && "work" in observed && typeof observed.work === "number" ? observed.work : 0;
-      } catch {
-        return 0;
-      }
-    }));
-    return counts.reduce((sum, count) => sum + count, 0);
+    if (preparing)
+      throw new ContractError("unavailable");
+    const targets = () => [
+      ...new Map(store.associatedProjects().map((p) => [canonicalJson([p.path, p.epoch]), p])).entries()
+    ].sort(([a], [b]) => a < b ? -1 : a === b ? 0 : 1);
+    const selected2 = targets();
+    const secrets = acquired.access.redactionLiterals();
+    const work = await Promise.all(selected2.map(async ([, p]) => {
+      const c = new ServiceCoordination(p.path, input.stateHome);
+      if (c.store.root !== p.path)
+        throw new ContractError("stale");
+      const observed = c.inspect();
+      if (observed.status === "stopped" || observed.status === "absent")
+        return [];
+      const epoch = c.localAccess().epoch;
+      if (epoch !== p.epoch)
+        return [];
+      const summary = decodeOwnerActivity(await nativeCall(c, "activity"));
+      if (!summary.complete || summary.epoch !== epoch || c.localAccess().epoch !== epoch)
+        throw new ContractError("unavailable");
+      const project = sanitizeText(p.path, secrets).replace(/[\p{Cc}\p{Cf}]/gu, " ");
+      return summary.activities.map((item) => {
+        if (item.epoch !== epoch || item.source === "terminal")
+          throw new ContractError("unavailable");
+        return {
+          key: [p.path, epoch, item.source, item.id],
+          item: {
+            project,
+            id: item.id,
+            source: item.source,
+            sessionId: item.sessionId
+          }
+        };
+      });
+    })).then((lists) => lists.flat());
+    if (preparing || canonicalJson(targets().map(([key2]) => key2)) !== canonicalJson(selected2.map(([key2]) => key2)) || work.length > MAINTENANCE_WORK_LIMIT)
+      throw new ContractError("unavailable");
+    const confirmed = {
+      digest: maintenanceWorkDigest(auth.epoch, work.map(({ key: key2 }) => key2)),
+      items: work.map(({ item }) => item)
+    };
+    canonicalJson(confirmed, LIMITS.controlBytes - 4096);
+    return confirmed;
+  }
+  async function assertConfirmedWork(digest) {
+    if ((await associatedWork()).digest !== digest)
+      throw new ContractError("stale");
   }
   function latestJob() {
     const job2 = record3.read();
@@ -18012,13 +18055,13 @@ Content-Length: 0\r
       version,
       unit: managed ? { name: managed.unit, scope: managed.scope ?? "user" } : null,
       upgrade: await route,
-      work: await associatedWork(),
+      work: managed ? await associatedWork().catch(() => null) : null,
       job: latestJob()
     };
   }
   async function requestJob(value2, current) {
     const o = closed(value2, ["action", "from", "to", "work", "epoch"]);
-    const action = oneOf(o.action, MAINTENANCE_ACTIONS), to = o.to === null ? null : decodeVersion(o.to);
+    const action = oneOf(o.action, MAINTENANCE_ACTIONS), to = o.to === null ? null : decodeVersion(o.to), work = decodeHash(o.work);
     if (action === "upgrade" !== (to !== null))
       throw new ContractError("invalid");
     if (decodeId(o.epoch) !== auth.epoch || decodeVersion(o.from) !== version)
@@ -18032,8 +18075,7 @@ Content-Length: 0\r
       throw new ContractError("conflict");
     requesting = true;
     try {
-      if (await associatedWork() !== integer(o.work, 0, 1e6))
-        throw new ContractError("stale");
+      await assertConfirmedWork(work);
       current();
       assert();
       const job2 = {
@@ -18048,7 +18090,7 @@ Content-Length: 0\r
         endedAt: null
       };
       record3.write(job2);
-      if (!launchJob(managed, job2)) {
+      if (!launchJob(managed, job2, work)) {
         record3.finish(job2.id, "failed", "refused", version);
         throw new ContractError("unavailable");
       }
@@ -18416,8 +18458,14 @@ Content-Length: 0\r
           });
           return;
         }
-        closed(value2, []);
         if (operation === "stop") {
+          if (value2 && typeof value2 === "object" && Object.hasOwn(value2, "confirmedWork")) {
+            const { confirmedWork } = closed(value2, ["confirmedWork"]);
+            await assertConfirmedWork(decodeHash(confirmedWork));
+            auth.current(caller2);
+            assert();
+          } else
+            closed(value2, []);
           reply(res, 200, {
             kind: "ok",
             value: { status: "accepted", epoch: auth.epoch }
@@ -18425,6 +18473,7 @@ Content-Length: 0\r
           stop();
           return;
         }
+        closed(value2, []);
         if (operation === "token-rotate") {
           acquired.access.rotate();
           await Promise.all([...retirements]);
@@ -18644,7 +18693,10 @@ Content-Length: 0\r
         return;
       }
       if (raw === "/workbench/v1/service" && req.method === "GET") {
-        reply(res, 200, await serviceEntry());
+        const service = await serviceEntry();
+        auth.current(caller);
+        assert();
+        reply(res, 200, service);
         return;
       }
       if (raw === "/workbench/v1/service/release" && req.method === "GET") {
@@ -35722,7 +35774,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "ddf9e9d35a3a7b928845d9b7bf1c122aa355e11810dc0066577290956bf6c793",
+  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38742,7 +38794,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "1b833e54ac91fb9d8e570f43da35e3e2faf6c9e214bd9d1bd7cce19c2fe7f243";
+  const embedded = "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

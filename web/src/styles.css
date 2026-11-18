@@ -2294,6 +2294,9 @@ summary:focus-visible,
   align-items: center;
   gap: 6px;
 }
+.service-work {
+  overflow-wrap: anywhere;
+}
 
 /* ---- Artifact preview / diff (pi .fp-* / .scm-* rules in reference.css) ---- */
 .fp-toc-layout {

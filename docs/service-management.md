@@ -139,11 +139,17 @@ A machine without a supported user service manager and `CADENCE_AUTOSTART=0` kee
 
 On Linux the workbench has a **Cadence service** dialog: the server button on the entry page, or **More → Cadence service** in a project.
 It shows the running version and its systemd unit, shows its installation method, asks that package manager for the latest version only when you press **Check for updates**, and offers **Restart service** and **Upgrade to VERSION**.
-The confirmation names the running workflows and conversations the restart stops; they stop through the orderly Stop, never by a signal.
-If work starts or ends before you confirm, the request is refused as stale and the dialog reads the service again.
+**Upgrade to VERSION** is the final confirmation.
+If workflows or conversations are running, the dialog lists each one by project and ID, and the button says **Stop work and upgrade to VERSION**.
+Restart keeps its separate confirmation.
+Both use orderly Stop.
+If the listed work changes before you confirm, the request is refused as stale and the dialog reads the service again.
+The job checks the same list again when it requests Stop, including after downloading an upgrade.
 
 The request runs outside the service, in a transient unit `cadence.maintenance.service` (`cadence-NAME.maintenance.service` for a named service), so closing or reloading the page does not interrupt it and one job runs at a time.
-It runs the same `cadence server restart` or `cadence server upgrade`, then records its outcome; the page waits for that record and offers to reload.
+It runs the same `cadence server restart` or `cadence server upgrade`, then records its outcome.
+After a successful upgrade, the requesting page reloads automatically when the target version is serving.
+A restart still offers a reload; a failed, rolled-back or unconfirmed upgrade leaves the result on screen.
 If it reports nothing, see `journalctl --user -u cadence.maintenance.service` (without `--user` for a system service) and `cadence server status`.
 
 An upgrade fetches the exact release and previous version while the service still runs, so an unreachable registry changes nothing.

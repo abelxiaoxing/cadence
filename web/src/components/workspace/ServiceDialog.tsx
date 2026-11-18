@@ -8,6 +8,7 @@ import {
   compareVersions,
   type MaintenanceJob,
   type MaintenanceReason,
+  type MaintenanceWorkItem,
   type ReleaseEntry,
   type ServiceEntry,
 } from "../../../../src/service/contracts/gateway.ts";
@@ -37,11 +38,29 @@ const REASONS: Record<MaintenanceReason, MessageKey> = {
   refused: "The service manager refused the operation.",
   interrupted: "The job ended without reporting.",
 };
-type Choice =
-  | { action: "restart"; to: null }
-  | { action: "upgrade"; to: string };
 /** Recorded outcome, no report in time, or a different version answering. */
 type Result = MaintenanceJob | "timeout" | "changed";
+/** Only this tab's submitted upgrade, recorded ready and serving its target,
+ * may reload the page. Merely discovering a completed job does nothing. */
+export function maintenanceOutcome(
+  submitted: MaintenanceJob,
+  service: ServiceEntry,
+): Result | "reload" | undefined {
+  const job = service.job;
+  if (job?.id !== submitted.id || job.state === "running") return;
+  if (
+    submitted.action === "upgrade" &&
+    job.state === "ready" &&
+    !unchanged(job)
+  )
+    return job.action === "upgrade" &&
+      job.version === submitted.to &&
+      service.version === submitted.to
+      ? "reload"
+      : "changed";
+  return job;
+}
+
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "unavailable";
 
@@ -122,7 +141,7 @@ export function ServiceDialog({
   const [service, setService] = useState<ServiceEntry>();
   const [error, setError] = useState("");
   const [latest, setLatest] = useState<ReleaseEntry | "checking" | "failed">();
-  const [choice, setChoice] = useState<Choice | null>(null);
+  const [confirmRestart, setConfirmRestart] = useState(false);
   const [stopWork, setStopWork] = useState(false);
   const [sending, setSending] = useState(false);
   const [submitted, setSubmitted] = useState<{
@@ -133,6 +152,19 @@ export function ServiceDialog({
   const [down, setDown] = useState(false);
   const [result, setResult] = useState<Result>();
   const [revision, observe] = useState(0);
+  const work = service?.work ?? null;
+  const workUnavailable = service?.unit && !work && (
+    <section>
+      <p role="alert">
+        {t(
+          "Cadence could not confirm which work would stop. Refresh the service status to continue.",
+        )}
+      </p>
+      <button type="button" onClick={() => observe((n) => n + 1)}>
+        {t("Refresh status")}
+      </button>
+    </section>
+  );
 
   useEffect(() => {
     void revision;
@@ -153,8 +185,10 @@ export function ServiceDialog({
       if (Date.now() - since > WAIT_MS[job.action]) return setResult("timeout");
       try {
         const current = await readService(abort.signal);
-        if (current.job?.id === job.id && current.job.state !== "running")
-          return setResult(current.job);
+        if (abort.signal.aborted) return;
+        const outcome = maintenanceOutcome(job, current);
+        if (outcome === "reload") return window.location.reload();
+        if (outcome !== undefined) return setResult(outcome);
       } catch (e) {
         if (abort.signal.aborted) return;
         // It answered, but in a shape this page's build cannot read, or
@@ -175,23 +209,29 @@ export function ServiceDialog({
     };
   }, [submitted]);
 
-  const check = () => {
+  const check = async () => {
     setLatest("checking");
-    readRelease()
-      .then(setLatest, () => setLatest("failed"))
-      // The server re-observes the route even when it refuses the query.
-      .finally(() => observe((n) => n + 1));
+    setError("");
+    const release = await readRelease().catch(() => "failed" as const);
+    try {
+      // Show the current route and work count alongside the final action.
+      setService(await readService());
+      setLatest(release);
+    } catch (e) {
+      setError(message(e));
+      setLatest("failed");
+    }
   };
-  const submit = (selected: Choice) => {
-    if (!service) return;
+  const submit = (to: string | null) => {
+    if (!service || !work || sending) return;
     setSending(true);
     setError("");
     requestMaintenance(
       {
-        action: selected.action,
+        action: to === null ? "restart" : "upgrade",
         from: service.version,
-        to: selected.to,
-        work: service.work,
+        to,
+        work: work.digest,
         epoch,
       },
       csrf,
@@ -200,6 +240,7 @@ export function ServiceDialog({
       .catch((e: unknown) => {
         setError(message(e));
         // Work started or stopped since the dialog read it: confirm again.
+        setService({ ...service, work: null });
         setStopWork(false);
         observe((n) => n + 1);
       })
@@ -293,39 +334,23 @@ export function ServiceDialog({
     );
   }
 
-  if (choice && service) {
-    const work = service.work;
+  if (confirmRestart && service) {
+    const items = work?.items ?? [];
     return (
-      <ActionDialog title={t("Cadence service")} onClose={onClose}>
+      <ActionDialog
+        title={t("Cadence service")}
+        onClose={sending ? undefined : onClose}
+      >
         <section>
-          <h3>
-            {choice.action === "restart"
-              ? t("Restart Cadence?")
-              : t("Upgrade Cadence {from} to {to}?", {
-                  from: service.version,
-                  to: choice.to,
-                })}
-          </h3>
+          <h3>{t("Restart Cadence?")}</h3>
           <p>
-            {choice.action === "restart"
-              ? t(
-                  "The service stops in order and starts again; this page waits and then reloads.",
-                )
-              : t(
-                  "The package manager downloads {to} while Cadence keeps running; then the service stops, {to} is installed and the service starts again. If {to} does not become ready, {from} is reinstalled.",
-                  { to: choice.to, from: service.version },
-                )}
+            {t(
+              "The service stops in order and starts again; this page waits for the result.",
+            )}
           </p>
-          {work > 0 && (
+          {items.length > 0 && (
             <>
-              <p role="alert">
-                {t(
-                  "{count} running workflows or conversations will be stopped.",
-                  {
-                    count: work,
-                  },
-                )}
-              </p>
+              <WorkToStop items={items} t={t} />
               <label className="service-confirm">
                 <input
                   type="checkbox"
@@ -337,12 +362,14 @@ export function ServiceDialog({
             </>
           )}
         </section>
+        {workUnavailable}
         {error && <p role="alert">{describeError(t, error)}</p>}
         <footer>
           <button
             type="button"
+            disabled={sending}
             onClick={() => {
-              setChoice(null);
+              setConfirmRestart(false);
               setStopWork(false);
               setError("");
             }}
@@ -351,11 +378,11 @@ export function ServiceDialog({
           </button>
           <button
             type="button"
-            className={work > 0 ? "danger" : "primary"}
-            disabled={sending || (work > 0 && !stopWork)}
-            onClick={() => submit(choice)}
+            className={items.length > 0 ? "danger" : "primary"}
+            disabled={sending || !work || (items.length > 0 && !stopWork)}
+            onClick={() => submit(null)}
           >
-            {choice.action === "restart" ? t("Restart now") : t("Upgrade now")}
+            {t("Restart now")}
           </button>
         </footer>
       </ActionDialog>
@@ -367,7 +394,10 @@ export function ServiceDialog({
       ? compareVersions(latest.version, service.version) > 0
       : false;
   return (
-    <ActionDialog title={t("Cadence service")} onClose={onClose}>
+    <ActionDialog
+      title={t("Cadence service")}
+      onClose={sending ? undefined : onClose}
+    >
       {!service ? (
         <p role={error ? "alert" : "status"}>
           {error ? describeError(t, error) : t("Reading the service…")}
@@ -440,33 +470,98 @@ export function ServiceDialog({
                         { version: latest.version },
                       )}
                 </p>
-              ) : (
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() =>
-                    setChoice({ action: "upgrade", to: latest.version })
-                  }
-                >
-                  <FiArrowUpCircle aria-hidden="true" />
-                  {t("Upgrade to {version}", { version: latest.version })}
-                </button>
-              )}
+              ) : work ? (
+                <UpgradeOffer
+                  version={latest.version}
+                  work={work.items}
+                  sending={sending}
+                  onUpgrade={submit}
+                  t={t}
+                />
+              ) : null}
             </section>
           )}
+          {workUnavailable}
           {error && <p role="alert">{describeError(t, error)}</p>}
         </>
       )}
       <footer>
         <button
           type="button"
-          disabled={!service?.unit}
-          onClick={() => setChoice({ action: "restart", to: null })}
+          disabled={!service?.unit || !work || sending || latest === "checking"}
+          onClick={() => setConfirmRestart(true)}
         >
           <FiRefreshCw aria-hidden="true" />
           {t("Restart service")}
         </button>
       </footer>
     </ActionDialog>
+  );
+}
+
+function WorkToStop({
+  items,
+  t,
+}: {
+  items: MaintenanceWorkItem[];
+  t: Translator["t"];
+}) {
+  return (
+    <>
+      <p role="alert">
+        {t("{count} running workflows or conversations will be stopped.", {
+          count: items.length,
+        })}
+      </p>
+      <ul className="service-work">
+        {items.map(({ project, source, id, sessionId }) => (
+          <li key={JSON.stringify([project, source, id])}>
+            {project} · {t(source === "turn" ? "Owner turn" : "Owner workflow")}{" "}
+            <code>{id}</code>
+            {sessionId && <> · {t("Conversation {id}", { id: sessionId })}</>}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+/** The version button itself confirms the upgrade, including its orderly Stop. */
+export function UpgradeOffer({
+  version,
+  work,
+  sending,
+  onUpgrade,
+  t,
+}: {
+  version: string;
+  work: MaintenanceWorkItem[];
+  sending: boolean;
+  onUpgrade(version: string): void;
+  t: Translator["t"];
+}) {
+  return (
+    <>
+      <p>
+        {t(
+          "Cadence downloads the update before stopping. If startup fails, it tries to restore the previous version. After a successful upgrade, this page reloads automatically; unsent images must be attached again.",
+        )}
+      </p>
+      {work.length > 0 && <WorkToStop items={work} t={t} />}
+      <button
+        type="button"
+        className={work.length > 0 ? "danger" : "primary"}
+        disabled={sending}
+        onClick={() => onUpgrade(version)}
+      >
+        <FiArrowUpCircle aria-hidden="true" />
+        {t(
+          work.length > 0
+            ? "Stop work and upgrade to {version}"
+            : "Upgrade to {version}",
+          { version },
+        )}
+      </button>
+    </>
   );
 }

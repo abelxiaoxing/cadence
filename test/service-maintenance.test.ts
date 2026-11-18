@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +11,9 @@ import {
   unitPath,
   write,
 } from "../src/service/autostart.ts";
+import { stopService } from "../src/service/cli.ts";
 import type { MaintenanceJob } from "../src/service/contracts/gateway.ts";
+import { maintenanceWorkDigest } from "../src/service/gateway.ts";
 import { GatewayStore } from "../src/service/gateway-store.ts";
 import type { PackageCommand } from "../src/service/installation.ts";
 import {
@@ -33,6 +38,83 @@ function temporary(): string {
   roots.push(root);
   return root;
 }
+
+it("binds maintenance consent to the gateway, owner and work identities even when the count stays the same", () => {
+  const first = ["/project/a", "owner-a", "workflow", "work-a"] as const;
+  const second = ["/project/b", "owner-b", "turn", "work-b"] as const;
+  const digest = maintenanceWorkDigest("gateway-a", [first, second]);
+  expect(maintenanceWorkDigest("gateway-a", [second, first])).toBe(digest);
+  expect(maintenanceWorkDigest("gateway-b", [first, second])).not.toBe(digest);
+  expect(
+    maintenanceWorkDigest("gateway-a", [
+      first,
+      ["/project/b", "owner-b", "turn", "work-c"],
+    ]),
+  ).not.toBe(digest);
+  expect(
+    maintenanceWorkDigest("gateway-a", [
+      first,
+      ["/project/b", "owner-c", "turn", "work-b"],
+    ]),
+  ).not.toBe(digest);
+});
+
+it("joins only a guarded Stop the gateway accepted and never falls back to an unguarded Stop", async () => {
+  const epoch = randomUUID();
+  const requests: unknown[] = [];
+  let refuse = true;
+  const server = createServer((request, response) => {
+    let raw = "";
+    request.on("data", (part) => {
+      raw += part;
+    });
+    request.on("end", () => {
+      requests.push(JSON.parse(raw));
+      response.statusCode = refuse ? 409 : 200;
+      response.end(
+        JSON.stringify(
+          refuse
+            ? { kind: "error", error: { code: "stale" } }
+            : { kind: "ok", value: { status: "accepted", epoch } },
+        ),
+      );
+    });
+  });
+  const listening = once(server, "listening");
+  server.listen(0, "127.0.0.1");
+  await listening;
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw Error("missing fixture port");
+    const target = {
+      localAccess: () => ({
+        endpoint: `http://127.0.0.1:${address.port}`,
+        epoch,
+        capability: "test-only",
+      }),
+      inspect: () => ({ status: "stopped", epoch }),
+    };
+    const digest = maintenanceWorkDigest(epoch, []);
+    expect(await stopService(target, digest)).toEqual({
+      status: "unconfirmed",
+    });
+    expect(requests).toEqual([{ confirmedWork: digest }]);
+    refuse = false;
+    expect(await stopService(target, digest)).toEqual({
+      status: "stopped",
+      epoch,
+    });
+    expect(requests).toEqual([
+      { confirmedWork: digest },
+      { confirmedWork: digest },
+    ]);
+  } finally {
+    const closed = once(server, "close");
+    server.close();
+    await closed;
+  }
+});
 const USER_CGROUP =
   "/user.slice/user-1000.slice/user@1000.service/app.slice/cadence.service";
 
