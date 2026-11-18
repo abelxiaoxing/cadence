@@ -519,35 +519,59 @@ it("one live run per session and the owner limit refuse independent Sends withou
   expect(child.launch).toHaveBeenCalledTimes(8);
 });
 
-it("owner Stop signals both workers and joins both originals, through auth settlement and native close", async () => {
-  const f = fixture();
-  const auth = deferred();
-  f.holdSettlement(auth.promise);
-  const a = await f.start(),
-    b = await f.start();
-  b.worker.closeOnAbort = false; // stop requested is not original native close
-  const stop = f.owner.stop();
-  for (const run of [a, b])
-    expect(run.worker.signal.reason).toMatchObject({
-      source: "service",
-      reason: "stop",
-      target: run.commandId,
+it.each(["A's auth settlement", "B's native close"] as const)(
+  "owner Stop signals both workers and joins both originals when %s comes first",
+  async (first) => {
+    const f = fixture();
+    const auth = deferred();
+    f.holdSettlement(auth.promise);
+    const a = await f.start(),
+      b = await f.start();
+    b.worker.closeOnAbort = false; // stop requested is not original native close
+    const [originalA, originalB] = f.settled;
+    const aSettled = vi.fn(),
+      stopFinished = vi.fn();
+    void originalA.then(aSettled);
+    const stop = f.owner.stop();
+    void stop.then(stopFinished);
+    for (const run of [a, b])
+      expect(run.worker.signal.reason).toMatchObject({
+        source: "service",
+        reason: "stop",
+        target: run.commandId,
+      });
+    expect(f.owner.acceptedPending).toBe(2);
+    expect(await a.worker.result).toMatchObject({
+      closed: true,
+      outcome: "canceled",
     });
-  expect(f.owner.acceptedPending).toBe(2);
-  auth.resolve();
-  await f.settled[0];
-  await turn(); // let owner accounting observe that original
-  expect(f.owner.state).toBe("stopping");
-  expect(f.owner.acceptedPending).toBe(1);
-  b.worker.end("canceled");
-  expect(await stop).toMatchObject({
-    state: "stopped",
-    settlement: "known",
-    pending: { process: 0, work: 0 },
-  });
-  for (const run of [a, b])
-    expect(f.state(run.commandId).status).toBe("canceled");
-});
+
+    if (first === "A's auth settlement") {
+      auth.resolve();
+      await originalA;
+    } else {
+      b.worker.end("canceled");
+      await originalB;
+    }
+    await turn(); // let owner accounting observe the released original
+    expect(aSettled).toHaveBeenCalledTimes(
+      first === "A's auth settlement" ? 1 : 0,
+    );
+    expect(stopFinished).not.toHaveBeenCalled();
+    expect(f.owner.state).toBe("stopping");
+    expect(f.owner.acceptedPending).toBe(1);
+
+    if (first === "A's auth settlement") b.worker.end("canceled");
+    else auth.resolve();
+    expect(await stop).toMatchObject({
+      state: "stopped",
+      settlement: "known",
+      pending: { process: 0, auth: 0, storage: 0, work: 0 },
+    });
+    for (const run of [a, b])
+      expect(f.state(run.commandId).status).toBe("canceled");
+  },
+);
 
 it("a message for a running reply is recorded before its worker hears of it, and is handed over only once the worker listens", async () => {
   const f = fixture(),
