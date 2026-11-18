@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
 import {
   type ChatItem,
@@ -972,58 +972,88 @@ it("a failed project observation retains identity but not readiness; unavailable
   expect(projectReadiness(restored.value, restored.error)).toBe("running");
 });
 
+async function projectObservationFixture() {
+  // Controlled hook callbacks, not a DOM or browser lifecycle test.
+  const React = await vi.importActual<typeof import("react")>("react");
+  vi.useFakeTimers();
+  const cells: unknown[] = [];
+  let cursor = 0;
+  let deps: readonly unknown[] | undefined;
+  let pendingEffect: import("react").EffectCallback | undefined;
+  let cleanup: (() => void) | undefined;
+  const unmount = () => {
+    cleanup?.();
+    cleanup = undefined;
+  };
+  onTestFinished(() => {
+    unmount();
+    vi.doUnmock("react");
+    vi.resetModules();
+    vi.useRealTimers();
+  });
+  const updates = vi.fn();
+  vi.doMock("react", () => ({
+    ...React,
+    useState: ((initial: unknown) => {
+      const at = cursor++;
+      if (!Object.hasOwn(cells, at)) cells[at] = initial;
+      return [
+        cells[at],
+        (update: unknown) => {
+          updates();
+          cells[at] = typeof update === "function" ? update(cells[at]) : update;
+        },
+      ];
+    }) as typeof React.useState,
+    useRef: ((initial: unknown) => {
+      const at = cursor++;
+      if (!Object.hasOwn(cells, at)) cells[at] = { current: initial };
+      return cells[at];
+    }) as typeof React.useRef,
+    useCallback: ((fn) => fn) as typeof React.useCallback,
+    useEffect: ((effect, next) => {
+      if (!deps || next?.some((value, i) => !Object.is(value, deps?.[i]))) {
+        deps = next;
+        pendingEffect = effect;
+      }
+    }) as typeof React.useEffect,
+  }));
+  vi.resetModules();
+  const { useProjectObservation } = await import(
+    "../../web/src/client/use-project-observation"
+  );
+  const requests: {
+    signal?: AbortSignal | null;
+    resolve(response: Response): void;
+    reject(error: Error): void;
+  }[] = [];
+  const fetcher = vi.fn<typeof fetch>(
+    (_url, init) =>
+      new Promise((resolve, reject) => {
+        requests.push({ resolve, reject, signal: init?.signal });
+      }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const render = (selectedEpoch: string | null = null, id = key("a")) => {
+    cursor = 0;
+    return useProjectObservation(id, selectedEpoch);
+  };
+  const flushEffect = () => {
+    if (!pendingEffect) return;
+    cleanup?.();
+    const effect = pendingEffect;
+    pendingEffect = undefined;
+    const result = effect();
+    cleanup = typeof result === "function" ? result : undefined;
+  };
+  return { render, flushEffect, unmount, requests, fetcher, updates };
+}
+
 it.each(["cold", "same-epoch", "replacement"])(
   "%s: confirmed preparation is current before its GET; older reads cannot undo it",
   async (scenario) => {
-    // Controlled hook callbacks, not a DOM or browser lifecycle test.
-    const React = await vi.importActual<typeof import("react")>("react");
-    vi.useFakeTimers();
-    const cells: unknown[] = [];
-    let cursor = 0;
-    let deps: readonly unknown[] | undefined;
-    let pendingEffect: import("react").EffectCallback | undefined;
-    let cleanup: (() => void) | undefined;
-    vi.doMock("react", () => ({
-      ...React,
-      useState: ((initial: unknown) => {
-        const at = cursor++;
-        if (!Object.hasOwn(cells, at)) cells[at] = initial;
-        return [
-          cells[at],
-          (update: unknown) => {
-            cells[at] =
-              typeof update === "function" ? update(cells[at]) : update;
-          },
-        ];
-      }) as typeof React.useState,
-      useRef: ((initial: unknown) => {
-        const at = cursor++;
-        if (!Object.hasOwn(cells, at)) cells[at] = { current: initial };
-        return cells[at];
-      }) as typeof React.useRef,
-      useCallback: ((fn) => fn) as typeof React.useCallback,
-      useEffect: ((effect, next) => {
-        if (!deps || next?.some((value, i) => !Object.is(value, deps?.[i]))) {
-          deps = next;
-          pendingEffect = effect;
-        }
-      }) as typeof React.useEffect,
-    }));
-    vi.resetModules();
-    const { useProjectObservation } = await import(
-      "../../web/src/client/use-project-observation"
-    );
-    const requests: {
-      resolve(response: Response): void;
-      reject(error: Error): void;
-    }[] = [];
-    const fetcher = vi.fn<typeof fetch>(
-      () =>
-        new Promise((resolve, reject) => {
-          requests.push({ resolve, reject });
-        }),
-    );
-    vi.stubGlobal("fetch", fetcher);
+    const { render, flushEffect, requests, fetcher } =
+      await projectObservationFixture();
     const epoch = crypto.randomUUID();
     const before =
       scenario === "cold"
@@ -1031,62 +1061,178 @@ it.each(["cold", "same-epoch", "replacement"])(
         : scenario === "same-epoch"
           ? epoch
           : crypto.randomUUID();
-    const render = (selectedEpoch: string | null) => {
-      cursor = 0;
-      // biome-ignore lint/correctness/useHookAtTopLevel: controlled hook harness, not a React render.
-      return useProjectObservation("a".repeat(64), selectedEpoch);
-    };
-    const flushEffect = () => {
-      if (!pendingEffect) return;
-      cleanup?.();
-      const effect = pendingEffect;
-      pendingEffect = undefined;
-      const result = effect();
-      cleanup = typeof result === "function" ? result : undefined;
-    };
-    try {
-      const initial = render(before);
-      flushEffect();
-      expect(requests).toHaveLength(1);
-      initial.prepared(epoch);
-      // Resolve the old GET before effect cleanup: synchronous invalidation,
-      // not abort timing, must prevent this result overwriting confirmation.
-      requests[0].resolve(
-        Response.json({
-          kind: "project-observation",
-          status: "stopped",
-          epoch: null,
-          workspaceId: null,
-        }),
-      );
+    const initial = render(before);
+    flushEffect();
+    expect(requests).toHaveLength(1);
+    initial.prepared(epoch);
+    // Resolve the old GET before effect cleanup: synchronous invalidation,
+    // not abort timing, must prevent this result overwriting confirmation.
+    requests[0].resolve(
+      Response.json({
+        kind: "project-observation",
+        status: "stopped",
+        epoch: null,
+        workspaceId: null,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const confirmed = render(epoch);
+    expect(confirmed.readiness).toBe("running");
+    expect(confirmed.value?.epoch).toBe(epoch);
+    expect(confirmed.error).toBeUndefined();
+    flushEffect();
+    expect(requests).toHaveLength(2);
+    requests[1].reject(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(0);
+    const stale = render(epoch);
+    expect(stale.readiness).toBe("stale");
+    expect(stale.value?.epoch).toBe(epoch);
+    expect(stale.error).toBe("offline");
+    stale.refresh();
+    stale.prepared(epoch);
+    expect(render(epoch).readiness).toBe("running");
+    expect(
+      fetcher.mock.calls.every(
+        ([, init]) => !init?.method || init.method === "GET",
+      ),
+    ).toBe(true);
+  },
+);
+
+const runningObservation = () => ({
+  kind: "project-observation",
+  status: "running",
+  epoch: crypto.randomUUID(),
+  workspaceId: crypto.randomUUID(),
+});
+
+it.each(["headers", "body"])(
+  "a project GET stalled at %s retires at one total deadline; polling recovers before its late reply",
+  async (stage) => {
+    const { render, flushEffect, requests, fetcher } =
+      await projectObservationFixture();
+    render();
+    flushEffect();
+    const first = runningObservation();
+    requests[0].resolve(Response.json(first));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render().readiness).toBe("running");
+    expect(requests).toHaveLength(2);
+
+    // Approach the deadline before returning any headers. The partial body
+    // deliberately ignores abort, so neither phase can rely on a rejection.
+    await vi.advanceTimersByTimeAsync(9000);
+    let late = () => requests[1].resolve(Response.json(first));
+    if (stage === "body") {
+      const bytes = new TextEncoder().encode(JSON.stringify(first));
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes.subarray(0, -1));
+          late = () => {
+            controller.enqueue(bytes.subarray(-1));
+            controller.close();
+          };
+        },
+      });
+      requests[1].resolve(new Response(body));
       await vi.advanceTimersByTimeAsync(0);
-      const confirmed = render(epoch);
-      expect(confirmed.readiness).toBe("running");
-      expect(confirmed.value?.epoch).toBe(epoch);
-      expect(confirmed.error).toBeUndefined();
-      flushEffect();
-      expect(requests).toHaveLength(2);
-      requests[1].reject(new Error("offline"));
-      await vi.advanceTimersByTimeAsync(0);
-      const stale = render(epoch);
-      expect(stale.readiness).toBe("stale");
-      expect(stale.value?.epoch).toBe(epoch);
-      expect(stale.error).toBe("offline");
-      stale.refresh();
-      stale.prepared(epoch);
-      expect(render(epoch).readiness).toBe("running");
-      expect(
-        fetcher.mock.calls.every(
-          ([, init]) => !init?.method || init.method === "GET",
-        ),
-      ).toBe(true);
-    } finally {
-      cleanup?.();
-      vi.doUnmock("react");
-      vi.resetModules();
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
+      expect(body.locked).toBe(true);
     }
+    await vi.advanceTimersByTimeAsync(999);
+    expect(requests[1].signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requests[1].signal?.aborted).toBe(true);
+    expect(render()).toMatchObject({
+      readiness: "stale",
+      value: first,
+      error: "timeout",
+    });
+    expect(requests).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    const recovered = runningObservation();
+    expect(requests).toHaveLength(3);
+    requests[2].resolve(Response.json(recovered));
+    await vi.advanceTimersByTimeAsync(0);
+    const current = render();
+    expect(current).toMatchObject({ readiness: "running", value: recovered });
+    expect(current.error).toBeUndefined();
+    late();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(render().value).toEqual(recovered);
+    expect(vi.getTimerCount()).toBe(1); // One next poll, no retired deadline or second chain.
+    expect(
+      fetcher.mock.calls.every(
+        ([url, init]) =>
+          url === `/workbench/v1/projects/${key("a")}` &&
+          (init?.method ?? "GET") === "GET",
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each(["project", "epoch", "refresh"])(
+  "%s change and unmount retire the project read, without publishing a failure or scheduling another retry",
+  async (change) => {
+    const { render, flushEffect, unmount, requests, updates } =
+      await projectObservationFixture();
+    const first = runningObservation();
+    render(first.epoch);
+    flushEffect();
+    requests[0].resolve(Response.json(first));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests).toHaveLength(2);
+    if (change === "refresh") render(first.epoch).refresh();
+    const project = key(change === "project" ? "b" : "a");
+    const epoch = change === "epoch" ? crypto.randomUUID() : first.epoch;
+    const pending = render(epoch, project);
+    expect(pending.readiness).toBe(change === "project" ? "unknown" : "stale");
+    if (change === "project") expect(pending.value).toBeUndefined();
+    flushEffect();
+    expect(requests[1].signal?.aborted).toBe(true);
+    expect(render(epoch, project).error).toBeUndefined();
+    expect(requests).toHaveLength(3);
+    const next = { ...runningObservation(), epoch };
+    requests[2].resolve(Response.json(next));
+    await vi.advanceTimersByTimeAsync(0);
+    requests[1].reject(new Error("retired"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render(epoch, project)).toMatchObject({
+      readiness: "running",
+      value: next,
+    });
+    expect(requests).toHaveLength(4);
+    const count = updates.mock.calls.length;
+    unmount();
+    expect(requests[3].signal?.aborted).toBe(true);
+    requests[3].resolve(Response.json(first));
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(updates).toHaveBeenCalledTimes(count);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(requests).toHaveLength(4);
+  },
+);
+
+it.each(["unauthenticated", "forbidden"])(
+  "%s project read keeps its diagnosis and stops automatic retries",
+  async (code) => {
+    const { render, flushEffect, requests } = await projectObservationFixture();
+    render();
+    flushEffect();
+    requests[0].resolve(
+      Response.json(
+        { kind: "error", error: { code } },
+        { status: code === "unauthenticated" ? 401 : 403 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(20000);
+    const revoked = render();
+    expect(revoked).toMatchObject({ error: code, readiness: "unknown" });
+    expect(requests).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    revoked.refresh();
+    render();
+    flushEffect();
+    expect(requests).toHaveLength(2);
   },
 );
 
