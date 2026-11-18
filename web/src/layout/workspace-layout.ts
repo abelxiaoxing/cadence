@@ -1,3 +1,5 @@
+import { drawerWidth } from "./swipe-drawer";
+
 /** Presentation preferences only: no project, conversation or execution state. */
 export const LAYOUT_STORAGE_KEY = "cadence-panel-layout-v1";
 export const PANEL_MIN = 220;
@@ -41,8 +43,12 @@ export function readPanelPreferences(raw: string | null): PanelPreferences {
  * Effective widths do not overwrite the user's wider-window preferences. */
 export function workspaceLayout(width: number, preference: PanelPreferences) {
   const mobile = width <= DRAWER_BREAKPOINT;
-  const left = panelWidth(preference.left, width - CHAT_MIN);
-  const right = panelWidth(preference.right);
+  const left = mobile
+    ? drawerWidth(width, "left")
+    : panelWidth(preference.left, width - CHAT_MIN);
+  const right = mobile
+    ? drawerWidth(width, "right")
+    : panelWidth(preference.right);
   const leftSpace = preference.navigation ? left : 0;
   const rightOverlay = !mobile && width - leftSpace - right < CHAT_MIN;
   const rightSpace = preference.inspector && !rightOverlay ? right : 0;

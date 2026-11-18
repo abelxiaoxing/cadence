@@ -2428,7 +2428,6 @@ summary:focus-visible,
     position: absolute;
     top: 0;
     bottom: 0;
-    width: min(300px, 86vw);
     z-index: 20;
     background: var(--bg-elev);
     box-shadow: 0 0 40px var(--shadow-3);
@@ -2442,7 +2441,6 @@ summary:focus-visible,
   }
   .drawer-right {
     right: 0;
-    width: min(380px, 92vw);
     transform: translateX(105%);
   }
   /* A parked drawer is not a scrollable second viewport. Swipe tracking
@@ -4092,9 +4090,6 @@ button.file-item:hover:not(:disabled),
   margin: 8px 0 12px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-}
-.cwd-picker-list[aria-busy] > button {
-  opacity: 0.55;
 }
 .cwd-picker-note {
   margin: 0;

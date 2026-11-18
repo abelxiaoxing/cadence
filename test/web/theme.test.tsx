@@ -186,7 +186,8 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ).toBeGreaterThanOrEqual(AA);
   });
   it("distinguishes resting question marks and underlined prose links on the reading canvas", () => {
-    const link = ".msg-text a[href]";
+    const link = ":is(.msg-text, .md) a[href]";
+    expect(declaration(link, "overflow-wrap")).toBe("anywhere");
     expect(declaration(link, "text-decoration")).toBe("underline");
     const bg = ruleColor("body", "background", scheme);
     const [r, g, b] = color(
@@ -200,6 +201,13 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(link, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(AA);
     }
+  });
+  it("keeps the shared Markdown link readable on plan and preview materials", () => {
+    const link = ruleColor(":is(.msg-text, .md) a[href]", "color", scheme);
+    const canvas = ruleColor("body", "background", scheme);
+    const wing = over(color("--glass-surface", scheme), canvas);
+    for (const surface of [wing, over(color("--card-bg", scheme), canvas)])
+      expect(contrast(link, surface)).toBeGreaterThanOrEqual(AA);
   });
   it("keeps the shared resting copy stroke visible on message and tool surfaces", () => {
     const rule = /\.chead-copy,\s*\.msg-text-copy \{([^}]+)/.exec(

@@ -196,6 +196,35 @@ One idle-off window had 1/153 intervals over 50ms (0.65%); all other windows had
 Idle paints involved document/menu and occasional footer; scroll also painted Latest; incremental reads painted transcript, text and code roots in both conditions with zero ambient draws.
 These are compositor samples and short frame windows, not exhaustive pixel coverage, glyph rasterization traces, hardware GPU or physical-device qualification, or the owner's final verification and review.
 
+### Pending directory reads, shared Markdown links and side-specific drags
+
+On the same branch and integration worktree, `optical-evidence-Bzwn1S/summary.json` under the run's temporary root records canonical build `c08d220b1839b13414298c2f9d22b9d87455e852787dae2369a2236457d76258` over pre-commit HEAD `bbd1e5198b9da1701689fb477320a40d3d6fe988`.
+The installed headless Chrome 151.0.7922.34 (Linux, ANGLE/Vulkan SwiftShader, DPR 1) rendered synthetic data in both themes at 320×820, 390×820 and 1440×900.
+Evidence for these repairs is in **6 `directoryReads`, 18 prose-link `readingStates`, and 26 `drawerGestures`** from this build, not the earlier 143-scene audit.
+
+- **Directory:** A pointer click requested `/optical/specimen/facets`; the fixture held that response until each still-enabled `Parent folder` and `facets` label was hit-tested away from hover on the previous listing.
+  The list had `aria-busy="true"` and a reading notice; Open was disabled.
+  Each label gave three text samples per view, dark **5.610:1** (RGB 138,147,162 on 25,26,30), light **5.589:1** (94,102,117 on 251,251,252), at all three widths.
+  Releasing the matching read displayed the child path and its `quartz` entry, cleared busy and enabled Open; dismissing without selection left Send disabled.
+  No Open or Send was activated.
+- **Links:** The ordinary reply, the visible PlanCard prose and the retained artifact switched to Safe Markdown each contained an inline fragment link between words.
+  The pointer was parked; the hit-tested label was neither hovered nor focused and computed a solid, automatic-thickness underline in its text color.
+  Worst dark/light text ratios across the three widths: chat **12.776/9.839**, plan **10.997/10.025**, artifact **11.448/10.378**.
+  For the plan minima (320px), the actual dark/light materials were RGB(27,28,31)/(247,247,248); for the artifact minima (desktop dark, all light), (23,24,28)/(251,251,252).
+  Foregrounds were (203,208,216) dark and (57,62,72) light, measured against compositor backings with glyph fill suppressed, not anti-aliased stroke measurements.
+  No link was followed and neither design nor implementation was submitted.
+- **Touch:** CDP touch input on the actual selected-project shell held each horizontal drag beyond the 320ms flick window.
+  At 320px the measured left/right widths were **275.19/294.39px**; a 168px inward drag gave transforms **−120.96/+141.12px** and scrim opacities **.581/.543**; releasing opened, cancelling the same pull stayed closed.
+  At 390px the respective widths were **300/358.80px**, transforms **−147/+208.74px**, opacities **.533/.446**, with the same outcomes.
+  A 245px outward push closed both sides at each width, held at transforms −245/+245px and opacities .152/.207 (320px) and .222/.350 (390px).
+  The distinguishing **390px right-edge 138px** pull held at **+238.74px** with **.3663** scrim progress after 766/765ms (dark/light) and stayed closed: below 40% of its own 105% travel, despite exceeding the left drawer's 126px threshold.
+  After each end/cancel the expanded and inert states, scrim and box matched the result; no dragging class or inline override remained.
+
+The same report completed the general scene and control observations with no reported problem or unavailable scenario.
+In the twelve 2.6s desktop windows p50 was 16.7ms throughout; p95 (on/off/off/on) was 16.8/33.4/33.4/16.8ms idle, 16.8ms throughout scrolling and 16.7/16.7/16.8/16.8ms during incremental reads; no interval exceeded 50ms.
+Only idle-on windows drew ambient frames; scroll painted document/Latest and incremental reads painted text, code, transcript and footer roots in both conditions.
+These are local compositor samples and emulated touch viewports, not exhaustive pixel coverage, physical phones, system edge-gesture arbitration, hardware-GPU timings or the owner's post-commit checks and review.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
