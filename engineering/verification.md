@@ -305,6 +305,44 @@ During probe repair, end-follow had moved the expanded agreement paragraph offsc
 A pre-final headless run also did not observe the original tab becoming hidden after a fixed delay; the probe now foregrounds the measured tab before activating another tab and measures only after observing `document.hidden`.
 These are local compositor samples and short synthetic observations, not screen-reader, physical-phone, hardware-GPU, live-provider or post-commit acceptance evidence.
 
+### Current panel, disabled models and artifact page find
+
+`optical-evidence-phDbdI/summary.json` under the run temporary root records canonical build `e5f7f324cbf7b92c8d46690529d003fa0d939861fe7564ecaf59f1a8a30da425` over pre-commit HEAD `d71252a5589fec3a49221dfa1c40aae761bc105f` on the same task branch and integration worktree.
+These are new observations, not the results for `d55cdc29` above.
+The installed Chrome 151.0.7922.34 used a fresh profile, synthetic loopback data and Linux ANGLE/Vulkan SwiftShader at DPR 1, in both themes at 320×820, 390×820 and 1440×900.
+
+- **Current page (`panelTabs`, 150 samples of tab state):** Folder setup displayed the static current Files label.
+  In chat the selectable pages were Files and Branches; in history they were Files and History details, with contents/checks/changes/reviews inside Inspector.
+  For each button, Tab or Shift+Tab focused the inactive target and Space selected it without moving its box.
+  The underline remained exclusive to the current page both after focus left and with the pointer over its neighbor; keyboard focus had its own outline.
+  All measured boxes fit their clipping ancestors and the viewport, with center and four inset edge hits.
+  Worst underline on tab / wing: dark **10.977 / 11.775:1** (RGB 203,208,216 on 27,28,33 / 20,21,25); light **9.335 / 10.289:1** (57,62,72 on 238,239,242 / 250,250,251).
+  The separate focus sample reached at least **10.874:1** dark and **9.335:1** light.
+  An earlier 320px run clipped the last Inspector tab: compact padding now puts its full 65.61px box at x=238.80–304.41.
+- **Model catalog (`disabledModels`, 24 targeted text captures):** `optical` was selectable; both `quartz` (Credentials unavailable) and `slate` (Not supported) remained native disabled buttons during measurement and were skipped by Tab.
+  Each name and each reason had its own nonempty text Range hit test, visible glyph ink and adjacent backing pixel inside the same button on the unmodified compositor capture; ancestor alpha was included (1 in these samples).
+  In quartz/slate order, worst name contrast was **15.789/14.952:1** dark (242,244,248 on 25,26,30 / 30,31,35) and **18.278/17.507:1** light (17,19,24 on 253,253,254 / 248,248,249).
+  Reason contrast was **5.610/5.552:1** dark (138,147,162 on 25,26,30 / 26,27,31) and **5.686:1** for each light reason (94,102,117 on 253,253,254).
+  Earlier captures sometimes contained only the backdrop where focused controls should have been.
+  The docked right wing and picker now filter a separate material layer behind their controls; the open picker is not nested inside a filtered composer.
+- **Artifact (`artifactFind`, six Inspector → changes → retained detail sessions):** A notice-only phrase, native view option, zoom control, raw gutter digit and selection footer each gave **0/0**, two disabled navigation buttons and no registered ranges.
+  Generated image/link notices also gave no hits in Markdown; the retained label `facet 7` remained navigable.
+  With the input unchanged, `Captured` yielded **1/1** in the raw line, Markdown heading (despite its ToC copy) and diff line, never the notice.
+  Each view/page change cleared the active highlight; Next then activated the exact text in the connected new body with a visible center hit.
+  Paging forward found the new added line, Previous returned to the first page, and unmount removed both highlight sets.
+  Full-field copy delivered the exact 288 characters from both immutable pages to the document-local receiver.
+  Ordinary field pages, folded code revelation, literal case, the 1000-real-range bound and global search navigation ran separately as before.
+
+All 143 general scene audits and 12 desktop timing windows completed without a reported problem or unavailable scene.
+The lowest general text ratios were **5.010:1** dark and **4.507:1** light (diff language label).
+At 1440×900 all windows had p50 16.7ms and no interval over 50ms; p95 in on/off/off/on order was 16.7/33.4/33.4/16.7ms idle, 16.7/16.7/16.8/16.7ms scrolling and 16.7/16.8/16.8/16.7ms incremental reading.
+Incremental reads painted transcript, message and code roots with either setting; scroll paints included Latest.
+Only idle-on drew ambient frames in these windows.
+The 480×300 Hero drew 25 times in 1.25s and 25 after context restoration; hidden, reduced motion, explicit off and lost context each drew zero.
+A preceding run did not observe the page becoming hidden when activating an unrelated target.
+The probe now opens a sibling tab from the measured page and requires `document.hidden` before counting background draws.
+These short observations do not qualify hardware GPUs, physical phones, live providers or the owner's post-commit checks and independent review.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

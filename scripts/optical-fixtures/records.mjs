@@ -107,6 +107,20 @@ export const catalog = {
       thinking: [{ level: "off", selectable: true }],
       eligibility: "candidate",
     },
+    {
+      model: "quartz",
+      provider: "fixture",
+      api: "openai-completions",
+      thinking: [{ level: "off", selectable: false }],
+      eligibility: "auth-unavailable",
+    },
+    {
+      model: "slate",
+      provider: "fixture",
+      api: null,
+      thinking: [],
+      eligibility: "unsupported",
+    },
   ],
 };
 export const controlContext = (taskId = null) => ({
@@ -405,14 +419,18 @@ export const events = [
   },
 }));
 
-export const diffText =
-  "--- a/material.ts\n+++ b/material.ts\n@@ -1 +1 @@\n-const material = 'glass';\n+const material = 'alabaster';\n\nRead the [artifact notes](#artifact-notes) for context.\n";
+const artifactStart = [
+  "--- a/material.ts\n+++ b/material.ts\n@@ -1 +1 @@\n-const material = 'glass';\n+const material = 'alabaster';\n\nRead the [artifact notes](#artifact-notes) for context.\n",
+  "# Mineral study\n\n## Captured page only\n\n![quartz](#omitted) [facet 7](relative)\n",
+].join("\n");
+const artifactContinuation = "+Captured page only on the next field page.\n";
+export const fullArtifact = artifactStart + artifactContinuation;
 export const artifact = {
   recordId: randomUUID(),
   version: 1,
   field: "changes",
-  bytes: Buffer.byteLength(diffText),
-  sha256: createHash("sha256").update(diffText).digest("hex"),
+  bytes: Buffer.byteLength(fullArtifact),
+  sha256: createHash("sha256").update(fullArtifact).digest("hex"),
 };
 export const change = {
   kind: "owner-fact",
@@ -432,6 +450,33 @@ export const change = {
     content: artifact,
   },
 };
+
+export function artifactPage(cursor) {
+  const seed = {
+    storeId,
+    scope: { kind: "task", id: task },
+    snapshotSeq: change.committedSeq,
+    query: null,
+    recordId: artifact.recordId,
+    recordVersion: artifact.version,
+    field: artifact.field,
+    offset: cursor.offset,
+  };
+  if (!isDeepStrictEqual(seed, cursor)) return null;
+  const split = Buffer.byteLength(artifactStart);
+  if (cursor.offset !== 0 && cursor.offset !== split) return null;
+  return {
+    cursor,
+    content: artifact,
+    text: cursor.offset ? artifactContinuation : artifactStart,
+    range: {
+      start: cursor.offset,
+      end: cursor.offset ? artifact.bytes : split,
+    },
+    next: cursor.offset ? null : { ...cursor, offset: split },
+    coverage,
+  };
+}
 
 // One retained message with immutable field pages. The code hit needs both
 // outer vertical and inner horizontal scrolling; the other disclosure is not

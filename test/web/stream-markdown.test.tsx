@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import rehypeRaw from "rehype-raw";
 import { unified } from "unified";
 import { describe, expect, it } from "vitest";
+import { ArtifactPreview } from "../../web/src/components/review/ArtifactPreview";
 import { MarkdownBody } from "../../web/src/components/rich/Markdown";
 import { StreamMarkdown as WorkflowStreamMarkdown } from "../../web/src/components/rich/StreamMarkdown";
 import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
@@ -392,3 +393,39 @@ it("exposes the recorded fence language and separate keyboard fold/copy actions 
   expect(html).not.toMatch(/<(pre|code)[^>]*data-field-chrome/);
   expect(html.indexOf("code-caption")).toBeLessThan(html.indexOf("<pre"));
 });
+
+// Markup ownership only. The CDP probe searches the mounted Inspector and
+// inspects actual Highlight ranges, including after a view or page change.
+it.each(["raw", "markdown", "diff"] as const)(
+  "marks the artifact %s body separately from preview chrome",
+  (view) => {
+    const html = renderToStaticMarkup(
+      <ArtifactPreview
+        text={"# Facet\n\n[facet 7](relative) ![quartz](#image)"}
+        view={view}
+        setView={() => {}}
+      />,
+    );
+    expect(html).not.toMatch(
+      /<(button|select|option|footer|nav)[^>]*data-retained-field/,
+    );
+    if (view === "markdown") {
+      expect(html).toMatch(
+        /class="fp-markdown-zoom" data-retained-field="true"><div class="md">/,
+      );
+      expect(html).toContain(
+        'facet 7<span data-field-chrome=""> [link unavailable]</span>',
+      );
+      expect(html).toContain(
+        '<span data-field-chrome="">[Image omitted: </span>quartz<span data-field-chrome="">]</span>',
+      );
+    } else {
+      expect(html.match(/data-retained-field="true"/g)).toHaveLength(2);
+      expect(html).toMatch(
+        view === "raw"
+          ? /class="fp-code-text" data-retained-field="true"># Facet/
+          : /class="scm-diff-line " data-retained-field="true"># Facet/,
+      );
+    }
+  },
+);

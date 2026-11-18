@@ -63,6 +63,12 @@ export function MarkdownBody({
   return (
     <ReactMarkdown
       remarkPlugins={hardBreaks ? remarkPluginsHardBreaks : remarkPlugins}
+      remarkRehypeOptions={{
+        footnoteLabelProperties: {
+          className: ["sr-only"],
+          dataFieldChrome: "",
+        },
+      }}
       rehypePlugins={
         rawHtml ? [rehypeRaw, rehypeSanitize, ...rehypePlugins] : rehypePlugins
       }
@@ -84,7 +90,9 @@ export function MarkdownBody({
         a: MdLink,
         img: ({ alt }) => (
           <span className="omission">
-            [Image omitted: {alt || "external/media content"}]
+            <span data-field-chrome="">[Image omitted: </span>
+            {alt || <span data-field-chrome="">external/media content</span>}
+            <span data-field-chrome="">]</span>
           </span>
         ),
       }}
@@ -104,10 +112,15 @@ export const Markdown = memo(function Markdown(props: {
     </div>
   );
 });
-function MdLink({ href, children }: JSX.IntrinsicElements["a"]) {
+function MdLink({ href, children, ...props }: JSX.IntrinsicElements["a"]) {
   const target = href && safeLink(href);
   return target ? (
     <a
+      data-field-chrome={
+        "data-footnote-ref" in props || "data-footnote-backref" in props
+          ? ""
+          : undefined
+      }
       href={target}
       target={target.startsWith("#") ? undefined : "_blank"}
       rel="noreferrer noopener"
@@ -116,7 +129,10 @@ function MdLink({ href, children }: JSX.IntrinsicElements["a"]) {
       {children}
     </a>
   ) : (
-    <span>{children} [link unavailable]</span>
+    <span>
+      {children}
+      <span data-field-chrome=""> [link unavailable]</span>
+    </span>
   );
 }
 // Only mounted, folded disclosures register an opener. Commit the one reveal

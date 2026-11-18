@@ -645,7 +645,25 @@ summary:focus-visible,
     width: calc(var(--left-w) - 18px);
   }
   .panel-drawer.drawer-right {
+    position: relative;
+    z-index: 0;
     width: calc(var(--right-w) - 18px);
+    background: transparent;
+    backdrop-filter: none;
+  }
+  /* Keep docked controls out of the backdrop-filter layer: focus changes
+     must not invalidate the current-page stroke along with the material. */
+  .drawer-right::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--glass-surface);
+    background-image: var(--grain-image);
+    background-size: var(--grain-size);
+    backdrop-filter: var(--glass-filter);
   }
 }
 .drawer-left {
@@ -1126,6 +1144,7 @@ summary:focus-visible,
   scrollbar-width: none;
 }
 .rp-tab {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -1145,11 +1164,19 @@ summary:focus-visible,
   background: var(--bg-elev2);
   color: var(--text);
 }
-.rp-tab[aria-pressed="true"],
-.rp-tab[aria-pressed="true"]:hover,
-.rp-tab[aria-current] {
+.rp-tab:is([aria-pressed="true"], [aria-current="true"]) {
   background: var(--bg-elev2);
   color: var(--text);
+}
+.rp-tab:is([aria-pressed="true"], [aria-current="true"])::after {
+  content: "";
+  position: absolute;
+  inset: auto 7px 2px;
+  border-bottom: 2px solid var(--accent);
+  pointer-events: none;
+}
+.rp-tab:focus-visible {
+  outline-offset: -2px;
 }
 /* Folds the panel away (pi .panel-collapse-btn); the topbar toggle reopens it. */
 .panel-collapse-btn {
@@ -2568,6 +2595,9 @@ summary:focus-visible,
   }
 }
 @media (max-width: 360px) {
+  .panel-right .rp-tab {
+    padding-inline: 8px;
+  }
   .brand {
     margin-right: 0;
   }
@@ -4965,6 +4995,11 @@ button.file-item:hover:not(:disabled),
   border-color: var(--accent);
   color: var(--accent-text);
 }
+/* The model menu overhangs the composer. Do not composite the entire
+   picker inside its parent's filtered layer while it is open. */
+.chat-composer:has(.model-popover) {
+  backdrop-filter: none;
+}
 .model-popover {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -4976,12 +5011,20 @@ button.file-item:hover:not(:disabled),
   max-height: min(460px, 62vh);
   border: 1px solid var(--glass-border);
   border-radius: 16px;
-  background: var(--menu-bg);
   border-top-color: var(--glass-border-top);
-  background-image: var(--grain-image);
-  background-size: var(--grain-size);
   box-shadow: 0 16px 40px var(--shadow-3);
   overflow: hidden;
+}
+.model-popover::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--menu-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   backdrop-filter: var(--glass-filter);
 }
 .model-popover-lead {
@@ -5042,6 +5085,9 @@ button.file-item:hover:not(:disabled),
   background: transparent;
   color: var(--text);
   text-align: left;
+}
+.model-option:disabled {
+  opacity: 1;
 }
 .model-option:hover:not(:disabled),
 .model-option:focus-visible {
@@ -5508,6 +5554,9 @@ button.link:hover:not(:disabled) {
   .model-popover,
   .more-menu-items,
   .panel-drawer {
+    background: var(--bg-elev);
+  }
+  .drawer-right::before {
     background: var(--bg-elev);
   }
   .receipt,

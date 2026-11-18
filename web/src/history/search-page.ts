@@ -11,8 +11,11 @@ export function collectRanges(root: HTMLElement, query: string): Range[] {
       // Captions, controls and line numbers are presentation, not retained
       // bytes. Keep text in folded code eligible so navigation can reveal it.
       if (
-        !el?.closest("[data-retained-field]") ||
-        el.closest("[data-field-chrome], .search-bar, .msg-collapsed")
+        !el ||
+        !root.contains(el.closest("[data-retained-field]")) ||
+        el.closest(
+          "[data-field-chrome], .katex-mathml, .search-bar, .msg-collapsed",
+        )
       )
         return NodeFilter.FILTER_REJECT;
       return (node.textContent ?? "").includes(needle)

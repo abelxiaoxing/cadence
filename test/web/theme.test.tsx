@@ -202,6 +202,31 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(selector, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
+  it("underlines only the current panel independently of hover and focus", () => {
+    const current = '.rp-tab:is([aria-pressed="true"], [aria-current="true"])';
+    expect(declaration(`${current}::after`, "border-bottom")).toBe(
+      "2px solid var(--accent)",
+    );
+    expect(declaration(`${current}::after`, "position")).toBe("absolute");
+    expect(declaration(".rp-tab:focus-visible", "outline-offset")).toBe("-2px");
+    const selected = ruleColor(current, "background", scheme);
+    const wing = over(color("--glass-surface", scheme), color("--bg", scheme));
+    for (const surface of [selected, wing])
+      expect(
+        contrast(color("--accent", scheme), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+  });
+  it("does not fade the disabled model's label and reason as a group", () => {
+    expect(declaration(".model-option:disabled", "opacity")).toBe("1");
+    const menu = over(
+      ruleColor(".model-popover::before", "background", scheme),
+      color("--bg", scheme),
+    );
+    for (const selector of [".model-option", ".model-option-note"])
+      expect(
+        contrast(ruleColor(selector, "color", scheme), menu),
+      ).toBeGreaterThanOrEqual(AA);
+  });
   it("marks the active search option with a solid stroke against the dialog and row", () => {
     expect(declaration(".gs-item", "border-inline-start")).toBe(
       "3px solid transparent",
