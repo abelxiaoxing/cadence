@@ -599,6 +599,7 @@ try {
             width,
             theme,
             rows: report.panelTabs,
+            problems,
           },
           context,
           group,
@@ -1178,9 +1179,11 @@ try {
   await layout(width, theme, "reduce");
   report.reducedDraws = await checkClock(false);
   await layout(width, theme);
+  report.afterReducedDraws = await checkClock(true);
   await ambient(false);
   report.disabledDraws = await checkClock(false);
   await ambient(true);
+  report.afterDisabledDraws = await checkClock(true);
   // A real background target, not a synthetic visibilitychange dispatch.
   await send("Page.bringToFront");
   // Open from the measured page: an unrelated CDP target in a separate
@@ -1210,6 +1213,10 @@ try {
     }
     await b.call("Target.closeTarget", { targetId: other.targetId });
     await send("Page.bringToFront");
+    if (report.hiddenDraws === 0) {
+      await wait("!document.hidden");
+      report.afterHiddenDraws = await checkClock(true);
+    }
   }
   if (report.hiddenDraws !== 0)
     limited.push(

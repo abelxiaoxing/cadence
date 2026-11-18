@@ -89,11 +89,7 @@ import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
 import { CacheStatus } from "./layout/CacheStatus";
 import { ContextStatus } from "./layout/ContextStatus";
-import {
-  ConnectionStatus,
-  StatusItem,
-  WorkingStatus,
-} from "./layout/StatusItem";
+import { ConnectionStatus, ReplyStatus, StatusItem } from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
 import { Crystal } from "./optics/Crystal";
@@ -297,7 +293,10 @@ export function App({
       : undefined);
   const currentChatLocation =
     chatLocation?.id === chatId ? chatLocation : undefined;
-  const activity = reported?.id === chatId ? reported : undefined;
+  const activity =
+    (!project || projectObserved) && reported?.id === chatId
+      ? reported
+      : undefined;
   const latency = useLatency();
   useEffect(() => {
     if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
@@ -1354,11 +1353,8 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
-            {activity && activity.runningSince !== null && (
-              <WorkingStatus
-                since={activity.runningSince}
-                label={t("Working")}
-              />
+            {chatId && (
+              <ReplyStatus clock={activity?.replyClock ?? "unavailable"} />
             )}
             {roster?.status === "complete"
               ? activeRuns.length > 0 && (

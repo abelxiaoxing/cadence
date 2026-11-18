@@ -54,6 +54,7 @@ export async function observeComposerFlow({
     flowCase.phase = name;
     flowCase.sequence++;
   };
+  flowCase.startedAt = Date.now() - 75_000;
   phase("thinking");
   await go(chat("optical-flow"), ".chat-composer[data-flow]");
   await click(input);
@@ -72,7 +73,16 @@ export async function observeComposerFlow({
       range.selectNodeContents(body);
       const r = range.getBoundingClientRect(),
         css = getComputedStyle(form, "::before");
+      const footer = document.querySelector(".statusbar-left");
       return {
+        observedAt: Date.now(),
+        working:
+          footer.querySelector(".working .bar-item-text")?.textContent ?? null,
+        duration:
+          footer.querySelector(".bar-item-duration")?.textContent ?? null,
+        unavailable: [...footer.querySelectorAll('[role="status"]')].some(
+          (el) => el.textContent === "Conversation activity unavailable.",
+        ),
         flow: form.hasAttribute("data-flow"),
         animation: css.animationName,
         runningAnimations: form
@@ -95,7 +105,27 @@ export async function observeComposerFlow({
     const flow =
         !flowCase.failTurn && ["thinking", "tool"].includes(flowCase.phase),
       animate = flow && motion !== "reduce";
-    rows.push({ width, theme, stage, ...observed });
+    rows.push({
+      width,
+      theme,
+      stage,
+      startedAt: flowCase.startedAt,
+      ...observed,
+    });
+    const running = !flowCase.failTurn && flowCase.phase !== "settled";
+    assert.equal(observed.unavailable, flowCase.failTurn, stage);
+    assert.equal(observed.working, running ? "Working" : null, stage);
+    if (running && flowCase.startedAt) {
+      assert.match(observed.duration, /^\d+:\d{2}$/);
+      const [mm, ss] = observed.duration.split(":").map(Number);
+      const seconds = Math.floor(
+        (observed.observedAt - flowCase.startedAt) / 1000,
+      );
+      assert.ok(
+        [seconds, seconds - 1].includes(mm * 60 + ss),
+        `Wrong elapsed time: ${stage}`,
+      );
+    } else assert.equal(observed.duration, null, stage);
     assert.equal(observed.flow, flow, stage);
     assert.equal(observed.animation, animate ? "prism-flow" : "none", stage);
     assert.equal(observed.runningAnimations, animate ? 1 : 0, stage);

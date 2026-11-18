@@ -21,7 +21,10 @@ function tabPixels(group, label, state, other) {
     painted[0] !== el ||
     el.textContent !== label ||
     el.matches(":hover") ||
-    el.matches(":focus") !== (state === "keyboard")
+    el.matches(":focus") !== (state === "keyboard") ||
+    (other &&
+      state !== "keyboard" &&
+      document.activeElement.textContent !== other)
   )
     throw Error(`Wrong ${group} marker: ${label}, ${state}`);
   if (
@@ -34,21 +37,37 @@ function tabPixels(group, label, state, other) {
     stroke = getComputedStyle(el, "::after");
   const bottom =
     r.bottom - parseFloat(css.borderBottomWidth) - parseFloat(stroke.bottom);
-  const y = Math.floor(bottom - parseFloat(stroke.borderBottomWidth) / 2);
+  const bounds = {
+    left: r.left + el.clientLeft + parseFloat(stroke.left),
+    right:
+      r.right - parseFloat(css.borderRightWidth) - parseFloat(stroke.right),
+    top: bottom - parseFloat(stroke.borderBottomWidth),
+    bottom,
+  };
+  const y = Math.floor((bounds.top + bottom) / 2);
+  const rail = el.parentElement,
+    nav = rail.getBoundingClientRect(),
+    wingX = Math.floor(nav.left + 3),
+    wingY = Math.floor(nav.bottom + 2);
+  if (
+    !rail.nextElementSibling?.contains(document.elementFromPoint(wingX, wingY))
+  )
+    throw Error(`Missing wing below ${group}`);
   const points = [];
   for (const f of [0.25, 0.5, 0.75]) {
-    const x = Math.floor(r.left + r.width * f);
+    const x = Math.floor(bounds.left + (bounds.right - bounds.left) * f);
     if (!el.contains(document.elementFromPoint(x, y)))
       throw Error(`Clipped current-page marker: ${label}`);
-    for (const [material, by] of [
-      ["tab", y - 2],
-      ["wing", Math.floor(r.bottom + 2)],
+    for (const [material, bx, by] of [
+      ["tab", x, y - 2],
+      ["rail", x, Math.floor(r.bottom + 2)],
+      ["wing", wingX, wingY],
     ])
       points.push({
         name: `${label} on ${material}`,
         surface: material,
         ink: [x, y],
-        x,
+        x: bx,
         y: by,
         min: 3,
       });
@@ -66,11 +85,31 @@ function tabPixels(group, label, state, other) {
       min: 3,
     });
   }
-  return points;
+  return {
+    bounds,
+    tabs: tabs.map((e) => ({
+      label: e.textContent,
+      current: e.getAttribute("aria-current"),
+      pressed: e.getAttribute("aria-pressed"),
+      focused: e === document.activeElement,
+    })),
+    points,
+  };
 }
 
 export async function observePanelTabs(
-  { run, click, parkPointer, capture, press, send, width, theme, rows },
+  {
+    run,
+    click,
+    parkPointer,
+    capture,
+    press,
+    send,
+    width,
+    theme,
+    rows,
+    problems,
+  },
   context,
   group,
   labels,
@@ -95,10 +134,23 @@ export async function observePanelTabs(
       !clipped,
       `Clipped ${context}/${label}/${state}: ${JSON.stringify(geometry)}`,
     );
-    const observed = await capture(`${label} ${state}`, () =>
-      run(tabPixels, nav, label, state, other),
-    );
-    assert.equal(observed?.samples, state === "keyboard" ? 7 : 6);
+    let marker;
+    const observed = await capture(`${label} ${state}`, async () => {
+      const { bounds, tabs, points } = await run(
+        tabPixels,
+        nav,
+        label,
+        state,
+        other,
+      );
+      marker = { bounds, tabs };
+      const glyph = await run(glyphSample, target, label, null, ".rp-tab");
+      return [...points, { ...glyph, surface: "label" }].map((p) => ({
+        ...p,
+        record: true,
+      }));
+    });
+    assert.equal(observed?.samples, state === "keyboard" ? 11 : 10);
     rows.push({
       width,
       theme,
@@ -108,10 +160,19 @@ export async function observePanelTabs(
       other,
       state,
       clipped,
+      marker,
       geometry,
       ...observed,
     });
-    assert.deepEqual(observed.failures, []);
+    if (observed.failures.length)
+      problems.push({
+        width,
+        theme,
+        context,
+        label,
+        state,
+        failures: observed.failures,
+      });
     return rect;
   };
   await parkPointer();
@@ -140,7 +201,7 @@ export async function observePanelTabs(
     const rect = await record(label, other, "keyboard", target);
     assert.deepEqual(rect, before.rect, "Selecting moved the tab");
     await press("Tab", 9, i > j ? 8 : 0);
-    await record(label, other, "rest", target);
+    assert.deepEqual(await record(label, other, "rest", target), rect);
     const { hit } = await run(
       controlGeometry,
       `${tabs}:nth-child(${j + 1})`,
@@ -152,7 +213,7 @@ export async function observePanelTabs(
       x: hit.center.x,
       y: hit.center.y,
     });
-    await record(label, other, "other hovered", target);
+    assert.deepEqual(await record(label, other, "other hovered", target), rect);
   }
 }
 

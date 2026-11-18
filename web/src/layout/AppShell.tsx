@@ -326,7 +326,7 @@ export function AppShell({
                 <FiChevronRight aria-hidden="true" />
               </button>
             </nav>
-            {inspector}
+            <div className="workbench-right-body">{inspector}</div>
           </div>
         </section>
       </div>

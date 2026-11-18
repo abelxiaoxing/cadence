@@ -13,9 +13,12 @@ import {
   latencyOf,
   latencySample,
 } from "../../web/src/client/latency";
+import { observedReplyClock } from "../../web/src/components/workspace/ChatWorkspace";
 import { LocaleProvider } from "../../web/src/i18n/locale";
 import { CacheStatus } from "../../web/src/layout/CacheStatus";
-import { ConnectionStatus } from "../../web/src/layout/StatusItem";
+import { ConnectionStatus, ReplyStatus } from "../../web/src/layout/StatusItem";
+
+import { runtimeTimeline, timelineResults } from "../helpers/runtime-timeline";
 
 afterEach(() => vi.useRealTimers());
 const ORIGIN = "https://cadence.example";
@@ -185,4 +188,78 @@ it("the reader carries the head read's cache totals across branches of the sessi
   await vi.advanceTimersByTimeAsync(0);
   expect(reader.view()).not.toHaveProperty("cache");
   reader.close();
+});
+
+it("the footer times an observed reply, not the transcript retained after a failed turn read", async () => {
+  vi.useFakeTimers({ now: 70_001 });
+  const id = crypto.randomUUID(),
+    epoch = crypto.randomUUID();
+  const ids = {
+    conversation: id,
+    epoch,
+    command: "command",
+    user: "user",
+    call: "call",
+    captureMessage: "message",
+    sourceLeaf: "leaf",
+    assistant: "assistant",
+    terminal: "terminal",
+  };
+  const checkpoints = runtimeTimeline("final-first");
+  let point = checkpoints[1]; // Live text, without a thinking or tool effect.
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (q) => {
+        const { head, turn } = timelineResults(ids, point);
+        if (q.kind === "conversation") return { kind: "ok", value: head };
+        if (q.kind !== "conversation-turn" || point.failed)
+          throw Error("unavailable");
+        return { kind: "ok", value: turn };
+      },
+    },
+    id,
+    () => {},
+  );
+  const item = (
+    clock = observedReplyClock(reader.view(), id, epoch, undefined),
+  ) => renderToStaticMarkup(<ReplyStatus clock={clock} />);
+  try {
+    reader.setActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(item()).toContain('class="bar-item-duration">1:10');
+    const live = reader.view();
+    const body = live.turns[0].steps[1].text;
+    expect(body).toBeTruthy();
+    for (const clock of [
+      observedReplyClock(live, id, null, undefined),
+      observedReplyClock(live, id, epoch, live.runs),
+      observedReplyClock(live, "other", epoch, undefined),
+    ])
+      expect(item(clock)).toContain("Conversation activity unavailable.");
+    if (!live.summary) throw Error("Missing live summary");
+    const queued = {
+      ...live,
+      summary: { ...live.summary, status: "queued" as const },
+      turns: [],
+    };
+    const noStart = item(observedReplyClock(queued, id, epoch, undefined));
+    expect(noStart).toContain(">Working<");
+    expect(noStart).not.toContain("bar-item-duration");
+    point = { ...point, failed: true };
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reader.view().summary).toBe(live.summary);
+    expect(reader.view().turns[0].steps[1].text).toBe(body);
+    expect(item()).toContain("Conversation activity unavailable.");
+    expect(item()).not.toMatch(/Working|duration|completed/i);
+    point = checkpoints[1];
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(item()).toContain('class="bar-item-duration">1:12');
+    expect(reader.view().turns[0].steps[1].text).toBe(body);
+    point = checkpoints[checkpoints.length - 1];
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reader.view().summary?.status).toBe("completed");
+    expect(item()).toBe("");
+  } finally {
+    reader.close();
+  }
 });

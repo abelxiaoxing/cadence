@@ -461,6 +461,48 @@ The separate Hero windows counted 26 draws and 25 after restoration; loss, reduc
 These were English browser observations on a fresh profile and synthetic readonly service, not live workflow execution, physical-device, hardware GPU or screen-reader qualification.
 The Chinese loading text, error and empty-file branches are component regressions, not additional browser scenes.
 
+### Panel focus departure and the reply clock
+
+**Interrupted owner check:** `optical-evidence-RDBrS3/summary.json` on HEAD `c493e9db` (build `01f1bbfb…`) stopped at scene 129, before the performance and draw windows.
+At 1440×900 in Alabaster, Branches remained selected after focus returned to Files, and its full button hit-tested; the worst stroke pixel and both reported backings were RGB (252,252,253), **1:1**.
+Even the sampled tab face was indistinguishable from the rail; that capture retained per-surface minima, not all pixels or proof of label ink.
+In a fixed eight-sequence replay of the same focus path on the old build (`optical-evidence-Nxycdw`), the 2px stroke covered x=1175.67–1254.81, y=80–82, including the original sample positions.
+The replay captured the label ink, selected face and stroke (9.335:1 on the tab); it did **not** reproduce the missing paint or invalidate the owner's failed frame.
+For the label backing use the gap beside its text range, not the keyboard outline above it (`optical-evidence-oqwI3O` sampled the latter).
+
+**After repair:** `optical-evidence-xedVN2/summary.json` under the run temporary root identifies canonical build `62245e12a29342e782b9fb1d48c65c1110e625ff7d08e6ce91a0d173e083a360`, over `c493e9db` in the same integration worktree and task branch.
+The desktop toolbar now sits above, not over, the filtered wing body.
+Installed headless Chrome 151.0.7922.34, disposable profile, synthetic loopback data, ANGLE/Vulkan SwiftShader, DPR 1; both system schemes at 320×820, 390×820 and 1440×900.
+This run completed 143 general scene audits, 150 tab states and all 12 performance windows; no problems or unavailable scenarios reported by the script.
+
+- **Selection:** `panelTabs` records ARIA, stroke bounds, label ink, button/clip rectangles and all 1,548 screenshot comparisons (including the separate focus indicator).
+  On the light desktop, with Files focused (`aria-pressed=false`) and Branches selected (`true`), its center and four inset edges hit and the label painted at (1199,66).
+  The stroke at y=81 was RGB (57,62,72), 9.335:1 on the face (238,239,242), 10.289:1 on the rail, 10.468:1 on the glass below; label 16.161:1.
+  Across viewports after focus departure, worst stroke on face / wing was 9.335 / 10.289 in Alabaster and 10.977 / 11.775 in Obsidian; adjacent hover did not erase the indicator.
+  The separately sampled keyboard outline reached at least 9.335:1 light and 10.874:1 dark.
+  Failed contrast or missing ink remains a hard failure even when the probe continues to independent scenes.
+- **Activity:** `composerFlow` observed the real footer in both desktop schemes: live thinking `Working 1:16`; refused turn read, “Conversation activity unavailable.” with neither working item nor duration; successful reread, `Working 1:18` from the original start.
+  Waiting and streaming text still showed Working without composer flow; settlement removed Working without showing the unavailable notice.
+  The same retained assistant paragraph remained hit-test readable and the unsent draft unchanged through every stage.
+- **Reading and controls:** Lowest general text sample was the edit language caption: 4.507:1 light (94,102,117 on 226,227,231), 5.010:1 dark (138,147,162 on 34,36,41).
+  At 320 / 390 / 1440px the long message was 278 / 348 / 790px wide; the code scrolled 2147px inside 276 / 346 / 788px clients, without a page-wide horizontal scroll.
+  `controls` records 72 measurements including Confirm implementation (165.9×28px at all three widths, center and four inset edges hit, Tab reachable; not activated).
+  Increments followed the bottom, growth preserved an up-scrolled position, and Latest resumed follow after expansion and resize.
+
+At 1440×900 in Obsidian, 2.6s frame windows in **on / off / off / on** order (times in ms, rounded):
+
+| Scenario  | p50                 | p95                 | Frames >50ms | Ambient draws |
+| --------- | ------------------- | ------------------- | ------------ | ------------- |
+| Idle Hero | 16.7/16.7/16.7/16.7 | 16.8/16.7/16.8/16.8 | 0% in each   | 52/0/0/52     |
+| Scroll    | 16.7/16.7/16.7/16.7 | 16.7/16.8/16.7/16.8 | 0% in each   | 0/0/0/0       |
+| Increment | 16.7/16.7/16.7/16.7 | 16.8/16.8/16.8/16.8 | 0% in each   | 0/0/0/0       |
+
+Idle Paint roots were document/menu/footer or none; scrolling painted Latest, not transcript text; increments painted the transcript wrapper, message, code and footer with either preference.
+The Hero used a 480×300 buffer and drew 25 times in 1.25s; hidden, reduced, disabled and context-lost windows counted zero, and each corresponding foreground, motion, switch or context restoration counted 25.
+All six unsaved-attempt transitions settled at opacity 0.07 with zero reading draws.
+These are local compositor samples and main-thread Paint roots, not per-glyph raster traces, power measurements, hardware GPU, physical phone, screen reader or live owner/provider qualification.
+They do not substitute for the owner's candidate checks or review.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

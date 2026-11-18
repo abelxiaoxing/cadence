@@ -44,16 +44,30 @@ const TOKENS = rootTokens();
 
 // Follow declarations of these specific component rules in stylesheet order
 // (reference.css is imported before styles.css's local preview overrides).
+const selectorKey = (s: string) =>
+  s
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\( | \)/g, (s) => s.trim())
+    .replace(/\s*([,>])\s*/g, "$1");
+const rules = SHEETS.flatMap((css) =>
+  [...withoutComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(
+    ([, selector, body]) => ({
+      selector: selectorKey(selector),
+      declarations: body.split(";").map((s) =>
+        s
+          .trim()
+          .replace(/\s*:\s*/, ":")
+          .replace(/\s+/g, " "),
+      ),
+    }),
+  ),
+).reverse();
 function declaration(selector: string, property: string): string {
-  const prefix = `  ${property}: `;
-  for (const css of [...SHEETS].reverse()) {
-    for (const block of css.split(`\n${selector} {\n`).slice(1).reverse()) {
-      const line = block
-        .split("\n}", 1)[0]
-        .split("\n")
-        .find((s) => s.startsWith(prefix));
-      if (line) return line.slice(prefix.length, -1);
-    }
+  for (const rule of rules) {
+    if (rule.selector !== selectorKey(selector)) continue;
+    const line = rule.declarations.find((s) => s.startsWith(`${property}:`));
+    if (line) return line.slice(property.length + 1).trim();
   }
   throw new Error(`Missing ${selector} { ${property} }`);
 }
@@ -202,8 +216,14 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(selector, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
-  it("marks selected sessions and files inside the row, independent of keyboard focus", () => {
-    const marker = ":is(.session-item.active, .file-item.selected)::before";
+  it("marks selected sessions, files and workflow items inside the row, independent of keyboard focus", () => {
+    const row =
+      ":is(.session-item.active, .file-item.selected, .agent-dock-run > .active)";
+    const marker = `${row}::before`;
+    expect(declaration(row, "position")).toBe("relative");
+    expect(declaration(marker, "content")).toBe('""');
+    expect(declaration(marker, "inset-block")).toBe("6px");
+    expect(declaration(marker, "inset-inline-start")).toBe("2px");
     expect(declaration(marker, "position")).toBe("absolute");
     expect(declaration(marker, "border-inline-start")).toBe(
       "3px solid var(--accent)",
@@ -223,7 +243,11 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     expect(declaration(".rp-tab:focus-visible", "outline-offset")).toBe("-2px");
     const selected = ruleColor(current, "background", scheme);
     const wing = over(color("--glass-surface", scheme), color("--bg", scheme));
-    for (const surface of [selected, wing])
+    for (const surface of [
+      selected,
+      wing,
+      ruleColor(".drawer-right .rp-tabs", "background", scheme),
+    ])
       expect(
         contrast(color("--accent", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);

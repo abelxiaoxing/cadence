@@ -60,7 +60,11 @@ import {
   wholePendingText,
   withdrawCommand,
 } from "../../client/conversation-inputs";
-import type { LoadedTurn } from "../../client/conversation-reader";
+import {
+  type ConversationView,
+  unsettled as inProgress,
+  type LoadedTurn,
+} from "../../client/conversation-reader";
 import {
   assertSendModel,
   captureSend,
@@ -151,14 +155,41 @@ export function followLatest(
 ): void {
   if (following && el) el.scrollTop = el.scrollHeight;
 }
+/** Epoch milliseconds for a currently observed live reply (0 when its start is
+ * unrecorded). Neither an unreadable reply nor a settled one owns a timer. */
+export type ReplyClock = number | "idle" | "unavailable";
+export function observedReplyClock(
+  view: ConversationView,
+  id: string,
+  epoch: string | null,
+  retained: ConversationView["runs"] | undefined,
+): ReplyClock {
+  const { summary } = view;
+  if (
+    !epoch ||
+    view.error ||
+    view.runs === retained ||
+    summary === undefined ||
+    (summary &&
+      (summary.id !== id ||
+        summary.status === "unknown" ||
+        (summary.live && summary.live.epoch !== epoch)))
+  )
+    return "unavailable";
+  if (!inProgress(summary?.status)) return "idle";
+  const latest = view.turns.at(-1);
+  return latest &&
+    latest.ordinal === view.count - 1 &&
+    inProgress(latest.header.status)
+    ? latest.header.at
+    : 0;
+}
 /** What the open conversation tells the statusbar: observations only. */
 export interface ConversationActivity {
   id: string;
   /** Turns on the branch shown. */
   turns: number;
-  /** When the live turn began (epoch ms), 0 when unrecorded; null when no
-   * reply is queued or running. */
-  runningSince: number | null;
+  replyClock: ReplyClock;
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
   context?: ContextUsage;
@@ -511,13 +542,26 @@ export function ChatWorkspace({
   // A failed or interrupted reply stays in the session; the next message
   // continues the branch as it would in the terminal.
   const settledBadly = !!summary && summary.status !== "completed" && !running;
-  // The live turn ends the branch; before Pi lists it the start is unrecorded.
   const lastTurn = turns.at(-1)?.header;
-  const runningSince = !running
-    ? null
-    : lastTurn && ["queued", "running"].includes(lastTurn.status)
-      ? lastTurn.at
-      : 0;
+  // A successful branch sync replaces its head's arrays, even for an empty
+  // session (null summary). Reattaching never makes a retained head current.
+  const owner =
+    available && modelAvailability.status === "ready"
+      ? modelAvailability
+      : null;
+  const attachment = owner ? `${owner.epoch}:${owner.attachmentVersion}` : null;
+  const [readFence, setReadFence] = useState({
+    attachment,
+    retained: undefined as ConversationView["runs"] | undefined,
+  });
+  if (readFence.attachment !== attachment)
+    setReadFence({ attachment, retained: conversation.runs });
+  const replyClock = observedReplyClock(
+    conversation,
+    id,
+    owner?.epoch ?? null,
+    readFence.retained,
+  );
   // The branch's context size beside the window of the model that reported
   // it, from the catalog already read here; each head read is a new object.
   const {
@@ -560,15 +604,15 @@ export function ChatWorkspace({
   }, [observe, observeConversation]);
   const onActivityRef = useRef(onActivity);
   onActivityRef.current = onActivity;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onActivityRef.current?.({
       id,
       turns: conversation.count,
-      runningSince,
+      replyClock,
       ...(usage ? { context: usage } : {}),
       ...(cache ? { cache } : {}),
     });
-  }, [id, conversation.count, runningSince, usage, cache]);
+  }, [id, conversation.count, replyClock, usage, cache]);
   const newest = turns.at(-1);
   const unsettled =
     !!newest && ["queued", "running"].includes(newest.header.status);
@@ -1474,29 +1518,9 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [resume]);
   // ---- Messages into the reply that is running ----
-  // A readable transcript can outlive the execution attachment. Fence off
-  // the head already displayed when observation resumes: only a successful
-  // branch sync installs a new summary (even if the turn body is unchanged).
-  const attachment =
-    available && modelAvailability.status === "ready"
-      ? `${modelAvailability.epoch}:${modelAvailability.attachmentVersion}`
-      : null;
-  const [flowFence, setFlowFence] = useState({
-    attachment,
-    retained: undefined as ChatSummary | undefined,
-  });
-  if (flowFence.attachment !== attachment)
-    setFlowFence({ attachment, retained: summary });
   const flow =
-    attachment !== null &&
-    flowFence.attachment === attachment &&
-    !conversation.error &&
-    summary !== flowFence.retained &&
-    summary?.id === id &&
-    summary.status === "running" &&
-    (!summary.live ||
-      (modelAvailability.status === "ready" &&
-        summary.live.epoch === modelAvailability.epoch)) &&
+    typeof replyClock === "number" &&
+    summary?.status === "running" &&
     turns.at(-1)?.ordinal === conversation.count - 1 &&
     lastTurn?.status === "running" &&
     (lastTurn.activity?.kind === "tool" ||
