@@ -220,20 +220,18 @@ it("the footer times an observed reply, not the transcript retained after a fail
     id,
     () => {},
   );
-  const item = (
-    clock = observedReplyClock(reader.view(), id, epoch, undefined),
-  ) => renderToStaticMarkup(<ReplyStatus clock={clock} />);
+  const item = (clock = observedReplyClock(reader.view(), id)) =>
+    renderToStaticMarkup(<ReplyStatus clock={clock} />);
   try {
-    reader.setActive(true);
+    reader.setActive(true, { epoch, attachmentVersion: 1 });
     await vi.advanceTimersByTimeAsync(0);
     expect(item()).toContain('class="bar-item-duration">1:10');
     const live = reader.view();
     const body = live.turns[0].steps[1].text;
     expect(body).toBeTruthy();
     for (const clock of [
-      observedReplyClock(live, id, null, undefined),
-      observedReplyClock(live, id, epoch, live.runs),
-      observedReplyClock(live, "other", epoch, undefined),
+      observedReplyClock({ ...live, observation: null }, id),
+      observedReplyClock(live, "other"),
     ])
       expect(item(clock)).toContain("Conversation activity unavailable.");
     if (!live.summary) throw Error("Missing live summary");
@@ -242,9 +240,10 @@ it("the footer times an observed reply, not the transcript retained after a fail
       summary: { ...live.summary, status: "queued" as const },
       turns: [],
     };
-    const noStart = item(observedReplyClock(queued, id, epoch, undefined));
+    const noStart = item(observedReplyClock(queued, id));
     expect(noStart).toContain(">Working<");
     expect(noStart).not.toContain("bar-item-duration");
+    expect(item(observedReplyClock({ ...live, summary: null }, id))).toBe("");
     point = { ...point, failed: true };
     await vi.advanceTimersByTimeAsync(1_000);
     expect(reader.view().summary).toBe(live.summary);

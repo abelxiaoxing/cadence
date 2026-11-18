@@ -122,6 +122,7 @@ const workspace = vi.hoisted(() => ({
   nodes: [] as ChatTreeNode[],
   runs: new Map<string, WorkflowRun>(),
   no: () => {},
+  mockWorkbench: false,
   modeActive: false,
   modeError: "",
   t: (key: string) => key,
@@ -142,7 +143,7 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
   return {
     ...actual,
     useWorkbench: (...args: Parameters<typeof useWorkbench>) =>
-      workspace.conversation
+      workspace.mockWorkbench
         ? {
             refresh: workspace.no,
             error:
@@ -249,6 +250,7 @@ afterEach(() => {
   hooks.effects.clear();
   children.clear();
   workspace.conversation = undefined;
+  workspace.mockWorkbench = false;
   workspace.modeActive = false;
   workspace.modeError = "";
   workspace.t = (key: string) => key;
@@ -473,20 +475,20 @@ it("conversation navigation hides the previous observation and its actions befor
       },
     }),
   };
-  render(() => useConversation(client, "first", true));
+  render(() => useConversation(client, "first", true, null));
   commit();
-  render(() => useConversation(client, "first", true));
+  render(() => useConversation(client, "first", true, null));
   commit();
   await vi.advanceTimersByTimeAsync(0);
   expect(
-    render(() => useConversation(client, "first", true)).summary,
+    render(() => useConversation(client, "first", true, null)).summary,
   ).toBeNull();
-  const next = render(() => useConversation(client, "next", true));
+  const next = render(() => useConversation(client, "next", true, null));
   expect(next.summary).toBeUndefined();
   expect(next.turns).toEqual([]);
   next.choose("old-branch"); // No retired reader is exposed before initialization.
   commit();
-  expect(render(() => useConversation(client, "next", true)).pinned).toBe(
+  expect(render(() => useConversation(client, "next", true, null)).pinned).toBe(
     false,
   );
 });
@@ -1073,6 +1075,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
   }
   vi.stubGlobal("ResizeObserver", Observer);
   const conversation: ReturnType<typeof useConversation> = {
+    observation: { epoch: "epoch", attachmentVersion: 1 },
     summary: {
       id: "chat",
       title: "Fixture",
@@ -1099,6 +1102,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
     loadEarlier: vi.fn(),
     showFrom: vi.fn(),
   };
+  workspace.mockWorkbench = true;
   workspace.conversation = conversation;
   workspace.nodes = turns.map((turn, i) => ({
     id: turn.header.id,
@@ -1258,67 +1262,205 @@ function workspaceFixture(turns: LoadedTurn[]) {
   };
 }
 
-it("passes flow only for fresh observed work on the branch, without retiring the transcript or draft", () => {
+// Only auxiliary workbench reads are stubbed. The workspace consumes the real
+// hook/reader; each transport Promise settles on request, even after abort.
+it.each([
+  { change: "paused history", held: "head" },
+  { change: "readable without owner", held: "turn" },
+  { change: "attachment version", held: "turn" },
+  { change: "epoch", held: "head" },
+])(
+  "$change fences a late $held before the new complete observation",
+  async ({ change, held }) => {
+    vi.useFakeTimers();
+    const turn = loaded("live", "live:user", 0);
+    const f = workspaceFixture([turn]);
+    workspace.conversation = undefined;
+    const requests: {
+      read: WorkbenchRead;
+      signal: AbortSignal;
+      resolve(value: WorkbenchResult): void;
+      reject(error: Error): void;
+    }[] = [];
+    Object.assign(f.client, {
+      workbenchRead: (read: WorkbenchRead, signal: AbortSignal) =>
+        new Promise((resolve, reject) =>
+          requests.push({
+            read,
+            signal,
+            resolve: (value) => resolve({ kind: "ok", value }),
+            reject,
+          }),
+        ),
+    });
+    const take = (kind: WorkbenchRead["kind"]) => {
+      const pending = required(requests.shift());
+      expect(pending.read).toMatchObject({ kind, leaf: "leaf" });
+      return pending;
+    };
+    // No summary.live, so an epoch check on that optional field cannot help.
+    const head: WorkbenchResult = {
+      kind: "conversation",
+      leaf: "leaf",
+      continues: true,
+      turns: 1,
+      branches: 2,
+      runs: [],
+      attempt: null,
+      summary: { ...required(f.conversation.summary), status: "running" },
+    };
+    const body = (text: string): WorkbenchResult => ({
+      kind: "conversation-turn",
+      conversationId: "chat",
+      leaf: "leaf",
+      ordinal: 0,
+      start: 0,
+      turn: { ...turn.header, activity: { kind: "thinking", sequence: 1 } },
+      steps: turn.steps.map((s) =>
+        s.role === "assistant" ? { ...s, text } : s,
+      ),
+    });
+    // Flush microtasks at a fixed fake instant; no poll interval is advanced.
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+    const acceptHead = async () => {
+      take("conversation").resolve(head);
+      await flush();
+    };
+    const acceptTurn = async (text: string) => {
+      take("conversation-turn").resolve(body(text));
+      await flush();
+    };
+    const onActivity =
+      vi.fn<NonNullable<ComponentProps<typeof ChatWorkspace>["onActivity"]>>();
+    const prepare = vi.fn(async () => {});
+    const props: Partial<ComponentProps<typeof ChatWorkspace>> = {
+      initialLeaf: "leaf",
+      available: true,
+      enabled: false,
+      onActivity,
+      prepareForPlan: prepare,
+      prepareForSend: prepare,
+    };
+    const draw = () => f.draw(false, props);
+    const check = (flow: boolean, text: string) => {
+      const view = draw();
+      expect(view.composer.flow).toBe(flow);
+      expect(onActivity.mock.lastCall?.[0].replyClock).toBe(
+        flow ? turn.header.at : "unavailable",
+      );
+      expect(view.rows[0].view.props.turn.steps[1].text).toBe(text);
+      expect(view.composer.draft).toBe("keep this draft");
+      expect(f.root.scrollTop).toBe(1234);
+      expect(requests).toHaveLength(0);
+      return view.rows[0].view.props.turn;
+    };
+    draw(); // Mount, then activate the reader.
+    draw();
+    await acceptHead();
+    await acceptTurn("displayed");
+    const shown = draw();
+    expect(shown.composer.flow).toBe(true); // Send is not observation.
+    shown.composer.onDraft("keep this draft");
+    f.root.scrollTop = 1234;
+    shown.scroll();
+    props.observe = 1;
+    draw(); // Start a sync which the transport will not finish on abort.
+    if (held === "turn") await acceptHead();
+    const obsolete = take(
+      held === "turn" ? "conversation-turn" : "conversation",
+    );
+    let retained = "displayed";
+    if (change === "paused history") {
+      props.available = false;
+      check(false, retained);
+      props.available = true;
+    } else if (change === "readable without owner") {
+      props.modelAvailability = { status: "unavailable" };
+      expect(draw().composer.flow).toBe(false);
+      await acceptHead();
+      retained = "readable history";
+      await acceptTurn(retained);
+      check(false, retained);
+      delete props.modelAvailability; // Reattach with exactly the original IDs.
+    } else {
+      props.modelAvailability = {
+        status: "ready",
+        epoch: change === "epoch" ? "next" : "epoch",
+        attachmentVersion: change === "epoch" ? 1 : 2,
+      };
+    }
+    // This render, not a later render after the effect, already hides live UI.
+    expect(draw().composer.flow).toBe(false);
+    const current = take("conversation"); // Replacement starts without manual Refresh.
+    expect(obsolete.signal.aborted).toBe(true);
+    check(false, retained);
+    const lateFailure = change === "epoch";
+    if (!lateFailure) {
+      obsolete.resolve(
+        held === "turn"
+          ? body("obsolete")
+          : { ...head, turns: 0, summary: null },
+      );
+      await flush();
+      check(false, retained);
+    }
+    current.resolve(head);
+    await flush();
+    const lastPage = take("conversation-turn");
+    check(false, retained);
+    lastPage.resolve(body("current"));
+    await flush();
+    const confirmed = check(true, "current");
+    if (lateFailure) {
+      obsolete.reject(new Error("obsolete failure"));
+      await flush();
+      check(true, "current");
+    }
+    // A current read error, unlike a retired one, does invalidate activity.
+    props.observe++;
+    draw();
+    await acceptHead();
+    take("conversation-turn").reject(new Error("read failed"));
+    await flush();
+    expect(check(false, "current")).toBe(confirmed);
+    props.observe++;
+    draw();
+    await acceptHead();
+    await acceptTurn("recovered");
+    check(true, "recovered");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+  },
+);
+
+it("passes flow only for thinking or tool activity of the last running turn on the observed branch", () => {
   const turn = loaded("live", "live:user", 0);
   const f = workspaceFixture([turn]);
   const view = f.conversation;
-  const freshHead = () => {
-    view.summary = { ...required(view.summary), status: "running" };
-  };
-  const flow = (props: Partial<ComponentProps<typeof ChatWorkspace>> = {}) =>
-    f.draw(false, props).composer.flow;
-  freshHead();
-  turn.header.status = "running";
-  turn.header.activity = { kind: "thinking", sequence: 1 };
-  expect(flow({ enabled: false, available: true })).toBe(true); // Send is not observation.
-  f.draw().composer.onDraft("keep this draft");
-  view.error = "stale";
-  const retained = f.draw();
-  expect(retained.composer.flow).toBe(false);
-  expect(retained.composer.draft).toBe("keep this draft");
-  expect(retained.rows[0].view.props.turn).toBe(turn);
-  view.error = "";
-  freshHead();
-  expect(flow()).toBe(true);
-  for (const interrupted of [
-    { available: false },
-    { modelAvailability: { status: "unavailable" } },
-  ] as const) {
-    expect(flow(interrupted)).toBe(false);
-    freshHead(); // Readable history while execution is unavailable isn't a current observation on reconnect.
-    expect(flow(interrupted)).toBe(false);
-    expect(flow()).toBe(false);
-    expect(flow()).toBe(false);
-    freshHead();
-    expect(flow()).toBe(true);
-  }
-  const replaced = {
-    modelAvailability: { status: "ready", epoch: "next", attachmentVersion: 2 },
-  } as const;
-  expect(flow(replaced)).toBe(false);
-  freshHead();
-  expect(flow(replaced)).toBe(true);
+  const summary = { ...required(view.summary), status: "running" as const };
+  view.summary = summary;
+  const flow = () => f.draw().composer.flow;
   for (const kind of ["waiting", "text", "tool", "thinking"] as const) {
     turn.header.activity = { kind, sequence: 2 };
-    expect(flow(replaced)).toBe(kind === "tool" || kind === "thinking");
+    expect(flow()).toBe(kind === "tool" || kind === "thinking");
   }
   view.summary = {
     ...required(view.summary),
     live: { epoch: "old", commandId: "old" },
   };
-  expect(flow(replaced)).toBe(false);
+  expect(flow()).toBe(false);
   view.summary = { ...required(view.summary), live: undefined, id: "other" };
-  expect(flow(replaced)).toBe(false);
+  expect(flow()).toBe(false);
   view.summary = { ...required(view.summary), id: "chat", status: "completed" };
-  expect(flow(replaced)).toBe(false);
-  freshHead();
+  expect(flow()).toBe(false);
+  view.summary = summary;
   view.count++;
-  expect(flow(replaced)).toBe(false); // Last displayed turn isn't the branch's last turn.
+  expect(flow()).toBe(false); // Last displayed turn isn't the branch's last turn.
   view.count--;
   turn.header.status = "completed";
-  expect(flow(replaced)).toBe(false);
+  expect(flow()).toBe(false);
   view.summary = undefined; // Branch change awaiting its first head.
-  expect(flow(replaced)).toBe(false);
+  expect(flow()).toBe(false);
 });
 
 it.each(["en", "zh"] as const)(

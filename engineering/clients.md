@@ -133,6 +133,13 @@ Edit/continue anchors and Send retain their recorded parent/end branch entries, 
 A command-to-Pi handoff can therefore update those coordinates without replacing the rendered row and its opened details.
 Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
 The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
+History readability is independent of execution readiness.
+`useConversation` keeps the branch reader mounted and identifies each uninterrupted ready attachment by a local generation: loss and recovery start a different generation even with identical epoch and attachment version.
+Each head sync captures its generation **before** issuing the read.
+Only that head with all required turn pages can confirm activity; a replacement starts a readonly sync and retires the previous one's success or failure, not the displayed turns or their lazy detail readers.
+`observedReplyClock` and composer flow use the same observation.
+Until confirmed (or after a failed read), the footer says activity is unavailable rather than Working; a confirmed live reply resumes at its recorded start, without a duration if none was recorded.
+Only thinking or tool activity on the displayed branch’s last running turn lights the composer.
 An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
 The initial change preview shows up to 400 lines; the write-body copy button takes the complete recorded `content`, including its final line break, not those displayed lines, the path or the tool output.
 Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
@@ -468,7 +475,7 @@ A chat image, recorded or still an unsent draft, opens enlarged in a modal viewe
 No session paths or remote image URLs are returned, and no session is rewritten.
 Timeline loading and resize-follow behavior are defined under [Scroll intent](#scroll-intent).
 A jump to a message not shown yet (a bar of the question rail, a Branches row, another version) reads back to its turn, every turn in between included because the shown turns stay gap-free, and a branch entered at one of its messages opens there rather than at its end.
-It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; a settled turn is read again only when the branch grew inside it, and another branch is read afresh.
+It polls the small head every second only while a turn is queued or running, every ten seconds otherwise; within one ready attachment a settled turn is reused unless the branch grew inside it, and another branch is read afresh.
 Branch navigation aborts obsolete readonly requests, including an away-and-back selection, and invalidates observation until the chosen head is read; it never cancels accepted work or enables Send from the previous branch.
 The branch shown (the view) and the entry the next message continues (the anchor) are separate: the view is chosen from one `conversation-tree` read for the branch shown (Pi's `/tree`, user messages only; made again when that branch gains or changes a message, not for each entry of a reply), which feeds the inspector's Branches tab, a version pager on each message where the session forks (the user messages that follow the same earlier one) and the question rail; choosing any of them only reads.
 The anchor is the end of the view unless one is set: "Edit and resend" on a user message sets it to the entry that message continued, loads the message's text into the composer and reads its images back as bytes into the in-memory draft, and "Continue from here" on a turn's last message sets it to that turn's end with an empty draft.
