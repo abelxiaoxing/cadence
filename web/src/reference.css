@@ -155,6 +155,10 @@
   --msgs-bg: transparent;
   --inputbox-bg: light-dark(rgba(255, 255, 255, 0.7), rgba(15, 23, 42, 0.72));
   --menu-bg: var(--glass-bg);
+  --menu-solid-bg: light-dark(
+    rgba(255, 255, 255, 0.97),
+    rgba(15, 23, 42, 0.96)
+  );
 }
 /* Narrow screens have less headroom for blur: the shell steps down to 12px
  * and content cards weaken further. */
