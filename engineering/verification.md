@@ -143,7 +143,7 @@ Streaming stayed at the bottom, up-scroll held on growth and Latest returned to 
 The 480×300 Hero buffer drew 26 times in a separate 1.25s window and 25 after context restoration; reduced motion, explicit off and lost context each drew zero, as did the actually hidden tab in 1s.
 These are compositor point samples and short local frame windows, not exhaustive contrast or energy measurements; no physical phone, hardware GPU, screen reader, live provider, authentication submission or deployment was tested.
 
-### Detail-follow and copy contrast repair (local observation)
+### Detail-follow and copy contrast repair (historical local observation)
 
 On the same branch/worktree, `optical-evidence-rDzygp/summary.json` measured canonical build `8df3ab6e4e89bff7d49dd0b523517560d83d773a9e553e3b8ba8c439c18e9e4e` over pre-commit HEAD `c587ef71a75048652099a09d372e20bed1445892`.
 Headless Chrome 151.0.7922.34, DPR 1, SwiftShader; both themes at 320×820, 390×820 and 1440×900, plus the forced-colors password form.
@@ -166,6 +166,35 @@ This is local evidence on these bytes, not owner acceptance, hardware GPU or phy
   No frame exceeded 50ms; scrolling and increments had zero ambient draws.
   Idle paints were occasional document/menu roots; scrolling also painted Latest; increment paints included transcript, text, code and footer in both conditions.
   Paint roots are not glyph rasterization or power measurements; these short windows are not cross-device performance guarantees.
+
+### Selected line, question rail and inline link (local observation)
+
+The `8df3ab6e` observations above did not exercise these three resting states.
+In the same integration worktree, `optical-evidence-fLwa2H/summary.json` measured canonical build `542aa77442f9ac57ce9439c236c3ff0955f22959da855a5f7a3b923f83b00462` over pre-commit HEAD `614436087cff7c3cc1d7eb90d45148d5a1c9cc6f`.
+Chrome 151.0.7922.34, headless Linux, ANGLE/Vulkan SwiftShader, DPR 1; both themes at 320×820, 390×820 and 1440×900.
+The report keeps `readingStates` separate from the 143 general scene audits (13,159 text samples) and the 48 button observations.
+A missing target or sample fails independently of the rest of the page.
+
+- **Selected number, all six views:** Click raw artifact line 2, move the pointer away, require `.sel:not(:hover)` and hit-test the digit and adjacent backing inside that line's `.fp-num`.
+  Use its foreground over the pixel just left of the digit in the unmodified capture; require ink in the glyph bounds as well.
+  An intermediate capture after a page-wide glyph-suppressed audit lacked the desktop digit despite a DOM hit; that capture is not contrast evidence.
+  The probe now measures the selection before that audit and clears it for the original unselected scene.
+  Dark: RGB(138,147,162) on (27,28,33), **5.488:1**; light: (94,102,117) on (238,239,242), **5.027:1**, at each width.
+- **Inline link, all six views:** A settled two-turn branch supplies both the tree and the transcript; its ordinary reply has prose on both sides of the `specimen notes` fragment link.
+  With no hover or focus, the actual hit-tested link computed an underline in its text color with automatic thickness.
+  Its foreground against the composited material under its text (glyph fill temporarily suppressed) measured **12.776:1** dark, RGB(203,208,216) on (9,10,13), and **9.839:1** light, (57,62,72) on (244,245,247), at each width.
+  The link was not followed.
+- **Question marks, both desktop views:** With neither hover nor focus in the rail, the current mark was 16px wide and the noncurrent one 10px; only the marks were visible.
+  In a single unmodified capture the noncurrent center (1427,399) against the material above it (1427,395) measured **6.387:1** dark, RGB(138,147,162) on (9,10,13), and **5.298:1** light, (94,102,117) on (244,245,247).
+  Tab reached the current mark, then ArrowUp moved focus to the other mark; each visible outline measured **12.776:1** dark and **9.839:1** light, the same RGB pairs as the prose link.
+  At 320 and 390px the rail was present but `display:none` as designed; no narrow rail contrast is claimed.
+
+No problem or unavailable scenario was recorded in that local report.
+The lowest general small-text sample remained the diff language label (5.010:1 dark, 4.507:1 light).
+At 1440×900 all twelve 2.6s windows had p50 16.7ms; p95 in on/off/off/on order: idle 16.8/16.7/16.7/16.8ms, scroll 16.7/16.8/16.7/16.7ms, increment 16.7ms throughout.
+One idle-off window had 1/153 intervals over 50ms (0.65%); all other windows had none.
+Idle paints involved document/menu and occasional footer; scroll also painted Latest; incremental reads painted transcript, text and code roots in both conditions with zero ambient draws.
+These are compositor samples and short frame windows, not exhaustive pixel coverage, glyph rasterization traces, hardware GPU or physical-device qualification, or the owner's final verification and review.
 
 ## Development practice
 

@@ -108,10 +108,27 @@ export const controlContext = (taskId = null) => ({
   taskId,
   error: { code: "unavailable", effect: "none", recovery: "operator" },
 });
+// Separate settled branch so the fixed tool, scroll and timing specimens do
+// not change shape. The turn and tree projections name the same user entries.
+const questions = [
+  {
+    id: "00000011",
+    entry: "00000012",
+    text: "Which material is shown?",
+    reply: "The panel is alabaster.",
+  },
+  {
+    id: "00000013",
+    entry: "00000014",
+    text: "Where are its notes?",
+    reply:
+      "Read the [specimen notes](#specimen-notes) for the surface description.",
+  },
+];
 const summary = (id) => ({
   id,
   title: `Optical · ${id}`,
-  leaf,
+  leaf: id === "questions" ? questions.at(-1).entry : leaf,
   status: id === "stream" ? "running" : "completed",
   origin: "webui",
   updatedAt: 1,
@@ -123,17 +140,23 @@ const long = Array.from(
     `### Study ${i + 1}\n\nLocal observation. Glass remains outside the reading column. 材质照明不应打断阅读。`,
 ).join("\n\n");
 const code = '```ts\nconst crystal = "' + "0123456789".repeat(32) + '";\n```';
-const steps = (id) =>
-  [
-    ["user", "Inspect the specimen."],
-    ["assistant", `${long}\n\n${code}`],
-    ["tool", ""],
-    [
-      "assistant",
-      `Specimen notes.\n\n${Array.from({ length: id === "stream" ? feed.increment : id === "expand" ? 5 : 1 }, (_, i) => `Sample ${i + 1}.`).join("\n\n")}`,
-    ],
-  ].map(([role, text], i) => ({
-    id: `step-${i}`,
+const steps = (id, question) =>
+  (question
+    ? [
+        ["user", question.text],
+        ["assistant", question.reply],
+      ]
+    : [
+        ["user", "Inspect the specimen."],
+        ["assistant", `${long}\n\n${code}`],
+        ["tool", ""],
+        [
+          "assistant",
+          `Specimen notes.\n\n${Array.from({ length: id === "stream" ? feed.increment : id === "expand" ? 5 : 1 }, (_, i) => `Sample ${i + 1}.`).join("\n\n")}`,
+        ],
+      ]
+  ).map(([role, text], i) => ({
+    id: question ? (i === 0 ? question.id : question.entry) : `step-${i}`,
     ...(id === "reading" && i === 0
       ? { images: [{ entry: leaf, index: 0, mimeType: "image/png" }] }
       : {}),
@@ -182,32 +205,38 @@ export function readRecord(q) {
       return {
         kind,
         summary: noSession ? null : summary(id),
-        leaf: noSession ? null : leaf,
+        leaf: noSession ? null : summary(id).leaf,
         continues: true,
-        turns: noSession ? 0 : 1,
+        turns: noSession ? 0 : id === "questions" ? questions.length : 1,
         branches: noSession ? 0 : 1,
         runs,
         attempt: id === "attempt" ? firstAttempt : null,
       };
-    case "conversation-turn":
+    case "conversation-turn": {
+      const question = id === "questions" ? questions[q.ordinal] : null;
+      const items = steps(id, question);
       return {
         kind,
         conversationId: id,
         leaf: q.leaf,
         ordinal: q.ordinal,
         turn: {
-          id: leaf,
-          entry: leaf,
-          at: 1,
+          id: question?.id ?? leaf,
+          entry: question?.entry ?? leaf,
+          ...(question
+            ? { parent: questions[q.ordinal - 1]?.entry ?? null }
+            : {}),
+          at: q.ordinal + 1,
           status: summary(id).status,
           notice: "",
           omitted: { thinking: false, media: false, other: false },
-          steps: 4,
-          stable: id === "stream" ? 3 : 4,
+          steps: items.length,
+          stable: id === "stream" ? items.length - 1 : items.length,
         },
         start: 0,
-        steps: steps(id),
+        steps: items,
       };
+    }
     case "conversation-step":
       return {
         kind,
@@ -245,7 +274,22 @@ export function readRecord(q) {
         },
       };
     case "conversation-tree":
-      return { kind, conversationId: id, nodes: [], truncated: false };
+      return {
+        kind,
+        conversationId: id,
+        nodes:
+          id !== "questions"
+            ? []
+            : questions.map((question, i) => ({
+                id: question.id,
+                parent: questions[i - 1]?.id ?? null,
+                text: question.text,
+                at: i + 1,
+                leaf: summary(id).leaf,
+                current: true,
+              })),
+        truncated: false,
+      };
     case "workflow-active":
       return { kind, runs: [] };
     case "workflow-history":

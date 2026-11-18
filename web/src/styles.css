@@ -2313,6 +2313,9 @@ summary:focus-visible,
   width: 4em;
   color: var(--text-faint);
 }
+.fp-line.sel .fp-num {
+  background: var(--bg-elev2);
+}
 .fp-code-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
