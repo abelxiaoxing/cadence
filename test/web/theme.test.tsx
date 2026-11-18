@@ -202,6 +202,19 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(selector, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
+  it("marks the active search option with a solid stroke against the dialog and row", () => {
+    expect(declaration(".gs-item", "border-inline-start")).toBe(
+      "3px solid transparent",
+    );
+    const active = '.gs-item[aria-selected="true"]';
+    const ink = ruleColor(active, "border-inline-start-color", scheme);
+    const menu = over(color("--menu-bg", scheme), color("--bg", scheme));
+    for (const surface of [
+      menu,
+      over(ruleColor(active, "background", scheme), menu),
+    ])
+      expect(contrast(ink, surface)).toBeGreaterThanOrEqual(GRAPHIC);
+  });
   it("keeps the selected artifact number readable after pointer departure", () => {
     const code = ruleColor(".fp-code", "background", scheme);
     const selected = over(

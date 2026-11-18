@@ -8,10 +8,13 @@ export function collectRanges(root: HTMLElement, query: string): Range[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const el = node.parentElement;
-      // 跳过搜索栏自身，避免高亮输入框里的查询文本
-      if (!el || el.closest(".search-bar")) return NodeFilter.FILTER_REJECT;
-      // 折叠摘要行的命中走折叠层（collectFoldedHits），展开后转 DOM 命中
-      if (el.closest(".msg-collapsed")) return NodeFilter.FILTER_REJECT;
+      // Captions, controls and line numbers are presentation, not retained
+      // bytes. Keep text in folded code eligible so navigation can reveal it.
+      if (
+        !el?.closest("[data-retained-field]") ||
+        el.closest("[data-field-chrome], .search-bar, .msg-collapsed")
+      )
+        return NodeFilter.FILTER_REJECT;
       return (node.textContent ?? "").includes(needle)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_SKIP;
@@ -19,8 +22,6 @@ export function collectRanges(root: HTMLElement, query: string): Range[] {
   });
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const lower = node.textContent ?? "";
-    // 只收消息气泡内的文本（[data-msg-id]），壳层文案（回到底部等）不参与命中
-    if (!node.parentElement?.closest("[data-retained-field]")) continue;
     let idx = lower.indexOf(needle);
     while (idx !== -1) {
       const r = document.createRange();

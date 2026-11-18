@@ -2,15 +2,17 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
+import { ServiceClient } from "../../src/service-client.ts";
 import type {
   HistoryRecord,
   RunProjection,
 } from "../../src/service-contract.ts";
+import { GlobalSearchModal } from "../../web/src/components/history/GlobalSearchModal";
 import { RunSummary } from "../../web/src/components/workspace/RunSummary";
 import { emptySearchWindow } from "../../web/src/history/search-summary";
 import { timelineBridge } from "../../web/src/timeline/timeline-adapter";
 import type { TimelineData } from "../../web/src/timeline/timeline-client.mjs";
-import { context, coverage, cursor, hash, id } from "./fixtures";
+import { context, coverage, cursor, hash, id, transport } from "./fixtures";
 
 it("a zero-hit window with continuation is never search completion", () => {
   const seed = { ...cursor(), query: "needle" };
@@ -25,6 +27,23 @@ it("a zero-hit window with continuation is never search completion", () => {
   expect(
     emptySearchWindow({ cursor: seed, hits: [], next: null, coverage }),
   ).toContain("final retained window");
+});
+it("binds the empty history combobox to its own listbox with no stale selection", () => {
+  const html = renderToStaticMarkup(
+    <GlobalSearchModal
+      seed={cursor()}
+      client={new ServiceClient(transport())}
+      onHit={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  const input = html.match(/<input[^>]+role="combobox"[^>]*>/)?.[0];
+  const list = html.match(/<div role="listbox"[^>]+>/)?.[0];
+  const id = input?.match(/aria-controls="([^"]+)"/)?.[1];
+  expect(id).toBeTruthy();
+  expect(list).toContain(`id="${id}"`);
+  expect(input).toContain('aria-expanded="false"');
+  expect(html).not.toMatch(/aria-activedescendant|role="option"/);
 });
 it("whole timeline bridge retains real worker-local clock domains without inventing overlap/duration", () => {
   const taskId = id(),

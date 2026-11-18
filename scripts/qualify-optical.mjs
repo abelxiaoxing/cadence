@@ -29,9 +29,14 @@ import {
   fieldTask,
   firstAttempt,
   project,
+  shellCommand,
   task,
   writeContent,
 } from "./optical-fixtures/records.mjs";
+import {
+  observeFieldBoundaries,
+  observeSearch,
+} from "./optical-fixtures/search-observations.mjs";
 import { fixture } from "./optical-fixtures/site.mjs";
 import { openTool } from "./optical-fixtures/tool-card.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
@@ -58,6 +63,7 @@ const report = {
   directoryReads: [],
   leading: [],
   fieldFind: [],
+  searchNavigation: [],
   controlFocus: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
@@ -228,6 +234,25 @@ try {
       problems.push({ width, theme, role, keyboardFocus: false });
     }
     return row;
+  };
+  // A fresh, write-only receiver in the fixture document. No clipboard read,
+  // browser permission or platform clipboard participates in the assertion.
+  const observeCopy = async (source, selector, label, expected, facts = {}) => {
+    await ev(
+      `opticalProbe.received=[]; Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{opticalProbe.received.push(text)}}})`,
+    );
+    const copy = await observeButton(`${source} copy`, selector, label);
+    assert.equal(copy.keyboardFocus, true);
+    await press(" ", 32);
+    assert.deepEqual(await ev("opticalProbe.received"), [expected]);
+    report.copies.push({
+      width,
+      theme,
+      source,
+      characters: expected.length,
+      exact: true,
+      ...facts,
+    });
   };
   let width, theme;
   const observeLeading = async (surface, selector) => {
@@ -669,11 +694,11 @@ try {
       assert.ok(await ev(`document.querySelector('.codeblock pre').hidden`));
       await click(".code-caption button:first-child");
       await expand("reading", "read", "material.ts");
-      await scrollTo(".toolcall-output-label");
+      await scrollTo(".toolcall-output .toolcall-output-label");
       await audit("tool output", [
         ".chat-turn",
         ".toolcall-output",
-        ".toolcall-output-label",
+        ".toolcall-output .toolcall-output-label",
         ".toolcall-output pre",
       ]);
       await observeButton("tool output copy", ".toolcall-output .output-copy");
@@ -738,6 +763,20 @@ try {
         ".char-add",
         ".char-del",
       ]);
+      await go(chat("bash"), ".toolcall-head");
+      await expand("bash", "bash", "specimen summary");
+      assert.equal(
+        await ev(
+          `document.querySelector('[data-optical-tool] .termline code').textContent`,
+        ),
+        shellCommand,
+      );
+      await observeCopy(
+        "full command",
+        "[data-optical-tool] .toolcall-args .output-copy",
+        "Copy command",
+        shellCommand,
+      );
       await go(chat("write"), ".toolcall-head");
       await expand("write", "write", "requested.txt");
       await wait(`document.querySelector('.write-copy')`);
@@ -745,26 +784,13 @@ try {
         await ev(`document.querySelectorAll('.diff-line-row.add').length`),
         400,
       );
-      // Intercept only writeText in this disposable fixture document; never
-      // ask for permissions, touch the system clipboard, or read it back.
-      await ev(
-        `Object.defineProperty(navigator,'clipboard',{value:{writeText: async text=>{opticalProbe.received=text}}})`,
-      );
-      const copy = await observeButton(
-        "requested write copy",
+      await observeCopy(
+        "requested write",
         ".file-diff-toolbar .write-copy",
+        undefined,
+        writeContent,
+        { shownLines: 400 },
       );
-      assert.equal(copy.keyboardFocus, true);
-      await press(" ", 32);
-      assert.equal(await ev(`opticalProbe.received`), writeContent);
-      report.copies.push({
-        width,
-        theme,
-        source: "requested write",
-        characters: writeContent.length,
-        exact: true,
-        shownLines: 400,
-      });
       await go(chat("design"), ".design-track input:checked");
       await scrollTo(".design-track");
       await audit("design", [
@@ -795,6 +821,18 @@ try {
       );
       const agreement = `${plan} > details`;
       await click(`${agreement} > summary`, "Complete delivery agreement");
+      // Opening the agreement grows the transcript. Explicitly leave end
+      // follow before positioning a paragraph for the typography sample.
+      const readingEdge = await ev(
+        `(()=>{const pane=document.querySelector('.chat-messages'),r=pane.getBoundingClientRect(),x=r.left+12,y=r.top+r.height/2;if(!pane.contains(document.elementFromPoint(x,y))) throw Error('Transcript wheel target obstructed');return {x,y}})()`,
+      );
+      await send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        ...readingEdge,
+        deltaX: 0,
+        deltaY: -180,
+      });
+      await wait(`document.querySelector('.scroll-bottom')`);
       await observeLeading(
         "open agreement",
         `${agreement}[open] > .md p:has(a[href="#plan-notes"])`,
@@ -855,6 +893,23 @@ try {
         rows: report.fieldFind,
         width,
         theme,
+      });
+      const searchProbe = {
+        go,
+        click,
+        wait,
+        press,
+        ev,
+        send,
+        run,
+        width,
+        theme,
+      };
+      await observeFieldBoundaries({ ...searchProbe, rows: report.fieldFind });
+      await observeSearch({
+        ...searchProbe,
+        capture,
+        rows: report.searchNavigation,
       });
       await go(`/app?project=${project}#task=${task}`, ".view-menu");
       await click(".view-menu summary");
@@ -998,12 +1053,21 @@ try {
   report.disabledDraws = await checkClock(false);
   await ambient(true);
   // A real background target, not a synthetic visibilitychange dispatch.
-  const other = await b.call("Target.createTarget", { url: "about:blank" });
+  await send("Page.bringToFront");
+  const other = await b.call("Target.createTarget", {
+    url: "about:blank",
+    newWindow: false,
+    background: false,
+  });
   await b.call("Target.activateTarget", { targetId: other.targetId });
-  await sleep(250);
+  // Activation is asynchronous. Start the interval only after observing the
+  // real hidden state, not a fixed delay after requesting the other tab.
+  for (let i = 0; i < 50 && !(await ev("document.hidden")); i++)
+    await sleep(100);
   if (await ev("document.hidden")) {
     const initial = await ev("opticalProbe.draws");
     await sleep(1000);
+    assert.ok(await ev("document.hidden"));
     assert.equal(await ev("opticalProbe.draws"), initial);
     report.hiddenDraws = 0;
   } else

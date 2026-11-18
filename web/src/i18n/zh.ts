@@ -900,6 +900,12 @@ export const zh = {
   "Inspect full retained {field}": "查看完整保留的{field}",
 
   // Transcript and tools
+  Command: "命令",
+  Arguments: "参数",
+  "Copy tool summary": "复制工具摘要",
+  "Copy command": "复制命令",
+  "Copy arguments": "复制参数",
+  "Copy output": "复制输出",
   "Copy displayed text": "复制显示的文本",
   "Copy unavailable": "无法复制",
   "Copy message": "复制消息",
