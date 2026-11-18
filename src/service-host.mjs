@@ -6406,6 +6406,13 @@ function decodeKnowledgeLookup(v) {
     return {
       investigation: decodeId(closed(v, ["investigation"]).investigation)
     };
+  if (Object.hasOwn(v ?? {}, "match")) {
+    const raw2 = closed(v, ["path", "match"]);
+    return {
+      path: text(raw2.path, 1024, true),
+      match: text(raw2.match, 256, true)
+    };
+  }
   const raw = closed(v, [
     "path",
     ...Object.hasOwn(v ?? {}, "section") ? ["section"] : []
@@ -17813,7 +17820,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "7198403cceffbea8db2a21fe32b30ab11c98764c8311251da0cc7e4147ac490d",
+    contractHash: "288728ae3489bb657292da4efec64d74db6879f5ad1d3de147fe971548d2fe19",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -31238,7 +31245,7 @@ import { join as join39 } from "node:path";
 // src/cadence-instructions.ts
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
-Start with existing evidence. Use cadence_knowledge to read a named project document or heading directly (the route table, AGENTS.md and the project index identify sources). Reuse recorded investigation answers from this conversation by passing their investigation ID to cadence_knowledge, which rechecks their cited files; older conclusions are leads until checked against current sources. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change the design or acceptance. Ask focused independent questions together and reuse answered results by investigation ID.
+Start with existing evidence. Use cadence_knowledge to read a named project document or heading directly (the route table, AGENTS.md and the project index identify sources). Reuse recorded investigation answers from this conversation by passing their investigation ID to cadence_knowledge, which rechecks their cited files; older conclusions are leads until checked against current sources. For a directly verifiable fact, use cadence_knowledge with path and match to read the actual source line and nearby context. Read the returned results before broadening an investigation. Surface material user choices as soon as the tradeoffs are understood. Exact implementation values, selectors and file inventories ordinarily belong to implementation workers and need not delay the design or plan. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change the design or acceptance. Ask focused independent questions together and reuse answered results by investigation ID.
 For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan. Describe each option's cost, the recommendation and reason, and what acceptance it affects. Give stable lowercase IDs; use when for predictable dependencies on earlier options. Keep routine implementation decisions yourself. Do not invent a questionnaire for a settled task. The user can edit any question, enter other ideas, fill remaining recommendations and submit once. A submitted design or "按你推荐的来" calls for the final implementation card in the same conversation; it never authorizes execution. Respect the submitted decisions, including custom answers, throughout the plan and review.
 Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. Investigate project prerequisites: worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target. Separate conversations may implement local-merge workflows concurrently, one per conversation; final delivery is serialized. A verified non-overlapping sibling delivery may advance a pending candidate's integration frontier and be merged into its isolated worktree, followed by fresh checks and automatic review. Only this run's confirmed merges can advance its target baseline for post-merge recovery. Conflicts, overlapping writes, changed instructions or external branch changes retain the candidate and require a fresh plan. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
@@ -32142,6 +32149,7 @@ var KNOWLEDGE_LIMITS = {
   contextBytes: 12 * 1024,
   sourceBytes: 4096,
   namedBytes: 8 * 1024,
+  factLines: 12,
   depth: 3
 };
 function pieces(token) {
@@ -32423,9 +32431,41 @@ Additional context not injected (load relevant files on demand): ${omitted2.join
     text: clip2(context, maximum - Buffer.byteLength(footer)) + footer
   };
 }
-function coordinatorKnowledge(root, { path, section }, secrets) {
-  if (sanitizeText(path, secrets) !== path || section && sanitizeText(section, secrets) !== section)
-    throw new Error("path/section: protected text");
+function coordinatorKnowledge(root, { path, section, match }, secrets, readSource4) {
+  if (sanitizeText(path, secrets) !== path || section && sanitizeText(section, secrets) !== section || match && sanitizeText(match, secrets) !== match)
+    throw new Error("path/section/match: protected text");
+  if (match) {
+    if (path.includes("\\") || path.split("/").some((part) => part.startsWith(".") || part.toLowerCase() === "node_modules") || /\.jsonl$/iu.test(path))
+      return { path, notice: "Choose a project source file." };
+    let preview;
+    try {
+      preview = readSource4(path);
+    } catch {
+      return { path, notice: "Source absent, unsafe or unreadable." };
+    }
+    const lines = preview.text.split(`
+`);
+    const at2 = lines.findIndex((line) => line.includes(match));
+    if (at2 < 0)
+      return {
+        path,
+        match,
+        limited: preview.limited,
+        notice: "Literal not found in the observed source prefix."
+      };
+    const first = Math.max(0, at2 - 2);
+    const context = Buffer.from(lines.slice(first, at2 + KNOWLEDGE_LIMITS.factLines).join(`
+`));
+    return {
+      path,
+      line: at2 + 1,
+      firstLine: first + 1,
+      match,
+      digest: digest(preview.text),
+      excerpt: context.subarray(0, KNOWLEDGE_LIMITS.namedBytes).toString("utf8").replace(/�$/u, ""),
+      limited: preview.limited || context.length > KNOWLEDGE_LIMITS.namedBytes
+    };
+  }
   const file = readKnowledgeFile(root, path);
   if (!file)
     return { path, notice: "Source absent, unsafe or unreadable." };
@@ -32569,7 +32609,7 @@ class ConversationWorkflow {
       return this.o.workflows.investigationSummary(source.investigation);
     if (!this.o.cwd)
       throw new ContractError("unavailable");
-    return coordinatorKnowledge(this.o.cwd, source, this.o.secrets());
+    return coordinatorKnowledge(this.o.cwd, source, this.o.secrets(), this.o.readSource);
   }
   run(id) {
     const view = this.o.workflows.view(id);
@@ -32810,7 +32850,7 @@ Current design ${design.id}, revision ${design.revision}, ${design.submitted ? "
             try {
               return this.knowledge(decodeKnowledgeLookup(args));
             } catch {
-              return refusal3("invalid", "path/investigation: supply either a project Markdown path and optional heading, or one retained investigation ID.");
+              return refusal3("invalid", "path/section/match/investigation: supply a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.");
             }
           }
           if (name === "cadence_design") {
@@ -35621,7 +35661,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.1.13",
-  build: "706411c9f41b31923b3dd1e4a974b2b014b9650c228a39de1754422053b2898a",
+  build: "76a9c75cc5c2b3616059f8830270dd7858112b5cd650d9f96f01c66f95da089e",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38212,14 +38252,16 @@ class Workbench {
     this.conversations = new Conversations(o);
     this.contexts = this.conversations.contexts;
     this.workflows = new Workflows({ ...o, contexts: this.contexts });
+    this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
     this.cadence = new ConversationWorkflow({
       ...o,
       contexts: this.contexts,
       conversations: this.conversations,
-      workflows: this.workflows
+      workflows: this.workflows,
+      cwd: this.files.root,
+      readSource: (path) => this.files.read(path)
     });
     this.conversations.assertSettled();
-    this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
     this.projectRoot = join44(o.coordination.files.namespace, "workbench-projects-v1");
   }
   activityReaderScope() {
@@ -38639,7 +38681,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "7198403cceffbea8db2a21fe32b30ab11c98764c8311251da0cc7e4147ac490d";
+  const embedded = "288728ae3489bb657292da4efec64d74db6879f5ad1d3de147fe971548d2fe19";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

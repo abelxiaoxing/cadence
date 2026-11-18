@@ -69,20 +69,22 @@ export class Workbench implements WorkbenchPort {
     this.conversations = new Conversations(o);
     this.contexts = this.conversations.contexts;
     this.workflows = new Workflows({ ...o, contexts: this.contexts });
-    this.cadence = new ConversationWorkflow({
-      ...o,
-      contexts: this.contexts,
-      conversations: this.conversations,
-      workflows: this.workflows,
-    });
-    // Control records are not a startup gate: one unusable record degrades
-    // only its own conversation (see ConversationWorkflow.read).
-    this.conversations.assertSettled();
     this.files = new WorkbenchFiles(
       o.coordination.store.root,
       [o.coordination.files.namespace, o.agentDir],
       o.secrets,
     );
+    this.cadence = new ConversationWorkflow({
+      ...o,
+      contexts: this.contexts,
+      conversations: this.conversations,
+      workflows: this.workflows,
+      cwd: this.files.root,
+      readSource: (path) => this.files.read(path),
+    });
+    // Control records are not a startup gate: one unusable record degrades
+    // only its own conversation (see ConversationWorkflow.read).
+    this.conversations.assertSettled();
     this.projectRoot = join(
       o.coordination.files.namespace,
       "workbench-projects-v1",

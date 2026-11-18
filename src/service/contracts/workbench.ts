@@ -98,13 +98,21 @@ export interface WorkflowLink {
   conversationId: string;
 }
 export type KnowledgeLookup =
-  | { path: string; section?: string }
+  | { path: string; section?: string; match?: never }
+  | { path: string; match: string; section?: never }
   | { investigation: string };
 export function decodeKnowledgeLookup(v: unknown): KnowledgeLookup {
   if (Object.hasOwn(v ?? {}, "investigation"))
     return {
       investigation: decodeId(closed(v, ["investigation"]).investigation),
     };
+  if (Object.hasOwn(v ?? {}, "match")) {
+    const raw = closed(v, ["path", "match"]);
+    return {
+      path: text(raw.path, 1024, true),
+      match: text(raw.match, 256, true),
+    };
+  }
   const raw = closed(v, [
     "path",
     ...(Object.hasOwn(v ?? {}, "section") ? ["section"] : []),

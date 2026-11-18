@@ -56,11 +56,19 @@ export const KNOWLEDGE_PARAMETERS = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        "One checkout-relative project Markdown document; omit when reading an investigation.",
+        "One checkout-relative document, or the exact project source file containing a known fact.",
     }),
   ),
   section: Type.Optional(
-    Type.String({ description: "Exact document heading." }),
+    Type.String({
+      description: "Exact Markdown heading. Use either section or match.",
+    }),
+  ),
+  match: Type.Optional(
+    Type.String({
+      description:
+        "A literal on a line of this source file (such as a token, assertion or build script). Return nearby current lines without a research worker.",
+    }),
   ),
   investigation: Type.Optional(
     Type.String({
@@ -235,7 +243,7 @@ export function createCoordinatorTools() {
     {
       name: "cadence_knowledge",
       description:
-        "Read current project knowledge directly, including its source and matching heading. No research worker.",
+        "Read a current project heading, a literal in one source file, or a retained investigation with its citations rechecked.",
       parameters: KNOWLEDGE_PARAMETERS,
     },
     {

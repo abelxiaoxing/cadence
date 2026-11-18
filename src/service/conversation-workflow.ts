@@ -134,6 +134,7 @@ export class ConversationWorkflow {
       workflows: Workflows;
       /** The project checkout, whose route table the coordinator is given. */
       cwd?: string;
+      readSource(path: string): { text: string; limited: boolean };
       secrets(): readonly string[];
     },
   ) {
@@ -179,7 +180,12 @@ export class ConversationWorkflow {
     if ("investigation" in source)
       return this.o.workflows.investigationSummary(source.investigation);
     if (!this.o.cwd) throw new ContractError("unavailable");
-    return coordinatorKnowledge(this.o.cwd, source, this.o.secrets());
+    return coordinatorKnowledge(
+      this.o.cwd,
+      source,
+      this.o.secrets(),
+      this.o.readSource,
+    );
   }
   private run(id: string): WorkflowRun {
     const view = this.o.workflows.view(id);
@@ -502,7 +508,7 @@ export class ConversationWorkflow {
             } catch {
               return refusal(
                 "invalid",
-                "path/investigation: supply either a project Markdown path and optional heading, or one retained investigation ID.",
+                "path/section/match/investigation: supply a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.",
               );
             }
           }

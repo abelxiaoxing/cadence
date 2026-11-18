@@ -36,6 +36,7 @@ export const KNOWLEDGE_LIMITS = {
   /** One discovered document's share, and one named source's (a whole topic). */
   sourceBytes: 4096,
   namedBytes: 8 * 1024,
+  factLines: 12,
   depth: 3,
 } as const;
 /** What the project and the agreement name for one reader, ahead of discovery. */
@@ -471,14 +472,62 @@ export function projectKnowledge(
 /** Direct named observations skip discovery and never start a worker. */
 export function coordinatorKnowledge(
   root: string,
-  { path, section }: Extract<KnowledgeLookup, { path: string }>,
+  { path, section, match }: Extract<KnowledgeLookup, { path: string }>,
   secrets: readonly string[],
+  readSource: (path: string) => { text: string; limited: boolean },
 ) {
   if (
     sanitizeText(path, secrets) !== path ||
-    (section && sanitizeText(section, secrets) !== section)
+    (section && sanitizeText(section, secrets) !== section) ||
+    (match && sanitizeText(match, secrets) !== match)
   )
-    throw new Error("path/section: protected text");
+    throw new Error("path/section/match: protected text");
+  if (match) {
+    // Use the same restricted, redacted preview available to the WebUI.
+    // Hidden trees, dependency directories and Pi/private history are not project sources.
+    if (
+      path.includes("\\") ||
+      path
+        .split("/")
+        .some(
+          (part) =>
+            part.startsWith(".") || part.toLowerCase() === "node_modules",
+        ) ||
+      /\.jsonl$/iu.test(path)
+    )
+      return { path, notice: "Choose a project source file." };
+    let preview: ReturnType<typeof readSource>;
+    try {
+      preview = readSource(path);
+    } catch {
+      return { path, notice: "Source absent, unsafe or unreadable." };
+    }
+    const lines = preview.text.split("\n");
+    const at = lines.findIndex((line) => line.includes(match));
+    if (at < 0)
+      return {
+        path,
+        match,
+        limited: preview.limited,
+        notice: "Literal not found in the observed source prefix.",
+      };
+    const first = Math.max(0, at - 2);
+    const context = Buffer.from(
+      lines.slice(first, at + KNOWLEDGE_LIMITS.factLines).join("\n"),
+    );
+    return {
+      path,
+      line: at + 1,
+      firstLine: first + 1,
+      match,
+      digest: digest(preview.text),
+      excerpt: context
+        .subarray(0, KNOWLEDGE_LIMITS.namedBytes)
+        .toString("utf8")
+        .replace(/�$/u, ""),
+      limited: preview.limited || context.length > KNOWLEDGE_LIMITS.namedBytes,
+    };
+  }
   const file = readKnowledgeFile(root, path);
   if (!file) return { path, notice: "Source absent, unsafe or unreadable." };
   const selected = section ? knowledgeSection(file.body, section) : file.body;
@@ -546,8 +595,8 @@ export interface CurationBrief {
   deviations: string;
 }
 /** The curator keeps the store a small, current cache of what cannot be
- * cheaply re-derived from the code. It is run once per delivery, after the
- * implementation passed its checks and review. */
+ * cheaply re-derived from the code. It is run once per delivery, before the
+ * assembled implementation goes to checks and independent review. */
 export function curationInstructions(brief: CurationBrief): string {
   const store = KNOWLEDGE_STORE;
   const managed = brief.managed
