@@ -1,8 +1,13 @@
 // Browser-side probes; evaluate their bodies in the canonical page, never in
 // a replacement HTML layout. A page screenshot is sampled, not saved to disk.
-export function textSamples() {
+export function textSamples(selector) {
+  const roots = selector
+    ? document.querySelectorAll(selector)
+    : [document.body];
+  if (roots.length !== 1)
+    throw Error(`Expected one visible text target: ${selector}`);
   const result = [],
-    walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    walker = document.createTreeWalker(roots[0], NodeFilter.SHOW_TEXT);
   const sample = (el, rects, name, pseudo) => {
     if (
       !el ||
@@ -28,9 +33,10 @@ export function textSamples() {
           alpha,
           fg: style.color,
           min:
-            parseFloat(style.fontSize) >= 24 ||
-            (parseFloat(style.fontSize) >= 18.66 &&
-              Number(style.fontWeight) >= 700)
+            !selector &&
+            (parseFloat(style.fontSize) >= 24 ||
+              (parseFloat(style.fontSize) >= 18.66 &&
+                Number(style.fontWeight) >= 700))
               ? 3
               : 4.5,
           name,
@@ -50,6 +56,7 @@ export function textSamples() {
       `${el.tagName}.${el.className}: ${n.textContent.trim().slice(0, 30)}`,
     );
   }
+  if (selector) return result;
   for (const el of document.querySelectorAll(
     "input[placeholder],textarea[placeholder]",
   ))
@@ -104,6 +111,68 @@ export function textSamples() {
       });
   }
   return result;
+}
+// Keep the selected gutter painted: take the backing just beside the digit
+// inside the same button. Retain the glyph bounds to reject a stale capture
+// of an empty inspector surface even if its contrast would be sufficient.
+export function gutterSample(selector) {
+  const button = document.querySelector(selector);
+  if (!button || button.textContent !== "2")
+    throw Error("Missing selected line 2");
+  const range = new Range();
+  range.selectNodeContents(button);
+  const r = range.getBoundingClientRect();
+  const y = Math.floor(r.top + r.height / 2),
+    x = Math.floor(r.left - 2);
+  if (
+    document.elementFromPoint(x, y) !== button ||
+    document.elementFromPoint(Math.floor(r.left + r.width / 2), y) !== button
+  )
+    throw Error("Selected number is not visible");
+  let alpha = 1;
+  for (let p = button; p; p = p.parentElement)
+    alpha *= Number(getComputedStyle(p).opacity);
+  return {
+    x,
+    y,
+    glyph: [r.left, r.top, r.right, r.bottom],
+    name: "BUTTON.fp-num: 2",
+    fg: getComputedStyle(button).color,
+    alpha,
+    min: 4.5,
+  };
+}
+// The short rule is the entire affordance at rest. Read its center and the
+// material just above it in the *same unmodified frame* (not CSS colors).
+export function questionMarkSample() {
+  const rail = document.querySelector(".qn-rail:not(:hover,:focus-within)");
+  const current = rail?.querySelector('.qn-bar.active[aria-current="true"]');
+  const short = rail?.querySelector(".qn-bar:not(.active,[aria-current])");
+  if (!short || !current)
+    throw Error("Missing resting current/noncurrent question pair");
+  const r = short.getBoundingClientRect();
+  const currentWidth = current.getBoundingClientRect().width;
+  const x = Math.floor(r.left + r.width / 2),
+    y = Math.floor(r.top + r.height / 2);
+  if (
+    !(
+      currentWidth > r.width &&
+      r.width > 0 &&
+      short === document.elementFromPoint(x, y)
+    ) ||
+    getComputedStyle(short.querySelector(".qn-bar-text")).visibility !==
+      "hidden"
+  )
+    throw Error("Question mark is not visible at rest");
+  return {
+    name: short.getAttribute("aria-label"),
+    ink: [x, y],
+    x,
+    y: Math.floor(r.top - 2),
+    min: 3,
+    currentWidth,
+    shortWidth: r.width,
+  };
 }
 export async function contrastPixels(png, points) {
   const blob = new Blob([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], {
@@ -163,6 +232,23 @@ export async function contrastPixels(png, points) {
     const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data,
       alpha = (p.alpha * a) / 255;
     const fg = [r, g, b].map((c, i) => c * alpha + bg[i] * (1 - alpha));
+    if (p.glyph) {
+      const [left, top, right, bottom] = p.glyph.map((n) =>
+        Math.floor(n * scale),
+      );
+      const distance = (pixel, color) =>
+        color.reduce((d, c, i) => d + Math.abs(c - img.data[pixel + i]), 0);
+      let painted = false;
+      for (let y = top; y <= bottom && !painted; y++)
+        for (let x = left; x <= right; x++) {
+          const pixel = 4 * (y * img.width + x);
+          if (distance(pixel, fg) < distance(pixel, bg)) {
+            painted = true;
+            break;
+          }
+        }
+      if (!painted) throw Error(`No visible glyph in capture: ${p.name}`);
+    }
     const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a),
       ratio = (hi + 0.05) / (lo + 0.05);
     const observed = {

@@ -10,6 +10,8 @@ import {
   contrastPixels,
   dimensions,
   frameWindow,
+  gutterSample,
+  questionMarkSample,
   readingPosition,
   restingCopySample,
   stableFrames,
@@ -42,6 +44,7 @@ const report = {
   palettes: [],
   copies: [],
   copyIndicators: [],
+  readingStates: [],
   toolCards: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
@@ -245,6 +248,34 @@ try {
     await capture(focusPoint);
     assert.ok(await ev(`document.activeElement.matches(${q(selector)})`));
   };
+  const capture = async (scene, locate) => {
+    // Sample indicators on the unmodified page. On a separate capture,
+    // temporarily remove glyph ink only to read the material under text.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await ev(
+        "new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))",
+      );
+      const points = await locate();
+      if (!points.length) return null;
+      const png = await send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+      });
+      if (JSON.stringify(points) !== JSON.stringify(await locate())) continue;
+      return run(contrastPixels, png.data, points);
+    }
+    throw Error(`Unstable screenshot geometry: ${scene}`);
+  };
+  const textContrast = async (scene, selector) => {
+    await ev(`document.body.style.webkitTextFillColor='transparent'`);
+    try {
+      return await capture(scene, async () =>
+        (await run(textSamples, selector ?? null)).filter((p) => !p.ink),
+      );
+    } finally {
+      await ev(`document.body.style.removeProperty('-webkit-text-fill-color')`);
+    }
+  };
   const audit = async (scene, selectors) => {
     await sleep(250);
     const geometry = await run(dimensions, selectors);
@@ -252,38 +283,10 @@ try {
       selectors.every((s) => geometry[s]?.box[0] > 0),
       `Missing layout in ${scene}: ${selectors.filter((s) => !geometry[s]?.box[0])}`,
     );
-    const capture = async (indicators) => {
-      // Sample indicators on the unmodified page. On a separate capture,
-      // temporarily remove glyph ink only to read the material under text.
-      for (let attempt = 0; attempt < 4; attempt++) {
-        await ev(
-          "new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))",
-        );
-        const pick = (points) =>
-          points.filter((p) => Boolean(p.ink) === indicators);
-        const points = pick(await run(textSamples));
-        if (!points.length) return null;
-        const png = await send("Page.captureScreenshot", {
-          format: "png",
-          captureBeyondViewport: false,
-        });
-        if (
-          JSON.stringify(points) !==
-          JSON.stringify(pick(await run(textSamples)))
-        )
-          continue;
-        return run(contrastPixels, png.data, points);
-      }
-      throw Error(`Unstable screenshot geometry: ${scene}`);
-    };
-    const indicators = await capture(true);
-    let contrast;
-    await ev(`document.body.style.webkitTextFillColor='transparent'`);
-    try {
-      contrast = await capture(false);
-    } finally {
-      await ev(`document.body.style.removeProperty('-webkit-text-fill-color')`);
-    }
+    const indicators = await capture(scene, async () =>
+      (await run(textSamples)).filter((p) => p.ink),
+    );
+    const contrast = await textContrast(scene);
     if (indicators?.failures.length)
       problems.push({ width, theme, scene, indicators: indicators.failures });
     assert.ok(contrast.samples, `no visible text sampled for ${scene}`);
@@ -325,6 +328,106 @@ try {
       )
         problems.push({ width, theme, scene, overflow: s, g });
     }
+  };
+  const parkPointer = () =>
+    send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
+  const recordState = (state, selector, observed, detail) => {
+    assert.ok(observed?.samples, `No ${state} sample: ${selector}`);
+    const row = {
+      width,
+      theme,
+      state,
+      selector,
+      hit: true,
+      ...detail,
+      ...observed,
+    };
+    report.readingStates.push(row);
+    if (observed.failures.length) problems.push(row);
+  };
+  const observeQuestions = async () => {
+    const link = '.msg-text p > a[href="#specimen-notes"]:not(:hover,:focus)';
+    const rail = ".qn-rail";
+    await go(chat("questions"), rail);
+    await parkPointer();
+    await scrollTo(link);
+    const decoration = await run((s) => {
+      const a = document.querySelector(s),
+        style = getComputedStyle(a);
+      if (
+        !(
+          a.previousSibling?.textContent.trim() &&
+          a.nextSibling?.textContent.trim()
+        )
+      )
+        throw Error("Not an inline prose link");
+      return {
+        label: a.textContent,
+        line: style.textDecorationLine,
+        color: style.textDecorationColor,
+        ink: style.color,
+        thickness: style.textDecorationThickness,
+      };
+    }, link);
+    assert.equal(decoration.label, "specimen notes");
+    assert.equal(decoration.line, "underline");
+    assert.equal(decoration.color, decoration.ink);
+    assert.ok(
+      decoration.thickness === "auto" || parseFloat(decoration.thickness) > 0,
+    );
+    recordState(
+      "resting link",
+      link,
+      await textContrast("resting link", link),
+      { hovered: false, focused: false, decoration },
+    );
+    if (width <= 900) {
+      assert.equal(
+        await ev(
+          `getComputedStyle(document.querySelector('.qn-rail')).display`,
+        ),
+        "none",
+      );
+      report.readingStates.push({
+        width,
+        theme,
+        state: "compact questions",
+        selector: rail,
+        hidden: true,
+      });
+      return;
+    }
+    await wait(
+      `document.querySelectorAll('.qn-bar').length===2 && document.querySelector('.qn-bar.active')`,
+    );
+    const point = await run(questionMarkSample);
+    const short = ".qn-bar:not(.active,[aria-current])";
+    recordState(
+      "resting question",
+      short,
+      await capture(short, async () => [await run(questionMarkSample)]),
+      { hovered: false, focusWithin: false, point },
+    );
+    const current = '.qn-bar.active[aria-current="true"]';
+    const control = await observeButton("question navigation", current);
+    assert.equal(control.keyboardFocus, true);
+    const focus = async (key, selector) => {
+      const observed = await capture(key, async () => {
+        assert.ok(
+          await ev(
+            `document.activeElement.matches(${q(`${selector}:focus-visible`)})`,
+          ),
+        );
+        return (await run(textSamples)).filter(
+          (p) => p.name === "BUTTON focus",
+        );
+      });
+      recordState(key, selector, observed, { focusVisible: true });
+    };
+    await focus("Tab question", current);
+    const first = await ev(`document.activeElement.dataset.question==='0'`);
+    await press(first ? "ArrowDown" : "ArrowUp", first ? 40 : 38);
+    await focus(first ? "ArrowDown question" : "ArrowUp question", short);
   };
   for (theme of ["dark", "light"])
     for (width of [320, 390, 1440]) {
@@ -426,6 +529,7 @@ try {
           attempt.body.includes(firstAttempt.status),
       );
       await audit("unsaved attempt", [".chat-attempt", ".chat-attempt-text"]);
+      await observeQuestions();
       await go(chat("reading"), ".chat-turn");
       await wait(
         `+getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
@@ -635,6 +739,22 @@ try {
       await wait(`document.querySelector('.scm-file button')`);
       await click(".scm-file button");
       await wait(`document.querySelector('.fp-preview')`);
+      // Observe the actual selection before any glyph-suppressed page audit.
+      const line = ".fp-code .fp-line:nth-child(2)";
+      await click(`${line} > .fp-num`, "2");
+      await parkPointer();
+      const selected = `${line}.sel:not(:hover) > .fp-num`;
+      await wait(`document.querySelector(${q(selected)})`);
+      await sleep(180); // Let the button's background transition finish.
+      recordState(
+        "selected line number",
+        selected,
+        await capture(selected, async () => [
+          await run(gutterSample, selected),
+        ]),
+        { line: 2, selected: true, hovered: false },
+      );
+      await click(".fp-foot button", "Clear selection");
       await scrollTo(".fp-head");
       await audit("artifact", [
         ".drawer-right",

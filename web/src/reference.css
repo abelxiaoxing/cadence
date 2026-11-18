@@ -663,9 +663,10 @@
   padding: 4px 10px;
 }
 
-.msg-text a {
+.msg-text a[href] {
   color: var(--link);
-
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
   overflow-wrap: anywhere;
 }
 
@@ -1397,7 +1398,7 @@ div.chead[role="button"]:focus-visible,
   min-height: 0;
   border: none;
   border-radius: 2px;
-  background: var(--glow-22);
+  background: var(--text-secondary);
   cursor: pointer;
   padding: 0;
   transition:
@@ -1414,8 +1415,7 @@ div.chead[role="button"]:focus-visible,
 
 .qn-bar:hover,
 .qn-bar:focus-visible {
-  background: var(--glow-38);
-  outline: none;
+  background: var(--text-primary);
 }
 
 .qn-bar.active {

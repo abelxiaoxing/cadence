@@ -42,6 +42,28 @@ function rootTokens(): Map<string, string> {
 }
 const TOKENS = rootTokens();
 
+// Follow declarations of these specific component rules in stylesheet order
+// (reference.css is imported before styles.css's local preview overrides).
+function declaration(selector: string, property: string): string {
+  const prefix = `  ${property}: `;
+  for (const css of [...SHEETS].reverse()) {
+    for (const block of css.split(`\n${selector} {\n`).slice(1).reverse()) {
+      const line = block
+        .split("\n}", 1)[0]
+        .split("\n")
+        .find((s) => s.startsWith(prefix));
+      if (line) return line.slice(prefix.length, -1);
+    }
+  }
+  throw new Error(`Missing ${selector} { ${property} }`);
+}
+function ruleColor(selector: string, property: string, scheme: Scheme): Rgba {
+  const value = declaration(selector, property);
+  const token = /^var\((--[\w-]+)\)$/.exec(value);
+  if (!token) throw new Error(`${selector} { ${property}: ${value} }`);
+  return color(token[1], scheme);
+}
+
 function parseColor(value: string): Rgba | null {
   const hex = /^#([0-9a-f]{6})$/i.exec(value);
   if (hex) {
@@ -148,6 +170,36 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
           failures.push(`${token} on ${surface}: ${ratio.toFixed(2)} < ${min}`);
       }
     expect(failures).toEqual([]);
+  });
+  it("keeps the selected artifact number readable after pointer departure", () => {
+    const code = ruleColor(".fp-code", "background", scheme);
+    const selected = over(
+      ruleColor(".fp-line.sel", "background", scheme),
+      code,
+    );
+    const gutter = over(
+      ruleColor(".fp-line.sel .fp-num", "background", scheme),
+      selected,
+    );
+    expect(
+      contrast(ruleColor(".fp-num", "color", scheme), gutter),
+    ).toBeGreaterThanOrEqual(AA);
+  });
+  it("distinguishes resting question marks and underlined prose links on the reading canvas", () => {
+    const link = ".msg-text a[href]";
+    expect(declaration(link, "text-decoration")).toBe("underline");
+    const bg = ruleColor("body", "background", scheme);
+    const [r, g, b] = color(
+      scheme === "dark" ? "--lens-violet" : "--lens-silver",
+      scheme,
+    );
+    for (const surface of [bg, over([r, g, b, 0.08], bg)]) {
+      const mark = over(ruleColor(".qn-bar", "background", scheme), surface);
+      expect(contrast(mark, surface)).toBeGreaterThanOrEqual(GRAPHIC);
+      expect(
+        contrast(ruleColor(link, "color", scheme), surface),
+      ).toBeGreaterThanOrEqual(AA);
+    }
   });
   it("keeps the shared resting copy stroke visible on message and tool surfaces", () => {
     const rule = /\.chead-copy,\s*\.msg-text-copy \{([^}]+)/.exec(
