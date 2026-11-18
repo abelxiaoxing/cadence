@@ -3,6 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { abortScope } from "../../src/abort-scope.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { HttpServiceTransport } from "../../src/service-http-client.ts";
+import { HTTP_ROUTES } from "../../src/service-wire.ts";
 import { WorkspaceObserver } from "../../web/src/client/observer";
 import { httpFixture } from "../helpers/service-http-fixture.ts";
 
@@ -29,7 +30,12 @@ it.each(["any", "timeout", "both"])(
       models: [],
       context: f.snap(f.scope).context,
     });
+    let sockets = 0;
     const transport = new HttpServiceTransport({
+      socket: () => {
+        sockets++;
+        throw new Error("unexpected chat socket");
+      },
       origin: f.origin,
       fetch: async (url, init) => {
         calls.push(String(url));
@@ -79,6 +85,17 @@ it.each(["any", "timeout", "both"])(
       abort.abort();
       await expect(waiting).rejects.toThrow();
       expect(calls.length).toBe(before);
+      expect(sockets).toBe(0);
+      // Re-observation may manage the viewer; it cannot prepare a project,
+      // renew approval, resend a message or cancel running work.
+      expect(new Set(calls.map((url) => new URL(url).pathname))).toEqual(
+        new Set([
+          HTTP_ROUTES.session,
+          HTTP_ROUTES.activeRuns,
+          HTTP_ROUTES.workspace,
+          HTTP_ROUTES.detach,
+        ]),
+      );
     } finally {
       scope.dispose();
       stop?.();

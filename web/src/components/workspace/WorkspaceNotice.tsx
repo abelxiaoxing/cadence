@@ -1,73 +1,177 @@
-import { useT } from "../../i18n/locale";
+import { useEffect, useRef, useState } from "react";
+import { FiChevronUp } from "react-icons/fi";
+import { LIMITS } from "../../../../src/service-contract.ts";
+import { type MessageKey, useT } from "../../i18n/locale";
+import { ConnectionStatus } from "../../layout/StatusItem";
 
-/** One observation warning, independent of local operation errors. Reading state
- * never prepares execution, retries a message or renews plan approval. */
-export function WorkspaceNotice({
-  error,
-  observationError,
-  projectObservationError,
-  unavailable = false,
+const statements = {
+  connecting: "Connecting…",
+  updating: "Updating state…",
+  chat: "Chat ready",
+  task: "Task up to date",
+  stopped: "Execution stopped",
+  "not-started": "Execution not started",
+  independent: "Browsing only",
+} as const satisfies Record<string, MessageKey>;
+
+export function accessRevoked(error?: string) {
+  return (
+    error === "unauthenticated" ||
+    error === "forbidden" ||
+    error === "Access revoked; explicit token re-entry required."
+  );
+}
+
+/** This disclosure occupies the same footer slot throughout a handoff. It
+ * observes no service and supplies no authority to callers. */
+export function WorkspaceConnection({
+  phase,
+  projectStatus,
+  projectError,
+  viewerError,
+  retained,
+  latency,
   onRefresh,
 }: {
-  error?: string;
-  observationError?: string;
-  projectObservationError?: string;
-  unavailable?: boolean;
-  onRefresh?(): void;
+  phase: keyof typeof statements;
+  projectStatus?: string;
+  projectError?: string;
+  viewerError?: string;
+  retained: boolean;
+  latency: number | null;
+  onRefresh(): void;
 }) {
-  const { t } = useT();
-  const warning = unavailable || observationError || projectObservationError;
-  if (!error && !warning) return null;
+  const { t, tx } = useT();
+  const diagnostic = (reason: string) => {
+    const text =
+      reason === "socket-timeout"
+        ? t("No recent update from the task connection")
+        : reason === "socket-closed"
+          ? t("The task connection closed")
+          : tx(reason);
+    // Preserve the wire code beside a translated cause for support reports.
+    return text !== reason && /^[a-z][a-z-]*$/.test(reason)
+      ? `${text} (${reason})`
+      : text;
+  };
+  const pending = phase === "updating" || phase === "connecting";
+  // Keep a diagnosed problem during retry, until a positive observation
+  // supersedes it. App keys this display lifetime to the selected view.
+  const failure = useRef<{ projectError?: string; viewerError?: string }>(
+    undefined,
+  );
+  if (projectError || viewerError)
+    failure.current = { projectError, viewerError };
+  else if (!pending) failure.current = undefined;
+  const cause = failure.current;
+  const revoked =
+    accessRevoked(cause?.projectError) || accessRevoked(cause?.viewerError);
+  // Even repeated quiet reconnects without an error frame cannot stay an
+  // initial spinner indefinitely. This changes only the words, not retries.
+  const [overdue, setOverdue] = useState(false);
+  useEffect(() => {
+    if (!pending) {
+      setOverdue(false);
+      return;
+    }
+    const timer = setTimeout(() => setOverdue(true), LIMITS.staleMs);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  const unavailable = !!cause || (pending && overdue);
+  const label = t(
+    revoked
+      ? "Sign-in required"
+      : unavailable
+        ? retained
+          ? "Last known state"
+          : "Latest state unavailable."
+        : statements[phase],
+  );
+  const dot = unavailable
+    ? "error"
+    : pending
+      ? "busy"
+      : phase === "task" || phase === "chat"
+        ? "ok"
+        : "";
   return (
-    <>
-      {error && (
-        <p className="banner-notice" role="alert">
-          {error}
-        </p>
-      )}
-      {warning && (
-        <section
-          className="workspace-notice"
-          aria-label={t("Observation status")}
+    <details
+      className="workspace-connection"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.open) return;
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector("summary")?.focus();
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          event.currentTarget.open = false;
+      }}
+    >
+      <summary aria-label={t("Connection status: {state}", { state: label })}>
+        <ConnectionStatus
+          dot={dot}
+          tip={t("Connection freshness is not execution outcome.")}
+          latency={dot === "ok" || dot === "" ? latency : null}
         >
-          <div className="workspace-notice-summary">
-            <p role="status">
-              <strong>{t("Latest state unavailable.")}</strong>{" "}
-              {t("Started work may still be running. No message is resent.")}
-            </p>
-            {onRefresh && (
-              <button type="button" onClick={onRefresh}>
-                {t("Observe current state")}
-              </button>
+          {label}
+        </ConnectionStatus>
+        <FiChevronUp aria-hidden="true" />
+      </summary>
+      <div className="connection-details">
+        <strong>{t("Observation status")}</strong>
+        {projectStatus && (
+          <p>
+            {t("Execution service: {status}", { status: tx(projectStatus) })}
+          </p>
+        )}
+        {phase === "independent" && (
+          <p>
+            {t(
+              "This owner is running independently. Browsing history does not connect it to this workbench.",
             )}
-          </div>
-          {(observationError || projectObservationError) && (
-            <details>
-              <summary>{t("Diagnostic details")}</summary>
-              {projectObservationError && (
-                <p>
-                  {t("Project observation: {code}.", {
-                    code: projectObservationError,
-                  })}
-                </p>
-              )}
-              {observationError && (
-                <p>
-                  {t("Viewer observation: {code}.", { code: observationError })}
-                </p>
-              )}
-              {(observationError === "stale" ||
-                projectObservationError === "stale") && (
-                <p>
-                  {t(
-                    "Context changed. Read the current state before confirming a plan.",
-                  )}
-                </p>
-              )}
-            </details>
-          )}
-        </section>
-      )}
-    </>
+          </p>
+        )}
+        {(phase === "stopped" || phase === "not-started") && (
+          <p>{t("Ready to prepare execution")}</p>
+        )}
+        {unavailable && (
+          <p>{t("Started work may still be running. No message is resent.")}</p>
+        )}
+        {cause?.projectError && (
+          <p>
+            {t("Project observation: {code}.", {
+              code: diagnostic(cause.projectError),
+            })}
+          </p>
+        )}
+        {cause?.viewerError && (
+          <p>
+            {t("Viewer observation: {code}.", {
+              code: diagnostic(cause.viewerError),
+            })}
+          </p>
+        )}
+        {(cause?.viewerError === "stale" ||
+          cause?.projectError === "stale") && (
+          <p>
+            {t(
+              "Context changed. Read the current state before confirming a plan.",
+            )}
+          </p>
+        )}
+        {pending && !cause && (
+          <p>{t("Waiting for current state from this connection.")}</p>
+        )}
+        {revoked ? (
+          <button type="button" onClick={() => window.location.reload()}>
+            {t("Sign in again")}
+          </button>
+        ) : (
+          <button type="button" onClick={onRefresh}>
+            {t("Observe current state")}
+          </button>
+        )}
+      </div>
+    </details>
   );
 }
