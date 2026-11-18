@@ -2,173 +2,7 @@
  * e8bab487af208bc9a1ab60a821652323f598127f; MIT (c) 2026 xing-shuyin.
  * Workspace/transcript/tools/rich/preview/SCM/search/plan/responsive families only.
  * From b627452c: the msg-actions, file-diff/diff, lp-filter and qn-rail
- * families. Cadence owns the current glass tokens and Cyan → Blue accents. */
-:root {
-  --bg: light-dark(#f5f7ff, #020617);
-  --bg-elev: light-dark(#ffffff, #0f172a);
-  --bg-elev2: light-dark(#eef4ff, #111c30);
-  --border: light-dark(#c8d5e8, #263449);
-  --border-soft: light-dark(#dbe4f2, #1e2b42);
-  --text: light-dark(#0f172a, #e6edf7);
-  --text-dim: light-dark(#475569, #a8b3c7);
-  --text-faint: light-dark(#5b6675, #8e99ad);
-  --accent: light-dark(#2563eb, #22d3ee);
-  --accent-soft: light-dark(rgba(37, 99, 235, 0.09), rgba(34, 211, 238, 0.12));
-  --green: light-dark(#036b4f, #34d399);
-  --green-soft: light-dark(rgba(4, 120, 87, 0.12), rgba(52, 211, 153, 0.12));
-  --red: light-dark(#c81e1e, #f87171);
-  --red-soft: light-dark(rgba(200, 30, 30, 0.1), rgba(248, 113, 113, 0.12));
-  --amber: light-dark(#9a5200, #fbbf24);
-  --blue: light-dark(#0969da, #3b82f6);
-  --blue-soft: light-dark(rgba(9, 105, 218, 0.1), rgba(59, 130, 246, 0.12));
-
-  --term-bg: light-dark(#ffffff, #0b0d12);
-  --term-fg: light-dark(#1f2328, #e6e8ef);
-  --term-cursor: light-dark(#2563eb, #22d3ee);
-  --term-cursor-accent: light-dark(#ffffff, #0b0d12);
-  --term-selection: light-dark(
-    rgba(124, 58, 237, 0.32),
-    rgba(139, 92, 246, 0.35)
-  );
-  --term-black: light-dark(#e8eaf0, #1a1d26);
-  --term-red: light-dark(#dc2626, #f87171);
-  --term-green: light-dark(#059669, #34d399);
-  --term-yellow: light-dark(#d97706, #fbbf24);
-  --term-blue: light-dark(#2563eb, #60a5fa);
-  --term-magenta: light-dark(#9333ea, #c084fc);
-  --term-cyan: light-dark(#0e7490, #22d3ee);
-  --term-white: light-dark(#1f2328, #e6e8ef);
-  --term-bright-black: light-dark(#8a91a3, #6b7284);
-  --term-bright-red: light-dark(#dc2626, #f87171);
-  --term-bright-green: light-dark(#059669, #34d399);
-  --term-bright-yellow: light-dark(#d97706, #fbbf24);
-  --term-bright-blue: light-dark(#2563eb, #60a5fa);
-  --term-bright-magenta: light-dark(#9333ea, #c084fc);
-  --term-bright-cyan: light-dark(#0e7490, #22d3ee);
-  --term-bright-white: light-dark(#000000, #ffffff);
-  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
-  --mermaid-font-size: 12px;
-  --sans:
-    Inter, Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
-
-  --tooltip-bg: light-dark(#ffffff, #232733);
-  --code-bg: light-dark(#f6f8fa, #0b0d12);
-  --code-text: light-dark(#1f2937, #c9d1d9);
-
-  --code-border: var(--border-soft);
-  --code-pad: 8px 10px;
-
-  --card-body-pad: 4px 14px 12px;
-  --err-text: light-dark(#b91c1c, #f0a5a5);
-  --red-text: light-dark(#b91c1c, #fca5a5);
-  --amber-text: light-dark(#92400e, #fcd34d);
-  --info-blue: light-dark(#0969da, #60a5fa);
-  --link: light-dark(#1d4ed8, #67e8f9);
-  --link-hover: light-dark(#1e40af, #a5f3fc);
-  --link-soft: light-dark(#1e40af, #bae6fd);
-  --md-strong: light-dark(#111827, #f3f4f6);
-  --skill-blue: light-dark(#0969da, #5eb3ff);
-  --plugin-purple: light-dark(#7c3aed, #b58cff);
-  --auth-green: light-dark(#047857, #6ee7a0);
-  --scroll-thumb: light-dark(#c7ccd8, #2a2f3d);
-  --scroll-thumb-hover: light-dark(#aab2c0, #3a4152);
-  --notice-err-bg: light-dark(#eadadf, #401d23);
-  --notice-warn-bg: light-dark(#eae2dc, #38251f);
-  --notice-info-bg: light-dark(#d8e0f3, #1b2544);
-  --notice-err-border: light-dark(#dc2626, #ef4444);
-  --notice-warn-border: light-dark(#b45309, #f59e0b);
-  --notice-info-border: light-dark(#2563eb, #3b82f6);
-  --send-blue: light-dark(#2563eb, #22d3ee);
-  --send-blue-hover: light-dark(#1d4ed8, #67e8f9);
-  --stop-red: light-dark(#dc2626, #ef4444);
-  --stop-red-hover: light-dark(#b91c1c, #dc2626);
-  --brand-grad-a: light-dark(#0e7490, #22d3ee);
-  --brand-grad-b: light-dark(#1d4ed8, #60a5fa);
-  --on-amber: light-dark(#ffffff, #1a1a1a);
-  --search-active-fg: light-dark(#ffffff, #1a1d26);
-  --switch-knob: #ffffff;
-  --bg-elev3: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.06));
-
-  --sunken-bg: light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.15));
-  --glow-015: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.015));
-  --glow-025: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.025));
-  --glow-03: light-dark(rgba(0, 0, 0, 0.02), rgba(255, 255, 255, 0.03));
-  --glow-04: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04));
-  --glow-05: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.05));
-  --glow-12: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.12));
-  --glow-18: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.18));
-  --glow-22: light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.22));
-  --glow-38: light-dark(rgba(0, 0, 0, 0.25), rgba(255, 255, 255, 0.38));
-
-  --control-fg: light-dark(#475569, #a8b3c7);
-  --control-bg: light-dark(#eef4ff, #111c30);
-  --control-border: light-dark(#c8d5e8, #263449);
-
-  --bg-image: none;
-  --bg-image-dim: 0.78;
-  --bg-image-blur: 0px;
-  /* Tiered glass: the shell (topbar, statusbar, composer, dialogs, popovers,
-   * drawers) is strong glass; content cards are light glass — higher
-   * opacity, weaker blur. Dense reading surfaces (code, terminal, tool
-   * output, diff) stay on opaque --code-bg / --bg-elev. Glass is
-   * translucent, never a wallpaper image or a remote asset. */
-  --glass-bg: light-dark(rgba(255, 255, 255, 0.66), rgba(15, 23, 42, 0.62));
-  --glass-card-bg: light-dark(rgba(255, 255, 255, 0.8), rgba(15, 23, 42, 0.78));
-  --glass-border: light-dark(
-    rgba(255, 255, 255, 0.72),
-    rgba(255, 255, 255, 0.12)
-  );
-  --glass-card-border: light-dark(
-    rgba(255, 255, 255, 0.6),
-    rgba(255, 255, 255, 0.08)
-  );
-  --glass-shadow: light-dark(rgba(37, 99, 235, 0.08), rgba(2, 6, 23, 0.36));
-  --glass-card-shadow: light-dark(
-    rgba(37, 99, 235, 0.05),
-    rgba(2, 6, 23, 0.26)
-  );
-  --glass-shell-blur: 24px;
-  --glass-card-blur: 12px;
-  --primary-glow: light-dark(rgba(37, 99, 235, 0.18), rgba(34, 211, 238, 0.15));
-  --primary-gradient: linear-gradient(
-    135deg,
-    var(--brand-grad-a),
-    var(--brand-grad-b)
-  );
-  --primary-hover: linear-gradient(
-    135deg,
-    var(--send-blue-hover),
-    var(--brand-grad-b)
-  );
-  /* Mesh and grid: desaturated and low-contrast so the glass has something
-   * to sit on without competing with the text. */
-  --mesh-a: light-dark(rgba(147, 197, 253, 0.42), rgba(34, 211, 238, 0.08));
-  --mesh-b: light-dark(rgba(196, 181, 253, 0.36), rgba(37, 99, 235, 0.1));
-  --mesh-c: light-dark(rgba(165, 243, 252, 0.32), rgba(99, 102, 241, 0.07));
-  --grid-line: light-dark(rgba(37, 99, 235, 0.03), rgba(56, 189, 248, 0.045));
-  --topbar-bg: var(--glass-bg);
-  --statusbar-bg: var(--glass-bg);
-  --panel-bg: var(--glass-bg);
-  --card-bg: var(--glass-card-bg);
-  --chip-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(15, 23, 42, 0.62));
-  --msgs-bg: transparent;
-  --inputbox-bg: light-dark(rgba(255, 255, 255, 0.7), rgba(15, 23, 42, 0.72));
-  --menu-bg: var(--glass-bg);
-  --menu-solid-bg: light-dark(
-    rgba(255, 255, 255, 0.97),
-    rgba(15, 23, 42, 0.96)
-  );
-}
-/* Narrow screens have less headroom for blur: the shell steps down to 12px
- * and content cards weaken further. */
-@media (max-width: 900px) {
-  :root {
-    --glass-shell-blur: 12px;
-    --glass-card-blur: 8px;
-  }
-}
-
+ * families. Material roles are supplied by optical-tokens.css. */
 .layout {
   flex: 1;
   display: flex;
@@ -186,7 +20,7 @@
 
   background: var(--msgs-bg, transparent);
   --chat-pad: 20px;
-  --chat-max: 860px;
+  --chat-max: var(--reading-width);
   --chat-rail: 0px;
   --chat-inset: max(
     var(--chat-pad),
@@ -344,7 +178,8 @@
 
 .scm-file {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   padding: 5px 10px;
   font-size: 13px;
@@ -888,8 +723,8 @@
   line-height: 1.55;
   flex: 1;
   min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .copy-btn {
@@ -991,7 +826,7 @@
   background: var(--card-bg, var(--bg-elev));
   box-shadow: 0 8px 24px var(--glass-card-shadow);
   overflow: hidden;
-  backdrop-filter: blur(var(--glass-card-blur));
+  border-top-color: var(--glass-border-top);
 }
 
 .thinking {
@@ -1000,7 +835,7 @@
   border-radius: 14px;
   background: var(--card-bg, var(--glow-015));
   box-shadow: 0 8px 24px var(--glass-card-shadow);
-  backdrop-filter: blur(var(--glass-card-blur));
+  border-top-color: var(--glass-border-top);
 }
 /* Without backdrop-filter these cards read as muddy: an opaque base. */
 @supports not (backdrop-filter: blur(1px)) {
@@ -2154,6 +1989,7 @@ div.chead[role="button"]:focus-visible,
 
 .fp-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
@@ -2174,7 +2010,8 @@ div.chead[role="button"]:focus-visible,
 .fp-code {
   flex: 1;
   overflow: auto;
-  background: var(--sunken-bg);
+  background: var(--code-bg);
+  box-shadow: var(--inset-shadow);
   font-family: var(--mono);
   font-size: calc(12px * var(--fp-zoom, 1));
   line-height: 1.6;
@@ -2531,7 +2368,7 @@ div.chead[role="button"]:focus-visible,
 }
 
 .fp-line:hover {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--bg-elev2);
 }
 
 .fp-line.sel {

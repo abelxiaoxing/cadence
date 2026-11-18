@@ -30,6 +30,11 @@ export function timelineBridge(
   );
   const segments: TimelineSegment[] = facts.map((r, i) => {
     const kind = r.kind === "owner-fact" ? r.fact.kind : r.capture.event.kind;
+    const event = r.kind === "capture-fact" ? r.capture.event : null;
+    const tool =
+      event?.kind === "tool-start" || event?.kind === "tool-end"
+        ? event.name
+        : undefined;
     const child = r.kind === "capture-fact" ? r.link.childRunId : null;
     const lane = kind.startsWith("tool")
       ? "tools"
@@ -38,6 +43,7 @@ export function timelineBridge(
         : "input";
     return {
       key: r.recordId,
+      ...(tool ? { meta: { tool } } : {}),
       lane,
       group: `${child ?? "owner"}:${lane}`,
       groupLabel: `${child ?? t("Owner")} · ${translate(lang, lane)}`,

@@ -346,7 +346,12 @@ Backend cookies and native capabilities never reach the browser; proxied actions
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit execution preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
-It has tiered light and dark glass colour schemes — strong glass for the shell (topbar, statusbar, composer, dialogs, popovers, drawers), lighter glass for content cards and stable opaque bases for dense reading surfaces such as code and tool output — both compiled into the one Tailwind stylesheet as `light-dark()` tokens, with local mesh/grid backgrounds, Cyan → Blue accents and text at WCAG AA: it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
+Mineral Alabaster and Obsidian Optical follow the system until the theme chip selects a scheme; the browser remembers that choice and applies it before the first render.
+`web/src/optical-tokens.css` supplies the palette, rims, recessed code surfaces, reading measure and material tiers, including history trace swatches.
+In More, **Ambient light** switches the decorative field off or on without changing a conversation.
+The shared shell draws a single low-resolution WebGL pass only for a visible empty Hero; reading uses a subdued static layer.
+Hidden tabs and reduced motion suspend the clock.
+A missing context leaves the CSS material in place.
 The script-free access page follows the system's scheme without storing a separate preference.
 Error codes, identifiers, commands and recorded content stay untranslated.
 

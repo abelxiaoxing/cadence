@@ -18,7 +18,15 @@ type Rgba = readonly [number, number, number, number];
 
 const source = (name: string) =>
   readFileSync(new URL(`../../web/src/${name}`, import.meta.url), "utf8");
-const SHEETS = ["reference.css", "styles.css"].map(source);
+const SHEETS = [
+  "optical-tokens.css",
+  "reference.css",
+  "styles.css",
+  "timeline/timeline.css",
+  "optics/ambient.css",
+  "components/workspace/design.css",
+  "components/rich/reading.css",
+].map(source);
 const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
 /** The `:root { … }` declarations of both sheets, later ones winning. */
@@ -51,6 +59,8 @@ function parseColor(value: string): Rgba | null {
 function color(token: string, scheme: Scheme): Rgba {
   const value = TOKENS.get(token);
   if (value === undefined) throw new Error(`${token} is not defined on :root`);
+  const alias = /^var\((--[\w-]+)\)$/.exec(value);
+  if (alias) return color(alias[1], scheme);
   const pair = /^light-dark\( ?(.+?), (#[0-9a-f]{6}|rgba?\([^)]*\)) ?\)$/i.exec(
     value,
   );
@@ -157,18 +167,50 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
   });
 });
 
+it.each(["dark", "light"] as const)(
+  "%s: nested wing, card, menu, selected options, trace chips and focus",
+  (scheme) => {
+    const c = (key: string) => color(`--${key}`, scheme);
+    // Upper bound on the caustic contribution, including its static lens.
+    const [r, g, b] = c(scheme === "dark" ? "lens-violet" : "lens-silver");
+    const base = over([r, g, b, 0.1], over(c("grain"), c("bg")));
+    const wing = over(c("glass-surface"), base);
+    const card = over(c("glass-card-bg"), wing);
+    const menu = over(c("menu-solid-bg"), card);
+    for (const surface of [
+      base,
+      wing,
+      card,
+      menu,
+      over(c("accent-soft"), menu),
+    ]) {
+      for (const name of [
+        "text",
+        "text-secondary",
+        "link",
+        "green",
+        "red",
+        "amber",
+      ])
+        expect(contrast(c(name), surface), name).toBeGreaterThanOrEqual(AA);
+      expect(contrast(c("focus"), surface)).toBeGreaterThanOrEqual(GRAPHIC);
+    }
+    for (const [name] of TOKENS)
+      if (name.startsWith("--tl-"))
+        expect(
+          contrast(color(name, scheme), c("bg-elev2")),
+          name,
+        ).toBeGreaterThanOrEqual(AA);
+  },
+);
+
 it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
   // A parser that silently matched nothing would pass every check above.
   expect(TOKENS.size).toBeGreaterThan(100);
-  const pairs = [...TOKENS.values()].filter((value) =>
-    value.startsWith("light-dark("),
-  );
-  expect(pairs.length).toBeGreaterThan(90);
-  expect(color("--bg", "light")).toEqual([245, 247, 255, 1]);
-  expect(color("--bg", "dark")).toEqual([2, 6, 23, 1]);
-  // Cyan → Blue is the shared primary accent in both schemes.
-  expect(TOKENS.get("--accent")).toBe("light-dark(#2563eb, #22d3ee)");
-  const [reference, styles] = SHEETS;
+  expect(color("--bg", "light")).toEqual([244, 245, 247, 1]);
+  expect(color("--bg", "dark")).toEqual([9, 10, 13, 1]);
+  expect(color("--glass-surface", "light")).toEqual([255, 255, 255, 0.72]);
+  const [styles, reference] = SHEETS;
   expect(styles).toContain("color-scheme: light dark;");
   expect(styles).toMatch(
     /:root\[data-theme="light"\] \{\n {2}color-scheme: light;/,
@@ -180,14 +222,11 @@ it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
 });
 
 it("writes rules against tokens, never a colour of one scheme", () => {
-  // Darkening towards black and a ::backdrop fallback are scheme-neutral.
-  const neutral = [
-    /color-mix\(in srgb, var\(--[a-z-]+\) \d+%, #000\)/g,
-    /var\(--scrim, rgba\(0, 0, 0, 0\.5\)\)/g,
-  ];
-  for (const css of SHEETS) {
-    let rules = withoutComments(css).replace(/^:root \{\n[\s\S]*?\n\}/gm, "");
-    for (const pattern of neutral) rules = rules.replace(pattern, "");
+  for (const [index, css] of SHEETS.entries()) {
+    const rules =
+      index === 0
+        ? withoutComments(css).replace(/^:root \{\n[\s\S]*?\n\}/gm, "")
+        : withoutComments(css);
     expect(rules.match(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/gi) ?? []).toEqual([]);
   }
 });

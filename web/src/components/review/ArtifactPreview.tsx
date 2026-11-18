@@ -79,6 +79,7 @@ export function ArtifactPreview({ text }: { text: string }) {
           {t("Zoom −")}
         </button>
         <CopyButton
+          className="output-copy"
           text={sel ? lines.slice(sel.start - 1, sel.end).join("\n") : text}
         />
       </div>

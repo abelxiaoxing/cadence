@@ -259,6 +259,19 @@ export function WorkflowLine({
   );
 }
 /** The plan awaiting approval: the conversation's one pending decision. */
+/** A local paint-only highlight: never route pointer movement into React
+ * state or treat a click on the context as an approval. */
+function highlight(event: import("react").PointerEvent<HTMLElement>) {
+  if (
+    event.pointerType !== "mouse" ||
+    matchMedia("(prefers-reduced-motion: reduce)").matches
+  )
+    return;
+  const el = event.currentTarget,
+    rect = el.getBoundingClientRect();
+  el.style.setProperty("--spot-x", `${event.clientX - rect.left}px`);
+  el.style.setProperty("--spot-y", `${event.clientY - rect.top}px`);
+}
 export function PlanCard({
   proposal,
   canApprove,
@@ -319,20 +332,24 @@ export function PlanCard({
         </p>
       )}
       <p>{t("Tools and checks run on the service host, not in a sandbox.")}</p>
-      <p>
-        <code>{proposal.cwd}</code> · {proposal.display?.model}
-      </p>
-      <p>
-        {t("Declared write paths use the checkout root:")}{" "}
-        <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
-      </p>
-      {proposal.display?.runtime && <p>{proposal.display.runtime}</p>}
-      {proposal.display?.branch && (
-        <p>
-          <code>{proposal.display.branch}</code> ·{" "}
-          <code>{proposal.display.baseCommit}</code>
+      <div className="plan-context">
+        <p onPointerMove={highlight}>
+          <code>{proposal.cwd}</code> · {proposal.display?.model}
         </p>
-      )}
+        <p onPointerMove={highlight}>
+          {t("Declared write paths use the checkout root:")}{" "}
+          <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
+        </p>
+        {proposal.display?.runtime && (
+          <p onPointerMove={highlight}>{proposal.display.runtime}</p>
+        )}
+        {proposal.display?.branch && (
+          <p>
+            <code>{proposal.display.branch}</code> ·{" "}
+            <code>{proposal.display.baseCommit}</code>
+          </p>
+        )}
+      </div>
       <p>
         {t(
           "Approval covers this goal, its decisions, acceptance and assumptions. The service then finishes on its own: it may revise the route and write scope inside the repository, and records any deviation from the acceptance for the automatic review and the final report. No push, publication or deployment.",
@@ -816,7 +833,7 @@ export function AssignmentBoard({
       )}
       <ul>
         {assignmentRows(run, steps).map(({ task, steps: own, artifact }) => (
-          <li className="workflow-task" key={task.id}>
+          <li className="workflow-task" key={task.id} onPointerMove={highlight}>
             <span className={`workflow-task-state ${task.state}`}>
               <AssignmentIcon state={task.state} />
               {tx(task.state)}

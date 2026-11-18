@@ -276,7 +276,11 @@ export function ToolStep({
               {detail.value.text && (
                 <div className="toolcall-output">
                   <div className="toolcall-output-label">
-                    {t(step.error ? "Error output" : "Output")}
+                    {t(state === "err" ? "Error output" : "Output")} · {status}
+                    <CopyButton
+                      text={detail.value.text}
+                      className="output-copy"
+                    />
                   </div>
                   <pre>{detail.value.text}</pre>
                 </div>

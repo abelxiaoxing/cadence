@@ -115,3 +115,42 @@ it("unknown native outcomes stay unknown even in historical summaries", () => {
   expect(html).toContain("historical projection");
   expect(html).not.toContain("completed");
 });
+
+it("carries the observed tool name into the shared list, legend and lane palette", () => {
+  const ids = { taskId: id(), runId: id(), childRunId: id(), epoch: id() };
+  const facts: HistoryRecord[] = ["read", "write", "read"].map((name, n) => ({
+    kind: "capture-fact",
+    recordId: id(),
+    committedSeq: String(n + 1),
+    link: ids,
+    capture: {
+      source: {
+        first: n + 1,
+        last: n + 1,
+        firstObservedMs: n,
+        lastObservedMs: n,
+      },
+      event: {
+        kind: "tool-start",
+        name,
+        callId: id(),
+        argsDetailId: null,
+        source: { disposition: "unavailable", value: null },
+        declaration: null,
+      },
+    },
+  }));
+  const bridge = timelineBridge(
+    ids.taskId,
+    facts,
+    () => {},
+    () => {},
+  );
+  const messages: TimelineData[] = [];
+  bridge.onData((data) => messages.push(data));
+  bridge.readSegments(ids.taskId);
+  const message = messages[0];
+  expect(
+    message.kind === "segs" && message.segs.map((s) => s.meta?.tool),
+  ).toEqual(["read", "write", "read"]);
+});

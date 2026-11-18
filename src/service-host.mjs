@@ -11249,27 +11249,24 @@ var styles = `
 :root {
   color-scheme: light dark;
   font-family:
-    Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-synthesis: none;
-  --page: light-dark(#f5f7ff, #020617);
-  --text: light-dark(#0f172a, #e6edf7);
-  --muted: light-dark(#536176, #94a3b8);
-  --glass: light-dark(rgba(255, 255, 255, 0.62), rgba(15, 23, 42, 0.62));
-  --glass-line: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.1));
-  --field: light-dark(rgba(255, 255, 255, 0.5), rgba(2, 6, 23, 0.48));
-  --field-line: light-dark(rgba(100, 116, 139, 0.28), rgba(255, 255, 255, 0.12));
-  --primary-a: light-dark(#0e7490, #22d3ee);
-  --primary-b: light-dark(#1d4ed8, #60a5fa);
-  --on-primary: light-dark(#ffffff, #082f49);
-  --focus: light-dark(#2563eb, #22d3ee);
-  --glow: light-dark(rgba(37, 99, 235, 0.22), rgba(34, 211, 238, 0.2));
-  --shadow: light-dark(rgba(30, 64, 175, 0.14), rgba(0, 0, 0, 0.42));
-  --mesh-a: light-dark(rgba(147, 197, 253, 0.64), rgba(34, 211, 238, 0.1));
-  --mesh-b: light-dark(rgba(196, 181, 253, 0.58), rgba(37, 99, 235, 0.16));
-  --mesh-c: light-dark(rgba(165, 243, 252, 0.52), rgba(99, 102, 241, 0.1));
-  --grid: light-dark(rgba(37, 99, 235, 0.04), rgba(56, 189, 248, 0.055));
-  --error: light-dark(#b91c1c, #fda4af);
-  --error-bg: light-dark(rgba(254, 226, 226, 0.7), rgba(159, 18, 57, 0.12));
+  --page: light-dark(#f4f5f7, #090a0d);
+  --text: light-dark(#111318, #f2f4f8);
+  --muted: light-dark(#5e6675, #8a93a2);
+  --glass: light-dark(rgba(255,255,255,.72), rgba(22,23,27,.9));
+  --glass-line: light-dark(rgba(56,59,70,.16), rgba(208,214,227,.14));
+  --rim: light-dark(#ffffff, #45464c);
+  --field: light-dark(#f4f5f7, #101115);
+  --field-line: light-dark(#777e89, #69707d);
+  --primary-a: light-dark(#445065, #c0ccde);
+  --primary-b: light-dark(#5c5069, #d1c6dc);
+  --on-primary: light-dark(#ffffff, #141519);
+  --focus: light-dark(#525964, #adb6c5);
+  --glow: light-dark(rgba(62,65,80,.09), rgba(194,188,220,.05));
+  --shadow: light-dark(rgba(31,32,39,.12), rgba(0,0,0,.46));
+  --error: light-dark(#843f50, #e3a6ae);
+  --error-bg: light-dark(#f8eaeb, #302125);
 }
 * {
   box-sizing: border-box;
@@ -11282,28 +11279,7 @@ body {
   place-items: center;
   padding: 28px 20px;
   color: var(--text);
-  background: var(--page);
-}
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-body::before {
-  background:
-    radial-gradient(circle at 12% 10%, var(--mesh-a), transparent 42%),
-    radial-gradient(circle at 90% 16%, var(--mesh-b), transparent 44%),
-    radial-gradient(circle at 52% 100%, var(--mesh-c), transparent 48%);
-}
-body::after {
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse at center, #000, transparent 78%);
+  background: radial-gradient(ellipse at 50% 36%, var(--glow), transparent 46%), var(--page);
 }
 main {
   position: relative;
@@ -11312,7 +11288,8 @@ main {
   padding: 40px;
   overflow: hidden;
   border: 1px solid var(--glass-line);
-  border-radius: 28px;
+  border-top-color: var(--rim);
+  border-radius: 24px;
   background: var(--glass);
   box-shadow:
     0 28px 80px var(--shadow),
@@ -11321,7 +11298,7 @@ main {
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   text-align: center;
-  animation: arrive 0.45s ease-out both;
+
 }
 main::before {
   content: "";
@@ -11393,13 +11370,15 @@ input[type="password"] {
 }
 input::placeholder {
   color: var(--muted);
-  font-family: Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  font-family: ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0;
 }
 input:hover {
   border-color: var(--focus);
 }
 input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
   border-color: var(--focus);
   box-shadow: 0 0 0 4px var(--glow);
 }
@@ -11417,7 +11396,7 @@ button {
   border-radius: 14px;
   background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
   color: var(--on-primary);
-  font: 600 14px Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  font: 600 14px ui-sans-serif, system-ui, sans-serif;
   cursor: pointer;
   box-shadow: 0 10px 28px var(--glow);
   transition:
@@ -11446,7 +11425,7 @@ button:focus-visible {
   outline-offset: 4px;
 }
 .notice {
-  margin: 0 0 16px;
+  margin: 16px 0;
   padding: 10px 12px;
   border: 1px solid var(--error);
   border-radius: 12px;
@@ -11467,12 +11446,6 @@ button:focus-visible {
   white-space: nowrap;
   border: 0;
 }
-@keyframes arrive {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
 @media (max-width: 420px) {
   body {
     padding: 18px 14px;
@@ -11491,11 +11464,12 @@ button:focus-visible {
   }
 }
 @media (forced-colors: active) {
-  body::before,
-  body::after,
   main::before {
     display: none;
   }
+  body, main, .brand-mark, .notice { background:Canvas; color:CanvasText; box-shadow:none; backdrop-filter:none; }
+  button { background:ButtonFace; color:ButtonText; }
+  input[type="password"] { background:Field; color:FieldText; }
   main,
   input[type="password"],
   button,
@@ -11503,6 +11477,7 @@ button:focus-visible {
   .notice {
     border: 1px solid CanvasText;
   }
+  :focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px; }
 }
 `;
 var AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash9("sha256").update(styles).digest("base64")}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
@@ -11522,7 +11497,7 @@ function renderAuthPage(options) {
 <body>
 <main aria-labelledby="welcome">
 <div class="brand">
-<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="M25 11a9 9 0 1 0 0 14M12 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="m18 2 13 9-4 16-9 7-9-7-4-16Zm-13 9 13 5 13-5M18 2v14l-9 11m9-11 9 11m-9-11v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
 <h1 id="welcome">Cadence</h1>
 </div>
 ${options.authError ? '<p id="auth-notice" class="notice" role="alert">Invalid access token.</p>' : ""}
@@ -35774,7 +35749,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
+  build: "ac7e44195873d2bad270463290607b86e8634cd25484ff92a900131b1f646e02",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,

@@ -96,6 +96,7 @@ import {
 } from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
+import { Crystal } from "./optics/Crystal";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
@@ -1123,7 +1124,7 @@ export function App({
               {!seed && (
                 <section className="empty-state">
                   <span className="empty-logo" aria-hidden="true">
-                    C
+                    <Crystal />
                   </span>
                   <h2>
                     {workspace.error
