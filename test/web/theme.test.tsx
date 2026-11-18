@@ -228,6 +228,19 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(color("--accent", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
+  it("keeps disabled mode text readable on the input capsule", () => {
+    const disabled = ".mode-toggle:disabled";
+    expect(declaration(disabled, "opacity")).toBe("1");
+    expect(declaration(".mode-toggle", "background")).toBe("transparent");
+    const capsule = over(
+      ruleColor(".chat-composer", "background", scheme),
+      ruleColor("body", "background", scheme),
+    );
+    for (const surface of [capsule, over(color("--grain", scheme), capsule)])
+      expect(
+        contrast(ruleColor(disabled, "color", scheme), surface),
+      ).toBeGreaterThanOrEqual(AA);
+  });
   it("does not fade the disabled model's label and reason as a group", () => {
     expect(declaration(".model-option:disabled", "opacity")).toBe("1");
     const menu = over(

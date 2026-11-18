@@ -5229,6 +5229,15 @@ button.link:hover:not(:disabled) {
   transform: translateX(11px);
 }
 
+/* The label still reports mode state when the switch cannot be changed. */
+.mode-toggle:disabled {
+  opacity: 1;
+  color: var(--text-primary);
+}
+.mode-toggle:disabled .mode-switch {
+  opacity: 0.5;
+}
+
 /* ---- Topbar overflow menu: refresh, disconnect, build ---- */
 .more-menu {
   position: relative;

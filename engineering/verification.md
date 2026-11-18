@@ -343,7 +343,7 @@ A preceding run did not observe the page becoming hidden when activating an unre
 The probe now opens a sibling tab from the measured page and requires `document.hidden` before counting background draws.
 These short observations do not qualify hardware GPUs, physical phones, live providers or the owner's post-commit checks and independent review.
 
-### Retained turns, composer mode and current navigation rows
+### Retained turns, composer mode and current navigation rows (historical observation)
 
 `optical-evidence-j679hv/summary.json` in the run temporary root records canonical `bun run build:web` build `fa5f00c6cf357f504baf6e9af9849d482b4d87d30576e681d2e50c9dcb3844da`, over pre-commit HEAD `5aa12a4d795c1e2f4bc516c27281da228921ac70` in the same integration worktree and task branch.
 These measurements are from that build: installed Chrome 151.0.7922.34, synthetic loopback fixture, disposable profile, ANGLE/Vulkan SwiftShader, DPR 1.
@@ -380,8 +380,52 @@ In on/off/off/on order, p95 was 16.7ms throughout at idle, 16.8/16.8/16.7/16.8ms
 Only idle-on drew ambient frames in those windows; scroll paints included Latest and increments painted message, code, transcript and footer with either preference.
 The separate 1.25s Hero windows counted 25 draws and 25 after restoration; loss, hidden, reduced motion and explicit off counted zero.
 An initial probe left the synthetic project selected before the next folder-first case; row and flow checks now run before the existing disposable-origin last-project cleanup.
-The final run reported no problems or unavailable scenes.
+That pre-commit run reported no problems or unavailable scenes.
 No hardware GPU, physical phone, live provider, actual service restart or post-commit owner review is claimed.
+
+### Project drawer readiness and unavailable mode text
+
+**Interrupted owner observation:** On HEAD `6de7793c3aeccaa3be4dda5bd1d5e005ee8c0761`, build `fa5f00c6cf357f504baf6e9af9849d482b4d87d30576e681d2e50c9dcb3844da` passed `verify`, but `optical-evidence-GGucAw/summary.json` stopped after 119 scene audits.
+At light/390px the navigation toggle received a click; the reading row's center was then `(0, 0)`.
+The shared welcome markup did not identify which shell received the click.
+There were **no performance windows** in this run.
+The earlier complete observation above is not its result.
+
+**After repair:** `optical-evidence-CRNq9N/summary.json` under the run's temporary root records canonical build `83cbab9ae8ebb31844976fc76bf65b01dd9f4ec2c85dc43a1adef39bd59d5482`, on the same task branch and integration worktree over pre-commit HEAD `6de7793c`.
+Installed Chrome 151.0.7922.34 ran against synthetic loopback reads in a fresh profile, with DPR 1 and ANGLE/Vulkan SwiftShader.
+All 143 scene audits completed, with no reported problems or unavailable scenes.
+
+- `rowDrawers` records FolderSetup on the requested `#chat=empty` route while the workbench entry is held.
+  After release, all six viewport/theme pairs showed the project header, “New conversation” and the project conversation list before either toggle was used.
+  Opening or reopening required the project toggle's expanded state and its non-inert wing (`.open` on compact screens).
+  Each pointer selection used a stable, fully intersecting box with a hit-tested center.
+  In light/390px the selected `reading` button measured 232 × 34.125px, center `(125, 300.83)` inside the button.
+  No shell layout change was necessary for the measured cases.
+  The 72 `selectedRows` states cover the two conversations and two files at rest, adjacent hover and keyboard focus.
+  The lowest marker-to-row ratio was 8.939:1; each file's four actions were Tab-reached and hit-tested without activation.
+- `unknownMode` requires the dedicated conversation's degraded `cadence-conversation` notice **and** its native disabled, neutrally named mode button.
+  It measures the button's text node, excluding the switch graphic and composer hint.
+  Three points just above the text range sample the capsule through the transparent button.
+  Each screenshot must contain glyph ink in the range.
+  The report records the worst backing coordinate and RGB, a painted glyph pixel, text bounds and effective opacity (1 throughout).
+
+Worst mode-label contrast by viewport (dark ink RGB 242,244,248; light ink RGB 17,19,24):
+
+| Viewport | Text bounds x/y, w×h (CSS px, rounded) | Dark backing / ratio | Light backing / ratio  |
+| -------- | -------------------------------------- | -------------------- | ---------------------- |
+| 320×820  | 103.5/681.2, 145.88×17                 | 19,20,24 / 16.715:1  | 252,252,253 / 18.123:1 |
+| 390×820  | 103.5/699.2, 145.88×17                 | 19,20,24 / 16.715:1  | 252,252,253 / 18.123:1 |
+| 1440×900 | 531.5/831.2, 145.88×17                 | 25,25,29 / 15.917:1  | 247,247,248 / 17.355:1 |
+
+Across the general scene audits, the lowest text ratios were 5.010:1 dark and 4.507:1 light (requested-edit language label).
+The first unsaved attempt settled at opacity 0.07 with no ambient draws in each reading window.
+At 1440×900 the twelve 2.6s frame windows had p50 16.7ms and 0% of intervals >50ms.
+In on/off/off/on order, p95 (ms) was 16.7/33.4/33.4/16.7 at idle, 16.7/16.8/16.7/16.7 scrolling and 16.7/16.8/16.7/16.7 during increments.
+Only idle-on drew ambient frames.
+Scroll Paint events included Latest; incremental paints included message, code, transcript wrapper and footer with either preference.
+End-follow, up-scroll through growth and Latest were observed.
+The separate 1.25s windows counted 26 Hero draws, 25 after restoration and zero while hidden, reduced, disabled or context-lost.
+These are local browser observations, not hardware GPU, physical phone or live service qualification.
 
 ## Development practice
 
