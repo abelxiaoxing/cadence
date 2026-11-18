@@ -6,6 +6,7 @@ import {
 } from "../../web/src/components/workspace/ChatWorkspace";
 import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import { ResizeHandle } from "../../web/src/layout/ResizeHandle";
+import { swipeShouldOpen } from "../../web/src/layout/swipe-drawer";
 import {
   CHAT_MIN,
   DEFAULT_LAYOUT,
@@ -72,6 +73,31 @@ it.each([901, 1000, 1050, 1180, 1280, 1440])(
     expect(preference).toEqual({ ...DEFAULT_LAYOUT, inspector: true });
   },
 );
+
+it.each([
+  [320, 275.2, 294.4],
+  [390, 300, 358.8],
+  [900, 300, 380],
+])(
+  "%ipx gives each compact drawer its own width regardless of docked preferences",
+  (width, left, right) => {
+    const layout = workspaceLayout(width, {
+      ...DEFAULT_LAYOUT,
+      left: 560,
+      right: 220,
+    });
+    expect(layout.mobile).toBe(true);
+    expect(layout.left).toBeCloseTo(left);
+    expect(layout.right).toBeCloseTo(right);
+  },
+);
+
+it("a 138px slow pull at 390px opens navigation but not the wider inspector", () => {
+  const layout = workspaceLayout(390, DEFAULT_LAYOUT);
+  const slow = { wasOpen: false, pull: 138, durationMs: 500 };
+  expect(swipeShouldOpen({ ...slow, width: layout.left })).toBe(true);
+  expect(swipeShouldOpen({ ...slow, width: layout.right })).toBe(false);
+});
 
 it("resize constraints include the other docked pane for pointer and keyboard changes", () => {
   const layout = workspaceLayout(1280, { ...DEFAULT_LAYOUT, inspector: true });

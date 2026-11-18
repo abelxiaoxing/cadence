@@ -5,6 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
+import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import {
   buttonGeometry,
   contrastPixels,
@@ -18,6 +19,7 @@ import {
   textSamples,
 } from "./optical-fixtures/measure.mjs";
 import {
+  cwd,
   feed,
   firstAttempt,
   project,
@@ -46,6 +48,8 @@ const report = {
   copyIndicators: [],
   readingStates: [],
   toolCards: [],
+  drawerGestures: [],
+  directoryReads: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
     encoding: "utf8",
@@ -345,10 +349,8 @@ try {
     report.readingStates.push(row);
     if (observed.failures.length) problems.push(row);
   };
-  const observeQuestions = async () => {
-    const link = '.msg-text p > a[href="#specimen-notes"]:not(:hover,:focus)';
-    const rail = ".qn-rail";
-    await go(chat("questions"), rail);
+  const observeLink = async (surface, selector, label) => {
+    const link = `${selector}:not(:hover,:focus)`;
     await parkPointer();
     await scrollTo(link);
     const decoration = await run((s) => {
@@ -367,9 +369,11 @@ try {
         color: style.textDecorationColor,
         ink: style.color,
         thickness: style.textDecorationThickness,
+        style: style.textDecorationStyle,
       };
     }, link);
-    assert.equal(decoration.label, "specimen notes");
+    assert.equal(decoration.label, label);
+    assert.equal(decoration.style, "solid");
     assert.equal(decoration.line, "underline");
     assert.equal(decoration.color, decoration.ink);
     assert.ok(
@@ -379,7 +383,70 @@ try {
       "resting link",
       link,
       await textContrast("resting link", link),
-      { hovered: false, focused: false, decoration },
+      { surface, hovered: false, focused: false, decoration },
+    );
+  };
+  const observeDirectory = async () => {
+    const target = ".cwd-footer .cwd-target code";
+    const at = (path) =>
+      `document.querySelector(${q(target)})?.textContent===${q(path)}`;
+    await wait(at(cwd));
+    const next = `${cwd}/facets`;
+    const release = site.holdDirectory(next);
+    await click(".cwd-picker-list > button", "facets");
+    await parkPointer();
+    const list = '.cwd-picker-list[aria-busy="true"]';
+    await wait(
+      `document.querySelector('${list} > [role="status"]')?.textContent==='Reading folder…'`,
+    );
+    assert.ok(
+      await ev(
+        `${at(cwd)} && !!document.querySelector('.cwd-footer button:disabled')`,
+      ),
+    );
+    const reading = {
+      width,
+      theme,
+      from: cwd,
+      requested: next,
+      openDisabled: true,
+      options: [],
+    };
+    report.directoryReads.push(reading);
+    for (const [s, label] of [
+      ["button:first-of-type", "Parent folder"],
+      ["button:last-of-type", "facets"],
+    ]) {
+      const option = `${list} > ${s}:enabled:not(:hover)`;
+      await scrollTo(option);
+      assert.equal(
+        await ev(`document.querySelector(${q(option)}).textContent`),
+        label,
+      );
+      const observed = await textContrast(
+        `pending directory: ${label}`,
+        option,
+      );
+      assert.ok(observed?.samples, `No visible pending ${label}`);
+      assert.ok(observed.worst.name.endsWith(`: ${label}`));
+      reading.options.push({ label, selector: option, ...observed });
+      assert.deepEqual(observed.failures, []);
+    }
+    release();
+    await wait(
+      `${at(next)} && document.querySelector('.cwd-footer button:enabled') && document.querySelector('.cwd-picker-list:not([aria-busy]) button span')?.textContent==='quartz'`,
+    );
+    reading.arrived = await ev(
+      `document.querySelector(${q(target)}).textContent`,
+    );
+  };
+  const observeQuestions = async () => {
+    const rail = ".qn-rail";
+    await go(chat("questions"), rail);
+    await observeLink(
+      "chat",
+      '.msg-text p > a[href="#specimen-notes"]',
+      "specimen notes",
     );
     if (width <= 900) {
       assert.equal(
@@ -460,7 +527,11 @@ try {
         ".cwd-picker-list",
         "dialog footer",
       ]);
+      await observeDirectory();
       await press("Escape", 27);
+      assert.ok(
+        await ev(`document.querySelector('[aria-label="Send"]').disabled`),
+      );
       await go(chat("empty"), ".conversation-header");
       await wait(`document.querySelector('.optical-field[data-scene="hero"]')`);
       if (width <= 900) {
@@ -505,8 +576,16 @@ try {
         ".code-caption",
         ".file-preview pre",
       ]);
-      if (width <= 900) await press("Escape", 27);
-      else await click(".inspector-toggle");
+      if (width <= 900) {
+        await press("Escape", 27);
+        await observeGestures({
+          run,
+          send,
+          width,
+          theme,
+          rows: report.drawerGestures,
+        });
+      } else await click(".inspector-toggle");
       // The shell stays mounted for the empty → first unsaved attempt switch.
       await wait(`document.querySelector('.chat-welcome')`);
       await ev(`location.hash='chat=attempt'`);
@@ -667,6 +746,11 @@ try {
         ".workflow-plan:not(.design-card)",
         ".plan-context",
       ]);
+      await observeLink(
+        "plan",
+        '.workflow-plan:not(.design-card) > .md p > a[href="#plan-notes"]',
+        "plan notes",
+      );
       const planButton = ".workflow-plan:not(.design-card) > button.primary";
       await wait(
         `document.querySelector(${q(planButton)})?.textContent==='Implement this plan'`,
@@ -762,9 +846,19 @@ try {
         ".fp-head",
         ".fp-code",
       ]);
-      await ev(
-        `(()=>{const s=document.querySelector('.fp-head select');s.value='diff';s.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+      const previewMode = (mode) =>
+        run((value) => {
+          const select = document.querySelector(".fp-head select");
+          select.value = value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }, mode);
+      await previewMode("markdown");
+      await observeLink(
+        "artifact",
+        '.fp-markdown-zoom > .md p > a[href="#artifact-notes"]',
+        "artifact notes",
       );
+      await previewMode("diff");
       await scrollTo(".scm-diff-line.add");
       await audit("diff", [
         ".fp-preview",

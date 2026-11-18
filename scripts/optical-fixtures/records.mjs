@@ -28,7 +28,11 @@ const proposal = {
   cwd,
   checkoutRoot: cwd,
   model: version,
-  plan: plan(),
+  plan: {
+    ...plan(),
+    decisions:
+      "Consult the [plan notes](#plan-notes) before implementation. No remote push or installation.",
+  },
 };
 const design = reviseDesign(
   newDesign(randomUUID(), { questions: designQuestionsFixture }),
@@ -300,8 +304,29 @@ export function readRecord(q) {
         commandId: null,
         response: { type: "run", run: id === uncertain.id ? uncertain : run },
       };
+    case "directories": {
+      const path = q.path === "~" ? cwd : q.path;
+      const children = new Map([
+        ["/optical", ["specimen"]],
+        [cwd, ["facets"]],
+        [`${cwd}/facets`, ["quartz"]],
+        [`${cwd}/facets/quartz`, []],
+      ]).get(path);
+      if (!children) return null;
+      return {
+        kind,
+        path,
+        parent:
+          path === "/optical" ? null : path.slice(0, path.lastIndexOf("/")),
+        limited: false,
+        entries: children.map((name) => ({
+          name,
+          path: `${path}/${name}`,
+          directory: true,
+        })),
+      };
+    }
     case "files":
-    case "directories":
       return {
         kind,
         path: q.path,
@@ -309,9 +334,7 @@ export function readRecord(q) {
         limited: false,
         entries: [
           { name: "facets", path: "facets", directory: true },
-          ...(kind === "files"
-            ? [{ name: "material.ts", path: "material.ts", directory: false }]
-            : []),
+          { name: "material.ts", path: "material.ts", directory: false },
         ],
       };
     case "file":
@@ -372,7 +395,7 @@ export const events = [
 }));
 
 export const diffText =
-  "--- a/material.ts\n+++ b/material.ts\n@@ -1 +1 @@\n-const material = 'glass';\n+const material = 'alabaster';\n";
+  "--- a/material.ts\n+++ b/material.ts\n@@ -1 +1 @@\n-const material = 'glass';\n+const material = 'alabaster';\n\nRead the [artifact notes](#artifact-notes) for context.\n";
 export const artifact = {
   recordId: randomUUID(),
   version: 1,

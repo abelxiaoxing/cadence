@@ -149,7 +149,7 @@ export function useSwipeDrawer(options: SwipeDrawerOptions): void {
         }
         locked = "horizontal";
         wasOpen = open === active;
-        width = drawerWidth(window.innerWidth);
+        width = drawerWidth(window.innerWidth, active);
         hidden = width * DRAWER_HIDDEN_RATIO;
         const box = root.querySelector<HTMLElement>(
           panelSelector

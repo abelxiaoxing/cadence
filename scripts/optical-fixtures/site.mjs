@@ -35,6 +35,7 @@ export function fixture(root) {
   const build = { contractHash: identity.contractHash, assets: identity };
   const failures = [];
   const stepReads = [];
+  let directoryGate;
   const snapshot = (scope) => ({
     protocol: 1,
     storeId,
@@ -138,8 +139,17 @@ export function fixture(root) {
         unavailable: 0,
         projects: [],
       });
-    if (p === "/workbench/v1/directories")
-      return json(readRecord({ kind: "directories", path: cwd }));
+    if (p === "/workbench/v1/directories") {
+      const path = u.searchParams.get("path");
+      const listing = readRecord({ kind: "directories", path });
+      if (!listing) return refuse();
+      if (directoryGate?.path === path) {
+        directoryGate.respond = () => json(listing);
+        directoryGate = undefined; // Only hold the next matching read.
+        return;
+      }
+      return json(listing);
+    }
     if (p === `/workbench/v1/projects/${project}`)
       return json({
         kind: "project-observation",
@@ -239,6 +249,16 @@ export function fixture(root) {
     build: identity,
     failures,
     stepReads,
+    holdDirectory(path) {
+      const gate = { path, respond: null };
+      directoryGate = gate;
+      return () => {
+        if (!gate.respond)
+          throw Error(`No pending directory response: ${path}`);
+        gate.respond();
+        gate.respond = null;
+      };
+    },
     async open() {
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
