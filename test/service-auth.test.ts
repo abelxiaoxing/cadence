@@ -92,6 +92,16 @@ async function socket(
 function wsMessage(ws: WebSocket): Promise<any> {
   return once(ws, "message").then(([value]) => JSON.parse(value.toString()));
 }
+// A protocol pong fences earlier data frames on this socket without releasing
+// an injected snapshot or advancing the application's heartbeat clock.
+async function expectFramesReceived(ws: WebSocket) {
+  const received = Promise.race([
+    once(ws, "pong").then(() => "pong"),
+    once(ws, "close").then(() => "closed"),
+  ]);
+  ws.ping();
+  expect(await received).toBe("pong");
+}
 async function refusedSocket(
   url: string,
   headers: Record<string, string>,
@@ -906,6 +916,118 @@ describe("real read-only WebSockets and bounded history transport", () => {
     ws.close();
     await close;
   });
+  it("coalesces overlapping same-subscription resyncs into one trailing snapshot without missing updates", async () => {
+    const f = await setup(),
+      a = actionFixture(f),
+      ws = await socket(f),
+      firstEntered = deferred(),
+      firstRelease = deferred(),
+      secondEntered = deferred(),
+      secondRelease = deferred();
+    let reads = 0;
+    f.projection.snapshot = async (scope) => {
+      const snapshot = f.snap(scope);
+      if (++reads === 1) {
+        firstEntered.resolve();
+        await firstRelease.promise;
+      } else {
+        secondEntered.resolve();
+        await secondRelease.promise;
+      }
+      return snapshot;
+    };
+    const messages: any[] = [];
+    ws.on("message", (data) => messages.push(JSON.parse(data.toString())));
+    try {
+      ws.send(JSON.stringify({ kind: "subscribe", scope: f.scope }));
+      await firstEntered.promise;
+      f.setSeq("5"); // Committed after the read began, without a live event.
+      for (let i = 0; i < 3; i++)
+        ws.send(JSON.stringify({ kind: "resync", scope: f.scope }));
+      await expectFramesReceived(ws);
+      expect(reads).toBe(1);
+      expect(f.callbacks.size).toBe(1);
+      firstRelease.resolve();
+      await secondEntered.promise;
+      f.emit("5", "6"); // During the trailing read, so must follow its snapshot.
+      secondRelease.resolve();
+      await vi.waitFor(() =>
+        expect(
+          messages.map((m) => [
+            m.kind,
+            m.snapshot?.committedSeq ?? m.event?.committedSeq,
+          ]),
+        ).toEqual([
+          ["snapshot", "1"],
+          ["snapshot", "5"],
+          ["event", "6"],
+        ]),
+      );
+      expect(reads).toBe(2);
+      expect(f.callbacks.size).toBe(1);
+      expect(a.effects).toEqual([]);
+      expect(a.owner.requestCancel).not.toHaveBeenCalled();
+    } finally {
+      firstRelease.resolve();
+      secondRelease.resolve();
+      ws.close();
+    }
+  });
+  it.each([
+    "different id",
+    "different kind",
+    "duplicate subscribe",
+    "invalid frame",
+    "revoked",
+  ])(
+    "retires pending resync without a late read or publication: %s",
+    async (reason) => {
+      const f = await setup(),
+        a = actionFixture(f),
+        ws = await socket(f),
+        entered = deferred(),
+        release = deferred();
+      const snapshot = vi.fn(async () => {
+        entered.resolve();
+        await release.promise;
+        return f.snap(f.scope);
+      });
+      f.projection.snapshot = snapshot;
+      const message = vi.fn();
+      ws.on("message", message);
+      try {
+        ws.send(JSON.stringify({ kind: "subscribe", scope: f.scope }));
+        await entered.promise;
+        ws.send(JSON.stringify({ kind: "resync", scope: f.scope }));
+        await expectFramesReceived(ws);
+        const closed = once(ws, "close");
+        if (reason === "revoked") f.material.rotate();
+        else if (reason === "invalid frame")
+          ws.send(JSON.stringify({ kind: "resync", scope: f.scope, extra: 1 }));
+        else
+          ws.send(
+            JSON.stringify({
+              kind: reason === "duplicate subscribe" ? "subscribe" : "resync",
+              scope: {
+                kind: reason === "different kind" ? "task" : f.scope.kind,
+                id: reason === "different id" ? randomUUID() : f.scope.id,
+              },
+            }),
+          );
+        await closed;
+        release.resolve();
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(snapshot).toHaveBeenCalledOnce();
+        expect(f.callbacks.size).toBe(0);
+        expect(message).not.toHaveBeenCalled();
+        expect(a.effects).toEqual([]);
+        expect(a.owner.requestCancel).not.toHaveBeenCalled();
+      } finally {
+        release.resolve();
+        ws.close();
+      }
+    },
+  );
   it("rotation closes original WS and removes grants but does not request cancellation", async () => {
     const f = await setup(),
       a = actionFixture(f),
@@ -958,6 +1080,8 @@ describe("real read-only WebSockets and bounded history transport", () => {
       close = once(ws, "close");
     ws.send(JSON.stringify({ kind: "subscribe", scope: f.scope }));
     await vi.waitFor(() => expect(f.callbacks.size).toBe(1));
+    ws.send(JSON.stringify({ kind: "resync", scope: f.scope }));
+    await expectFramesReceived(ws);
     for (let i = 0; i < 260; i++)
       expect(() => f.emit(String(i + 1), String(i + 2))).not.toThrow();
     await close;
@@ -1814,7 +1938,7 @@ describe("HTTP/auth independent review regressions", () => {
       f.emit("2", "3"); // Missing 1 -> 2 forces a resync while draining pending.
       firstRelease.resolve();
       await secondEntered.promise;
-      // Wait an event-loop turn so the older snapshot's finally has run.
+      // Let earlier completion handlers settle before publishing during the resync.
       await new Promise((resolve) => setImmediate(resolve));
       f.emit("3", "4");
       secondRelease.resolve();
