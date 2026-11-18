@@ -52,6 +52,51 @@ export const RESEARCH_PARAMETERS = Type.Object({
     ),
   ),
 });
+export const KNOWLEDGE_PARAMETERS = Type.Union([
+  Type.Object({
+    path: Type.String({
+      description: "One checkout-relative project Markdown document.",
+    }),
+    section: Type.Optional(
+      Type.String({ description: "Exact heading to read." }),
+    ),
+  }),
+  Type.Object({
+    investigation: Type.String({
+      description:
+        "A retained investigation ID. Return a summary only if its cited sources still match.",
+    }),
+  }),
+]);
+export const DESIGN_PARAMETERS = Type.Object({
+  questions: Type.Array(
+    Type.Object({
+      id: Type.String(),
+      question: Type.String(),
+      options: Type.Array(
+        Type.Object({
+          id: Type.String(),
+          label: Type.String(),
+          cost: Type.String(),
+        }),
+      ),
+      recommended: Type.String({ description: "Recommended option ID" }),
+      reason: Type.String(),
+      acceptance: Type.String({
+        description: "Acceptance item this decision affects",
+      }),
+      when: Type.Optional(
+        Type.Object(
+          { question: Type.String(), option: Type.String() },
+          {
+            description:
+              "Only relevant for this earlier question and selected option.",
+          },
+        ),
+      ),
+    }),
+  ),
+});
 export const PLAN_PARAMETERS = Type.Object({
   goal: Type.String(),
   design: Type.String({ description: "The initial technical route." }),
@@ -186,6 +231,18 @@ export function createCoordinatorTools() {
   };
   process.on("message", receive);
   const tools = [
+    {
+      name: "cadence_knowledge",
+      description:
+        "Read current project knowledge directly, including its source and matching heading. No research worker.",
+      parameters: KNOWLEDGE_PARAMETERS,
+    },
+    {
+      name: "cadence_design",
+      description:
+        "Show all material product choices, recommendations, tradeoffs and affected acceptance together. End this turn after publication. Only the user submits design choices.",
+      parameters: DESIGN_PARAMETERS,
+    },
     {
       name: "cadence_research",
       description:

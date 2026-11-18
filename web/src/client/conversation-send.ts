@@ -116,7 +116,7 @@ export function captureSend(input: {
   text: string;
   images?: readonly File[];
   revision: number;
-  intent: "ordinary" | "enter" | "message" | "exit";
+  intent: "ordinary" | "enter" | "message" | "exit" | "design";
   location?: ConversationLocation;
   model?: ModelSelector;
   installModel?: boolean;

@@ -14,6 +14,12 @@ import {
   oneOf,
   text,
 } from "./core.ts";
+import {
+  type DesignAnswer,
+  type DesignDraft,
+  decodeDesign,
+  designAnswers,
+} from "./design.ts";
 import { decodeModelSelector, type ModelSelector } from "./domain.ts";
 import {
   type ChoiceVersion,
@@ -30,7 +36,6 @@ import {
   type ModelCatalog,
   type ModelChoiceState,
 } from "./models.ts";
-
 import {
   decodeWorkflowProposal,
   decodeWorkflowRequest,
@@ -44,6 +49,7 @@ import {
 } from "./workflow.ts";
 
 export interface CadenceConversation {
+  design?: DesignDraft;
   id: string;
   revision: number;
   enabled: boolean;
@@ -66,6 +72,7 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     "proposal",
     "runs",
     ...(degraded ? ["notice"] : []),
+    ...(Object.hasOwn(v ?? {}, "design") ? ["design"] : []),
   ]);
   return {
     id: decodeSessionId(o.id),
@@ -74,6 +81,7 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     head: nullable(o.head, decodeId),
     proposal: nullable(o.proposal, decodeWorkflowProposal),
     runs: list(o.runs, 200, decodeId),
+    ...(o.design === undefined ? {} : { design: decodeDesign(o.design) }),
     ...(degraded ? { notice: text(o.notice, 1024, true) } : {}),
   };
 }
@@ -89,7 +97,27 @@ export interface WorkflowLink {
   runId: string;
   conversationId: string;
 }
+export type KnowledgeLookup =
+  | { path: string; section?: string }
+  | { investigation: string };
+export function decodeKnowledgeLookup(v: unknown): KnowledgeLookup {
+  if (Object.hasOwn(v ?? {}, "investigation"))
+    return {
+      investigation: decodeId(closed(v, ["investigation"]).investigation),
+    };
+  const raw = closed(v, [
+    "path",
+    ...(Object.hasOwn(v ?? {}, "section") ? ["section"] : []),
+  ]);
+  return {
+    path: text(raw.path, 1024, true),
+    ...(raw.section === undefined
+      ? {}
+      : { section: text(raw.section, 512, true) }),
+  };
+}
 export type WorkbenchRead =
+  | { kind: "project-knowledge"; source: KnowledgeLookup }
   | {
       kind: "conversation-image";
       live?: true;
@@ -222,7 +250,15 @@ export type WorkbenchCommand =
       images?: string[];
       model: ChoiceVersion;
       revision: number;
-      intent: "message" | "enter" | "exit";
+      intent: "message" | "enter" | "exit" | "design";
+    }
+  | {
+      kind: "cadence-design-edit";
+      commandId: string;
+      conversationId: string;
+      revision: number;
+      designId: string;
+      answers: DesignAnswer[];
     }
   | {
       /** Explicitly refresh an unchanged agreement's execution binding. No grant or execution. */
@@ -715,6 +751,11 @@ const statuses = [
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
+    case "project-knowledge":
+      return {
+        kind,
+        source: decodeKnowledgeLookup(closed(v, ["kind", "source"]).source),
+      };
     case "conversation-context":
     case "reload-conversation-models":
     case "conversation-models": {
@@ -1014,7 +1055,25 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
         : { images: list(o.images, Number.MAX_SAFE_INTEGER, decodeId) }),
       model: decodeChoiceVersion(o.model),
       revision: integer(o.revision, 0),
-      intent: oneOf(o.intent, ["message", "enter", "exit"]),
+      intent: oneOf(o.intent, ["message", "enter", "exit", "design"]),
+    };
+  }
+  if (kind === "cadence-design-edit") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "revision",
+      "designId",
+      "answers",
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeSessionId(o.conversationId),
+      revision: integer(o.revision, 0),
+      designId: decodeId(o.designId),
+      answers: designAnswers(o.answers),
     };
   }
   if (kind === "cadence-revalidate") {

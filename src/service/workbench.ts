@@ -104,6 +104,13 @@ export class Workbench implements WorkbenchPort {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();
     switch (request.kind) {
+      case "project-knowledge":
+        return {
+          kind: "file",
+          path: "project-knowledge",
+          text: JSON.stringify(this.cadence.knowledge(request.source)),
+          limited: false,
+        };
       case "conversation-context":
         return {
           kind: request.kind,
@@ -402,6 +409,8 @@ export class Workbench implements WorkbenchPort {
       request.kind === "cadence-exit"
     )
       return this.send(request, caller);
+    if (request.kind === "cadence-design-edit")
+      return this.cadence.editDesign(request, caller);
     if (request.kind === "cadence-revalidate")
       return this.cadence.revalidate(request, caller);
     if (
