@@ -5083,7 +5083,7 @@ button.link:hover:not(:disabled) {
   padding: 5px;
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  background: var(--menu-bg);
+  background: var(--menu-solid-bg);
   box-shadow: 0 16px 40px var(--shadow-2);
   backdrop-filter: blur(var(--glass-shell-blur));
 }

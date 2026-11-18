@@ -21,3 +21,13 @@ Why: the pinned `vis-timeline.css` sets `.vis-item` `border-color: #97b0f8`, `bo
 Anchors: `web/src/timeline/timeline.css#.rtr-tlbody .vis-item.rtr-tc`, `web/dist/assets/vis-timeline.css#vis-item`
 
 Source: this delivery, 2026-11-18
+
+### Biome wraps long :root light-dark() token values onto multiple lines
+
+Kind: pitfall
+
+Why: `biome check` inside `bun run verify` reformats a `:root` declaration that exceeds 80 columns, so a single-line `--menu-solid-bg: light-dark(rgba(...), rgba(...));` fails the lint stage; write the value wrapped with a 2-space property and 4-space arguments, matching `--glass-border` and `--menu-solid-bg`.
+
+Anchors: `web/src/reference.css#--menu-solid-bg`, `web/src/reference.css#--glass-border`
+
+Source: this delivery, 2026-11-18
