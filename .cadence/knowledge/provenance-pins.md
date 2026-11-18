@@ -7,6 +7,7 @@
 Kind: contract
 
 Why: editing a pinned body such as `src/service/conversation-records.ts` or `src/model-preview.mjs` requires refreshing its SHA-256 in `destinations`, independently of package membership.
+The top-level `sources` map holds the original upstream pi-web-ui hashes, checked for 64-hex shape only; provenance refreshes touch `destinations`, whose entries the test hashes against the on-disk files.
 `package-members.json` lists bodies shipped as themselves: bundled sources such as `src/service/gateway.ts` need no member entry; their generated executables do.
 
 Anchors: `provenance/webui-reuse.json#destinations`, `test/service-package.test.ts#reuse provenance pins every current adaptation and integration body`, `provenance/package-members.json#service-host.mjs`
