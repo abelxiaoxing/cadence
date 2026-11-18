@@ -78,12 +78,8 @@
     },
     {
       "id": "plan-navigation",
-      "sources": [
-        "web/src/conv-groups.ts"
-      ],
-      "destinations": [
-        "web/src/navigation/assignment-rows.ts"
-      ],
+      "sources": ["web/src/conv-groups.ts"],
+      "destinations": ["web/src/navigation/assignment-rows.ts"],
       "modifications": "Readonly tree/collapse/orphan traversal remains. The legacy plan editor, prospective task plan adapter and Save/Generate/Start controls are retired; current conversation workflows own plan approval."
     },
     {
@@ -165,9 +161,7 @@
     },
     {
       "id": "timeline",
-      "sources": [
-        "plugins/run-trace/client/entry.mjs"
-      ],
+      "sources": ["plugins/run-trace/client/entry.mjs"],
       "destinations": [
         "web/src/timeline/timeline-client.mjs",
         "web/src/timeline/timeline-client.d.mts",
@@ -194,9 +188,7 @@
     },
     {
       "id": "build",
-      "sources": [
-        "web/vite.config.ts"
-      ],
+      "sources": ["web/vite.config.ts"],
       "destinations": [
         "web/vite.config.ts",
         "web/tsconfig.json",
@@ -448,8 +440,8 @@
     "test/web/project-entry.test.tsx": "647c9b4a317a6d3a58b05ada426a203663a0c5c9d7d0350a9f9603cce97c59a1",
     "test/web/project-resume.test.tsx": "e1aa7ac1f16944c7eea6fd38bf5b7e2428ece4c3d57b069f872cad57c31a6141",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "7c0eab76f02bb7d16d367a25eae7ee920c0cbcb0e00fab93f2d22d8d681bcdf7",
-    "web/src/layout/AppShell.tsx": "d78ffa662c4d6c5cfae3f9c952897a5e8e8037a90abc3e4f3d49b3f20d4ee77e",
+    "web/src/App.tsx": "51a430ca946eec1aa7081068ec6027628ab4f25a027f6cafddb787ecbd2fc5d8",
+    "web/src/layout/AppShell.tsx": "7d47e6c0141ceef4f5b8ba80c3d02690d914e580568aca41e8609eb94fe29338",
     "web/src/client/browser.ts": "0ead2a755394245320192386ce04abdd39321b6a71a137bf85b6f4469aab8f0d",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/use-workspace.ts": "c9c8bb7f6100ad0cc7a46376bde8a197ad282a52e2d0348c5849402d9822f70c",
@@ -497,7 +489,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "3cd345342952bc44feace9d4d2fd055935c7464beefeb33616bd7a7a0895fc62",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "a4b246245f9d95f2b7b5f7d34f4b5abe2916a2b81143d1c79274f2e62b1c630f",
+    "web/src/styles.css": "3a42cba48aa0dd05f26ee996772539074d157c351f885aea51a055b13f72eab6",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "89641f3869291b2b4020c4745cd36f6024a63fc927bc9dea10f69e924c4fa02c",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -537,7 +529,7 @@
     "web/src/client/use-workbench.ts": "d248d7fb6804d65cf410083baa8758c8474652e2a20cde03ef9576a7005c6a01",
     "test/workbench-boundaries.test.ts": "fba2c4b9d911a3fd5cf2e96cc2dfb89e9178f39e97b44f9fc730f93deb032e4b",
     "test/web/workbench.test.tsx": "485b99523201ed2d2a3b86e76e449fbe3e4823b1c5c6eaf16744e1ebaffc9df8",
-    "web/src/components/workspace/ChatWorkspace.tsx": "e314596551136cd92f1ef5691e95d4836aee0d0ce81d3d4148e1b4472f634446",
+    "web/src/components/workspace/ChatWorkspace.tsx": "2cf0bce47c4209e51a979713204c02091ebd5bd2c043003ec9b8b9aad158ce5a",
     "web/src/components/workspace/ChatSteps.tsx": "32234b8ccf80a533d06c214a48e9ad4a9970c545b839fa149c093d11c7673276",
     "web/src/components/workspace/AgentDock.tsx": "d2fe19e6d57addf88fb42ffbfe1a4063e3b2cfd8c2d3ca6875dcddc2311883a2",
     "web/src/components/workspace/FilesPanel.tsx": "77ff49d400bd43e2d87be670be0830b7b874d38427d49849e772e88fea68fb59",
@@ -644,7 +636,7 @@
     "test/model-preview-process.test.ts": "3dd670bc539b3ed567839d9ddff7a66f0b17c291c2a9d493eae6ea42c1d24026",
     "test/model-preview-recovery.test.ts": "1654c8d51ecdfa683bd3a89fb764d87b36757673838a906d842cbc8e2d83bc8b",
     "test/web/model-wait.test.tsx": "827b4b8f119d9e8e7e627f51aa2c098d1bad240e45a6170986f4a51f28942784",
-    "web/src/layout/StatusItem.tsx": "bf32b9b1e4aca9d9cc26eb4817e2419da2a21d151b9f9c64544f0d92a87b278d",
+    "web/src/layout/StatusItem.tsx": "d8ac7cc50599aa1d5f67620550d10b2dbf5616abceb74ba91eefb6acab507abe",
     "src/session-file.mjs": "1609585df8c0a95df4b31cbb030a28749fbf4b334aaf1a4b146277c9c1fc6305",
     "src/session-rename.mjs": "1feafef55bdc1fba26331cecce20186af002618f4ed28b2f9b2dcabc54616c2c",
     "test/conversation-rename.test.ts": "8b7593da7a769412db8c77de51b0696e15202d5ecbf11786c79b21633ac268df",
@@ -655,7 +647,7 @@
     "web/src/layout/theme.ts": "ceebe4a7442f311183ffeea3517c3695a143bcb256078b3e3cd3517155e449f3",
     "web/src/components/workspace/MessageActions.tsx": "76bf904edcea719f09b7b198c2c6dab468a004bd9b537f52e2b1157a7a35229d",
     "test/web/toasts.test.tsx": "2c408a3fe0099a48971ff1803abc2339991bdf1de398ef586237f455f432c306",
-    "test/web/theme.test.tsx": "d399ea05d9cdf357ed0959e3c4ae3e351825d485b66c9263f23813ffd8329f03",
+    "test/web/theme.test.tsx": "1ce360af88e68de8d8cecb75611acf706072f6d96190f0d6e7a40097337421e7",
     "web/src/rich/file-diff.ts": "99959f42ce9b2ca5ee86195a0428dc34d8960158b1b6e9e762c5b8d99568e58a",
     "web/src/rich/code-fence.ts": "46af3d2406c1b11e065a7d6132fd3b7d187076026c1ae2aa47e71352c6057775",
     "web/src/components/workspace/FileChangeCard.tsx": "123c07a575329fb1b0e229b7501668a479091063da8d861bfeabb2e34b13be64",
@@ -701,7 +693,7 @@
     "web/src/client/cache-usage.ts": "902eaffb13d342914d79c2dfd3d66fab8d1c30dc3fe6df9042185e05521537fa",
     "web/src/client/latency.ts": "ad8ab548d492b7ddcae92014ede3ae507ec095f14059d32c4aa8c5d799391f86",
     "web/src/layout/CacheStatus.tsx": "fd8f4a371bc340ffb87a4ebc2dadef30c6a196a3c08e4444ba70d3b7032c5ab4",
-    "test/web/statusbar.test.tsx": "4dabd3b30e44ed5b888a5fa5947c258305fbb1c8a22802cc941d9b524bfcb07f",
+    "test/web/statusbar.test.tsx": "c4f369e4b9ffe78d359a2d6d203ffcc800857c72be3e037fefe3ba3b090d176c",
     "web/src/components/StreamMarkdown.tsx": "1d8d579285d686f862fe40010a9eed094d053d1da0883cf4027427d0f4118a23",
     "web/src/components/workspace/turn-source.ts": "0dcc746257a6755a7cc240caeaa17891cc13c3f6abddfe81d0d6a98099db4837",
     "test/web/chat-timeline.test.tsx": "4d30569e600cf3960417fc3da6a5799db3c6c1315814ed57bce2053356913d25",
@@ -709,10 +701,10 @@
     "test/web/workflow-agent.test.tsx": "a26b485d9291fd3b461cc32f252ad9da1edd22291b93b53b7779fb9132b0604f",
     "test/runtime-timeline.test.ts": "34d34020b79119bf95c459e38e6923c0603f1410d84add27515f230da03325b0",
     "test/helpers/runtime-timeline.ts": "96c8c9383ff188aebcb5dae0cf4447e1e3a22b203a310c6a907145d06e1b7691",
-    "web/dist/assets/cadence.css": "03e2e1f1cbc40aae7497aa8841c38e555d7d79d49f4c228370bc2c07f5294f91",
-    "web/dist/assets/cadence.js": "9fa476e65f53d40e38b1d9d2a653870d45008ebc106b0e2c19130d6e2ffb0283",
+    "web/dist/assets/cadence.css": "fef5ab9be1b33c4ea0b591f6fd0e7271a5af144d636749b8123a7e11d5ee8e3e",
+    "web/dist/assets/cadence.js": "2c0bad951a24a3208a8f8f114e7deff535a092953068762bd25ddcf0faf22bf5",
     "web/dist/assets/markdown.js": "8bbd768f02c2caf28f3f8895793aae60d986229bf4f332c253ee950c43a69d9f",
-    "web/dist/manifest.json": "002c2723b68061a4ed88a7d0d977682c1364520550b0a6fbda2aa2bc21ff09a4",
+    "web/dist/manifest.json": "451109b76d5536b2b025713bdbcec53f11d5226f6b88859d529d5bb50bbb92d1",
     "web/dist/assets/timeline-client.js": "b599a92660284b936f52314c0da923c3aca851f8d4b9c4e7e7ee65d3167c6d01",
     "web/src/components/workspace/DesignCard.tsx": "73cffd7f6e8d0b6f37eb1e7d379f1cdc0057ecbb9c956a2d07527204e5a5a039"
   },

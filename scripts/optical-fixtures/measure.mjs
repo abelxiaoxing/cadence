@@ -133,13 +133,13 @@ export function glyphSample(
   const r = range.getBoundingClientRect();
   const y = Math.floor(r.top + r.height / 2);
   const [bx, by] =
-    backingFraction === undefined
+    backingFraction == null
       ? [Math.floor(r.left - 2), y]
       : [Math.floor(r.left + r.width * backingFraction), Math.floor(r.top - 2)];
   const backing = document.elementFromPoint(bx, by);
   if (
     !surface.contains(backing) ||
-    (backingFraction !== undefined && backing !== surface) ||
+    (backingFraction != null && backing !== surface) ||
     !r.width ||
     !r.height ||
     ![r.left + 1, r.left + r.width / 2, r.right - 1].every(
@@ -217,6 +217,7 @@ export async function contrastPixels(png, points) {
   const failures = new Map();
   const words = {};
   const surfaces = {};
+  const readings = [];
   for (const p of points) {
     const offset =
       (Math.floor(p.y * scale) * img.width + Math.floor(p.x * scale)) * 4;
@@ -277,7 +278,6 @@ export async function contrastPixels(png, points) {
             break;
           }
         }
-      if (!paintedGlyph) throw Error(`No visible glyph in capture: ${p.name}`);
     }
     const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a),
       ratio = (hi + 0.05) / (lo + 0.05);
@@ -287,14 +287,16 @@ export async function contrastPixels(png, points) {
       fg: p.fg,
       alpha,
       effectiveFg: fg,
-      ...(paintedGlyph && {
+      ...(p.glyph && {
         glyph: p.glyph,
-        paintedGlyph,
+        paintedGlyph: paintedGlyph ?? null,
         backingPoint: [p.x, p.y],
       }),
       name: p.name,
       min: p.min,
     };
+    if (p.record)
+      readings.push({ ...observed, ink: p.ink, backingPoint: [p.x, p.y] });
     if (
       p.surface &&
       (!surfaces[p.surface] || ratio < surfaces[p.surface].ratio)
@@ -308,7 +310,7 @@ export async function contrastPixels(png, points) {
         words[mark] = observed;
     if (!worst || ratio < worst.ratio) worst = observed;
     if (
-      ratio < p.min &&
+      (ratio < p.min || (p.glyph && !paintedGlyph)) &&
       (!failures.has(p.name) || failures.get(p.name).ratio > ratio)
     )
       failures.set(p.name, observed);
@@ -317,6 +319,7 @@ export async function contrastPixels(png, points) {
     samples: points.length,
     worst,
     words,
+    ...(readings.length ? { readings } : {}),
     ...(Object.keys(surfaces).length ? { surfaces } : {}),
     failures: [...failures.values()],
   };

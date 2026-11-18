@@ -172,7 +172,12 @@ const questions = [
 ];
 const liveReply = { epoch, commandId: randomUUID() };
 // Change only the dedicated composer specimen, never a timing/scroll input.
-export const flowCase = { phase: "thinking", failTurn: false, sequence: 0 };
+export const flowCase = {
+  phase: "thinking",
+  failTurn: false,
+  sequence: 0,
+  startedAt: 0,
+};
 const isRunning = (id) =>
   id === "stream" ||
   id === "live-input" ||
@@ -301,7 +306,7 @@ export function readRecord(q) {
           ...(question
             ? { parent: questions[q.ordinal - 1]?.entry ?? null }
             : {}),
-          at: q.ordinal + 1,
+          at: flow ? flowCase.startedAt : q.ordinal + 1,
           status: summary(id).status,
           ...(flow && isRunning(id)
             ? {
