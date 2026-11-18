@@ -129,11 +129,14 @@ const questions = [
       "Read the [specimen notes](#specimen-notes) for the surface description.",
   },
 ];
+const liveReply = { epoch, commandId: randomUUID() };
+const isRunning = (id) => id === "stream" || id === "live-input";
 const summary = (id) => ({
   id,
   title: `Optical · ${id}`,
   leaf: id === "questions" ? questions.at(-1).entry : leaf,
-  status: id === "stream" ? "running" : "completed",
+  status: isRunning(id) ? "running" : "completed",
+  ...(id === "live-input" ? { live: liveReply } : {}),
   origin: "webui",
   updatedAt: 1,
 });
@@ -171,7 +174,7 @@ const steps = (id, question) =>
     clipped: false,
     error: false,
     parts: role === "tool" ? 1 : 0,
-    state: i === 3 && id === "stream" ? "streaming" : "completed",
+    state: i === 3 && isRunning(id) ? "streaming" : "completed",
   }));
 export function readRecord(q) {
   const { kind, id } = q;
@@ -235,7 +238,7 @@ export function readRecord(q) {
           notice: "",
           omitted: { thinking: false, media: false, other: false },
           steps: items.length,
-          stable: id === "stream" ? items.length - 1 : items.length,
+          stable: isRunning(id) ? items.length - 1 : items.length,
         },
         start: 0,
         steps: items,
@@ -421,3 +424,83 @@ export const change = {
     content: artifact,
   },
 };
+
+// One retained message, two immutable field pages. The code hit needs both
+// outer vertical and inner horizontal scrolling; the other disclosure is not
+// part of the search target.
+export const fieldTask = randomUUID();
+const pages = [
+  [
+    "FacetSpot overview of the mineral study.",
+    "```text\nOther folded specimen.\n```",
+    ...Array.from({ length: 36 }, (_, i) => `Recorded layer ${i + 1}.`),
+    "```text\n" + "0123456789".repeat(45) + " FacetSpotZircon\n```",
+    "FacetSpot appendix.",
+    "",
+  ].join("\n\n"),
+  "Second retained page.",
+];
+const finalText = {
+  recordId: randomUUID(),
+  version: 1,
+  field: "final-text",
+  bytes: Buffer.byteLength(pages.join("")),
+  sha256: createHash("sha256").update(pages.join("")).digest("hex"),
+};
+export const historyMessage = {
+  kind: "message",
+  owner: {
+    taskId: fieldTask,
+    runId: randomUUID(),
+    childRunId: randomUUID(),
+    entity: { kind: "message", id: randomUUID(), version: 1 },
+  },
+  version: 1,
+  role: "assistant",
+  source: { disposition: "unavailable", value: null },
+  resultCallId: null,
+  state: "final",
+  finalBlockCount: 1,
+  finalText,
+};
+const scope = { kind: "task", id: fieldTask };
+export const fieldRoute =
+  `/app?project=${project}#` +
+  new URLSearchParams({
+    task: fieldTask,
+    detail: JSON.stringify({
+      storeId,
+      scope,
+      snapshotSeq: change.committedSeq,
+      query: null,
+      recordId: finalText.recordId,
+      recordVersion: 1,
+      field: finalText.field,
+      offset: 0,
+    }),
+  });
+export function fieldPage(cursor) {
+  if (cursor.recordId !== finalText.recordId || cursor.scope?.id !== fieldTask)
+    return null;
+  const text =
+    cursor.offset === 0
+      ? pages[0]
+      : cursor.offset === Buffer.byteLength(pages[0])
+        ? pages[1]
+        : null;
+  if (!text) return null;
+  const end = cursor.offset + Buffer.byteLength(text);
+  return {
+    cursor,
+    content: finalText,
+    text,
+    range: { start: cursor.offset, end },
+    next: end < finalText.bytes ? { ...cursor, offset: end } : null,
+    coverage: {
+      observed: "complete",
+      source: "complete",
+      redacted: false,
+      omissions: [],
+    },
+  };
+}

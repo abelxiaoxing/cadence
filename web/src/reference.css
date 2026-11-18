@@ -604,6 +604,10 @@
   word-break: break-word;
 }
 
+.md :is(p, li, blockquote, td, th) {
+  line-height: var(--reading-leading);
+}
+
 .md > pre,
 .msg-text pre {
   max-width: 100%;
@@ -2164,7 +2168,6 @@ div.chead[role="button"]:focus-visible,
 
 .fp-markdown p {
   margin: 0.8em 0;
-  line-height: 1.85;
 }
 
 .fp-markdown p:first-child {

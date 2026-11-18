@@ -171,6 +171,37 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       }
     expect(failures).toEqual([]);
   });
+  it("paints a solid sash and two inset split-button focus indicators", () => {
+    const sash = ".resize-handle:focus-visible";
+    expect(declaration(sash, "border-left")).toBe("2px solid var(--accent)");
+    expect(declaration(".resize-handle", "background")).toBe("transparent");
+    expect(
+      declaration(".composer-split > button:focus-visible", "outline"),
+    ).toBe("2px solid currentColor");
+    expect(
+      declaration(".composer-split > button:focus-visible", "outline-offset"),
+    ).toBe("-4px");
+    const canvas = ruleColor("body", "background", scheme);
+    const composer = over(
+      ruleColor(".chat-composer", "background", scheme),
+      canvas,
+    );
+    for (const surface of [canvas, composer]) {
+      expect(
+        contrast(color("--accent", scheme), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+    }
+    for (const [selector, surface] of [
+      [".composer-split > button", composer],
+      [
+        ".composer-split > .composer-steer",
+        ruleColor(".composer-split > .composer-steer", "background", scheme),
+      ],
+    ] as const)
+      expect(
+        contrast(ruleColor(selector, "color", scheme), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+  });
   it("keeps the selected artifact number readable after pointer departure", () => {
     const code = ruleColor(".fp-code", "background", scheme);
     const selected = over(
@@ -299,6 +330,13 @@ it.each(["dark", "light"] as const)(
         ).toBeGreaterThanOrEqual(AA);
   },
 );
+
+it("applies the reading budget to shared Markdown prose, not all controls", () => {
+  expect(TOKENS.get("--reading-leading")).toBe("1.65");
+  expect(declaration(".md :is(p, li, blockquote, td, th)", "line-height")).toBe(
+    "var(--reading-leading)",
+  );
+});
 
 it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
   // A parser that silently matched nothing would pass every check above.

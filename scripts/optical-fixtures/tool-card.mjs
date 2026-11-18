@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buttonGeometry, readingPosition } from "./measure.mjs";
+import { controlGeometry, readingPosition } from "./measure.mjs";
 
 // Retain the actual card, rather than re-querying whichever .chead-main is
 // first after the input. The marker is only in the disposable probe document.
@@ -62,7 +62,7 @@ export async function openTool({ ev, run, send, wait, site, row, route }) {
     ev(`opticalProbe.stableFrames(${readingPosition}, 'transcript')`);
   try {
     await run(locate, route, row.tool, row.path);
-    const geometry = await run(buttonGeometry, button, !row.position);
+    const geometry = await run(controlGeometry, button, !row.position);
     row.before = await ev("opticalProbe.tool()");
     row.hit = geometry.hit;
     assert.equal(row.before.expanded, "false");

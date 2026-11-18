@@ -225,6 +225,47 @@ In the twelve 2.6s desktop windows p50 was 16.7ms throughout; p95 (on/off/off/on
 Only idle-on windows drew ambient frames; scroll painted document/Latest and incremental reads painted text, code, transcript and footer roots in both conditions.
 These are local compositor samples and emulated touch viewports, not exhaustive pixel coverage, physical phones, system edge-gesture arbitration, hardware-GPU timings or the owner's post-commit checks and review.
 
+### Split-control focus, folded field matches and paragraph leading
+
+The `c08d220b` matrix above is historical: it did not Tab to the sashes or the live reply actions, navigate inside folded code on a field page, or measure cross-view paragraph leading.
+In the same integration worktree, `optical-evidence-TXq5lF/summary.json` under the run's temporary root records canonical build `f128824387407e238891e67fd7a9204b46c6987a09abfe148f80443e88126283` over pre-commit HEAD `e86f4794c26de22c71190ba007516bd9582f76a1`.
+Headless Chrome 151.0.7922.34, Linux, ANGLE/Vulkan SwiftShader, DPR 1, a fresh profile and readonly synthetic responses; both themes at 320×820, 390×820 and 1440×900.
+These are worker observations of those bytes, not the owner's final checks or independent review.
+
+- **Desktop Tab focus (`controlFocus`, eight controls):** Both panes were open.
+  Tab reached the range inputs, then an actual draft typed in the independent `live-input` conversation exposed Queue and Steer beside Stop.
+  The next Tab from Queue reached Steer; the draft remained unsent.
+  The sashes occupied x=257–263 and 1077–1083, y=50–878.
+  At three heights the probe sampled the 2px solid focus stroke against the material on *each* side.
+  Queue and Steer occupied x=952–986 and 986–1020, y=824–856, fully inside the pill's x=952–1020 clip.
+  Each ring was sampled at four side midpoints against the adjacent material inside that same button, not against the outer composer outline.
+  `controlFocus` records sample coordinates, control and ancestor clip rectangles, edge hits and the worst ink/backing pair.
+  Missing samples, clipped controls or contrast below 3:1 fail.
+  Worst screenshot RGB pairs (ink on adjacent backing) in left/right/Queue/Steer order:
+  - Dark: 203,208,216 on 8,9,12 (**12.850:1**); 203,208,216 on 83,86,96 (**4.726:1**); 203,208,216 on 20,21,25 (**11.775:1**); 29,30,34 on 194,199,207 (**9.805:1**).
+  - Light: 57,62,72 on 229,230,232 (**8.594:1**); 57,62,72 on 168,172,181 (**4.719:1**); 57,62,72 on 251,251,252 (**10.378:1**); 245,245,245 on 65,70,79 (**8.701:1**).
+  - During repair a capture had an empty composer despite a DOM hit.
+    Removing its backdrop filter only when the split appeared still produced a blank layer in a light-theme run.
+  The running reply now keeps the same unfiltered material before and after typing.
+- **Field find (`fieldFind`, six viewports/themes):** On the retained detail page, both disclosures were closed before the case-sensitive search for `FacetSpotZircon`.
+  Next opened only the matching block.
+  After changing the query to `FacetSpot`, folding the target again and pressing Enter also revealed it.
+  Shift+Enter and Previous reached the overview, appendix and folded target in reverse; the other block stayed closed.
+  The active Highlight Range had to name the expected text at its actual offset, fit completely inside the viewport and all clipping ancestors, and pass a center hit test without test-side scroll correction.
+  At 320/390/1440px the unique hit scrolled the long line horizontally by **2687/2617/2175px** and the tab vertically by **845/777/542px** in each theme.
+  Query and raw/Markdown changes cleared the active highlight; moving to the next field page and unmounting for the context view left no stale highlight.
+- **Reading (`leading`, 30 visible paragraphs):** At all six theme/width combinations the computed line-height/font-size (CSS px) was **23.1/14** in chat, the plan and the retained history message, **20.625/12.5** inside the opened complete agreement and **21.45/13** in the Markdown artifact preview.
+  Each ratio is **1.65** (per-sample tolerance 1/64px in line-height).
+  No measurements were inferred from wrappers or closed details.
+
+The same run retained the 143 general scene audits and 12 desktop frame windows with no reported failure or unavailable scenario.
+Lowest general small-text contrast remained the requested diff language label: dark 5.010:1 and light 4.507:1.
+At 1440×900 all 2.6s windows had p50 16.7ms and no interval over 50ms; p95 (on/off/off/on) was 16.7/33.4/33.4/16.8ms idle, 16.7/16.8/16.7/16.7ms scrolling and 16.8/16.7/16.7/16.7ms incremental reading.
+The incremental windows painted transcript, text and code roots with either setting, with no ambient draws; scrolling painted document/Latest.
+The 480×300 Hero drew 26 times in 1.25s and 25 after restoration; off, reduced, lost and actually hidden each drew zero.
+These compositor samples and short local frame windows do not qualify physical phones, hardware GPUs, live providers or other operating systems.
+No send, queue, steer, stop, approval or auth submission was activated.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

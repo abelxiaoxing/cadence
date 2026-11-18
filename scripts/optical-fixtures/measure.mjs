@@ -326,10 +326,15 @@ export async function frameWindow(ms, scroll) {
 
 // Scroll the control itself (including its nested scrollers). Measure the
 // border box, not just a center hit or the dimensions of its enclosing card.
-export async function buttonGeometry(selector, scroll = true) {
+export async function controlGeometry(selector, scroll = true) {
   const el = document.querySelector(selector);
-  if (!(el instanceof HTMLButtonElement))
-    throw Error(`Missing button: ${selector}`);
+  if (
+    !(
+      el instanceof HTMLButtonElement ||
+      el?.matches('.resize-handle[type="range"]')
+    )
+  )
+    throw Error(`Missing control: ${selector}`);
   if (scroll)
     el.scrollIntoView({
       block: "center",
