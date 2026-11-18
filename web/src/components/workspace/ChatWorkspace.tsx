@@ -161,19 +161,16 @@ export type ReplyClock = number | "idle" | "unavailable";
 export function observedReplyClock(
   view: ConversationView,
   id: string,
-  epoch: string | null,
-  retained: ConversationView["runs"] | undefined,
 ): ReplyClock {
-  const { summary } = view;
+  const { summary, observation } = view;
   if (
-    !epoch ||
+    !observation ||
     view.error ||
-    view.runs === retained ||
     summary === undefined ||
     (summary &&
       (summary.id !== id ||
         summary.status === "unknown" ||
-        (summary.live && summary.live.epoch !== epoch)))
+        (summary.live && summary.live.epoch !== observation.epoch)))
   )
     return "unavailable";
   if (!inProgress(summary?.status)) return "idle";
@@ -461,7 +458,13 @@ export function ChatWorkspace({
       ? activityRoute(window.location.hash, id).leaf
       : initialLeaf,
   );
-  const conversation = useConversation(client, id, available, entryLeaf);
+  const conversation = useConversation(
+    client,
+    id,
+    available,
+    modelAvailability.status === "ready" ? modelAvailability : null,
+    entryLeaf,
+  );
   const { turns } = conversation;
   // Undefined until observed; null is a conversation not started yet.
   const observed = conversation.summary !== undefined;
@@ -543,25 +546,7 @@ export function ChatWorkspace({
   // continues the branch as it would in the terminal.
   const settledBadly = !!summary && summary.status !== "completed" && !running;
   const lastTurn = turns.at(-1)?.header;
-  // A successful branch sync replaces its head's arrays, even for an empty
-  // session (null summary). Reattaching never makes a retained head current.
-  const owner =
-    available && modelAvailability.status === "ready"
-      ? modelAvailability
-      : null;
-  const attachment = owner ? `${owner.epoch}:${owner.attachmentVersion}` : null;
-  const [readFence, setReadFence] = useState({
-    attachment,
-    retained: undefined as ConversationView["runs"] | undefined,
-  });
-  if (readFence.attachment !== attachment)
-    setReadFence({ attachment, retained: conversation.runs });
-  const replyClock = observedReplyClock(
-    conversation,
-    id,
-    owner?.epoch ?? null,
-    readFence.retained,
-  );
+  const replyClock = observedReplyClock(conversation, id);
   // The branch's context size beside the window of the model that reported
   // it, from the catalog already read here; each head read is a new object.
   const {

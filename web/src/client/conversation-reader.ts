@@ -37,7 +37,14 @@ export interface TurnSource {
 export interface LoadedTurn extends TurnSource {
   ordinal: number;
 }
+/** Local identity for one uninterrupted ready attachment (never sent on reads). */
+export interface ReadAttachment {
+  readonly epoch: string;
+  readonly attachmentVersion: number;
+}
 export interface ConversationView {
+  /** Attachment at the start of the last complete sync; null for history only. */
+  observation: ReadAttachment | null;
   /** Undefined until the first observation; null for a conversation not started. */
   summary: ChatSummary | null | undefined;
   /** The branch shown, by its last entry; a message sent now continues it. */
@@ -126,12 +133,14 @@ export class ConversationReader {
   >();
   private error = "";
   private loadingEarlier = false;
-  private running = false;
+  private inFlight?: AbortController;
+  private attachment: ReadAttachment | null = null;
+  private observation: ReadAttachment | null = null;
   private again = false;
   private closed = false;
   private active = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private abort = new AbortController();
+  private selection = new AbortController();
   private reads = 0;
   private readonly queue: (() => void)[] = [];
   private snapshot: ConversationView;
@@ -145,17 +154,29 @@ export class ConversationReader {
   view(): ConversationView {
     return this.snapshot;
   }
-  /** Observation runs only while active; shown data stays while paused. */
-  setActive(active: boolean): void {
-    if (this.active === active) return;
+  /** History can be read without a ready attachment. On replacement, start
+   * a readonly pass even if a retired transport request has yet to return. */
+  setActive(active: boolean, attachment: ReadAttachment | null = null): void {
+    if (this.active === active && this.attachment === attachment) return;
+    this.retireSync();
     this.active = active;
+    this.attachment = attachment;
+    if (this.observation) {
+      this.observation = null;
+      this.publish();
+    }
     if (active) void this.tick();
-    else clearTimeout(this.timer);
+  }
+  private retireSync(): void {
+    clearTimeout(this.timer);
+    this.inFlight?.abort();
+    this.inFlight = undefined;
+    this.again = false;
   }
   close(): void {
     this.closed = true;
-    this.abort.abort();
-    clearTimeout(this.timer);
+    this.retireSync();
+    this.selection.abort();
   }
   /** Observe now, e.g. after a send. Readonly; it never replays a command. */
   refresh = (): void => {
@@ -172,8 +193,10 @@ export class ConversationReader {
     }
     // Navigation retires reads, never an admitted Send or owner operation.
     // A retained summary is not a fresh observation of the selected branch.
-    this.abort.abort();
-    this.abort = new AbortController();
+    this.retireSync();
+    this.selection.abort();
+    this.selection = new AbortController();
+    this.observation = null;
     this.pinned = leaf;
     this.summary = undefined;
     this.context = undefined;
@@ -230,6 +253,7 @@ export class ConversationReader {
       turns.unshift(turn);
     }
     return {
+      observation: this.observation,
       summary: this.summary,
       leaf: this.leaf,
       pinned: this.pinned !== null,
@@ -250,25 +274,24 @@ export class ConversationReader {
   }
   private async tick(): Promise<void> {
     if (this.closed || !this.active) return;
-    if (this.running) {
+    if (this.inFlight) {
       this.again = true;
       return;
     }
-    this.running = true;
+    const pass = new AbortController();
+    this.inFlight = pass;
     clearTimeout(this.timer);
     const earlier = this.loadingEarlier;
-    const selection = this.abort;
     try {
-      await this.sync(selection.signal);
-      if (selection === this.abort) this.error = "";
+      await this.sync(pass.signal, this.attachment);
     } catch (error) {
-      if (this.closed) return;
-      if (selection === this.abort)
-        this.error = error instanceof ReadError ? error.message : "unavailable";
-    } finally {
-      this.running = false;
+      if (pass.signal.aborted) return;
+      pass.abort(); // A failed page retires any sibling reads of this pass.
+      this.observation = null;
+      this.error = error instanceof ReadError ? error.message : "unavailable";
     }
-    if (this.closed) return;
+    if (this.inFlight !== pass) return;
+    this.inFlight = undefined;
     // A request made meanwhile is served by the pass that follows.
     if (earlier && !this.again) this.loadingEarlier = false;
     this.publish();
@@ -284,7 +307,10 @@ export class ConversationReader {
       [...this.turns.values()].some((turn) => unsettled(turn.header.status));
     this.timer = setTimeout(() => void this.tick(), live ? LIVE_MS : IDLE_MS);
   }
-  private async sync(signal: AbortSignal): Promise<void> {
+  private async sync(
+    signal: AbortSignal,
+    attachment: ReadAttachment | null,
+  ): Promise<void> {
     const pinned = this.pinned;
     const head = await this.read(
       {
@@ -312,6 +338,7 @@ export class ConversationReader {
       if (
         !turn ||
         o >= grown ||
+        (attachment !== this.observation && o === head.turns - 1) ||
         turn.header.stable < turn.header.steps ||
         unsettled(turn.header.status)
       )
@@ -339,6 +366,8 @@ export class ConversationReader {
     this.context = head.context;
     this.cache = head.cache;
     this.summary = head.summary;
+    this.observation = attachment;
+    this.error = "";
     this.count = head.turns;
     // A load-earlier request made during this read still wins.
     this.first = Math.min(first, this.first ?? first);
@@ -390,7 +419,7 @@ export class ConversationReader {
     const next = reconcileSteps(prior?.steps ?? [], steps as ChatStep[]);
     if (
       prior &&
-      prior.image === this.imageReader(leaf, signal) &&
+      prior.image === this.imageReader(leaf, this.selection.signal) &&
       JSON.stringify(prior.header) === JSON.stringify(header) &&
       prior.steps.length === next.length &&
       next.every((step, i) => step === prior.steps[i])
@@ -402,8 +431,8 @@ export class ConversationReader {
         next.find((step) => step.role === "user")?.renderId ?? header.id,
       header,
       steps: next,
-      detail: this.detail(leaf, header.id, next, signal),
-      image: this.imageReader(leaf, signal),
+      detail: this.detail(leaf, header.id, next, this.selection.signal),
+      image: this.imageReader(leaf, this.selection.signal),
     };
   }
   private async turnRead(
@@ -517,7 +546,7 @@ export class ConversationReader {
   }
   private async read(
     request: WorkbenchRead,
-    signal: AbortSignal = this.abort.signal,
+    signal: AbortSignal,
   ): Promise<WorkbenchResult> {
     if (this.reads >= READS)
       await new Promise<void>((resolve) => this.queue.push(resolve));

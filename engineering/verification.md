@@ -352,7 +352,7 @@ These measurements are from that build: installed Chrome 151.0.7922.34, syntheti
   A failed turn read then left the same thinking turn visible: the assistant paragraph still passed a text-range hit test, the unsent draft was unchanged, but the attribute was absent, `::before` reported `animation-name: none` and no flow animation was running.
   A successful tool read restored flow; reduced motion kept the indication static, and restoring motion brought back one animation.
   Waiting, text and settlement showed none, with another positive thinking observation immediately before settlement.
-  The separate `chat-timeline` component regression covers paused reads, unavailable/replaced execution attachments and the requirement for a new head after reconnect; this browser fixture induced a read failure, not a live-owner restart.
+  The separate `chat-timeline` component regression covers paused reads, unavailable/replaced execution attachments and recovery after reconnect; this browser fixture induced a read failure, not an attachment race or live-owner restart.
 - **Mode uncertainty:** English and Chinese component tests cross a failed mode read with retained on/armed intent and check the actual composer hint and native disabled button (text, class, accessible name and title).
   An ordinary message does not require an affirmative Cadence observation, and no toggle, design edit or design submission grants implementation approval.
 - **Navigation (`selectedRows`):** In both themes at 320×820, 390×820 and 1440×900, the probe opened `reading` then `design`, and `material.ts` then `optics.ts`, using the visible navigation and file controls.
@@ -615,6 +615,11 @@ The separate optical observation below does not turn unit tests into browser evi
   The same workspace fixture drives the real lazy-window observer callback over registered row refs without a new conversation snapshot: below/exactly at the 80px boundary, paused reading, Latest, user return to the bottom, composer resize, hidden-view restoration, earlier-page compensation and observer/frame cleanup.
   It also asserts that registration/measurement, question tracking and jump pins, branch versions, workflow placement, edit/continue and Send anchors still use read/navigation coordinates, not rendering identities.
   Helper-only identity or resize tests cannot establish that the main workspace is wired to them.
+  For attachment races, `chat-timeline` drives `ChatWorkspace` through the actual `useConversation` and `ConversationReader`, holding individual head/turn Promises across a read pause, loss and recovery with identical owner IDs, and independent epoch/version replacements.
+  Obsolete replies ignore abort, including an error released after a new success.
+  Check the composer and reported footer clock before the new turn arrives, with no `summary.live`, and verify the draft, branch reads, body and paused scroll survive.
+  `conversation-reader` gates an earlier turn page while a retained detail remains readable; `statusbar` renders unavailable, untimed and timed activity.
+  These controlled regressions do not measure browser animation, paint or a real owner restart.
   A focused wiring rerun is `bun run test:web test/web/chat-timeline.test.tsx test/web/lazy-window.test.tsx`; read-redaction and Markdown semantic regressions are selected with `bun run test:target test/conversation-records.test.ts` and `bun run test:web test/web/stream-markdown.test.tsx test/web/chat-timeline.test.tsx`.
   Apply the exact-file/passed-assertion coverage rule above; these commands identify regression owners, not a recorded pass or a replacement for `verify` and independent Agent review of the new candidate.
   `test/web/{runtime-observation,workspace-layout,lazy-window,workflow-agent}.test.tsx` covers in-transcript observations without a separate composer status strip, Stop markup and follow-versus-scrolled-up resize intent.
