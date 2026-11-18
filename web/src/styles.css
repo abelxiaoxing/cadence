@@ -3385,16 +3385,27 @@ summary:focus-visible,
 .chat-composer {
   flex: none;
   position: relative;
+  isolation: isolate;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
   border: 1px solid var(--glass-border);
   border-radius: 24px;
   border-top-color: var(--glass-border-top);
-  background: var(--glass-surface);
-  background-image: var(--grain-image);
-  background-size: var(--grain-size);
   box-shadow:
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
+}
+/* Filter the material behind the controls, not the form's text, focus or
+   overhanging menus. ::before remains the independent top refraction. */
+.chat-composer::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   backdrop-filter: var(--glass-filter);
 }
 .chat-composer:focus-within {
@@ -4939,11 +4950,6 @@ button.file-item:hover:not(:disabled),
 .chat-undelivered > button {
   margin-top: 4px;
 }
-/* Keep the running reply's bar on one paint layer. Adding the split buttons
- * mid-draft must not rebuild a backdrop layer underneath keyboard focus. */
-.chat-composer:has(.composer-toolbar > .danger) {
-  backdrop-filter: none;
-}
 /* Beside Stop while a reply runs: queue behind it, or steer it. */
 .composer-split {
   display: inline-flex;
@@ -5023,11 +5029,6 @@ button.file-item:hover:not(:disabled),
 .model-trigger.empty {
   border-color: var(--accent);
   color: var(--accent-text);
-}
-/* The model menu overhangs the composer. Do not composite the entire
-   picker inside its parent's filtered layer while it is open. */
-.chat-composer:has(.model-popover) {
-  backdrop-filter: none;
 }
 .model-popover {
   position: absolute;
@@ -5587,7 +5588,7 @@ button.link:hover:not(:disabled) {
 @supports not (backdrop-filter: blur(1px)) {
   .topbar,
   .statusbar,
-  .chat-composer,
+  .chat-composer::after,
   .action-dialog,
   .model-popover,
   .more-menu-items,

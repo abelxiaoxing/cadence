@@ -1,5 +1,5 @@
 // Browser-side probes; evaluate their bodies in the canonical page, never in
-// a replacement HTML layout. A page screenshot is sampled, not saved to disk.
+// a replacement HTML layout. Pixel samples come from compositor screenshots.
 export function textSamples(selector) {
   const roots = selector
     ? document.querySelectorAll(selector)
@@ -192,7 +192,7 @@ export function questionMarkSample() {
     shortWidth: r.width,
   };
 }
-export async function contrastPixels(png, points) {
+export async function contrastPixels(png, points, landmarks) {
   const blob = new Blob([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], {
       type: "image/png",
     }),
@@ -204,11 +204,31 @@ export async function contrastPixels(png, points) {
   bitmap.close();
   const img = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height),
     scale = img.width / innerWidth;
+  // Extra unmodified pixels for a geometry witness (not contrast targets).
+  // The fixture requests a viewport screenshot at DPR 1 and no page zoom.
+  const frame = landmarks && {
+    bitmap: [img.width, img.height],
+    viewport: [innerWidth, innerHeight],
+    dpr: devicePixelRatio,
+    pixels: Object.fromEntries(
+      Object.entries(landmarks).map(([key, [x, y]]) => {
+        if (x < 0 || x >= innerWidth || y < 0 || y >= innerHeight)
+          throw Error(`Offscreen screenshot landmark: ${key} at ${x},${y}`);
+        const i =
+          4 * (Math.floor(y * scale) * img.width + Math.floor(x * scale));
+        return [key, { x, y, rgb: [...img.data.slice(i, i + 3)] }];
+      }),
+    ),
+  };
   const lum = ([r, g, b]) => {
     const v = [r, g, b]
       .map((c) => c / 255)
       .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
     return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
   };
   const canvas = new OffscreenCanvas(1, 1).getContext("2d", {
     willReadFrequently: true,
@@ -270,17 +290,22 @@ export async function contrastPixels(png, points) {
       const [left, top, right, bottom] = p.glyph.map((n) => n * scale);
       const distance = (pixel, color) =>
         color.reduce((d, c, i) => d + Math.abs(c - img.data[pixel + i]), 0);
-      for (let y = Math.ceil(top); y < Math.floor(bottom) && !paintedGlyph; y++)
+      // Prefer a stem to its anti-aliased fringe. The reported ink is still
+      // an actual sampled pixel, not the CSS foreground used to locate it.
+      let nearest = Infinity;
+      for (let y = Math.ceil(top); y < Math.floor(bottom) && nearest > 0; y++)
         for (let x = Math.ceil(left); x < Math.floor(right); x++) {
-          const pixel = 4 * (y * img.width + x);
-          if (distance(pixel, fg) < distance(pixel, bg)) {
-            paintedGlyph = { x, y, rgb: [...img.data.slice(pixel, pixel + 3)] };
-            break;
+          const pixel = 4 * (y * img.width + x),
+            d = distance(pixel, fg);
+          if (d < nearest && d < distance(pixel, bg)) {
+            const rgb = [...img.data.slice(pixel, pixel + 3)];
+            paintedGlyph = { x, y, rgb, ratio: contrast(rgb, bg) };
+            nearest = d;
+            if (!d) break;
           }
         }
     }
-    const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a),
-      ratio = (hi + 0.05) / (lo + 0.05);
+    const ratio = contrast(fg, bg);
     const observed = {
       ratio: +ratio.toFixed(3),
       bg,
@@ -317,6 +342,7 @@ export async function contrastPixels(png, points) {
   }
   return {
     samples: points.length,
+    ...(frame && { frame }),
     worst,
     words,
     ...(readings.length ? { readings } : {}),

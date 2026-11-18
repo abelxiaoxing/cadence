@@ -106,7 +106,7 @@ try {
   const { evaluate: ev, send } = b;
   const run = (fn, ...args) => ev(`(${fn})(${args.map(q).join(",")})`);
   await send("Page.addScriptToEvaluateOnNewDocument", {
-    source: `window.opticalProbe={draws:0,stableFrames:${stableFrames}};const draw=WebGLRenderingContext.prototype.drawArrays;WebGLRenderingContext.prototype.drawArrays=function(...args){if(this.canvas.closest('.optical-field'))opticalProbe.draws++;return draw.apply(this,args);};`,
+    source: `window.opticalProbe={draws:0,stableFrames:${stableFrames},glyphSample:${glyphSample}};const draw=WebGLRenderingContext.prototype.drawArrays;WebGLRenderingContext.prototype.drawArrays=function(...args){if(this.canvas.closest('.optical-field'))opticalProbe.draws++;return draw.apply(this,args);};`,
   });
   const wait = async (expr) => {
     for (let i = 0; i < 70; i++) {
@@ -1088,9 +1088,19 @@ try {
         go,
         chat,
         wait,
-        capture,
+        screenshot: async (name) => {
+          const { data } = await send("Page.captureScreenshot", {
+            format: "png",
+            captureBeyondViewport: false,
+          });
+          await writeFile(join(reportDir, name), Buffer.from(data, "base64"), {
+            flag: "wx",
+          });
+          return data;
+        },
         run,
         rows: report.unknownMode,
+        problems,
       });
       await observeSelectedRows({
         width,

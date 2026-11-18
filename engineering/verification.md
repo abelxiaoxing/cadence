@@ -503,6 +503,48 @@ All six unsaved-attempt transitions settled at opacity 0.07 with zero reading dr
 These are local compositor samples and main-thread Paint roots, not per-glyph raster traces, power measurements, hardware GPU, physical phone, screen reader or live owner/provider qualification.
 They do not substitute for the owner's candidate checks or review.
 
+### Unavailable mode: missing capsule paint versus a moving layout
+
+On HEAD `181b8995713f0c5361b14765206a7feea041504a`, `verify` passed but the owner's `optical-evidence-9ZJFCq/summary.json` stopped after 48 scene audits on canonical build `b24896e9a328c9c358f7e42efccec06e7502136d0ba632f46adac803ba7d780b`.
+At dark/390px the button was natively disabled, with the expected name and title, but `paintedGlyph` was null.
+**17.977:1** was the CSS ink calculated against a canvas pixel, not readable painted text.
+There were no performance windows.
+That check did not complete the six views or the draw/follow observations.
+
+**Targeted replay:** Same integration worktree, installed headless Chromium 151.0.7922.34, fresh profile, synthetic loopback projections, Obsidian, six rounds alternating 390×820 and 320×820 at DPR 1.
+Each sequence opened the retained artifact in Inspector → changes, exercised its find/navigation, dismissed the compact drawer and navigated to `#chat=optical-unknown`.
+Readiness required that conversation's heading, its degraded-read notice and its native disabled `Cadence state unavailable` button with matching label and title.
+Each round kept two distinct unmodified PNGs: the first screenshot requested at observed readiness, and another after 300ms and stable button geometry.
+This is not a trace of every intervening compositor frame.
+
+- **Before:** `unknown-frames-H34Y6G` under the inherited run temporary root retains all 24 PNGs, `summary.json` and their `landmarks.json` pixel readings.
+  At 320px the six ready frames showed ink; four subsequent stable frames did not.
+  At 390px five ready captures straddled a geometry change; do not classify them from their pre-capture Range alone.
+  Five of the six stable captures were missing ink.
+  In `390-1-stable.png`, bitmap and CSS viewport were both 390×820 with no zoom or offset.
+  The notice glyph at (34,583) was RGB(227,166,174), and its rule began where expected.
+  The button remained at (59.5,694), 200.875×28; its text Range ran from (103.5,699.20) to (249.375,716.20).
+  The capsule top (195,618), backings at x=118/176/234, y=697, and even the pixel nearest the requested ink in that Range were **all canvas RGB(9,10,13)**.
+  This was not a whole-screenshot offset.
+- **Repair:** Filter, glass base and grain now share a noninteractive material behind the controls; the focus outline, top refraction and local flow stay on the form.
+  No palette or contrast threshold changed.
+  On rebuilt `cd62a3ba58343e40492568f5829478092285e9754e30e8059fa7a8178eece430`, `unknown-frames-4CcssV` repeated the same 24 captures.
+  All stable frames painted the label.
+  Its original pre-capture sampler still flagged the six 390px ready frames: the footer reflow had moved the button down 18px **during** the capture.
+  The saved PNGs have both the notice and the ink at the new positions.
+- **Frame binding:** `unknownMode` keeps the ready and stable screenshots separately.
+  It brackets each PNG with document identity, route, semantics and geometry, checks bitmap/viewport dimensions, and identifies the presented geometry from the notice rule and the pixel above it, **not** from the mode label.
+  Ambiguous or missing evidence fails; a later frame cannot replace the first.
+  `unknown-bound-6QVhrs` exercised that binding on six further rounds per width: all 24 bound frames had effective opacity 1 and ink RGB(242,244,248) against all three RGB(19,20,24) backings, **16.715:1**.
+  At 390px the actual ink pixel was (108,704), and the capsule outside/top/inside pixels were RGB(7,8,10)/(66,69,77)/(19,20,24).
+  At 320px the button y was 676, the Range y was 681.20–698.20, the backings y=679 and the ink at (108,686).
+  In a separate collector-only negative control (`unknown-negative-control-ik4cK4`), substituting the saved blank 320px frame produced a dark/320/ready problem, preserved the stable and next viewport readings, and exited 1.
+  This was not a failure on a newly painted product frame.
+
+These targeted observations do not qualify a physical phone, hardware GPU, live service, or the full candidate.
+For the six theme/viewport pairs, draw counts, incremental follow/up-scroll/Latest and performance windows, use only the owner's **new** `qualify-optical` report on the final candidate.
+The earlier build reports above are not results for this one.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
