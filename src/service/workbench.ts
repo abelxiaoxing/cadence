@@ -80,7 +80,7 @@ export class Workbench implements WorkbenchPort {
       conversations: this.conversations,
       workflows: this.workflows,
       cwd: this.files.root,
-      readSource: (path) => this.files.read(path),
+      files: this.files,
     });
     // Control records are not a startup gate: one unusable record degrades
     // only its own conversation (see ConversationWorkflow.read).
@@ -107,12 +107,12 @@ export class Workbench implements WorkbenchPort {
     this.o.owner.lease.assert();
     switch (request.kind) {
       case "project-knowledge":
-        return {
-          kind: "file",
+        return this.cadence.knowledge(request.source).then((observation) => ({
+          kind: "file" as const,
           path: "project-knowledge",
-          text: JSON.stringify(this.cadence.knowledge(request.source)),
+          text: JSON.stringify(observation),
           limited: false,
-        };
+        }));
       case "conversation-context":
         return {
           kind: request.kind,

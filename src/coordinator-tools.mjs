@@ -53,6 +53,12 @@ export const RESEARCH_PARAMETERS = Type.Object({
   ),
 });
 export const KNOWLEDGE_PARAMETERS = Type.Object({
+  checkout: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Instead of other fields, give up to eight checkout-relative dependency directory names (e.g. node_modules and web/node_modules), or [] for Git placement only. Observe the original checkout, Git branch and HEAD, and whether each named entry is a directory, symlink or absent. Never follows a dependency link.",
+    }),
+  ),
   path: Type.Optional(
     Type.String({
       description:
@@ -67,7 +73,7 @@ export const KNOWLEDGE_PARAMETERS = Type.Object({
   match: Type.Optional(
     Type.String({
       description:
-        "A literal on a line of this source file (such as a token, assertion or build script). Return nearby current lines without a research worker.",
+        "A literal on a line of this source file (such as a token, assertion or build script). Return matching line numbers with short previews and context at the first occurrence, without a research worker.",
     }),
   ),
   investigation: Type.Optional(
@@ -243,7 +249,7 @@ export function createCoordinatorTools() {
     {
       name: "cadence_knowledge",
       description:
-        "Read a current project heading, a literal in one source file, or a retained investigation with its citations rechecked.",
+        "Read current checkout preparation facts, a project heading, a literal in one source file, or a retained investigation with its citations rechecked.",
       parameters: KNOWLEDGE_PARAMETERS,
     },
     {

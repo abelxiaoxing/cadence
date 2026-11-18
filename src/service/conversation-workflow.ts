@@ -50,8 +50,9 @@ import type { ServiceOwner } from "./owner.ts";
 import type { Caller } from "./ports.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
 import { coordinatorKnowledge, routeTableBrief } from "./project-knowledge.ts";
+import type { WorkbenchFiles } from "./workbench-files.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
-import { WorkflowRefusal } from "./workflow-git.ts";
+import { gitRun, WorkflowRefusal } from "./workflow-git.ts";
 import type { Workflows } from "./workflows.ts";
 
 const EVIDENCE_BYTES = 16384;
@@ -134,7 +135,7 @@ export class ConversationWorkflow {
       workflows: Workflows;
       /** The project checkout, whose route table the coordinator is given. */
       cwd?: string;
-      readSource(path: string): { text: string; limited: boolean };
+      files: Pick<WorkbenchFiles, "read" | "dependencyEntry">;
       secrets(): readonly string[];
     },
   ) {
@@ -176,15 +177,40 @@ export class ConversationWorkflow {
       throw e;
     }
   }
-  knowledge(source: KnowledgeLookup) {
+  async knowledge(source: KnowledgeLookup) {
     if ("investigation" in source)
       return this.o.workflows.investigationSummary(source.investigation);
     if (!this.o.cwd) throw new ContractError("unavailable");
-    return coordinatorKnowledge(
-      this.o.cwd,
-      source,
-      this.o.secrets(),
-      this.o.readSource,
+    if ("checkout" in source) {
+      const entries = source.checkout.map((path) => ({
+        path,
+        kind: this.o.files.dependencyEntry(path),
+      }));
+      // Planning needs placement, not a repository-wide status scan. The plan
+      // publisher observes the actual proposed paths, index and commit identity.
+      const [head, branch] = await Promise.all([
+        gitRun(this.o.cwd, [
+          "--no-lazy-fetch",
+          "rev-parse",
+          "--verify",
+          "HEAD",
+        ]),
+        gitRun(this.o.cwd, ["symbolic-ref", "--quiet", "HEAD"]),
+      ]);
+      return {
+        checkout: sanitizeText(this.o.cwd, this.o.secrets()),
+        head: head.code === 0 ? head.stdout.trim() : null,
+        branch:
+          branch.code === 0
+            ? sanitizeText(branch.stdout.trim(), this.o.secrets())
+            : null,
+        entries,
+        notice:
+          "Preparation evidence only. cadence_plan checks the proposed write paths for conflicts and requires Git commit identity for local delivery. Unrelated dirty files do not require a clean checkout. Use an authorized original dependency entry by its displayed checkout-relative path; confirm it is usable in declared setup.",
+      };
+    }
+    return coordinatorKnowledge(this.o.cwd, source, this.o.secrets(), (path) =>
+      this.o.files.read(path),
     );
   }
   private run(id: string): WorkflowRun {
@@ -504,11 +530,11 @@ export class ConversationWorkflow {
             if (!this.o.cwd)
               return refusal("unavailable", "Project directory unavailable.");
             try {
-              return this.knowledge(decodeKnowledgeLookup(args));
+              return await this.knowledge(decodeKnowledgeLookup(args));
             } catch {
               return refusal(
                 "invalid",
-                "path/section/match/investigation: supply a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.",
+                "checkout/path/section/match/investigation: supply checkout with a list of local dependency paths, a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.",
               );
             }
           }

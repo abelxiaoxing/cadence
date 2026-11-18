@@ -1,9 +1,11 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -227,12 +229,11 @@ function fixture(
     ...(project.cwd
       ? {
           cwd: project.cwd,
-          readSource: (path: string) =>
-            new WorkbenchFiles(
-              project.cwd!,
-              [],
-              project.secrets ?? (() => []),
-            ).read(path),
+          files: new WorkbenchFiles(
+            project.cwd,
+            [],
+            project.secrets ?? (() => []),
+          ),
         }
       : {}),
   } as unknown as ConstructorParameters<typeof ConversationWorkflow>[0]);
@@ -1311,6 +1312,23 @@ it("a coordinator reads current project sections without a research run", async 
   });
   expect(fact.excerpt).toContain("--glass-bg: light-dark(white, black)");
   expect(fact.excerpt).not.toContain("secret-canary");
+  writeFileSync(
+    join(cwd, source),
+    Array.from(
+      { length: 20 },
+      (_, n) => `.menu-${n} { background: var(--menu-bg); }`,
+    ).join("\n"),
+  );
+  const uses = await f.tool(turn, "cadence_knowledge", {
+    path: source,
+    match: "--menu-bg",
+  });
+  expect(uses.matchingLines).toBe(20);
+  expect(uses.matches).toHaveLength(16);
+  expect(uses.matches).toContainEqual({
+    line: 16,
+    text: ".menu-15 { background: var(--menu-bg); }",
+  });
   writeFileSync(join(cwd, "auth.json"), '{"secret":"private contents"}');
   expect(
     await f.tool(turn, "cadence_knowledge", {
@@ -1325,6 +1343,54 @@ it("a coordinator reads current project sections without a research run", async 
       section: "ignored",
     }),
   ).toMatchObject({ refused: "invalid" });
+  expect(f.runs.size).toBe(0);
+  await f.settle(turn);
+});
+
+it("observes Git placement and local dependency links without a research worker or repository-wide cleanliness prerequisite", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "checkout-facts-"));
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  git("init", "--quiet", "--initial-branch=work");
+  git(
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=local@example.invalid",
+    "commit",
+    "--quiet",
+    "--allow-empty",
+    "-m",
+    "base",
+  );
+  // An unrelated untracked file is harmless to plan publication.
+  writeFileSync(join(cwd, "unrelated"), "");
+  mkdirSync(join(cwd, "web"));
+  const dependency = mkdtempSync(join(tmpdir(), "private-dependency-"));
+  symlinkSync(dependency, join(cwd, "node_modules"), "junction");
+  const f = fixture(undefined, { cwd });
+  const turn = f.send(randomUUID(), "enter");
+  const read = (checkout: string[]) =>
+    f.tool(turn, "cadence_knowledge", { checkout });
+  const result = await read(["node_modules", "web", "web/node_modules"]);
+  expect(result).toMatchObject({
+    checkout: cwd,
+    branch: "refs/heads/work",
+    head: git("rev-parse", "HEAD"),
+    entries: [
+      { path: "node_modules", kind: "symlink" },
+      { path: "web", kind: "directory" },
+      { path: "web/node_modules", kind: "absent" },
+    ],
+  });
+  expect(JSON.stringify(result)).not.toContain(dependency);
+  expect(await read(["node_modules/inner"])).toMatchObject({
+    refused: "invalid",
+  });
+  expect(await read(["../secret"])).toMatchObject({ refused: "invalid" });
+  expect(await read([".git"])).toMatchObject({ refused: "invalid" });
+  git("checkout", "--quiet", "--detach", "HEAD");
+  expect(await read([])).toMatchObject({ branch: null, head: result.head });
   expect(f.runs.size).toBe(0);
   await f.settle(turn);
 });
