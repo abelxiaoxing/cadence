@@ -47,7 +47,8 @@ export class WorkspaceObserver {
           state.workspace?.epoch === epoch &&
           state.attached &&
           !state.error &&
-          state.transportStatus === "current"
+          state.transportStatus === "current" &&
+          (!state.observation || state.observation.connection === "current")
         )
           finish();
       };
@@ -80,7 +81,10 @@ export class WorkspaceObserver {
     let tracker = new ProjectionTracker();
     let generation = 0;
     let socketVersion = 0;
-    let reading = false;
+    let reading: Promise<void> | undefined;
+    let storeId: string | undefined;
+    // An HTTP poll can repair the projection, not prove a task socket alive.
+    let socketError: string | undefined;
     let acquiring = false;
     let lastPoll = 0;
     // A failed read (e.g. a passive read fenced by publication) is observed
@@ -96,21 +100,42 @@ export class WorkspaceObserver {
     };
     this.latest = state;
     const current = () => !disposed && version === this.version;
+    const matchesOwner = (data: { epoch: string; storeId: string }) =>
+      data.epoch === state.epoch && data.storeId === storeId;
     const emit = () => {
       if (!current()) return;
-      this.latest = { ...state, observation: tracker.state };
+      const observation = tracker.state;
+      this.latest = {
+        ...state,
+        error: state.error ?? socketError,
+        observation,
+        actions:
+          state.actions &&
+          state.transportStatus === "current" &&
+          (!scope || observation?.connection === "current"),
+      };
       publish(this.latest);
       for (const check of this.readiness) check(this.latest);
+    };
+    const retire = () => {
+      socketVersion++;
+      abort.abort();
+      stopSocket?.();
+      stopSocket = undefined;
+      state.attached = false;
+      state.actions = false;
     };
     const stop = () => {
       if (disposed) return;
       disposed = true;
-      abort.abort();
+      retire();
       clearInterval(timer);
       clearTimeout(retry);
-      socketVersion++;
-      stopSocket?.();
-      if (version === this.version) this.pollCurrent = undefined;
+      if (version === this.version) {
+        this.pollCurrent = undefined;
+        this.latest = undefined;
+      }
+      if (!blocked) enqueue(detach);
     };
     this.stopCurrent = stop;
     // One serialized observation lifetime. Session retries reuse the transport's
@@ -122,12 +147,8 @@ export class WorkspaceObserver {
     const enqueue = (job: () => Promise<void>) => {
       this.serial = this.serial.then(job).catch((error: unknown) => {
         if (current() && !blocked) {
-          abort.abort();
-          socketVersion++;
-          stopSocket?.();
-          state.attached = false;
+          retire();
           state.error = error instanceof Error ? error.message : "unavailable";
-          state.actions = false;
           state.transportStatus = "stale";
           emit();
           retryAttachment();
@@ -147,16 +168,38 @@ export class WorkspaceObserver {
       });
     };
     const detach = async () => {
-      await this.api.transport.detach();
+      // A poll may already be reading this allocation's session body. Join
+      // its bounded, aborted read before releasing or replacing the viewer.
+      await reading;
+      const released = await this.api.transport.detach();
+      if (
+        current() &&
+        !blocked &&
+        released?.kind === "error" &&
+        revoked(released.error.code)
+      )
+        revoke(false);
     };
-    const poll = async (refreshSession = true) => {
-      if (!current() || !state.attached || reading || blocked) return;
-      reading = true;
-      state.actions = false;
-      let succeeded = false;
-      emit();
-      lastPoll = Date.now();
+    const poll = (refreshSession = true) => {
+      if (!current() || !state.attached || blocked || reading) return reading;
       const signal = abort.signal;
+      state.actions = false;
+      lastPoll = Date.now();
+      reading = read(refreshSession, signal).then((succeeded) => {
+        reading = undefined;
+        if (!current() || signal.aborted) return;
+        failed = !succeeded;
+        state.actions = !!succeeded && actionCapability;
+        emit();
+        if (!succeeded && state.error === "stale") {
+          if (acquiring) retryAttachment();
+          else reconnect();
+        }
+      });
+      emit();
+      return reading;
+    };
+    const read = async (refreshSession: boolean, signal: AbortSignal) => {
       try {
         // Keep the same attachment alive and notice a replacement owner even
         // in ordinary chat, where there is no WebSocket or changed model list.
@@ -169,19 +212,18 @@ export class WorkspaceObserver {
             if (revoked(session.error.code)) revoke();
             return;
           }
-          if (session.value.epoch !== state.epoch) {
+          if (!matchesOwner(session.value)) {
             state.error = "stale";
             return;
           }
           actionCapability = session.value.capabilities.actions;
         }
-        if (!scope) state.transportStatus = "current";
         // Safety roster is independent of selected history/workspace proof progress.
         // Inconclusive history must not make active work undiscoverable for Cancel.
         const active = await this.api.client.activeRuns(signal);
         if (!current() || signal.aborted) return;
         if (active.kind === "ok") {
-          if (active.value.epoch !== state.epoch) {
+          if (!matchesOwner(active.value)) {
             state.error = "stale";
             return;
           }
@@ -198,7 +240,7 @@ export class WorkspaceObserver {
           if (revoked(workspace.error.code)) revoke();
           return;
         }
-        if (workspace.value.epoch !== state.epoch) {
+        if (!matchesOwner(workspace.value)) {
           state.error = "stale";
           return;
         }
@@ -210,58 +252,41 @@ export class WorkspaceObserver {
           if (reply.kind === "error") {
             state.error = reply.error.code;
             if (revoked(reply.error.code)) revoke();
-          } else if (reply.value.epoch !== state.epoch) {
-            state.error = "stale";
-          } else {
-            const installed = tracker.install(reply.value, Date.now(), ticket);
-            if (installed !== undefined) generation = installed;
-            state.error = undefined;
-            succeeded = true;
+            return;
           }
-        } else {
-          state.error = undefined;
-          succeeded = true;
-        }
+          if (!matchesOwner(reply.value)) {
+            state.error = "stale";
+            return;
+          }
+          const installed = tracker.install(reply.value, Date.now(), ticket);
+          if (installed !== undefined) generation = installed;
+        } else state.transportStatus = "current";
+        state.error = undefined;
+        return true;
       } catch {
         if (current() && !signal.aborted) {
           state.error = "Observation unavailable.";
           state.actions = false;
           state.transportStatus = "stale";
         }
-      } finally {
-        reading = false;
-        if (current() && !signal.aborted) {
-          failed = !succeeded;
-          state.actions = succeeded && actionCapability;
-          emit();
-          if (!succeeded && state.error === "stale") reconnect();
-        }
       }
     };
-    const revoke = () => {
+    const revoke = (release = true) => {
       blocked = true;
-      state.attached = false;
-      state.actions = false;
+      retire();
       state.transportStatus = "closed";
       state.error = "Access revoked; explicit token re-entry required.";
       state.workspace = undefined;
       state.activeRuns = undefined;
       tracker = new ProjectionTracker();
-      abort.abort();
       clearInterval(timer);
       clearTimeout(retry);
-      socketVersion++;
-      stopSocket?.();
-      enqueue(detach);
+      if (release) enqueue(detach);
       emit();
     };
     const acquire = async () => {
       if (!current() || blocked) return;
-      state.attached = false;
-      state.actions = false;
-      abort.abort();
-      socketVersion++;
-      stopSocket?.();
+      retire();
       await detach();
       if (!current() || blocked) return;
       const session = await this.api.client.session();
@@ -278,52 +303,83 @@ export class WorkspaceObserver {
       }
       abort = new AbortController();
       tracker = new ProjectionTracker();
+      storeId = session.value.storeId;
       state = {
         epoch: session.value.epoch,
         attached: true,
-        actions: session.value.capabilities.actions,
+        actions: false,
         transportStatus: "closed",
         attachmentVersion: state.attachmentVersion + 1,
       };
       actionCapability = session.value.capabilities.actions;
       emit();
       await poll(false); // acquire already read this exact session
-      if (!current() || blocked || !scope) return;
+      if (!current() || blocked || !scope || state.error === "stale") return;
       const socket = ++socketVersion;
+      const lost = (error: string) => {
+        retire();
+        socketError = error;
+        state.transportStatus = "closed";
+        state.attachmentVersion++;
+        retryAttachment();
+        emit();
+      };
       stopSocket = this.api.transport.subscribe(
         scope,
         (message) => {
           if (!current() || blocked || socket !== socketVersion) return;
+          const data =
+            message.kind === "snapshot"
+              ? message.snapshot
+              : message.kind === "event"
+                ? message.event
+                : undefined;
+          if (
+            data &&
+            (!matchesOwner(data) ||
+              data.scope.kind !== scope.kind ||
+              data.scope.id !== scope.id)
+          ) {
+            lost("stale");
+            return;
+          }
+          let accepted = false;
           if (message.kind === "snapshot") {
             const installed = tracker.install(
               message.snapshot,
               Date.now(),
               tracker.beginSnapshot(),
             );
-            if (installed !== undefined) generation = installed;
+            if (installed !== undefined) {
+              generation = installed;
+              accepted = true;
+            }
           } else if (message.kind === "event") {
-            if (
-              tracker.receive(message.event, generation, Date.now()) ===
-              "resync"
-            )
-              void poll();
-          } else void poll();
+            const result = tracker.receive(
+              message.event,
+              generation,
+              Date.now(),
+            );
+            if (result === "duplicate") return;
+            accepted = result === "applied";
+          }
+          if (accepted) {
+            socketError = undefined;
+            state.transportStatus = "current";
+          } else {
+            state.transportStatus = "stale";
+            void poll();
+          }
           emit();
         },
         (status) => {
           if (!current() || blocked || socket !== socketVersion) return;
-          state.transportStatus = status;
-          if (status === "closed") {
-            state.attached = false;
-            state.actions = false;
-            state.attachmentVersion++;
-            abort.abort();
-            socketVersion++;
-            // The server revoked this socket's attachment. Acquire observation only;
-            // dialogs/grants are invalidated, never silently renewed.
-            retryAttachment();
+          if (status === "closed") lost(socketError ?? "socket-closed");
+          else {
+            socketError = "socket-timeout";
+            state.transportStatus = "stale";
+            emit();
           }
-          emit();
         },
       );
     };
@@ -342,12 +398,6 @@ export class WorkspaceObserver {
       )
         void poll();
     }, 1000);
-    return () => {
-      // Cleanup may be called after a replacement scope has already taken over.
-      // It must neither clear the new poll hook nor detach the new attachment.
-      if (!current()) return;
-      stop();
-      enqueue(detach);
-    };
+    return stop;
   }
 }
