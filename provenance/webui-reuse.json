@@ -678,7 +678,7 @@
     "web/src/components/workspace/use-send-anchor.ts": "0b2cf497b259153d6c96a05a723c0b3c4783b0f5f150cdc10dfafdf8d4d6f2c4",
     "src/worker-inputs.mjs": "a68205a12751f8cd94adf324711487c67f81de80e9ac0a2717706f0fa70c0cac",
     "test/worker-inputs.test.mjs": "58dc3779c1898f85b341f31701bb12e89655361d0d39a8ae51cf496409a2fa68",
-    "test/conversation-input.test.ts": "fbed1d9c85360c8d887244cb405daf07a8c66b63a551074a46ac1d52f6d174ab",
+    "test/conversation-input.test.ts": "2e40bc4c2ff99eaf4bce4ce90298e408cdc956b3c000635c3322adcd6b97c703",
     "test/service-conversation-inputs.test.ts": "d0a9f4866365833af257bda08dc3f49e95ebaa074980ddbb812bbf0b7f4d0779",
     "web/src/client/conversation-inputs.ts": "bf6c9ff9144fc5f66e123a7cb67a78141465eea20157db645dd59cb91df2a148",
     "web/src/components/workspace/WaitingMessages.tsx": "886ea0dedd57203c454a827cc73ee71a2a887703a446395031f64cbb7a4c5c23",
