@@ -77,6 +77,8 @@ const report = {
   searchNavigation: [],
   panelTabs: [],
   selectedRows: [],
+  workflowRows: [],
+  filePreviewReads: [],
   rowDrawers: [],
   unknownMode: [],
   composerFlow: [],
@@ -1105,6 +1107,9 @@ try {
         send,
         capture,
         rows: report.selectedRows,
+        workflowRows: report.workflowRows,
+        filePreviewReads: report.filePreviewReads,
+        observeButton,
       });
       if (width > 900)
         await observeComposerFlow({

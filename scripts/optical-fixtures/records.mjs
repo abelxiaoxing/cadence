@@ -74,6 +74,30 @@ const uncertain = {
     },
   ],
 };
+// Only this conversation publishes a retained child to the navigation dock.
+export const dockRun = {
+  ...run,
+  id: randomUUID(),
+  goal: "Inspect the facet",
+  phase: "finished",
+  status: "completed",
+  tasks: [],
+  steps: [
+    {
+      id: "facet",
+      childRunId: randomUUID(),
+      kind: "research",
+      status: "completed",
+      text: "Recorded facet inspection.",
+      exitCode: 0,
+      truncated: false,
+    },
+  ],
+};
+export const fileText = {
+  "material.ts": 'export const material = "alabaster";',
+  "optics.ts": 'export const optic = "prism";',
+};
 const revalidated = randomUUID();
 export const firstAttempt = {
   commandId: randomUUID(),
@@ -208,7 +232,13 @@ export function readRecord(q) {
   const noSession = id === "empty" || id === "attempt";
   const planned = id === "design" || id === "confirm";
   const runs =
-    id === "design" ? [runId] : id === "confirm" ? [uncertain.id] : [];
+    id === "dock"
+      ? [dockRun.id]
+      : id === "design"
+        ? [runId]
+        : id === "confirm"
+          ? [uncertain.id]
+          : [];
   switch (kind) {
     case "conversation-image":
       return { kind, mimeType: "image/png", data: PNG, next: null };
@@ -344,11 +374,19 @@ export function readRecord(q) {
       return { kind, runs: [] };
     case "workflow-history":
       return { kind, entries: [{ id: runId, run }], next: null };
+    case "workflow-transcript":
+      return id === dockRun.id && q.stepId === dockRun.steps[0].id
+        ? { kind, runId: id, stepId: q.stepId, turn: null }
+        : null;
     case "workflow":
       return {
         kind,
         commandId: null,
-        response: { type: "run", run: id === uncertain.id ? uncertain : run },
+        response: {
+          type: "run",
+          run:
+            id === dockRun.id ? dockRun : id === uncertain.id ? uncertain : run,
+        },
       };
     case "directories": {
       const path = q.path === "~" ? cwd : q.path;
@@ -387,10 +425,11 @@ export function readRecord(q) {
         ],
       };
     case "file":
+      if (!Object.hasOwn(fileText, q.path)) return null;
       return {
         kind,
         path: q.path,
-        text: 'export const material = "alabaster";',
+        text: fileText[q.path],
         limited: false,
       };
     default:

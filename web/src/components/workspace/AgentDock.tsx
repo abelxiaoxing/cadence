@@ -140,11 +140,13 @@ export function WorkflowAgentGroup({
   const { t, tx } = useT();
   const counts = assignmentCounts(run);
   const chosen = selected?.runId === run.id ? selected.stepId : undefined;
+  const currentRun = chosen === null;
   return (
     <section className="agent-dock-run" aria-label={run.goal}>
       <button
         type="button"
-        className={`agent-dock-run-head${chosen === null ? " active" : ""}`}
+        className={`agent-dock-run-head${currentRun ? " active" : ""}`}
+        aria-current={currentRun || undefined}
         title={run.goal}
         onClick={() =>
           onOpen?.({ runId: run.id, stepId: null, label: run.goal })
@@ -158,12 +160,14 @@ export function WorkflowAgentGroup({
         )}
       </button>
       {steps.map((step) => {
+        const currentStep = chosen === step.id;
         const label = workflowAgentLabel(step.id);
         const task = run.tasks?.find((entry) => entry.id === label);
         return (
           <button
             type="button"
-            className={`agent-dock-row${chosen === step.id ? " active" : ""}`}
+            className={`agent-dock-row${currentStep ? " active" : ""}`}
+            aria-current={currentStep || undefined}
             key={step.childRunId}
             title={task ? `${task.title} · ${run.goal}` : run.goal}
             onClick={() => onOpen?.({ runId: run.id, stepId: step.id, label })}

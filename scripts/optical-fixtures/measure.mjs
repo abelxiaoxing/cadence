@@ -114,15 +114,20 @@ export function textSamples(selector) {
 }
 // Keep the actual label painted. Its adjacent backing is inside the same
 // button; verify glyph ink in the Range as well as DOM hit-test geometry.
-export function glyphSample(selector, text, backingFraction) {
+export function glyphSample(
+  selector,
+  text,
+  backingFraction,
+  surfaceSelector = "button",
+) {
   const label = document.querySelector(selector),
-    button = label?.closest("button"),
+    surface = label?.closest(surfaceSelector),
     node =
       label &&
       [...label.childNodes].find(
         (n) => n.nodeType === Node.TEXT_NODE && n.textContent === text,
       );
-  if (!button || !node) throw Error(`Missing ${selector} text node: ${text}`);
+  if (!surface || !node) throw Error(`Missing ${selector} text node: ${text}`);
   const range = new Range();
   range.selectNodeContents(node); // Exclude the adjacent switch graphic.
   const r = range.getBoundingClientRect();
@@ -133,8 +138,8 @@ export function glyphSample(selector, text, backingFraction) {
       : [Math.floor(r.left + r.width * backingFraction), Math.floor(r.top - 2)];
   const backing = document.elementFromPoint(bx, by);
   if (
-    !button.contains(backing) ||
-    (backingFraction !== undefined && backing !== button) ||
+    !surface.contains(backing) ||
+    (backingFraction !== undefined && backing !== surface) ||
     !r.width ||
     !r.height ||
     ![r.left + 1, r.left + r.width / 2, r.right - 1].every(

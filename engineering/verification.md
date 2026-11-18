@@ -427,6 +427,40 @@ End-follow, up-scroll through growth and Latest were observed.
 The separate 1.25s windows counted 26 Hero draws, 25 after restoration and zero while hidden, reduced, disabled or context-lost.
 These are local browser observations, not hardware GPU, physical phone or live service qualification.
 
+### Current workflow row and pending file preview
+
+`optical-evidence-lfSRRA/summary.json` under the run temporary root records canonical build `01f1bbfb2f85458c45ed26f2b0e3d6b9cfff7c5ceaa501654d340d3e1260a522` over pre-commit HEAD `9293a76c1f3c5c59d058de383cbd78bb6b718479` on the same task branch and integration worktree.
+Installed headless Chrome 151.0.7922.34, ANGLE/Vulkan SwiftShader, DPR 1; dark and light system schemes at 320×820, 390×820 and 1440×900.
+The measurements below come from this build's **36 `workflowRows` and 12 `filePreviewReads`**, not the preceding build's 143 scene audits.
+
+- **Workflow:** A separate conversation listed the synthetic “Inspect the facet” run with one retained research child.
+  Pointer activation of each dock button in turn opened the matching central heading and the run card or child's recorded result.
+  On compact screens each selection dismissed the navigation drawer; measurements waited for it to reopen.
+  The only `aria-current` button carried the solid leading rule, without a change in width or height.
+  Each rest, adjacent-hover and keyboard state sampled three points on the painted rule against both the row and the wing (216 comparisons); the 12 keyboard states also sampled the outer ring independently.
+  The rule was not measured at the step's status dot.
+- **File preview:** The loopback fixture held the next `file` response for the clicked path, first `material.ts`, then `optics.ts`.
+  With the matching header present and no old code, the screenshot contained glyph ink for “Reading…” inside the preview's status paragraph.
+  The text ratio used its effective foreground against the painted backing just above the glyph range.
+  The 22×22px close button passed center and inset-edge hit tests and received visible Tab focus before release.
+  After release the status disappeared and the code line matched the file, including on switching paths.
+  A further held refresh of `optics.ts` showed both its retained line and the status; releasing it after `material.ts` had settled did not replace the new preview.
+
+Worst contrasts in these observations (RGB triplets are foreground on backing; ratios are rounded):
+
+| Theme     | Marker on selected row             | Marker on wing | Focus ring on wing | Pending preview text                |
+| --------- | ---------------------------------- | -------------- | ------------------ | ----------------------------------- |
+| Obsidian  | 10.782:1 (203,208,216 on 28,30,33) | 11.775:1       | 11.775:1           | 5.887:1 (138,147,162 on 20,21,25)   |
+| Alabaster | 9.263:1 (57,62,72 on 238,238,240)  | 10.289:1       | 10.289:1           | 5.541:1 (94,102,117 on 250,250,251) |
+
+Separately, this run completed its 143 general scene audits (lowest text: dark 5.010:1, light 4.507:1) and 12 desktop frame windows without a reported problem or unavailable scene.
+At idle, scrolling and incrementing, p50 was 16.7ms throughout, with no interval over 50ms.
+In on/off/off/on order, p95 (ms) was 16.8/16.7/33.4/16.7 at idle, 16.7/16.8/16.8/16.7 scrolling and 16.7/16.8/16.8/16.8 during increments.
+Only idle-on drew ambient frames; scrolling painted Latest and increments painted message/code and transcript content with either preference.
+The separate Hero windows counted 26 draws and 25 after restoration; loss, reduced motion, explicit off and hidden counted zero.
+These were English browser observations on a fresh profile and synthetic readonly service, not live workflow execution, physical-device, hardware GPU or screen-reader qualification.
+The Chinese loading text, error and empty-file branches are component regressions, not additional browser scenes.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

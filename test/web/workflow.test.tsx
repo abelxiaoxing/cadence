@@ -19,6 +19,7 @@ import {
 } from "../../web/src/client/workflow-entry";
 import {
   AgentDock,
+  type WorkflowAgent,
   WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
 import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
@@ -575,17 +576,22 @@ it("the dock groups subagents per run, live first, and shows each one's assignme
     "Five assignments",
     "Earlier research",
   ]);
-  const group = (index: number, locale: "en" | "zh" = "en") =>
+  const selectedStep = {
+    runId: live.id,
+    stepId: groups[0].steps[2].id,
+    label: "ui",
+  };
+  const group = (
+    index: number,
+    locale: "en" | "zh" = "en",
+    selected: WorkflowAgent | null = selectedStep,
+  ) =>
     renderToStaticMarkup(
       <LocaleProvider initial={locale}>
         <WorkflowAgentGroup
           run={groups[index].run}
           steps={groups[index].steps}
-          selected={{
-            runId: live.id,
-            stepId: groups[0].steps[2].id,
-            label: "ui",
-          }}
+          selected={selected}
         />
       </LocaleProvider>,
     );
@@ -595,6 +601,29 @@ it("the dock groups subagents per run, live first, and shows each one's assignme
   );
   expect(html.match(/class="agent-dock-row/g)).toHaveLength(6);
   expect(html.match(/class="agent-dock-row active"/g)).toHaveLength(1);
+  const head = group(0, "en", {
+    runId: live.id,
+    stepId: null,
+    label: live.goal,
+  });
+  const currentButtons = (markup: string) =>
+    markup.match(
+      /<button\b[^>]*aria-current="true"[^>]*>[\s\S]*?<\/button>/g,
+    ) ?? [];
+  expect(currentButtons(html)).toHaveLength(1);
+  expect(currentButtons(html)[0]).toContain('class="agent-dock-row active"');
+  expect(currentButtons(html)[0]).toContain("implementation · ui</strong>");
+  expect(currentButtons(head)).toHaveLength(1);
+  expect(currentButtons(head)[0]).toContain(
+    'class="agent-dock-run-head active"',
+  );
+  expect(head.match(/ active"/g)).toHaveLength(1);
+  for (const none of [
+    group(0, "en", null),
+    group(1),
+    group(0, "en", { ...selectedStep, stepId: "not-listed" }),
+  ])
+    expect(none).not.toMatch(/aria-current| active"/);
   // The step's own status, and under its name the assignment's state: a
   // finished worker is not an integrated assignment, and the reverse.
   expect(html).toMatch(

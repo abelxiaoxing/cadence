@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { controlGeometry, glyphSample } from "./measure.mjs";
+import { dockRun, fileText } from "./records.mjs";
 
 // The activated page is not necessarily the button under the pointer or the
 // keyboard focus. Sample the real underline independently of both states.
@@ -223,13 +224,14 @@ export async function observeDisabledModels({
 // Sample inside the leading rule, not the keyboard outline outside the button.
 // Require the three targets (mark, row backing, wing padding) in the same frame.
 function rowPixels(kind, target, other, state) {
-  const session = kind === "session";
-  const rowSelector = session
-    ? ".conversation-row .session-item"
-    : ".file-item";
+  const [rowSelector, container] = {
+    session: [".conversation-row .session-item", ".lp-section-body"],
+    file: [".file-item", ".file-list"],
+    workflow: [".agent-dock-run > button", ".agent-dock-body"],
+  }[kind];
   const button = document.querySelector(target),
     row = button.closest(rowSelector),
-    host = row.closest(session ? ".lp-section-body" : ".file-list");
+    host = row.closest(container);
   const mark = (el) => getComputedStyle(el, "::before");
   const marked = [...host.querySelectorAll(rowSelector)].filter(
     (el) =>
@@ -241,7 +243,7 @@ function rowPixels(kind, target, other, state) {
     marked[0] !== row ||
     host.querySelectorAll('[aria-current="true"]').length !== 1 ||
     !button.matches('[aria-current="true"]') ||
-    !row.matches(session ? ".active" : ".selected")
+    !row.matches(kind === "file" ? ".selected" : ".active")
   )
     throw Error(`Wrong selected ${kind}: ${target}`);
   const focus = state === "keyboard",
@@ -372,6 +374,52 @@ export async function observeSelectedRows(probe) {
   }
 }
 
+const preview = ".file-preview";
+const status = `${preview} [role="status"]`;
+const code = `${preview} .code-line-body`;
+const title = (path) =>
+  `${query(`${preview} header span`)}?.textContent === ${JSON.stringify(path)}`;
+const body = (path) =>
+  `${query(code)}?.textContent === ${JSON.stringify(fileText[path])}`;
+const settled = (path) =>
+  `${title(path)} && !${query(status)} && ${body(path)}`;
+
+async function pendingPreview(
+  { wait, capture, run, observeButton },
+  path,
+  release,
+) {
+  let close, contrast;
+  try {
+    await wait(
+      `${title(path)} && ${query(status)}?.textContent === 'Reading…' && !${query(code)}`,
+    );
+    contrast = await capture(`reading ${path}`, async () => [
+      await run(glyphSample, status, "Reading…", 0.5, '[role="status"]'),
+    ]);
+    assert.equal(contrast.samples, 1);
+    assert.deepEqual(contrast.failures, []);
+    close = await observeButton(
+      "pending preview close",
+      `${preview} header button`,
+      "Close preview",
+    );
+    assert.ok(
+      close.keyboardFocus && Object.values(close.hit).every((p) => p.hit),
+    );
+  } finally {
+    release();
+  }
+  await wait(settled(path));
+  return {
+    path,
+    body: fileText[path],
+    close: close.rect,
+    keyboardClose: true,
+    ...contrast,
+  };
+}
+
 async function selectRows(
   {
     width,
@@ -388,6 +436,9 @@ async function selectRows(
     send,
     capture,
     rows,
+    workflowRows,
+    filePreviewReads,
+    observeButton,
   },
   entry,
 ) {
@@ -425,42 +476,68 @@ async function selectRows(
     await clickPoint(target, geometry.hit.center);
     return geometry;
   };
-  for (const kind of ["session", "file"]) {
-    const session = kind === "session",
-      toggle = `${projectShell} > .topbar > .${session ? "navigation" : "inspector"}-toggle`,
-      wing = `${projectShell} .drawer-${session ? "left" : "right"}`,
+  const dock = `.agent-dock-run[aria-label="${dockRun.goal}"]`;
+  for (const kind of ["session", "file", "workflow"]) {
+    const file = kind === "file",
+      workflow = kind === "workflow";
+    if (workflow) await go(chat("dock"), `${dock} > .agent-dock-row`);
+    const toggle = `${projectShell} > .topbar > .${file ? "inspector" : "navigation"}-toggle`,
+      wing = `${projectShell} .drawer-${file ? "right" : "left"}`,
       opened = `${wing}:not([inert])${width <= 900 ? ".open" : ""}`;
     const open = async () => {
       if (!(await expanded(toggle))) await activate(toggle);
-      entry.target = `${wing} ${session ? sessionRow("reading") : ".file-main"}`;
       await wait(
         `${query(`${toggle}[aria-expanded="true"]`)} && ${query(opened)}`,
       );
     };
     const wasOpen = await expanded(toggle);
     await open();
-    const names = session
-      ? ["reading", "design"]
-      : ["material.ts", "optics.ts"];
-    const selector = (name) =>
-      `${wing} ${session ? sessionRow(name) : `.file-main[title="${name}"]`}`;
-    for (const [i, name] of names.entries()) {
-      const target = selector(name),
-        other = selector(names[1 - i]);
+    const targets = workflow
+      ? [
+          [dockRun.goal, `${dock} > .agent-dock-run-head`],
+          [dockRun.steps[0].id, `${dock} > .agent-dock-row`],
+        ]
+      : file
+        ? Object.keys(fileText).map((path) => [
+            path,
+            `.file-main[title="${path}"]`,
+          ])
+        : ["reading", "design"].map((name) => [name, sessionRow(name)]);
+    if (workflow)
+      assert.ok(await ev(`!${query(`${dock} > :is(.active,[aria-current])`)}`));
+    for (const [i, [name, selector]] of targets.entries()) {
+      const target = `${wing} ${selector}`,
+        other = `${wing} ${targets[1 - i][1]}`;
+      const held = file ? site.holdFile(name) : null;
       const before = await activate(target);
-      if (session) {
-        await wait(
-          `document.querySelector('.conversation-heading h2')?.textContent==='Optical · ${name}'`,
+      if (file) {
+        const reading = await pendingPreview(
+          { wait, capture, run, observeButton },
+          name,
+          await held(),
         );
+        filePreviewReads.push({ width, theme, ...reading });
+      } else {
+        if (workflow) {
+          const view = ".workflow-agent";
+          const id = i ? dockRun.steps[0].id : dockRun.id;
+          const heading = i ? `research · ${name}` : name;
+          const content = i
+            ? ".workflow-agent-result .md p"
+            : ".workflow-card header strong";
+          await wait(
+            `${query(`${view} h2[title="${id}"]`)}?.innerText === ${JSON.stringify(heading)} && ${query(`${view} ${content}`)}?.innerText === ${JSON.stringify(i ? dockRun.steps[0].text : name)}`,
+          );
+        } else
+          await wait(
+            `document.querySelector('.conversation-heading h2')?.textContent==='Optical · ${name}'`,
+          );
         if (width <= 900)
           await wait(
             `${query(`${toggle}[aria-expanded="false"]`)} && ${query(`${wing}[inert]:not(.open)`)}`,
           );
-        await open(); // Selection dismisses the compact conversation drawer.
-      } else
-        await wait(
-          `document.querySelector('.file-preview [title="${name}"]') && document.querySelector('.file-preview .codeblock')`,
-        );
+        await open(); // Selecting a conversation, run or child dismisses the compact drawer.
+      }
       await parkPointer();
       const record = async (state) => {
         const geometry = await geometryOf(target);
@@ -469,12 +546,21 @@ async function selectRows(
           before.rect.width,
           "Selection changed row width",
         );
+        if (workflow) assert.equal(geometry.rect.height, before.rect.height);
         const observed = await capture(`${target} ${state}`, () =>
           run(rowPixels, kind, target, other, state),
         );
         assert.equal(observed?.samples, state === "keyboard" ? 7 : 6);
         assert.deepEqual(observed.failures, []);
-        rows.push({ width, theme, kind, name, state, geometry, ...observed });
+        (workflow ? workflowRows : rows).push({
+          width,
+          theme,
+          kind,
+          name,
+          state,
+          geometry,
+          ...observed,
+        });
       };
       // A pointer selection may leave focus on the row.
       await run(() => document.activeElement.blur());
@@ -491,7 +577,7 @@ async function selectRows(
       await press("Tab", 9);
       await press("Tab", 9, 8);
       await record("keyboard");
-      if (!session) {
+      if (file) {
         // All four file actions must still be reached in order and hit-test
         // inside the selected row. Do not activate download/reference/copy.
         for (const action of [
@@ -511,6 +597,27 @@ async function selectRows(
           assert.ok(Object.values(geometry.hit).every((p) => p.hit));
         }
       }
+    }
+    if (file) {
+      // The retained body is explicitly refreshing. Leave it pending, then
+      // release the obsolete response after the new file has already settled.
+      const path = targets[1][0],
+        next = targets[0][0];
+      const held = site.holdFile(path);
+      await activate(`${wing} [aria-label="Refresh files"]`);
+      const release = await held();
+      try {
+        await wait(
+          `${title(path)} && ${query(status)}?.textContent === 'Reading…' && ${body(path)}`,
+        );
+        await activate(`${wing} ${targets[0][1]}`);
+        await wait(settled(next));
+      } finally {
+        release();
+      }
+      await run(controlGeometry, `${preview} header button`, false);
+      assert.ok(await ev(settled(next)));
+      filePreviewReads.at(-1).retiredRefresh = { path, current: next };
     }
     if (!wasOpen && (await expanded(toggle))) {
       if (width <= 900) await press("Escape", 27);

@@ -873,10 +873,14 @@ summary:focus-visible,
 }
 /* A solid leading mark sits inside the row padding; the keyboard outline and
  * trailing actions have their own space. Selection changes no dimensions. */
-:is(.session-item.active, .file-item.selected) {
+:is(.session-item.active, .file-item.selected, .agent-dock-run > .active) {
   position: relative;
 }
-:is(.session-item.active, .file-item.selected)::before {
+:is(
+  .session-item.active,
+  .file-item.selected,
+  .agent-dock-run > .active
+)::before {
   content: "";
   position: absolute;
   inset-block: 6px;
