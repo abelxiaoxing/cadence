@@ -160,56 +160,60 @@ function chipFor(seg, lang) {
   return seg.kind;
 }
 
-/* 工具配色：常用工具固定色（读=青、写=琥珀、bash=紫），其余按名哈希进调色板——同一工具永远同色。 */
+/* 工具配色：常用工具固定色（读=青、写=琥珀、bash=紫），其余按名哈希进调色板——同一工具永远同色。
+ * 色板本身是 timeline.css 里的 --tl-* light-dark() token：两套方案恒同色相，仅按方案调明度/alpha。 */
 const TOOL_PALETTE = [
-  "#3b82f6",
-  "#22c55e",
-  "#ec4899",
-  "#06b6d4",
-  "#f97316",
-  "#84cc16",
-  "#818cf8",
-  "#fb7185",
-  "#eab308",
-  "#14b8a6",
+  "rtr-tc-0",
+  "rtr-tc-1",
+  "rtr-tc-2",
+  "rtr-tc-3",
+  "rtr-tc-4",
+  "rtr-tc-5",
+  "rtr-tc-6",
+  "rtr-tc-7",
+  "rtr-tc-8",
+  "rtr-tc-9",
 ];
 const TOOL_FIXED = {
-  read: "#2dd4bf",
-  get: "#2dd4bf",
-  list: "#2dd4bf",
-  glob: "#2dd4bf",
-  grep: "#2dd4bf",
-  search: "#2dd4bf",
-  fetch: "#2dd4bf",
-  cat: "#2dd4bf",
-  show: "#2dd4bf",
-  query: "#2dd4bf",
-  edit: "#f59e0b",
-  write: "#f59e0b",
-  patch: "#f59e0b",
-  apply: "#f59e0b",
-  create: "#f59e0b",
-  save: "#f59e0b",
-  move: "#f59e0b",
-  rename: "#f59e0b",
-  bash: "#a78bfa",
+  read: "rtr-tc-read",
+  get: "rtr-tc-read",
+  list: "rtr-tc-read",
+  glob: "rtr-tc-read",
+  grep: "rtr-tc-read",
+  search: "rtr-tc-read",
+  fetch: "rtr-tc-read",
+  cat: "rtr-tc-read",
+  show: "rtr-tc-read",
+  query: "rtr-tc-read",
+  edit: "rtr-tc-write",
+  write: "rtr-tc-write",
+  patch: "rtr-tc-write",
+  apply: "rtr-tc-write",
+  create: "rtr-tc-write",
+  save: "rtr-tc-write",
+  move: "rtr-tc-write",
+  rename: "rtr-tc-write",
+  bash: "rtr-tc-bash",
 };
-function toolColor(name) {
+function toolClass(name) {
   const n = String(name ?? "tool");
-  if (TOOL_FIXED[n]) return TOOL_FIXED[n];
+  if (TOOL_FIXED[n]) return `rtr-tc ${TOOL_FIXED[n]}`;
   let h = 0;
   for (let i = 0; i < n.length; i++) h = ((h << 5) - h + n.charCodeAt(i)) | 0;
-  return TOOL_PALETTE[Math.abs(h) % TOOL_PALETTE.length];
+  return `rtr-tc ${TOOL_PALETTE[Math.abs(h) % TOOL_PALETTE.length]}`;
 }
 
 /* 模型泳道内部分色：思考=浅天蓝，回答=正蓝（失败仍标红优先）。 */
-const MODEL_COLORS = { thinking: "#38bdf8", text: "#3b82f6" };
-function laneColor(seg) {
-  if (seg.status === "error") return "#f87171";
+const MODEL_CLASSES = {
+  thinking: "rtr-tc rtr-tc-thinking",
+  text: "rtr-tc rtr-tc-text",
+};
+function laneClass(seg) {
+  if (seg.status === "error") return null; // st-error keeps the shared --red
   if (seg.lane === "tools")
-    return toolColor(seg.meta?.tool ?? (seg.kind === "file" ? "file" : "tool"));
+    return toolClass(seg.meta?.tool ?? (seg.kind === "file" ? "file" : "tool"));
   if (seg.lane === "model" && (seg.kind === "thinking" || seg.kind === "text"))
-    return MODEL_COLORS[seg.kind];
+    return MODEL_CLASSES[seg.kind];
   return null;
 }
 
@@ -607,11 +611,8 @@ export default {
         const endMs = Math.max(realEnd, startMs + eps);
         const err = s.status === "error";
         const cls = `lane-${s.lane}${err ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}`;
-        // 按泳道/类型着色（失败仍标红）；内联 style 覆盖泳道底色。
-        const color = laneColor(s);
-        const style = color
-          ? `background-color:${color};border-color:${color};`
-          : undefined;
+        // 按泳道/类型着色（失败仍标红）；swatch 类覆盖泳道底色。
+        const tc = laneClass(s);
         return {
           id: s.key,
           group: s.group,
@@ -619,8 +620,7 @@ export default {
           end: new Date(endMs),
           type: "range",
           content: "",
-          className: cls,
-          ...(style ? { style } : {}),
+          className: tc ? `${cls} ${tc}` : cls,
         };
       });
     }
@@ -660,8 +660,8 @@ ${lanes
         const realEnd = Math.max(s.end ?? s.t, s.t);
         const end = Math.max(realEnd, s.t + minSpanMs);
         const width = ((end - s.t) / span) * 100;
-        const color = laneColor(s);
-        return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%${color ? `;background-color:${color};border-color:${color}` : ""}"></span>`;
+        const tc = laneClass(s);
+        return `<span class="rtr-blk lane-${ln}${s.status === "error" ? " st-error" : ""}${s.status === "running" ? " st-running" : ""}${s.key === selectedKey ? " sel" : ""}${tc ? ` ${tc}` : ""}" data-i="${i}" title="${esc(s.title)}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></span>`;
       })
       .join("")}</div></div>`;
   })
@@ -687,12 +687,12 @@ ${lanes
             s.status === "error"
               ? null
               : s.kind === "tool"
-                ? toolColor(s.meta?.tool ?? "tool")
+                ? toolClass(s.meta?.tool ?? "tool")
                 : s.kind === "thinking" || s.kind === "text"
-                  ? MODEL_COLORS[s.kind]
+                  ? MODEL_CLASSES[s.kind]
                   : null;
           return `<button class="rtr-row${s.key === selectedKey ? " sel" : ""}${s.status === "error" ? " err" : ""}" data-key="${esc(s.key)}">
-<span class="rtr-chip"${tc ? ` style="border-color:${tc};color:${tc}"` : ""}>${esc(chipFor(s, lang))}</span>
+<span class="rtr-chip${tc ? ` ${tc}` : ""}">${esc(chipFor(s, lang))}</span>
 <span class="tt">${esc(s.title)}</span>
 <time>${esc(fmtClock(s.t, L))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}</time>
 </button>`;
@@ -708,19 +708,19 @@ ${lanes
       const vis = visibleSegs();
       const seen = new Map();
       if (vis.some((s) => s.kind === "thinking"))
-        seen.set(lang === "zh" ? "思考" : "think", MODEL_COLORS.thinking);
+        seen.set(lang === "zh" ? "思考" : "think", MODEL_CLASSES.thinking);
       if (vis.some((s) => s.kind === "text"))
-        seen.set(lang === "zh" ? "回答" : "text", MODEL_COLORS.text);
+        seen.set(lang === "zh" ? "回答" : "text", MODEL_CLASSES.text);
       for (const s of vis) {
         if (s.lane !== "tools" || s.status === "error") continue;
         const name = s.meta?.tool ?? (s.kind === "file" ? "file" : null);
         if (!name || seen.has(name)) continue;
-        seen.set(name, toolColor(name));
+        seen.set(name, toolClass(name));
       }
       el.innerHTML = [...seen.entries()]
         .map(
           ([n, c]) =>
-            `<span class="lg-item"><i style="background:${c}"></i>${esc(n)}</span>`,
+            `<span class="lg-item"><i class="${c}"></i>${esc(n)}</span>`,
         )
         .join("");
       el.style.display = seen.size ? "" : "none";
