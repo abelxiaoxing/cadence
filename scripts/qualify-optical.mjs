@@ -5,7 +5,10 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
-import { observeComposerFlow } from "./optical-fixtures/composer-observations.mjs";
+import {
+  observeComposerFlow,
+  observeUnknownMode,
+} from "./optical-fixtures/composer-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
 import {
   contrastPixels,
@@ -74,6 +77,8 @@ const report = {
   searchNavigation: [],
   panelTabs: [],
   selectedRows: [],
+  rowDrawers: [],
+  unknownMode: [],
   composerFlow: [],
   disabledModels: [],
   artifactFind: [],
@@ -145,6 +150,23 @@ try {
     );
     await sleep(80);
   };
+  const clickPoint = async (selector, { x, y }) => {
+    report.hitTests.push({
+      width,
+      theme,
+      selector,
+      x: Math.round(x),
+      y: Math.round(y),
+    });
+    for (const type of ["mousePressed", "mouseReleased"])
+      await send("Input.dispatchMouseEvent", {
+        type,
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+  };
   const click = async (s, exact) => {
     const point = await run(
       (s, text) => {
@@ -163,20 +185,7 @@ try {
       s,
       exact ?? "",
     );
-    report.hitTests.push({
-      width,
-      theme,
-      selector: s,
-      x: Math.round(point.x),
-      y: Math.round(point.y),
-    });
-    for (const type of ["mousePressed", "mouseReleased"])
-      await send("Input.dispatchMouseEvent", {
-        type,
-        ...point,
-        button: "left",
-        clickCount: 1,
-      });
+    await clickPoint(s, point);
     await sleep(80);
   };
   const press = async (key, code, modifiers = 0) => {
@@ -1070,12 +1079,24 @@ try {
       });
       if (width <= 900) await press("Escape", 27);
       else await click(".inspector-toggle");
+      await observeUnknownMode({
+        width,
+        theme,
+        go,
+        chat,
+        wait,
+        capture,
+        run,
+        rows: report.unknownMode,
+      });
       await observeSelectedRows({
         width,
         theme,
         go,
         chat,
-        click,
+        site,
+        clickPoint,
+        drawers: report.rowDrawers,
         wait,
         ev,
         run,

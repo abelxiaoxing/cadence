@@ -310,70 +310,164 @@ function rowPixels(kind, target, other, state) {
   return points;
 }
 
-export async function observeSelectedRows({
-  width,
-  theme,
-  go,
-  chat,
-  click,
-  wait,
-  ev,
-  run,
-  parkPointer,
-  press,
-  send,
-  capture,
-  rows,
-}) {
-  await go(chat("empty"), ".chat-welcome");
-  const expanded = (toggle) =>
-    ev(
-      `document.querySelector('${toggle}').getAttribute('aria-expanded') === 'true'`,
+const projectHeader = ".chat-workspace:not([hidden]) > .conversation-header";
+const projectShell = `.app:has(${projectHeader})`;
+const sessionRow = (name) =>
+  `.conversation-row .session-item[title="Optical · ${name}"]`;
+const query = (selector) =>
+  `document.querySelector(${JSON.stringify(selector)})`;
+
+// Also useful on a failed readiness check, when a target may be missing or
+// parked. Report the element actually at its center, not just a boolean hit.
+function drawerSnapshot(selector, header) {
+  const control = document.querySelector(selector);
+  const r = control?.getBoundingClientRect();
+  const hit =
+    r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return {
+    route: location.pathname + location.search + location.hash,
+    folderSetup: !!document.querySelector(".welcome-action"),
+    heading: document.querySelector(`${header} h2`)?.textContent ?? null,
+    sessions: [
+      ...document.querySelectorAll(".conversation-row .session-item"),
+    ].map((el) => el.title),
+    wings: ["left", "right"].map((side) => {
+      const el = document.querySelector(`.drawer-${side}`);
+      const toggle = document.querySelector(
+        side === "left" ? ".navigation-toggle" : ".inspector-toggle",
+      );
+      return {
+        side,
+        expanded: toggle?.getAttribute("aria-expanded"),
+        inert: el?.inert,
+        open: el?.matches(".open"),
+      };
+    }),
+    selector,
+    rect: r?.toJSON() ?? null,
+    centerElement: hit && [
+      hit.localName,
+      hit.getAttribute("class"),
+      hit.getAttribute("title"),
+    ],
+  };
+}
+
+export async function observeSelectedRows(probe) {
+  const entry = {
+    width: probe.width,
+    theme: probe.theme,
+    target: sessionRow("reading"),
+  };
+  probe.drawers.push(entry);
+  try {
+    await selectRows(probe, entry);
+  } catch (error) {
+    entry.failure = await probe.run(
+      drawerSnapshot,
+      entry.target,
+      projectHeader,
     );
-  const open = async (toggle) => {
-    if (!(await expanded(toggle))) await click(toggle);
+    throw error;
+  }
+}
+
+async function selectRows(
+  {
+    width,
+    theme,
+    go,
+    chat,
+    site,
+    clickPoint,
+    wait,
+    ev,
+    run,
+    parkPointer,
+    press,
+    send,
+    capture,
+    rows,
+  },
+  entry,
+) {
+  const release = site.holdWorkbenchEntry();
+  try {
+    await go(chat("empty"), ".welcome-action:disabled");
+    entry.pending = await run(drawerSnapshot, entry.target, projectHeader);
+    assert.ok(entry.pending.folderSetup && !entry.pending.heading);
+  } finally {
+    release();
+  }
+  await wait(
+    `location.pathname + location.search + location.hash === ${JSON.stringify(chat("empty"))} && ${query(`${projectHeader} h2`)}?.textContent === 'New conversation' && ${query(`${projectShell} .chat-welcome`)} && ${query(sessionRow("reading"))} && ${query(sessionRow("design"))}`,
+  );
+  entry.ready = await run(drawerSnapshot, entry.target, projectHeader);
+  const expanded = (toggle) =>
+    ev(`${query(toggle)}.getAttribute('aria-expanded') === 'true'`);
+  const geometryOf = async (target) => {
+    entry.target = target;
+    await wait(query(target));
+    const geometry = await run(controlGeometry, target, false);
+    const { rect, visible, hit } = geometry;
+    assert.ok(
+      rect.width > 0 &&
+        rect.height > 0 &&
+        visible.width >= rect.width - 0.01 &&
+        visible.height >= rect.height - 0.01 &&
+        hit.center.hit,
+      `Clipped ${target}: ${JSON.stringify(geometry)}`,
+    );
+    return geometry;
+  };
+  const activate = async (target) => {
+    const geometry = await geometryOf(target);
+    await clickPoint(target, geometry.hit.center);
+    return geometry;
   };
   for (const kind of ["session", "file"]) {
     const session = kind === "session",
-      toggle = session ? ".navigation-toggle" : ".inspector-toggle";
+      toggle = `${projectShell} > .topbar > .${session ? "navigation" : "inspector"}-toggle`,
+      wing = `${projectShell} .drawer-${session ? "left" : "right"}`,
+      opened = `${wing}:not([inert])${width <= 900 ? ".open" : ""}`;
+    const open = async () => {
+      if (!(await expanded(toggle))) await activate(toggle);
+      entry.target = `${wing} ${session ? sessionRow("reading") : ".file-main"}`;
+      await wait(
+        `${query(`${toggle}[aria-expanded="true"]`)} && ${query(opened)}`,
+      );
+    };
     const wasOpen = await expanded(toggle);
-    await open(toggle);
+    await open();
     const names = session
       ? ["reading", "design"]
       : ["material.ts", "optics.ts"];
     const selector = (name) =>
-      session
-        ? `.conversation-row .session-item[title="Optical · ${name}"]`
-        : `.file-main[title="${name}"]`;
+      `${wing} ${session ? sessionRow(name) : `.file-main[title="${name}"]`}`;
     for (const [i, name] of names.entries()) {
       const target = selector(name),
         other = selector(names[1 - i]);
-      await wait(`document.querySelector('${target}')`);
-      const before = await run(controlGeometry, target);
-      await click(target);
+      const before = await activate(target);
       if (session) {
         await wait(
           `document.querySelector('.conversation-heading h2')?.textContent==='Optical · ${name}'`,
         );
-        await open(toggle); // Selecting a conversation dismisses the compact drawer.
+        if (width <= 900)
+          await wait(
+            `${query(`${toggle}[aria-expanded="false"]`)} && ${query(`${wing}[inert]:not(.open)`)}`,
+          );
+        await open(); // Selection dismisses the compact conversation drawer.
       } else
         await wait(
           `document.querySelector('.file-preview [title="${name}"]') && document.querySelector('.file-preview .codeblock')`,
         );
       await parkPointer();
-      await run(controlGeometry, target);
       const record = async (state) => {
-        const geometry = await run(controlGeometry, target, false);
+        const geometry = await geometryOf(target);
         assert.equal(
           geometry.rect.width,
           before.rect.width,
           "Selection changed row width",
-        );
-        assert.ok(
-          geometry.visible.width >= geometry.rect.width - 0.01 &&
-            geometry.visible.height >= geometry.rect.height - 0.01 &&
-            geometry.hit.center.hit,
-          `Clipped ${target}`,
         );
         const observed = await capture(`${target} ${state}`, () =>
           run(rowPixels, kind, target, other, state),
@@ -385,8 +479,7 @@ export async function observeSelectedRows({
       // A pointer selection may leave focus on the row.
       await run(() => document.activeElement.blur());
       await record("rest");
-      const { hit } = await run(controlGeometry, other, false);
-      assert.ok(hit.center.hit);
+      const { hit } = await geometryOf(other);
       await send("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: hit.center.x,
@@ -414,14 +507,15 @@ export async function observeSelectedRows({
               `document.activeElement.matches('${s}:enabled:focus-visible')`,
             ),
           );
-          const geometry = await run(controlGeometry, s, false);
+          const geometry = await geometryOf(s);
           assert.ok(Object.values(geometry.hit).every((p) => p.hit));
         }
       }
     }
     if (!wasOpen && (await expanded(toggle))) {
       if (width <= 900) await press("Escape", 27);
-      else await click(toggle);
+      else await activate(toggle);
+      await wait(query(`${toggle}[aria-expanded="false"]`));
     }
   }
 }

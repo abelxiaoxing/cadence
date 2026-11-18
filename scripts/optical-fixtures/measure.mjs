@@ -114,18 +114,27 @@ export function textSamples(selector) {
 }
 // Keep the actual label painted. Its adjacent backing is inside the same
 // button; verify glyph ink in the Range as well as DOM hit-test geometry.
-export function glyphSample(selector, text) {
+export function glyphSample(selector, text, backingFraction) {
   const label = document.querySelector(selector),
-    button = label?.closest("button");
-  if (!button || label.textContent !== text)
-    throw Error(`Missing ${selector}: ${text}`);
+    button = label?.closest("button"),
+    node =
+      label &&
+      [...label.childNodes].find(
+        (n) => n.nodeType === Node.TEXT_NODE && n.textContent === text,
+      );
+  if (!button || !node) throw Error(`Missing ${selector} text node: ${text}`);
   const range = new Range();
-  range.selectNodeContents(label);
+  range.selectNodeContents(node); // Exclude the adjacent switch graphic.
   const r = range.getBoundingClientRect();
-  const y = Math.floor(r.top + r.height / 2),
-    x = Math.floor(r.left - 2);
+  const y = Math.floor(r.top + r.height / 2);
+  const [bx, by] =
+    backingFraction === undefined
+      ? [Math.floor(r.left - 2), y]
+      : [Math.floor(r.left + r.width * backingFraction), Math.floor(r.top - 2)];
+  const backing = document.elementFromPoint(bx, by);
   if (
-    !button.contains(document.elementFromPoint(x, y)) ||
+    !button.contains(backing) ||
+    (backingFraction !== undefined && backing !== button) ||
     !r.width ||
     !r.height ||
     ![r.left + 1, r.left + r.width / 2, r.right - 1].every(
@@ -137,8 +146,8 @@ export function glyphSample(selector, text) {
   for (let p = label; p; p = p.parentElement)
     alpha *= Number(getComputedStyle(p).opacity);
   return {
-    x,
-    y,
+    x: bx,
+    y: by,
     glyph: [r.left, r.top, r.right, r.bottom],
     name: `${label.tagName}.${label.className}: ${text}`,
     fg: getComputedStyle(label).color,
@@ -250,22 +259,20 @@ export async function contrastPixels(png, points) {
     const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data,
       alpha = (p.alpha * a) / 255;
     const fg = [r, g, b].map((c, i) => c * alpha + bg[i] * (1 - alpha));
+    let paintedGlyph;
     if (p.glyph) {
-      const [left, top, right, bottom] = p.glyph.map((n) =>
-        Math.floor(n * scale),
-      );
+      const [left, top, right, bottom] = p.glyph.map((n) => n * scale);
       const distance = (pixel, color) =>
         color.reduce((d, c, i) => d + Math.abs(c - img.data[pixel + i]), 0);
-      let painted = false;
-      for (let y = top; y <= bottom && !painted; y++)
-        for (let x = left; x <= right; x++) {
+      for (let y = Math.ceil(top); y < Math.floor(bottom) && !paintedGlyph; y++)
+        for (let x = Math.ceil(left); x < Math.floor(right); x++) {
           const pixel = 4 * (y * img.width + x);
           if (distance(pixel, fg) < distance(pixel, bg)) {
-            painted = true;
+            paintedGlyph = { x, y, rgb: [...img.data.slice(pixel, pixel + 3)] };
             break;
           }
         }
-      if (!painted) throw Error(`No visible glyph in capture: ${p.name}`);
+      if (!paintedGlyph) throw Error(`No visible glyph in capture: ${p.name}`);
     }
     const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a),
       ratio = (hi + 0.05) / (lo + 0.05);
@@ -275,6 +282,11 @@ export async function contrastPixels(png, points) {
       fg: p.fg,
       alpha,
       effectiveFg: fg,
+      ...(paintedGlyph && {
+        glyph: p.glyph,
+        paintedGlyph,
+        backingPoint: [p.x, p.y],
+      }),
       name: p.name,
       min: p.min,
     };

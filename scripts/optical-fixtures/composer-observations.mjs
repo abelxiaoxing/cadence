@@ -1,5 +1,37 @@
 import assert from "node:assert/strict";
+import { glyphSample } from "./measure.mjs";
 import { flowCase } from "./records.mjs";
+import { degradedMode } from "./site.mjs";
+
+export async function observeUnknownMode({
+  go,
+  chat,
+  wait,
+  capture,
+  run,
+  rows,
+  width,
+  theme,
+}) {
+  const label = "Cadence state unavailable";
+  const selector = `.chat-composer .mode-toggle.unknown:disabled[aria-label="${label}"][title="${label}"]`;
+  // Unknown is also the initial state. Wait for the notice from this exact
+  // degraded read, not just the class or the hint (hidden on compact screens).
+  await go(chat(degradedMode.id), ".chat-workspace > .conversation-header");
+  await wait(
+    `document.querySelector('.conversation-heading h2')?.textContent === 'Optical · ${degradedMode.id}' && [...document.querySelectorAll('.chat-messages [role="alert"]')].some(el => el.textContent === ${JSON.stringify(degradedMode.notice)}) && document.querySelector(${JSON.stringify(selector)})`,
+  );
+  const observed = await capture(label, () =>
+    Promise.all(
+      [0.1, 0.5, 0.9].map((f) => run(glyphSample, selector, label, f)),
+    ),
+  );
+  rows.push({ width, theme, ...degradedMode, selector, ...observed });
+  assert.equal(observed?.samples, 3);
+  assert.ok(observed.worst.paintedGlyph);
+  assert.equal(observed.worst.alpha, 1);
+  assert.deepEqual(observed.failures, []);
+}
 
 // Drive head/turn polls, not the DOM attribute under test. Notice identifies
 // the delivered turn version even when two successive expectations are off.

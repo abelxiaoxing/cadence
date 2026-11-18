@@ -25,6 +25,11 @@ import {
   storeId,
   workspaceId,
 } from "./records.mjs";
+export const degradedMode = {
+  id: "optical-unknown",
+  notice: "The mode record for this specimen is unavailable.",
+};
+
 export function fixture(root) {
   const dir = join(root, "web/dist"),
     manifest = JSON.parse(readFileSync(join(dir, "manifest.json"))),
@@ -40,7 +45,7 @@ export function fixture(root) {
   const build = { contractHash: identity.contractHash, assets: identity };
   const failures = [];
   const stepReads = [];
-  let directoryGate;
+  let directoryGate, entryGate;
   const snapshot = (scope) => ({
     protocol: 1,
     storeId,
@@ -115,16 +120,19 @@ export function fixture(root) {
             : "application/octet-stream",
         assets.get(p),
       );
-    if (p === "/workbench/v1")
-      return json({
-        kind: "workbench",
-        epoch,
-        csrf,
-        home: cwd,
-        projects: [{ id: project, path: cwd, cwd, epoch }],
-        recoveries: [],
-        build,
-      });
+    if (p === "/workbench/v1") {
+      const reply = () =>
+        json({
+          kind: "workbench",
+          epoch,
+          csrf,
+          home: cwd,
+          projects: [{ id: project, path: cwd, cwd, epoch }],
+          recoveries: [],
+          build,
+        });
+      return entryGate ? entryGate.promise.then(reply) : reply();
+    }
     if (p === "/workbench/v1/service")
       return json({
         kind: "service",
@@ -200,6 +208,8 @@ export function fixture(root) {
       )
         return json({ kind: "error", error: publicError("stale") });
       const v = readRecord(q);
+      if (v?.kind === "cadence-conversation" && q.id === degradedMode.id)
+        return ok({ ...v, state: { ...v.state, notice: degradedMode.notice } });
       if (q.kind === "conversation-step") {
         const { id, leaf, turnId, step, part } = q;
         const read = { id, leaf, turnId, step, part, result: "pending" };
@@ -264,6 +274,13 @@ export function fixture(root) {
     build: identity,
     failures,
     stepReads,
+    holdWorkbenchEntry() {
+      entryGate = Promise.withResolvers();
+      return () => {
+        entryGate.resolve();
+        entryGate = undefined;
+      };
+    },
     holdDirectory(path) {
       const gate = { path, respond: null };
       directoryGate = gate;
