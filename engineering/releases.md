@@ -15,8 +15,11 @@ Tool display names share one redact-then-clip rule at the existing 128-byte JSON
 New and expanded controlled tests cover the runtime timeline (root and Web), runtime observation, the chat timeline, conversation records, Pi session handoff and worker capture/retry projection; they are controlled fixtures, not real-browser or real-model qualification.
 The version is advanced to 2.1.11, the canonical operator/service/Web builders were rerun for it, and the provenance pins for the rebuilt `cadence.js` and web manifest were refreshed in the same tree.
 Observed environment: Linux, Node 26.7.0, Bun 1.3.14.
-Commit, push and npm publication were explicitly authorized; publication still requires the matching annotated tag's actual CI receipt and registry digest/latest confirmation.
-No consumer installation or service change, dependency or browser download, or enlarged test budget occurred.
+The release commit `cb91b67` was pushed to `main` before the annotated `v2.1.11` tag.
+GitHub Actions `Publish npm` run 44217357596 (prepare, publish) succeeded; the audited artifact SHA-256 is `ffada24ea72eb98c246bfa0ece4c37bdc8978906804cfec0fc4a98cf916d62ad`.
+The registry confirms `@abelxiaoxing/cadence@2.1.11` as `latest` with integrity `sha512-2ssBQ0XaOopTEMqdI/rFltTpHml51DyhcaRGLUOLxKE9ibGm5ai/b8cT378nd5BOxB3D6r0kjlqIs6IpWqH42A==` and SHA-1 `a3d83c99c46544acc49ce2ffc8e034fa10a40f80`.
+A fresh download of the registry tarball hashes to the same audited SHA-256, binding installed bytes to the audited artifact.
+Commit, push and npm publication were explicitly authorized; no consumer installation or service change, dependency or browser download, or enlarged test budget occurred.
 
 ## Release 2.1.10 acceptance snapshot
 
