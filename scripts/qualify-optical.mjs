@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
 import {
   observeComposerFlow,
+  observeComposerGrip,
   observeUnknownMode,
 } from "./optical-fixtures/composer-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
@@ -87,6 +88,7 @@ const report = {
   rowDrawers: [],
   unknownMode: [],
   composerFlow: [],
+  composerGrip: [],
   disabledModels: [],
   artifactFind: [],
   controlFocus: [],
@@ -777,6 +779,16 @@ try {
       await wait(
         `+getComputedStyle(document.querySelector('.optical-field')).opacity<=.08`,
       );
+      await observeComposerGrip({
+        width,
+        theme,
+        route: chat("reading"),
+        send,
+        run,
+        parkPointer,
+        screenshot,
+        rows: report.composerGrip,
+      });
       await scrollTo(".code-caption");
       assert.ok(
         await ev(
