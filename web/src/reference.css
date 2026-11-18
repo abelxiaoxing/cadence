@@ -108,14 +108,29 @@
   --bg-image: none;
   --bg-image-dim: 0.78;
   --bg-image-blur: 0px;
-  /* Glass is translucent, never a wallpaper image or a remote asset. */
-  --glass-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(15, 23, 42, 0.6));
+  /* Tiered glass: the shell (topbar, statusbar, composer, dialogs, popovers,
+   * drawers) is strong glass; content cards are light glass — higher
+   * opacity, weaker blur. Dense reading surfaces (code, terminal, tool
+   * output, diff) stay on opaque --code-bg / --bg-elev. Glass is
+   * translucent, never a wallpaper image or a remote asset. */
+  --glass-bg: light-dark(rgba(255, 255, 255, 0.66), rgba(15, 23, 42, 0.62));
+  --glass-card-bg: light-dark(rgba(255, 255, 255, 0.8), rgba(15, 23, 42, 0.78));
   --glass-border: light-dark(
-    rgba(255, 255, 255, 0.65),
-    rgba(255, 255, 255, 0.1)
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0.12)
   );
-  --glass-shadow: light-dark(rgba(37, 99, 235, 0.1), rgba(0, 0, 0, 0.28));
-  --primary-glow: light-dark(rgba(37, 99, 235, 0.2), rgba(34, 211, 238, 0.18));
+  --glass-card-border: light-dark(
+    rgba(255, 255, 255, 0.6),
+    rgba(255, 255, 255, 0.08)
+  );
+  --glass-shadow: light-dark(rgba(37, 99, 235, 0.08), rgba(2, 6, 23, 0.36));
+  --glass-card-shadow: light-dark(
+    rgba(37, 99, 235, 0.05),
+    rgba(2, 6, 23, 0.26)
+  );
+  --glass-shell-blur: 24px;
+  --glass-card-blur: 12px;
+  --primary-glow: light-dark(rgba(37, 99, 235, 0.18), rgba(34, 211, 238, 0.15));
   --primary-gradient: linear-gradient(
     135deg,
     var(--brand-grad-a),
@@ -126,18 +141,28 @@
     var(--send-blue-hover),
     var(--brand-grad-b)
   );
-  --mesh-a: light-dark(rgba(147, 197, 253, 0.58), rgba(34, 211, 238, 0.09));
-  --mesh-b: light-dark(rgba(196, 181, 253, 0.52), rgba(37, 99, 235, 0.13));
-  --mesh-c: light-dark(rgba(165, 243, 252, 0.48), rgba(99, 102, 241, 0.09));
-  --grid-line: light-dark(rgba(37, 99, 235, 0.035), rgba(56, 189, 248, 0.05));
-  --topbar-bg: light-dark(rgba(255, 255, 255, 0.56), rgba(2, 6, 23, 0.62));
-  --statusbar-bg: var(--topbar-bg);
+  /* Mesh and grid: desaturated and low-contrast so the glass has something
+   * to sit on without competing with the text. */
+  --mesh-a: light-dark(rgba(147, 197, 253, 0.42), rgba(34, 211, 238, 0.08));
+  --mesh-b: light-dark(rgba(196, 181, 253, 0.36), rgba(37, 99, 235, 0.1));
+  --mesh-c: light-dark(rgba(165, 243, 252, 0.32), rgba(99, 102, 241, 0.07));
+  --grid-line: light-dark(rgba(37, 99, 235, 0.03), rgba(56, 189, 248, 0.045));
+  --topbar-bg: var(--glass-bg);
+  --statusbar-bg: var(--glass-bg);
   --panel-bg: var(--glass-bg);
-  --card-bg: var(--glass-bg);
-  --chip-bg: light-dark(rgba(255, 255, 255, 0.48), rgba(15, 23, 42, 0.56));
+  --card-bg: var(--glass-card-bg);
+  --chip-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(15, 23, 42, 0.62));
   --msgs-bg: transparent;
-  --inputbox-bg: light-dark(rgba(255, 255, 255, 0.56), rgba(15, 23, 42, 0.66));
+  --inputbox-bg: light-dark(rgba(255, 255, 255, 0.7), rgba(15, 23, 42, 0.72));
   --menu-bg: var(--glass-bg);
+}
+/* Narrow screens have less headroom for blur: the shell steps down to 12px
+ * and content cards weaken further. */
+@media (max-width: 900px) {
+  :root {
+    --glass-shell-blur: 12px;
+    --glass-card-blur: 8px;
+  }
 }
 
 .layout {
@@ -824,7 +849,7 @@
 }
 
 .codeblock pre {
-  background: var(--chip-bg, var(--code-bg));
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 0;
@@ -957,21 +982,28 @@
 
 .toolcall {
   margin: 8px 0;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 8px 24px var(--glass-shadow);
+  box-shadow: 0 8px 24px var(--glass-card-shadow);
   overflow: hidden;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-card-blur));
 }
 
 .thinking {
   margin: 8px 0;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg, var(--glow-015));
-  box-shadow: 0 8px 24px var(--glass-shadow);
-  @apply backdrop-blur-xl;
+  box-shadow: 0 8px 24px var(--glass-card-shadow);
+  backdrop-filter: blur(var(--glass-card-blur));
+}
+/* Without backdrop-filter these cards read as muddy: an opaque base. */
+@supports not (backdrop-filter: blur(1px)) {
+  .toolcall,
+  .thinking {
+    background: var(--bg-elev2);
+  }
 }
 
 .thinking-icon {
@@ -1151,7 +1183,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--chip-bg, var(--bg-elev2));
+  background: var(--bg-elev2);
   border-bottom: 1px solid var(--border-soft);
   min-width: 0;
 }
@@ -1775,7 +1807,7 @@ div.chead[role="button"]:focus-visible,
   white-space: pre;
   overflow: auto;
   max-height: 200px;
-  background: var(--chip-bg, var(--bg-elev2));
+  background: var(--code-bg);
   border: 1px solid var(--code-border, var(--border-soft));
   border-radius: 6px;
   padding: var(--code-pad, 8px 10px);
@@ -1876,7 +1908,7 @@ div.chead[role="button"]:focus-visible,
   margin: 0;
   max-height: 320px;
   overflow: auto;
-  background: var(--chip-bg, var(--code-bg));
+  background: var(--code-bg);
   border: 1px solid var(--code-border, var(--border-soft));
   border-radius: 6px;
   padding: var(--code-pad, 8px 10px);

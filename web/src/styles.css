@@ -20,11 +20,13 @@
   --accent-strong: light-dark(#1d4ed8, #22d3ee);
   /* Dark glyphs keep the Cyan end of the dark gradient readable. */
   --on-accent: light-dark(#ffffff, #082f49);
-  /* Elevation: resting cards, floating menus and tooltips, dialogs and drawers. */
-  --shadow-1: light-dark(rgba(31, 35, 40, 0.08), rgba(0, 0, 0, 0.2));
-  --shadow-2: light-dark(rgba(31, 35, 40, 0.14), rgba(0, 0, 0, 0.42));
-  --shadow-3: light-dark(rgba(31, 35, 40, 0.2), rgba(0, 0, 0, 0.55));
-  --scrim: light-dark(rgba(31, 35, 40, 0.4), rgba(0, 0, 0, 0.5));
+  /* Elevation: resting cards, floating menus and tooltips, dialogs and
+   * drawers. Soft on light, navy-tinted on dark so glass lifts without a
+   * hard black edge. */
+  --shadow-1: light-dark(rgba(31, 35, 40, 0.07), rgba(2, 6, 23, 0.26));
+  --shadow-2: light-dark(rgba(31, 35, 40, 0.11), rgba(2, 6, 23, 0.44));
+  --shadow-3: light-dark(rgba(31, 35, 40, 0.16), rgba(2, 6, 23, 0.56));
+  --scrim: light-dark(rgba(31, 35, 40, 0.38), rgba(2, 6, 23, 0.56));
   /* Syntax colours: highlight.js's GitHub and GitHub Dark themes, the light
    * comment darkened from #6e7781 (4.27:1 on the code surface) to AA. */
   --hl-keyword: light-dark(#cf222e, #ff7b72);
@@ -222,6 +224,9 @@ code {
   cursor: not-allowed;
   opacity: 0.45;
 }
+:where(button:active:not(:disabled)) {
+  transform: translateY(1px);
+}
 :where(button.primary) {
   border-color: var(--accent-strong);
   background: var(--primary-gradient);
@@ -233,6 +238,9 @@ code {
   background: var(--primary-hover);
   color: var(--on-accent);
   box-shadow: 0 8px 26px var(--primary-glow);
+}
+:where(button.primary:active:not(:disabled)) {
+  box-shadow: 0 3px 10px var(--primary-glow);
 }
 :where(button.danger) {
   border-color: color-mix(in srgb, var(--red) 45%, transparent);
@@ -271,6 +279,22 @@ code {
 :where(input:focus, select:focus, textarea:focus) {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Error state: the same red the alerts use, on the field border and ring. */
+:where(
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"]
+) {
+  border-color: var(--red);
+}
+:where(
+  input[aria-invalid="true"]:focus,
+  select[aria-invalid="true"]:focus,
+  textarea[aria-invalid="true"]:focus
+) {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-soft);
 }
 :where(textarea) {
   width: 100%;
@@ -336,7 +360,7 @@ summary:focus-visible,
   background: var(--topbar-bg, var(--bg-elev));
   box-shadow: 0 8px 32px var(--glass-shadow);
   flex-shrink: 0;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
   --topbar-ctl-h: 28px;
 }
 .topbar-flow {
@@ -642,7 +666,7 @@ summary:focus-visible,
   flex: none;
   min-height: 0;
   overflow: hidden;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
 }
 .drawer-left {
   width: var(--left-w);
@@ -1729,12 +1753,12 @@ summary:focus-visible,
 .card {
   margin: 8px 0;
   padding: 12px 14px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 10px 30px var(--glass-shadow);
+  box-shadow: 0 10px 30px var(--glass-card-shadow);
   font-size: 12.5px;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-card-blur));
 }
 .run-summary > h3,
 .receipt > h3 {
@@ -1859,7 +1883,7 @@ summary:focus-visible,
   border-top: 1px solid var(--glass-border);
   background: var(--statusbar-bg, var(--bg-elev));
   font-size: 11px;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
   line-height: 1.4;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -2183,7 +2207,7 @@ summary:focus-visible,
   background: var(--menu-bg);
   color: var(--text);
   box-shadow: 0 20px 60px var(--shadow-3);
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
   font-size: 13px;
 }
 /* A ::backdrop inherits custom properties only in 2024 and later engines. */
@@ -3209,7 +3233,7 @@ summary:focus-visible,
   padding: var(--code-pad, 8px 10px);
   border: 1px solid var(--code-border, var(--border-soft));
   border-radius: 6px;
-  background: var(--chip-bg, var(--code-bg));
+  background: var(--code-bg);
   font-family: var(--mono);
   font-size: 12.5px;
 }
@@ -3287,11 +3311,11 @@ summary:focus-visible,
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
   border: 1px solid var(--glass-border);
   border-radius: 18px;
-  background: var(--card-bg, var(--bg-elev));
+  background: var(--glass-bg, var(--bg-elev));
   box-shadow:
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
 }
 .chat-composer:focus-within {
   border-color: var(--accent);
@@ -4118,11 +4142,11 @@ button.file-item:hover:not(:disabled),
   max-width: 920px;
   margin: -6px auto 16px;
   padding: 2px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg);
-  box-shadow: 0 8px 24px var(--glass-shadow);
-  @apply backdrop-blur-xl;
+  box-shadow: 0 8px 24px var(--glass-card-shadow);
+  backdrop-filter: blur(var(--glass-card-blur));
 }
 .workflow-line-open {
   display: flex;
@@ -4425,13 +4449,13 @@ button.file-item:hover:not(:disabled),
   max-width: 920px;
   margin: 0 auto 16px;
   padding: 16px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-card-border);
   border-left: 3px solid var(--accent);
   border-radius: 16px;
   background: var(--card-bg);
-  box-shadow: 0 12px 36px var(--glass-shadow);
+  box-shadow: 0 12px 36px var(--glass-card-shadow);
   color: var(--text);
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-card-blur));
   overflow-wrap: anywhere;
 }
 .design-card nav,
@@ -4850,7 +4874,7 @@ button.file-item:hover:not(:disabled),
   background: var(--menu-bg);
   box-shadow: 0 16px 40px var(--shadow-3);
   overflow: hidden;
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
 }
 .model-popover-lead {
   margin: 0;
@@ -5061,7 +5085,7 @@ button.link:hover:not(:disabled) {
   border-radius: 14px;
   background: var(--menu-bg);
   box-shadow: 0 16px 40px var(--shadow-2);
-  @apply backdrop-blur-xl;
+  backdrop-filter: blur(var(--glass-shell-blur));
 }
 .more-menu-items button {
   display: flex;
@@ -5361,4 +5385,28 @@ button.link:hover:not(:disabled) {
   padding: 10px 16px 0;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* Without backdrop-filter the glass tiers would read as muddy: give every
+ * glass surface an opaque, readable base. Last on purpose: these overrides
+ * must win the cascade over each surface's own background. (.toolcall and
+ * .thinking keep their fallback next to their own rules in reference.css.) */
+@supports not (backdrop-filter: blur(1px)) {
+  .topbar,
+  .statusbar,
+  .chat-composer,
+  .action-dialog,
+  .model-popover,
+  .more-menu-items,
+  .panel-drawer {
+    background: var(--bg-elev);
+  }
+  .receipt,
+  .run-summary,
+  .scm-file,
+  .card,
+  .workflow-line,
+  .workflow-plan {
+    background: var(--bg-elev2);
+  }
 }
