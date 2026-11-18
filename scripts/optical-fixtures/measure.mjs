@@ -112,32 +112,36 @@ export function textSamples(selector) {
   }
   return result;
 }
-// Keep the selected gutter painted: take the backing just beside the digit
-// inside the same button. Retain the glyph bounds to reject a stale capture
-// of an empty inspector surface even if its contrast would be sufficient.
-export function gutterSample(selector) {
-  const button = document.querySelector(selector);
-  if (!button || button.textContent !== "2")
-    throw Error("Missing selected line 2");
+// Keep the actual label painted. Its adjacent backing is inside the same
+// button; verify glyph ink in the Range as well as DOM hit-test geometry.
+export function glyphSample(selector, text) {
+  const label = document.querySelector(selector),
+    button = label?.closest("button");
+  if (!button || label.textContent !== text)
+    throw Error(`Missing ${selector}: ${text}`);
   const range = new Range();
-  range.selectNodeContents(button);
+  range.selectNodeContents(label);
   const r = range.getBoundingClientRect();
   const y = Math.floor(r.top + r.height / 2),
     x = Math.floor(r.left - 2);
   if (
-    document.elementFromPoint(x, y) !== button ||
-    document.elementFromPoint(Math.floor(r.left + r.width / 2), y) !== button
+    !button.contains(document.elementFromPoint(x, y)) ||
+    !r.width ||
+    !r.height ||
+    ![r.left + 1, r.left + r.width / 2, r.right - 1].every(
+      (x) => document.elementFromPoint(x, y) === label,
+    )
   )
-    throw Error("Selected number is not visible");
+    throw Error(`Hidden label: ${text}`);
   let alpha = 1;
-  for (let p = button; p; p = p.parentElement)
+  for (let p = label; p; p = p.parentElement)
     alpha *= Number(getComputedStyle(p).opacity);
   return {
     x,
     y,
     glyph: [r.left, r.top, r.right, r.bottom],
-    name: "BUTTON.fp-num: 2",
-    fg: getComputedStyle(button).color,
+    name: `${label.tagName}.${label.className}: ${text}`,
+    fg: getComputedStyle(label).color,
     alpha,
     min: 4.5,
   };
@@ -198,6 +202,7 @@ export async function contrastPixels(png, points) {
   let worst = null;
   const failures = new Map();
   const words = {};
+  const surfaces = {};
   for (const p of points) {
     const offset =
       (Math.floor(p.y * scale) * img.width + Math.floor(p.x * scale)) * 4;
@@ -255,9 +260,16 @@ export async function contrastPixels(png, points) {
       ratio: +ratio.toFixed(3),
       bg,
       fg: p.fg,
+      alpha,
+      effectiveFg: fg,
       name: p.name,
       min: p.min,
     };
+    if (
+      p.surface &&
+      (!surfaces[p.surface] || ratio < surfaces[p.surface].ratio)
+    )
+      surfaces[p.surface] = observed;
     for (const mark of ["char-add", "char-del"])
       if (
         p.name.startsWith(`SPAN.${mark}:`) &&
@@ -275,6 +287,7 @@ export async function contrastPixels(png, points) {
     samples: points.length,
     worst,
     words,
+    ...(Object.keys(surfaces).length ? { surfaces } : {}),
     failures: [...failures.values()],
   };
 }
@@ -331,7 +344,7 @@ export async function controlGeometry(selector, scroll = true) {
   if (
     !(
       el instanceof HTMLButtonElement ||
-      el?.matches('.resize-handle[type="range"]')
+      el?.matches('.resize-handle[type="range"], .rp-tab[aria-current="true"]')
     )
   )
     throw Error(`Missing control: ${selector}`);

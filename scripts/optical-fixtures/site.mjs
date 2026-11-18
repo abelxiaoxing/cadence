@@ -6,13 +6,12 @@ import { WebSocketServer } from "ws";
 import { AUTH_PAGE_CSP, renderAuthPage } from "../../src/service/auth-page.ts";
 import { browserIdentity, digest } from "../build-identity.mjs";
 import {
-  artifact,
+  artifactPage,
   catalog,
   change,
   controlContext,
   csrf,
   cwd,
-  diffText,
   epoch,
   events,
   fieldPage,
@@ -218,22 +217,8 @@ export function fixture(root) {
       q.id === historyMessage.owner.entity.id
     )
       return ok({ request: q, record: historyMessage });
-    if (p.endsWith("/details") && q?.recordId === artifact.recordId)
-      return ok({
-        cursor: q,
-        content: artifact,
-        text: diffText,
-        range: { start: 0, end: artifact.bytes },
-        next: null,
-        coverage: {
-          observed: "complete",
-          source: "complete",
-          redacted: false,
-          omissions: [],
-        },
-      });
     if (p.endsWith("/details") && q) {
-      const page = fieldPage(q);
+      const page = artifactPage(q) ?? fieldPage(q);
       if (page) return ok(page);
     }
     if (q?.reader)

@@ -285,3 +285,155 @@ export async function observeFieldBoundaries({
     }
   }
 }
+
+// Enter through Changes → Inspect full retained field. Deliberately keep the
+// same query in the mounted search input while replacing the preview's body.
+export async function observeArtifactFind({
+  click,
+  wait,
+  press,
+  ev,
+  run,
+  send,
+  width,
+  theme,
+  rows,
+}) {
+  const pane = ".inspector-body .detail-pane",
+    bar = `${pane} .search-bar`,
+    input = `${bar} input`;
+  const type = async (query) => {
+    await click(input);
+    await press("a", 65, 2);
+    await send("Input.insertText", { text: query });
+    await wait(`document.activeElement.value===${JSON.stringify(query)}`);
+  };
+  const select = async (view) => {
+    const s = `${pane} .fp-head select`;
+    await run((s) => document.querySelector(s).focus(), s);
+    const [key, code] = {
+      raw: ["Home", 36],
+      markdown: ["ArrowDown", 40],
+      diff: ["End", 35],
+    }[view];
+    // Markdown follows raw in this native select; no synthetic change event.
+    await press(key, code);
+    await wait(`document.querySelector('${s}').value==='${view}'`);
+  };
+  const check = async (query, target, active = false) => {
+    const row = await run(
+      (pane, query, target) => {
+        const el = document.querySelector(pane),
+          bar = el.querySelector(".search-bar");
+        const ranges = [...(CSS.highlights.get("cadence-page") ?? [])];
+        const current = [...(CSS.highlights.get("cadence-page-active") ?? [])];
+        const r = current[0],
+          rr = r?.getBoundingClientRect();
+        return {
+          query: bar.querySelector("input").value,
+          view: el.querySelector(".fp-head select").value,
+          count: bar.querySelector("span").textContent.split(";")[0],
+          disabled: [...bar.querySelectorAll("button")].map((b) => b.disabled),
+          matches: ranges.map((r) => ({
+            text: r.toString(),
+            tag: r.startContainer.parentElement.tagName,
+            body: r.startContainer.textContent,
+            correct:
+              target &&
+              r.startContainer.isConnected &&
+              !!r.startContainer.parentElement.closest(target) &&
+              el.contains(r.commonAncestorContainer),
+          })),
+          active: current.length,
+          activeHit:
+            !!rr &&
+            current.length === 1 &&
+            ranges.includes(r) &&
+            r.toString() === query &&
+            r.startContainer.parentElement.contains(
+              document.elementFromPoint(
+                rr.x + rr.width / 2,
+                rr.y + rr.height / 2,
+              ),
+            ),
+        };
+      },
+      pane,
+      query,
+      target,
+    );
+    rows.push({ width, theme, ...row });
+    assert.equal(row.query, query);
+    assert.equal(row.count, target ? "1/1" : "0/0");
+    assert.deepEqual(row.disabled, [!target, !target]);
+    assert.equal(row.matches.length, target ? 1 : 0);
+    assert.ok(row.matches.every((m) => m.correct && m.text === query));
+    assert.equal(row.active, active ? 1 : 0);
+    assert.equal(row.activeHit, active);
+  };
+  const zero = async (word, chrome) => {
+    assert.ok(
+      await run(
+        (s, word) =>
+          [...document.querySelectorAll(s)].some((e) =>
+            e.textContent.includes(word),
+          ),
+        `${pane} ${chrome}`,
+        word,
+      ),
+      `Missing chrome specimen: ${word}`,
+    );
+    await type(word);
+    await check(word, null);
+  };
+  const navigate = async (word, target) => {
+    await check(word, target);
+    await click(`${bar} button`, "Next match");
+    await check(word, target, true);
+  };
+  await click(`${pane} .fp-num`, "2");
+  for (const [q, s] of [
+    ["filesystem read", ".fp-notice"],
+    ["Raw text / lines", ".fp-head option"],
+    ["Zoom +", ".fp-head button"],
+    ["2", ".fp-num"],
+    ["Clear selection", ".fp-foot"],
+  ])
+    await zero(q, s);
+  const common = "Captured";
+  await type(common);
+  const raw = ".fp-code-text",
+    diff = ".scm-diff-line";
+  // Exact selected body, not merely some descendant of the preview wrapper.
+  await navigate(common, raw);
+  await select("markdown");
+  await wait(`document.querySelector('${pane} .fp-toc')`);
+  assert.ok(
+    await ev(
+      `document.querySelector('${pane} .fp-toc').textContent.includes('Captured')`,
+    ),
+  );
+  await navigate(common, ".fp-markdown-zoom h2");
+  await select("diff");
+  await navigate(common, diff);
+  await click(`${pane} > .toolbar button`, "Next field page");
+  await wait(
+    `document.querySelector('${pane} .scm-diff-line')?.textContent.includes('next field page')`,
+  );
+  await navigate(common, `${diff}.add`);
+  await click(`${pane} > .toolbar button`, "Previous");
+  await wait(`document.querySelector('${pane} .scm-diff-line.hdr')`);
+  await navigate(common, diff);
+  await select("raw");
+  await navigate(common, raw);
+  await select("markdown");
+  await zero("Image omitted", ".omission");
+  await zero("link unavailable", ".fp-markdown-zoom");
+  await type("facet 7");
+  await navigate("facet 7", ".fp-markdown-zoom p > span:not(.omission)");
+  await click('.rp-tabs[aria-label="Inspector"] button', "checks");
+  await wait(
+    `!document.querySelector('${input}') && !CSS.highlights.has('cadence-page') && !CSS.highlights.has('cadence-page-active')`,
+  );
+  rows.push({ width, theme, unmounted: true });
+}

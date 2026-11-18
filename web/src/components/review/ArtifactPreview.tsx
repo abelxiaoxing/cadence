@@ -11,10 +11,18 @@ import { textLines } from "../../rich/text-lines";
 import { CopyButton } from "../rich/CopyButton";
 import { Markdown } from "../rich/Markdown";
 import { DiffView } from "./DiffView";
-export function ArtifactPreview({ text }: { text: string }) {
+export type ArtifactView = "raw" | "markdown" | "diff";
+export function ArtifactPreview({
+  text,
+  view,
+  setView,
+}: {
+  text: string;
+  view: ArtifactView;
+  setView: (view: ArtifactView) => void;
+}) {
   const { t } = useT();
-  const [view, setView] = useState<"raw" | "markdown" | "diff">("raw"),
-    [wrap, setWrap] = useState(true),
+  const [wrap, setWrap] = useState(true),
     [zoom, setZoom] = useState(1),
     [toc, setToc] = useState<TocHeading[]>([]);
   const [sel, setSel] = useState<{ start: number; end: number } | null>(null),
@@ -109,7 +117,11 @@ export function ArtifactPreview({ text }: { text: string }) {
                 ))}
               </nav>
             )}
-            <div className="fp-markdown-zoom" ref={markdownRef}>
+            <div
+              className="fp-markdown-zoom"
+              ref={markdownRef}
+              data-retained-field
+            >
               <Markdown text={text} />
             </div>
           </div>
@@ -136,7 +148,12 @@ export function ArtifactPreview({ text }: { text: string }) {
                 >
                   {n}
                 </button>
-                <span className="fp-code-text">{line || " "}</span>
+                <span
+                  className="fp-code-text"
+                  data-retained-field={line ? true : undefined}
+                >
+                  {line || " "}
+                </span>
               </div>
             ))}
           </div>

@@ -11,13 +11,17 @@ import {
   controlGeometry,
   dimensions,
   frameWindow,
-  gutterSample,
+  glyphSample,
   questionMarkSample,
   readingPosition,
   restingCopySample,
   stableFrames,
   textSamples,
 } from "./optical-fixtures/measure.mjs";
+import {
+  observeDisabledModels,
+  observePanelTabs,
+} from "./optical-fixtures/panel-observations.mjs";
 import {
   leading,
   observeFieldFind,
@@ -28,12 +32,14 @@ import {
   feed,
   fieldTask,
   firstAttempt,
+  fullArtifact,
   project,
   shellCommand,
   task,
   writeContent,
 } from "./optical-fixtures/records.mjs";
 import {
+  observeArtifactFind,
   observeFieldBoundaries,
   observeSearch,
 } from "./optical-fixtures/search-observations.mjs";
@@ -64,6 +70,9 @@ const report = {
   leading: [],
   fieldFind: [],
   searchNavigation: [],
+  panelTabs: [],
+  disabledModels: [],
+  artifactFind: [],
   controlFocus: [],
   branch: execFileSync("git", ["branch", "--show-current"], {
     cwd: root,
@@ -244,6 +253,7 @@ try {
     const copy = await observeButton(`${source} copy`, selector, label);
     assert.equal(copy.keyboardFocus, true);
     await press(" ", 32);
+    await wait("opticalProbe.received.length > 0");
     assert.deepEqual(await ev("opticalProbe.received"), [expected]);
     report.copies.push({
       width,
@@ -562,6 +572,26 @@ try {
       assert.ok(
         await ev(`document.querySelector('[aria-label="Send"]').disabled`),
       );
+      const panelTabs = (context, group, labels) =>
+        observePanelTabs(
+          {
+            run,
+            click,
+            parkPointer,
+            capture,
+            press,
+            send,
+            width,
+            theme,
+            rows: report.panelTabs,
+          },
+          context,
+          group,
+          labels,
+        );
+      await click(".inspector-toggle");
+      await panelTabs("folder", "Workspace panels", ["Files"]);
+      await click(".panel-collapse-btn");
       await click(".welcome-action");
       await wait(`document.querySelector('.cwd-filter')`);
       await audit("directory chooser", [
@@ -598,6 +628,16 @@ try {
       await audit("service", ["dialog", "dialog header", "dialog footer"]);
       await press("Escape", 27);
       await click(".model-trigger");
+      await observeDisabledModels({
+        run,
+        wait,
+        press,
+        scrollTo,
+        capture,
+        width,
+        theme,
+        rows: report.disabledModels,
+      });
       await audit("models", [".model-popover", ".model-popover-notes"]);
       await press("Escape", 27);
       await click(".chat-composer textarea");
@@ -611,6 +651,8 @@ try {
         `document.querySelector('.drawer-right:not([inert]) .file-main')`,
       );
       await audit("files", [".drawer-right", ".files-panel", ".file-main"]);
+      await panelTabs("chat", "Workspace panels", ["Files", "Branches"]);
+      await click('.rp-tabs[aria-label="Workspace panels"] button', "Files");
       await click(".file-main", "material.ts");
       await wait(`document.querySelector('.file-preview .codeblock')`);
       await audit("file preview", [
@@ -943,6 +985,16 @@ try {
       )
         await click(".inspector-toggle");
       await sleep(250); // The opener slides the target in; hit-test after its transition.
+      await panelTabs("history", "Workspace panels", [
+        "Files",
+        "History details",
+      ]);
+      await panelTabs("history", "Inspector", [
+        "contents",
+        "checks",
+        "changes",
+        "reviews",
+      ]);
       await click('.rp-tabs[aria-label="Inspector"] button', "changes");
       await wait(`document.querySelector('.scm-file button')`);
       await click(".scm-file button");
@@ -958,7 +1010,7 @@ try {
         "selected line number",
         selected,
         await capture(selected, async () => [
-          await run(gutterSample, selected),
+          await run(glyphSample, selected, "2"),
         ]),
         { line: 2, selected: true, hovered: false },
       );
@@ -994,6 +1046,24 @@ try {
         ".scm-diff-line.add",
         ".scm-diff-line.del",
       ]);
+      await observeCopy(
+        "paged artifact",
+        ".scm-body .field-details button",
+        "Copy full retained field",
+        fullArtifact,
+      );
+      await previewMode("raw");
+      await observeArtifactFind({
+        click,
+        wait,
+        press,
+        ev,
+        run,
+        send,
+        width,
+        theme,
+        rows: report.artifactFind,
+      });
       if (width <= 900) await press("Escape", 27);
       else await click(".inspector-toggle");
       // Start the next folder-first observation in this disposable origin only.
@@ -1054,28 +1124,38 @@ try {
   await ambient(true);
   // A real background target, not a synthetic visibilitychange dispatch.
   await send("Page.bringToFront");
-  const other = await b.call("Target.createTarget", {
-    url: "about:blank",
-    newWindow: false,
-    background: false,
+  // Open from the measured page: an unrelated CDP target in a separate
+  // window can be active without hiding this one. No profile is reused.
+  await send("Runtime.evaluate", {
+    expression: "void window.open('about:blank', '_blank')",
+    userGesture: true,
   });
-  await b.call("Target.activateTarget", { targetId: other.targetId });
-  // Activation is asynchronous. Start the interval only after observing the
-  // real hidden state, not a fixed delay after requesting the other tab.
-  for (let i = 0; i < 50 && !(await ev("document.hidden")); i++)
-    await sleep(100);
-  if (await ev("document.hidden")) {
-    const initial = await ev("opticalProbe.draws");
-    await sleep(1000);
-    assert.ok(await ev("document.hidden"));
-    assert.equal(await ev("opticalProbe.draws"), initial);
-    report.hiddenDraws = 0;
-  } else
+  const { targetInfos } = await b.call("Target.getTargets");
+  const other = targetInfos.find(
+    (t) => t.type === "page" && t.openerId === b.targetId,
+  );
+  if (other) {
+    const { sessionId } = await b.call("Target.attachToTarget", {
+      targetId: other.targetId,
+      flatten: true,
+    });
+    await b.call("Page.bringToFront", {}, sessionId);
+    for (let i = 0; i < 50 && !(await ev("document.hidden")); i++)
+      await sleep(100);
+    if (await ev("document.hidden")) {
+      const initial = await ev("opticalProbe.draws");
+      await sleep(1000);
+      assert.ok(await ev("document.hidden"));
+      assert.equal(await ev("opticalProbe.draws"), initial);
+      report.hiddenDraws = 0;
+    }
+    await b.call("Target.closeTarget", { targetId: other.targetId });
+    await send("Page.bringToFront");
+  }
+  if (report.hiddenDraws !== 0)
     limited.push(
-      "Headless target activation did not hide the original document; background draw count unmeasured.",
+      "The browser did not open and foreground a sibling tab that hid this document; background draw count unmeasured.",
     );
-  await b.call("Target.closeTarget", { targetId: other.targetId });
-  await b.call("Target.activateTarget", { targetId: b.targetId });
   // Summarize main-thread Paint events while the trace streams; never save a
   // raw trace. A shared layer is not evidence every glyph in it was repainted.
   let paints = [],

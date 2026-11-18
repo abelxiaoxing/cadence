@@ -27,7 +27,11 @@ export function DiffView({ text }: { text: string }) {
         else if (ln.startsWith("+")) cls = "add";
         else if (ln.startsWith("-")) cls = "del";
         return (
-          <div key={key} className={`scm-diff-line ${cls}`}>
+          <div
+            key={key}
+            className={`scm-diff-line ${cls}`}
+            data-retained-field={ln ? true : undefined}
+          >
             {ln || " "}
           </div>
         );

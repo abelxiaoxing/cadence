@@ -20,13 +20,13 @@ export function DetailPane({
   client,
   cursor,
   highlight,
-  render,
+  preview,
   compact = false,
 }: {
   client: ServiceClient;
   cursor: ReadCursor;
   highlight?: ByteRange;
-  render?: (text: string) => ReactNode;
+  preview?: { view: string; render: (text: string) => ReactNode };
   compact?: boolean;
 }) {
   const { t, tx } = useT();
@@ -106,6 +106,7 @@ export function DetailPane({
     }
   };
   const data = page && !("kind" in page) ? page : undefined;
+  const pageKey = data ? canonicalJson(data.cursor) : "";
   const marked = () => {
     if (!data || !highlight || !data.range) return data?.text;
     const start =
@@ -144,12 +145,14 @@ export function DetailPane({
           </p>
         )}
         <div className="toolbar">
-          <button
-            type="button"
-            onClick={() => setMode((m) => (m === "raw" ? "markdown" : "raw"))}
-          >
-            {mode === "raw" ? t("Markdown page") : t("Raw page")}
-          </button>
+          {!preview && (
+            <button
+              type="button"
+              onClick={() => setMode((m) => (m === "raw" ? "markdown" : "raw"))}
+            >
+              {mode === "raw" ? t("Markdown page") : t("Raw page")}
+            </button>
+          )}
           <button
             type="button"
             disabled={!!copying.current}
@@ -197,16 +200,20 @@ export function DetailPane({
           {!compact && (
             <LocalSearchBar
               container={textContainer}
-              version={`${data.content.recordId}:${data.content.version}:${data.range?.start ?? 0}:${mode}`}
+              version={`${pageKey}:${preview?.view ?? mode}`}
             />
           )}
-          <div ref={textContainer} data-retained-field>
-            {render ? (
-              render(data.text)
-            ) : mode === "markdown" ? (
-              <Markdown text={data.text} />
+          <div ref={textContainer}>
+            {preview ? (
+              <div key={pageKey}>{preview.render(data.text)}</div>
             ) : (
-              <pre className="detail-text">{marked()}</pre>
+              <div data-retained-field>
+                {mode === "markdown" ? (
+                  <Markdown text={data.text} />
+                ) : (
+                  <pre className="detail-text">{marked()}</pre>
+                )}
+              </div>
             )}
           </div>
         </>
