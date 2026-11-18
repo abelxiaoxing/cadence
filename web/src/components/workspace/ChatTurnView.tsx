@@ -11,7 +11,7 @@ import {
   FiCornerDownRight,
   FiEdit2,
 } from "react-icons/fi";
-import type { TurnSource } from "../../client/conversation-reader";
+import { type TurnSource, unsettled } from "../../client/conversation-reader";
 import { useT } from "../../i18n/locale";
 import { StreamMarkdown } from "../StreamMarkdown";
 import {
@@ -67,7 +67,7 @@ export const ChatTurnView = memo(function ChatTurnView({
   const answer = replies.filter(
     ({ step }) => step.role === "assistant" && !step.error,
   );
-  const live = header.status === "queued" || header.status === "running";
+  const live = unsettled(header.status);
   // "After this turn": offered on the turn's last message, once Pi ended it.
   const continueAction = onContinue && header.entry && (
     <MessageAction
@@ -244,7 +244,9 @@ export const ChatTurnView = memo(function ChatTurnView({
             {waiting && (
               <p className="msg-working" role="status">
                 <span className="working-spin" aria-hidden="true" />
-                {header.status === "queued" ? tx("queued") : t("Working…")}
+                {header.status === "running"
+                  ? t("Working…")
+                  : tx(header.status)}
               </p>
             )}
             {omitted.map((note) => (
@@ -291,7 +293,7 @@ export const ChatTurnView = memo(function ChatTurnView({
           {notice.map((line) => tx(line)).join("\n")}
         </p>
       )}
-      {!["completed", "running", "queued"].includes(header.status) && (
+      {!live && header.status !== "completed" && (
         <p className={`ep-state ${header.status}`}>{tx(header.status)}</p>
       )}
     </section>

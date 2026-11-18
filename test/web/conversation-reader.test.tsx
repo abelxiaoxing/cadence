@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { IMAGE_LIMITS } from "../../src/image-content.mjs";
 import {
@@ -13,6 +14,8 @@ import {
   IDLE_MS,
   LIVE_MS,
 } from "../../web/src/client/conversation-reader";
+import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
+import { LocaleProvider } from "../../web/src/i18n/locale";
 import { PNG } from "../helpers/images.ts";
 import {
   independentFixtureIds,
@@ -41,6 +44,8 @@ const step = (n: number): ChatStep => ({
 });
 interface Turn {
   id: string;
+  /** Pi entry when different from the turn id; null before Pi writes it. */
+  entry?: string | null;
   status: ChatStatus;
   steps: ChatStep[];
   stable: number;
@@ -53,19 +58,20 @@ function owner(turns: Turn[]) {
   const value = async (request: WorkbenchRead): Promise<WorkbenchResult> => {
     if (request.kind === "conversation") {
       const head = turns.at(-1);
+      const leaf = head?.entry !== undefined ? head.entry : (head?.id ?? null);
       return {
         kind: "conversation",
         summary: head
           ? {
               id,
               title: "t",
-              leaf: head.id,
+              leaf,
               status: head.status,
               updatedAt: 0,
               origin: "webui",
             }
           : null,
-        leaf: head?.id ?? null,
+        leaf,
         continues: true,
         turns: turns.length,
         branches: turns.length ? 1 : 0,
@@ -86,7 +92,7 @@ function owner(turns: Turn[]) {
         ordinal: request.ordinal,
         turn: {
           id: turn.id,
-          entry: turn.id,
+          entry: turn.entry === undefined ? turn.id : turn.entry,
           at: 0,
           status: turn.status,
           notice: "",
@@ -180,6 +186,54 @@ it("shows the newest turns first, reads a settled turn once and loads earlier on
   ]);
   reader.close();
 });
+
+it.each(["en", "zh"] as const)(
+  "%s: the first turn read shows startup without inventing output, and polls through to the real reply",
+  async (locale) => {
+    vi.useFakeTimers();
+    const turn: Turn = { ...settled(1), entry: null, status: "starting" };
+    const o = owner([turn]);
+    const reader = new ConversationReader(o.client, id, () => {});
+    const body = () =>
+      renderToStaticMarkup(
+        <LocaleProvider initial={locale}>
+          <ChatTurnView turn={reader.view().turns[0]} />
+        </LocaleProvider>,
+      );
+    try {
+      reader.setActive(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reader.view().summary?.status).toBe("starting");
+      const first = body();
+      expect(first).toContain("Hello");
+      expect(first).toMatch(
+        locale === "zh" ? /正在启动<\/p>/ : /starting<\/p>/,
+      );
+      expect(first).not.toMatch(
+        /queued|排队中|Working…|处理中…|ep-state starting|msg-part/,
+      );
+      o.reads.length = 0;
+      turn.status = "running";
+      await vi.advanceTimersByTimeAsync(LIVE_MS);
+      expect(kinds(o.reads)).toEqual(["conversation", "turn 0/null"]);
+      expect(body()).toContain(locale === "zh" ? "处理中…" : "Working…");
+      turn.steps.push({
+        ...step(0),
+        id: "answer",
+        role: "assistant",
+        text: "Now answered.",
+      });
+      turn.stable = turn.steps.length;
+      turn.status = "completed";
+      turn.entry = "answer";
+      await vi.advanceTimersByTimeAsync(LIVE_MS);
+      expect(body()).toContain("Now answered.");
+      expect(body()).not.toContain("msg-working");
+    } finally {
+      reader.close();
+    }
+  },
+);
 
 it("a long turn assembles from ranges; an unsettled one re-reads only what may change", async () => {
   vi.useFakeTimers();
