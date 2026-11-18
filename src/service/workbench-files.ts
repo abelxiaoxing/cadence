@@ -52,12 +52,15 @@ export class WorkbenchFiles {
       canonicalAmbientRoot(path),
     ]);
   }
-  allowed(path: string): void {
+  private permittedPath(path: string): void {
     if (
       path.split(/[\\/]/).some(sensitive) ||
       this.excluded.some((root) => inside(root, path))
     )
       throw new ContractError("forbidden");
+  }
+  allowed(path: string): void {
+    this.permittedPath(path);
     const stat = lstatSync(path);
     if (
       stat.isSymbolicLink() ||
@@ -67,6 +70,25 @@ export class WorkbenchFiles {
         stat.uid !== process.getuid())
     )
       throw new ContractError("forbidden");
+  }
+  /** Inspect just the named dependency entry. Never resolve or read a leaf link. */
+  dependencyEntry(path: string): "directory" | "symlink" | "absent" | "other" {
+    if (
+      isAbsolute(path) ||
+      path.includes("\\") ||
+      /[:\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(path) ||
+      path.split("/").some((part) => !part || part.startsWith(".")) ||
+      sanitizeText(path, this.secrets()) !== path
+    )
+      throw new ContractError("forbidden");
+    const entry = join(this.root, path);
+    this.permittedPath(entry);
+    if (!inside(this.root, entry)) throw new ContractError("forbidden");
+    if (!safeDirectory(dirname(entry))) return "absent";
+    const stat = lstatSync(entry, { throwIfNoEntry: false });
+    if (!stat) return "absent";
+    if (stat.isSymbolicLink()) return "symlink";
+    return stat.isDirectory() ? "directory" : "other";
   }
   directory(path: string): string {
     if (!isAbsolute(path) || !safeDirectory(path))
