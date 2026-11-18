@@ -60,7 +60,8 @@ The gateway preparation route cannot carry message text, select a model or grant
 Directory entries retain distinct cwd identities even when they resolve to the same checkout owner; old root-keyed entries remain readable without migration.
 Preparation binds the original Send's conversation location independently of its directory-navigation entry; it never replaces that entry's identity.
 Only successfully prepared epochs join whole-workbench Stop; browsing an independently running owner never adopts it, and directory aliases are joined once per exact owner epoch.
-Each project owner handles Stop for its admitted work: it signals the original workers and waits for process, auth and storage settlement. Uncertain settlement keeps the owner quarantined.
+Each project owner handles Stop for its admitted work: it signals the original workers and waits for process, auth and storage settlement.
+Uncertain settlement keeps the owner quarantined.
 
 Native conversation mode routes workflow requests through `index → cadence-mode → native client → Workbench → Workflows`.
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, explicit unchanged-plan revalidation, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
@@ -81,9 +82,13 @@ Its readonly directory validator is shared with the repository verification guar
 `src/cadence-preferences.ts` stores only the credential-free default for new conversations.
 The readonly diagnostics path is `index → history-shell → native client → history/workflow readers`; it cannot create, approve, execute, check, review or select a model.
 `TaskActions`, `TaskScheduler`, `ActionAdmission`, the old graph executor and foreground `TaskController` are removed, along with their execution-only tests and prospective-plan helper.
-`Workbench` passes `CheckoutGate` to `Workflows`, not to `Conversations`. Ordinary Sends neither acquire nor wait for a checkout permit.
-Between workflows, research shares read access; direct working-copy delivery, target preflight, candidate creation and final Git integration require exclusive access. Isolated candidate work holds no target checkout permit.
-Cancellation removes a pending permit request. Once granted, a permit stays held until the original operation settles, even on Stop or quarantine. See [Conversation workflow lifetime](lifetimes.md#conversation-workflow-lifetime) for stage boundaries and writer fairness.
+`Workbench` passes `CheckoutGate` to `Workflows`, not to `Conversations`.
+Ordinary Sends neither acquire nor wait for a checkout permit.
+Between workflows, research shares read access; direct working-copy delivery, target preflight, candidate creation and final Git integration require exclusive access.
+Isolated candidate work holds no target checkout permit.
+Cancellation removes a pending permit request.
+Once granted, a permit stays held until the original operation settles, even on Stop or quarantine.
+See [Conversation workflow lifetime](lifetimes.md#conversation-workflow-lifetime) for stage boundaries and writer fairness.
 `ServiceCoordination` owns a `CheckoutStore`, not task CRUD.
 Retained task readers/writers use an explicit `legacyTaskStore` adapter; current path/filesystem consumers import `workspace.ts` directly.
 Conversation choice versions bind their durable preference revision, identity/cwd, live source selection, owner epoch and access generation; no model is reconstructed from task history.
