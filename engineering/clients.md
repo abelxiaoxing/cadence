@@ -19,6 +19,13 @@ Planning tools expose coordinated readonly subagents, proposals and observations
 Product choices use one batch with stable question and option IDs, tradeoffs, recommendations, related acceptance and optional dependencies on earlier answers.
 Native Pi keeps the editable draft in its branch entries and resumes it with `/cadence design`.
 The browser owner retains it with its conversation revision and rejects stale edits.
+At tool ingress only, omitted `when`, `null` and the provider's pair of empty dependency IDs mean an independent question.
+Partial, unknown and forward dependencies refuse the complete batch with a field path; the saved representation has no `when` for independent questions.
+A pending batch opens a modal in the visible conversation once answering is available.
+Closing it leaves the conversation card and saved choices intact; polling and editing the same draft do not reopen a dismissed modal.
+The card can reopen it and shows submitted answers without prompting again.
+Filling recommendations preserves explicit answers.
+No modal is inferred from assistant prose or from a refused publication.
 Selecting or revisiting a question requires no model turn.
 Submission sends the confirmed choices for the implementation card.
 Revising design retires the previous card.

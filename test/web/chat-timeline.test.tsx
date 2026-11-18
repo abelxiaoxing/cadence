@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
 import {
   type ChatStep,
   type ChatTreeNode,
@@ -25,6 +26,7 @@ import {
 } from "../../web/src/client/conversation-reader";
 import { useConversation } from "../../web/src/client/use-conversation";
 import { useWorkbench } from "../../web/src/client/use-workbench";
+import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
 import { MarkdownBody } from "../../web/src/components/rich/Markdown";
 import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
 import { CollapsibleHead } from "../../web/src/components/transcript/CollapsibleHead";
@@ -36,10 +38,12 @@ import {
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { DesignCard } from "../../web/src/components/workspace/DesignCard";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
 import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import { designQuestionsFixture } from "../helpers/design-questions.ts";
 import {
   type IndependentCase,
   type IndependentCheckpoint,
@@ -495,6 +499,60 @@ function elements<P = { children?: ReactNode }>(
     ...elements<P>(node.props.children, type),
   ];
 }
+it("presents one batch after settlement, preserves dismissal across edits and only submits on click", () => {
+  let draft = newDesign(crypto.randomUUID(), {
+    questions: designQuestionsFixture,
+  });
+  const onSubmit = vi.fn();
+  const card = (disabled = false) =>
+    render(() =>
+      DesignCard({
+        draft,
+        active: true,
+        disabled,
+        onSubmit,
+        onEdit: (answers) => {
+          draft = reviseDesign(draft, answers, false);
+        },
+      }),
+    );
+  const dialog = (node: ReactNode) =>
+    elements<ComponentProps<typeof ActionDialog>>(node, ActionDialog)[0];
+  const button = (node: ReactNode, label: string) =>
+    required(
+      elements<{ children: ReactNode; onClick(): void }>(node, "button").find(
+        (e) => e.props.children === label,
+      ),
+    ).props;
+  expect(dialog(card(true))).toBeUndefined();
+  commit();
+  card();
+  commit();
+  dialog(card()).props.onClose?.();
+  draft = { ...draft, revision: draft.revision + 1 };
+  expect(dialog(card())).toBeUndefined();
+  button(card(), "Choose answers").onClick();
+  elements<{ type: string; onChange(): void }>(card(), "input")
+    .filter((e) => e.props.type === "radio")[1]
+    .props.onChange();
+  expect(draft.answers).toEqual([
+    { question: "surface", option: "everywhere" },
+  ]);
+  button(card(), "Fill unanswered with recommendations").onClick();
+  expect(draft.answers).toHaveLength(3); // preserves the explicit answer and unlocks its dependent question
+  expect(onSubmit).not.toHaveBeenCalled();
+  button(
+    card(),
+    "Submit design and use recommendations for unanswered questions",
+  ).onClick();
+  expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+    ...draft,
+    submitted: true,
+    revision: draft.revision + 1,
+  });
+  expect(dialog(card())).toBeUndefined();
+});
+
 // The real workflow component owns recordedTurn and the detail closure. Only
 // transport replies and hook scheduling are controlled here; no backend import,
 // persisted-file claim, or hand-written replacement detail function.

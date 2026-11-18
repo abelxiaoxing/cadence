@@ -1086,6 +1086,7 @@ export function ChatWorkspace({
   };
   const editDesign = async (answers: DesignAnswer[]) => {
     if (!state?.design || decisionBusy.current) return;
+    clearError();
     const generation = sendGeneration.current;
     decisionBusy.current = true;
     setBusy(true);
@@ -2024,8 +2025,17 @@ export function ChatWorkspace({
             <DesignCard
               key={state.design.id}
               draft={state.design}
+              active={!hidden}
+              error={error ? describeError(t, error) : undefined}
               disabled={
-                busy || running || !canSend || !cadenceKnown || !!approving
+                !!pinned ||
+                !!anchor ||
+                attaching ||
+                busy ||
+                !!running ||
+                !canSend ||
+                !cadenceKnown ||
+                !!approving
               }
               onEdit={editDesign}
               onSubmit={(d) =>
