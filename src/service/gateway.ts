@@ -25,6 +25,7 @@ import {
   publicError,
 } from "../service-contract.ts";
 import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
+import { sanitizeText } from "../worker-redaction.mjs";
 import { effectiveWorkspace } from "../workspace.ts";
 import { ActivityDiscoveryReader } from "./activity-discovery.ts";
 import {
@@ -43,21 +44,18 @@ import {
   stopService,
 } from "./cli.ts";
 import { localOrigin } from "./config.ts";
-import {
-  closed,
-  decodeHash,
-  decodeId,
-  integer,
-  oneOf,
-  text,
-} from "./contracts/core.ts";
+import { decodeOwnerActivity } from "./contracts/activity.ts";
+import { closed, decodeHash, decodeId, oneOf, text } from "./contracts/core.ts";
 import {
   canUpgrade,
   decodeProjectEntry,
   decodeVersion,
   type ExecutionPreparation,
   MAINTENANCE_ACTIONS,
+  MAINTENANCE_WORK_LIMIT,
   type MaintenanceJob,
+  type MaintenanceWork,
+  type MaintenanceWorkItem,
   type ServiceEntry,
 } from "./contracts/gateway.ts";
 import {
@@ -110,6 +108,19 @@ interface Binding {
   project: GatewayProject;
   endpoint: string;
   cookie: string;
+}
+/** Bind the confirmation to an exact set of work, independent of phase and order. */
+export function maintenanceWorkDigest(
+  gatewayEpoch: string,
+  work: readonly (readonly [
+    project: string,
+    ownerEpoch: string,
+    kind: MaintenanceWorkItem["source"],
+    id: string,
+  ])[],
+): string {
+  const keys = work.map((identity) => canonicalJson(identity)).sort();
+  return hash(canonicalJson([gatewayEpoch, keys]));
 }
 /** Serial owner settlement avoids racing their shared registry writer.
  * Resolves with the projects whose Stop was not confirmed; each keeps its own
@@ -333,30 +344,76 @@ export async function createGateway(
   const commands = packageCommands(packageSystem);
   let route: Promise<UpgradeRoute> | undefined,
     requesting = false;
-  /** Accepted work in associated running owners: what a restart stops. */
-  async function associatedWork(): Promise<number> {
-    const counts = await Promise.all(
+  /** Read the actual owners Stop will join. Discovery's cached sidebar can
+   * also include standalone Pi turns and omit owners; it cannot confirm Stop. */
+  async function associatedWork(): Promise<MaintenanceWork> {
+    if (preparing) throw new ContractError("unavailable");
+    const targets = () =>
       [
-        ...new Map(store.associatedProjects().map((p) => [p.path, p])).values(),
-      ].map(async (p) => {
-        try {
-          const observed = await serviceStatus(
-            new ServiceCoordination(p.path, input.stateHome),
-          );
-          return observed &&
-            typeof observed === "object" &&
-            "status" in observed &&
-            observed.status === "alive" &&
-            "work" in observed &&
-            typeof observed.work === "number"
-            ? observed.work
-            : 0;
-        } catch {
-          return 0;
-        }
+        ...new Map(
+          store
+            .associatedProjects()
+            .map((p) => [canonicalJson([p.path, p.epoch]), p]),
+        ).entries(),
+      ].sort(([a], [b]) => (a < b ? -1 : a === b ? 0 : 1));
+    const selected = targets();
+    const secrets = acquired.access.redactionLiterals();
+    const work = await Promise.all(
+      selected.map(async ([, p]) => {
+        const c = new ServiceCoordination(p.path, input.stateHome);
+        if (c.store.root !== p.path) throw new ContractError("stale");
+        const observed = c.inspect();
+        if (observed.status === "stopped" || observed.status === "absent")
+          return [];
+        const epoch = c.localAccess().epoch;
+        if (epoch !== p.epoch) return []; // Stop leaves a replaced owner alone.
+        const summary = decodeOwnerActivity(await nativeCall(c, "activity"));
+        if (
+          !summary.complete ||
+          summary.epoch !== epoch ||
+          c.localAccess().epoch !== epoch
+        )
+          throw new ContractError("unavailable");
+        const project = sanitizeText(p.path, secrets).replace(
+          /[\p{Cc}\p{Cf}]/gu,
+          " ",
+        );
+        return summary.activities.map((item) => {
+          if (item.epoch !== epoch || item.source === "terminal")
+            throw new ContractError("unavailable");
+          return {
+            key: [p.path, epoch, item.source, item.id] as const,
+            item: {
+              project,
+              id: item.id,
+              source: item.source,
+              sessionId: item.sessionId,
+            } satisfies MaintenanceWorkItem,
+          };
+        });
       }),
-    );
-    return counts.reduce((sum, count) => sum + count, 0);
+    ).then((lists) => lists.flat());
+    if (
+      preparing ||
+      canonicalJson(targets().map(([key]) => key)) !==
+        canonicalJson(selected.map(([key]) => key)) ||
+      work.length > MAINTENANCE_WORK_LIMIT
+    )
+      throw new ContractError("unavailable");
+    const confirmed = {
+      digest: maintenanceWorkDigest(
+        auth.epoch,
+        work.map(({ key }) => key),
+      ),
+      items: work.map(({ item }) => item),
+    };
+    // Leave room for the service status and job in the same bounded reply.
+    canonicalJson(confirmed, LIMITS.controlBytes - 4096);
+    return confirmed;
+  }
+  async function assertConfirmedWork(digest: string): Promise<void> {
+    if ((await associatedWork()).digest !== digest)
+      throw new ContractError("stale");
   }
   function latestJob(): MaintenanceJob | null {
     const job = record.read();
@@ -374,7 +431,7 @@ export async function createGateway(
         ? { name: managed.unit, scope: managed.scope ?? "user" }
         : null,
       upgrade: await route,
-      work: await associatedWork(),
+      work: managed ? await associatedWork().catch(() => null) : null,
       job: latestJob(),
     };
   }
@@ -385,7 +442,8 @@ export async function createGateway(
   ): Promise<MaintenanceJob> {
     const o = closed(value, ["action", "from", "to", "work", "epoch"]);
     const action = oneOf(o.action, MAINTENANCE_ACTIONS),
-      to = o.to === null ? null : decodeVersion(o.to);
+      to = o.to === null ? null : decodeVersion(o.to),
+      work = decodeHash(o.work);
     if ((action === "upgrade") !== (to !== null))
       throw new ContractError("invalid");
     if (decodeId(o.epoch) !== auth.epoch || decodeVersion(o.from) !== version)
@@ -397,8 +455,7 @@ export async function createGateway(
     if (requesting || jobRunning(managed)) throw new ContractError("conflict");
     requesting = true;
     try {
-      if ((await associatedWork()) !== integer(o.work, 0, 1_000_000))
-        throw new ContractError("stale");
+      await assertConfirmedWork(work);
       current();
       assert();
       const job: MaintenanceJob = {
@@ -413,7 +470,7 @@ export async function createGateway(
         endedAt: null,
       };
       record.write(job);
-      if (!launchJob(managed, job)) {
+      if (!launchJob(managed, job, work)) {
         record.finish(job.id, "failed", "refused", version);
         throw new ContractError("unavailable");
       }
@@ -861,8 +918,17 @@ export async function createGateway(
           });
           return;
         }
-        closed(value, []);
         if (operation === "stop") {
+          if (
+            value &&
+            typeof value === "object" &&
+            Object.hasOwn(value, "confirmedWork")
+          ) {
+            const { confirmedWork } = closed(value, ["confirmedWork"]);
+            await assertConfirmedWork(decodeHash(confirmedWork));
+            auth.current(caller);
+            assert();
+          } else closed(value, []);
           reply(res, 200, {
             kind: "ok",
             value: { status: "accepted", epoch: auth.epoch },
@@ -870,6 +936,7 @@ export async function createGateway(
           stop();
           return;
         }
+        closed(value, []);
         if (operation === "token-rotate") {
           acquired.access.rotate();
           await Promise.all([...retirements]);
@@ -1185,7 +1252,10 @@ export async function createGateway(
         return;
       }
       if (raw === "/workbench/v1/service" && req.method === "GET") {
-        reply(res, 200, await serviceEntry());
+        const service = await serviceEntry();
+        auth.current(caller);
+        assert();
+        reply(res, 200, service);
         return;
       }
       // Registry contact only on an explicit check, never in the background.

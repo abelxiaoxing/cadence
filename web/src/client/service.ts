@@ -73,10 +73,10 @@ export function readRelease(signal?: AbortSignal): Promise<ReleaseEntry> {
 }
 export interface MaintenanceRequest {
   action: MaintenanceJob["action"];
-  /** The version, target and work count the confirmation showed. */
+  /** The version, target and digest of the work the confirmation showed. */
   from: string;
   to: string | null;
-  work: number;
+  work: string;
   epoch: string;
 }
 /** One explicit request; never retried, since its response may be lost while

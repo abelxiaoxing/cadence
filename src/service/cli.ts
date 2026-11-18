@@ -22,6 +22,7 @@ import {
   agentDirectory,
   autostartStatus,
   configureAutostart,
+  generatedUnit,
   hostSystem,
   type LingerState,
   type OwnerControl,
@@ -30,8 +31,9 @@ import {
   serviceConfigPath,
   serviceName,
   stopAutostart,
+  unitWorkspace,
 } from "./autostart.ts";
-import { closed, text } from "./contracts/core.ts";
+import { closed, decodeHash, text } from "./contracts/core.ts";
 import { decodeVersion } from "./contracts/gateway.ts";
 import {
   type RegistryLockDiagnostic,
@@ -121,7 +123,7 @@ export function nativeCall(
   c: ControlTarget,
   operation: string,
   reveal = false,
-  controlBody?: { attachments: string[] },
+  controlBody?: { attachments: string[] } | { confirmedWork: string },
   signal?: AbortSignal,
 ): Promise<unknown> {
   if (signal?.aborted) return Promise.reject(new ContractError("unavailable"));
@@ -245,12 +247,23 @@ export async function serviceStatus(
     };
   }
 }
-export async function stopService(c: ControlTarget): Promise<ManagementReply> {
+export async function stopService(
+  c: ControlTarget,
+  confirmedWork?: string,
+): Promise<ManagementReply> {
   // A disconnected/missing ack is never a successful stop, even if a later file
   // looks stopped. Only this authenticated exact-epoch accepted request is joined.
   let epoch: string;
   try {
-    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
+    const reply = closed(
+      await nativeCall(
+        c,
+        "stop",
+        false,
+        confirmedWork ? { confirmedWork } : undefined,
+      ),
+      ["status", "epoch"],
+    );
     if (reply.status !== "accepted") throw new ContractError("unavailable");
     epoch = decodeId(reply.epoch);
   } catch {
@@ -694,11 +707,18 @@ async function serverAction(
 function upgrade(
   s: AutostartSystem,
   to: string | undefined,
+  stopConfirmed?: () => Promise<boolean>,
 ): Promise<UpgradeResult> {
   if (s.platform !== "linux") return Promise.resolve({ status: "unsupported" });
   return upgradeService(s, to, {
     commands: packageCommands(s),
-    stop: () => serverAction(s, "stop", undefined, false),
+    stop: async () => {
+      if (stopConfirmed && !(await stopConfirmed()))
+        return { status: "unconfirmed" };
+      // Any later Stop is rollback of the newly installed instance.
+      stopConfirmed = undefined;
+      return serverAction(s, "stop", undefined, false);
+    },
     restart: () => restartInstalled(s),
   });
 }
@@ -875,7 +895,9 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   let linger = process.env.CADENCE_LINGER !== "0";
   let scope: "system" | "user" | undefined;
   let name: string | undefined, port: number | undefined;
-  let to: string | undefined, job: string | undefined;
+  let to: string | undefined,
+    job: string | undefined,
+    confirmedWork: string | undefined;
   const seen = new Set<string>();
   while (argv.length) {
     const flag = argv.shift();
@@ -900,8 +922,12 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       argv[0]
     )
       job = decodeId(argv.shift());
+    else if (flag === "--confirmed-work" && argv[0])
+      confirmedWork = decodeHash(argv.shift());
     else throw new ContractError("invalid");
   }
+  if ((job === undefined) !== (confirmedWork === undefined))
+    throw new ContractError("invalid");
   const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl, {
     scope,
     name,
@@ -949,11 +975,39 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
     }
   }
   let result: UpgradeResult & { service?: string; endpoint?: string };
+  const stopConfirmed =
+    confirmedWork && job
+      ? async () => {
+          try {
+            const unit = generatedUnit(s);
+            if (typeof unit !== "string" || unitWorkspace(unit) !== null)
+              return false;
+            const store = new GatewayStore(serviceConfigPath(s));
+            const recorded = new MaintenanceRecord(store).read();
+            if (
+              recorded?.id !== job ||
+              recorded.state !== "running" ||
+              recorded.action !== action ||
+              recorded.to !== (to ?? null) ||
+              recorded.from !== installedVersion(s.root)
+            )
+              return false;
+            // The gateway rechecks the work at admission of its orderly Stop.
+            return (
+              (await stopService(store, confirmedWork)).status === "stopped"
+            );
+          } catch {
+            return false;
+          }
+        }
+      : undefined;
   try {
     result =
       action === "upgrade"
-        ? await upgrade(s, to)
-        : await serverAction(s, action, requested, linger);
+        ? await upgrade(s, to, stopConfirmed)
+        : stopConfirmed && !(await stopConfirmed())
+          ? { status: "unconfirmed" }
+          : await serverAction(s, action, requested, linger);
   } catch (error) {
     if (error instanceof ContractError && error.code === "invalid")
       process.stderr.write(

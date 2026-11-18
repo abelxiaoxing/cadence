@@ -1,10 +1,12 @@
 // The service dialog's static presentation; the restart itself is covered by
 // test/service-maintenance-systemd.test.ts against a real systemd manager.
+import { Children, isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   canUpgrade,
   type MaintenanceJob,
+  type ServiceEntry,
   UPGRADE_ROUTES,
 } from "../../src/service/contracts/gateway.ts";
 import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
@@ -12,7 +14,9 @@ import { FolderSetup } from "../../web/src/components/workspace/FolderSetup";
 import {
   describeJob,
   installationMessage,
+  maintenanceOutcome,
   ServiceDialog,
+  UpgradeOffer,
   unchanged,
 } from "../../web/src/components/workspace/ServiceDialog";
 import {
@@ -85,6 +89,79 @@ it("only a job that stopped nothing keeps the page connected", () => {
   expect(
     unchanged(job({ action: "restart", to: null, version: "2.0.28" })),
   ).toBe(false);
+});
+it.each([0, 3])(
+  "the displayed target is the final upgrade action (%i running)",
+  (work) => {
+    const onUpgrade = vi.fn();
+    const t: Translator["t"] = (key, vars) => translate("zh", key, vars);
+    const props = {
+      version: "2.0.29",
+      work: Array.from({ length: work }, (_, index) => ({
+        project: `/projects/project-${index}`,
+        source: index === 0 ? ("workflow" as const) : ("turn" as const),
+        id: `work-${index}`,
+        sessionId: index === 0 ? "sample-conversation" : null,
+      })),
+      sending: false,
+      onUpgrade,
+      t,
+    };
+    const offer = UpgradeOffer(props);
+    const html = renderToStaticMarkup(offer);
+    expect(html).toContain(
+      work ? "停止运行中的工作并升级到 2.0.29" : "升级到 2.0.29",
+    );
+    expect(html.includes("3 个正在运行的工作流或会话将被停止")).toBe(!!work);
+    if (work) {
+      expect(html).toContain("/projects/project-0");
+      expect(html).toContain("work-2");
+      expect(html).toContain("sample-conversation");
+    }
+    expect(html).toContain("升级成功后页面会自动刷新");
+    const actions = Children.toArray(offer.props.children).filter(
+      (item): item is ReactElement<{ onClick(): void }> =>
+        isValidElement(item) && item.type === "button",
+    );
+    expect(actions).toHaveLength(1);
+    expect(onUpgrade).not.toHaveBeenCalled();
+    actions[0].props.onClick();
+    expect(onUpgrade).toHaveBeenCalledExactlyOnceWith("2.0.29");
+    expect(renderToStaticMarkup(<UpgradeOffer {...props} sending />)).toContain(
+      'disabled=""',
+    );
+  },
+);
+it("reloads only for the submitted upgrade once its target is ready and serving", () => {
+  const submitted = job({ state: "running", version: null, endedAt: null });
+  const current: ServiceEntry = {
+    kind: "service",
+    work: null,
+    unit: null,
+    upgrade: "npm",
+    version: "2.0.29",
+    job: job({}),
+  };
+  expect(maintenanceOutcome(submitted, current)).toBe("reload");
+  expect(maintenanceOutcome(submitted, { ...current, version: "2.0.28" })).toBe(
+    "changed",
+  );
+  for (const other of [null, submitted, job({ id: "other" })])
+    expect(
+      maintenanceOutcome(submitted, { ...current, job: other }),
+    ).toBeUndefined();
+  for (const settled of [
+    job({ state: "rolled-back" }),
+    job({ state: "failed" }),
+    job({ version: submitted.from }),
+  ])
+    expect(maintenanceOutcome(submitted, { ...current, job: settled })).toBe(
+      settled,
+    );
+  const restart = job({ action: "restart", to: null });
+  expect(maintenanceOutcome(restart, { ...current, job: restart })).toBe(
+    restart,
+  );
 });
 it("a dialog without a close handler offers no dismissal while a restart runs", () => {
   const closable = renderToStaticMarkup(

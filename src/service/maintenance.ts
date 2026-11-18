@@ -140,7 +140,11 @@ export class MaintenanceRecord {
 /** Runs `cadence server <action> --job <id>` in its own transient unit, with
  * the environment the service's definition bakes, so it observes the same
  * state home and Pi sources. The fixed name admits one job at a time. */
-export function launchJob(s: AutostartSystem, job: MaintenanceJob): boolean {
+export function launchJob(
+  s: AutostartSystem,
+  job: MaintenanceJob,
+  confirmedWork: string,
+): boolean {
   const text = generatedUnit(s);
   if (typeof text !== "string") return false;
   const scope = s.scope === "system" ? "--system" : "--user";
@@ -168,6 +172,8 @@ export function launchJob(s: AutostartSystem, job: MaintenanceJob): boolean {
       ...(job.to ? ["--to", job.to] : []),
       "--job",
       job.id,
+      "--confirmed-work",
+      confirmedWork,
     ],
     { stdio: "ignore", timeout: 20_000 },
   );

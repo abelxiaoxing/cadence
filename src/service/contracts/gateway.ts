@@ -15,6 +15,7 @@ import {
   oneOf,
   text,
 } from "./core.ts";
+import { decodeSessionId } from "./models.ts";
 /** Explicit preparation only; neither purpose sends a message or approves work. */
 export type ExecutionPreparation = "send" | "plan-validation";
 export interface ProjectEntry {
@@ -235,6 +236,33 @@ export function canUpgrade(route: (typeof UPGRADE_ROUTES)[number]): boolean {
     route === "bun-local"
   );
 }
+export const MAINTENANCE_WORK_LIMIT = 256;
+export interface MaintenanceWorkItem {
+  project: string;
+  source: "turn" | "workflow";
+  id: string;
+  sessionId: string | null;
+}
+export interface MaintenanceWork {
+  digest: string;
+  items: MaintenanceWorkItem[];
+}
+function decodeMaintenanceWork(value: unknown): MaintenanceWork {
+  const o = closed(value, ["digest", "items"]);
+  return {
+    digest: decodeHash(o.digest),
+    items: list(o.items, MAINTENANCE_WORK_LIMIT, (v) => {
+      const row = closed(v, ["project", "source", "id", "sessionId"]);
+      return {
+        project: text(row.project, 4096, true),
+        source: oneOf(row.source, ["turn", "workflow"]),
+        id: decodeId(row.id),
+        sessionId:
+          row.sessionId === null ? null : decodeSessionId(row.sessionId),
+      };
+    }),
+  };
+}
 export interface ServiceEntry {
   kind: "service";
   /** The running package version. */
@@ -243,8 +271,8 @@ export interface ServiceEntry {
    * WebUI cannot restart or upgrade it. */
   unit: { name: string; scope: "user" | "system" } | null;
   upgrade: (typeof UPGRADE_ROUTES)[number];
-  /** Accepted work in the associated running projects; a restart stops it. */
-  work: number;
+  /** The exact work an orderly Stop would end, or null if unconfirmed. */
+  work: MaintenanceWork | null;
   /** The latest restart or upgrade requested from the WebUI. */
   job: MaintenanceJob | null;
 }
@@ -270,7 +298,7 @@ export function decodeServiceEntry(value: unknown): ServiceEntry {
     version: decodeVersion(o.version),
     unit,
     upgrade: oneOf(o.upgrade, UPGRADE_ROUTES),
-    work: integer(o.work, 0, 1_000_000),
+    work: o.work === null ? null : decodeMaintenanceWork(o.work),
     job: o.job === null ? null : decodeMaintenanceJob(o.job),
   };
 }

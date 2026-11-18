@@ -2817,6 +2817,9 @@ function unitEnvironment(text2) {
   }
   return out;
 }
+function generatedUnit(s) {
+  return readGenerated(unitPath(s), MARKER);
+}
 function directory(path2) {
   try {
     return isAbsolute3(path2) && statSync2(path2).isDirectory();
@@ -7942,10 +7945,10 @@ async function serviceStatus(c, diagnose = false) {
     };
   }
 }
-async function stopService(c) {
+async function stopService(c, confirmedWork) {
   let epoch;
   try {
-    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
+    const reply = closed(await nativeCall(c, "stop", false, confirmedWork ? { confirmedWork } : undefined), ["status", "epoch"]);
     if (reply.status !== "accepted")
       throw new ContractError("unavailable");
     epoch = decodeId(reply.epoch);
@@ -8266,12 +8269,17 @@ async function serverAction(s, action, requested, linger) {
       return { status: "unsupported" };
   }
 }
-function upgrade(s, to) {
+function upgrade(s, to, stopConfirmed) {
   if (s.platform !== "linux")
     return Promise.resolve({ status: "unsupported" });
   return upgradeService(s, to, {
     commands: packageCommands(s),
-    stop: () => serverAction(s, "stop", undefined, false),
+    stop: async () => {
+      if (stopConfirmed && !await stopConfirmed())
+        return { status: "unconfirmed" };
+      stopConfirmed = undefined;
+      return serverAction(s, "stop", undefined, false);
+    },
     restart: () => restartInstalled(s)
   });
 }
@@ -8466,7 +8474,7 @@ async function serverMain(argv, hostUrl) {
   let linger = process.env.CADENCE_LINGER !== "0";
   let scope;
   let name, port;
-  let to, job2;
+  let to, job2, confirmedWork;
   const seen = new Set;
   while (argv.length) {
     const flag = argv.shift();
@@ -8491,9 +8499,13 @@ async function serverMain(argv, hostUrl) {
       to = decodeVersion(argv.shift());
     else if (flag === "--job" && (action === "restart" || action === "upgrade") && argv[0])
       job2 = decodeId(argv.shift());
+    else if (flag === "--confirmed-work" && argv[0])
+      confirmedWork = decodeHash(argv.shift());
     else
       throw new ContractError("invalid");
   }
+  if (job2 === undefined !== (confirmedWork === undefined))
+    throw new ContractError("invalid");
   const s = hostSystem(dirname14(dirname14(fileURLToPath2(hostUrl))), ownerControl, {
     scope,
     name
@@ -8538,8 +8550,22 @@ async function serverMain(argv, hostUrl) {
     }
   }
   let result;
+  const stopConfirmed = confirmedWork && job2 ? async () => {
+    try {
+      const unit = generatedUnit(s);
+      if (typeof unit !== "string" || unitWorkspace(unit) !== null)
+        return false;
+      const store = new GatewayStore(serviceConfigPath(s));
+      const recorded = new MaintenanceRecord(store).read();
+      if (recorded?.id !== job2 || recorded.state !== "running" || recorded.action !== action || recorded.to !== (to ?? null) || recorded.from !== installedVersion(s.root))
+        return false;
+      return (await stopService(store, confirmedWork)).status === "stopped";
+    } catch {
+      return false;
+    }
+  } : undefined;
   try {
-    result = action === "upgrade" ? await upgrade(s, to) : await serverAction(s, action, requested, linger);
+    result = action === "upgrade" ? await upgrade(s, to, stopConfirmed) : stopConfirmed && !await stopConfirmed() ? { status: "unconfirmed" } : await serverAction(s, action, requested, linger);
   } catch (error) {
     if (error instanceof ContractError && error.code === "invalid")
       process.stderr.write(`Cadence server install needs an existing absolute --workspace directory.

@@ -232,7 +232,7 @@ describe("installation discovery", () => {
         version: "1.0.0",
         unit: null,
         upgrade: route,
-        work: 0,
+        work: null,
         job: null,
       });
       expect(canUpgrade(dto.upgrade)).toBe(true);
