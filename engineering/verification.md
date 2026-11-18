@@ -579,6 +579,65 @@ The revised probe locates the trigger by the live reply lock and tests the insta
 These picker observations did not send a message, choose a model, use a live provider, qualify a physical device or repeat the performance windows.
 The full candidate checks and independent review remain the owner's evidence.
 
+### Partial composer paint after closing Inspector
+
+**Failed baseline.**
+On pre-repair HEAD `7e7b30a` (`a5bc3bf6ab8ca00bece76dce61bc270715d11a84f6b6e6198fe996aaef269865`), the owner's `optical-evidence-fxd9pr` recorded one failure in 143 scene audits.
+In light/1440×900 the capsule surface was still present, but its disabled mode label, model label and placeholder disappeared between `ready` and `stable`.
+The part of the hint still visible at the right is not the mode button.
+A computed foreground on a correctly painted material does not establish that the text was drawn.
+
+**Targeted comparison.**
+Same integration worktree, installed headless Chrome 151.0.7922.34, DPR 1, fresh profile per series and synthetic loopback reads.
+Each round opens history → Inspector → Changes, searches the retained artifact across views and pages, closes Inspector (Escape on compact screens) and enters `optical-unknown`.
+Each evidence directory below is under the inherited `TMPDIR` and retains a JSON summary and both unmodified PNGs for each observed round/view.
+`ready` is the first capture after route/heading/degraded notice/native disabled-button readiness; `stable` uses the existing 300ms and stable geometry.
+Neither phase substitutes for the other.
+
+| Light/1440, six rounds                   | Web build (prefix) | Ready / stable frames meeting all three text checks | Evidence directory        |
+| ---------------------------------------- | ------------------ | --------------------------------------------------- | ------------------------- |
+| Unchanged UI                             | `a5bc3bf6ab8c`     | 6/6 ready; 5/6 stable                               | `capsule-before-QUN4vH`   |
+| Short painted grip only                  | `40251c351733`     | 6/6 ready; 6/6 stable                               | `capsule-handle-OrlJHu`   |
+| Sibling filter plate only, original grip | `d50b5b170e5d`     | 6/6 ready; 5/6 stable                               | `capsule-plate-EuiukN`    |
+| Short grip and sibling plate             | `60ed592b4fe2`     | 6/6 ready; 6/6 stable                               | `capsule-combined-P33k1z` |
+
+The grip-only change **still failed** on the second dark/1440 stable capture in the two-round matrix `capsule-handle-matrix-XXrkZf`.
+Neither change in isolation establishes the compositor's root cause.
+The combined treatment keeps the hit area but changes only the mark, and paints the base and stationary grain on the capsule itself.
+A noninteractive workspace pseudo-element behind the form samples the backdrop; its CSS anchor follows wrapping and resizing.
+Without anchor support it is not needed for contrast.
+Without filter support the capsule gets the opaque fallback.
+No repaint timer, React update or forced layer promotion was added.
+
+**Final targeted build.** `bun run build:web` produced `60ed592b4fe2ec3f0f96ff1c8b68bd9f3c4d1339565df6a83f6cf1cc5c91cf22` in this worktree.
+In `capsule-combined-grid-yxWsEs`, two rounds in each of dark/light × 320×820, 390×820 and 1440×900 produced 24 bound frames.
+All passed.
+The notice edge, not the glyphs, selected the presented geometry when the 390px footer reflowed during capture.
+An earlier series (`capsule-combined-matrix-ODqdDG`) stopped in dark/1440 artifact search on an active-match assertion, **before** its composer observation; it is not a six-view result.
+
+The mode text Range uses all three adjacent backing samples.
+The model sample is the common leading 24px **inside the span's text Range**, so a loading caption can change without making a CPU icon, chevron or border eligible.
+For the empty textarea, the first word `Message,` is located from its content origin and first-line metrics; the backing point is in the adjacent textarea padding.
+Each reading records its pixel, coordinates and backing from the **same** PNG.
+The lowest painted ratios in the two-round matrix were:
+
+| Text        | Obsidian (ink / backing RGB; ratio) | Alabaster (ink / backing RGB; ratio) |
+| ----------- | ----------------------------------- | ------------------------------------ |
+| Mode        | 242,244,248 / 25,25,29; **15.917**  | 17,19,24 / 247,247,248; **17.355**   |
+| Model       | 138,147,162 / 19,20,24; **5.939**   | 94,102,117 / 252,252,253; **5.637**  |
+| Placeholder | 138,147,162 / 19,20,24; **5.939**   | 94,102,117 / 252,252,253; **5.637**  |
+
+Collector-only negative control `capsule-saved-control-P60hnC` used the owner's original light/1440 PNGs instead of new product frames: ready passed, stable failed (exit 1).
+No mode or placeholder ink was found; even the strongest model-region pixel was only 1.102:1.
+`capsule-controls-rY1fJ4` separately exercised Shift+Tab focus, ArrowUp (64→80), pointer drag near the edge (80→128), Home (automatic), and an open menu hit **outside** the capsule at 1440 and 390px.
+The plate matched the form bounds before and after resizing, with no filter on the form.
+The desktop flow probe observed the retained thinking/tool transitions and static reduced-motion state.
+
+**Limits.**
+These are sampled compositor frames, not continuous video or a guarantee that a different GPU, browser or physical phone cannot reproduce the defect.
+No live workspace, hardware-GPU comparison, non-Chromium fallback run, performance windows or full qualification rerun is claimed here.
+The owner's final `qualify-optical` and `verify` results and independent review must bind the actual delivery candidate.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

@@ -279,12 +279,16 @@ export async function contrastPixels(png, points, landmarks) {
       p.fg = `rgb(${pixel.join(",")})`;
       p.alpha = 1;
     }
-    canvas.clearRect(0, 0, 1, 1);
-    canvas.fillStyle = p.fg;
-    canvas.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data,
-      alpha = (p.alpha * a) / 255;
-    const fg = [r, g, b].map((c, i) => c * alpha + bg[i] * (1 - alpha));
+    let alpha = p.alpha,
+      fg = bg;
+    if (p.fg) {
+      canvas.clearRect(0, 0, 1, 1);
+      canvas.fillStyle = p.fg;
+      canvas.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = canvas.getImageData(0, 0, 1, 1).data;
+      alpha *= a / 255;
+      fg = [r, g, b].map((c, i) => c * alpha + bg[i] * (1 - alpha));
+    } else if (!p.glyph) throw Error(`Missing ink target: ${p.name}`);
     let paintedGlyph;
     if (p.glyph) {
       const [left, top, right, bottom] = p.glyph.map((n) => n * scale);
@@ -295,8 +299,17 @@ export async function contrastPixels(png, points, landmarks) {
       let nearest = Infinity;
       for (let y = Math.ceil(top); y < Math.floor(bottom) && nearest > 0; y++)
         for (let x = Math.ceil(left); x < Math.floor(right); x++) {
-          const pixel = 4 * (y * img.width + x),
-            d = distance(pixel, fg);
+          const pixel = 4 * (y * img.width + x);
+          // Text-only region, but no reference ink (e.g. a loading caption
+          // changing color). Measure its strongest stem in the actual frame.
+          if (!p.fg) {
+            const rgb = [...img.data.slice(pixel, pixel + 3)],
+              ratio = contrast(rgb, bg);
+            if (ratio > (paintedGlyph?.ratio ?? 1))
+              paintedGlyph = { x, y, rgb, ratio };
+            continue;
+          }
+          const d = distance(pixel, fg);
           if (d < nearest && d < distance(pixel, bg)) {
             const rgb = [...img.data.slice(pixel, pixel + 3)];
             paintedGlyph = { x, y, rgb, ratio: contrast(rgb, bg) };
@@ -305,6 +318,7 @@ export async function contrastPixels(png, points, landmarks) {
           }
         }
     }
+    if (!p.fg && paintedGlyph) fg = paintedGlyph.rgb;
     const ratio = contrast(fg, bg);
     const observed = {
       ratio: +ratio.toFixed(3),

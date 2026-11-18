@@ -3391,8 +3391,12 @@ summary:focus-visible,
 .chat-composer {
   flex: none;
   position: relative;
-  isolation: isolate;
+  z-index: 1;
+  anchor-name: --composer;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   border: 1px solid var(--glass-border);
   border-radius: 24px;
   border-top-color: var(--glass-border-top);
@@ -3400,19 +3404,23 @@ summary:focus-visible,
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
 }
-/* Filter the material behind the controls, not the form's text, focus or
-   overhanging menus. ::before remains the independent top refraction. */
-.chat-composer::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: var(--glass-surface);
-  background-image: var(--grain-image);
-  background-size: var(--grain-size);
-  backdrop-filter: var(--glass-filter);
+/* Only the optical plate samples the backdrop. It is a sibling behind the
+   entire form, sized by layout even when the toolbar wraps or drafts grow.
+   Without anchor positioning, keep just the capsule's base and static grain. */
+@supports (anchor-scope: --composer) and (backdrop-filter: blur(1px)) {
+  .chat-workspace {
+    anchor-scope: --composer;
+  }
+  .chat-workspace:has(> .chat-composer)::after {
+    content: "";
+    position: absolute;
+    position-anchor: --composer;
+    inset: anchor(top) anchor(right) anchor(bottom) anchor(left);
+    z-index: 0;
+    border-radius: 24px;
+    pointer-events: none;
+    backdrop-filter: var(--glass-filter);
+  }
 }
 .chat-composer:focus-within {
   outline: 2px solid var(--focus);
@@ -3474,7 +3482,8 @@ summary:focus-visible,
 }
 /* The height handle (pi .composer-resize), as a keyboard-operable range input
  * like the pane sashes: a short bar on the top edge, shown on hover or focus
- * and always on touch screens. */
+ * and always on touch screens. Keep the wide drag target stable; change only
+ * the short mark rather than fading a layer spanning the toolbar. */
 .composer-resize {
   -webkit-appearance: none;
   appearance: none;
@@ -3490,25 +3499,23 @@ summary:focus-visible,
   padding: 0;
   border: 0;
   border-radius: 0;
+  color: transparent;
   background:
-    linear-gradient(var(--border), var(--border)) center / 48px 4px no-repeat;
+    linear-gradient(currentColor, currentColor) center / 48px 4px no-repeat;
   cursor: ns-resize;
   touch-action: none;
-  opacity: 0;
-  transition: opacity 0.15s;
+  transition: none;
+  box-shadow: none;
 }
-.chat-composer:hover > .composer-resize,
-.composer-resize:focus-visible,
-.composer-resize:active {
-  opacity: 1;
+:where(.chat-composer:hover) > .composer-resize {
+  color: var(--border);
 }
 .composer-resize:hover,
 .composer-resize:focus-visible,
 .composer-resize:active {
-  background-image: linear-gradient(var(--accent), var(--accent));
+  color: var(--accent);
   background-size: 56px 4px;
   outline: none;
-  box-shadow: none;
 }
 /* A fixed height is said by the bar's shape too, not only its colour. */
 .composer-resize.is-manual {
@@ -3516,8 +3523,8 @@ summary:focus-visible,
     48px 4px,
     8px 8px;
   background-image:
-    linear-gradient(var(--border), var(--border)),
-    radial-gradient(circle, var(--accent) 60%, transparent 62%);
+    linear-gradient(currentColor, currentColor),
+    radial-gradient(circle, currentColor 60%, transparent 62%);
 }
 .composer-resize::-webkit-slider-runnable-track {
   height: 100%;
@@ -4888,7 +4895,7 @@ button.file-item:hover:not(:disabled),
     opacity: 0.35;
   }
   .composer-resize {
-    opacity: 1;
+    color: var(--border);
   }
   /* Room for a finger; the date gives way to the message. */
   .branch-row time {
@@ -5601,7 +5608,7 @@ button.link:hover:not(:disabled) {
 @supports not (backdrop-filter: blur(1px)) {
   .topbar,
   .statusbar,
-  .chat-composer::after,
+  .chat-composer,
   .action-dialog,
   .model-popover,
   .more-menu-items,

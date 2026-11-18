@@ -17,6 +17,41 @@ function modeFrame(selector, label, notice) {
     x = Math.floor(c.left + c.width / 2),
     y = Math.floor(c.top),
     rule = Math.floor(n.left + 1);
+  const model = ".chat-composer .model-trigger .model-trigger-text";
+  // Reading models… can become Choose a model during capture, without moving
+  // the notice. Bind only their common text interior, never the CPU/chevron or
+  // the outline. The PNG supplies the ink, not a guessed loading-state color.
+  const modelText = opticalProbe.glyphSample(
+    model,
+    document.querySelector(model).textContent,
+  );
+  const [ml, mt, mr, mb] = modelText.glyph;
+  if (mr - ml < 24) throw Error("Missing model text interior");
+  const input = button.form.querySelector("textarea:placeholder-shown");
+  if (!input || input.value || !input.placeholder.startsWith("Message,"))
+    throw Error("Expected the empty Message field");
+  // A native placeholder has no DOM Range. Read only its first word on the
+  // first line, inside the textarea's padded content (also when it wraps).
+  const field = input.getBoundingClientRect(),
+    style = getComputedStyle(input),
+    placeholder = getComputedStyle(input, "::placeholder"),
+    ctx = new OffscreenCanvas(1, 1).getContext("2d");
+  ctx.font = `${placeholder.fontSize} ${placeholder.fontFamily}`;
+  const left = field.left + input.clientLeft + parseFloat(style.paddingLeft),
+    top = field.top + input.clientTop + parseFloat(style.paddingTop),
+    right = left + ctx.measureText("Message,").width,
+    bottom = top + parseFloat(style.lineHeight),
+    xBack = Math.floor(left - 3),
+    yBack = Math.floor((top + bottom) / 2);
+  if (
+    ![xBack, left + 1, right - 1].every(
+      (x) => document.elementFromPoint(x, yBack) === input,
+    )
+  )
+    throw Error("Hidden placeholder");
+  let alpha = Number(placeholder.opacity);
+  for (let p = input; p; p = p.parentElement)
+    alpha *= Number(getComputedStyle(p).opacity);
   return {
     document: performance.timeOrigin,
     route: location.pathname + location.search + location.hash,
@@ -35,10 +70,26 @@ function modeFrame(selector, label, notice) {
       outside: [x, y - 2],
       inside: [x, y + 4],
     },
-    points: [0.1, 0.5, 0.9].map((f) => ({
-      ...opticalProbe.glyphSample(selector, label, f),
-      record: true,
-    })),
+    points: [
+      ...[0.1, 0.5, 0.9].map((f) =>
+        opticalProbe.glyphSample(selector, label, f),
+      ),
+      {
+        ...modelText,
+        name: ".model-trigger-text",
+        fg: null,
+        glyph: [ml, mt, ml + 24, mb],
+      },
+      {
+        name: `TEXTAREA placeholder: ${input.placeholder}`,
+        x: xBack,
+        y: yBack,
+        glyph: [left, top, right, bottom],
+        fg: placeholder.color,
+        alpha,
+        min: 4.5,
+      },
+    ].map((p) => ({ ...p, record: true })),
   };
 }
 
@@ -127,13 +178,13 @@ export async function observeUnknownMode({
       row.bound = row.bindings.indexOf(matches[0]);
       Object.assign(row, observations[row.bound]);
       const { samples, readings, failures } = row;
-      assert.equal(samples, 3);
-      assert.equal(readings?.length, 3);
+      assert.equal(samples, 5);
+      assert.equal(readings?.length, 5);
       for (const r of readings) {
-        assert.ok(r.paintedGlyph, "Missing painted mode label");
+        assert.ok(r.paintedGlyph, `Missing painted ink: ${r.name}`);
         assert.ok(
           r.paintedGlyph.ratio >= r.min,
-          `Painted mode label: ${r.paintedGlyph.ratio}:1`,
+          `${r.name}: ${r.paintedGlyph.ratio}:1`,
         );
         assert.equal(r.alpha, 1);
       }
