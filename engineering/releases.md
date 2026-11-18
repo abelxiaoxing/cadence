@@ -3,6 +3,21 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.1.11 acceptance snapshot
+
+Full `verify` passed on the release candidate: 2222 root/native tests in 135 files (2 skipped) and 591 web tests in 47 files.
+Syntax, generated bundles, type checks, deterministic web builds, lint, Agent pins and the real-pack audit were all green.
+Ordinary WebUI turns now render stable streaming timelines: one speaker label over the reply in recorded order, one block per readable thinking step (folded, read when opened, never streamed or copied as answer text) and one card per tool call that names the tool and its target and reads arguments and output only while opened.
+Opened details refresh when their full-content version, coordinates or execution state changes, closing or leaving retires pending reads, and the new runtime observation view keeps live activity visible in the workspace.
+Capture markers optionally carry `captureMessageId` and `captureResultCallId`, binding finalized Pi messages and independently observed tool results to capture UUIDs under the existing command/run/user/parent/branch ownership checks; unmarked Pi tails are withheld during live handoff, old history keeps its recorded identity, and no association is guessed from equal bodies or visible counts.
+Tool executions and results join by source call ID plus the complete unredacted source name held only in the local turn index; unexecuted declarations stay pending, unavailable or canceled by the assistant's own end state, and settled reads never make them successful.
+Tool display names share one redact-then-clip rule at the existing 128-byte JSON-encoded, Unicode-safe budget in live activity, listings, lazy details and Pi history.
+New and expanded controlled tests cover the runtime timeline (root and Web), runtime observation, the chat timeline, conversation records, Pi session handoff and worker capture/retry projection; they are controlled fixtures, not real-browser or real-model qualification.
+The version is advanced to 2.1.11, the canonical operator/service/Web builders were rerun for it, and the provenance pins for the rebuilt `cadence.js` and web manifest were refreshed in the same tree.
+Observed environment: Linux, Node 26.7.0, Bun 1.3.14.
+Commit, push and npm publication were explicitly authorized; publication still requires the matching annotated tag's actual CI receipt and registry digest/latest confirmation.
+No consumer installation or service change, dependency or browser download, or enlarged test budget occurred.
+
 ## Release 2.1.10 acceptance snapshot
 
 Full `verify` passed on the release candidate: 2038 root/native tests in 134 files (2 skipped) and 479 web tests in 45 files.
