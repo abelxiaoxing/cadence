@@ -1024,15 +1024,19 @@ it.each(["en", "zh"] as const)(
 
 it("the Web design card shows active questions, option costs, recommendation, custom input and one submission", () => {
   const d = newDesign(randomUUID(), { questions: designQuestionsFixture });
-  const render = (draft: typeof d) =>
+  const render = (draft: typeof d, active = true, disabled = false) =>
     renderToStaticMarkup(
       <DesignCard
         draft={draft}
-        disabled={false}
+        active={active}
+        disabled={disabled}
         onEdit={() => {}}
         onSubmit={() => {}}
       />,
     );
+  expect(render(d)).toContain("<dialog");
+  expect(render(d, false)).not.toContain("<dialog");
+  expect(render(d, true, true)).not.toContain("<dialog");
   expect(render(d)).toContain("Quieter surfaces");
   expect(render(d)).toContain("Which motion?");
   expect(render(d)).toContain("Other idea");
@@ -1044,5 +1048,7 @@ it("the Web design card shows active questions, option costs, recommendation, cu
   );
   expect(render(selected)).toContain("How much blur?");
   expect(render(selected)).toContain("Design submitted");
+  expect(render(selected)).toContain("Review choices");
+  expect(render(selected)).not.toContain("<dialog");
   expect(render(selected)).not.toContain("Confirm implementation");
 });

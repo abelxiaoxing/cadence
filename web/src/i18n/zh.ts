@@ -3,7 +3,14 @@
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
   "Design choices": "设计选项",
-  "Use all recommendations": "采用全部推荐",
+  "Fill unanswered with recommendations": "为未回答的问题填入推荐项",
+  "Discard typed answer": "放弃未采用的回答",
+  "Choose answers": "选择答案",
+  "Review choices": "查看或修改选择",
+  "{answered} of {total} questions answered":
+    "已回答 {answered} / {total} 个问题",
+  "Submitting answers requests a plan, not implementation.":
+    "提交后将根据你的选择生成实施计划，不会开始实施。",
   "Plan identity": "计划标识",
   Questions: "问题",
   Recommended: "推荐",

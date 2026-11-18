@@ -4472,8 +4472,26 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   margin-block: 12px;
 }
+.design-card .design-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.design-option:has(input:checked) {
+  border-color: var(--accent);
+}
 .design-card label small {
   display: block;
+  color: var(--text-dim);
+}
+.design-card button,
+.action-dialog:has(.design-card) footer {
+  overflow-wrap: anywhere;
+  flex-wrap: wrap;
 }
 .design-card button[aria-current="step"] {
   border-color: var(--accent);

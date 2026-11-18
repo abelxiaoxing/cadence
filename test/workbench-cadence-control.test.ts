@@ -1185,7 +1185,34 @@ it("a batch survives refresh, refuses stale edits and grants, and starts no work
     id = randomUUID();
   const read = () => f.cw.records.state(id);
   const start = f.send(id, "enter");
-  await f.tool(start, "cadence_design", { questions: designQuestionsFixture });
+  const [firstQuestion, dependent, lastQuestion] = designQuestionsFixture;
+  for (const [when, field] of [
+    [{ question: firstQuestion.id, option: "" }, "option"],
+    [{ question: "", option: "frames" }, "question"],
+    [{ question: lastQuestion.id, option: "quiet" }, "question"],
+    [{ question: firstQuestion.id, option: "missing" }, "option"],
+  ] as const) {
+    expect(
+      await f.tool(start, "cadence_design", {
+        questions: [firstQuestion, { ...dependent, when }, lastQuestion],
+      }),
+    ).toMatchObject({
+      refused: "invalid",
+      notice: expect.stringContaining(`questions[1].when.${field}:`),
+    });
+    expect(read().design).toBeUndefined();
+  }
+  // A strict provider supplied both empty strings on every independent question.
+  expect(
+    await f.tool(start, "cadence_design", {
+      questions: [
+        { ...firstQuestion, when: { question: "", option: "" } },
+        dependent,
+        { ...lastQuestion, when: null },
+      ],
+    }),
+  ).toMatchObject({ designId: expect.any(String) });
+  expect(read().design?.questions).toEqual(designQuestionsFixture);
   expect(await f.tool(start, "cadence_plan", plan())).toMatchObject({
     refused: "design-pending",
   });

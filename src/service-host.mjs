@@ -5326,141 +5326,6 @@ function validateImageBytes(bytes, mimeType) {
   return { width, height };
 }
 
-// src/service/contracts/design.ts
-var label = (v) => text(v, 1024, true);
-var key = (v) => {
-  const s = text(v, 48, true);
-  if (!/^[a-z][a-z0-9-]*$/u.test(s))
-    throw new Error("id: use lowercase letters, digits and hyphens");
-  return s;
-};
-function designQuestions(input) {
-  const { questions } = closed(input, ["questions"]);
-  const seen = new Map;
-  const rows = list(questions, 12, (raw) => {
-    const q = closed(raw, [
-      "id",
-      "question",
-      "options",
-      "recommended",
-      "reason",
-      "acceptance",
-      ...Object.hasOwn(raw ?? {}, "when") ? ["when"] : []
-    ]);
-    const id = key(q.id);
-    const options = list(q.options, 6, (raw2) => {
-      const o = closed(raw2, ["id", "label", "cost"]);
-      return { id: key(o.id), label: label(o.label), cost: label(o.cost) };
-    });
-    const ids = new Set(options.map((o) => o.id));
-    const recommended = key(q.recommended);
-    if (seen.has(id) || ids.size !== options.length || ids.size < 2 || !ids.has(recommended))
-      throw new Error("questions: use distinct question and option IDs and identify one recommended option");
-    const dep = q.when === undefined ? null : closed(q.when, ["question", "option"]);
-    const when = dep && {
-      question: key(dep.question),
-      option: key(dep.option)
-    };
-    if (when && !seen.get(when.question)?.has(when.option))
-      throw new Error("when: name an option of an earlier question");
-    seen.set(id, ids);
-    return {
-      id,
-      question: label(q.question),
-      options,
-      recommended,
-      reason: label(q.reason),
-      acceptance: label(q.acceptance),
-      ...when ? { when } : {}
-    };
-  });
-  if (!rows.length)
-    throw new Error("questions: supply a material product decision");
-  canonicalJson(rows, 24 * 1024);
-  return rows;
-}
-function designAnswers(v) {
-  return list(v, 12, (raw) => {
-    const other = Object.hasOwn(raw ?? {}, "other");
-    const a = closed(raw, ["question", other ? "other" : "option"]);
-    const question = key(a.question);
-    return other ? { question, other: label(a.other) } : { question, option: key(a.option) };
-  });
-}
-function available(q, answers) {
-  const dep = q.when;
-  return !dep || answers.some((a) => a.question === dep.question && ("option" in a) && a.option === dep.option);
-}
-function selectDesign(questions, choices, fill = false) {
-  const answers = [];
-  const indexed = new Map(choices.map((a) => [a.question, a]));
-  if (indexed.size !== choices.length || choices.some((a) => !questions.some((q) => q.id === a.question)))
-    throw new ContractError("invalid");
-  for (const q of questions) {
-    if (!available(q, answers))
-      continue;
-    const a = indexed.get(q.id);
-    if (a && "option" in a && !q.options.some((o) => o.id === a.option))
-      throw new ContractError("invalid");
-    if (a)
-      answers.push(a);
-    else if (fill)
-      answers.push({ question: q.id, option: q.recommended });
-  }
-  return answers;
-}
-function decodeDesign(v) {
-  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
-  const questions = designQuestions({ questions: o.questions });
-  const submitted = bool(o.submitted);
-  const answers = designAnswers(o.answers);
-  if (canonicalJson(selectDesign(questions, answers, submitted)) !== canonicalJson(answers))
-    throw new ContractError("invalid");
-  return {
-    id: decodeId(o.id),
-    revision: integer(o.revision, 1),
-    questions,
-    answers,
-    submitted
-  };
-}
-function newDesign(id, input, previous) {
-  const questions = designQuestions(input);
-  const retained = previous?.answers.filter((a) => {
-    const before = previous.questions.find((q) => q.id === a.question);
-    const after = questions.find((q) => q.id === a.question);
-    return before && after && canonicalJson(before) === canonicalJson(after);
-  }) ?? [];
-  return {
-    id,
-    revision: 1,
-    questions,
-    answers: selectDesign(questions, retained),
-    submitted: false
-  };
-}
-function answerText(q, a) {
-  return a && ("other" in a ? a.other : q.options.find((o) => o.id === a.option)?.label);
-}
-function designSummary(d) {
-  return d.questions.filter((q) => available(q, d.answers)).map((q) => `- ${q.question} — ${answerText(q, d.answers.find((a) => a.question === q.id)) ?? "…"}
-  Acceptance: ${q.acceptance}`).join(`
-`);
-}
-function designMessage(d, maximum) {
-  const summary = designSummary(d);
-  return new TextEncoder().encode(summary).length <= maximum ? summary : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
-}
-var recommendsDesign = (s) => /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(s.trim());
-function reviseDesign(d, answers, submit) {
-  return {
-    ...d,
-    revision: d.revision + 1,
-    answers: selectDesign(d.questions, answers, submit),
-    submitted: submit
-  };
-}
-
 // src/service/contracts/workflow.ts
 var WORKFLOW_LIMITS = {
   tasks: 16,
@@ -5592,8 +5457,8 @@ function workflowOrder(tasks) {
 }
 function workflowAncestors(tasks, id) {
   const needed = new Set;
-  const visit = (key2) => {
-    for (const dep of tasks.find((t) => t.id === key2)?.after ?? []) {
+  const visit = (key) => {
+    for (const dep of tasks.find((t) => t.id === key)?.after ?? []) {
       if (!needed.has(dep)) {
         needed.add(dep);
         visit(dep);
@@ -5772,9 +5637,9 @@ function workflowPlanInput(v) {
     return issue("plan", "must be an object");
   const completed = (source, defaults) => {
     const result = { ...defaults };
-    for (const [key2, value] of Object.entries(source))
+    for (const [key, value] of Object.entries(source))
       if (value !== null && value !== undefined)
-        result[key2] = value;
+        result[key] = value;
     return result;
   };
   const plan = completed(v, {
@@ -5796,7 +5661,7 @@ function workflowPlanInput(v) {
 function researchInput(v) {
   if (v === null || typeof v !== "object" || Array.isArray(v))
     return issue("request", "must be an object with a goal and questions");
-  const given = (key2) => Object.getOwnPropertyDescriptor(v, key2)?.value ?? undefined;
+  const given = (key) => Object.getOwnPropertyDescriptor(v, key)?.value ?? undefined;
   const distinct = (name, value, maximum) => [
     ...new Set(entries(name, typeof value === "string" ? [value] : value, Number.MAX_SAFE_INTEGER, (entry, path) => words(path, entry, maximum).trim()).filter(Boolean))
   ];
@@ -6368,6 +6233,157 @@ function decodeWorkflowDiagnostics(v) {
       platform: text(r.platform, 32, true),
       startedAt: timestamp(r.startedAt)
     }
+  };
+}
+
+// src/service/contracts/design.ts
+var label = (v) => text(v, 1024, true);
+var key = (v, path = "id") => {
+  const s = words(path, v, 48, true);
+  if (!/^[a-z][a-z0-9-]*$/u.test(s))
+    return issue(path, "start with a lowercase letter; use lowercase letters, digits and hyphens");
+  return s;
+};
+function designQuestions(input, source) {
+  const { questions } = fields2("design", input, ["questions"]);
+  const seen = new Map;
+  const rows = entries("questions", questions, 12, (raw, path) => {
+    const q = fields2(path, raw, ["id", "question", "options", "recommended", "reason", "acceptance"], ["when"]);
+    const id = key(q.id, `${path}.id`);
+    if (seen.has(id))
+      return issue(`${path}.id`, "use a distinct question ID");
+    const ids = new Set;
+    const options = entries(`${path}.options`, q.options, 6, (raw2, path2) => {
+      const o = fields2(path2, raw2, ["id", "label", "cost"]);
+      const id2 = key(o.id, `${path2}.id`);
+      if (ids.has(id2))
+        return issue(`${path2}.id`, "use a distinct option ID");
+      ids.add(id2);
+      return {
+        id: id2,
+        label: words(`${path2}.label`, o.label, 1024, true),
+        cost: words(`${path2}.cost`, o.cost, 1024, true)
+      };
+    });
+    if (options.length < 2)
+      return issue(`${path}.options`, "supply at least two alternatives");
+    const recommended = key(q.recommended, `${path}.recommended`);
+    if (!ids.has(recommended))
+      return issue(`${path}.recommended`, "name an option ID of this question");
+    let when;
+    if (q.when !== undefined && !(source === "tool" && q.when === null)) {
+      const dep = fields2(`${path}.when`, q.when, ["question", "option"]);
+      if (!(source === "tool" && dep.question === "" && dep.option === "")) {
+        const question = key(dep.question, `${path}.when.question`);
+        if (!seen.has(question))
+          return issue(`${path}.when.question`, "name an earlier question, or omit when for an independent question");
+        const option = key(dep.option, `${path}.when.option`);
+        if (!seen.get(question)?.has(option))
+          return issue(`${path}.when.option`, "name an option ID of the earlier question");
+        when = { question, option };
+      }
+    }
+    seen.set(id, ids);
+    return {
+      id,
+      question: words(`${path}.question`, q.question, 1024, true),
+      options,
+      recommended,
+      reason: words(`${path}.reason`, q.reason, 1024, true),
+      acceptance: words(`${path}.acceptance`, q.acceptance, 1024, true),
+      ...when ? { when } : {}
+    };
+  });
+  if (!rows.length)
+    throw new Error("questions: supply a material product decision");
+  try {
+    canonicalJson(rows, 24 * 1024);
+  } catch (error) {
+    if (!(error instanceof ContractError) || error.code !== "oversize")
+      throw error;
+    return issue("questions", "the complete batch must fit in 24 KiB of encoded JSON");
+  }
+  return rows;
+}
+function designAnswers(v) {
+  return list(v, 12, (raw) => {
+    const other = Object.hasOwn(raw ?? {}, "other");
+    const a = closed(raw, ["question", other ? "other" : "option"]);
+    const question = key(a.question);
+    return other ? { question, other: label(a.other) } : { question, option: key(a.option) };
+  });
+}
+function available(q, answers) {
+  const dep = q.when;
+  return !dep || answers.some((a) => a.question === dep.question && ("option" in a) && a.option === dep.option);
+}
+function selectDesign(questions, choices, fill = false) {
+  const answers = [];
+  const indexed = new Map(choices.map((a) => [a.question, a]));
+  if (indexed.size !== choices.length || choices.some((a) => !questions.some((q) => q.id === a.question)))
+    throw new ContractError("invalid");
+  for (const q of questions) {
+    if (!available(q, answers))
+      continue;
+    const a = indexed.get(q.id);
+    if (a && "option" in a && !q.options.some((o) => o.id === a.option))
+      throw new ContractError("invalid");
+    if (a)
+      answers.push(a);
+    else if (fill)
+      answers.push({ question: q.id, option: q.recommended });
+  }
+  return answers;
+}
+function decodeDesign(v) {
+  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
+  const questions = designQuestions({ questions: o.questions }, "record");
+  const submitted = bool(o.submitted);
+  const answers = designAnswers(o.answers);
+  if (canonicalJson(selectDesign(questions, answers, submitted)) !== canonicalJson(answers))
+    throw new ContractError("invalid");
+  return {
+    id: decodeId(o.id),
+    revision: integer(o.revision, 1),
+    questions,
+    answers,
+    submitted
+  };
+}
+function newDesign(id, input, previous) {
+  const questions = designQuestions(input, "tool");
+  const retained = previous?.answers.filter((a) => {
+    const before = previous.questions.find((q) => q.id === a.question);
+    const after = questions.find((q) => q.id === a.question);
+    return before && after && canonicalJson(before) === canonicalJson(after);
+  }) ?? [];
+  return {
+    id,
+    revision: 1,
+    questions,
+    answers: selectDesign(questions, retained),
+    submitted: false
+  };
+}
+function answerText(q, a) {
+  return a && ("other" in a ? a.other : q.options.find((o) => o.id === a.option)?.label);
+}
+function designSummary(d) {
+  return d.questions.filter((q) => available(q, d.answers)).map((q) => `- ${q.question} — ${answerText(q, d.answers.find((a) => a.question === q.id)) ?? "…"}
+  Acceptance: ${q.acceptance}`).join(`
+`);
+}
+function designMessage(d, maximum) {
+  const summary = designSummary(d);
+  return new TextEncoder().encode(summary).length <= maximum ? summary : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
+}
+var recommendsDesign = (s) => /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(s.trim());
+function reviseDesign(d, answers, submit) {
+  return {
+    ...d,
+    revision: d.revision + 1,
+    answers: selectDesign(d.questions, answers, submit),
+    submitted: submit
   };
 }
 
@@ -17850,7 +17866,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17",
+    contractHash: "a2c7a1d587a0f88d6f59d62bde850a30eef645414ccee9a9ec58dadedec72edf",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -31321,7 +31337,7 @@ import { join as join39 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 Start with existing evidence. Use cadence_knowledge to read a named project document or heading directly (the route table, AGENTS.md and the project index identify sources). Reuse recorded investigation answers from this conversation by passing their investigation ID to cadence_knowledge, which rechecks their cited files; older conclusions are leads until checked against current sources. For a directly verifiable fact, use cadence_knowledge with path and match to read the actual source line and nearby context. Read the returned results before broadening an investigation. Surface material user choices as soon as the tradeoffs are understood. Exact implementation values, selectors and file inventories ordinarily belong to implementation workers and need not delay the design or plan. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change the design or acceptance. Ask focused independent questions together and reuse answered results by investigation ID.
-For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan. Describe each option's cost, the recommendation and reason, and what acceptance it affects. Give stable lowercase IDs; use when for predictable dependencies on earlier options. Keep routine implementation decisions yourself. Do not invent a questionnaire for a settled task. The user can edit any question, enter other ideas, fill remaining recommendations and submit once. A submitted design or "按你推荐的来" calls for the final implementation card in the same conversation; it never authorizes execution. Respect the submitted decisions, including custom answers, throughout the plan and review.
+For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan. Describe each option's cost, the recommendation and reason, and what acceptance it affects. Give stable lowercase IDs; omit when (or use null) unless the question depends on an earlier option. Publish the choices through the tool, not a Markdown questionnaire asking for a typed reply. If publication is refused for invalid input, correct the named field and repeat the complete batch yourself. Keep routine implementation decisions yourself. Do not invent a questionnaire for a settled task. The user can edit any question, enter other ideas, fill remaining recommendations and submit once. A submitted design or "按你推荐的来" calls for the final implementation card in the same conversation; it never authorizes execution. Respect the submitted decisions, including custom answers, throughout the plan and review.
 Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. For local preparation, use cadence_knowledge with checkout: [the needed dependency directory names] to observe the original checkout, Git placement and local entries directly. Use the original entry by path if the user authorizes sharing installed dependencies; the link target and its contents are unnecessary. cadence_plan checks the actual write targets and Git commit identity. Leave those checks to the owner. Do not send researchers to enumerate Git internals, ignored dependencies or private workflow records for these facts. Worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target. Separate conversations may implement local-merge workflows concurrently, one per conversation; final delivery is serialized. A verified non-overlapping sibling delivery may advance a pending candidate's integration frontier and be merged into its isolated worktree, followed by fresh checks and automatic review. Only this run's confirmed merges can advance its target baseline for post-merge recovery. Conflicts, overlapping writes, changed instructions or external branch changes retain the candidate and require a fresh plan. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
@@ -32967,25 +32983,25 @@ Current design ${design.id}, revision ${design.revision}, ${design.submitted ? "
             }
           }
           if (name === "cadence_design") {
+            let design2;
             try {
-              const design2 = newDesign(randomUUID25(), args, current2.state.design);
-              if (sanitizeText(canonicalJson(design2), this.o.secrets()) !== canonicalJson(design2))
-                return refusal3("forbidden", "Design contains protected text.");
-              this.save({
-                ...current2.state,
-                design: design2,
-                proposal: null,
-                revision: current2.state.revision + 1
-              }, current2.file);
-              return {
-                designId: design2.id,
-                notice: "Design choices displayed. Finish this turn and wait for the user's batch submission."
-              };
+              design2 = newDesign(randomUUID25(), args, current2.state.design);
             } catch (error) {
-              if (this.o.owner.state !== "idle")
-                throw error;
               return refusal3("invalid", diagnosticText(error instanceof Error ? error.message : "questions: invalid design", 512, this.o.secrets()));
             }
+            const encoded2 = canonicalJson(design2);
+            if (sanitizeText(encoded2, this.o.secrets()) !== encoded2)
+              return refusal3("forbidden", "Design contains protected text.");
+            this.save({
+              ...current2.state,
+              design: design2,
+              proposal: null,
+              revision: current2.state.revision + 1
+            }, current2.file);
+            return {
+              designId: design2.id,
+              notice: "Design choices published. Finish this turn and wait for the user's batch submission; do not ask for a typed answer."
+            };
           }
           const epoch = this.o.owner.lease.registration.epoch;
           const model2 = c.model.conversation && this.o.contexts ? this.o.contexts.snapshot(c.model.conversation).version : this.o.choice.snapshot().version;
@@ -35774,7 +35790,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "54061f924162265c24464be1d6b7f694027357bf1f4ae4028acd23a766029f76",
+  build: "c1ff0aa2174b5d66b236544868732e40674d28a6e39bc1bd62c99fce2508610b",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38794,7 +38810,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "4229be698d525c0b5d53c9399971a8044927173f384650e558d1b9245a7a5b17";
+  const embedded = "a2c7a1d587a0f88d6f59d62bde850a30eef645414ccee9a9ec58dadedec72edf";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

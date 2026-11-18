@@ -9,6 +9,7 @@ import {
   list,
   text,
 } from "./core.ts";
+import { entries, fields, issue, words } from "./workflow.ts";
 
 export interface DesignQuestion {
   id: string;
@@ -30,63 +31,91 @@ export interface DesignDraft {
   submitted: boolean;
 }
 const label = (v: unknown) => text(v, 1024, true);
-const key = (v: unknown) => {
-  const s = text(v, 48, true);
+const key = (v: unknown, path = "id") => {
+  const s = words(path, v, 48, true);
   if (!/^[a-z][a-z0-9-]*$/u.test(s))
-    throw new Error("id: use lowercase letters, digits and hyphens");
+    return issue(
+      path,
+      "start with a lowercase letter; use lowercase letters, digits and hyphens",
+    );
   return s;
 };
-export function designQuestions(input: unknown): DesignQuestion[] {
-  const { questions } = closed(input, ["questions"]);
+function designQuestions(
+  input: unknown,
+  source: "tool" | "record",
+): DesignQuestion[] {
+  const { questions } = fields("design", input, ["questions"]);
   const seen = new Map<string, Set<string>>();
-  const rows = list(questions, 12, (raw) => {
-    const q = closed(raw, [
-      "id",
-      "question",
-      "options",
-      "recommended",
-      "reason",
-      "acceptance",
-      ...(Object.hasOwn(raw ?? {}, "when") ? ["when"] : []),
-    ]);
-    const id = key(q.id);
-    const options = list(q.options, 6, (raw) => {
-      const o = closed(raw, ["id", "label", "cost"]);
-      return { id: key(o.id), label: label(o.label), cost: label(o.cost) };
+  const rows = entries("questions", questions, 12, (raw, path) => {
+    const q = fields(
+      path,
+      raw,
+      ["id", "question", "options", "recommended", "reason", "acceptance"],
+      ["when"],
+    );
+    const id = key(q.id, `${path}.id`);
+    if (seen.has(id)) return issue(`${path}.id`, "use a distinct question ID");
+    const ids = new Set<string>();
+    const options = entries(`${path}.options`, q.options, 6, (raw, path) => {
+      const o = fields(path, raw, ["id", "label", "cost"]);
+      const id = key(o.id, `${path}.id`);
+      if (ids.has(id)) return issue(`${path}.id`, "use a distinct option ID");
+      ids.add(id);
+      return {
+        id,
+        label: words(`${path}.label`, o.label, 1024, true),
+        cost: words(`${path}.cost`, o.cost, 1024, true),
+      };
     });
-    const ids = new Set(options.map((o) => o.id));
-    const recommended = key(q.recommended);
-    if (
-      seen.has(id) ||
-      ids.size !== options.length ||
-      ids.size < 2 ||
-      !ids.has(recommended)
-    )
-      throw new Error(
-        "questions: use distinct question and option IDs and identify one recommended option",
-      );
-    const dep =
-      q.when === undefined ? null : closed(q.when, ["question", "option"]);
-    const when = dep && {
-      question: key(dep.question),
-      option: key(dep.option),
-    };
-    if (when && !seen.get(when.question)?.has(when.option))
-      throw new Error("when: name an option of an earlier question");
+    if (options.length < 2)
+      return issue(`${path}.options`, "supply at least two alternatives");
+    const recommended = key(q.recommended, `${path}.recommended`);
+    if (!ids.has(recommended))
+      return issue(`${path}.recommended`, "name an option ID of this question");
+    // Some providers populate optional objects even for independent questions.
+    // Only an unambiguous no-dependency value may disappear at tool ingress.
+    let when: DesignQuestion["when"];
+    if (q.when !== undefined && !(source === "tool" && q.when === null)) {
+      const dep = fields(`${path}.when`, q.when, ["question", "option"]);
+      if (!(source === "tool" && dep.question === "" && dep.option === "")) {
+        const question = key(dep.question, `${path}.when.question`);
+        if (!seen.has(question))
+          return issue(
+            `${path}.when.question`,
+            "name an earlier question, or omit when for an independent question",
+          );
+        const option = key(dep.option, `${path}.when.option`);
+        if (!seen.get(question)?.has(option))
+          return issue(
+            `${path}.when.option`,
+            "name an option ID of the earlier question",
+          );
+        when = { question, option };
+      }
+    }
     seen.set(id, ids);
     return {
       id,
-      question: label(q.question),
+      question: words(`${path}.question`, q.question, 1024, true),
       options,
       recommended,
-      reason: label(q.reason),
-      acceptance: label(q.acceptance),
+      reason: words(`${path}.reason`, q.reason, 1024, true),
+      acceptance: words(`${path}.acceptance`, q.acceptance, 1024, true),
       ...(when ? { when } : {}),
     };
   });
   if (!rows.length)
     throw new Error("questions: supply a material product decision");
-  canonicalJson(rows, 24 * 1024);
+  try {
+    canonicalJson(rows, 24 * 1024);
+  } catch (error) {
+    if (!(error instanceof ContractError) || error.code !== "oversize")
+      throw error;
+    return issue(
+      "questions",
+      "the complete batch must fit in 24 KiB of encoded JSON",
+    );
+  }
   return rows;
 }
 export function designAnswers(v: unknown): DesignAnswer[] {
@@ -134,7 +163,7 @@ export function selectDesign(
 }
 export function decodeDesign(v: unknown): DesignDraft {
   const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
-  const questions = designQuestions({ questions: o.questions });
+  const questions = designQuestions({ questions: o.questions }, "record");
   const submitted = bool(o.submitted);
   const answers = designAnswers(o.answers);
   if (
@@ -155,7 +184,7 @@ export function newDesign(
   input: unknown,
   previous?: DesignDraft,
 ): DesignDraft {
-  const questions = designQuestions(input);
+  const questions = designQuestions(input, "tool");
   const retained =
     previous?.answers.filter((a) => {
       const before = previous.questions.find((q) => q.id === a.question);

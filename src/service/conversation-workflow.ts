@@ -13,6 +13,7 @@ import {
   parseWireJson,
 } from "./contracts/core.ts";
 import {
+  type DesignDraft,
   designMessage,
   newDesign,
   recommendsDesign,
@@ -539,33 +540,10 @@ export class ConversationWorkflow {
             }
           }
           if (name === "cadence_design") {
+            let design: DesignDraft;
             try {
-              const design = newDesign(
-                randomUUID(),
-                args,
-                current.state.design,
-              );
-              if (
-                sanitizeText(canonicalJson(design), this.o.secrets()) !==
-                canonicalJson(design)
-              )
-                return refusal("forbidden", "Design contains protected text.");
-              this.save(
-                {
-                  ...current.state,
-                  design,
-                  proposal: null,
-                  revision: current.state.revision + 1,
-                },
-                current.file,
-              );
-              return {
-                designId: design.id,
-                notice:
-                  "Design choices displayed. Finish this turn and wait for the user's batch submission.",
-              };
+              design = newDesign(randomUUID(), args, current.state.design);
             } catch (error) {
-              if (this.o.owner.state !== "idle") throw error;
               return refusal(
                 "invalid",
                 diagnosticText(
@@ -577,6 +555,23 @@ export class ConversationWorkflow {
                 ),
               );
             }
+            const encoded = canonicalJson(design);
+            if (sanitizeText(encoded, this.o.secrets()) !== encoded)
+              return refusal("forbidden", "Design contains protected text.");
+            this.save(
+              {
+                ...current.state,
+                design,
+                proposal: null,
+                revision: current.state.revision + 1,
+              },
+              current.file,
+            );
+            return {
+              designId: design.id,
+              notice:
+                "Design choices published. Finish this turn and wait for the user's batch submission; do not ask for a typed answer.",
+            };
           }
           const epoch = this.o.owner.lease.registration.epoch;
           const model =
