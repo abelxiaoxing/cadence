@@ -69,7 +69,12 @@ The script prints the directory containing `summary.json` under that scope: bran
 For the design submission, implementation/confirmation and code/tool controls, `controls` records the actual button after scrolling and stable layout: name, four edges and size, viewport, intersections with clipping ancestors, disabled state, center and four inset edge hits.
 Enabled buttons must receive visible focus via Tab; disabled ones have no keyboard-operability claim.
 No submit or confirmation is activated.
-The requested-write copy uses Space and a write-only receiver inside the disposable document, never the system clipboard.
+The full-command and requested-write copies use Tab, Space and a write-only receiver inside the disposable document, never the system clipboard.
+For the expanded shell card, compare the received string to the multiline command, including its leading spaces, tab and trailing newline, not the card summary or output.
+`searchNavigation` exercises two allowlisted literal queries against actual byte offsets in a synthetic retained field.
+Check the focused combobox, its controlled listbox and selected option across continuation, continued typing and real arrow keys; the probe must not scroll the options.
+Measure the solid stroke on both adjacent screenshot surfaces, and compare the Enter destination's cursor, marked text and byte range to the active hit.
+`fieldFind` includes localized no-language fence captions, real prose and folded code with the same words, and a generated gutter before the 1000th genuine match.
 `toolCards` binds a disclosure to one synthetic route, tool name and target path, waits for a stable hit-tested button, then activates the folded head once with real pointer input.
 It records the event targets, before/after disclosure states and completed conversation-step read coordinates/result category, not the detail payload.
 The requested edit must contain both `opal` and `silver` inside that same card; both compositor word samples must reach 4.5:1 at each viewport/theme, independently of the artifact diff.
@@ -265,6 +270,40 @@ The incremental windows painted transcript, text and code roots with either sett
 The 480×300 Hero drew 26 times in 1.25s and 25 after restoration; off, reduced, lost and actually hidden each drew zero.
 These compositor samples and short local frame windows do not qualify physical phones, hardware GPUs, live providers or other operating systems.
 No send, queue, steer, stop, approval or auth submission was activated.
+
+### Full commands, keyboard search and retained-field boundaries
+
+In the same task worktree, `optical-evidence-p3ohAl/summary.json` under the run's temporary root records canonical build `d55cdc298ca69c272882f1dd9ab956f26fde9bd4f429d805023713deb0544337` over pre-commit HEAD `a775d72b4b0873054f697307b448ef0913639817`.
+The following are measurements on those bytes, not results carried forward from `f1288243`.
+The installed headless Chrome 151.0.7922.34 used a fresh profile, Linux ANGLE/Vulkan SwiftShader and DPR 1 in dark and light at 320×820, 390×820 and 1440×900.
+
+- **Full command:** In all six views the lazy `bash` card opened and displayed the 527-character fixture command.
+  `Copy command` received Tab focus, its center and four inner edges were reachable, and Space delivered exactly one unchanged string to the document-local receiver.
+  The 34.5×28 CSS-pixel button was entirely inside the clip at x=244.5–279, 314.5–349 and 1190.5–1225 respectively.
+  Neither a shell nor the platform clipboard was used.
+- **Global search:** Escape restored the opener.
+  Continuing from 24 hits to the next 12 retired the old active ID; typing in the still-focused input started a fresh query.
+  ArrowDown reached the initially offscreen `Recorded layer 17.`; ArrowUp returned to `Recorded layer 2.`.
+  Neither the document nor dialog scrolled.
+  Enter opened that field's exact v1 cursor and highlighted bytes **[93, 107)**, not the first occurrence of the same query.
+  At 320/390/1440px the result pane's vertical clip was y=176.31–627.31 / 176.31–627.31 / 260.27–755.27; its scrollTop at hit 17 was **1342 / 1078 / 754**, and at hit 2 **189 / 174 / 142**.
+  All sampled active rows fit the measured clipping intersections.
+  The worst stroke ratios against the **row / dialog** were **7.319 / 8.055** dark (RGB 173,182,197 on 37,39,43 / 30,31,35) and **5.882 / 6.543** light (82,89,100 on 234,234,236 / 246,246,247).
+- **Find in field:** English `Code` and Chinese `代码` present only in a code caption each produced zero highlights and disabled both navigation buttons.
+  On the page with genuine matches each produced exactly two ranges, one in prose and one inside folded code.
+  The gutter-only digit `2` had no range; the `1` search reached `Final 1.` as the 1000th real match.
+  The existing folded reveal, case, horizontal scroll, backward/forward, raw-page and cleanup assertions also ran.
+
+The same report completed all 143 general scene audits and 12 desktop timing windows with no reported problem or unavailable scenario.
+The lowest small-text ratio was the diff language label, 5.010 dark and 4.507 light.
+The 480×300 Hero drew 25 times in 1.25s, 25 after restoration and zero while lost, hidden, disabled or under reduced motion.
+All 2.6s windows had p50 16.7ms and no interval over 50ms.
+In on/off/off/on order, p95 was 16.7/16.7/16.8/16.7ms idle, 16.7/16.8/16.8/16.7ms scrolling and 16.7ms throughout incremental reading.
+Only idle-on drew ambient frames.
+Main-thread paints included document/menu at idle, Latest while scrolling and transcript, code, message text and footer during increments with either setting.
+During probe repair, end-follow had moved the expanded agreement paragraph offscreen; the typography probe now wheels away from the end before positioning and hit-testing that paragraph, independently of the unassisted search and follow tests.
+A pre-final headless run also did not observe the original tab becoming hidden after a fixed delay; the probe now foregrounds the measured tab before activating another tab and measures only after observing `document.hidden`.
+These are local compositor samples and short synthetic observations, not screen-reader, physical-phone, hardware-GPU, live-provider or post-commit acceptance evidence.
 
 ## Development practice
 

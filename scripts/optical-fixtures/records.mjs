@@ -1,6 +1,7 @@
 // Pure synthetic public projections. No worker/owner, filesystem browsing,
 // model API, mutation, approval or simulated completion derived from a click.
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
 import { designQuestionsFixture } from "../../test/helpers/design-questions.ts";
 import { PNG } from "../../test/helpers/images.ts";
@@ -84,7 +85,9 @@ export const writeContent = Array.from(
   { length: 407 },
   (_, i) => `facet ${i + 1}\n`,
 ).join("");
-const mutation = {
+export const shellCommand = `  specimen "${"silver-quartz-".repeat(35)}"\n\tsecond fixture line  \n`;
+const tools = {
+  bash: { command: shellCommand },
   edit: {
     path: "material.ts",
     oldText: "const tone = silver;",
@@ -169,8 +172,13 @@ const steps = (id, question) =>
       : {}),
     role,
     text,
-    name: role === "tool" ? (Object.hasOwn(mutation, id) ? id : "read") : "",
-    target: role === "tool" ? (mutation[id]?.path ?? "material.ts") : "",
+    name: role === "tool" ? (Object.hasOwn(tools, id) ? id : "read") : "",
+    target:
+      role === "tool"
+        ? id === "bash"
+          ? "specimen summary"
+          : (tools[id]?.path ?? "material.ts")
+        : "",
     clipped: false,
     error: false,
     parts: role === "tool" ? 1 : 0,
@@ -255,9 +263,9 @@ export function readRecord(q) {
         item: {
           id: "step-2",
           role: "tool",
-          name: mutation[id] ? id : "read",
+          name: Object.hasOwn(tools, id) ? id : "read",
           text: "Actual fixture output.\n".repeat(32),
-          args: JSON.stringify(mutation[id] ?? { path: "material.ts" }),
+          args: JSON.stringify(tools[id] ?? { path: "material.ts" }),
           error: false,
         },
       };
@@ -425,20 +433,23 @@ export const change = {
   },
 };
 
-// One retained message, two immutable field pages. The code hit needs both
+// One retained message with immutable field pages. The code hit needs both
 // outer vertical and inner horizontal scrolling; the other disclosure is not
 // part of the search target.
 export const fieldTask = randomUUID();
 const pages = [
   [
     "FacetSpot overview of the mineral study.",
-    "```text\nOther folded specimen.\n```",
+    "```\nOther folded specimen.\n```",
     ...Array.from({ length: 36 }, (_, i) => `Recorded layer ${i + 1}.`),
     "```text\n" + "0123456789".repeat(45) + " FacetSpotZircon\n```",
     "FacetSpot appendix.",
     "",
   ].join("\n\n"),
   "Second retained page.",
+  "\n\nCode and 代码 in prose.\n\n```\nCode and 代码 in the recorded block.\nAnother line.\n```\n\n" +
+    "1 ".repeat(999) +
+    "\n\nFinal 1.",
 ];
 const finalText = {
   recordId: randomUUID(),
@@ -464,30 +475,78 @@ export const historyMessage = {
   finalText,
 };
 const scope = { kind: "task", id: fieldTask };
-export const fieldRoute =
+const fieldCursor = {
+  storeId,
+  scope,
+  snapshotSeq: change.committedSeq,
+  query: null,
+  recordId: finalText.recordId,
+  recordVersion: 1,
+  field: finalText.field,
+  offset: 0,
+};
+const route = (cursor) =>
   `/app?project=${project}#` +
-  new URLSearchParams({
-    task: fieldTask,
-    detail: JSON.stringify({
-      storeId,
-      scope,
-      snapshotSeq: change.committedSeq,
-      query: null,
-      recordId: finalText.recordId,
-      recordVersion: 1,
-      field: finalText.field,
-      offset: 0,
-    }),
+  new URLSearchParams({ task: fieldTask, detail: JSON.stringify(cursor) });
+export const fieldRoute = route(fieldCursor);
+const starts = pages.map((_, i) =>
+  Buffer.byteLength(pages.slice(0, i).join("")),
+);
+export const literalRoute = route({ ...fieldCursor, offset: starts[2] });
+const coverage = {
+  observed: "complete",
+  source: "complete",
+  redacted: false,
+  omissions: [],
+};
+// Every global hit has a real location in the same immutable field. Accept
+// only these exact initial and continuation cursors, not arbitrary searches.
+export function searchSpecimen(query) {
+  if (!["Recorded", "Recorded layer"].includes(query)) return [];
+  return [...pages[0].matchAll(/Recorded layer \d+\./g)].map((match) => {
+    const start = Buffer.byteLength(pages[0].slice(0, match.index));
+    return {
+      owner: historyMessage.owner,
+      content: finalText,
+      range: { start, end: start + Buffer.byteLength(query) },
+      preview: match[0],
+      cursor: { ...fieldCursor, query, offset: start },
+    };
   });
+}
+export function searchPage(cursor) {
+  const hits = searchSpecimen(cursor?.query);
+  if (!hits.length) return null;
+  const seed = {
+    ...fieldCursor,
+    query: cursor.query,
+    recordId: null,
+    recordVersion: null,
+    field: null,
+  };
+  const next = hits[24].cursor;
+  if (isDeepStrictEqual(cursor, seed))
+    return { cursor, hits: hits.slice(0, 24), next, coverage };
+  if (isDeepStrictEqual(cursor, next))
+    return { cursor, hits: hits.slice(24), next: null, coverage };
+  return null;
+}
 export function fieldPage(cursor) {
-  if (cursor.recordId !== finalText.recordId || cursor.scope?.id !== fieldTask)
+  const matches = searchSpecimen(cursor.query);
+  if (cursor.query !== null && !matches.length) return null;
+  const hit = matches.find((h) => isDeepStrictEqual(h.cursor, cursor));
+  if (
+    !hit &&
+    !isDeepStrictEqual(cursor, {
+      ...fieldCursor,
+      query: cursor.query,
+      offset: cursor.offset,
+    })
+  )
     return null;
-  const text =
-    cursor.offset === 0
-      ? pages[0]
-      : cursor.offset === Buffer.byteLength(pages[0])
-        ? pages[1]
-        : null;
+  const text = hit
+    ? Buffer.from(pages[0]).subarray(cursor.offset).toString()
+    : pages[starts.indexOf(cursor.offset)];
   if (!text) return null;
   const end = cursor.offset + Buffer.byteLength(text);
   return {
@@ -496,11 +555,6 @@ export function fieldPage(cursor) {
     text,
     range: { start: cursor.offset, end },
     next: end < finalText.bytes ? { ...cursor, offset: end } : null,
-    coverage: {
-      observed: "complete",
-      source: "complete",
-      redacted: false,
-      omissions: [],
-    },
+    coverage,
   };
 }

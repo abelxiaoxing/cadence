@@ -205,6 +205,7 @@ export function ToolStep({
     () => (args ? parseFileMutationArgs(step.name, args) : null),
     [step.name, args],
   );
+  const argumentText = args && !change ? (command ?? readableArgs(args)) : "";
   return (
     <div className={`toolcall ${state}`}>
       <CollapsibleHead
@@ -241,7 +242,11 @@ export function ToolStep({
             )}
             <span className="toolcall-spacer" />
             {step.target && (
-              <CopyButton text={step.target} className="chead-copy" />
+              <CopyButton
+                text={step.target}
+                label={t("Copy tool summary")}
+                className="chead-copy"
+              />
             )}
           </>
         }
@@ -260,16 +265,28 @@ export function ToolStep({
                 <div className="toolcall-args">
                   {change ? (
                     <FileChangeCard data={change} failed={state === "err"} />
-                  ) : command ? (
-                    <div className="termline">
-                      <FiTerminal
-                        className="termline-icon"
-                        aria-hidden="true"
-                      />
-                      <code>{command}</code>
-                    </div>
                   ) : (
-                    <pre>{readableArgs(detail.value.args)}</pre>
+                    <>
+                      <div className="toolcall-output-label">
+                        {t(command ? "Command" : "Arguments")}
+                        <CopyButton
+                          text={argumentText}
+                          label={t(command ? "Copy command" : "Copy arguments")}
+                          className="output-copy"
+                        />
+                      </div>
+                      {command ? (
+                        <div className="termline">
+                          <FiTerminal
+                            className="termline-icon"
+                            aria-hidden="true"
+                          />
+                          <code>{argumentText}</code>
+                        </div>
+                      ) : (
+                        <pre>{argumentText}</pre>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -279,6 +296,7 @@ export function ToolStep({
                     {t(state === "err" ? "Error output" : "Output")} · {status}
                     <CopyButton
                       text={detail.value.text}
+                      label={t("Copy output")}
                       className="output-copy"
                     />
                   </div>

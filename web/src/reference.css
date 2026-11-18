@@ -448,8 +448,7 @@
   cursor: pointer;
 }
 
-.gs-item:hover:not(:disabled),
-.gs-item.active:not(:disabled) {
+.gs-item:hover:not(:disabled) {
   background: var(--bg-elev3);
 }
 

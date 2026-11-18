@@ -158,7 +158,7 @@ function PlainCodeBlock({
   const numWidth = multi ? `${String(lines.length).length + 1}ch` : undefined;
   return (
     <div className="codeblock">
-      <div className="code-caption">
+      <div data-field-chrome="" className="code-caption">
         <button
           type="button"
           aria-expanded={expanded}
@@ -188,6 +188,7 @@ function PlainCodeBlock({
           <div className="code-line" key={key}>
             {multi && (
               <span
+                data-field-chrome=""
                 className="code-num"
                 style={numWidth ? { width: numWidth } : undefined}
               >

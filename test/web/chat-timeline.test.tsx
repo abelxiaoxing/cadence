@@ -25,6 +25,7 @@ import {
 } from "../../web/src/client/conversation-reader";
 import { useConversation } from "../../web/src/client/use-conversation";
 import { useWorkbench } from "../../web/src/client/use-workbench";
+import { CopyButton } from "../../web/src/components/rich/CopyButton";
 import { MarkdownBody } from "../../web/src/components/rich/Markdown";
 import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
 import { CollapsibleHead } from "../../web/src/components/transcript/CollapsibleHead";
@@ -497,6 +498,62 @@ function elements<P = { children?: ReactNode }>(
     ...elements<P>(node.props.children, type),
   ];
 }
+it.each([
+  {
+    label: "Copy command",
+    args: { command: "  specimen\n\tmineral  \n" },
+    displayed: "  specimen\n\tmineral  \n",
+    tag: "code",
+  },
+  {
+    label: "Copy arguments",
+    args: { path: "opal" },
+    displayed: '{\n  "path": "opal"\n}',
+    tag: "pre",
+  },
+])(
+  "ToolStep keeps the summary, $label and output distinct through lazy expansion",
+  async ({ label, args, displayed, tag }) => {
+    const { turn, step, detail, requests } = fixture();
+    step.target = "summary only";
+    const draw = () => {
+      const tree = render(() => ToolStep({ turn, index: 0, step }));
+      commit();
+      const head = elements<ComponentProps<typeof CollapsibleHead>>(
+        tree,
+        CollapsibleHead,
+      )[0].props;
+      const buttons = elements<ComponentProps<typeof CopyButton>>(
+        [head.after, tree],
+        CopyButton,
+      );
+      return {
+        tree,
+        head,
+        copies: buttons.map((b) => [b.props.label, b.props.text]),
+      };
+    };
+    const summary = ["Copy tool summary", step.target];
+    const closed = draw();
+    expect(closed.copies).toEqual([summary]);
+    expect(detail).not.toHaveBeenCalled();
+    closed.head.onToggle();
+    expect(draw().copies).toEqual([summary]);
+    const text = "recorded output\n";
+    requests[0].resolve({ args: JSON.stringify(args), text });
+    await settle();
+    const open = draw();
+    expect(elements(open.tree, tag)[0].props.children).toBe(displayed);
+    expect(open.copies).toEqual([
+      summary,
+      [label, displayed],
+      ["Copy output", text],
+    ]);
+    open.head.onToggle();
+    expect(draw().copies).toEqual([summary]);
+    expect(detail).toHaveBeenCalledTimes(1);
+  },
+);
 // The real workflow component owns recordedTurn and the detail closure. Only
 // transport replies and hook scheduling are controlled here; no backend import,
 // persisted-file claim, or hand-written replacement detail function.

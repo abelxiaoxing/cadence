@@ -1,7 +1,14 @@
 /* Direct adaptation of pi-web-ui GlobalSearchModal.tsx search/request-correlation,
  * keyboard navigation and result-section family. MIT (c) 2026 xing-shuyin.
  * Cadence replaces session restoration/files/plugins with exact durable hit anchors. */
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { FiSearch } from "react-icons/fi";
 import { searchRequest } from "../../history/search-request";
 import { emptySearchWindow } from "../../history/search-summary";
@@ -31,7 +38,11 @@ export function GlobalSearchModal({
     lastReqRef = useRef(0);
   const [query, setQuery] = useState(""),
     [active, setActive] = useState(0);
-  const [page, setPage] = useState<SearchPage>(),
+  const listId = useId();
+  const results = useRef<HTMLDivElement>(null),
+    activeRow = useRef<HTMLButtonElement>(null),
+    reveal = useRef(false);
+  const [replyPage, setPage] = useState<SearchPage>(),
     [pending, setPending] = useState(false),
     [error, setError] = useState<string>();
   const controller = useRef<AbortController | null>(null);
@@ -47,6 +58,7 @@ export function GlobalSearchModal({
         if (lastReqRef.current !== reqId || abort.signal.aborted) return;
         if (reply.kind === "error") setError(reply.error.code);
         else {
+          reveal.current = true;
           setPage(reply.value);
           setActive(0);
         }
@@ -89,6 +101,22 @@ export function GlobalSearchModal({
       controller.current?.abort();
     };
   }, [query, frozenSeed, search]);
+  const page = replyPage?.cursor.query === query ? replyPage : undefined;
+  const selected = page?.hits[active];
+  const optionId = ({ content, range }: SearchHit) =>
+    `${listId}-${content.recordId}-${content.version}-${content.field}-${range.start}-${range.end}`;
+  useLayoutEffect(() => {
+    if (!selected || !reveal.current || !results.current || !activeRow.current)
+      return;
+    const pane = results.current;
+    const row = activeRow.current.getBoundingClientRect();
+    const top = pane.getBoundingClientRect().top + pane.clientTop;
+    const bottom = top + pane.clientHeight;
+    if (row.top < top || row.height > pane.clientHeight)
+      pane.scrollTop += Math.floor(row.top - top);
+    else if (row.bottom > bottom)
+      pane.scrollTop += Math.ceil(row.bottom - bottom);
+  }, [selected]);
   return (
     <ActionDialog title={t("Search retained history")} onClose={onClose}>
       <div className="gs-modal">
@@ -97,22 +125,26 @@ export function GlobalSearchModal({
           <input
             ref={inputRef}
             aria-label={t("Case-sensitive literal query")}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={!!selected}
+            aria-controls={listId}
+            aria-activedescendant={selected ? optionId(selected) : undefined}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
+              if (!selected || e.nativeEvent.isComposing) return;
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
+                reveal.current = true;
+                const delta = e.key === "ArrowDown" ? 1 : -1;
                 setActive((a) =>
-                  Math.max(0, Math.min(a + 1, (page?.hits.length ?? 0) - 1)),
+                  Math.max(0, Math.min(a + delta, page.hits.length - 1)),
                 );
               }
-              if (e.key === "ArrowUp") {
+              if (e.key === "Enter") {
                 e.preventDefault();
-                setActive((a) => Math.max(a - 1, 0));
-              }
-              if (e.key === "Enter" && page?.hits[active]) {
-                e.preventDefault();
-                onHit(page.hits[active]);
+                onHit(selected);
                 onClose();
               }
             }}
@@ -128,7 +160,7 @@ export function GlobalSearchModal({
             },
           )}
         </p>
-        <div className="gs-results">
+        <div className="gs-results" ref={results}>
           {pending && (
             <p role="status">{t("Searching bounded retained range…")}</p>
           )}
@@ -138,55 +170,73 @@ export function GlobalSearchModal({
             </p>
           )}
           {!query && <p>{t("Enter a query to search this selected scope.")}</p>}
+          {page && <Coverage value={page.coverage} />}
+          <div className="gs-section" hidden={!page}>
+            <div className="gs-section-head" id={`${listId}-label`}>
+              {t("Matches on this page: {count}", {
+                count: page?.hits.length ?? 0,
+              })}
+            </div>
+            <div
+              role="listbox"
+              id={listId}
+              aria-labelledby={`${listId}-label`}
+              hidden={!selected}
+            >
+              {page?.hits.map((hit, i) => (
+                <button
+                  type="button"
+                  key={optionId(hit)}
+                  role="option"
+                  tabIndex={-1}
+                  id={optionId(hit)}
+                  ref={selected === hit ? activeRow : undefined}
+                  aria-selected={selected === hit}
+                  className="gs-item"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseMove={() => {
+                    reveal.current = false;
+                    if (hit !== selected) setActive(i);
+                  }}
+                  onClick={() => {
+                    onHit(hit);
+                    onClose();
+                  }}
+                >
+                  <span className="gs-item-title">
+                    {tx(hit.owner.entity.kind)} · {tx(hit.content.field)} · v
+                    {hit.content.version}
+                  </span>
+                  <span className="gs-item-sub">{hit.preview}</span>
+                  <code>
+                    {hit.owner.childRunId ??
+                      hit.owner.runId ??
+                      hit.owner.taskId}{" "}
+                    / {hit.content.recordId} /{" "}
+                    {t("bytes {start}–{end}", {
+                      start: hit.range.start,
+                      end: hit.range.end,
+                    })}
+                  </code>
+                </button>
+              ))}
+            </div>
+            {page && page.hits.length === 0 && (
+              <p>{tx(emptySearchWindow(page))}</p>
+            )}
+          </div>
           {page && (
-            <>
-              <Coverage value={page.coverage} />
-              <div className="gs-section">
-                <div className="gs-section-head">
-                  {t("Matches on this page: {count}", {
-                    count: page.hits.length,
-                  })}
-                </div>
-                {page.hits.map((hit, i) => (
-                  <button
-                    type="button"
-                    key={`${hit.content.recordId}:${hit.content.version}:${hit.range.start}`}
-                    className={`gs-item ${active === i ? "active" : ""}`}
-                    onMouseEnter={() => setActive(i)}
-                    onClick={() => {
-                      onHit(hit);
-                      onClose();
-                    }}
-                  >
-                    <span className="gs-item-title">
-                      {tx(hit.owner.entity.kind)} · {tx(hit.content.field)} · v
-                      {hit.content.version}
-                    </span>
-                    <span className="gs-item-sub">{hit.preview}</span>
-                    <code>
-                      {hit.owner.childRunId ??
-                        hit.owner.runId ??
-                        hit.owner.taskId}{" "}
-                      / {hit.content.recordId} /{" "}
-                      {t("bytes {start}–{end}", {
-                        start: hit.range.start,
-                        end: hit.range.end,
-                      })}
-                    </code>
-                  </button>
-                ))}
-                {page.hits.length === 0 && <p>{tx(emptySearchWindow(page))}</p>}
-              </div>
-              <button
-                type="button"
-                disabled={pending || !page.next}
-                onClick={() => {
-                  if (page.next) void search(page.next, ++lastReqRef.current);
-                }}
-              >
-                {t("Continue same snapshot search")}
-              </button>
-            </>
+            <button
+              type="button"
+              disabled={pending || !page.next}
+              onClick={() => {
+                if (!page.next) return;
+                inputRef.current?.focus({ preventScroll: true });
+                void search(page.next, ++lastReqRef.current);
+              }}
+            >
+              {t("Continue same snapshot search")}
+            </button>
           )}
         </div>
         <footer className="gs-foot">

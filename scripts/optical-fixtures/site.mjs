@@ -20,6 +20,7 @@ import {
   historyMessage,
   project,
   readRecord,
+  searchPage,
   storeId,
   workspaceId,
 } from "./records.mjs";
@@ -205,6 +206,18 @@ export function fixture(root) {
       }
       if (v) return ok(v);
     }
+    if (p === `/projects/${project}/api/v1/search`) {
+      const page = searchPage(q);
+      if (page) return ok(page);
+      failures.push("Unexpected synthetic search cursor");
+      return refuse();
+    }
+    if (
+      p === `/projects/${project}/api/v1/entity` &&
+      q?.kind === "message" &&
+      q.id === historyMessage.owner.entity.id
+    )
+      return ok({ request: q, record: historyMessage });
     if (p.endsWith("/details") && q?.recordId === artifact.recordId)
       return ok({
         cursor: q,
