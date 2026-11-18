@@ -402,7 +402,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
    * fails because the table, or the workspace it is in, cannot be read. */
   const routeTable = (ctx: ExtensionContext) => {
     try {
-      return routeTableBrief(resolveWorkspace(ctx.cwd).cwd, []);
+      return routeTableBrief(resolveWorkspace(ctx.cwd).root, []);
     } catch {
       return "";
     }
@@ -1072,7 +1072,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     name: "cadence_knowledge",
     label: "Read project knowledge",
     description:
-      "Read one current project Markdown source or heading without a research worker.",
+      "Read a current project heading, a literal in a named source file, or a retained investigation without a research worker.",
     parameters: KNOWLEDGE_PARAMETERS,
     async execute(_id, input, _signal, _update, ctx) {
       active(ctx);

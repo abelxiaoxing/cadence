@@ -32,6 +32,7 @@ import { ConversationWorkflow } from "../src/service/conversation-workflow.ts";
 import type { ConversationControl } from "../src/service/conversations.ts";
 import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
+import { WorkbenchFiles } from "../src/service/workbench-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
 import { workflowResultDetail } from "../src/service/workflow-result.ts";
 import { designQuestionsFixture } from "./helpers/design-questions.ts";
@@ -223,7 +224,17 @@ function fixture(
     },
     workflows,
     secrets: project.secrets ?? (() => []),
-    ...(project.cwd ? { cwd: project.cwd } : {}),
+    ...(project.cwd
+      ? {
+          cwd: project.cwd,
+          readSource: (path: string) =>
+            new WorkbenchFiles(
+              project.cwd!,
+              [],
+              project.secrets ?? (() => []),
+            ).read(path),
+        }
+      : {}),
   } as unknown as ConstructorParameters<typeof ConversationWorkflow>[0]);
   const root = join(directory, "conversation-workflows-v1");
   const send = (
@@ -1283,6 +1294,37 @@ it("a coordinator reads current project sections without a research run", async 
   expect(first.excerpt).not.toMatch(/secret-canary|Unrelated/);
   writeFileSync(doc, "## Themes\nPrefer solid text surfaces.");
   expect((await read()).digest).not.toBe(first.digest);
+  const source = "reference.css";
+  writeFileSync(
+    join(cwd, source),
+    "/* secret-canary */\n:root {\n  --glass-bg: light-dark(white, black);\n}\n",
+  );
+  const fact = await f.tool(turn, "cadence_knowledge", {
+    path: source,
+    match: "--glass-bg",
+  });
+  expect(fact).toMatchObject({
+    line: 3,
+    firstLine: 1,
+    limited: false,
+    digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+  expect(fact.excerpt).toContain("--glass-bg: light-dark(white, black)");
+  expect(fact.excerpt).not.toContain("secret-canary");
+  writeFileSync(join(cwd, "auth.json"), '{"secret":"private contents"}');
+  expect(
+    await f.tool(turn, "cadence_knowledge", {
+      path: "auth.json",
+      match: "secret",
+    }),
+  ).not.toHaveProperty("excerpt");
+  expect(
+    await f.tool(turn, "cadence_knowledge", {
+      path: source,
+      match: "--glass-bg",
+      section: "ignored",
+    }),
+  ).toMatchObject({ refused: "invalid" });
   expect(f.runs.size).toBe(0);
   await f.settle(turn);
 });

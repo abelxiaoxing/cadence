@@ -226,7 +226,7 @@ export class WorkbenchFiles {
     }
   }
   /** A redacted text preview of a small UTF-8 file's beginning. */
-  read(path: string): WorkbenchResult {
+  read(path: string): Extract<WorkbenchResult, { kind: "file" }> {
     const { buffer, stat } = this.bytes(path, 0, 128 * 1024);
     const whole = buffer.length === stat.size;
     const decoded = new TextDecoder("utf-8", { fatal: true }).decode(buffer, {
