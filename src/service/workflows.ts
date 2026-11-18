@@ -3193,7 +3193,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           ),
           history: this.revisionHistory(live),
           deviations: this.deviationBrief(live, "work").trim(),
-        })}\n${facts.length ? "Prior verification evidence (historical):\n" + this.evidence(live, facts) : "Final candidate checks and independent review are pending. Base knowledge on the implemented files and their sources."}`,
+        })}\n${facts.length ? `Prior verification evidence (historical):\n${this.evidence(live, facts)}` : "Final candidate checks and independent review are pending. Base knowledge on the implemented files and their sources."}`,
         paths,
         "knowledge",
       );
@@ -3778,7 +3778,13 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         this.documents(live),
         [...live.delivered].sort(),
       );
-      await this.verifyAndRepair(live, this.cwd, p, false);
+      await this.verifyAndRepair(
+        live,
+        this.cwd,
+        p,
+        false,
+        this.documents(live),
+      );
       return;
     }
     if (!target || !delivery) throw new ContractError("invalid");

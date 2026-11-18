@@ -106,7 +106,9 @@ Dependent assignments wait for completion.
 Unknown originals, Cancel and authority/storage failures stop new work.
 An editing worker with nonzero exit needs a settled, successful cleanup diagnostic before recovery; direct-child close alone cannot authorize another editor.
 A timed-out shell check is not automatically replayed because descendant/tool closure was not established.
-The owner assembles implementation, curated knowledge and deliverable notes before candidate checks and independent Agent review. Final verification and integration outcomes stay in owner records. Repairs and changed candidate identities require fresh evidence.
+The owner assembles implementation, curated knowledge and deliverable notes before candidate checks and independent Agent review.
+Final verification and integration outcomes stay in owner records.
+Repairs and changed candidate identities require fresh evidence.
 Failed checks, rejected review, unparseable review and settled worker failures can enter diagnosis and repair without further routine confirmation.
 Every declared check runs in every round.
 A check is set aside only by a recorded deviation that names it: it still runs and is shown as failed, stops gating acceptance, and is listed in the acceptance record (`waived`); a candidate whose every check was set aside is never accepted.
@@ -131,7 +133,6 @@ For local delivery, it follows sibling refresh under exclusive checkout access, 
 Local-merge verification rounds first commit the approved candidate changes, then bind real checks and Agent review to that exact commit/tree and source identity.
 After a verified sibling merge, the candidate diff base is that sibling commit: incorporated sibling paths are not attributed to this run, while its own complete diff still passes scope, checks and fixed-base Agent review.
 Delivery notes and knowledge changes are included before final acceptance; new edits invalidate earlier acceptance.
-Local-merge candidates receive another verification after delivery notes, before fast-forward integration.
 Post-merge failures preserve the real merge: any repair happens in the owned candidate, is checked/reviewed there and fast-forwards the unchanged target again.
 The user's unrelated index is never committed by recovery.
 Local commit hooks/signing are disabled; verification is explicitly approved instead.

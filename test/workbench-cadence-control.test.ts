@@ -14,6 +14,11 @@ import {
   type ErrorCode,
 } from "../src/service/contracts/core.ts";
 import {
+  designMessage,
+  designSummary,
+  reviseDesign,
+} from "../src/service/contracts/design.ts";
+import {
   decodeWorkbenchResult,
   type WorkbenchCommand,
   type WorkbenchResult,
@@ -29,6 +34,7 @@ import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
 import { workflowResultDetail } from "../src/service/workflow-result.ts";
+import { designQuestionsFixture } from "./helpers/design-questions.ts";
 import { fixtureRuntime } from "./helpers/worker-runtime.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -1160,4 +1166,158 @@ it("a turn that reaches the coordinator carries the project's route table; leavi
   expect(asked).toBe(0);
   // The shared policy still names the table; the table itself is not read.
   expect(f.instructions(left)).not.toContain("engineering/search.md#Tokens");
+});
+
+it("a batch survives refresh, refuses stale edits and grants, and starts no work on submission", async () => {
+  const f = fixture(),
+    id = randomUUID();
+  const read = () => f.cw.records.state(id);
+  const start = f.send(id, "enter");
+  await f.tool(start, "cadence_design", { questions: designQuestionsFixture });
+  expect(await f.tool(start, "cadence_plan", plan())).toMatchObject({
+    refused: "design-pending",
+  });
+  await f.settle(start);
+  const first = read();
+  expect(first.design?.submitted).toBe(false);
+  const edit = (
+    state: typeof first,
+    answers: NonNullable<typeof first.design>["answers"],
+  ) =>
+    f.cw.editDesign(
+      {
+        kind: "cadence-design-edit",
+        commandId: randomUUID(),
+        conversationId: id,
+        revision: state.revision,
+        designId: state.design!.id,
+        answers,
+      },
+      caller,
+    );
+  edit(first, [
+    { question: "surface", option: "everywhere" },
+    { question: "blur", option: "heavy" },
+    { question: "motion", other: "Keep keyboard focus still" },
+  ]);
+  expect(() => edit(first, [])).toThrow("stale");
+  const before = read();
+  edit(before, [
+    { question: "surface", option: "frames" },
+    ...before.design!.answers.slice(1),
+  ]);
+  const changed = read().design!;
+  expect(changed.answers).toEqual([
+    { question: "surface", option: "frames" },
+    { question: "motion", other: "Keep keyboard focus still" },
+  ]);
+  expect(f.turns.get(id)).toEqual([start]);
+  expect(() => f.send(id, "design", "stale client summary")).toThrow("stale");
+  const submitted = f.send(
+    id,
+    "design",
+    designSummary(reviseDesign(changed, changed.answers, true)),
+  );
+  expect(read().design?.submitted).toBe(true);
+  expect(await f.tool(submitted, "cadence_status", {})).toMatchObject({
+    design: read().design,
+  });
+  expect(f.instructions(submitted)).not.toContain("Keep keyboard focus still");
+  await f.tool(submitted, "cadence_plan", plan());
+  await f.settle(submitted);
+  const shown = read();
+  expect(shown.proposal).toBeTruthy();
+  expect(f.runs.size).toBe(0);
+  const binding = {
+    conversationId: id,
+    revision: shown.revision,
+    proposalId: shown.proposal!.id,
+    digest: shown.proposal!.digest,
+  };
+  const grant = f.cw.approval(
+    { kind: "cadence-prepare", commandId: randomUUID(), ...binding },
+    caller,
+  );
+  if (grant.kind !== "cadence-grant") throw Error("grant");
+  edit(shown, [{ question: "surface", other: "Opaque" }]);
+  expect(read().proposal).toBeNull();
+  expect(() =>
+    f.cw.approval(
+      {
+        kind: "cadence-approve",
+        commandId: randomUUID(),
+        ...binding,
+        grant: grant.grant,
+      },
+      caller,
+    ),
+  ).toThrow("stale");
+  const recommended = f.send(id, "message", "按你推荐的来");
+  expect(read().design?.submitted).toBe(true);
+  expect(read().design?.answers).toContainEqual({
+    question: "motion",
+    option: "quiet",
+  });
+  await f.settle(recommended);
+  expect(f.runs.size).toBe(0);
+});
+
+it("a coordinator reads current project sections without a research run", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "read-knowledge-"));
+  const doc = join(cwd, "AGENTS.md");
+  writeFileSync(
+    doc,
+    "# Project\n## Themes\nKeep contrast. secret-canary\n## Delivery\nUnrelated detail.\n",
+  );
+  const f = fixture(undefined, { cwd, secrets: () => ["secret-canary"] });
+  const turn = f.send(randomUUID(), "enter");
+  const read = () =>
+    f.tool(turn, "cadence_knowledge", { path: "AGENTS.md", section: "Themes" });
+  const first = await read();
+  expect(first).toMatchObject({
+    section: "Themes",
+    digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    limited: false,
+  });
+  expect(first.excerpt).toContain("Keep contrast.");
+  expect(first.excerpt).not.toMatch(/secret-canary|Unrelated/);
+  writeFileSync(doc, "## Themes\nPrefer solid text surfaces.");
+  expect((await read()).digest).not.toBe(first.digest);
+  expect(f.runs.size).toBe(0);
+  await f.settle(turn);
+});
+
+it("an oversized visible design stays complete and readable after a bounded submission", async () => {
+  const f = fixture(),
+    id = randomUUID(),
+    turn = f.send(id, "enter");
+  const rows = Array.from({ length: 12 }, (_, i) => ({
+    ...designQuestionsFixture[0],
+    id: `surface-${i}`,
+    question: "题".repeat(190),
+    acceptance: "验".repeat(190),
+  }));
+  await f.tool(turn, "cadence_design", { questions: rows });
+  await f.settle(turn);
+  const state = f.cw.records.state(id);
+  f.cw.editDesign(
+    {
+      kind: "cadence-design-edit",
+      commandId: randomUUID(),
+      conversationId: id,
+      revision: state.revision,
+      designId: state.design!.id,
+      answers: rows.map((q) => ({ question: q.id, other: "答".repeat(300) })),
+    },
+    caller,
+  );
+  const draft = f.cw.records.state(id).design!;
+  const complete = reviseDesign(draft, draft.answers, true);
+  expect(Buffer.byteLength(designSummary(complete))).toBeGreaterThan(16384);
+  const message = designMessage(complete, 16384);
+  expect(message).toContain(complete.id);
+  const sent = f.send(id, "design", message);
+  expect(Buffer.byteLength(f.instructions(sent))).toBeLessThan(16384);
+  expect((await f.tool(sent, "cadence_status", {})).design).toEqual(complete);
+  await f.settle(sent);
 });

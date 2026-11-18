@@ -58,7 +58,8 @@ Known-secret sanitation happens before injection.
 It is not universal business-secret detection or a sandbox.
 Documents can guide implementation but never grant permissions, skip mandatory checks or authorize a new remote action.
 
-The coordinator keeps its own conversation small: the route table, up to its budget and sanitized, is the only project knowledge it is given with every turn (`routeTableBrief`, in the native system prompt and the browser coordinator's instructions, as data rather than instructions), and it reads routed documents or headings directly through `cadence_knowledge`. The response includes the observed source digest and truncation status.
+The coordinator keeps its own conversation small: the route table, up to its budget and sanitized, is the only project knowledge it is given with every turn (`routeTableBrief`, in the native system prompt and the browser coordinator's instructions, as data rather than instructions), and it reads routed documents or headings directly through `cadence_knowledge`.
+The response includes the observed source digest and truncation status.
 Every completed investigation is recorded under `workflows-v1/investigations/` by its step's child run identity, with the commit it was made at and a digest of each project file its answer cites (`citedFiles`, at most 32), so a later agreement can name it instead of having each worker explore again.
 The coordinator's summary of a research run shows that identity on each step.
 A worker is given a named investigation's answer only while every cited file still reads as recorded in its own working tree; otherwise it gets a pointer saying which files changed, without the stale answer.

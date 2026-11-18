@@ -3,6 +3,8 @@
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
   "Design choices": "设计选项",
+  "Use all recommendations": "采用全部推荐",
+  "Plan identity": "计划标识",
   Questions: "问题",
   Recommended: "推荐",
   Acceptance: "验收",

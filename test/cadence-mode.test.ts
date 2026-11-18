@@ -12,6 +12,7 @@ import {
   restoreCadenceMode,
   transcriptText,
 } from "../src/cadence-mode.ts";
+import { designQuestionsFixture } from "./helpers/design-questions.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
 const injected = vi.hoisted(() => ({
@@ -1098,5 +1099,28 @@ it("native sessions own their model scope; tree navigation keeps it but a fork c
   const next = injected.client.models.mock.calls.at(-1)[1];
   expect(next.cwd).toBe(scope.cwd);
   expect(next.id).not.toBe(scope.id);
+  await h.emit("session_shutdown");
+});
+
+it("a native batch returns confirmed answers in one tool result and editing it retires the earlier plan", async () => {
+  const h = host();
+  await h.start();
+  await h.call("cadence_plan", plan());
+  let menus = 0;
+  h.ctx.ui.select.mockImplementation(async (_title: string, rows: string[]) => {
+    menus++;
+    if (menus === 1) return rows.find((r) => r.startsWith("Which motion?"));
+    if (menus === 2) return rows.find((r) => r.startsWith("Strong"));
+    return rows.find((r) => r.startsWith("Submit design"));
+  });
+  const out = await h.call("cadence_design", {
+    questions: designQuestionsFixture,
+  });
+  expect(out.content[0].text).toContain("Strong");
+  expect(out.content[0].text).toContain("Frames");
+  expect(out.content[0].text).not.toContain("How much blur?");
+  expect(h.last().design.submitted).toBe(true);
+  expect(h.effects).toEqual(["propose"]);
+  await expect(h.call("cadence_start")).rejects.toThrow("No current plan");
   await h.emit("session_shutdown");
 });

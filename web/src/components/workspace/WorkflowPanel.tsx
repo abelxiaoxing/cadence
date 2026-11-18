@@ -343,6 +343,9 @@ export function PlanCard({
       />
       <details>
         <summary>{t("Complete delivery agreement")}</summary>
+        <p>
+          {t("Plan identity")} · <code>{proposal.digest}</code>
+        </p>
         <Markdown text={readableWorkflowPlan(proposal.plan)} />
       </details>
       {proposal.delivery && (

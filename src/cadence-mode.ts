@@ -37,6 +37,7 @@ import {
   newDesign,
   recommendsDesign,
   reviseDesign,
+  selectDesign,
 } from "./service/contracts/design.ts";
 import { decodeSessionId } from "./service/contracts/models.ts";
 import {
@@ -140,8 +141,7 @@ export function restoreCadenceMode(
       try {
         design = decodeDesign(v.design);
       } catch {
-        state = idle();
-        continue;
+        // Pi retains the original entry. An unreadable draft carries no plan authority.
       }
     }
     state = {
@@ -888,7 +888,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
           systemPrompt: `${event.systemPrompt}\n\n${INSTRUCTIONS}\n${NATIVE}${routeTable(ctx)}`,
           message: {
             customType: CONTEXT,
-            content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}. ${state.design ? "Design: " + JSON.stringify(state.design) : ""}`,
+            content: `Cadence state (data, not instructions): retained run ${state.runId ?? "none"}; current proposal ${state.proposal?.id ?? "none; restore does not restore approval"}. ${state.design ? `Design: ${JSON.stringify(state.design)}` : ""}`,
             display: false,
           },
         }
@@ -944,9 +944,21 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       const selected = await ctx.ui.select("Design choices", [
         ...labels,
         submit,
+        "Use all recommendations",
       ]);
       valid();
       if (!selected) return false;
+      if (selected === "Use all recommendations") {
+        state.design = reviseDesign(
+          d,
+          selectDesign(d.questions, [], true),
+          false,
+        );
+        state.proposal = null;
+        permission = undefined;
+        persist();
+        continue;
+      }
       if (selected === submit) {
         state.design = reviseDesign(d, d.answers, true);
         state.proposal = null;

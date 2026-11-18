@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
+import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
 import type {
   CadenceConversation,
   WorkbenchCommand,
@@ -20,6 +21,7 @@ import {
   AgentDock,
   WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
+import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
 import {
   AssignmentBoard,
   DeliveryDetails,
@@ -41,6 +43,7 @@ import {
   workflowAgentLabel,
 } from "../../web/src/navigation/workflow-assignments";
 import type { ActiveRuns, RunProjection } from "../../web/src/types";
+import { designQuestionsFixture } from "../helpers/design-questions.ts";
 import { plan } from "../helpers/workflow-plan.ts";
 import { transport } from "./fixtures";
 
@@ -1018,3 +1021,28 @@ it.each(["en", "zh"] as const)(
     expect(dock).toContain("agent-dot blocked");
   },
 );
+
+it("the Web design card shows active questions, option costs, recommendation, custom input and one submission", () => {
+  const d = newDesign(randomUUID(), { questions: designQuestionsFixture });
+  const render = (draft: typeof d) =>
+    renderToStaticMarkup(
+      <DesignCard
+        draft={draft}
+        disabled={false}
+        onEdit={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+  expect(render(d)).toContain("Quieter surfaces");
+  expect(render(d)).toContain("Which motion?");
+  expect(render(d)).toContain("Other idea");
+  expect(render(d)).not.toContain("How much blur?");
+  const selected = reviseDesign(
+    d,
+    [{ question: "surface", option: "everywhere" }],
+    true,
+  );
+  expect(render(selected)).toContain("How much blur?");
+  expect(render(selected)).toContain("Design submitted");
+  expect(render(selected)).not.toContain("Confirm implementation");
+});
