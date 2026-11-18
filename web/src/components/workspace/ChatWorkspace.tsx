@@ -1458,6 +1458,10 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [resume]);
   // ---- Messages into the reply that is running ----
+  const flow =
+    lastTurn?.status === "running" &&
+    (lastTurn.activity?.kind === "tool" ||
+      lastTurn.activity?.kind === "thinking");
   const liveRun = running ? summary?.live : undefined;
   // The whole text of messages this tab sent, which the head read may clip.
   const sentInputs = useRef(new Map<string, string>());
@@ -1913,10 +1917,14 @@ export function ChatWorkspace({
               )}
             </p>
           )}
-          {conversation.summary === null &&
+          {available &&
+            conversation.count === 0 &&
+            !turns.length &&
+            conversation.summary === null &&
             !conversation.error &&
             !activitySelected && (
               <ChatWelcome
+                visible={!hidden}
                 hint={t(
                   "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
                 )}
@@ -2136,6 +2144,7 @@ export function ChatWorkspace({
         )}
       </div>
       <ChatComposer
+        flow={flow}
         inputRef={textarea}
         draft={draft}
         onDraft={setDraft}

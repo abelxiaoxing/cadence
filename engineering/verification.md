@@ -21,7 +21,7 @@ bun pm pack --destination /absolute/private-temp
 
 `bun run verify` is the sole integration and release gate, not a preliminary pass before another suite.
 It runs every independent check at once: syntax, generated bundles, incremental type checks, deterministic web build checks, lint, Agent pins, fast root tests, Web unit/SSR tests and exact real-pack auditing, with a time and outcome for each stage.
-There is no full verification mode, browser automation runner or browser dependency; unknown options fail before any stage starts.
+There is no full verification mode, browser gate or browser dependency; unknown options fail before any stage starts.
 Keep new gate checks short and deterministic.
 Slow process/SDK/PTY/service-manager tests are not release prerequisites or automatic follow-ups, including when those areas change.
 A green gate qualifies only those executed checks, not real-browser interaction, long-running process behavior, paid providers or native Windows/macOS/ConPTY operation.
@@ -57,6 +57,50 @@ If work is live, closure is uncertain or a report/package must be retained, leav
 No automatic migration or cleanup of previously scattered directories is implied.
 Unit runs point their workers at `cadence-test-run-<pid>` under that root and remove the whole subtree in the vitest globalSetup teardown, so a finished run leaves no fixtures behind; the caller's root is left as found.
 It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`), but no Chromium.
+
+## Optical presentation observation
+
+`node scripts/qualify-optical.mjs` is an independent, optional observation against the current canonical `web/dist`, **not** a release stage.
+It checks the browser build identity and asset digests, serves synthetic public projections on ephemeral loopback and exercises the actual client via a local Chromium DevTools pipe.
+No provider, execution command, installation, auth submission or user profile participates.
+`OPTICAL_CHROME` may name an already-installed executable.
+Use the same private temporary environment as for `verify`.
+The script prints the path of `summary.json` under that scope: branch, pre-commit HEAD and browser identity, viewports, geometry, reachable control centers, contrast samples, draw counts, frame windows and paint attribution.
+A missing browser, unavailable draw scenario or failed observation is not a pass.
+
+### Optical candidate observation
+
+On branch `cadence/git-worktree-cadence-spatial-optical-craft-webui-b4181761-740f-4805-8c68-3d948841cbe3`, candidate build `6b29c6567c5d9ffc3ae9829bfc77103018dad4f4330acf0a9ea22e59ae3cabc3` was observed before the owner's delivery commit (base `f625cfc1a85e2ee2453bdcdd5836ffe364bd8c06`).
+Headless Chrome 151.0.7922.34, Linux, ANGLE Vulkan/SwiftShader, DPR 1; **software** WebGL, not physical GPU or phone qualification.
+Both schemes at 320×820, 390×820 and 1440×900: 125 scene observations including the additional forced-colors login, 133 hit-tested control centers and 11,078 text/background samples.
+The matrix opened both Heroes, directory/service/model/overflow and path menus, compact drawers, file preview, long Markdown and its code controls, lazy tool output, lightbox, design, plan, assignments, history trace and retained artifact/diff, plus initial and invalid native password forms.
+At the three widths the chat row measured 278/348/790px; its scrolling viewport had client/scroll widths of 310/310, 380/380 and 1170/1170px.
+The code's 2147px scroll width stayed inside 276/346/788px clients.
+At 320px the navigation and inspector opener centers were (21,21) and (299,21); Escape returned navigation focus.
+No synthetic Send or approval was used.
+
+Contrast used computed foregrounds against samples of the composited material under visible text with glyph ink temporarily removed; indicators were sampled on the unmodified capture.
+These are sampled points, not every possible background pixel.
+Worst small text: dark history time `#8a93a2` on RGB(32,33,37), **5.19:1**; light artifact line number `#5e6675` on RGB(233,234,238), **4.81:1**.
+Lowest sampled indicator/focus was 5.87:1 (light composer).
+Observations prompted repairs to placeholder and hovered artifact contrast, parked drawer geometry, trace tab wrapping and the connection strip.
+In particular, a filtered footer sometimes lost its connection dot during compositor captures; the translucent strip no longer blurs the surface behind it.
+
+Same 1440×900 viewport/content, 2.6s windows in on/off/off/on order per scenario. p50 was 16.7ms throughout; p95 values below are milliseconds for individual rounds, not cross-device guarantees.
+
+| Scene               | On p95      | Off p95     | Frames over 50ms                     | Main-thread paint attribution                                                         |
+| ------------------- | ----------- | ----------- | ------------------------------------ | ------------------------------------------------------------------------------------- |
+| Empty idle          | 16.8 / 16.8 | 16.8 / 33.4 | 1/126 in first on round, otherwise 0 | No repeating text paints; occasional document/menu or footer paint                    |
+| Scroll              | 16.7 / 16.8 | 16.8 / 16.8 | 0                                    | Document, Latest, occasional menu                                                     |
+| Incremental reading | 16.8 / 16.7 | 16.8 / 16.7 | 0                                    | Transcript wrapper, text/code, document and footer on read updates in both conditions |
+
+The single long idle frame did not repeat.
+The 480×300 Hero buffer drew 25 times in a separate 1.25s window, zero with reduced motion, disabled or after context loss.
+The restored context drew 25 times; an actually hidden tab had no draws in 1s.
+Scrolling and incremental reading had zero ambient draws.
+Growth followed the bottom, up-scroll held its position and Latest returned to the end.
+DevTools Paint node IDs describe paint roots, not exact glyph rasterization or compositor/GPU energy.
+No deployment, real credentials, live model workloads, device battery life, physical mobile browser or hardware GPU was tested.
 
 ## Development practice
 
@@ -100,7 +144,8 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 ## Regression owners
 
 This index includes retained slow diagnostics; their presence does not add them to the gate.
-Real-browser automation has been removed, not replaced by a claim that unit tests exercise a browser.
+The release gate does not launch a browser.
+The separate optical observation below does not turn unit tests into browser evidence.
 
 - `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, conversation-bound models/defaults, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
 - `service-conversation-workflow`, `test/web/workflow.test.tsx`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.

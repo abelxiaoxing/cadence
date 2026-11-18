@@ -161,7 +161,7 @@ function chipFor(seg, lang) {
 }
 
 /* 工具配色：常用工具固定色（读=青、写=琥珀、bash=紫），其余按名哈希进调色板——同一工具永远同色。
- * 色板本身是 timeline.css 里的 --tl-* light-dark() token：两套方案恒同色相，仅按方案调明度/alpha。 */
+ * 色板本身是 optical-tokens.css 里的 --tl-* light-dark() token：两套方案恒同色相，仅按方案调明度/alpha。 */
 const TOOL_PALETTE = [
   "rtr-tc-0",
   "rtr-tc-1",
@@ -197,7 +197,7 @@ const TOOL_FIXED = {
 };
 function toolClass(name) {
   const n = String(name ?? "tool");
-  if (TOOL_FIXED[n]) return `rtr-tc ${TOOL_FIXED[n]}`;
+  if (Object.hasOwn(TOOL_FIXED, n)) return `rtr-tc ${TOOL_FIXED[n]}`;
   let h = 0;
   for (let i = 0; i < n.length; i++) h = ((h << 5) - h + n.charCodeAt(i)) | 0;
   return `rtr-tc ${TOOL_PALETTE[Math.abs(h) % TOOL_PALETTE.length]}`;

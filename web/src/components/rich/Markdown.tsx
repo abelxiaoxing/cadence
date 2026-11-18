@@ -1,7 +1,7 @@
 /* Adapted from pi-web-ui web/src/components/Markdown.tsx (e8bab487af208bc9a1ab60a821652323f598127f).
  * Copyright (c) 2026 xing-shuyin. MIT; see licenses/pi-web-ui-MIT.txt.
  * Cadence removes plugin fences, file-path access and automatic external resources. */
-import { type JSX, memo, type ReactNode } from "react";
+import { type JSX, memo, type ReactNode, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -12,6 +12,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
 import "katex/dist/katex.min.css";
+import { useT } from "../../i18n/locale";
+import "./reading.css";
 import { splitCodeLines } from "../../rich/code-lines";
 import remarkBackslashMath from "../../rich/remark-backslash-math";
 import { CopyButton } from "./CopyButton";
@@ -128,6 +130,14 @@ function PlainCodeBlock({
     children && typeof children === "object" && "props" in children
       ? (children as { props?: { children?: ReactNode } }).props?.children
       : children;
+  const language =
+    children && typeof children === "object" && "props" in children
+      ? String(
+          (children.props as { className?: string }).className ?? "",
+        ).match(/(?:^|\s)language-([^\s]+)/)?.[1]
+      : undefined;
+  const { locale } = useT();
+  const [expanded, setExpanded] = useState(true);
   let offset = 0;
   const lines = splitCodeLines(inner).map((nodes) => {
     const key = `code-offset:${offset}`;
@@ -138,8 +148,18 @@ function PlainCodeBlock({
   const numWidth = multi ? `${String(lines.length).length + 1}ch` : undefined;
   return (
     <div className="codeblock">
-      <CopyButton text={codeText(children)} />
-      <pre {...props}>
+      <div className="code-caption">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          {language || (locale === "zh" ? "代码" : "Code")}
+        </button>
+        <CopyButton text={codeText(children)} className="output-copy" />
+      </div>
+      <pre {...props} hidden={!expanded}>
         {lines.map(({ nodes, key }, i) => (
           <div className="code-line" key={key}>
             {multi && (

@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@import "./optical-tokens.css";
 @import "./reference.css";
 @source "./**/*.{ts,tsx}";
 /* Cadence task-workspace chrome restyled from pi-web-ui web/src/styles.css
@@ -6,49 +7,7 @@
  * data-tip, panel/lp-section/session-item, resize handle, statusbar, msg-meta/body,
  * empty-state, scroll-bottom and scrollbar families) and, from b627452c, the
  * notices and img-lightbox families. MIT (c) 2026 xing-shuyin;
- * source-family lineage in provenance/webui-reuse.json. Tokens come from reference.css. */
-:root {
-  /* Scheme tokens follow the system until `data-theme` names one. Glass and
-   * Cyan → Blue accents share the same tokens across every workspace surface. */
-  color-scheme: light dark;
-  /* WCAG AA (4.5:1) for small safety statements, selected-tab text and the
-   * primary button, on the page, raised and tinted surfaces of either scheme
-   * (test/web/theme.test.tsx). pi's #6b7284 and #8b5cf6 text read 3.5–4.2:1 on
-   * the dark surfaces and white.css's #818b98 3.2–3.5:1 on the light ones. */
-  --text-faint: light-dark(#5b6675, #8e99ad);
-  --accent-text: light-dark(#1d4ed8, #67e8f9);
-  --accent-strong: light-dark(#1d4ed8, #22d3ee);
-  /* Dark glyphs keep the Cyan end of the dark gradient readable. */
-  --on-accent: light-dark(#ffffff, #082f49);
-  /* Elevation: resting cards, floating menus and tooltips, dialogs and
-   * drawers. Soft on light, navy-tinted on dark so glass lifts without a
-   * hard black edge. */
-  --shadow-1: light-dark(rgba(31, 35, 40, 0.07), rgba(2, 6, 23, 0.26));
-  --shadow-2: light-dark(rgba(31, 35, 40, 0.11), rgba(2, 6, 23, 0.44));
-  --shadow-3: light-dark(rgba(31, 35, 40, 0.16), rgba(2, 6, 23, 0.56));
-  --scrim: light-dark(rgba(31, 35, 40, 0.38), rgba(2, 6, 23, 0.56));
-  /* Syntax colours: highlight.js's GitHub and GitHub Dark themes, the light
-   * comment darkened from #6e7781 (4.27:1 on the code surface) to AA. */
-  --hl-keyword: light-dark(#cf222e, #ff7b72);
-  --hl-title: light-dark(#8250df, #d2a8ff);
-  --hl-constant: light-dark(#0550ae, #79c0ff);
-  --hl-string: light-dark(#0a3069, #a5d6ff);
-  --hl-builtin: light-dark(#953800, #ffa657);
-  --hl-comment: light-dark(#636c76, #8b949e);
-  --hl-tag: light-dark(#116329, #7ee787);
-  --hl-section: light-dark(#0550ae, #1f6feb);
-  --hl-bullet: light-dark(#0550ae, #f2cc60);
-  --hl-addition: light-dark(#116329, #aff5b4);
-  --hl-addition-bg: light-dark(#dafbe1, #033a16);
-  --hl-deletion: light-dark(#82071e, #ffdcd7);
-  --hl-deletion-bg: light-dark(#ffebe9, #67060c);
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
+ * source-family lineage in provenance/webui-reuse.json. Material roles come from optical-tokens.css. */
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -86,29 +45,14 @@ body {
   font-size: 14px;
   line-height: 1.6;
 }
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-body::before {
-  background:
-    radial-gradient(circle at 12% 8%, var(--mesh-a), transparent 42%),
-    radial-gradient(circle at 88% 12%, var(--mesh-b), transparent 44%),
-    radial-gradient(circle at 52% 96%, var(--mesh-c), transparent 48%);
-}
-body::after {
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
 #root {
   position: relative;
   z-index: 1;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+  color: var(--text-secondary);
 }
 button > svg {
   min-width: 1em;
@@ -323,6 +267,8 @@ code {
   align-items: flex-start;
   gap: 8px;
 }
+input:focus-visible,
+select:focus-visible,
 button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
@@ -341,6 +287,7 @@ summary:focus-visible,
    App shell
    ============================================================ */
 .app {
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   height: 100dvh;
@@ -356,11 +303,8 @@ summary:focus-visible,
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--glass-border);
-  background: var(--topbar-bg, var(--bg-elev));
-  box-shadow: 0 8px 32px var(--glass-shadow);
+  background: transparent;
   flex-shrink: 0;
-  backdrop-filter: blur(var(--glass-shell-blur));
   --topbar-ctl-h: 28px;
 }
 .topbar-flow {
@@ -401,6 +345,22 @@ summary:focus-visible,
   line-height: 1;
   flex-shrink: 0;
   box-shadow: 0 6px 20px var(--primary-glow);
+}
+.brand-logo svg {
+  width: 21px;
+}
+.chat-welcome h2 {
+  color: var(--text-primary);
+  font-size: clamp(22px, 3vw, 36px);
+  font-weight: 540;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+/* The Hero hint stays legible even beneath the edge of an open menu. */
+.chat-welcome > p {
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 3px 10px;
 }
 .brand-name {
   margin: 0;
@@ -666,7 +626,27 @@ summary:focus-visible,
   flex: none;
   min-height: 0;
   overflow: hidden;
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 16px;
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  box-shadow:
+    0 8px 22px var(--shadow-1),
+    inset 0 1px var(--glass-border-top);
+}
+@media (min-width: 901px) {
+  .panel-drawer {
+    margin: 0 9px 10px;
+  }
+  .panel-drawer.drawer-left {
+    width: calc(var(--left-w) - 18px);
+  }
+  .panel-drawer.drawer-right {
+    width: calc(var(--right-w) - 18px);
+  }
 }
 .drawer-left {
   width: var(--left-w);
@@ -675,6 +655,8 @@ summary:focus-visible,
   width: var(--right-w);
 }
 .panel-drawer .panel {
+  background: transparent;
+  border: 0;
   width: 100%;
   min-height: 0;
   overflow: hidden;
@@ -1758,7 +1740,7 @@ summary:focus-visible,
   background: var(--card-bg, var(--bg-elev));
   box-shadow: 0 10px 30px var(--glass-card-shadow);
   font-size: 12.5px;
-  backdrop-filter: blur(var(--glass-card-blur));
+  backdrop-filter: var(--card-filter);
 }
 .run-summary > h3,
 .receipt > h3 {
@@ -1836,7 +1818,7 @@ summary:focus-visible,
 .entry > * {
   max-width: 520px;
 }
-.empty-state h2,
+.empty-state:not(.chat-welcome) h2,
 .entry h1 {
   margin: 8px 0 2px;
   font-size: 18px;
@@ -1857,14 +1839,17 @@ summary:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--primary-gradient);
-  color: var(--on-accent);
-  font-size: 22px;
-  font-weight: 700;
-  box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  width: 64px;
+  height: 64px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 20px;
+  background: var(--glass-surface);
+  color: var(--prism-b);
+  box-shadow:
+    0 16px 36px var(--shadow-2),
+    inset 0 1px 1px var(--glass-border-top);
 }
 
 /* ---- Statusbar (pi .statusbar / .bar-item / .status-item / .status-dot /
@@ -1882,8 +1867,8 @@ summary:focus-visible,
   padding: 1px 4px;
   border-top: 1px solid var(--glass-border);
   background: var(--statusbar-bg, var(--bg-elev));
-  font-size: 11px;
-  backdrop-filter: blur(var(--glass-shell-blur));
+  font: 11px var(--mono);
+  /* Keep the connection glyph on the same stable paint surface as its label. */
   line-height: 1.4;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -1957,8 +1942,7 @@ summary:focus-visible,
 }
 /* An item with no figure yet (pi .is-zero): present, but quiet. */
 .statusbar .status-item.is-zero {
-  opacity: 0.6;
-  transition: opacity 0.15s ease;
+  color: var(--text-faint);
 }
 .statusbar .status-item.is-zero:hover {
   opacity: 1;
@@ -2205,14 +2189,17 @@ summary:focus-visible,
   border: 1px solid var(--glass-border);
   border-radius: 18px;
   background: var(--menu-bg);
+  border-top-color: var(--glass-border-top);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   color: var(--text);
   box-shadow: 0 20px 60px var(--shadow-3);
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
   font-size: 13px;
 }
 /* A ::backdrop inherits custom properties only in 2024 and later engines. */
 .action-dialog::backdrop {
-  background: var(--scrim, rgba(0, 0, 0, 0.5));
+  background: var(--scrim);
 }
 .action-dialog > header,
 .action-dialog > footer {
@@ -2455,8 +2442,21 @@ summary:focus-visible,
     width: min(380px, 92vw);
     transform: translateX(105%);
   }
+  /* A parked drawer is not a scrollable second viewport. Swipe tracking
+     makes it visible before applying the gesture transform. */
+  .panel-drawer:not(.open):not(.drawer-dragging) {
+    display: none;
+  }
   .panel-drawer.open {
     transform: translateX(0);
+  }
+  @starting-style {
+    .panel-drawer.drawer-right.open {
+      transform: translateX(105%);
+    }
+    .panel-drawer.drawer-left.open {
+      transform: translateX(-105%);
+    }
   }
   .panel-drawer.drawer-dragging {
     transition: none;
@@ -3075,7 +3075,7 @@ summary:focus-visible,
  * then the reply as message text and tool cards in recorded order. Turns are
  * already mounted lazily, so the cards inside never skip their own layout. */
 .chat-turn {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 8px;
 }
 .chat-turn .msg {
@@ -3123,10 +3123,14 @@ summary:focus-visible,
   margin-top: 0;
 }
 .chat-turn .msg-text.single {
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
+}
+.chat-turn .msg-text.single .msg-text-copy {
+  align-self: flex-end;
 }
 .chat-turn .msg-text .md {
-  line-height: 1.75;
+  line-height: var(--reading-leading);
 }
 .chat-turn .msg-text .md > :first-child {
   margin-top: 0;
@@ -3313,18 +3317,56 @@ summary:focus-visible,
   position: relative;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
   border: 1px solid var(--glass-border);
-  border-radius: 18px;
-  background: var(--glass-bg, var(--bg-elev));
+  border-radius: 24px;
+  border-top-color: var(--glass-border-top);
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   box-shadow:
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
 }
 .chat-composer:focus-within {
-  border-color: var(--accent);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus);
   box-shadow:
     0 0 0 3px var(--accent-soft),
     0 12px 40px var(--glass-shadow);
+}
+.chat-composer::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: -1px 7% auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--prism-a),
+    var(--prism-b),
+    transparent
+  );
+  opacity: 0;
+}
+.chat-composer:focus-within::before,
+.chat-composer:has(.mode-toggle.on)::before,
+.chat-composer[data-flow]::before {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-composer[data-flow]::before {
+    animation: prism-flow 2.8s ease-in-out infinite alternate;
+  }
+}
+@keyframes prism-flow {
+  from {
+    transform: scaleX(0.5);
+  }
+  to {
+    transform: scaleX(0.96);
+  }
 }
 /* The text area grows with its text (ChatComposer sets its height); the
  * handle on the card's top edge sets a fixed height instead of a native
@@ -3600,7 +3642,7 @@ summary:focus-visible,
   box-shadow: 0 0 0 4px var(--red-soft);
 }
 .composer-toolbar > .danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--red) 85%, #000);
+  background: color-mix(in srgb, var(--red) 85%, var(--bg-canvas));
   color: var(--on-accent);
 }
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
@@ -3679,7 +3721,7 @@ summary:focus-visible,
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 4px auto 12px;
   color: var(--text-dim);
   font-size: 12px;
@@ -3696,8 +3738,7 @@ summary:focus-visible,
 }
 .chat-turn.off-branch {
   padding-left: 12px;
-  border-left: 2px dashed var(--border);
-  opacity: 0.6;
+  border-left: 2px dashed var(--focus);
 }
 .chat-turn.off-branch:hover,
 .chat-turn.off-branch:focus-within {
@@ -3836,9 +3877,7 @@ button.file-item:hover:not(:disabled),
   flex-shrink: 0;
   color: var(--text-faint);
 }
-.file-item.dir .file-icon {
-  color: var(--amber);
-}
+
 .file-name {
   min-width: 0;
   overflow: hidden;
@@ -3913,6 +3952,7 @@ button.file-item:hover:not(:disabled),
   min-height: 0;
 }
 .file-preview .codeblock {
+  flex-direction: column;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -4142,14 +4182,17 @@ button.file-item:hover:not(:disabled),
   flex-wrap: wrap;
   align-items: center;
   gap: 0 4px;
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: -6px auto 16px;
   padding: 2px;
   border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border-top-color: var(--glass-border-top);
   box-shadow: 0 8px 24px var(--glass-card-shadow);
-  backdrop-filter: blur(var(--glass-card-blur));
+  backdrop-filter: var(--card-filter);
 }
 .workflow-line-open {
   display: flex;
@@ -4340,12 +4383,39 @@ button.file-item:hover:not(:disabled),
   padding: 0;
   list-style: none;
 }
+.workflow-board > ul,
+.plan-context {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 8px;
+}
+.workflow-task,
+.plan-context > p {
+  position: relative;
+  background: var(--bg-elev);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+}
+@media (hover: hover) {
+  .workflow-task:hover,
+  .plan-context > p:hover {
+    background-image: radial-gradient(
+      ellipse at var(--spot-x, 50%) var(--spot-y, 0%),
+      var(--accent-soft),
+      transparent 70%
+    );
+  }
+}
 .workflow-task {
+  flex-direction: column;
   display: flex;
   align-items: baseline;
   gap: 4px 12px;
-  padding: 7px 2px;
-  border-top: 1px solid var(--border-soft);
+
   font-size: 12.5px;
   @media (max-width: 640px) {
     flex-direction: column;
@@ -4356,7 +4426,9 @@ button.file-item:hover:not(:disabled),
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: 7.5em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 8px;
   color: var(--text-faint);
   font-size: 12px;
   @media (max-width: 640px) {
@@ -4449,16 +4521,18 @@ button.file-item:hover:not(:disabled),
   }
 }
 .workflow-plan {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 16px;
   padding: 16px;
   border: 1px solid var(--glass-card-border);
-  border-left: 3px solid var(--accent);
   border-radius: 16px;
   background: var(--card-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border-top-color: var(--glass-border-top);
   box-shadow: 0 12px 36px var(--glass-card-shadow);
   color: var(--text);
-  backdrop-filter: blur(var(--glass-card-blur));
+  backdrop-filter: var(--card-filter);
   overflow-wrap: anywhere;
 }
 .design-card nav,
@@ -4509,19 +4583,19 @@ button.file-item:hover:not(:disabled),
   display: none;
 }
 .workflow-agent-goal {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 16px;
   overflow-wrap: anywhere;
 }
 .workflow-agent-result {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 20px;
   padding-top: 12px;
   border-top: 1px solid var(--border-soft);
   overflow-wrap: anywhere;
 }
 .workflow-agent .workflow-card {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto;
 }
 
@@ -4875,9 +4949,12 @@ button.file-item:hover:not(:disabled),
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   background: var(--menu-bg);
+  border-top-color: var(--glass-border-top);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   box-shadow: 0 16px 40px var(--shadow-3);
   overflow: hidden;
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
 }
 .model-popover-lead {
   margin: 0;
@@ -5056,10 +5133,10 @@ button.link:hover:not(:disabled) {
   transform: translateX(5px);
 }
 .mode-toggle.on {
-  color: var(--accent-text);
+  color: var(--prism-b);
 }
 .mode-toggle.on .mode-switch {
-  background: var(--accent-strong);
+  background: var(--prism-b);
 }
 .mode-toggle.on .mode-switch::after {
   background: var(--on-accent);
@@ -5087,8 +5164,9 @@ button.link:hover:not(:disabled) {
   border: 1px solid var(--glass-border);
   border-radius: 14px;
   background: var(--menu-solid-bg);
+  border-top-color: var(--glass-border-top);
   box-shadow: 0 16px 40px var(--shadow-2);
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
 }
 .more-menu-items button {
   display: flex;
@@ -5217,7 +5295,7 @@ button.link:hover:not(:disabled) {
   justify-content: center;
 }
 .img-lightbox::backdrop {
-  background: var(--scrim, rgba(0, 0, 0, 0.5));
+  background: var(--scrim);
 }
 .img-lightbox-panel {
   --lb-image-max-w: min(78vw, 880px);

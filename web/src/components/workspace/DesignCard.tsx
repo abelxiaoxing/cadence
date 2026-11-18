@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   answerText,
   available,
@@ -7,6 +7,7 @@ import {
   reviseDesign,
   selectDesign,
 } from "../../../../src/service/contracts/design.ts";
+import "./design.css";
 import { useT } from "../../i18n/locale";
 
 export function DesignCard({
@@ -37,6 +38,27 @@ export function DesignCard({
   const questions = draft.questions.filter((q) => available(q, draft.answers));
   const q = questions.find((row) => row.id === selected) ?? questions[0];
   const answer = draft.answers.find((a) => a.question === q.id);
+  // Labels may wrap independently. Measure their actual layout, not the
+  // option index; moving the lens never changes a radio or submits anything.
+  const track = useRef<HTMLDivElement>(null);
+  const picked = answer && "option" in answer ? answer.option : null;
+  useLayoutEffect(() => {
+    void q.id; // Different questions can use identical option IDs.
+    const node = track.current;
+    if (!node || !picked) return;
+    const selected = node
+      .querySelector<HTMLInputElement>("input:checked")
+      ?.closest("label");
+    if (!selected) return;
+    const place = () => {
+      node.style.setProperty("--pill-y", `${selected.offsetTop}px`);
+      node.style.setProperty("--pill-h", `${selected.offsetHeight}px`);
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    for (const label of node.querySelectorAll("label")) observer.observe(label);
+    return () => observer.disconnect();
+  }, [picked, q.id]);
   const choose = (a: DesignAnswer) =>
     edit([...draft.answers.filter((old) => old.question !== q.id), a]);
   const otherValue =
@@ -69,24 +91,34 @@ export function DesignCard({
       </nav>
       <fieldset disabled={disabled}>
         <legend>{q.question}</legend>
-        {q.options.map((o) => (
-          <label key={o.id}>
-            <input
-              type="radio"
-              name={draft.id + q.id}
-              checked={!!answer && "option" in answer && answer.option === o.id}
-              onChange={() => choose({ question: q.id, option: o.id })}
-            />{" "}
-            {o.label}
-            {o.id === q.recommended ? ` · ${t("Recommended")}` : ""}
-            <small>{o.cost}</small>
-          </label>
-        ))}
+        <div className="design-track" ref={track} data-selected={!!picked}>
+          {q.options.map((o) => (
+            <label key={o.id}>
+              <input
+                type="radio"
+                name={draft.id + q.id}
+                checked={
+                  !!answer && "option" in answer && answer.option === o.id
+                }
+                onChange={() => choose({ question: q.id, option: o.id })}
+              />{" "}
+              {o.label}
+              {o.id === q.recommended ? ` · ${t("Recommended")}` : ""}
+              <small>{o.cost}</small>
+            </label>
+          ))}
+        </div>
         <p>{q.reason}</p>
         <p>
           {t("Acceptance")} · {q.acceptance}
         </p>
-        <label>
+        <label
+          className={
+            answer && "other" in answer
+              ? "design-custom chosen"
+              : "design-custom"
+          }
+        >
           {t("Other idea")}
           <input
             value={otherValue}

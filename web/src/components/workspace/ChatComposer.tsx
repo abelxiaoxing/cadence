@@ -96,6 +96,7 @@ export interface ChatComposerProps {
   hint: string;
   /** A reply is queued or running: Stop takes Send's place. */
   running: boolean;
+  flow?: boolean;
   canStop: boolean;
   onStop(): void;
   canSend: boolean;
@@ -132,6 +133,7 @@ export function ChatComposer({
   model,
   hint,
   running,
+  flow,
   canStop,
   onStop,
   canSend,
@@ -351,6 +353,7 @@ export function ChatComposer({
     <form
       ref={form}
       className="chat-composer"
+      data-flow={flow || undefined}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}

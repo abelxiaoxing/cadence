@@ -380,3 +380,13 @@ it("the shared workflow renderer retains its existing pacer and consumes semanti
     semanticHtml(renderToStaticMarkup(<MarkdownBody text={text} />)),
   );
 });
+
+it("exposes the recorded fence language and separate keyboard fold/copy actions outside the scroller", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownBody text={"```python\nx = 1\n```"} />,
+  );
+  expect(html).toMatch(
+    /class="code-caption"><button type="button" aria-expanded="true">.*?python<\/button><button[^>]*aria-label="Copy displayed text"/,
+  );
+  expect(html.indexOf("code-caption")).toBeLessThan(html.indexOf("<pre"));
+});

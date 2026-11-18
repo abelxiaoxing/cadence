@@ -1,0 +1,41 @@
+.toolcall-output pre {
+  box-shadow: var(--inset-shadow);
+}
+.code-caption,
+.toolcall-output-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.code-caption {
+  padding: 2px 6px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--code-border);
+  border-radius: 9px 9px 0 0;
+  color: var(--text-dim);
+  font: 12px var(--mono);
+}
+.code-caption > button,
+.toolcall-output .output-copy {
+  color: inherit;
+  background: transparent;
+  border: 0;
+}
+.code-caption > button:first-child {
+  text-align: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.codeblock .code-caption + pre {
+  border-radius: 0 0 9px 9px;
+  box-shadow: var(--inset-shadow);
+}
+.codeblock .code-line {
+  width: max-content;
+  min-width: 100%;
+}
+.codeblock pre[hidden] {
+  display: none;
+}
