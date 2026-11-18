@@ -35,22 +35,58 @@ it.each(["en", "zh"] as const)(
           />
         </LocaleProvider>,
       );
-    expect(render(false, false)).toContain(
-      locale === "zh" ? "Cadence 已关闭" : "Cadence off",
-    );
-    const armed = render(false, true);
-    expect(armed).toContain('class="mode-toggle armed"');
-    expect(armed).toContain(
-      locale === "zh" ? "下次发送开启 Cadence" : "Cadence on next Send",
-    );
-    expect(armed).not.toContain('class="mode-toggle on"');
-    expect(armed).not.toContain('aria-pressed="true"');
-    expect(render(true, true)).toContain(
-      locale === "zh" ? "Cadence 已开启" : "Cadence on",
-    );
-    expect(render(false, false, false)).toContain(
-      locale === "zh" ? "Cadence 状态未确认" : "Cadence state unavailable",
-    );
+    const chinese = locale === "zh";
+    for (const [active, armed, known, state, text, title] of [
+      [
+        false,
+        false,
+        true,
+        "off",
+        chinese ? "Cadence 已关闭" : "Cadence off",
+        chinese
+          ? "开启 Cadence 模式：先商定计划，再开始实施。"
+          : "Turn on Cadence mode: agree on a plan before implementation.",
+      ],
+      [
+        false,
+        true,
+        true,
+        "armed",
+        chinese ? "下次发送开启 Cadence" : "Cadence on next Send",
+        chinese
+          ? "发送下一条消息时将开启 Cadence 模式，点击取消。"
+          : "Your next message turns on Cadence mode. Click to cancel.",
+      ],
+      [
+        true,
+        true,
+        true,
+        "on",
+        chinese ? "Cadence 已开启" : "Cadence on",
+        chinese
+          ? "Cadence 模式已开启，点击退出。"
+          : "Cadence mode is on. Click to exit it.",
+      ],
+    ] as const) {
+      const html = render(active, armed, known);
+      expect(html).toContain(`class="mode-toggle ${state}"`);
+      expect(html).toContain(`aria-label="${text}"`);
+      expect(html).toContain(`title="${title}"`);
+      expect(html).toContain(`</span>${text}</button>`);
+      expect(html).not.toMatch(/disabled=|aria-pressed="true"/);
+    }
+    const neutral = chinese
+      ? "Cadence 状态未确认"
+      : "Cadence state unavailable";
+    for (const active of [false, true])
+      for (const armed of [false, true]) {
+        const html = render(active, armed, false);
+        expect(html).toContain('class="mode-toggle unknown"');
+        expect(html).toContain('disabled=""');
+        expect(html).toContain(`aria-label="${neutral}"`);
+        expect(html).toContain(`title="${neutral}"`);
+        expect(html).toContain(`</span>${neutral}</button>`);
+      }
     expect(click).not.toHaveBeenCalled();
   },
 );

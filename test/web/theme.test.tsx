@@ -202,6 +202,18 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         contrast(ruleColor(selector, "color", scheme), surface),
       ).toBeGreaterThanOrEqual(GRAPHIC);
   });
+  it("marks selected sessions and files inside the row, independent of keyboard focus", () => {
+    const marker = ":is(.session-item.active, .file-item.selected)::before";
+    expect(declaration(marker, "position")).toBe("absolute");
+    expect(declaration(marker, "border-inline-start")).toBe(
+      "3px solid var(--accent)",
+    );
+    const wing = over(color("--glass-surface", scheme), color("--bg", scheme));
+    for (const surface of [wing, over(color("--accent-soft", scheme), wing)])
+      expect(
+        contrast(color("--accent", scheme), surface),
+      ).toBeGreaterThanOrEqual(GRAPHIC);
+  });
   it("underlines only the current panel independently of hover and focus", () => {
     const current = '.rp-tab:is([aria-pressed="true"], [aria-current="true"])';
     expect(declaration(`${current}::after`, "border-bottom")).toBe(

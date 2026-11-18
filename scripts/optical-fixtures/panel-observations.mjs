@@ -219,3 +219,209 @@ export async function observeDisabledModels({
   await press("Tab", 9, 8);
   assert.ok(await run((s) => document.activeElement.matches(s), usable));
 }
+
+// Sample inside the leading rule, not the keyboard outline outside the button.
+// Require the three targets (mark, row backing, wing padding) in the same frame.
+function rowPixels(kind, target, other, state) {
+  const session = kind === "session";
+  const rowSelector = session
+    ? ".conversation-row .session-item"
+    : ".file-item";
+  const button = document.querySelector(target),
+    row = button.closest(rowSelector),
+    host = row.closest(session ? ".lp-section-body" : ".file-list");
+  const mark = (el) => getComputedStyle(el, "::before");
+  const marked = [...host.querySelectorAll(rowSelector)].filter(
+    (el) =>
+      mark(el).content !== "none" &&
+      mark(el).borderInlineStartStyle === "solid",
+  );
+  if (
+    marked.length !== 1 ||
+    marked[0] !== row ||
+    host.querySelectorAll('[aria-current="true"]').length !== 1 ||
+    !button.matches('[aria-current="true"]') ||
+    !row.matches(session ? ".active" : ".selected")
+  )
+    throw Error(`Wrong selected ${kind}: ${target}`);
+  const focus = state === "keyboard",
+    outline = getComputedStyle(button);
+  if (
+    row.matches(":hover") ||
+    button.matches(":focus-visible") !== focus ||
+    (state === "rest" && row.matches(":focus-within")) ||
+    (state === "other hovered" &&
+      !document.querySelector(other).matches(":hover"))
+  )
+    throw Error(`Wrong ${target} interaction: ${state}`);
+  if (
+    focus &&
+    (outline.outlineStyle !== "solid" || parseFloat(outline.outlineOffset) < 0)
+  )
+    throw Error(`No independent outer focus: ${target}`);
+  const r = row.getBoundingClientRect(),
+    stroke = mark(row),
+    w = parseFloat(stroke.borderLeftWidth);
+  const left = r.left + row.clientLeft + parseFloat(stroke.left);
+  const x = Math.floor(left + w / 2),
+    inside = Math.ceil(left + w),
+    wing = Math.floor(r.left - 5);
+  const top = r.top + row.clientTop + parseFloat(stroke.top),
+    h = parseFloat(stroke.height);
+  if (!(w >= 2 && h >= 6)) throw Error(`Empty rule: ${target}`);
+  const points = [];
+  for (const f of [0.1, 0.5, 0.9]) {
+    const y = Math.floor(top + h * f);
+    const at = (x) => document.elementFromPoint(x, y);
+    if (!row.contains(at(x)) || !row.contains(at(inside)) || at(wing) !== host)
+      throw Error(`Clipped ${target} marker/backing at ${x},${y}`);
+    for (const [surface, sx] of [
+      ["row", inside],
+      ["wing", wing],
+    ])
+      points.push({
+        name: `${kind} marker on ${surface}`,
+        surface,
+        ink: [x, y],
+        expectedInk: stroke.borderLeftColor,
+        x: sx,
+        y,
+        min: 3,
+      });
+  }
+  if (focus) {
+    const width = parseFloat(outline.outlineWidth),
+      offset = parseFloat(outline.outlineOffset);
+    const ringX = Math.floor(
+      button.getBoundingClientRect().left - offset - width / 2,
+    );
+    if (width < 2 || !(wing < ringX && ringX < r.left && r.left < x))
+      throw Error(`Focus and selection are not separate: ${target}`);
+    points.push({
+      name: `${kind} focus on wing`,
+      surface: "focus",
+      ink: [ringX, Math.floor(top + h / 2)],
+      expectedInk: outline.outlineColor,
+      x: wing,
+      y: Math.floor(top + h / 2),
+      min: 3,
+    });
+  }
+  return points;
+}
+
+export async function observeSelectedRows({
+  width,
+  theme,
+  go,
+  chat,
+  click,
+  wait,
+  ev,
+  run,
+  parkPointer,
+  press,
+  send,
+  capture,
+  rows,
+}) {
+  await go(chat("empty"), ".chat-welcome");
+  const expanded = (toggle) =>
+    ev(
+      `document.querySelector('${toggle}').getAttribute('aria-expanded') === 'true'`,
+    );
+  const open = async (toggle) => {
+    if (!(await expanded(toggle))) await click(toggle);
+  };
+  for (const kind of ["session", "file"]) {
+    const session = kind === "session",
+      toggle = session ? ".navigation-toggle" : ".inspector-toggle";
+    const wasOpen = await expanded(toggle);
+    await open(toggle);
+    const names = session
+      ? ["reading", "design"]
+      : ["material.ts", "optics.ts"];
+    const selector = (name) =>
+      session
+        ? `.conversation-row .session-item[title="Optical · ${name}"]`
+        : `.file-main[title="${name}"]`;
+    for (const [i, name] of names.entries()) {
+      const target = selector(name),
+        other = selector(names[1 - i]);
+      await wait(`document.querySelector('${target}')`);
+      const before = await run(controlGeometry, target);
+      await click(target);
+      if (session) {
+        await wait(
+          `document.querySelector('.conversation-heading h2')?.textContent==='Optical · ${name}'`,
+        );
+        await open(toggle); // Selecting a conversation dismisses the compact drawer.
+      } else
+        await wait(
+          `document.querySelector('.file-preview [title="${name}"]') && document.querySelector('.file-preview .codeblock')`,
+        );
+      await parkPointer();
+      await run(controlGeometry, target);
+      const record = async (state) => {
+        const geometry = await run(controlGeometry, target, false);
+        assert.equal(
+          geometry.rect.width,
+          before.rect.width,
+          "Selection changed row width",
+        );
+        assert.ok(
+          geometry.visible.width >= geometry.rect.width - 0.01 &&
+            geometry.visible.height >= geometry.rect.height - 0.01 &&
+            geometry.hit.center.hit,
+          `Clipped ${target}`,
+        );
+        const observed = await capture(`${target} ${state}`, () =>
+          run(rowPixels, kind, target, other, state),
+        );
+        assert.equal(observed?.samples, state === "keyboard" ? 7 : 6);
+        assert.deepEqual(observed.failures, []);
+        rows.push({ width, theme, kind, name, state, geometry, ...observed });
+      };
+      // A pointer selection may leave focus on the row.
+      await run(() => document.activeElement.blur());
+      await record("rest");
+      const { hit } = await run(controlGeometry, other, false);
+      assert.ok(hit.center.hit);
+      await send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: hit.center.x,
+        y: hit.center.y,
+      });
+      await record("other hovered");
+      await parkPointer();
+      await run((s) => document.querySelector(s).focus(), target);
+      await press("Tab", 9);
+      await press("Tab", 9, 8);
+      await record("keyboard");
+      if (!session) {
+        // All four file actions must still be reached in order and hit-test
+        // inside the selected row. Do not activate download/reference/copy.
+        for (const action of [
+          ".download",
+          ".ref",
+          `[aria-label="Copy name ${name}"]`,
+          `[aria-label="Copy path ${name}"]`,
+        ]) {
+          await press("Tab", 9);
+          const s = `.file-item.selected .file-attach${action}`;
+          assert.ok(
+            await ev(
+              `document.activeElement.matches('${s}:enabled:focus-visible')`,
+            ),
+          );
+          const geometry = await run(controlGeometry, s, false);
+          assert.ok(Object.values(geometry.hit).every((p) => p.hit));
+        }
+      }
+    }
+    if (!wasOpen && (await expanded(toggle))) {
+      if (width <= 900) await press("Escape", 27);
+      else await click(toggle);
+    }
+  }
+}

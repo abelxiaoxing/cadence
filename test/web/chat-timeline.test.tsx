@@ -43,6 +43,7 @@ import { useStepDetail } from "../../web/src/components/workspace/turn-source";
 import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
 import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import { translate } from "../../web/src/i18n/locale";
 import {
   type IndependentCase,
   type IndependentCheckpoint,
@@ -121,6 +122,8 @@ const workspace = vi.hoisted(() => ({
   nodes: [] as ChatTreeNode[],
   runs: new Map<string, WorkflowRun>(),
   no: () => {},
+  modeActive: false,
+  modeError: "",
   t: (key: string) => key,
 }));
 vi.mock("../../web/src/client/use-conversation", async (original) => {
@@ -142,6 +145,10 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
       workspace.conversation
         ? {
             refresh: workspace.no,
+            error:
+              args[1]?.kind === "cadence-conversation"
+                ? workspace.modeError
+                : undefined,
             value:
               args[1]?.kind === "conversation-context"
                 ? {
@@ -157,7 +164,7 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
                     kind: "cadence-conversation",
                     state: {
                       id: "chat",
-                      enabled: false,
+                      enabled: workspace.modeActive,
                       revision: 0,
                       runs: [],
                       head: null,
@@ -242,6 +249,9 @@ afterEach(() => {
   hooks.effects.clear();
   children.clear();
   workspace.conversation = undefined;
+  workspace.modeActive = false;
+  workspace.modeError = "";
+  workspace.t = (key: string) => key;
   workspace.nodes = [];
   workspace.runs = new Map();
   vi.unstubAllGlobals();
@@ -1147,7 +1157,10 @@ function workspaceFixture(turns: LoadedTurn[]) {
     }
   >();
   let tree: ReactNode;
-  const draw = (hidden = false) => {
+  const draw = (
+    hidden = false,
+    props: Partial<ComponentProps<typeof ChatWorkspace>> = {},
+  ) => {
     tree = render(() =>
       ChatWorkspace({
         client: client as never,
@@ -1164,6 +1177,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
         onModelChanged: workspace.no,
         onChanged: workspace.no,
         onReferenceUsed: workspace.no,
+        ...props,
       }),
     );
     const messages = required(
@@ -1243,6 +1257,109 @@ function workspaceFixture(turns: LoadedTurn[]) {
     observers: Observer.all,
   };
 }
+
+it("passes flow only for fresh observed work on the branch, without retiring the transcript or draft", () => {
+  const turn = loaded("live", "live:user", 0);
+  const f = workspaceFixture([turn]);
+  const view = f.conversation;
+  const freshHead = () => {
+    view.summary = { ...required(view.summary), status: "running" };
+  };
+  const flow = (props: Partial<ComponentProps<typeof ChatWorkspace>> = {}) =>
+    f.draw(false, props).composer.flow;
+  freshHead();
+  turn.header.status = "running";
+  turn.header.activity = { kind: "thinking", sequence: 1 };
+  expect(flow({ enabled: false, available: true })).toBe(true); // Send is not observation.
+  f.draw().composer.onDraft("keep this draft");
+  view.error = "stale";
+  const retained = f.draw();
+  expect(retained.composer.flow).toBe(false);
+  expect(retained.composer.draft).toBe("keep this draft");
+  expect(retained.rows[0].view.props.turn).toBe(turn);
+  view.error = "";
+  freshHead();
+  expect(flow()).toBe(true);
+  for (const interrupted of [
+    { available: false },
+    { modelAvailability: { status: "unavailable" } },
+  ] as const) {
+    expect(flow(interrupted)).toBe(false);
+    freshHead(); // Readable history while execution is unavailable isn't a current observation on reconnect.
+    expect(flow(interrupted)).toBe(false);
+    expect(flow()).toBe(false);
+    expect(flow()).toBe(false);
+    freshHead();
+    expect(flow()).toBe(true);
+  }
+  const replaced = {
+    modelAvailability: { status: "ready", epoch: "next", attachmentVersion: 2 },
+  } as const;
+  expect(flow(replaced)).toBe(false);
+  freshHead();
+  expect(flow(replaced)).toBe(true);
+  for (const kind of ["waiting", "text", "tool", "thinking"] as const) {
+    turn.header.activity = { kind, sequence: 2 };
+    expect(flow(replaced)).toBe(kind === "tool" || kind === "thinking");
+  }
+  view.summary = {
+    ...required(view.summary),
+    live: { epoch: "old", commandId: "old" },
+  };
+  expect(flow(replaced)).toBe(false);
+  view.summary = { ...required(view.summary), live: undefined, id: "other" };
+  expect(flow(replaced)).toBe(false);
+  view.summary = { ...required(view.summary), id: "chat", status: "completed" };
+  expect(flow(replaced)).toBe(false);
+  freshHead();
+  view.count++;
+  expect(flow(replaced)).toBe(false); // Last displayed turn isn't the branch's last turn.
+  view.count--;
+  turn.header.status = "completed";
+  expect(flow(replaced)).toBe(false);
+  view.summary = undefined; // Branch change awaiting its first head.
+  expect(flow(replaced)).toBe(false);
+});
+
+it.each(["en", "zh"] as const)(
+  "%s: composer hint prioritizes unobserved mode over retained on or next-Send intent",
+  (locale) => {
+    workspace.t = (key) => translate(locale, key);
+    const f = workspaceFixture([loaded("one", undefined, 0)]);
+    for (const active of [false, true]) {
+      workspace.modeActive = active;
+      for (const slash of [false, true]) {
+        f.draw().composer.onDraft(
+          slash ? "/cadence specimen" : "ordinary message",
+        );
+        workspace.modeError = "unavailable";
+        const unknown = f.draw().composer;
+        expect(unknown.hint).toBe(
+          locale === "en" ? "Cadence state unavailable" : "Cadence 状态未确认",
+        );
+        expect(unknown.cadence).toMatchObject({
+          known: false,
+          active,
+          armed: active || slash,
+        });
+        if (!active && !slash) expect(unknown.canSend).toBe(true);
+        workspace.modeError = "";
+        const known = f.draw().composer;
+        expect(known.hint).toBe(
+          active
+            ? translate(
+                locale,
+                "Cadence stays on. Confirm one plan before implementation.",
+              )
+            : slash
+              ? translate(locale, "Your next message turns on Cadence mode.")
+              : "",
+        );
+        expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+      }
+    }
+  },
+);
 
 it.each(["failed", "canceled"] as const)(
   "an unsaved first %s attempt is a reading scene, not an empty Hero",

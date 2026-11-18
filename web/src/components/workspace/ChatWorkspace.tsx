@@ -117,6 +117,7 @@ import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { LazyMount } from "../transcript/LazyMount";
 import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
 import type { BranchesView } from "./BranchesPanel";
+import { composerMode, modeHints } from "./CadenceModeButton";
 import { ChatComposer } from "./ChatComposer";
 import { useImageDraft } from "./ChatImages";
 import { turnParts } from "./ChatSteps";
@@ -487,6 +488,12 @@ export function ChatWorkspace({
     [draftKey],
   );
   const input = cadenceInput(draft, cadence ? "cadence" : mode);
+  const modeFacts = {
+    active: cadence,
+    armed: input.mode === "cadence",
+    known: cadenceKnown,
+  };
+  const modeHint = modeHints[composerMode(modeFacts)];
   const canSend =
     enabled &&
     !(activitySelected && !conversation.summary) &&
@@ -1467,7 +1474,30 @@ export function ChatWorkspace({
     return () => clearTimeout(timer);
   }, [resume]);
   // ---- Messages into the reply that is running ----
+  // A readable transcript can outlive the execution attachment. Fence off
+  // the head already displayed when observation resumes: only a successful
+  // branch sync installs a new summary (even if the turn body is unchanged).
+  const attachment =
+    available && modelAvailability.status === "ready"
+      ? `${modelAvailability.epoch}:${modelAvailability.attachmentVersion}`
+      : null;
+  const [flowFence, setFlowFence] = useState({
+    attachment,
+    retained: undefined as ChatSummary | undefined,
+  });
+  if (flowFence.attachment !== attachment)
+    setFlowFence({ attachment, retained: summary });
   const flow =
+    attachment !== null &&
+    flowFence.attachment === attachment &&
+    !conversation.error &&
+    summary !== flowFence.retained &&
+    summary?.id === id &&
+    summary.status === "running" &&
+    (!summary.live ||
+      (modelAvailability.status === "ready" &&
+        summary.live.epoch === modelAvailability.epoch)) &&
+    turns.at(-1)?.ordinal === conversation.count - 1 &&
     lastTurn?.status === "running" &&
     (lastTurn.activity?.kind === "tool" ||
       lastTurn.activity?.kind === "thinking");
@@ -1940,7 +1970,8 @@ export function ChatWorkspace({
               <ChatWelcome
                 visible={!hidden}
                 hint={t(
-                  "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
+                  modeHint ??
+                    "Type a message below. Turn on Cadence mode to agree on a plan before implementation.",
                 )}
               />
             )}
@@ -2086,13 +2117,16 @@ export function ChatWorkspace({
               onApprove={() => void approve()}
             />
           )}
-          {state?.enabled && !state.proposal && runs.length === 0 && (
-            <p className="inspector-note">
-              {t(
-                "Cadence stays on for this conversation until you explicitly exit.",
-              )}
-            </p>
-          )}
+          {cadenceKnown &&
+            state?.enabled &&
+            !state.proposal &&
+            runs.length === 0 && (
+              <p className="inspector-note">
+                {t(
+                  "Cadence stays on for this conversation until you explicitly exit.",
+                )}
+              </p>
+            )}
           {flows.failed && (
             <p className="inspector-note" role="status">
               {t(
@@ -2193,9 +2227,7 @@ export function ChatWorkspace({
                       )
         }
         cadence={{
-          active: cadence,
-          armed: input.mode === "cadence",
-          known: cadenceKnown,
+          ...modeFacts,
           disabled: cadence
             ? !canExit
             : !!running || busy || !!pending || awaitingModel,
@@ -2231,13 +2263,11 @@ export function ChatWorkspace({
           awaitingSend: awaitingModel,
         }}
         hint={
-          liveRun && canInput && !inputBlock && draft.trim()
+          cadenceKnown && liveRun && canInput && !inputBlock && draft.trim()
             ? t("Enter steers this reply · Alt+Enter queues behind it")
-            : cadence
-              ? t("Cadence stays on. Confirm one plan before implementation.")
-              : input.mode === "cadence"
-                ? t("Your next message turns on Cadence mode.")
-                : ""
+            : modeHint
+              ? t(modeHint)
+              : ""
         }
         running={!!running}
         canStop={!busy && canInterrupt}
