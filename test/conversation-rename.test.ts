@@ -103,7 +103,6 @@ function fixture(sessions = 3) {
     owner: owner as never,
     models: {} as never,
     choice: {} as never,
-    gate: {} as never,
     agentDir,
     cwd,
     secrets: () => secrets,

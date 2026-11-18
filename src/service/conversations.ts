@@ -25,7 +25,6 @@ import {
 } from "../worker-public.mjs";
 import { DetailSanitizer, sanitizeText } from "../worker-redaction.mjs";
 import { resolveWorkspace } from "../workspace.ts";
-import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
 import { managedActivity } from "./contracts/activity.ts";
 import { ContractError, canonicalJson } from "./contracts/core.ts";
 import type { ExecutionContext } from "./contracts/models.ts";
@@ -36,6 +35,7 @@ import {
   type ChatTurn,
   clipText,
   decodeSessionId,
+  isLiveChatStatus,
   RUN_INPUTS,
   WAITING_INPUTS,
   type WorkbenchCommand,
@@ -91,7 +91,6 @@ interface Options {
   owner: ServiceOwner;
   models: OwnerModelContext;
   choice: OwnerModelChoice;
-  gate: CheckoutGate;
   agentDir: string;
   cwd: string;
   secrets(): readonly string[];
@@ -528,11 +527,9 @@ export class Conversations {
         leaf: live.accepted.parent,
         phase: live.abort.signal.aborted
           ? "stopping"
-          : live.state.status === "queued"
-            ? "queued"
-            : live.state.status === "running"
-              ? "running"
-              : "settling",
+          : isLiveChatStatus(live.state.status)
+            ? live.state.status
+            : "settling",
       }),
     );
   }
@@ -582,7 +579,7 @@ export class Conversations {
   }
   /** Startup refuses while a browser message's native closure is unconfirmed:
    * its worker may still write to the session. A message the previous owner's
-   * death interrupted (still recorded queued or running) does not refuse: host
+   * death interrupted (still starting, queued or running) does not refuse: host
    * startup has already stopped that owner's workers by exact identity, and the
    * reader reports the reply as interrupted. A session's newest command may be
    * a message sent into a reply: that reply's closure counts for it. */
@@ -736,7 +733,7 @@ export class Conversations {
         ? summaryTitle(listed.summary)
         : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
       state: {
-        status: "queued",
+        status: control ? "queued" : "starting",
         notice: "",
         omitted: { thinking: false, media: false, other: false },
         user: null,
@@ -1097,7 +1094,6 @@ export class Conversations {
   ): Promise<AcceptedWorkResult> {
     const { accepted, abort, state } = live;
     const commandId = live.commandId;
-    let barrier: CheckoutPermit | undefined;
     let authSettled: Promise<void> | undefined;
     let uncertain = false;
     let native: NativeSettlement = {
@@ -1121,17 +1117,13 @@ export class Conversations {
       this.o.owner.state === "idle" &&
       this.currentDirectory(live.execution.cwd);
     try {
+      this.o.owner.lease.assert();
       if (!current()) throw new ContractError("stale");
       if (control?.reply) {
         state.status = "completed";
         state.notice = control.reply;
         return { status: "settled" };
       }
-      if (!control) {
-        barrier = await this.o.gate.acquire(commandId, abort.signal);
-        barrier.assertHeld();
-      }
-      if (!current()) throw new ContractError("stale");
       const selected = live.execution.model;
       if (!selected) throw new ContractError("stale");
       this.o.models.assertCurrent(selected);
@@ -1293,7 +1285,6 @@ export class Conversations {
         uncertain = true;
       }
       if (uncertain) this.o.owner.quarantine();
-      else if (this.o.owner.state === "idle") barrier?.release();
       for (const input of live.inputs) this.inputs.delete(input.commandId);
       this.active.delete(commandId);
     }

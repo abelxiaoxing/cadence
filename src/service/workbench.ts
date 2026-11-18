@@ -66,9 +66,14 @@ export class Workbench implements WorkbenchPort {
       sessionDir?: string;
     },
   ) {
-    this.conversations = new Conversations(o);
+    const { gate, ...common } = o;
+    this.conversations = new Conversations(common);
     this.contexts = this.conversations.contexts;
-    this.workflows = new Workflows({ ...o, contexts: this.contexts });
+    this.workflows = new Workflows({
+      ...common,
+      gate,
+      contexts: this.contexts,
+    });
     this.files = new WorkbenchFiles(
       o.coordination.store.root,
       [o.coordination.files.namespace, o.agentDir],
