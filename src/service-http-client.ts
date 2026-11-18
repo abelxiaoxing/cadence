@@ -33,6 +33,7 @@ import {
   type PreflightRequest,
   parseWireJson,
   type ReadCursor,
+  type Reply,
   type Scope,
   utf8Bytes,
 } from "./service-contract.ts";
@@ -183,9 +184,14 @@ export class HttpServiceTransport implements ServiceTransport {
             !!this.options.localCapability
           )
             throw new ContractError("forbidden");
-          this.attachment =
-            sessionAttachment ??
-            decodeId(response.headers.get("x-cadence-attachment"));
+          // The body can finish after this viewer was retired (even after the
+          // header matched). Never reinstall the old allocation or its CSRF.
+          if (
+            requestSignal?.aborted ||
+            sessionAttachment !== this.attachment ||
+            !sessionAttachment
+          )
+            throw new ContractError("stale");
           this.csrf = reply.value.csrf;
         }
       }
@@ -278,49 +284,62 @@ export class HttpServiceTransport implements ServiceTransport {
   search(input: ReadCursor, signal?: AbortSignal) {
     return this.request("search", input, signal);
   }
-  async detach(): Promise<unknown> {
+  async detach(): Promise<Reply<null> | undefined> {
     const attachment = this.attachment;
     if (!attachment) return;
-    // A lost session body may leave the exact allocation without its CSRF.
-    // Read that same ID again so departure/reconnection can release it instead
-    // of blocking forever or abandoning a slot. This cannot submit work.
-    if (!this.options.localCapability && !this.csrf) {
-      const session = decodeReply(await this.session(), decodeSessionBootstrap);
-      if (session.kind === "error") {
-        if (!["stale", "unauthenticated"].includes(session.error.code))
-          throw new ContractError(session.error.code);
-        if (this.attachment === attachment) this.attachment = undefined;
-        return session;
+    // A lost session body may leave this allocation without its CSRF. A
+    // restarted owner may also refuse the old CSRF on detach. In either case
+    // read the SAME ID at most once. No command or grant is renewed.
+    let checked = false;
+    for (;;) {
+      if (!this.options.localCapability && !this.csrf) {
+        checked = true;
+        const session = decodeReply(
+          await this.session(),
+          decodeSessionBootstrap,
+        );
+        if (session.kind === "error") {
+          if (session.error.code === "forbidden") return session;
+          if (!["stale", "unauthenticated"].includes(session.error.code))
+            throw new ContractError(session.error.code);
+          if (this.attachment === attachment) this.attachment = undefined;
+          return session;
+        }
       }
-    }
-    const result = decodeReply(await this.request("detach", null), (value) => {
-      if (value !== null) throw new ContractError("invalid");
-      return null;
-    });
-    // A lost reply does not prove release. Retain the exact attachment for a
-    // later detach rather than allocating another of the 16 slots.
-    // Stale means the server no longer owns this ID; rotation also revokes it.
-    if (
-      result.kind === "error" &&
-      result.error.code !== "stale" &&
-      result.error.code !== "unauthenticated"
-    ) {
-      // A restarted direct owner can keep the access token but replace CSRF.
-      // The next detach recovers it by reading the same allocation, rather than
-      // repeatedly sending this refused challenge. No work command is retried.
+      if (this.attachment !== attachment) throw new ContractError("stale");
+      const result = decodeReply(
+        await this.request("detach", null),
+        (value) => {
+          if (value !== null) throw new ContractError("invalid");
+          return null;
+        },
+      );
+      // Only acknowledgement, stale (no longer owned) or rotation proves the
+      // slot released. An uncertain reply retains the exact ID for later.
       if (
-        result.error.code === "forbidden" &&
-        !this.options.localCapability &&
-        this.attachment === attachment
-      )
+        result.kind === "error" &&
+        result.error.code !== "stale" &&
+        result.error.code !== "unauthenticated"
+      ) {
+        if (
+          result.error.code === "forbidden" &&
+          !this.options.localCapability &&
+          this.attachment === attachment
+        ) {
+          this.csrf = null;
+          if (!checked) continue;
+          // Still forbidden with the freshly observed challenge: stop, without
+          // claiming release or allocating a new viewer.
+          return result;
+        }
+        throw new ContractError(result.error.code);
+      }
+      if (this.attachment === attachment) {
+        this.attachment = undefined;
         this.csrf = null;
-      throw new ContractError(result.error.code);
+      }
+      return result;
     }
-    if (this.attachment === attachment) {
-      this.attachment = undefined;
-      this.csrf = null;
-    }
-    return result;
   }
   async *export(
     input: ExportRequest,
@@ -388,7 +407,7 @@ export class HttpServiceTransport implements ServiceTransport {
   subscribe(
     scopeInput: Scope,
     receive: (value: SocketOutput) => void,
-    status: (state: "current" | "stale" | "closed") => void,
+    status: (state: "stale" | "closed") => void,
   ): () => void {
     const scope = decodeScope(scopeInput);
     if (!this.attachment || !this.options.socket)
@@ -412,7 +431,7 @@ export class HttpServiceTransport implements ServiceTransport {
       }
       notify("closed");
     };
-    const notify = (value: "current" | "stale" | "closed") => {
+    const notify = (value: "stale" | "closed") => {
       try {
         status(value);
       } catch {
@@ -420,8 +439,14 @@ export class HttpServiceTransport implements ServiceTransport {
       }
     };
     const timer = setInterval(() => {
-      if (!active) return;
-      if (Date.now() - last >= LIMITS.staleMs) notify("stale");
+      const silent = Date.now() - last;
+      if (silent >= LIMITS.staleMs) {
+        notify("stale");
+        // A hanging handshake can't ping. An open but silent connection gets
+        // one reconcile period to answer; don't wait indefinitely for close.
+        if (!active || silent > LIMITS.reconcileMs) return stop();
+      }
+      if (!active || closed) return;
       try {
         if (Date.now() - reconciled >= LIMITS.reconcileMs) {
           socket.send(canonicalJson({ kind: "resync", scope }));
@@ -434,6 +459,7 @@ export class HttpServiceTransport implements ServiceTransport {
     socket.addEventListener("open", () => {
       if (closed) return;
       active = true;
+      last = reconciled = Date.now();
       try {
         socket.send(canonicalJson({ kind: "subscribe", scope }));
       } catch {
@@ -441,14 +467,15 @@ export class HttpServiceTransport implements ServiceTransport {
       }
     });
     socket.addEventListener("message", (event) => {
-      if (closed) return;
+      if (closed || !active) return;
       try {
         if (typeof event.data !== "string") throw new ContractError("invalid");
         const value = decodeSocketOutput(
           parseWireJson(event.data, LIMITS.viewerBytes),
         );
         last = Date.now();
-        notify("current");
+        // Only the observer knows whether the frame advances the selected
+        // attachment/epoch/projection. A resync request isn't current data.
         receive(value);
       } catch {
         stop();
