@@ -702,9 +702,9 @@
     "test/runtime-timeline.test.ts": "34d34020b79119bf95c459e38e6923c0603f1410d84add27515f230da03325b0",
     "test/helpers/runtime-timeline.ts": "96c8c9383ff188aebcb5dae0cf4447e1e3a22b203a310c6a907145d06e1b7691",
     "web/dist/assets/cadence.css": "f96aefe181ecbeeb0fbf1308372c4659535b00422abafdb75168b3d39a89769c",
-    "web/dist/assets/cadence.js": "49c9ea51e583f16c04eff78cf6f93d6fc1142492696c15a89c030ec215945189",
+    "web/dist/assets/cadence.js": "6b99d8bfa3adc22af45a1de11d61f377beb13e30587a023eb7ece9cb1bd5aa38",
     "web/dist/assets/markdown.js": "6a36e89e7124a36afa87e8b3a6cdc20a26b50c66d74c39f08e30407bf367e706",
-    "web/dist/manifest.json": "defa0da81f2fe5d72bd34a25d37c098430c5068f3e63288dda327035802d5f7b",
+    "web/dist/manifest.json": "999dbac276c2824bda100ecfad00e1027065180e2b03da445901a41649d7b075",
     "web/dist/assets/timeline-client.js": "60320f5b032eb9a4d443e01f932f4721cbf6d2f9d785cdebf19452a26d38007e",
     "web/src/components/workspace/DesignCard.tsx": "a29aff6187ea386e82b4a9260a58fcaa27babc7da514214549e94a22ac9719ef"
   },
