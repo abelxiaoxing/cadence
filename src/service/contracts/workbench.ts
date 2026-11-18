@@ -100,7 +100,10 @@ export type WorkbenchRead =
       offset: number;
     }
   | {
-      kind: "conversation-context" | "conversation-models";
+      kind:
+        | "conversation-context"
+        | "conversation-models"
+        | "reload-conversation-models";
       location: ConversationLocation;
     }
   | { kind: "cadence-conversation"; id: string }
@@ -690,7 +693,7 @@ export type WorkbenchResult =
   | { kind: "accepted"; commandId: string }
   | { kind: "project"; commandId: string; path: string; link: string };
 export interface WorkbenchPort {
-  read(request: WorkbenchRead): WorkbenchResult;
+  read(request: WorkbenchRead): WorkbenchResult | Promise<WorkbenchResult>;
   command(
     request: WorkbenchCommand,
     caller?: {
@@ -713,6 +716,7 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
     case "conversation-context":
+    case "reload-conversation-models":
     case "conversation-models": {
       const o = closed(v, ["kind", "location"]);
       return { kind, location: decodeConversationLocation(o.location) };

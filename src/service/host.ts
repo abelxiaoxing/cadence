@@ -439,11 +439,11 @@ export async function createServiceHost(
       });
     // One complete, current literal source for every owner-facing projection.
     // Access material is deliberately excluded from the ordinary launch env.
-    const ownerLiterals = () => [
+    const ownerLiterals = (workspace = false) => [
       ...access.redactionLiterals(),
       native.capability,
       ...network.literals,
-      ...models.viewRedactionLiterals(),
+      ...models.viewRedactionLiterals(workspace ? "installed" : "text"),
     ];
     workbench = !sourceBuild?.deferRuntime
       ? new Workbench({
@@ -491,13 +491,13 @@ export async function createServiceHost(
         };
       },
       workspace: () => {
-        const before = ownerLiterals();
+        const before = ownerLiterals(true);
         const view = {
           rootLabel: diagnosticText(sanitizeText(c.store.root, before), 4096),
           models: models.observe(),
           context: unavailable(null),
         };
-        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals(true)))
           throw new ContractError("stale");
         return view;
       },

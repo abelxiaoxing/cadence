@@ -450,7 +450,7 @@ export function ModelPicker({
                     : t(
                         preview
                           ? "No models are configured. Add a provider to Pi's models.json or auth.json, then read the list again."
-                          : "No models are configured. Add a provider to Pi's models.json or auth.json, then restart the service.",
+                          : "No models are configured. Add a provider to Pi's models.json or auth.json, then reopen the model picker.",
                       )}
                 </p>
               )}
@@ -483,7 +483,7 @@ export function ModelPicker({
                 type="button"
                 className="link"
                 disabled={loading || pending}
-                onClick={reread}
+                onClick={() => reread(true)}
               >
                 {t("Refresh models")}
               </button>
@@ -502,8 +502,8 @@ export function ModelPicker({
               <p role="alert">
                 {t(
                   catalog.withheld === 1
-                    ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json."
-                    : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json.",
+                    ? "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json."
+                    : "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; reopen the picker after editing models.json.",
                   { count: catalog.withheld },
                 )}
               </p>
@@ -513,7 +513,11 @@ export function ModelPicker({
                 {t("The model list could not be read ({code}).", {
                   code: catalogError,
                 })}{" "}
-                <button type="button" className="link" onClick={reread}>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => reread(true)}
+                >
                   {t("Read again")}
                 </button>
               </p>

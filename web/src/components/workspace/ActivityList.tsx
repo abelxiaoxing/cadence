@@ -26,13 +26,6 @@ export function ActivityList({
   represented = [],
 }: ActivityListProps & { represented?: readonly string[] }) {
   const { t, tx } = useT();
-  const sessions = new Set(
-    value?.projects.flatMap((p) =>
-      p.activities
-        .filter((a) => a.sessionId)
-        .map((a) => `${p.path}\0${a.sessionId}`),
-    ),
-  );
   // The selected project's managed work already has its authorized controls in
   // Running work. Discovery must not duplicate those rows or controls.
   const visible = value?.projects
@@ -44,21 +37,12 @@ export function ActivityList({
       ),
     }))
     .filter((p) => p.activities.length);
+  const partial = !!error || value?.completeness === "partial";
+  if (!visible?.length && !partial) return null;
   return (
     <section className="lp-section" aria-label={t("Active Pi work")}>
-      <header className="lp-section-header">
-        <span className="lp-section-title">{t("Active Pi work")}</span>
-      </header>
       <div className="lp-section-body">
-        {value && (
-          <p className="panel-hint">
-            {t("{projects} projects · {sessions} sessions", {
-              projects: value.projects.length,
-              sessions: sessions.size,
-            })}
-          </p>
-        )}
-        {(error || value?.completeness === "partial") && (
+        {partial && (
           <p role="status" className="panel-hint">
             {t(
               "Activity observation is partial. Missing work is not known to have finished.",
@@ -66,23 +50,6 @@ export function ActivityList({
             {error ? ` (${error})` : ""}
           </p>
         )}
-        {represented.length > 0 && (
-          <p className="panel-hint">
-            {t("Owner work already listed below is not duplicated here.")}
-          </p>
-        )}
-        {!value && !error && (
-          <p className="panel-hint">{t("Discovering active work…")}</p>
-        )}
-        {value?.completeness === "complete" &&
-          !error &&
-          !value.projects.length && (
-            <p className="panel-hint">
-              {t(
-                "No active work observed. Idle terminals and owners are not listed.",
-              )}
-            </p>
-          )}
         {visible?.map((project) => (
           <div key={project.path}>
             <p className="panel-hint">{project.path}</p>

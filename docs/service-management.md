@@ -107,7 +107,7 @@ Install and restart print the private entry link once the owner answers; the JSO
 A successful manager start request is not owner readiness: an unready owner reports `quarantined` or `unconfirmed`, retains the separate `managerStatus`, exits nonzero and names `cadence doctor`.
 Status also retains the manager's `active`/`activating`/`failed` observation separately.
 A definition whose project directory was removed gets a readable refusal (exit78, so the unit does not restart in a loop); `cadence server install` switches it to the workbench.
-`restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
+`restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade or a Node change.
 The `upgrade` command (Linux) installs the latest version, or exactly `--to VERSION`, with the detected installation's package manager and restarts; see [Restart and upgrade from the WebUI](#restart-and-upgrade-from-the-webui) for its steps.
 Commands that change the service (`install`, `restart`, `stop`, `uninstall`, `upgrade`) refuse with `inside-service` when they run inside the service they would stop, for example from a tool of its own agent: stopping a systemd unit ends every process in it, so the command would die before it started the service again.
 Use the WebUI or a terminal outside the service instead.
@@ -335,9 +335,11 @@ At sign-out or shutdown Windows ends the owner without orderly Stop: running wor
   The conversation model picker offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
   A model whose provider or model ID contains a known credential value is withheld from the catalog, since showing the ID would reveal that value; the catalog says how many models are withheld, and the rest stay selectable.
   Credential values are `auth.json` keys, `models.json` `apiKey` and header values (and the variables they name) and service-environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or `COOKIE`.
-  The common Ollama placeholder `"apiKey": "ollama"` under a provider named `ollama` is such a case: give the placeholder a value that matches no provider or model ID (for example `"local-no-auth"`), then restart the service.
-  The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
-  Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then explicitly Send or choose the conversation model again; retained preferences are not erased.
+  The common Ollama placeholder `"apiKey": "ollama"` under a provider named `ollama` is such a case: give the placeholder a value that matches no provider or model ID (for example `"local-no-auth"`), then reopen the model picker.
+  Opening the conversation model picker reads `models.json` again without restarting the service.
+  An invalid edit refuses that read; fix the file and reopen the picker.
+  There is no background reload or message replay.
+  Saved preferences remain; execution still verifies its pinned model.
 - A foreground owner can be managed from another terminal.
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route: running work is interrupted, and the next start recovers the owner automatically.
   A recovered `stopped` registration records that the old owner was proven gone, not that its interrupted work completed.

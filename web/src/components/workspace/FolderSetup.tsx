@@ -136,8 +136,7 @@ export function FolderSetup({
                 locked={!ready}
                 open={modelOpen}
                 onOpenChange={(open) => {
-                  if (open && !modelRead.preview && !modelRead.loading)
-                    modelRead.reread();
+                  if (open) modelRead.reread();
                   setModelOpen(open);
                 }}
                 onChanged={() => {}}

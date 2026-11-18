@@ -36,6 +36,7 @@ import {
   type PiSource,
   PiSourceRefusal,
   piSource,
+  readPiAuth,
   readPiSnapshot,
   sameModels,
   sdkRefusal,
@@ -234,6 +235,11 @@ export class OwnerModelContext {
   #loading = false;
   #tail: Promise<void> = Promise.resolve();
   #generation = 0;
+  #reload?: Promise<void>;
+  #previousLiterals: readonly string[] = [];
+  get catalogGeneration(): number {
+    return this.#generation;
+  }
   constructor(options: ModelContextOptions) {
     this.#options = options;
     this.#launch = captureEnvironment(options.environment);
@@ -252,14 +258,21 @@ export class OwnerModelContext {
     }));
   }
   /** Readonly selected-source freshness, never getAuth or inference. */
-  assertCurrent(selection: ModelSelection): void {
+  assertCurrent(
+    selection: ModelSelection,
+    source: "installed" | "disk" = "disk",
+  ): void {
     const selected = this.#selected.get(selection.sourceSelectionId);
     if (
       !selected ||
       canonicalSelection(selected.selection) !== canonicalSelection(selection)
     )
       throw new ContractError("stale");
-    this.fresh(selected);
+    this.fresh(
+      selected,
+      false,
+      source === "installed" ? this.catalogSource(true) : undefined,
+    );
   }
   /** Owner-only known literals from validated private sources. No getAuth,
    * interpolation, refresh, credential write or public secret-derived identity. */
@@ -304,8 +317,27 @@ export class OwnerModelContext {
   /** Owner-only readonly literals for current text before any model is selected.
    * Also needed while originals settle after Stop/quarantine. Retain source and
    * lease checks, but do not require admission to still be open. */
-  viewRedactionLiterals(): readonly string[] {
-    return this.catalogLiterals(this.readCatalogSource());
+  viewRedactionLiterals(
+    source: "installed" | "text" = "installed",
+  ): readonly string[] {
+    this.#options.owner.lease.assert();
+    if (!this.#source || !this.#snapshot)
+      throw new ContractError("unavailable");
+    // Project with the installed model configuration, not the file the user
+    // might be editing. Auth is independent (including live OAuth renewal).
+    const current =
+      source === "text" ? readPiSnapshot(this.#source) : undefined;
+    const { auth, credentials } = current ?? readPiAuth(this.#source);
+    const installed = snapshotLiterals(
+      { ...this.#snapshot, auth, credentials },
+      this.#launch,
+      [...this.#previousLiterals, ...(this.#options.network?.literals ?? [])],
+    );
+    // Untrusted file/session/worker text can contain credentials from disk even
+    // before a picker installs them. This is redaction only, not SDK discovery.
+    return current && !sameModels(current, this.#snapshot)
+      ? snapshotLiterals(current, this.#launch, installed)
+      : installed;
   }
   get loading(): boolean {
     return this.#loading;
@@ -317,7 +349,7 @@ export class OwnerModelContext {
     withheld: number;
   } {
     try {
-      const current = this.catalogSource();
+      const current = this.catalogSource(true);
       const runtime = this.#runtime;
       if (!runtime || !this.#thinking) throw new ContractError("unavailable");
       const catalog = projectModelCatalog(
@@ -328,7 +360,7 @@ export class OwnerModelContext {
         (input, snapshot) => this.validateModel(input, snapshot),
       );
       // Re-read original selected sources before returning the projection.
-      const after = this.catalogSource();
+      const after = this.catalogSource(true);
       if (
         after.auth.identity !== current.auth.identity ||
         after.auth.stamp !== current.auth.stamp
@@ -341,12 +373,8 @@ export class OwnerModelContext {
       );
     }
   }
-  private catalogSource(): PiSnapshot {
+  private catalogSource(installedOnly = false): PiSnapshot {
     this.alive();
-    return this.readCatalogSource();
-  }
-  private readCatalogSource(): PiSnapshot {
-    this.#options.owner.lease.assert();
     if (
       this.#loading ||
       !this.#runtime ||
@@ -356,6 +384,8 @@ export class OwnerModelContext {
     )
       throw new ContractError("unavailable");
     if (this.#runtime.getError()) throw new ContractError("corrupt-selected");
+    if (installedOnly)
+      return { ...this.#snapshot, ...readPiAuth(this.#source) };
     const current = readPiSnapshot(this.#source);
     if (!sameModels(this.#snapshot, current)) throw new ContractError("stale");
     return current;
@@ -364,8 +394,65 @@ export class OwnerModelContext {
     return snapshotLiterals(
       snapshot,
       this.#launch,
-      this.#options.network?.literals ?? [],
+      this.#options.network?.literals,
     );
+  }
+  /** Explicit picker read, never observation polling. Build locally: an invalid
+   * edit cannot discard the installed runtime or change any choice version. */
+  async reloadCatalog(): Promise<void> {
+    this.alive();
+    if (this.#reload) return this.#reload;
+    const source = this.#source,
+      installed = this.#snapshot;
+    if (!source || !installed || this.#loading)
+      throw new ContractError("unavailable");
+    const before = readPiSnapshot(source);
+    if (sameModels(installed, before)) return;
+    this.#reload = (async () => {
+      const runtime = await this.createRuntime(source);
+      this.alive();
+      const after = readPiSnapshot(source);
+      if (
+        !sameModels(before, after) ||
+        before.auth.stamp !== after.auth.stamp ||
+        before.auth.identity !== after.auth.identity ||
+        this.#snapshot !== installed
+      )
+        throw new ContractError("stale");
+      // Keep earlier known literals protected in retained text. snapshotLiterals
+      // deduplicates and bounds the union before installing either change.
+      const previous = snapshotLiterals(
+        installed,
+        this.#launch,
+        this.#previousLiterals,
+      );
+      snapshotLiterals(after, this.#launch, previous);
+      this.#previousLiterals = previous;
+      this.#runtime = runtime;
+      this.#snapshot = after;
+      this.#selected.clear();
+      this.#retained.clear();
+      ++this.#generation;
+    })();
+    try {
+      await this.#reload;
+    } finally {
+      this.#reload = undefined;
+    }
+  }
+  private async createRuntime(source: PiSource) {
+    const { ModelRuntime } = await import("@earendil-works/pi-coding-agent");
+    const { InMemoryModelsStore } = await import("@earendil-works/pi-ai");
+    const runtime = await ModelRuntime.create({
+      authPath: source.authPath,
+      modelsPath: source.modelsPath,
+      modelsStore: new InMemoryModelsStore(),
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+    });
+    const refused = runtime.getError();
+    if (refused) throw sdkRefusal(refused);
+    return runtime;
   }
   /** Explicit owner-wide replacement only, never called by catalog/read paths. */
   replaceSelection(
@@ -422,7 +509,8 @@ export class OwnerModelContext {
    * refused before SDK construction, and getError is never a warning/fallback. */
   async load(): Promise<void> {
     this.alive();
-    if (this.#loading || this.#pending) throw new ContractError("capacity");
+    if (this.#loading || this.#pending || this.#reload)
+      throw new ContractError("capacity");
     const existing = runtimeOwners.get(this.#options.owner);
     if (existing && existing !== this) throw new ContractError("conflict");
     runtimeOwners.set(this.#options.owner, this);
@@ -441,8 +529,7 @@ export class OwnerModelContext {
       );
       const before = readPiSnapshot(source);
       const pi = await import("@earendil-works/pi-coding-agent");
-      const { ModelRuntime } = pi;
-      const { InMemoryModelsStore, getSupportedThinkingLevels } = await import(
+      const { getSupportedThinkingLevels } = await import(
         "@earendil-works/pi-ai"
       );
       // SDK imports can replace startup dispatchers; install owned public routing
@@ -455,17 +542,9 @@ export class OwnerModelContext {
         !sameModels(before, ready)
       )
         throw new ContractError("stale");
-      const runtime = await ModelRuntime.create({
-        authPath: source.authPath,
-        modelsPath: source.modelsPath,
-        modelsStore: new InMemoryModelsStore(),
-        allowModelNetwork: false,
-        refreshOnCreate: false,
-      });
+      const runtime = await this.createRuntime(source);
       this.alive();
       const after = readPiSnapshot(source);
-      const refused = runtime.getError();
-      if (refused) throw sdkRefusal(refused);
       if (
         after.auth.identity !== ready.auth.identity ||
         !sameModels(ready, after)
@@ -561,11 +640,17 @@ export class OwnerModelContext {
       this.catalogLiterals(current),
     );
   }
-  private fresh(selected: Selected, resolvingOAuth = false): PiSnapshot {
+  private fresh(
+    selected: Selected,
+    resolvingOAuth = false,
+    installed?: PiSnapshot,
+  ): PiSnapshot {
     this.alive();
+    if (this.#selected.get(selected.selection.sourceSelectionId) !== selected)
+      throw new ContractError("stale");
     if (!this.#source || !this.#snapshot || !this.#runtime)
       throw new ContractError("unavailable");
-    const snapshot = readPiSnapshot(this.#source);
+    const snapshot = installed ?? readPiSnapshot(this.#source);
     // getModel can invoke a registered provider's synchronous getModels. Guard
     // function transports BEFORE calling it, including unchanged-choice reads.
     if (

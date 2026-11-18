@@ -153,7 +153,7 @@ export class ConversationContexts {
         accessGeneration: owner.accessGeneration,
         configRev: context.revision + 1,
         catalogId: conversationIdentity(
-          `cadence-context-version:${canonicalJson([this.seed, context, selected?.sourceSelectionId ?? null])}`,
+          `cadence-context-version:${canonicalJson([this.seed, this.o.models.catalogGeneration ?? 0, context, selected?.sourceSelectionId ?? null])}`,
         ),
         conversation: { id: context.id, cwd: context.cwd },
       },
@@ -163,7 +163,8 @@ export class ConversationContexts {
     const before = this.snapshot(location);
     const { context } = this.records.read(location);
     const catalog = this.o.models.catalog();
-    if (before.selected) this.o.models.assertCurrent(before.selected);
+    if (before.selected)
+      this.o.models.assertCurrent(before.selected, "installed");
     if (canonicalJson(before) !== canonicalJson(this.snapshot(location)))
       throw new ContractError("stale");
     let remembered: ModelSelector | null = context.model;

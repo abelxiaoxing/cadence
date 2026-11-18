@@ -58,6 +58,7 @@ async function fixture() {
     getError: () => undefined,
     getRegisteredNativeProvider: () => undefined,
     getRegisteredProviderConfig: () => undefined,
+    getModels: () => [model],
     getModel: () => model,
     getProvider: () => ({ auth: { oauth: {} } }),
     getAuth,
@@ -138,6 +139,58 @@ async function fixture() {
     selection,
   };
 }
+
+it("edits are not viewer disconnects; only opening the picker installs a validated catalog", async () => {
+  const f = await fixture();
+  const path = join(f.agentDir, "models.json");
+  const version = f.context.catalogGeneration;
+  writeFileSync(path, "{", { mode: 0o600 });
+  expect(f.context.viewRedactionLiterals()).toContain("renewed-token-1");
+  expect(f.context.catalog().entries.length).toBeGreaterThan(0);
+  await expect(f.context.reloadCatalog()).rejects.toThrow();
+  expect(f.context.catalogGeneration).toBe(version);
+  expect(f.context.observe()).toEqual([f.selection]);
+  const key = "fixture-new-model-key";
+  writeFileSync(
+    path,
+    JSON.stringify({
+      providers: {
+        [f.selection.provider]: {
+          apiKey: key,
+          api: "openai-completions",
+          baseUrl: "https://fixture.invalid",
+          models: [{ id: "replacement" }],
+        },
+      },
+    }),
+  );
+  // Free text must still redact newly written credentials before a reload.
+  expect(f.context.viewRedactionLiterals("text")).toContain(key);
+  expect(f.context.catalogGeneration).toBe(version);
+  const model = {
+    ...(seam.runtime.getModel as () => object)(),
+    id: "replacement",
+  };
+  seam.runtime = {
+    ...seam.runtime,
+    getModels: () => [model],
+    getModel: () => model,
+  };
+  expect(f.context.catalog().entries.map((entry) => entry.model)).toEqual([
+    "fixed",
+  ]);
+  await Promise.all([f.context.reloadCatalog(), f.context.reloadCatalog()]);
+  expect(f.context.catalog().entries.map((entry) => entry.model)).toEqual([
+    "replacement",
+  ]);
+  expect(f.context.catalogGeneration).toBe(version + 1);
+  expect(f.context.viewRedactionLiterals()).toContain(key);
+  expect(f.context.observe()).toEqual([]);
+  expect(() => f.context.assertCurrent(f.selection)).toThrow("stale");
+  await f.context.reloadCatalog();
+  expect(f.context.catalogGeneration).toBe(version + 1);
+  expect(f.getAuth).toHaveBeenCalledTimes(1);
+});
 
 it.each(["stopping", "quarantined"])(
   "retains current redaction during %s without reopening model admission",

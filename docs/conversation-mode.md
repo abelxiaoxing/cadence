@@ -303,7 +303,7 @@ A revision may also change the assignments that have not started yet (drop, rewr
 The unified WebUI sidebar automatically lists active work in this account and state home, including projects you have never selected.
 An interactive terminal must load the Cadence extension: a real model/tool round appears even without `/cadence`, but an idle terminal or idle owner does not.
 Terminal rounds are observe-only; owner turns and workflows retain their actual queue, execution, recovery and settlement phases and existing authorized controls.
-The counts deduplicate projects and sessions, while separate terminal instances and owner work keep their own sources.
+Separate terminal instances and owner work keep their own rows; work already shown under **Running work** is not repeated.
 
 Click an activity to remember its directory and read the shared Pi session at the observed branch.
 This does not start or associate an owner, grant execution consent or expand workbench Stop.

@@ -1347,7 +1347,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       // Preference selection must never block observation/cancellation or the picker.
       await connect(ctx, false);
       current();
-      const catalog = value(await client().models(undefined, location));
+      const catalog = value(await client().models(undefined, location, true));
       current();
       const models = catalog.entries.filter(
         (m) => m.eligibility === "candidate" && m.api,
