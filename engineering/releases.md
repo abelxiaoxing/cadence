@@ -1225,4 +1225,13 @@ Publication requires the matching annotated tag's actual CI outcome and registry
 
 ## 2.1.12 release candidate
 
-The Web model picker explicitly refreshes the local catalog; the workspace no longer displays a separate runtime observation bar. The workbench validates the conversation record before attempting the owner-wide reload. Canonical outputs and reuse pins were refreshed. Local `bun run verify` passed: 2,223 root tests and 574 Web tests, generated outputs, types, lint and real pack audit. No browser or live-provider qualification is claimed.
+The Web model picker explicitly refreshes the local catalog; the workspace no longer displays a separate runtime observation bar.
+The workbench validates the conversation record before attempting the owner-wide reload.
+Canonical outputs and reuse pins were refreshed.
+Local `bun run verify` passed before this note was added: 2,223 root tests and 574 Web tests, generated outputs, types, lint and real pack audit.
+No browser or live-provider qualification is claimed.
+
+## 2.1.13 release candidate
+
+The 2.1.12 CI gate refused the release note's Markdown formatting before the publish job ran.
+This candidate corrects the note without moving the earlier tag.

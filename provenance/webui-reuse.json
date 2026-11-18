@@ -700,9 +700,9 @@
     "test/web/workflow-agent.test.tsx": "a26b485d9291fd3b461cc32f252ad9da1edd22291b93b53b7779fb9132b0604f",
     "test/runtime-timeline.test.ts": "34d34020b79119bf95c459e38e6923c0603f1410d84add27515f230da03325b0",
     "test/helpers/runtime-timeline.ts": "96c8c9383ff188aebcb5dae0cf4447e1e3a22b203a310c6a907145d06e1b7691",
-    "web/dist/assets/cadence.js": "bd7f3a352f234bb3824f7bdb086a0d77f711268266e2636f7a7fc7b30ed9de2e",
+    "web/dist/assets/cadence.js": "72578896eb1988c97fbce87da488814fa8f4151c1cb6337669c773d666f21ccc",
     "web/dist/assets/markdown.js": "6a36e89e7124a36afa87e8b3a6cdc20a26b50c66d74c39f08e30407bf367e706",
-    "web/dist/manifest.json": "3ee1cf84cc8a9ddf4857f0478d752921f95db6b89f8a8398c2b08e092937119f"
+    "web/dist/manifest.json": "b599088152376e73eeaa6847e095f149d2419d2e8171c97109afde8ad1d67278"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
