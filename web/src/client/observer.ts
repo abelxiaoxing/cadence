@@ -3,8 +3,11 @@ import {
   type ObservationState,
   ProjectionTracker,
 } from "../../../src/service-client.ts";
+import { compareSequence } from "../../../src/service-contract.ts";
 import type { Scope, WorkspaceBootstrap } from "../types";
 import type { BrowserClient } from "./browser";
+import { refusedAccess } from "./observation-read";
+
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
   epoch?: string;
@@ -14,13 +17,37 @@ export interface ViewerState {
   observation?: ObservationState;
   transportStatus: "current" | "stale" | "closed";
   attachmentVersion: number;
+  /** Aborted synchronously on retirement, even before the next render. */
+  readonly allocationSignal?: AbortSignal;
   error?: string;
 }
-const revoked = (code: string) =>
-  code === "unauthenticated" || code === "forbidden";
+/** Denial belongs to the selected project/page, not one poll, scope or owner
+ * epoch. All its observation chains retire synchronously on the first refusal. */
+export class ObservationAccess {
+  private readonly controller = new AbortController();
+  readonly signal = this.controller.signal;
+  private denial?: { source: "entry" | "project" | "viewer"; code: string };
+  get refusal() {
+    return this.denial;
+  }
+  refuse(source: "entry" | "project" | "viewer", code: string) {
+    if (!refusedAccess(code) || this.refusal) return;
+    this.denial = { source, code };
+    this.controller.abort(new Error(code));
+  }
+  check() {
+    if (this.signal.aborted) throw this.signal.reason;
+  }
+  subscribe = (notify: () => void) => {
+    this.signal.addEventListener("abort", notify);
+    return () => this.signal.removeEventListener("abort", notify);
+  };
+  snapshot = () => this.refusal;
+}
 export class WorkspaceObserver {
   private serial: Promise<void> = Promise.resolve();
   private version = 0;
+  private attachmentVersion = 0;
   private stopCurrent: (() => void) | undefined;
   private pollCurrent: (() => void) | undefined;
   private latest: ViewerState | undefined;
@@ -33,16 +60,19 @@ export class WorkspaceObserver {
   whenReady(
     epoch: string,
     signal: AbortSignal,
-    minimumVersion = 0,
+    expectedVersion = 0,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const finish = (error?: Error) => {
         this.readiness.delete(check);
         signal.removeEventListener("abort", abort);
+        this.access.signal.removeEventListener("abort", abort);
         error ? reject(error) : resolve();
       };
       const check = (state: ViewerState) => {
-        if (this.version < minimumVersion || state.epoch !== epoch) return;
+        if (expectedVersion && this.version > expectedVersion)
+          return finish(new Error("stale"));
+        if (this.version < expectedVersion || state.epoch !== epoch) return;
         if (
           state.workspace?.epoch === epoch &&
           state.attached &&
@@ -53,17 +83,25 @@ export class WorkspaceObserver {
           finish();
       };
       const abort = () =>
-        finish(new Error(this.latest?.error ?? "unavailable"));
-      if (signal.aborted) {
+        finish(
+          new Error(
+            this.access.refusal?.code ?? this.latest?.error ?? "unavailable",
+          ),
+        );
+      if (signal.aborted || this.access.signal.aborted) {
         abort();
         return;
       }
       this.readiness.add(check);
+      this.access.signal.addEventListener("abort", abort, { once: true });
       signal.addEventListener("abort", abort, { once: true });
       if (this.latest) check(this.latest);
     });
   }
-  constructor(private readonly api: BrowserClient) {}
+  constructor(
+    private readonly api: BrowserClient,
+    readonly access = new ObservationAccess(),
+  ) {}
   refresh(): void {
     this.pollCurrent?.();
   }
@@ -91,6 +129,11 @@ export class WorkspaceObserver {
     // again soon rather than after the full reconcile period. Readonly only.
     let failed = false;
     let blocked = false;
+    let allocationPendingRelease = false;
+    let repairRevision = 0;
+    let repairNeeded = false;
+    let followup = false;
+    let minimumSeq = "0";
     let actionCapability = false;
     let state: ViewerState = {
       actions: false,
@@ -122,12 +165,17 @@ export class WorkspaceObserver {
       abort.abort();
       stopSocket?.();
       stopSocket = undefined;
-      state.attached = false;
-      state.actions = false;
+      state = {
+        ...state,
+        attached: false,
+        actions: false,
+        allocationSignal: undefined,
+      };
     };
     const stop = () => {
       if (disposed) return;
       disposed = true;
+      this.access.signal.removeEventListener("abort", revoked);
       retire();
       clearInterval(timer);
       clearTimeout(retry);
@@ -172,34 +220,41 @@ export class WorkspaceObserver {
       // its bounded, aborted read before releasing or replacing the viewer.
       await reading;
       const released = await this.api.transport.detach();
-      if (
-        current() &&
-        !blocked &&
-        released?.kind === "error" &&
-        revoked(released.error.code)
-      )
-        revoke(false);
+      allocationPendingRelease = false;
+      // A final authenticated detach refusal concerns this project's access
+      // even when navigation has already queued the next scope's acquisition.
+      if (released?.kind === "error" && refusedAccess(released.error.code))
+        this.access.refuse("viewer", released.error.code);
     };
     const poll = (refreshSession = true) => {
       if (!current() || !state.attached || blocked || reading) return reading;
       const signal = abort.signal;
       state.actions = false;
       lastPoll = Date.now();
-      reading = read(refreshSession, signal).then((succeeded) => {
-        reading = undefined;
-        if (!current() || signal.aborted) return;
-        failed = !succeeded;
-        state.actions = !!succeeded && actionCapability;
-        emit();
-        if (!succeeded && state.error === "stale") {
-          if (acquiring) retryAttachment();
-          else reconnect();
-        }
-      });
+      reading = read(refreshSession, signal, repairRevision).then(
+        (succeeded) => {
+          reading = undefined;
+          if (!current() || signal.aborted) return;
+          failed = !succeeded;
+          state.actions = !!succeeded && actionCapability;
+          emit();
+          if (!succeeded && state.error === "stale") {
+            if (acquiring) retryAttachment();
+            else reconnect();
+          } else if (followup) {
+            followup = false;
+            void poll();
+          }
+        },
+      );
       emit();
       return reading;
     };
-    const read = async (refreshSession: boolean, signal: AbortSignal) => {
+    const read = async (
+      refreshSession: boolean,
+      signal: AbortSignal,
+      revision: number,
+    ) => {
       try {
         // Keep the same attachment alive and notice a replacement owner even
         // in ordinary chat, where there is no WebSocket or changed model list.
@@ -209,7 +264,7 @@ export class WorkspaceObserver {
           if (session.kind === "error") {
             state.actions = false;
             state.error = session.error.code;
-            if (revoked(session.error.code)) revoke();
+            if (refusedAccess(session.error.code)) deny(session.error.code);
             return;
           }
           if (!matchesOwner(session.value)) {
@@ -228,8 +283,8 @@ export class WorkspaceObserver {
             return;
           }
           state.activeRuns = active.value;
-        } else if (revoked(active.error.code)) {
-          revoke();
+        } else if (refusedAccess(active.error.code)) {
+          deny(active.error.code);
           return;
         } else state.activeRuns = undefined;
         emit();
@@ -237,7 +292,7 @@ export class WorkspaceObserver {
         if (!current() || signal.aborted) return;
         if (workspace.kind === "error") {
           state.error = workspace.error.code;
-          if (revoked(workspace.error.code)) revoke();
+          if (refusedAccess(workspace.error.code)) deny(workspace.error.code);
           return;
         }
         if (!matchesOwner(workspace.value)) {
@@ -251,15 +306,29 @@ export class WorkspaceObserver {
           if (!current() || signal.aborted) return;
           if (reply.kind === "error") {
             state.error = reply.error.code;
-            if (revoked(reply.error.code)) revoke();
+            if (refusedAccess(reply.error.code)) deny(reply.error.code);
             return;
           }
           if (!matchesOwner(reply.value)) {
             state.error = "stale";
             return;
           }
+          // A snapshot begun before a new synchronization demand cannot
+          // satisfy it, even at the same watermark.
+          if (revision !== repairRevision) return;
+          if (compareSequence(reply.value.committedSeq, minimumSeq) < 0) return;
+          const previous = tracker.state;
           const installed = tracker.install(reply.value, Date.now(), ticket);
-          if (installed !== undefined) generation = installed;
+          if (installed !== undefined) {
+            generation = installed;
+            repairNeeded = false;
+            if (
+              state.transportStatus === "current" &&
+              (previous?.connection !== "current" ||
+                previous.snapshot.committedSeq !== reply.value.committedSeq)
+            )
+              state.transportStatus = "stale";
+          }
         } else state.transportStatus = "current";
         state.error = undefined;
         return true;
@@ -271,32 +340,36 @@ export class WorkspaceObserver {
         }
       }
     };
-    const revoke = (release = true) => {
+    const deny = (code: string) => {
+      this.access.refuse("viewer", code);
+    };
+    const revoked = () => {
       blocked = true;
       retire();
       state.transportStatus = "closed";
-      state.error = "Access revoked; explicit token re-entry required.";
+      state.error = this.access.refusal?.code;
       state.workspace = undefined;
       state.activeRuns = undefined;
       tracker = new ProjectionTracker();
       clearInterval(timer);
       clearTimeout(retry);
-      if (release) enqueue(detach);
+      if (allocationPendingRelease) enqueue(detach);
       emit();
     };
     const acquire = async () => {
       if (!current() || blocked) return;
       retire();
+      emit();
       await detach();
       if (!current() || blocked) return;
-      const session = await this.api.client.session();
-      if (!current() || blocked) {
-        await detach();
-        return;
-      }
+      allocationPendingRelease = true;
+      const session = await this.api.client.session(this.access.signal);
+      if (!current() || blocked) return; // its stop/refusal already enqueued release
       if (session.kind === "error") {
-        if (revoked(session.error.code)) {
-          revoke();
+        if (refusedAccess(session.error.code)) {
+          // No viewer was granted by this initial allocation.
+          allocationPendingRelease = false;
+          deny(session.error.code);
           return;
         }
         throw new Error(session.error.code);
@@ -304,12 +377,16 @@ export class WorkspaceObserver {
       abort = new AbortController();
       tracker = new ProjectionTracker();
       storeId = session.value.storeId;
+      repairRevision = 0;
+      repairNeeded = followup = false;
+      minimumSeq = "0";
       state = {
         epoch: session.value.epoch,
         attached: true,
+        allocationSignal: abort.signal,
         actions: false,
         transportStatus: "closed",
-        attachmentVersion: state.attachmentVersion + 1,
+        attachmentVersion: ++this.attachmentVersion,
       };
       actionCapability = session.value.capabilities.actions;
       emit();
@@ -320,7 +397,7 @@ export class WorkspaceObserver {
         retire();
         socketError = error;
         state.transportStatus = "closed";
-        state.attachmentVersion++;
+        state.attachmentVersion = ++this.attachmentVersion;
         retryAttachment();
         emit();
       };
@@ -345,6 +422,8 @@ export class WorkspaceObserver {
           }
           let accepted = false;
           if (message.kind === "snapshot") {
+            if (compareSequence(message.snapshot.committedSeq, minimumSeq) < 0)
+              return;
             const installed = tracker.install(
               message.snapshot,
               Date.now(),
@@ -352,14 +431,18 @@ export class WorkspaceObserver {
             );
             if (installed !== undefined) {
               generation = installed;
+              repairNeeded = followup = false;
               accepted = true;
             }
           } else if (message.kind === "event") {
-            const result = tracker.receive(
-              message.event,
-              generation,
-              Date.now(),
-            );
+            if (
+              repairNeeded &&
+              compareSequence(message.event.committedSeq, minimumSeq) <= 0
+            )
+              return;
+            const result = repairNeeded
+              ? "resync"
+              : tracker.receive(message.event, generation, Date.now());
             if (result === "duplicate") return;
             accepted = result === "applied";
           }
@@ -368,7 +451,13 @@ export class WorkspaceObserver {
             state.transportStatus = "current";
           } else {
             state.transportStatus = "stale";
-            void poll();
+            if (data && compareSequence(data.committedSeq, minimumSeq) > 0)
+              minimumSeq = data.committedSeq;
+            repairNeeded = true;
+            repairRevision++;
+            // One trailing poll per outstanding demand, not per timer tick.
+            if (reading) followup = true;
+            else void poll();
           }
           emit();
         },
@@ -383,6 +472,11 @@ export class WorkspaceObserver {
         },
       );
     };
+    if (this.access.signal.aborted) {
+      revoked();
+      return stop;
+    }
+    this.access.signal.addEventListener("abort", revoked, { once: true });
     reconnect();
     this.pollCurrent = () => {
       if (state.attached) void poll();

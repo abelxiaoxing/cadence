@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { IconType } from "react-icons";
 import {
@@ -27,12 +28,13 @@ import type {
   ProjectEntry,
 } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
-import { canonicalJson } from "../../src/service-contract.ts";
+import { canonicalJson, compareSequence } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
 import type { FolderDraft } from "./client/folder-draft";
 import { useLatency } from "./client/latency";
 import type { PreviewModels } from "./client/model-preview";
+import { ObservationAccess } from "./client/observer";
 import {
   activityRoute,
   branchHash,
@@ -43,6 +45,7 @@ import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
 import type { ModelAvailability } from "./client/use-model-catalog";
 import { useProjectObservation } from "./client/use-project-observation";
+import { useRetainedTaskWorkspace } from "./client/use-retained-task-workspace";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
@@ -79,7 +82,11 @@ import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
-import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
+import {
+  type CanCancelWorkflow,
+  cancelWorkflow,
+  workflowLive,
+} from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import {
   accessRevoked,
@@ -107,6 +114,8 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 export function App({
   api: provided,
   onOpenProject,
+  entryObservation,
+  projectAccess,
   homeFolder,
   projectEntries,
   notices,
@@ -121,6 +130,8 @@ export function App({
   onDraftApplied,
 }: {
   api?: BrowserClient;
+  projectAccess?: ObservationAccess;
+  entryObservation?: { pending: boolean; error?: string; refresh(): void };
   previewModels?: PreviewModels;
   initialDraft?: FolderDraft & { conversationId: string };
   onDraftApplied?(conversationId: string): void;
@@ -143,7 +154,7 @@ export function App({
   onOpenService?(): void;
 }) {
   const { t, tx } = useT();
-  const [api] = useState(() => provided ?? browserClient());
+  const [api] = useState(() => provided ?? browserClient(project?.id));
   const [activityHash, setActivityHash] = useState(() =>
     typeof window === "undefined" ? "" : window.location.hash,
   );
@@ -188,7 +199,21 @@ export function App({
   const [scope, setScope] = useState<Scope | null>(
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
-  const execution = useProjectObservation(project?.id, project?.epoch);
+  const [localAccess] = useState(() => new ObservationAccess());
+  const access = projectAccess ?? localAccess;
+  const refusal = useSyncExternalStore(
+    access.subscribe,
+    access.snapshot,
+    access.snapshot,
+  );
+  const entryError =
+    refusal?.source === "entry" ? refusal.code : entryObservation?.error;
+  const entryRevoked = accessRevoked(entryError);
+  const execution = useProjectObservation(
+    entryRevoked ? undefined : project?.id,
+    project?.epoch,
+    access,
+  );
   const running = !!project && execution.readiness === "running";
   const independent = running && execution.association === "unassociated";
   const executionReady =
@@ -202,45 +227,51 @@ export function App({
       execution.readiness === "not-started");
   // Preserve a previously eligible safety viewer across an inconclusive read,
   // not across a positive stop, lost association, or revoked access.
-  const eligible = useRef<{ selected: string | null; epoch: string }>(null);
+  const eligible = useRef<{
+    projectId: string;
+    selected: string | null;
+    epoch: string;
+  }>(null);
   if (project) {
     if (executionReady && execution.value?.epoch)
       eligible.current = {
+        projectId: project.id,
         selected: project.epoch,
         epoch: execution.value.epoch,
       };
     else if (
-      eligible.current?.selected !== project.epoch ||
+      eligible.current?.projectId !== project.id ||
+      eligible.current.selected !== project.epoch ||
       running ||
       executionStopped ||
+      refusal ||
       accessRevoked(execution.error)
     )
       eligible.current = null;
   }
   const executionEpoch = eligible.current?.epoch ?? null;
-  // Revocation ends this viewer, including any automatic epoch/scope handoff.
-  // Only re-entering the authenticated page starts another viewer lifetime.
-  const viewerRefusal = useRef<string | undefined>(undefined);
   const observeExecution =
-    !viewerRefusal.current && (!project || executionEpoch !== null);
+    !entryRevoked && !refusal && (!project || executionEpoch !== null);
   const workspace = useWorkspace(
     api,
     taskId ? { kind: "task", id: taskId } : null,
     !detached && observeExecution,
     executionEpoch,
+    access,
   );
-  if (observeExecution && accessRevoked(workspace.error))
-    viewerRefusal.current = workspace.error;
   const [handoffs, setHandoffs] = useState(0);
-  const viewerWorkspaceId =
-    workspace.workspace?.workspaceId ?? workspace.activeRuns?.workspaceId;
+  const expectedWorkspace = execution.value?.workspaceId;
   const wrongWorkspace =
     !!project &&
     workspace.epoch === executionEpoch &&
-    !!execution.value?.workspaceId &&
-    !!viewerWorkspaceId &&
-    viewerWorkspaceId !== execution.value.workspaceId;
+    !!expectedWorkspace &&
+    [workspace.workspace, workspace.activeRuns].some(
+      (read) => read && read.workspaceId !== expectedWorkspace,
+    );
   const attached =
+    !detached &&
+    !entryObservation?.pending &&
+    !entryError &&
     observeExecution &&
     !handoffs &&
     !wrongWorkspace &&
@@ -248,6 +279,7 @@ export function App({
     !accessRevoked(workspace.error) &&
     (!project || workspace.epoch === executionEpoch);
   const projectError =
+    (refusal?.source === "project" ? refusal.code : undefined) ??
     execution.error ??
     (execution.value?.status === "unavailable"
       ? "unavailable"
@@ -257,7 +289,7 @@ export function App({
   // Resync invalidates freshness without diagnosing a failure. Keep the
   // viewer's explicit cause separate from the current-data gate below.
   const viewerError =
-    viewerRefusal.current ??
+    (refusal?.source === "viewer" ? refusal.code : undefined) ??
     (observeExecution
       ? (workspace.error ?? (wrongWorkspace ? "stale" : undefined))
       : undefined);
@@ -273,11 +305,36 @@ export function App({
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
   // history and drafts reachable; only an explicit user action can prepare execution.
-  const projectObserved = !!(project && (execution.value || execution.error));
+  const projectObserved = !!(
+    project &&
+    (execution.value || execution.error || refusal)
+  );
   const signInRequired =
-    accessRevoked(projectError) || accessRevoked(viewerError);
+    !!refusal ||
+    entryRevoked ||
+    accessRevoked(projectError) ||
+    accessRevoked(viewerError);
   const conversationAvailable =
     !detached && !signInRequired && !!(workspace.workspace || projectObserved);
+  const retained = useRetainedTaskWorkspace(
+    independent && !detached && !signInRequired ? project?.id : undefined,
+    taskId,
+    execution.value?.workspaceId,
+    execution.value?.epoch,
+    access,
+  );
+  const viewerHistoryWorkspace =
+    observeExecution &&
+    !wrongWorkspace &&
+    !signInRequired &&
+    (!project || workspace.workspace?.epoch === executionEpoch)
+      ? workspace.workspace
+      : undefined;
+  const historyWorkspace = independent
+    ? retained.history?.workspace
+    : viewerHistoryWorkspace;
+  const historyClient = retained.history?.client ?? api.client;
+  const historyKey = `${independent ? "retained" : "viewer"}:${project?.id ?? "direct"}:${historyWorkspace?.epoch ?? ""}:${historyWorkspace?.storeId ?? ""}`;
   const chatWorkspace = useRef<string | null>(null);
   if (workspace.workspace || execution.value?.workspaceId)
     chatWorkspace.current =
@@ -289,19 +346,24 @@ export function App({
           location?: ConversationLocation,
           progress?: PreparationProgress,
         ) => {
-          const epoch = await onPrepareExecution(
-            purpose,
-            signal,
-            location,
-            progress,
-          );
-          if (signal.aborted) throw new Error("stale");
-          // Even for the same epoch, the old viewer cannot release this wait.
+          access.check();
+          // Invalidate captured stop handlers before the preparation or any
+          // render it schedules. A same-epoch viewer replacement is still a handoff.
+          lifetime.current.depart();
           setHandoffs((count) => count + 1);
           try {
+            const epoch = await onPrepareExecution(
+              purpose,
+              signal,
+              location,
+              progress,
+            );
+            access.check();
+            if (signal.aborted) throw new Error("stale");
             execution.prepared(epoch);
             const observation = workspace.reconnect();
             await workspace.whenReady(epoch, signal, observation);
+            access.check();
           } finally {
             setHandoffs((count) => count - 1);
           }
@@ -310,10 +372,14 @@ export function App({
   const prepareSend = preparation("send");
   const preparePlan = preparation("plan-validation");
   const chats = useConversationHistory(api.client, conversationAvailable);
+  const observingRoster =
+    workspace.attached && workspace.workspace && !detached && !signInRequired;
   const chatActivity = useWorkbench(
     api.client,
-    workspace.workspace && !detached ? { kind: "conversation-active" } : null,
+    observingRoster ? { kind: "conversation-active" } : null,
     1000,
+    access,
+    workspace.attachmentVersion,
   );
   const activeChats =
     chatActivity.value?.kind === "conversation-active"
@@ -327,8 +393,14 @@ export function App({
   ];
   const workflowActivity = useWorkbench(
     api.client,
-    workspace.workspace && !detached ? { kind: "workflow-active" } : null,
+    // Unlike full history, the safety roster is useful as soon as this
+    // viewer can reach the owner, including during a task resync.
+    observeExecution && workspace.attached && !detached && !signInRequired
+      ? { kind: "workflow-active" }
+      : null,
     2000,
+    access,
+    workspace.attachmentVersion,
   );
   const background =
     workflowActivity.value?.kind === "workflow-active"
@@ -345,7 +417,10 @@ export function App({
   );
   const projects = useWorkbench(
     api.client,
-    !project && workspace.workspace && !detached ? { kind: "projects" } : null,
+    !project && observingRoster ? { kind: "projects" } : null,
+    0,
+    access,
+    workspace.attachmentVersion,
   );
   const initialCwd =
     newConversationCwd ??
@@ -387,7 +462,7 @@ export function App({
   const taskObservation =
     candidate?.scope.kind === "task" &&
     candidate.scope.id === taskId &&
-    candidate.storeId === workspace.workspace?.storeId &&
+    candidate.storeId === viewerHistoryWorkspace?.storeId &&
     candidate.epoch === workspace.epoch &&
     (!project || candidate.epoch === executionEpoch)
       ? workspace.observation
@@ -437,6 +512,10 @@ export function App({
     scope,
     selectedSnapshot: selectedSnapshot ?? null,
     detached,
+    project: project?.id ?? null,
+    selectedEpoch: project?.epoch ?? null,
+    viewerEpoch: workspace.epoch ?? null,
+    attached,
     attachment: workspace.attachmentVersion,
     workspaceContext: workspace.workspace?.context ?? null,
     observationError: workspace.error ?? null,
@@ -566,11 +645,47 @@ export function App({
         historyUrl(taskId, undefined, { scope: value, snapshotSeq: snapshot }),
       );
   };
+  // A deep link may pin an older commit but cannot invent a watermark or
+  // borrow an anchor from a different store/scope.
+  const historical = retained.history?.workspace;
+  const anchorMismatch =
+    historical &&
+    ((selectedSnapshot &&
+      compareSequence(selectedSnapshot, historical.committedSeq) > 0) ||
+      (detail &&
+        (detail.storeId !== historical.storeId ||
+          detail.scope.kind !== scope?.kind ||
+          detail.scope.id !== scope?.id ||
+          compareSequence(detail.snapshotSeq, historical.committedSeq) > 0)));
+  const historyError =
+    retained.error ??
+    (anchorMismatch
+      ? "History anchor does not match the selected workspace"
+      : undefined);
   const snapshotSeq =
-    selectedSnapshot ??
-    taskObservation?.snapshot.committedSeq ??
-    workspace.workspace?.committedSeq;
-  const storeId = workspace.workspace?.storeId;
+    historyWorkspace && !anchorMismatch
+      ? (selectedSnapshot ??
+        taskObservation?.snapshot.committedSeq ??
+        historyWorkspace.committedSeq)
+      : undefined;
+  const storeId = historyWorkspace?.storeId;
+  const unavailableReason =
+    historyError ??
+    entryError ??
+    projectError ??
+    viewerError ??
+    (signInRequired
+      ? "Sign-in required"
+      : executionStopped
+        ? execution.readiness === "stopped"
+          ? "Execution stopped"
+          : "Execution not started"
+        : undefined);
+  const historyPlaceholder = unavailableReason
+    ? t("Recorded history unavailable: {reason}.", {
+        reason: tx(unavailableReason),
+      })
+    : t("Reading recorded history…");
   const seed: ListRequest | null =
     scope && storeId && snapshotSeq
       ? {
@@ -597,13 +712,33 @@ export function App({
       : null;
   const runs = taskObservation?.snapshot.runs ?? [];
   const resultTicket = lifetime.current.ticket();
+  const renderedSignal = workspace.allocationSignal;
+  // Safety stop needs the exact rendered viewer and run, not a complete
+  // history read or live task socket. Never let a retained button borrow the
+  // mutable client's next attachment, even when the owner epoch is unchanged.
+  const canCancelWorkflow: CanCancelWorkflow = (run) =>
+    mounted.current &&
+    lifetime.current.current(resultTicket) &&
+    renderedSignal?.aborted === false &&
+    !access.signal.aborted &&
+    !signInRequired &&
+    attached &&
+    workspace.attachmentVersion > 0 &&
+    run.epoch === workspace.epoch &&
+    workflowLive(run);
   const result = (value: CommandObservation) => {
     setReceipt(value);
     if (value.receipt && lifetime.current.current(resultTicket))
       workspace.refresh();
   };
   const cancel = (runId: string) => {
-    if (canceling.has(runId) || !attached || !workspace.activeRuns) return;
+    if (
+      access.signal.aborted ||
+      canceling.has(runId) ||
+      !attached ||
+      !workspace.activeRuns
+    )
+      return;
     const commandId = crypto.randomUUID(),
       epoch = workspace.activeRuns.epoch;
     setCanceling((prev) => new Set(prev).add(runId));
@@ -700,6 +835,9 @@ export function App({
               : "unavailable",
         };
   const refreshConnection = () => {
+    if (access.signal.aborted || entryRevoked) return;
+    entryObservation?.refresh();
+    retained.refresh();
     if (observeExecution) workspace.refresh();
     execution.refresh();
   };
@@ -842,7 +980,7 @@ export function App({
         }
         navigation={
           <>
-            {!conversationAvailable && (
+            {!conversationAvailable && !background?.runs.length && (
               <aside className="panel panel-left lp-panel">
                 {discovery && <ActivityList {...discovery} />}
                 {activeRuns.length > 0 && (
@@ -884,11 +1022,13 @@ export function App({
                 </p>
               </aside>
             )}
-            {conversationAvailable && (
+            {(conversationAvailable || !!background?.runs.length) && (
               <TaskSidebar
+                key={`${historyKey}:${independent ? (taskId ?? "chat") : ""}`}
                 discovery={discovery}
                 client={api.client}
-                workspace={workspace.workspace}
+                workspace={viewerHistoryWorkspace}
+                retained={retained.history}
                 executionStopped={executionStopped}
                 taskId={taskId}
                 scope={scope}
@@ -975,10 +1115,14 @@ export function App({
                     closeDrawer();
                   }
                 }}
+                canCancelWorkflow={canCancelWorkflow}
                 onCancelWorkflow={async (run) => {
                   // The banner holds the last request's refusal: an accepted
                   // request clears it, nothing else does.
-                  setError(await cancelWorkflow(api.client, run));
+                  if (!canCancelWorkflow(run)) return;
+                  setError(
+                    await cancelWorkflow(api.client, run, canCancelWorkflow),
+                  );
                   workflowActivity.refresh();
                 }}
                 onTask={selectTask}
@@ -1023,11 +1167,12 @@ export function App({
                 {t("Reading this conversation…")}
               </p>
             )}
-            {agent && (
+            {agent && !signInRequired && (
               <WorkflowAgentView
                 key={`${agent.runId}:${agent.stepId ?? ""}`}
                 client={api.client}
                 agent={agent}
+                canCancelWorkflow={canCancelWorkflow}
                 backLabel={
                   chatId
                     ? t("Back to conversation")
@@ -1071,9 +1216,10 @@ export function App({
                 observe={summaryChanges}
                 available={conversationAvailable}
                 canInterrupt={attached}
+                canCancelWorkflow={canCancelWorkflow}
                 enabled={prepareSend ? conversationAvailable : observationFresh}
                 modelAvailability={modelAvailability}
-                previewModels={previewModels}
+                previewModels={signInRequired ? undefined : previewModels}
                 initialDraft={
                   initialDraft?.conversationId === chatId
                     ? initialDraft
@@ -1133,17 +1279,17 @@ export function App({
                 </details>
               </header>
             )}
-            <div className="workspace-content" hidden={!!chatId || !!agent}>
+            <div
+              key={`${historyKey}:${taskId ?? "chat"}`}
+              className="workspace-content"
+              hidden={!!chatId || !!agent}
+            >
               {!seed && (
                 <section className="empty-state">
                   <span className="empty-logo" aria-hidden="true">
                     C
                   </span>
-                  <h2>
-                    {workspace.error
-                      ? t("Recorded history could not be read.")
-                      : t("Reading recorded history…")}
-                  </h2>
+                  <h2>{historyPlaceholder}</h2>
                   <p>
                     {t(
                       "History is readonly. Start new work in a conversation with /cadence.",
@@ -1159,7 +1305,7 @@ export function App({
                       hit.owner.entity.kind === "tool") && (
                       <EntityPane
                         key={`${hit.owner.entity.id}:${hit.owner.entity.version}`}
-                        client={api.client}
+                        client={historyClient}
                         seed={{
                           storeId: detail.storeId,
                           scope: detail.scope,
@@ -1172,7 +1318,7 @@ export function App({
                     )}
                   <DetailPane
                     key={`${detail.recordId}:${detail.recordVersion}`}
-                    client={api.client}
+                    client={historyClient}
                     cursor={detail}
                     highlight={hit?.range}
                   />
@@ -1188,17 +1334,17 @@ export function App({
                     }
                   >
                     {tab === "messages" && (
-                      <MessageList client={api.client} seed={seed} />
+                      <MessageList client={historyClient} seed={seed} />
                     )}
                     {tab === "tools" && (
-                      <Tools client={api.client} seed={seed} />
+                      <Tools client={historyClient} seed={seed} />
                     )}
                     {tab === "context" && (
-                      <ContentExplorer client={api.client} seed={seed} />
+                      <ContentExplorer client={historyClient} seed={seed} />
                     )}
                     {tab === "timeline" && (
                       <TimelineView
-                        client={api.client}
+                        client={historyClient}
                         seed={seed}
                         onSearch={() => setSearchOpen(true)}
                       />
@@ -1227,7 +1373,7 @@ export function App({
                         <h3>{t("Retained runs")}</h3>
                         <RunBrowser
                           key={taskId}
-                          client={api.client}
+                          client={historyClient}
                           seed={{
                             ...seed,
                             scope: {
@@ -1320,8 +1466,8 @@ export function App({
             />
           ) : seed ? (
             <InspectorPanel
-              key={taskId}
-              client={api.client}
+              key={`${historyKey}:${taskId}`}
+              client={historyClient}
               seed={{
                 ...seed,
                 scope: { kind: "task", id: taskId ?? seed.scope.id },
@@ -1329,9 +1475,7 @@ export function App({
             />
           ) : (
             <p className="panel-empty" role="status">
-              {workspace.error
-                ? t("Recorded history could not be read.")
-                : t("Reading recorded history…")}
+              {historyPlaceholder}
             </p>
           )
         }
@@ -1340,23 +1484,27 @@ export function App({
             <WorkspaceConnection
               key={`${project?.id ?? "direct"}:${taskId ?? "chat"}`}
               phase={
-                executionStopped
-                  ? execution.readiness === "not-started"
-                    ? "not-started"
-                    : "stopped"
-                  : independent
-                    ? "independent"
-                    : observationFresh
-                      ? taskId
-                        ? "task"
-                        : "chat"
-                      : connecting
-                        ? "connecting"
-                        : "updating"
+                entryObservation?.pending
+                  ? "updating"
+                  : executionStopped
+                    ? execution.readiness === "not-started"
+                      ? "not-started"
+                      : "stopped"
+                    : independent
+                      ? "independent"
+                      : observationFresh
+                        ? taskId
+                          ? "task"
+                          : "chat"
+                        : connecting
+                          ? "connecting"
+                          : "updating"
               }
+              entryError={entryError}
               projectStatus={project && execution.readiness}
               projectError={projectError}
               viewerError={viewerError}
+              historyError={historyError}
               retained={
                 !!workspace.workspace ||
                 (execution.readiness === "stale" &&
@@ -1428,7 +1576,8 @@ export function App({
       )}
       {searchOpen && searchSeed && (
         <GlobalSearchModal
-          client={api.client}
+          key={`${historyKey}:${scope?.id}`}
+          client={historyClient}
           seed={searchSeed}
           onClose={() => setSearchOpen(false)}
           onHit={(value) => {
@@ -1449,6 +1598,7 @@ export function App({
       )}
       {exportOpen && searchSeed && (
         <ExportDialog
+          key={`${historyKey}:${scope?.id}`}
           request={{
             storeId: searchSeed.storeId,
             scope: searchSeed.scope,

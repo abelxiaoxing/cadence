@@ -1,27 +1,17 @@
-import { abortScope } from "../../../src/abort-scope.ts";
 import {
   type ActivityDiscovery,
   decodeActivityDiscovery,
 } from "../../../src/service/contracts/activity.ts";
-import { errorCode, readJson } from "./service";
+import { observationRead, refusedAccess } from "./observation-read";
 
 export async function readActivity(
   signal: AbortSignal,
 ): Promise<ActivityDiscovery> {
-  const scope = abortScope([signal], 12000);
-  try {
-    const response = await fetch("/workbench/v1/activity", {
-      credentials: "same-origin",
-      redirect: "error",
-      cache: "no-store",
-      signal: scope.signal,
-    });
-    const value = await readJson(response);
-    if (!response.ok) throw new Error(errorCode(value));
-    return decodeActivityDiscovery(value);
-  } finally {
-    scope.dispose();
-  }
+  return observationRead(
+    "/workbench/v1/activity",
+    signal,
+    decodeActivityDiscovery,
+  );
 }
 /** After a failed observation, retained rows are never presented as current and
  * disappear after the short uncertainty window; the failure notice remains. */
@@ -49,7 +39,7 @@ export function staleActivity(
 export function observeActivity(
   epoch: string,
   publish: (value: ActivityDiscovery | undefined, error: string) => void,
-  changedEpoch: () => void,
+  invalidateEntry: (refusal?: string) => void,
   read = readActivity,
 ) {
   const abort = new AbortController();
@@ -60,15 +50,22 @@ export function observeActivity(
       const next = await read(abort.signal);
       if (abort.signal.aborted) return;
       if (next.epoch !== epoch) {
-        changedEpoch();
+        invalidateEntry();
         throw new Error("stale");
       }
       value = next;
       publish(value, "");
     } catch (error) {
       if (abort.signal.aborted) return;
+      const code = error instanceof Error ? error.message : "unavailable";
+      if (refusedAccess(code)) {
+        abort.abort();
+        invalidateEntry(code);
+        publish(undefined, code);
+        return;
+      }
       value = value ? staleActivity(value, Date.now()) : undefined;
-      publish(value, error instanceof Error ? error.message : "unavailable");
+      publish(value, code);
     } finally {
       if (!abort.signal.aborted) timer = setTimeout(tick, 3000);
     }

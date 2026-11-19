@@ -33,6 +33,8 @@ import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { HalfRingSpinner } from "./ChatSteps";
 
+export type CanCancelWorkflow = (run: WorkflowRun) => boolean;
+
 const LIVE = ["queued", "running"];
 export const workflowLive = (run: WorkflowRun) => LIVE.includes(run.status);
 /** When the owner accepted a run (its own clock); older records carry only
@@ -130,11 +132,13 @@ function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
 export function WorkflowLine({
   client,
   run,
+  canCancelWorkflow,
   onOpen,
   onChanged,
 }: {
   client: ServiceClient;
   run: WorkflowRun;
+  canCancelWorkflow?: CanCancelWorkflow;
   onOpen(): void;
   onChanged?(): void;
 }) {
@@ -225,11 +229,12 @@ export function WorkflowLine({
           className="ghost workflow-line-stop"
           aria-label={t("Cancel workflow — request stop")}
           title={t("Cancel workflow — request stop")}
-          disabled={busy}
+          disabled={busy || !canCancelWorkflow?.(run)}
           onClick={() => {
+            if (busy || !canCancelWorkflow?.(run)) return;
             setBusy(true);
             setError("");
-            void cancelWorkflow(client, run)
+            void cancelWorkflow(client, run, canCancelWorkflow)
               .then((code) => {
                 if (!alive.current) return;
                 setError(code);
@@ -397,8 +402,10 @@ export function PlanCard({
 /** Request orderly closure of one workflow; the reply is an observation, never a retry. */
 export async function cancelWorkflow(
   client: Pick<ServiceClient, "workbenchCommand">,
-  run: { id: string; epoch: string },
+  run: WorkflowRun,
+  canCancelWorkflow: CanCancelWorkflow,
 ): Promise<string> {
+  if (!canCancelWorkflow(run)) return "stale";
   const reply = await client.workbenchCommand({
     kind: "workflow-cancel",
     commandId: crypto.randomUUID(),
@@ -409,6 +416,7 @@ export async function cancelWorkflow(
 }
 type WorkflowCardProps = {
   client: ServiceClient;
+  canCancelWorkflow?: CanCancelWorkflow;
   id: string;
   onChanged?(): void;
   onOpenAgent?(agent: WorkflowAgent): void;
@@ -423,6 +431,7 @@ function WorkflowCardView({
   id,
   onChanged,
   onOpenAgent,
+  canCancelWorkflow,
 }: WorkflowCardProps) {
   const { t, tx } = useT();
   const [poll, setPoll] = useState(1000);
@@ -620,11 +629,11 @@ function WorkflowCardView({
         <button
           type="button"
           className="danger"
-          disabled={busy}
+          disabled={busy || !canCancelWorkflow?.(run)}
           onClick={() => {
-            if (!run) return;
+            if (busy || !canCancelWorkflow?.(run)) return;
             setBusy(true);
-            void cancelWorkflow(client, run)
+            void cancelWorkflow(client, run, canCancelWorkflow)
               .then((code) => {
                 if (!alive.current) return;
                 setError(code);

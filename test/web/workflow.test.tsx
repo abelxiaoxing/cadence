@@ -24,6 +24,7 @@ import {
 import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
 import {
   AssignmentBoard,
+  cancelWorkflow,
   DeliveryDetails,
   Deviations,
   nextRunWindow,
@@ -267,6 +268,29 @@ const line = (r: WorkflowRun, locale: "en" | "zh" = "en") =>
       />
     </LocaleProvider>,
   );
+it("workflow-cancel rechecks the supplied attachment gate at dispatch, not just when drawing Stop", async () => {
+  const live = run();
+  const { api, commands } = client(state());
+  let attached = true;
+  const allowed = (r: WorkflowRun) => attached && r.epoch === live.epoch;
+  expect(allowed(live)).toBe(true);
+  attached = false;
+  expect(await cancelWorkflow(api, live, allowed)).toBe("stale");
+  attached = true;
+  expect(
+    await cancelWorkflow(api, { ...live, epoch: randomUUID() }, allowed),
+  ).toBe("stale");
+  expect(commands).toEqual([]);
+  expect(await cancelWorkflow(api, live, allowed)).toBe("");
+  expect(commands).toEqual([
+    {
+      kind: "workflow-cancel",
+      epoch: live.epoch,
+      runId: live.id,
+      commandId: expect.any(String),
+    },
+  ]);
+});
 it("a workflow is one line: what it is doing while live, never its step list", () => {
   const live = run();
   const html = line(live);

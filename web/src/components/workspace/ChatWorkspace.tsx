@@ -127,6 +127,7 @@ import { QuestionRail } from "./QuestionRail";
 import { useSendAnchor } from "./use-send-anchor";
 import { WaitingMessages } from "./WaitingMessages";
 import {
+  type CanCancelWorkflow,
   nextRunWindow,
   PlanCard,
   placeWorkflows,
@@ -196,6 +197,7 @@ export function ChatWorkspace({
   directoryNamespaces = [],
   available = enabled,
   canInterrupt = enabled,
+  canCancelWorkflow,
   modelAvailability,
   previewModels,
   initialDraft,
@@ -228,6 +230,7 @@ export function ChatWorkspace({
   directoryNamespaces?: string[];
   available?: boolean;
   canInterrupt?: boolean;
+  canCancelWorkflow?: CanCancelWorkflow;
   /** Kept mounted (draft, scroll, observations) while a subagent view covers it. */
   hidden?: boolean;
   /** Changes when something outside this view (a rename or archive from the
@@ -951,6 +954,7 @@ export function ChatWorkspace({
       key={run.id}
       client={client}
       run={run}
+      canCancelWorkflow={canCancelWorkflow}
       onOpen={() =>
         onOpenAgent?.({ runId: run.id, stepId: null, label: run.goal })
       }

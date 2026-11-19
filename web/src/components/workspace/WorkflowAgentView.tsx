@@ -8,12 +8,13 @@ import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
 import { recordedTurn } from "./turn-source";
-import { WorkflowCard } from "./WorkflowPanel";
+import { type CanCancelWorkflow, WorkflowCard } from "./WorkflowPanel";
 
 const LIVE = ["queued", "running"];
 
 interface AgentViewProps {
   client: ServiceClient;
+  canCancelWorkflow?: CanCancelWorkflow;
   agent: WorkflowAgent;
   backLabel: string;
   onBack(): void;
@@ -43,6 +44,7 @@ function AgentView({
   backLabel,
   onBack,
   onOpenAgent,
+  canCancelWorkflow,
 }: AgentViewProps) {
   const { t, tx } = useT();
   const [poll, setPoll] = useState(1000);
@@ -146,6 +148,7 @@ function AgentView({
             <WorkflowCard
               client={client}
               id={agent.runId}
+              canCancelWorkflow={canCancelWorkflow}
               onOpenAgent={onOpenAgent}
             />
           )}
