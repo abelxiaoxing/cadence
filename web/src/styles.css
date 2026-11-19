@@ -4242,7 +4242,8 @@ button.file-item:hover:not(:disabled),
   justify-content: space-between;
   flex-wrap: wrap;
 }
-.cwd-footer > button:disabled[aria-busy="true"] {
+.cwd-footer > button:disabled[aria-busy="true"],
+.workflow-plan > .primary:disabled[aria-busy="true"] {
   opacity: 1;
   color: var(--text-primary);
   background: var(--chip-bg);

@@ -849,6 +849,7 @@
   color: var(--text-dim);
   font-style: italic;
   font-size: 13px;
+  line-height: var(--reading-leading);
   white-space: pre-wrap;
 
   min-width: 0;

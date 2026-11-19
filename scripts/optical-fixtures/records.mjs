@@ -75,7 +75,7 @@ const uncertain = {
     },
   ],
 };
-// Only this conversation publishes a retained child to the navigation dock.
+// Terminal dock specimen: no polling when its retained result is opened.
 export const dockResult = "  Facet samples:\n\tsilver  \n\n  quartz\n";
 export const dockRun = {
   ...run,
@@ -96,6 +96,27 @@ export const dockRun = {
     },
   ],
 };
+// Independent live child. Its offset witness changes on each read but not in
+// height; only an explicit growth phase appends paragraphs to its answer.
+export const liveDock = {
+  ...run,
+  id: randomUUID(),
+  goal: "Follow the growing specimen",
+  tasks: [],
+  steps: [
+    {
+      ...dockRun.steps[0],
+      id: "live-facet",
+      childRunId: randomUUID(),
+      status: "running",
+      text: "",
+      exitCode: null,
+    },
+  ],
+};
+export const agentFeed = { growth: 0, sequence: 0 };
+export const validatingChat = "validate-specimen";
+export const recordedThinking = "Compare the surfaces.\nRead the second facet.";
 export const fileText = {
   "material.ts": 'export const material = "alabaster";',
   "optics.ts": 'export const optic = "prism";',
@@ -168,7 +189,7 @@ export const catalog = {
     },
   ],
 };
-// Only this live conversation has an installed model and multiple offered levels.
+// The live picker and settled revalidation specimens have an installed model.
 export const lockedReply = "locked-levels";
 const lockedModel = {
   provider: "fixture",
@@ -290,15 +311,19 @@ const steps = (id, question) =>
 export function readRecord(q) {
   const { kind, id } = q;
   const noSession = id === "empty" || id === "attempt";
-  const planned = id === "design" || id === "confirm";
+  const planned = id === "design" || id === "confirm" || id === validatingChat;
+  const hasModel =
+    q.location?.id === lockedReply || q.location?.id === validatingChat;
   const runs =
     id === "dock"
       ? [dockRun.id]
-      : id === "design"
-        ? [runId]
-        : id === "confirm"
-          ? [uncertain.id]
-          : [];
+      : id === "live-dock"
+        ? [liveDock.id]
+        : id === "design"
+          ? [runId]
+          : id === "confirm"
+            ? [uncertain.id]
+            : [];
   switch (kind) {
     case "conversation-image":
       return { kind, mimeType: "image/png", data: PNG, next: null };
@@ -309,7 +334,7 @@ export function readRecord(q) {
           id: q.location.id,
           cwd,
           revision: 1,
-          model: q.location.id === lockedReply ? lockedModel : null,
+          model: hasModel ? lockedModel : null,
         },
       };
     case "reload-conversation-models":
@@ -317,9 +342,7 @@ export function readRecord(q) {
       return {
         kind: "conversation-models",
         catalog: {
-          ...(q.location.id === lockedReply
-            ? lockedCatalog
-            : { ...catalog, selected: null }),
+          ...(hasModel ? lockedCatalog : { ...catalog, selected: null }),
           version: { ...version, conversation: q.location },
         },
       };
@@ -400,7 +423,7 @@ export function readRecord(q) {
                 role: "thinking",
                 name: "",
                 args: "",
-                text: "Compare the specimen surfaces.",
+                text: recordedThinking,
                 error: false,
               }
             : {
@@ -423,7 +446,11 @@ export function readRecord(q) {
           proposal: planned
             ? {
                 ...proposal,
-                model: { ...version, conversation: { id, cwd } },
+                model: {
+                  ...version,
+                  ...(id === validatingChat ? { catalogId: revalidated } : {}),
+                  conversation: { id, cwd },
+                },
                 ...(id === "confirm" ? { revalidatedFrom: revalidated } : {}),
               }
             : null,
@@ -457,6 +484,54 @@ export function readRecord(q) {
         ? { kind: "file", path: "facet.txt", text: dockResult, limited: false }
         : null;
     case "workflow-transcript":
+      if (id === liveDock.id && q.stepId === liveDock.steps[0].id)
+        return {
+          kind,
+          runId: id,
+          stepId: q.stepId,
+          turn: {
+            id: liveDock.steps[0].childRunId,
+            epoch,
+            status: "running",
+            notice: `Facet read ${String(++agentFeed.sequence).padStart(4, "0")}`,
+            omitted: { thinking: false, media: false, other: false },
+            items: [
+              {
+                id: "report",
+                role: "assistant",
+                name: "",
+                args: "",
+                error: false,
+                state: "completed",
+                text: long,
+              },
+              {
+                id: "tool",
+                role: "tool",
+                name: "read",
+                args: '{"path":"facet.txt"}',
+                error: false,
+                state: "completed",
+                text: "Retained layer.\n".repeat(24),
+              },
+              {
+                id: "answer",
+                role: "assistant",
+                name: "",
+                args: "",
+                error: false,
+                state: "streaming",
+                text: [
+                  "Facet notes.",
+                  ...Array.from(
+                    { length: agentFeed.growth },
+                    (_, i) => `New facet ${i + 1}.`,
+                  ),
+                ].join("\n\n"),
+              },
+            ],
+          },
+        };
       return id === dockRun.id && q.stepId === dockRun.steps[0].id
         ? { kind, runId: id, stepId: q.stepId, turn: null }
         : null;
@@ -467,7 +542,13 @@ export function readRecord(q) {
         response: {
           type: "run",
           run:
-            id === dockRun.id ? dockRun : id === uncertain.id ? uncertain : run,
+            id === liveDock.id
+              ? liveDock
+              : id === dockRun.id
+                ? dockRun
+                : id === uncertain.id
+                  ? uncertain
+                  : run,
         },
       };
     case "projects":

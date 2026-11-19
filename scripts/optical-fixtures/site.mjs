@@ -2,6 +2,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { WebSocketServer } from "ws";
 import { AUTH_PAGE_CSP, renderAuthPage } from "../../src/service/auth-page.ts";
 import { publicError } from "../../src/worker-public.mjs";
@@ -47,7 +48,7 @@ export function fixture(root) {
   const failures = [];
   const stepReads = [];
   const detailReads = [];
-  let directoryGate, fileGate, entryGate;
+  let directoryGate, fileGate, entryGate, readGate;
   let directEntry = false;
   const snapshot = (scope) => ({
     protocol: 1,
@@ -231,6 +232,15 @@ export function fixture(root) {
       )
         return json({ kind: "error", error: publicError("stale") });
       if (q.kind === "workflow-detail") detailReads.push(q);
+      if (readGate && isDeepStrictEqual(q, readGate.request)) {
+        const gate = readGate;
+        readGate = undefined;
+        gate.resolve({
+          request: q,
+          respond: (fail) => (fail ? invalid() : ok(readRecord(q))),
+        });
+        return;
+      }
       const v = readRecord(q);
       if (q.kind === "file" && fileGate?.path === q.path && v) {
         fileGate.resolve(() => ok(v));
@@ -304,6 +314,31 @@ export function fixture(root) {
     failures,
     stepReads,
     detailReads,
+    // Hold exactly one matching GET, before constructing its response. This
+    // cannot grant a command. Fail if the UI never actually requests it.
+    holdRead(request) {
+      if (readGate) throw Error("Read gate already armed");
+      const gate = Promise.withResolvers();
+      readGate = { request, resolve: gate.resolve };
+      return async () => {
+        let timer;
+        try {
+          return await Promise.race([
+            gate.promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(Error(`No matching GET: ${JSON.stringify(request)}`)),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+          readGate = undefined;
+        }
+      };
+    },
     holdWorkbenchEntry() {
       entryGate = Promise.withResolvers();
       return () => {

@@ -73,6 +73,10 @@ import {
 } from "./optical-fixtures/search-observations.mjs";
 import { fixture } from "./optical-fixtures/site.mjs";
 import { openTool } from "./optical-fixtures/tool-card.mjs";
+import {
+  observeLiveAgent,
+  observeValidation,
+} from "./optical-fixtures/workflow-observations.mjs";
 import { assertVerificationTemp } from "./verification-temp.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -106,6 +110,7 @@ const report = {
   panelTabs: [],
   selectedRows: [],
   workflowRows: [],
+  agentScroll: [],
   filePreviewReads: [],
   rowDrawers: [],
   unknownMode: [],
@@ -1362,6 +1367,23 @@ try {
         },
         report,
       );
+      await picker("plan-validation", observeValidation, site);
+      await observeLiveAgent({
+        width,
+        theme,
+        site,
+        go,
+        chat,
+        wait,
+        run,
+        ev,
+        click,
+        send,
+        press,
+        clickPoint,
+        observeButton,
+        rows: report.agentScroll,
+      });
       // Start the next folder-first observation in this disposable origin only.
       await ev(`localStorage.removeItem('cadence-last-project')`);
     }

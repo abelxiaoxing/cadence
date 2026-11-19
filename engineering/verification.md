@@ -1046,6 +1046,44 @@ On canonical build `14ddd7a96204cb8300e329b19652a5c469f651a1d4a40785cb0adf1d59a3
 These are synthetic local Chromium reading/scroll observations, not physical-device, performance, auth or all-surface qualification.
 The owner still runs no-argument `bun run verify`, the full `node scripts/qualify-optical.mjs` matrix (including timing/paint windows) and independent review on the actual delivery candidate before integration.
 
+### Live subagent scroll, recorded thinking and plan validation
+
+The earlier owner's `optical-evidence-ps2SRI` on `32d31c70` did not exercise these three states.
+The following is a **targeted** observation on that pre-commit HEAD plus the repairs, in the same task branch and integration worktree.
+`$TMPDIR/optical-evidence-J6uqLT/summary.json` records canonical WebUI build `a0bce69fbfa5aa5ababd729f02f84835a431f14f5ff8f3fd759142a9d5efc100`, installed headless Chrome 151.0.7922.34 and synthetic loopback records.
+DPR 1; both themes at 320×820, 390×820 and 1440×900.
+
+- **Subagent:** `agentScroll` enters a separate running child through its dock row, not the terminal retained-result specimen.
+  Each released transcript GET has a numbered notice; sample only once that response is rendered and the pane geometry is stable.
+  The table gives `.workflow-agent .chat-messages` geometry in CSS px, identical in the two themes.
+  After the real −48px wheel, reads 2 and 3 both left the initial dimensions and the reading offset unchanged.
+  No sampling step centered the transcript.
+
+  | Width | Scroll height / client height | Initial top → wheel top → poll 2 → poll 3 | Top on first growth | Top after −128px, held through expansion and growth | Top at keyboard Latest → next growth |
+  | ----- | ----------------------------- | ----------------------------------------- | ------------------- | --------------------------------------------------- | ------------------------------------ |
+  | 320   | 1854 / 680                    | 1174 → 1126 → 1126 → 1126                 | 1291                | 1163                                                | 1916 → 2032                          |
+  | 390   | 1531 / 698                    | 833 → 785 → 785 → 785                     | 949                 | 821                                                 | 1549 → 1665                          |
+  | 1440  | 1205 / 787                    | 418 → 370 → 370 → 370                     | 535                 | 407                                                 | 1134 → 1251                          |
+
+  The followed growth, Tab/Space Latest and growth after Latest all ended at gap zero.
+  While away, one pointer click on the visible tool disclosure increased the extent by 483–508px without moving the reader.
+  For desktop emulation hit-test the upper inline padding for the wheel: in `optical-evidence-3wPY6j` a center wheel reached the DOM but did not scroll.
+  There was no follow write or extent change.
+  An event alone is not a scroll measurement.
+- **Thinking:** `step-material` opens the recorded thinking disclosure.
+  `leading` checks the visible range of the exact two-line text node in `.thinking-body` rather than its title, Markdown or loading message.
+  All six measured 21.45px line height at 13px font size (1.65).
+  The unit/SSR cases for body-free activity remain separate; the browser did not read hidden reasoning from a live model.
+- **Plan:** in `pickerStates` → `plan-validation`, the settled conversation has an installed model and a stale proposal catalog identity.
+  Click the enabled **Validate plan again** action and hold its matching `conversation-models` GET.
+  A still-enabled button, different label, missing stem or missing backing sample is not evidence of busy contrast.
+  All six unmodified viewport PNGs show the disabled **Validating plan…** label.
+  At each width, the dark stem RGB(242,244,248) on the button face RGB(20,21,25) measured **16.569:1**, the light stem RGB(17,19,24) on RGB(250,250,251) **17.813:1**.
+  The fixture then returned a read error: busy cleared, the validation action was available again and no Send, validation command, approval or implementation request was made.
+
+These are local browser viewport observations, not physical-device, hardware GPU or real-service qualification.
+They do not rerun the performance windows or replace the owner's full matrix, no-argument `verify` and independent review on the eventual delivery candidate.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
