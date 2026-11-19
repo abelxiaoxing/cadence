@@ -428,6 +428,7 @@ export function ProjectPicker({
           type="button"
           className="primary"
           disabled={!canOpen}
+          aria-busy={busy || undefined}
           onClick={() => void open(target)}
         >
           {busy

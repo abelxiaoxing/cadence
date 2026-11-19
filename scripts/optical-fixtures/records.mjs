@@ -107,6 +107,25 @@ export const firstAttempt = {
   text: "First specimen before Pi persistence.",
   notice: "Message not saved.",
 };
+export const pendingInputs = [
+  {
+    commandId: randomUUID(),
+    mode: "queue",
+    text: "Next specimen:\ninspect the quartz.",
+  },
+  {
+    commandId: randomUUID(),
+    mode: "steer",
+    text: "This specimen:\ncompare both faces.",
+  },
+];
+export const undeliveredInput = {
+  commandId: randomUUID(),
+  status: "canceled",
+  text: "Describe the unpolished surface.",
+  notice:
+    "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.",
+};
 export const writeContent = Array.from(
   { length: 407 },
   (_, i) => `facet ${i + 1}\n`,
@@ -201,7 +220,9 @@ export const flowCase = {
   sequence: 0,
   startedAt: 0,
 };
+const pendingLive = { epoch, commandId: randomUUID() };
 const isRunning = (id) =>
+  id === "pending" ||
   id === "stream" ||
   id === "live-input" ||
   id === lockedReply ||
@@ -212,6 +233,7 @@ const summary = (id) => ({
   title: `Optical · ${id}`,
   leaf: id === "questions" ? questions.at(-1).entry : leaf,
   status: isRunning(id) ? "running" : "completed",
+  ...(id === "pending" ? { live: pendingLive } : {}),
   ...(id === "live-input"
     ? { live: liveReply }
     : id === lockedReply
@@ -317,6 +339,8 @@ export function readRecord(q) {
         branches: noSession ? 0 : 1,
         runs,
         attempt: id === "attempt" ? firstAttempt : null,
+        ...(id === "pending" ? { pending: pendingInputs } : {}),
+        ...(id === "undelivered" ? { undelivered: [undeliveredInput] } : {}),
       };
     case "conversation-turn": {
       const question = id === "questions" ? questions[q.ordinal] : null;
@@ -444,6 +468,8 @@ export function readRecord(q) {
             id === dockRun.id ? dockRun : id === uncertain.id ? uncertain : run,
         },
       };
+    case "projects":
+      return { kind, entries: [{ path: cwd, current: true }] };
     case "directories": {
       const path = q.path === "~" ? cwd : q.path;
       const children = new Map([
