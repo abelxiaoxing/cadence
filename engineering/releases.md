@@ -1247,3 +1247,8 @@ Two local deliveries with the configured `abel/LocalModel` produced the theme an
 Each passed independent Agent review and post-merge verification.
 Chromium inspection covered light and dark desktop layouts, code previews, real conversation and workflow views, and a 390px viewport.
 The combined acceptance commit was `592aadca841e23c490046dec39dc2d1880cd0273`.
+
+## 2.2.1 release candidate
+
+Source commit `48d3f2c` combines the design-choice dialog, WebUI read recovery and optical presentation changes.
+The release regenerates the service and WebUI outputs and records the matching WebUI asset hashes.
