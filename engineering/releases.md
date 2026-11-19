@@ -1258,3 +1258,8 @@ The release regenerates the service and WebUI outputs and records the matching W
 A fresh WebUI session can prepare a Send and restore or choose its conversation model without first installing an unscoped owner model.
 A viewer handoff that reaches its deadline keeps the draft and reports a timeout without replaying the message.
 The release also includes the queued delivery context and coordinator diagnostics from `a3fe51a`.
+
+## 2.2.3 release candidate
+
+The WebUI Subagents dock follows the open Pi conversation rather than every workflow in the project.
+The regression covers concurrent conversations, copied history IDs, missing attribution and a poll that returns after navigation.

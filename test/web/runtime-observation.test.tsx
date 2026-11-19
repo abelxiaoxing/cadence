@@ -68,7 +68,7 @@ vi.mock("../../web/src/client/use-workbench", async (original) => ({
           },
   }),
 }));
-vi.mock("../../web/src/components/workspace/AgentDock", () => ({
+vi.mock("../../web/src/client/use-workflow-runs", () => ({
   useWorkflowRuns: () => ({
     runs: new Map([[facts.workflow.id, facts.workflow]]),
     failed: false,

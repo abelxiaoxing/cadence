@@ -110,6 +110,7 @@ import {
   useModelCatalog,
 } from "../../client/use-model-catalog";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
+import { useWorkflowRuns } from "../../client/use-workflow-runs";
 import {
   approveWorkflow,
   cadenceApproval,
@@ -120,9 +121,10 @@ import {
 import { pushPromptHistory } from "../../composer/prompt-history";
 import { describeError, useT } from "../../i18n/locale";
 import { dismissToasts, notify } from "../../layout/toasts";
+import { dockGroups } from "../../navigation/workflow-assignments";
 import { useLazyWindow } from "../../transcript/use-lazy-window";
 import { LazyMount } from "../transcript/LazyMount";
-import { useWorkflowRuns, type WorkflowAgent } from "./AgentDock";
+import type { ConversationAgents, WorkflowAgent } from "./AgentDock";
 import type { BranchesView } from "./BranchesPanel";
 import { composerMode, modeHints } from "./CadenceModeButton";
 import { ChatComposer } from "./ChatComposer";
@@ -143,6 +145,7 @@ import {
   WorkflowLine,
 } from "./WorkflowPanel";
 
+const NO_ACTIVE_RUNS: readonly string[] = [];
 const NATIVE_ANCHORING =
   typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
 
@@ -263,7 +266,8 @@ export function ChatWorkspace({
   hidden = false,
   observe = 0,
   onOpenAgent,
-  onWorkflowRuns,
+  activeWorkflowIds = NO_ACTIVE_RUNS,
+  onAgents,
   onBranches,
   onOpenBranches,
 }: {
@@ -295,8 +299,9 @@ export function ChatWorkspace({
    * sidebar) may have changed the conversation's summary: read it again. */
   observe?: number;
   onOpenAgent?(agent: WorkflowAgent): void;
-  /** This conversation's recent workflow runs, for the subagent dock. */
-  onWorkflowRuns?(ids: string[]): void;
+  /** Active IDs attributed by the owner's roster; retained IDs come from history. */
+  activeWorkflowIds?: readonly string[];
+  onAgents?(observation: ConversationAgents): void;
   /** The session tree and the ways to act on it, for the Branches tab. */
   onBranches?(view: BranchesView): void;
   /** Open the Branches tab. */
@@ -1003,10 +1008,6 @@ export function ChatWorkspace({
     () => [...new Set([...conversation.runs, ...(state?.runs ?? [])])],
     [conversation.runs, state?.runs],
   );
-  const runsKey = JSON.stringify(runs.slice(-4));
-  useEffect(() => {
-    onWorkflowRuns?.(JSON.parse(runsKey));
-  }, [runsKey, onWorkflowRuns]);
   // Each workflow is one line after the turn it started in. Each list's newest
   // are read first; older ones only once the turns shown could hold them.
   const [windows, setWindows] = useState({
@@ -1016,14 +1017,32 @@ export function ChatWorkspace({
   const watched = useMemo(
     () => [
       ...new Set([
+        ...activeWorkflowIds,
         ...conversation.runs.slice(-windows.terminal),
         ...(state?.runs ?? []).slice(-windows.browser),
         ...(approving ? [approving] : []),
       ]),
     ],
-    [conversation.runs, state?.runs, windows, approving],
+    [activeWorkflowIds, conversation.runs, state?.runs, windows, approving],
   );
-  const flows = useWorkflowRuns(reader, available ? watched : [], 1000);
+  const flows = useWorkflowRuns(reader, id, available ? watched : []);
+  // Share one verified observation with the dock; copied terminal entries
+  // are not ownership, and the dock need not read these runs a second time.
+  const agentsUnavailable =
+    !available ||
+    !observed ||
+    !!conversation.error ||
+    !cadenceKnown ||
+    !!flows.error ||
+    flows.incomplete;
+  useEffect(() => {
+    if (!onAgents) return;
+    const recent = runs.filter((runId) => flows.runs.has(runId)).slice(-4);
+    onAgents({
+      groups: dockGroups([...activeWorkflowIds, ...recent], flows.runs),
+      unavailable: agentsUnavailable,
+    });
+  }, [runs, activeWorkflowIds, flows.runs, agentsUnavailable, onAgents]);
   const contextError = available ? contextRead.error : undefined;
   const headError = available ? conversation.error || undefined : undefined;
   const workflowError = available ? workflow.error : undefined;

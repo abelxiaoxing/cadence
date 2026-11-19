@@ -41,8 +41,15 @@ const design = reviseDesign(
   [{ question: "surface", option: "frames" }],
   false,
 );
+const execution = (id) => ({
+  cwd,
+  checkoutRoot: cwd,
+  model: null,
+  version: { ...version, conversation: { id, cwd } },
+});
 const run = {
   id: runId,
+  execution: execution("design"),
   epoch,
   goal: "Fixture · mineral study",
   status: "running",
@@ -60,6 +67,7 @@ const run = {
 };
 const uncertain = {
   ...run,
+  execution: execution("confirm"),
   id: randomUUID(),
   status: "unknown",
   phase: "verifying",
@@ -79,6 +87,7 @@ const uncertain = {
 export const dockResult = "  Facet samples:\n\tsilver  \n\n  quartz\n";
 export const dockRun = {
   ...run,
+  execution: execution("dock"),
   id: randomUUID(),
   goal: "Inspect the facet",
   phase: "finished",
@@ -100,6 +109,7 @@ export const dockRun = {
 // height; only an explicit growth phase appends paragraphs to its answer.
 export const liveDock = {
   ...run,
+  execution: execution("live-dock"),
   id: randomUUID(),
   goal: "Follow the growing specimen",
   tasks: [],

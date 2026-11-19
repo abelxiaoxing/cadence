@@ -71,7 +71,7 @@ Only research, implementation, diagnosis, knowledge and review steps first obser
 Workflow review rejections are announced and counted as `rejected`, never as agent errors; assignment reports retain `partial` and `blocked` separately too.
 Native cards and the browser dock do not count those as crashes or completed assignments.
 The workflow view counts incomplete reports on the selected step page without inferring a delivery outcome.
-Legacy task history and the WebUI's project-wide dock remain unchanged.
+Legacy task history remains independent of session attribution.
 A run that leaves the active roster remains attributed until its final observation; a failed roster read is not proof of completion.
 A child whose outcome the session can no longer observe (no readable owner a whole retry after losing it, or a persistently unreadable workflow) ends as an error that says so; `/cadence-history` keeps the actual outcome.
 An abandoned run is not automatically readmitted while it remains in the roster; only its ID is retained until it leaves, preventing repeated failed reads and duplicate agent batches.
@@ -367,7 +367,12 @@ While no live authenticated owner can take them the actions are shown disabled, 
 History rows are grouped by this browser's calendar day (today, yesterday, earlier), and a filter box narrows the rows already listed by title and reads nothing: Running work is never filtered, and pages not loaded are not searched.
 Running work counts reply/workflow/run rows, not distinct conversations; an unreadable count is labelled unobserved, never zero.
 There is no separate workflow list: a workflow belongs to the conversation that started it, browser or terminal, and appears there as one line; an active one is also listed under Running work.
-A separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
+The lower-left Subagents dock follows the open conversation, not the project-wide Running work list.
+Active candidate IDs come from that conversation's owner-issued roster links; retained IDs in Pi or browser history are hints, not ownership (a fork may copy them).
+The chat lines and dock share one workflow reader.
+It admits a run only when the returned ID matches the request and its immutable `execution.version.conversation.id` matches the open session; a foreign or unattributed run supplies no rows, counts, transcript link or further live polling in this conversation.
+The dock shows this conversation's active and recent observed runs.
+Switching conversations retires the old reads; a legacy task view shows only children from the selected task snapshot, without scanning other tasks.
 The dock is only as tall as its rows, up to its default height, until a drag sets one; it stays folded while empty unless opened, and its heading count leads the total with the queued or running agents (`2 active · 5 total`).
 Workflow subagents are grouped per run, live ones first: a group's head names the run, counts its assignments by state when the run lists them (queued ones have no row yet) and opens the run's own view, and a row whose step works on an assignment shows that assignment's state under the step's own status.
 When a workflow ID list changes, observations of still-listed live runs survive failed re-reads and remain visibly stale; changing client identity retires the cache.

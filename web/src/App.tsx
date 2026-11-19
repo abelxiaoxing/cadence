@@ -67,6 +67,7 @@ import {
 } from "./components/workspace/ActivityList";
 import {
   AgentDock,
+  type ConversationAgents,
   type WorkflowAgent,
 } from "./components/workspace/AgentDock";
 import {
@@ -171,7 +172,6 @@ export function App({
   const activitySelection = activityRoute(activityHash, chatId ?? "");
   // A workflow subagent (or run) shown in the main area over the current view.
   const [agent, setAgent] = useState<WorkflowAgent | null>(null);
-  const [chatRuns, setChatRuns] = useState<string[]>([]);
   const [projectOpen, setProjectOpen] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"files" | "branches" | "task">(
     initial ? "task" : "files",
@@ -380,14 +380,12 @@ export function App({
     workflowActivity.value?.kind === "workflow-active"
       ? workflowActivity.value
       : undefined;
-  const workflowIds = useMemo(
-    () => [
-      ...new Set([
-        ...(background?.runs.map((run) => run.id) ?? []),
-        ...chatRuns,
-      ]),
-    ],
-    [background, chatRuns],
+  const activeWorkflowIds = useMemo(
+    () =>
+      background?.links
+        ?.filter((link) => link.conversationId === chatId)
+        .map((link) => link.runId) ?? [],
+    [background, chatId],
   );
   const projects = useWorkbench(
     api.client,
@@ -518,10 +516,7 @@ export function App({
     const id = selected ?? crypto.randomUUID();
     if (!selected) setNewConversationCwd(workingFolder ?? initialCwd);
     setAgent(null);
-    if (id !== chatId) {
-      setChatRuns([]);
-      setReference(undefined);
-    }
+    if (id !== chatId) setReference(undefined);
     departView();
     setChatId(id);
     setTaskId(null);
@@ -553,7 +548,6 @@ export function App({
   }, [chatId]);
   const selectTask = (id: string, title?: string) => {
     setAgent(null);
-    setChatRuns([]);
     setChatId(null);
     setRightTab("task");
     setTaskTitle(title ?? "");
@@ -579,7 +573,6 @@ export function App({
           if (typeof cwd === "string") setNewConversationCwd(cwd);
           setReference(undefined);
           setAgent(null);
-          setChatRuns([]);
           setChatId(chat);
           setTaskId(null);
           setScope(null);
@@ -590,7 +583,6 @@ export function App({
         return;
       }
       setAgent(null);
-      setChatRuns([]);
       setChatId(null);
       setRightTab("task");
       // Same-document links/back navigation observe the exact new task too.
@@ -926,6 +918,20 @@ export function App({
       latestChat.current === chatKey,
     [chatKey, navTicket, access],
   );
+  const [agentReport, setAgentReport] = useState<{
+    key: string;
+    agents: ConversationAgents;
+  }>();
+  const onAgents = useCallback(
+    (agents: ConversationAgents) => {
+      if (readSelected()) setAgentReport({ key: chatKey, agents });
+    },
+    [chatKey, readSelected],
+  );
+  const chatAgents =
+    agentReport?.key === chatKey && conversationAvailable
+      ? agentReport.agents
+      : undefined;
   const [report, setReport] = useState<{
     key: string;
     diagnostics: ChatDiagnostics;
@@ -1282,35 +1288,44 @@ export function App({
                 onScope={selectScope}
               />
             )}
-            {workspace.workspace && (
-              <AgentDock
-                client={api.client}
-                active={workspace.activeRuns}
-                taskId={taskId}
-                runs={runs}
-                snapshot={snapshotSeq}
-                workflowRuns={workflowIds}
-                selected={agent}
-                onOpenWorkflow={(next) => {
-                  setAgent(next);
-                  closeDrawer();
-                }}
-                onOpen={(parent, child, snapshot, label) => {
-                  selectTask(parent);
-                  setScope({ kind: "child", id: child });
-                  setScopeTitle(label);
-                  setSelectedSnapshot(snapshot);
-                  history.replaceState(
-                    null,
-                    "",
-                    historyUrl(parent, undefined, {
-                      scope: { kind: "child", id: child },
-                      snapshotSeq: snapshot,
-                    }),
-                  );
-                }}
-              />
-            )}
+            {workspace.workspace &&
+              !signInRequired &&
+              (chatId ? (
+                <AgentDock
+                  key={`chat:${chatId}`}
+                  kind="conversation"
+                  groups={chatAgents?.groups ?? []}
+                  unavailable={
+                    !background ||
+                    !!workflowActivity.error ||
+                    !chatAgents ||
+                    chatAgents.unavailable
+                  }
+                  selected={agent}
+                  onOpen={(next) => {
+                    if (readSelected()) {
+                      setAgent(next);
+                      closeDrawer();
+                    }
+                  }}
+                />
+              ) : (
+                taskId && (
+                  <AgentDock
+                    key={`task:${taskId}`}
+                    kind="task"
+                    runs={runs}
+                    unavailable={!taskObservation || !!workspace.error}
+                    onOpen={(child, label) =>
+                      selectScope(
+                        { kind: "child", id: child },
+                        taskObservation?.snapshot.committedSeq,
+                        label,
+                      )
+                    }
+                  />
+                )
+              ))}
           </>
         }
         content={
@@ -1349,7 +1364,8 @@ export function App({
                 onActivity={setReported}
                 hidden={!!agent}
                 onOpenAgent={setAgent}
-                onWorkflowRuns={setChatRuns}
+                activeWorkflowIds={activeWorkflowIds}
+                onAgents={onAgents}
                 onBranches={setBranchView}
                 onOpenBranches={openBranches}
                 workspaceId={

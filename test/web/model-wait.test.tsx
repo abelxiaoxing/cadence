@@ -138,7 +138,7 @@ vi.mock("../../web/src/client/use-model-catalog", () => ({
 vi.mock("../../web/src/transcript/use-lazy-window", () => ({
   useLazyWindow: () => ({ hidden: new Set() }),
 }));
-vi.mock("../../web/src/components/workspace/AgentDock", () => ({
+vi.mock("../../web/src/client/use-workflow-runs", () => ({
   useWorkflowRuns: () => ({ runs: new Map(), unreadable: new Set() }),
 }));
 vi.mock("../../web/src/components/workspace/ChatImages", () => ({
