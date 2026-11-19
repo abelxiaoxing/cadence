@@ -111,49 +111,51 @@ export function FolderSetup({
               )}
             </ChatWelcome>
           </div>
-          <div className="chat-composer">
-            <textarea
-              aria-label={t("Message")}
-              rows={3}
-              value={draft.text}
-              onChange={(event) =>
-                onDraftChange?.({ ...draft, text: event.target.value })
-              }
-              placeholder={t(
-                "Write a message. Choose a folder before sending…",
-              )}
-            />
-            <div className="composer-toolbar">
-              <ModelPicker
-                scope="next-conversation"
-                availability={{ status: "not-started" }}
-                read={modelRead}
-                draftModel={draft.model}
-                onPreviewChoice={
-                  onDraftChange
-                    ? (model) => onDraftChange({ ...draft, model })
-                    : undefined
+          <div className="composer-dock">
+            <div className="chat-composer">
+              <textarea
+                aria-label={t("Message")}
+                rows={3}
+                value={draft.text}
+                onChange={(event) =>
+                  onDraftChange?.({ ...draft, text: event.target.value })
                 }
-                locked={!ready}
-                open={modelOpen}
-                onOpenChange={(open) => {
-                  if (open) modelRead.reread();
-                  setModelOpen(open);
-                }}
-                onChanged={() => {}}
+                placeholder={t(
+                  "Write a message. Choose a folder before sending…",
+                )}
               />
-              <span className="composer-hint">
-                {t("Choose a folder before sending.")}
-              </span>
-              <button
-                type="button"
-                className="primary"
-                aria-label={t("Send")}
-                title={t("Send")}
-                disabled
-              >
-                <FiArrowUp aria-hidden="true" />
-              </button>
+              <div className="composer-toolbar">
+                <ModelPicker
+                  scope="next-conversation"
+                  availability={{ status: "not-started" }}
+                  read={modelRead}
+                  draftModel={draft.model}
+                  onPreviewChoice={
+                    onDraftChange
+                      ? (model) => onDraftChange({ ...draft, model })
+                      : undefined
+                  }
+                  locked={!ready}
+                  open={modelOpen}
+                  onOpenChange={(open) => {
+                    if (open) modelRead.reread();
+                    setModelOpen(open);
+                  }}
+                  onChanged={() => {}}
+                />
+                <span className="composer-hint">
+                  {t("Choose a folder before sending.")}
+                </span>
+                <button
+                  type="button"
+                  className="primary"
+                  aria-label={t("Send")}
+                  title={t("Send")}
+                  disabled
+                >
+                  <FiArrowUp aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
         </section>

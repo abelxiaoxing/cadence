@@ -202,7 +202,7 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ).toBe("-4px");
     const canvas = ruleColor("body", "background", scheme);
     const composer = over(
-      ruleColor(".chat-composer", "background", scheme),
+      ruleColor(".composer-dock::before", "background", scheme),
       canvas,
     );
     for (const surface of [canvas, composer]) {
@@ -289,25 +289,39 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     const disabled = ".mode-toggle:disabled";
     expect(declaration(disabled, "opacity")).toBe("1");
     expect(declaration(".mode-toggle", "background")).toBe("transparent");
-    const material = ".chat-composer";
-    const plate =
-      "@supports (anchor-scope: --composer) and (backdrop-filter: blur(1px)) / .chat-workspace:has(> .chat-composer)::after";
+    expect(declaration(".model-trigger", "transition")).toBe("none");
+    const dock = ".composer-dock";
+    const plate = `${dock}::before`;
+    expect(declaration(dock, "position")).toBe("relative");
+    expect(declaration(plate, "position")).toBe("absolute");
+    expect(declaration(plate, "inset")).toBe("0");
+    expect(declaration(plate, "clip-path")).toBe(
+      `inset(0 round ${declaration(dock, "border-radius")})`,
+    );
     expect(declaration(plate, "pointer-events")).toBe("none");
     expect(declaration(plate, "backdrop-filter")).toBe("var(--glass-filter)");
-    expect(declaration(plate, "position-anchor")).toBe(
-      declaration(material, "anchor-name"),
-    );
-    expect(Number(declaration(plate, "z-index"))).toBeLessThan(
-      Number(declaration(material, "z-index")),
-    );
-    expect(declaration(material, "background-image")).toBe(
-      "var(--grain-image)",
-    );
+    expect(declaration(dock, "z-index")).toBe("1");
+    expect(declaration(plate, "z-index")).toBe("-1");
+    for (const selector of [dock, ".chat-composer"]) {
+      for (const property of ["clip-path", "overflow", "backdrop-filter"])
+        expect(declarations.has(`${selector} { ${property} }`)).toBe(false);
+    }
+    expect(declaration(dock, "box-shadow")).toContain("var(--glass-shadow)");
+    expect(declaration(plate, "background-image")).toBe("var(--grain-image)");
     const capsule = over(
-      ruleColor(material, "background", scheme),
+      ruleColor(plate, "background", scheme),
       ruleColor("body", "background", scheme),
     );
-    for (const surface of [capsule, over(color("--grain", scheme), capsule)]) {
+    const fallback = ruleColor(
+      `@supports not (backdrop-filter: blur(1px)) / ${plate}`,
+      "background-color",
+      scheme,
+    );
+    expect(fallback[3]).toBe(1);
+    for (const surface of [capsule, fallback].flatMap((base) => [
+      base,
+      over(color("--grain", scheme), base),
+    ])) {
       for (const selector of [
         disabled,
         ".model-trigger",
@@ -338,7 +352,7 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       // above, translucent capsule (possibly a grain fleck) below.
       const canvas = ruleColor("body", "background", scheme);
       const capsule = over(
-        ruleColor(".chat-composer", "background", scheme),
+        ruleColor(".composer-dock::before", "background", scheme),
         canvas,
       );
       for (const surface of [

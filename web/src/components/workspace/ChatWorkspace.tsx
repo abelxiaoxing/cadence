@@ -2200,112 +2200,116 @@ export function ChatWorkspace({
           />
         )}
       </div>
-      <ChatComposer
-        flow={flow}
-        inputRef={textarea}
-        draft={draft}
-        onDraft={setDraft}
-        locked={busy || !!pending || awaitingModel}
-        images={imageDraft.files}
-        imageKey={imageDraft.key}
-        imagesLocked={imagesLocked}
-        onAddImages={addImages}
-        onRemoveImage={(file) => removeImages([file])}
-        anchor={strip}
-        status={
-          liveRun && draft.trim() && inputBlock
-            ? t(
-                inputBlock === "images"
-                  ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
-                  : inputBlock === "mode"
-                    ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
-                    : inputBlock === "full"
-                      ? "Eight messages already wait for this reply. Withdraw one, or wait."
-                      : "A message into a running reply continues that reply, not another entry.",
-              )
-            : running || canPrepareOnly || canSend || preparing
-              ? undefined
-              : pending
-                ? t("The last Send is not yet confirmed. No message is resent.")
-                : awaitingModel
-                  ? t("Choose a model; your message is sent right after.")
-                  : busy
-                    ? t("Sending…")
-                    : t(
-                        "Sending is unavailable until the current context is observed. Your draft stays here.",
-                      )
-        }
-        cadence={{
-          ...modeFacts,
-          disabled: cadence
-            ? !canExit
-            : !!running || busy || !!pending || awaitingModel,
-          onClick: () => {
-            if (cadence) {
-              void send("exit cadence");
-              return;
-            }
-            if (input.mode === "cadence") {
-              setMode("chat");
-              if (cadenceInput(draft, "chat").mode === "cadence")
-                setDraft(input.text);
-            } else setMode("cadence");
-          },
-        }}
-        model={{
-          client: modelClient,
-          availability,
-          read: modelRead,
-          lastModel: context?.model,
-          draftModel,
-          onPreviewChoice: previewModels
-            ? (choice) => chosenModel(choice, false)
-            : undefined,
-          locked: !!running || busy || !!pending,
-          open: modelOpen,
-          onOpenChange: openModels,
-          onChanged: () => {
-            contextRead.refresh();
-            onModelChanged();
-          },
-          onChosen: (choice) => chosenModel(choice, true),
-          awaitingSend: awaitingModel,
-        }}
-        hint={
-          cadenceKnown && liveRun && canInput && !inputBlock && draft.trim()
-            ? t("Enter steers this reply · Alt+Enter queues behind it")
-            : modeHint
-              ? t(modeHint)
-              : ""
-        }
-        running={!!running}
-        canStop={!busy && canInterrupt}
-        onStop={() => void interrupt()}
-        canSend={
-          ((cadence && cadenceExit(draft) ? canExit : canSend) ||
-            canPrepareOnly) &&
-          !attaching &&
-          (!!draft.trim() || imageDraft.files.length > 0)
-        }
-        onSend={() => void send()}
-        input={
-          liveRun
-            ? {
-                enabled: canInput && !inputBlock && !!draft.trim(),
-                onInput: (mode) => void sendInput(mode),
+      <div className="composer-dock">
+        <ChatComposer
+          flow={flow}
+          inputRef={textarea}
+          draft={draft}
+          onDraft={setDraft}
+          locked={busy || !!pending || awaitingModel}
+          images={imageDraft.files}
+          imageKey={imageDraft.key}
+          imagesLocked={imagesLocked}
+          onAddImages={addImages}
+          onRemoveImage={(file) => removeImages([file])}
+          anchor={strip}
+          status={
+            liveRun && draft.trim() && inputBlock
+              ? t(
+                  inputBlock === "images"
+                    ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
+                    : inputBlock === "mode"
+                      ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
+                      : inputBlock === "full"
+                        ? "Eight messages already wait for this reply. Withdraw one, or wait."
+                        : "A message into a running reply continues that reply, not another entry.",
+                )
+              : running || canPrepareOnly || canSend || preparing
+                ? undefined
+                : pending
+                  ? t(
+                      "The last Send is not yet confirmed. No message is resent.",
+                    )
+                  : awaitingModel
+                    ? t("Choose a model; your message is sent right after.")
+                    : busy
+                      ? t("Sending…")
+                      : t(
+                          "Sending is unavailable until the current context is observed. Your draft stays here.",
+                        )
+          }
+          cadence={{
+            ...modeFacts,
+            disabled: cadence
+              ? !canExit
+              : !!running || busy || !!pending || awaitingModel,
+            onClick: () => {
+              if (cadence) {
+                void send("exit cadence");
+                return;
               }
-            : undefined
-        }
-        historyScope={workspaceId}
-        files={{
-          client,
-          location:
-            available && contextKnown && context
-              ? { id, cwd: context.cwd }
+              if (input.mode === "cadence") {
+                setMode("chat");
+                if (cadenceInput(draft, "chat").mode === "cadence")
+                  setDraft(input.text);
+              } else setMode("cadence");
+            },
+          }}
+          model={{
+            client: modelClient,
+            availability,
+            read: modelRead,
+            lastModel: context?.model,
+            draftModel,
+            onPreviewChoice: previewModels
+              ? (choice) => chosenModel(choice, false)
               : undefined,
-        }}
-        onResized={keepEnd}
-      />
+            locked: !!running || busy || !!pending,
+            open: modelOpen,
+            onOpenChange: openModels,
+            onChanged: () => {
+              contextRead.refresh();
+              onModelChanged();
+            },
+            onChosen: (choice) => chosenModel(choice, true),
+            awaitingSend: awaitingModel,
+          }}
+          hint={
+            cadenceKnown && liveRun && canInput && !inputBlock && draft.trim()
+              ? t("Enter steers this reply · Alt+Enter queues behind it")
+              : modeHint
+                ? t(modeHint)
+                : ""
+          }
+          running={!!running}
+          canStop={!busy && canInterrupt}
+          onStop={() => void interrupt()}
+          canSend={
+            ((cadence && cadenceExit(draft) ? canExit : canSend) ||
+              canPrepareOnly) &&
+            !attaching &&
+            (!!draft.trim() || imageDraft.files.length > 0)
+          }
+          onSend={() => void send()}
+          input={
+            liveRun
+              ? {
+                  enabled: canInput && !inputBlock && !!draft.trim(),
+                  onInput: (mode) => void sendInput(mode),
+                }
+              : undefined
+          }
+          historyScope={workspaceId}
+          files={{
+            client,
+            location:
+              available && contextKnown && context
+                ? { id, cwd: context.cwd }
+                : undefined,
+          }}
+          onResized={keepEnd}
+        />
+      </div>
     </section>
   );
 }
