@@ -235,7 +235,9 @@ const steps = (id, question) =>
       ]
     : [
         ["user", "Inspect the specimen."],
-        ["assistant", `${long}\n\n${code}`],
+        id === "step-material"
+          ? ["thinking", ""]
+          : ["assistant", `${long}\n\n${code}`],
         ["tool", ""],
         [
           "assistant",
@@ -258,7 +260,7 @@ const steps = (id, question) =>
         : "",
     clipped: false,
     error: false,
-    parts: role === "tool" ? 1 : 0,
+    parts: role === "tool" || role === "thinking" ? 1 : 0,
     state: i === 3 && isRunning(id) ? "streaming" : "completed",
   }));
 export function readRecord(q) {
@@ -365,14 +367,24 @@ export function readRecord(q) {
         turnId: q.turnId,
         step: q.step,
         part: q.part,
-        item: {
-          id: "step-2",
-          role: "tool",
-          name: Object.hasOwn(tools, id) ? id : "read",
-          text: "Actual fixture output.\n".repeat(32),
-          args: JSON.stringify(tools[id] ?? { path: "material.ts" }),
-          error: false,
-        },
+        item:
+          id === "step-material" && q.step === 1
+            ? {
+                id: "step-1",
+                role: "thinking",
+                name: "",
+                args: "",
+                text: "Compare the specimen surfaces.",
+                error: false,
+              }
+            : {
+                id: "step-2",
+                role: "tool",
+                name: Object.hasOwn(tools, id) ? id : "read",
+                text: "Actual fixture output.\n".repeat(32),
+                args: JSON.stringify(tools[id] ?? { path: "material.ts" }),
+                error: false,
+              },
       };
     case "cadence-conversation":
       return {

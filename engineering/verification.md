@@ -864,6 +864,54 @@ These material readings are computed styles on mounted cards using synthetic dat
 The opaque no-filter backing is covered by the dual-theme stylesheet test, not by a fallback browser run.
 Final `verify`, browser observation on the committed candidate and independent review remain the owner's checks.
 
+### Compact wings, chat step cards and incomplete edits
+
+On the integration worktree over `5bb760e8791d`, the canonical web build was `0f4271a12ed6b77cd681e69220a69c890f7ebb3bc33bf44d8b3100c12b1a5e6d`.
+`$TMPDIR/optical-evidence-qllrhq/summary.json` binds the branch, build and viewport PNGs: installed headless Chrome 151.0.7922.34, SwiftShader, DPR 1, synthetic loopback data.
+The full collector recorded 143 scene audits with no reported problems or unavailable scenarios.
+
+In the separate `step-material` conversation, `cardMaterials` includes the two folded, readable steps rendered by `ToolStep` and `ThinkingStep` (not a turn activity flag) at 320×820, 390×820 and 1440×900, in both themes.
+`wingMaterials` records both open drawers at each compact width in each theme: after the slide ends, the probe requires zero translation and a hit on a heading inside the non-inert wing.
+The 12 card and eight wing readings compare the **mounted surface's computed styles** before and after a PNG.
+A hidden element resolves expected token values only; it is not the measured surface.
+The compact wing had 8px blur / 112% saturation and .80 dark / .72 light fill alpha; the cards had 3px compact or 5px desktop blur / 105% saturation and .94 / .92 alpha.
+Both retained the two stationary grain tiles, lit top, three quieter edges and tier-specific shadow.
+
+`surfaceContrast` is separate **pixel evidence**.
+Each Tab frame compares an actual glyph stem and the focused control's solid outline to their adjacent backings in one unmodified PNG.
+A second capture with text fill suppressed samples the surface beneath the visible text against its computed foreground.
+Worst ratios across the tested widths (under-text / painted label / painted Tab focus):
+
+| Surface and label       | Obsidian                 | Alabaster               |
+| ----------------------- | ------------------------ | ----------------------- |
+| Left wing, Running work | 10.977 / 11.960 / 11.960 | 7.994 / 8.369 / 8.374   |
+| Right wing, Branches    | 11.321 / 11.668 / 11.951 | 8.043 / 8.043 / 8.374   |
+| Tool, read              | 5.783 / 16.278 / 11.568  | 5.544 / 17.824 / 10.296 |
+| Thinking                | 5.783 / 5.783 / 11.568   | 5.589 / 5.589 / 10.378  |
+
+The opaque no-filter base is a dual-theme stylesheet regression, not an observation in a browser lacking filters.
+Compact secondary labels use neutral ink: light secondary on the original translucent wing over scrim and grain computed to only 4.368:1.
+The long transcript exposed a separate paint failure: `optical-evidence-snThAM` lost the dark desktop tool-summary copy focus.
+In `copy-ring-diag-v4lOb1`, the entire card interior sampled as canvas even though the focus and box did not move.
+The focused step now keeps its own fill and grain but paints its filter on a noninteractive plate behind them, not around the controls.
+`copy-ring-diag-TzG8sC` measured that copy outline at 11.568 / 10.378 in the repaired build.
+An intermediate full observation (`optical-evidence-h46kYd`) also recorded a low dark desktop mention-editor outline and stopped on the light/390 code fold.
+These are not passing frames.
+The new material sequence now follows the existing interaction sequences; the fold probe uses a settled button hit and checks both disclosure and pre after **each** click.
+The mention threshold is unchanged; a single later pass does not establish the cause of the earlier outline reading.
+
+The final report retains all twelve 2.6s frame windows and Paint roots.
+Median intervals rounded to 16.7ms; scroll and incremental p95 ranged from 16.7 to 16.8ms with no intervals over 50ms.
+One ambient-on idle window had one interval over 50ms (1/153); the highest idle p95 was 33.4ms in an off window.
+The incremental windows recorded two tool-card Paint events each, on or off, with no ambient draws.
+Hidden, reduced-motion and explicitly disabled also drew zero.
+This does not identify every rasterized glyph or qualify hardware GPUs, physical phones or other engines.
+
+`file-diff.test.tsx` contrasts a missing replacement side with an explicitly empty string, including mixed valid/invalid batches and legacy arguments.
+`chat-timeline.test.tsx` opens the real `ToolStep` with controlled lazy detail and checks the displayed arguments and `CopyButton` payload, without a diff card or counts.
+This is not an OS clipboard test or a claim about the file on disk.
+Final candidate verification and independent review are the owner's checks.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

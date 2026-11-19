@@ -470,8 +470,8 @@ export async function observeOpenMaterial(probe, row, panel) {
   if (panel === ".mention-menu") checkMentionBacking(row.frames.at(-1));
 }
 
-// Hit-test the heading, but read the material of its mounted card, not a row.
-function cardMaterial(selector, headingSelector) {
+// Hit-test the heading, but read the enclosing mounted surface, not a row.
+function surfaceMaterial(selector, headingSelector) {
   const heading = document.querySelector(headingSelector),
     card = heading.closest(selector),
     rect = heading.getBoundingClientRect(),
@@ -483,6 +483,7 @@ function cardMaterial(selector, headingSelector) {
   return {
     heading: heading.textContent,
     point: { x, y },
+    rect: card.getBoundingClientRect().toJSON(),
     hovered: card.matches(":hover"),
     fill: css.backgroundColor,
     radius: css.borderRadius,
@@ -499,36 +500,120 @@ function cardMaterial(selector, headingSelector) {
     })),
   };
 }
+// Resolve the tier's tokens in this document's scheme and media query. This
+// hidden reference supplies expected values only; it is never a paint sample.
+function expectedMaterial(wing) {
+  const el = document.createElement("span");
+  Object.assign(el.style, {
+    display: "none",
+    backgroundColor: wing ? "var(--glass-surface)" : "var(--card-bg)",
+    backgroundImage: "var(--grain-image)",
+    backgroundSize: "var(--grain-size)",
+    backdropFilter: wing ? "var(--glass-filter)" : "var(--card-filter)",
+    border: `1px solid var(${wing ? "--glass-border" : "--glass-card-border"})`,
+    borderTopColor: "var(--glass-border-top)",
+    boxShadow: wing
+      ? "0 8px 22px var(--shadow-1), inset 0 1px var(--glass-border-top)"
+      : "0 10px 30px var(--glass-card-shadow)",
+  });
+  document.body.append(el);
+  try {
+    const css = getComputedStyle(el);
+    return {
+      fill: css.backgroundColor,
+      grain: css.backgroundImage,
+      size: css.backgroundSize,
+      position: css.backgroundPosition,
+      filter: css.backdropFilter,
+      shadow: css.boxShadow,
+      edges: ["Top", "Right", "Bottom", "Left"].map((side) => ({
+        style: css[`border${side}Style`],
+        width: css[`border${side}Width`],
+        color: css[`border${side}Color`],
+      })),
+    };
+  } finally {
+    el.remove();
+  }
+}
+const alpha = (s) => Number(s.match(/^rgba\(.*?, ([\d.]+)\)$/)?.[1] ?? 1);
+async function checkTier(run, material, wing) {
+  for (const [key, expected] of Object.entries(
+    await run(expectedMaterial, wing),
+  ))
+    assert.deepEqual(
+      material[key],
+      expected,
+      `Wrong ${wing ? "wing" : "card"} ${key}`,
+    );
+}
+async function captureSurface(
+  { run, screenshot, width, theme, rows },
+  selector,
+  headingSelector,
+  state,
+) {
+  const read = () => run(surfaceMaterial, selector, headingSelector);
+  const material = await read();
+  const file = `${selector.slice(1)}-${theme}-${width}-${state}.png`;
+  rows.push({
+    width,
+    theme,
+    selector,
+    headingSelector,
+    state,
+    file,
+    ...material,
+  });
+  await screenshot(file);
+  assert.deepEqual(await read(), material);
+  assert.equal(material.hovered, state === "hover");
+  assert.deepEqual(material.animations, []);
+  return material;
+}
+async function observeWingMaterial(probe, selector, headingSelector) {
+  await probe.parkPointer();
+  await probe.run(async (s) => {
+    const el = document.querySelector(s);
+    await Promise.all(el.getAnimations().map((a) => a.finished));
+    if (
+      !el.matches(".panel-drawer.open:not([inert])") ||
+      new DOMMatrixReadOnly(getComputedStyle(el).transform).m41 !== 0
+    )
+      throw Error(`Expected settled open ${s}`);
+  }, selector);
+  const material = await captureSurface(
+    probe,
+    selector,
+    headingSelector,
+    "open",
+  );
+  assert.ok(
+    material.rect.left >= -0.01 && material.rect.right <= probe.width + 0.01,
+  );
+  assert.ok(alpha(material.fill) > 0 && alpha(material.fill) < 1);
+  await checkTier(probe.run, material, true);
+}
 export async function observeCardMaterial(
-  { run, send, scrollTo, parkPointer, screenshot, width, theme, rows },
+  probe,
   selector,
   headingSelector = `${selector} :is(h2,h3)`,
 ) {
+  const { run, send, scrollTo, parkPointer } = probe;
   await scrollTo(headingSelector);
   await parkPointer();
-  const alpha = (s) => Number(s.match(/^rgba\(.*?, ([\d.]+)\)$/)?.[1] ?? 1);
-  const read = () => run(cardMaterial, selector, headingSelector);
   const capture = async (state) => {
-    const material = await read();
-    const file = `${selector.slice(1)}-${theme}-${width}-${state}.png`;
-    rows.push({
-      width,
-      theme,
+    const material = await captureSurface(
+      probe,
       selector,
       headingSelector,
       state,
-      file,
-      ...material,
-    });
-    await screenshot(file);
-    assert.deepEqual(await read(), material);
-    assert.equal(material.hovered, state === "hover");
+    );
     assert.ok(alpha(material.fill) >= 0.9);
     if (state === "rest") assert.ok(alpha(material.fill) < 1);
     assert.match(material.radius, /^1[4-6]px$/);
     assert.equal(material.grain.match(/radial-gradient\(/g)?.length, 2);
     assert.match(material.size, /^\d+px \d+px, \d+px \d+px$/);
-    assert.deepEqual(material.animations, []);
     assert.match(material.filter, /blur\([\d.]+px\) saturate\(/);
     assert.notEqual(material.shadow, "none");
     const [top, right, bottom, left] = material.edges;
@@ -543,6 +628,8 @@ export async function observeCardMaterial(
     return material;
   };
   const rest = await capture("rest");
+  if (selector === ".toolcall" || selector === ".thinking")
+    await checkTier(run, rest, false);
   if (selector === ".scm-file") {
     await send("Input.dispatchMouseEvent", {
       type: "mouseMoved",
@@ -552,6 +639,139 @@ export async function observeCardMaterial(
     assert.notEqual(hover.fill, rest.fill);
     assert.deepEqual(hover, { ...rest, fill: hover.fill, hovered: true });
     await parkPointer();
+  }
+}
+
+// Focus and ink are pixel observations, separate from the computed material.
+async function observeSurfaceContrast(probe, surface, button, label, text) {
+  const { run, observeButton, textContrast } = probe;
+  const row = {
+    scene: `${surface.slice(1)}-contrast`,
+    width: probe.width,
+    theme: probe.theme,
+    frames: [],
+  };
+  probe.rows.push(row);
+  assert.ok((await observeButton(row.scene, button)).keyboardFocus);
+  await painted(probe, row, "tab", () =>
+    run(
+      (surface, button, label, text) => {
+        const target = document.activeElement;
+        if (!target.matches(button) || !target.matches(":focus-visible"))
+          throw Error(`Missing Tab focus on ${button}`);
+        const css = getComputedStyle(target),
+          r = target.getBoundingClientRect();
+        const w = parseFloat(css.outlineWidth),
+          o = parseFloat(css.outlineOffset);
+        const y = Math.floor(r.top + r.height / 2),
+          x = Math.floor(r.right + o + w / 2),
+          bx = x + Math.ceil(w / 2) + 1;
+        const plate = target.closest(surface);
+        if (
+          w < 2 ||
+          css.outlineStyle !== "solid" ||
+          ![x, bx].every((px) =>
+            plate.contains(document.elementFromPoint(px, y)),
+          )
+        )
+          throw Error(
+            `Missing focus outline or adjacent material in ${surface}`,
+          );
+        const focusedCard = plate.matches(".toolcall,.thinking");
+        const underlay = focusedCard && getComputedStyle(plate, "::before");
+        return {
+          ...(focusedCard && {
+            focusedMaterial: {
+              fill: getComputedStyle(plate).backgroundColor,
+              grain: getComputedStyle(plate).backgroundImage,
+              shellFilter: getComputedStyle(plate).backdropFilter,
+              filter: underlay.backdropFilter,
+              behind: underlay.zIndex,
+              interactive: underlay.pointerEvents,
+              content: underlay.content,
+            },
+          }),
+          points: [
+            { ...opticalProbe.glyphSample(label, text), record: true },
+            {
+              name: "Tab focus",
+              ink: [x, y],
+              x: bx,
+              y,
+              min: 3,
+              expectedInk: css.outlineColor,
+              record: true,
+            },
+          ],
+        };
+      },
+      surface,
+      button,
+      label,
+      text,
+    ),
+  );
+  if (surface === ".toolcall" || surface === ".thinking") {
+    const { fill, grain, filter } = await run(expectedMaterial, false);
+    assert.deepEqual(row.frames.at(-1).focusedMaterial, {
+      fill,
+      grain,
+      filter,
+      shellFilter: "none",
+      behind: "-1",
+      interactive: "none",
+      content: '""',
+    });
+  }
+  row.underText = await textContrast(row.scene, surface);
+  assert.ok(row.underText?.samples);
+  assert.deepEqual(row.underText.failures, []);
+}
+
+export async function observeChatMaterials(probe, report) {
+  const { go, chat, click, press, wait, width } = probe;
+  const contrast = { ...probe, rows: report.surfaceContrast };
+  await go(chat("step-material"), ".chat-turn .thinking-label");
+  for (const [selector, text] of [
+    [".toolcall", "read"],
+    [".thinking", "Thinking"],
+  ]) {
+    const button = `.chat-turn ${selector} .chead-main[aria-expanded="false"]`;
+    const label = `${button} .chead-title`;
+    await observeCardMaterial(probe, selector, label);
+    await observeSurfaceContrast(contrast, selector, button, label, text);
+  }
+  if (width > 900) return;
+  const section = ".running-conversations .lp-section-heading";
+  const tab = ".rp-tabs > button.rp-tab:nth-child(2)";
+  for (const [side, toggle, control, heading, text] of [
+    [
+      "left",
+      ".navigation-toggle",
+      section,
+      `${section} .lp-section-title`,
+      "Running work",
+    ],
+    ["right", ".inspector-toggle", tab, tab, "Branches"],
+  ]) {
+    const wing = `.drawer-${side}.open`,
+      label = `${wing} ${heading}`;
+    await click(toggle);
+    await wait(`document.querySelector(${JSON.stringify(label)})`);
+    await observeWingMaterial(
+      { ...probe, rows: report.wingMaterials },
+      wing,
+      label,
+    );
+    await observeSurfaceContrast(
+      contrast,
+      wing,
+      `${wing} ${control}`,
+      label,
+      text,
+    );
+    await press("Escape", 27);
+    await wait(`document.activeElement.matches(${JSON.stringify(toggle)})`);
   }
 }
 

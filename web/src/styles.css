@@ -630,7 +630,7 @@ summary:focus-visible,
   border: 1px solid var(--glass-border);
   border-top-color: var(--glass-border-top);
   border-radius: 16px;
-  background: var(--glass-surface);
+  background-color: var(--glass-surface);
   background-image: var(--grain-image);
   background-size: var(--grain-size);
   box-shadow:
@@ -1806,6 +1806,8 @@ summary:focus-visible,
 .run-summary,
 .scm-file,
 .card,
+.toolcall,
+.thinking,
 .workflow-card {
   border: 1px solid var(--glass-card-border);
   border-top-color: var(--glass-border-top);
@@ -2503,12 +2505,16 @@ summary:focus-visible,
     display: none;
   }
   .panel-drawer {
+    /* The compact wing lies over the scrim and the transcript, not just the
+       canvas. Keep its quiet labels legible without opacifying the glass. */
+    --text-secondary: var(--accent);
+    --text-dim: var(--text-secondary);
+    --text-faint: var(--text-secondary);
+    --control-fg: var(--text-secondary);
     position: absolute;
     top: 0;
     bottom: 0;
     z-index: 20;
-    background: var(--bg-elev);
-    box-shadow: 0 0 40px var(--shadow-3);
     @media (prefers-reduced-motion: no-preference) {
       transition: transform 0.18s ease;
     }
@@ -3235,6 +3241,27 @@ summary:focus-visible,
   display: inline-block;
   max-width: none;
   margin-bottom: 4px;
+}
+/* Keep a focused control out of the scrollport's filtered layer. On long
+   transcripts Chromium can drop the entire filtered card when tabbing. The
+   plate sits behind the card's fill and grain, in the same message body. */
+@supports (backdrop-filter: blur(1px)) {
+  .msg-body:has(> :is(.toolcall, .thinking):focus-within) {
+    isolation: isolate;
+  }
+  .msg-body > :is(.toolcall, .thinking):focus-within {
+    position: relative;
+    backdrop-filter: none;
+  }
+  .msg-body > :is(.toolcall, .thinking):focus-within::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    backdrop-filter: var(--card-filter);
+  }
 }
 .chat-turn .toolcall {
   margin: 6px 0;
@@ -5627,8 +5654,7 @@ button.link:hover:not(:disabled) {
 
 /* Without backdrop-filter the glass tiers would read as muddy: give every
  * glass surface an opaque, readable base. Last on purpose: these overrides
- * must win the cascade over each surface's own background. (.toolcall and
- * .thinking keep their fallback next to their own rules in reference.css.) */
+ * must win the cascade over each surface's own background. */
 @supports not (backdrop-filter: blur(1px)) {
   .topbar,
   .statusbar,
@@ -5638,19 +5664,21 @@ button.link:hover:not(:disabled) {
   .mention-menu::before,
   .view-menu-items,
   .more-menu-items,
-  .img-lightbox-panel,
-  .panel-drawer {
+  .img-lightbox-panel {
     background: var(--bg-elev);
   }
   .workbench-right-body::before {
     background: var(--bg-elev);
   }
+  .panel-drawer,
   .scm-file {
     background-color: var(--bg-elev);
   }
   .receipt,
   .run-summary,
   .card,
+  .toolcall,
+  .thinking,
   .workflow-line,
   .workflow-plan,
   .workflow-card {

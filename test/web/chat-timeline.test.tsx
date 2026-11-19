@@ -38,6 +38,7 @@ import {
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { FileChangeCard } from "../../web/src/components/workspace/FileChangeCard";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
 import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
@@ -516,21 +517,35 @@ function elements<P = { children?: ReactNode }>(
 }
 it.each([
   {
+    tool: "bash",
     label: "Copy command",
     args: { command: "  specimen\n\tmineral  \n" },
     displayed: "  specimen\n\tmineral  \n",
     tag: "code",
   },
   {
+    tool: "bash",
     label: "Copy arguments",
     args: { path: "opal" },
     displayed: '{\n  "path": "opal"\n}',
     tag: "pre",
   },
+  {
+    tool: "edit",
+    label: "Copy arguments",
+    args: { path: "a.ts", edits: [{ oldText: "keep" }] },
+    displayed: JSON.stringify(
+      { path: "a.ts", edits: [{ oldText: "keep" }] },
+      null,
+      2,
+    ),
+    tag: "pre",
+  },
 ])(
-  "ToolStep keeps the summary, $label and output distinct through lazy expansion",
-  async ({ label, args, displayed, tag }) => {
+  "ToolStep keeps the $tool summary, $label and output distinct through lazy expansion",
+  async ({ tool, label, args, displayed, tag }) => {
     const { turn, step, detail, requests } = fixture();
+    step.name = tool;
     step.target = "summary only";
     const draw = () => {
       const tree = render(() => ToolStep({ turn, index: 0, step }));
@@ -560,6 +575,10 @@ it.each([
     await settle();
     const open = draw();
     expect(elements(open.tree, tag)[0].props.children).toBe(displayed);
+    expect(elements(open.tree, FileChangeCard)).toHaveLength(0);
+    const spans = elements<{ className?: string }>(open.tree, "span");
+    for (const name of ["file-diff-stat-badge", "add", "del"])
+      expect(spans.map((s) => s.props.className)).not.toContain(name);
     expect(open.copies).toEqual([
       summary,
       [label, displayed],
