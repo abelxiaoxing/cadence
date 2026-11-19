@@ -12,6 +12,7 @@ import {
 } from "./optical-fixtures/composer-observations.mjs";
 import {
   observeCardMaterial,
+  observeChatMaterials,
   observeDesign,
   observeOpenMaterial,
   observeRetainedCopy,
@@ -82,6 +83,8 @@ const report = {
   copyIndicators: [],
   readingStates: [],
   cardMaterials: [],
+  wingMaterials: [],
+  surfaceContrast: [],
   toolCards: [],
   drawerGestures: [],
   directoryReads: [],
@@ -885,9 +888,18 @@ try {
       ]);
       await observeButton("code fold", ".code-caption button:first-child");
       await observeButton("code copy", ".code-caption .output-copy");
-      await click(".code-caption button:first-child");
-      assert.ok(await ev(`document.querySelector('.codeblock pre').hidden`));
-      await click(".code-caption button:first-child");
+      // Tab can scroll the caption as it moves between the two controls.
+      // Position once per activation; dispatch only at a settled, hit-tested
+      // button and require both the disclosure and its own pre to change.
+      for (const hidden of [true, false]) {
+        const selector = ".code-caption button:first-child";
+        const { hit } = await run(controlGeometry, selector);
+        assert.ok(Object.values(hit).every((p) => p.hit));
+        await clickPoint(selector, hit.center);
+        await wait(
+          `(() => { const b=document.querySelector(${q(selector)}); return b.getAttribute('aria-expanded') === '${!hidden}' && b.closest('.codeblock').querySelector('pre').hidden === ${hidden} })()`,
+        );
+      }
       await expand("reading", "read", "material.ts");
       await scrollTo(".toolcall-output .toolcall-output-label");
       await audit("tool output", [
@@ -1278,6 +1290,20 @@ try {
           run,
           rows: report.composerFlow,
         });
+      // A separate conversation, after the original keyboard/scroll sequences.
+      await observeChatMaterials(
+        {
+          ...cardProbe,
+          go,
+          chat,
+          click,
+          press,
+          wait,
+          observeButton,
+          textContrast,
+        },
+        report,
+      );
       // Start the next folder-first observation in this disposable origin only.
       await ev(`localStorage.removeItem('cadence-last-project')`);
     }

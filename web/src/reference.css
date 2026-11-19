@@ -831,30 +831,12 @@
   background: var(--bg-elev);
 }
 
-.toolcall {
-  margin: 8px 0;
-  border: 1px solid var(--glass-card-border);
-  border-radius: 14px;
-  background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 8px 24px var(--glass-card-shadow);
-  overflow: hidden;
-  border-top-color: var(--glass-border-top);
-}
-
+.toolcall,
 .thinking {
   margin: 8px 0;
-  border: 1px solid var(--glass-card-border);
-  border-radius: 14px;
-  background: var(--card-bg, var(--glow-015));
-  box-shadow: 0 8px 24px var(--glass-card-shadow);
-  border-top-color: var(--glass-border-top);
 }
-/* Without backdrop-filter these cards read as muddy: an opaque base. */
-@supports not (backdrop-filter: blur(1px)) {
-  .toolcall,
-  .thinking {
-    background: var(--bg-elev2);
-  }
+.toolcall {
+  overflow: hidden;
 }
 
 .thinking-icon {
@@ -2430,7 +2412,6 @@ div.chead[role="button"]:focus-visible,
     top: 0;
     bottom: 0;
     z-index: 60;
-    background: var(--bg-elev);
     @media (prefers-reduced-motion: no-preference) {
       transition: transform 0.25s ease;
     }
@@ -2438,15 +2419,11 @@ div.chead[role="button"]:focus-visible,
 
   .panel-drawer.drawer-left {
     left: 0;
-    border-right: 1px solid var(--border);
-    box-shadow: 8px 0 30px var(--shadow-2);
     transform: translateX(-105%);
   }
 
   .panel-drawer.drawer-right {
     right: 0;
-    border-left: 1px solid var(--border);
-    box-shadow: -8px 0 30px var(--shadow-2);
     transform: translateX(105%);
   }
 

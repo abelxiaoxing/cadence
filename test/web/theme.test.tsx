@@ -376,6 +376,49 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       "2px solid var(--accent)",
     );
   });
+  it("keeps the wing material when either drawer slides over the scrim", () => {
+    const wing = ".panel-drawer";
+    const fill = ruleColor(wing, "background-color", scheme);
+    expect(fill).toEqual(color("--glass-surface", scheme));
+    expect(fill[3]).toBeLessThan(1);
+    expect(declaration(wing, "border")).toBe("1px solid var(--glass-border)");
+    expect(declaration(wing, "border-top-color")).toBe(
+      "var(--glass-border-top)",
+    );
+    expect(declaration(wing, "background-image")).toBe("var(--grain-image)");
+    expect(declaration(wing, "background-size")).toBe("var(--grain-size)");
+    expect(declaration(wing, "backdrop-filter")).toBe("var(--glass-filter)");
+    expect(declaration(wing, "box-shadow")).toContain("var(--shadow-1)");
+    // The imported 768px rules include more specific compound selectors. A
+    // later shorthand in either compact sheet can erase just part of the tier.
+    const compactWing =
+      /^@media \(max-width: (?:768|900)px\) \/ \.(?:panel-drawer|drawer-left|drawer-right)\S* \{/;
+    for (const key of declarations.keys())
+      if (compactWing.test(key))
+        expect(key).not.toMatch(
+          /\{ (background[^ ]*|backdrop-filter|border[^ ]*|box-shadow) \}$/,
+        );
+    const fallback = `@supports not (backdrop-filter: blur(1px)) / ${wing}`;
+    const solid = ruleColor(fallback, "background-color", scheme);
+    expect(solid[3]).toBe(1);
+    for (const prop of ["background", "background-image", "background-size"])
+      expect(declarations.has(`${fallback} { ${prop} }`)).toBe(false);
+    const compact = `@media (max-width: 900px) / ${wing}`;
+    for (const role of ["--text-dim", "--text-faint", "--control-fg"])
+      expect(declaration(compact, role)).toBe("var(--text-secondary)");
+    const ink = ruleColor(compact, "--text-secondary", scheme);
+    const scrim = color("--scrim", scheme);
+    for (const base of [
+      solid,
+      ...[0, 255].map((c) => over(fill, over(scrim, [c, c, c, 1]))),
+    ]) {
+      const face = over(color("--grain", scheme), base);
+      expect(contrast(ink, face)).toBeGreaterThanOrEqual(AA);
+      expect(contrast(color("--accent", scheme), face)).toBeGreaterThanOrEqual(
+        GRAPHIC,
+      );
+    }
+  });
   it.each([
     ".receipt",
     ".run-summary",
@@ -383,6 +426,8 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ".card",
     ".rtr",
     ".workflow-card",
+    ".toolcall",
+    ".thinking",
   ])(
     "%s keeps its lit top, quieter edges and static grain on a card backing",
     (card) => {
@@ -414,6 +459,23 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         );
     },
   );
+  it("leaves the keyboard target above its card's filter plate without resetting the fill or grain", () => {
+    const scope = "@supports (backdrop-filter: blur(1px)) / ";
+    const card = `${scope}.msg-body > :is(.toolcall, .thinking):focus-within`;
+    expect(
+      declaration(
+        `${scope}.msg-body:has(> :is(.toolcall, .thinking):focus-within)`,
+        "isolation",
+      ),
+    ).toBe("isolate");
+    expect(declaration(card, "position")).toBe("relative");
+    expect(declaration(card, "backdrop-filter")).toBe("none");
+    const plate = `${card}::before`;
+    expect(declaration(plate, "inset")).toBe("0");
+    expect(declaration(plate, "z-index")).toBe("-1");
+    expect(declaration(plate, "pointer-events")).toBe("none");
+    expect(declaration(plate, "backdrop-filter")).toBe("var(--card-filter)");
+  });
   it.each([".scm-file:hover", ".scm-file.active"])(
     "%s changes only the fill and preserves the file selection marker",
     (state) => {
