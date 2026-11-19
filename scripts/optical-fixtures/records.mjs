@@ -183,7 +183,7 @@ const questions = [
     id: "00000011",
     entry: "00000012",
     text: "Which material is shown?",
-    reply: "The panel is alabaster.",
+    reply: "The panel is alabaster.\n\nIncomplete formula: $\\frac$.",
   },
   {
     id: "00000013",

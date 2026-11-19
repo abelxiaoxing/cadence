@@ -376,6 +376,59 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       "2px solid var(--accent)",
     );
   });
+  it.each([".receipt", ".run-summary", ".scm-file", ".card", ".rtr"])(
+    "%s keeps its lit top, quieter edges and static grain on a card backing",
+    (card) => {
+      const edge = card === ".rtr" ? "--glass-border" : "--glass-card-border";
+      expect(declaration(card, "border")).toBe(`1px solid var(${edge})`);
+      expect(declaration(card, "border-top-color")).toBe(
+        "var(--glass-border-top)",
+      );
+      expect(color("--glass-border-top", scheme)[3]).toBeGreaterThan(
+        color(edge, scheme)[3],
+      );
+      expect(declaration(card, "background-image")).toBe("var(--grain-image)");
+      expect(declaration(card, "background-size")).toBe("var(--grain-size)");
+      expect(declaration(card, "backdrop-filter")).toBe("var(--card-filter)");
+      expect(declaration(card, "box-shadow")).toContain(
+        card === ".rtr" ? "var(--glass-shadow)" : "var(--glass-card-shadow)",
+      );
+      expect(declaration(card, "background-color")).toBe(
+        "var(--card-bg, var(--bg-elev))",
+      );
+      const fallback = `@supports not (backdrop-filter: blur(1px)) / ${card}`;
+      expect(ruleColor(fallback, "background-color", scheme)[3]).toBe(1);
+      for (const prop of ["background", "background-image", "background-size"])
+        expect(declarations.has(`${fallback} { ${prop} }`)).toBe(false);
+      if (card === ".receipt")
+        expect(declaration(card, "border-left")).toBe(
+          "3px solid var(--accent)",
+        );
+    },
+  );
+  it.each([".scm-file:hover", ".scm-file.active"])(
+    "%s changes only the fill and preserves the file selection marker",
+    (state) => {
+      for (const prop of ["background", "background-image", "background-size"])
+        expect(declarations.has(`${state} { ${prop} }`)).toBe(false);
+      const fill = ruleColor(state, "background-color", scheme);
+      expect(fill[3]).toBe(1);
+      expect(fill).not.toEqual(
+        ruleColor(
+          "@supports not (backdrop-filter: blur(1px)) / .scm-file",
+          "background-color",
+          scheme,
+        ),
+      );
+      const marker = ruleColor(".scm-file.active", "border-left-color", scheme);
+      for (const surface of [fill, over(color("--grain", scheme), fill)]) {
+        expect(contrast(marker, surface)).toBeGreaterThanOrEqual(GRAPHIC);
+        expect(
+          contrast(color("--text-dim", scheme), surface),
+        ).toBeGreaterThanOrEqual(AA);
+      }
+    },
+  );
   it.each([
     ".model-popover",
     ".mention-menu",

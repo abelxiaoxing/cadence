@@ -29,7 +29,13 @@ const remarkPluginsHardBreaks = [
 const rehypePlugins: PluggableList = [
   [
     rehypeKatex,
-    { strict: false, throwOnError: false, trust: false, maxExpand: 1000 },
+    {
+      strict: false,
+      throwOnError: false,
+      errorColor: "var(--err-text)",
+      trust: false,
+      maxExpand: 1000,
+    },
   ],
   [rehypeHighlight, { detect: false, ignoreMissing: true }],
 ];
