@@ -846,6 +846,24 @@ The material fields are computed styles, not isolated pixel measurements of each
 The no-filter fallback, `.scm-file.active`, the other shared card selectors and the unknown-command error shape have stylesheet or SSR coverage, not additional browser scenes.
 The owner's final candidate checks and independent review remain separate.
 
+### Open workflow progress card
+
+In the `design` conversation, click `.workflow-line-open` and wait for `.workflow-board` before measuring the progress card.
+`cardMaterials` scrolls `article.workflow-card > header > strong` into view, parks the pointer outside the card and hit-tests the heading.
+It reads the enclosing article's computed style before and after a viewport PNG, not the conversation summary or a Bento step's surface.
+The `assignments` scene still measures geometry and contrast separately.
+
+**Local observation:** `$TMPDIR/optical-evidence-txT11A/summary.json`, build `e9980014b838b138f4d265a1f4ba92c66aca8e2417e820b3de7b45cbd901b0dc` over pre-commit HEAD `b932e25b` in the same integration worktree.
+Installed headless Chrome 151.0.7922.34 recorded six resting progress cards: both themes at 320×820, 390×820 and 1440×900.
+Their widths were 288, 358 and 800px respectively.
+Obsidian's fill was `rgba(23, 24, 28, .94)`, with top/other edge alpha .22/.10; Alabaster's was `rgba(251, 251, 252, .92)`, with edge alpha .94/.16.
+All had 14px corners, four 1px solid edges, two stationary grain tiles (5×7 and 7×11px), no card animation and a shadow with 10px vertical offset and 30px blur.
+The backdrop blur was 3px at compact widths and 5px on desktop, with 105% saturation throughout.
+
+These material readings are computed styles on mounted cards using synthetic data, not pixel measurements of individual layers or physical-device results.
+The opaque no-filter backing is covered by the dual-theme stylesheet test, not by a fallback browser run.
+Final `verify`, browser observation on the committed candidate and independent review remain the owner's checks.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

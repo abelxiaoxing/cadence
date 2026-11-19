@@ -376,10 +376,18 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       "2px solid var(--accent)",
     );
   });
-  it.each([".receipt", ".run-summary", ".scm-file", ".card", ".rtr"])(
+  it.each([
+    ".receipt",
+    ".run-summary",
+    ".scm-file",
+    ".card",
+    ".rtr",
+    ".workflow-card",
+  ])(
     "%s keeps its lit top, quieter edges and static grain on a card backing",
     (card) => {
       const edge = card === ".rtr" ? "--glass-border" : "--glass-card-border";
+      expect(declaration(card, "border-radius")).toMatch(/^1[4-6]px$/);
       expect(declaration(card, "border")).toBe(`1px solid var(${edge})`);
       expect(declaration(card, "border-top-color")).toBe(
         "var(--glass-border-top)",
