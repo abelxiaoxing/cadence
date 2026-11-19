@@ -216,6 +216,8 @@ For a mounted page, only the requesting page reloads automatically, after observ
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
+The authenticated session advertises `capabilities.actions` when the live owner can handle workbench actions, even before a model is chosen; Send restores or asks for the model of its captured conversation only after acquiring the fresh viewer.
+An expired viewer handoff reports a timeout, not a changed conversation.
 Preparation is not message admission or execution consent.
 `project-entry.ts` reports `dispatched` only after local signal/body/identity preparation and the POST's handoff to fetch; that handoff is not proof of receipt.
 Only a decoded response matching the selected project/path/cwd and a non-null epoch reports `confirmed`, before the serialized viewer attachment wait.

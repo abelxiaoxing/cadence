@@ -18,6 +18,7 @@ import { LIMITS, publicError } from "../../src/service-contract.ts";
 import { HISTORY_CSRF_HEADER } from "../../src/service-wire.ts";
 import { App } from "../../web/src/App";
 import { browserClient } from "../../web/src/client/browser";
+import { SEND_PREPARATION_MS } from "../../web/src/client/conversation-send";
 import { LAST_PROJECT_STORAGE_KEY } from "../../web/src/client/last-project";
 import {
   ObservationAccess,
@@ -524,7 +525,9 @@ vi.mock(
 function RetainedApp(props: ComponentProps<typeof App>) {
   return retain(appCells, () => App(props));
 }
-const prepare = vi.fn(async () => epoch);
+const prepare = vi.fn<
+  NonNullable<ComponentProps<typeof App>["onPrepareExecution"]>
+>(async () => epoch);
 function render(
   locale: "en" | "zh" = "en",
   options: {
@@ -2493,6 +2496,80 @@ it.each([true, false])(
     expect(f.draw().html).toContain("my draft");
   },
 );
+it("a cold prepared Send restores the conversation model before dispatching its one original message", async () => {
+  const f = openedChat(true);
+  await f.settle();
+  const installed = sendCatalog();
+  const { sourceSelectionId: _source, ...choice } = installed.value.selected;
+  const before = { ...installed.value.version, catalogId: id() };
+  let restored = false;
+  vi.spyOn(f.api.client, "models").mockImplementation(async () =>
+    restored
+      ? installed
+      : {
+          ...installed,
+          value: {
+            ...installed.value,
+            version: before,
+            selected: null,
+            remembered: choice,
+          },
+        },
+  );
+  const command = vi
+    .spyOn(f.api.client, "workbenchCommand")
+    .mockImplementation(async (request) => {
+      if (request.kind === "restore-model") restored = true;
+      return {
+        kind: "ok",
+        value: { kind: "accepted", commandId: request.commandId },
+      };
+    });
+  submit?.();
+  await flush();
+  expect(command).not.toHaveBeenCalled();
+  attachViewer();
+  ready(); // a composed workbench, still without an unscoped model
+  await f.settle();
+  expect(command.mock.calls.map(([request]) => request)).toEqual([
+    expect.objectContaining({
+      kind: "restore-model",
+      expected: before,
+      location: { id: chat, cwd: "/fixture" },
+      choice,
+    }),
+    expect.objectContaining({
+      kind: "send",
+      conversationId: chat,
+      model: installed.value.version,
+      text: "my draft",
+    }),
+  ]);
+  expect(prepare).toHaveBeenCalledOnce();
+});
+
+it("a confirmed preparation that times out waiting for the committed viewer keeps the draft and does not report stale", async () => {
+  const f = openedChat(true);
+  await f.settle();
+  prepare.mockImplementationOnce(
+    async (_purpose, _signal, _location, progress) => {
+      progress?.("confirmed");
+      return epoch;
+    },
+  );
+  const command = vi.spyOn(f.api.client, "workbenchCommand");
+  submit?.();
+  await flush(); // observer is ready, but no new committed allocation ticket
+  await vi.advanceTimersByTimeAsync(SEND_PREPARATION_MS);
+  const after = f.draw();
+  expect(after.html).toContain(
+    "Execution preparation was confirmed, but the message was not sent (timeout).",
+  );
+  expect(after.html).toContain("my draft");
+  expect(command).not.toHaveBeenCalled();
+  expect(prepare).toHaveBeenCalledOnce();
+});
+
 it("one explicit prepared Send uses only its own newly confirmed viewer, and its uncertain reply remains visible after a read retry", async () => {
   const f = openedChat(true);
   await f.settle();

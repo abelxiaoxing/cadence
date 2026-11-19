@@ -36098,8 +36098,8 @@ function workflowResultDetail(value, secrets) {
 var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
-  version: "2.2.1",
-  build: "cc7851ae7cfa57703a732dd79f6f12da1875f2e8521aac5f007d71cb5cab3ee4",
+  version: "2.2.2",
+  build: "9d8538776a8e8f204fa4ccffb749d41eee1ca010f56af92ef5d3e88038eb2910",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -39341,7 +39341,7 @@ async function createServiceHost(value, sourceBuild, lifetime) {
           authority: "local",
           csrf: null,
           capabilities: {
-            actions: !!workbench && !!choice.snapshot().selected,
+            actions: ready2 && heldOwner.state === "idle" && !!workbench,
             manualChecks: false,
             history: true
           }

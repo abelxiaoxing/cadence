@@ -82,8 +82,8 @@ it.each(["any", "timeout", "both"])(
       const abort = new AbortController();
       const waiting = observer.whenReady(randomUUID(), abort.signal);
       const before = calls.length;
-      abort.abort();
-      await expect(waiting).rejects.toThrow();
+      abort.abort(new DOMException("The wait timed out", "TimeoutError"));
+      await expect(waiting).rejects.toThrow("timeout");
       expect(calls.length).toBe(before);
       expect(sockets).toBe(0);
       // Re-observation may manage the viewer; it cannot prepare a project,

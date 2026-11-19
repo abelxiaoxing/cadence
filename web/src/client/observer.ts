@@ -41,6 +41,13 @@ export class ObservationAccess {
   check() {
     if (this.signal.aborted) throw this.signal.reason;
   }
+  /** A preparation deadline is not evidence that the selected viewer changed. */
+  waitError(signal: AbortSignal, fallback: string): Error {
+    return new Error(
+      this.denial?.code ??
+        (signal.reason?.name === "TimeoutError" ? "timeout" : fallback),
+    );
+  }
   subscribe = (notify: () => void) => {
     this.signal.addEventListener("abort", notify);
     return () => this.signal.removeEventListener("abort", notify);
@@ -88,9 +95,7 @@ export class WorkspaceObserver {
       };
       const abort = () =>
         finish(
-          new Error(
-            this.access.refusal?.code ?? this.latest?.error ?? "unavailable",
-          ),
+          this.access.waitError(signal, this.latest?.error ?? "unavailable"),
         );
       if (signal.aborted || this.access.signal.aborted) {
         abort();

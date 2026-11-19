@@ -313,8 +313,14 @@ it("real authenticated read surfaces stay closed to task actions and do not writ
   expect(session).toMatchObject({
     kind: "ok",
     value: {
-      capabilities: { actions: false, manualChecks: false, history: true },
+      capabilities: { actions: true, manualChecks: false, history: true },
     },
+  });
+  // Diagnostic actions describes the unscoped slot; an authenticated
+  // workbench session must already be able to select a conversation model.
+  expect(await nativeCall(f.c, "status")).toMatchObject({
+    status: "alive",
+    actions: false,
   });
   const workspace = await client.workspace();
   expect(workspace).toMatchObject({

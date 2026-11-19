@@ -1252,3 +1252,9 @@ The combined acceptance commit was `592aadca841e23c490046dec39dc2d1880cd0273`.
 
 Source commit `48d3f2c` combines the design-choice dialog, WebUI read recovery and optical presentation changes.
 The release regenerates the service and WebUI outputs and records the matching WebUI asset hashes.
+
+## 2.2.2 release candidate
+
+A fresh WebUI session can prepare a Send and restore or choose its conversation model without first installing an unscoped owner model.
+A viewer handoff that reaches its deadline keeps the draft and reports a timeout without replaying the message.
+The release also includes the queued delivery context and coordinator diagnostics from `a3fe51a`.
