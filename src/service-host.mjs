@@ -6435,6 +6435,17 @@ var RUN_INPUTS = 32;
 var WAITING_INPUTS = 8;
 var PENDING_TEXT_BYTES = 256;
 var UNDELIVERED_TEXT_BYTES = 2 * CONVERSATION_SEND_BYTES;
+var workflowTurnStatuses = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+var CHAT_STATUSES = ["starting", ...workflowTurnStatuses];
+var isLiveChatStatus = (status) => status === "starting" || status === "queued" || status === "running";
 var TREE_NODES = 1000;
 var STEP_TEXT_BYTES = 16 * 1024;
 var TARGET_BYTES = 1024;
@@ -6493,15 +6504,6 @@ function decodeChatCursor(value) {
   const o = closed(value, ["id", "updatedAt"]);
   return { id: decodeSessionId(o.id), updatedAt: integer(o.updatedAt, 0) };
 }
-var statuses = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown"
-];
 function decodeWorkbenchRead(v) {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
@@ -6939,7 +6941,7 @@ function decodeChatTurn(v) {
     ...o.retry === undefined ? {} : { retry: decodeModelRetry(o.retry) },
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, workflowTurnStatuses),
     notice: text(o.notice, 1024),
     ...transcript ? { transcript: { pages: integer(transcript.pages, 0) } } : {},
     omitted: {
@@ -7100,7 +7102,7 @@ function decodeChatTurnHeader(v) {
     entry: nullable(o.entry, decodeEntryId),
     ...o.parent === undefined ? {} : { parent: nullable(o.parent, decodeEntryId) },
     at: integer(o.at, 0),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024),
     omitted: {
       thinking: bool(omitted.thinking),
@@ -7131,7 +7133,7 @@ function decodeChatSummary(v) {
     id: decodeSessionId(o.id),
     title: text(o.title, 512, true),
     leaf: nullable(o.leaf, decodeEntryId),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     updatedAt: integer(o.updatedAt, 0),
     origin: oneOf(o.origin, ["terminal", "webui"]),
     ...has("cadence") ? { cadence: bool(o.cadence) } : {},
@@ -7149,7 +7151,7 @@ function decodeChatAttempt(v) {
   return {
     commandId: decodeId(o.commandId),
     text: text(o.text, 16 * 1024),
-    status: oneOf(o.status, statuses),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 1024)
   };
 }
@@ -7513,6 +7515,17 @@ var pageReaders = [
   "changes",
   "reviews"
 ];
+var HISTORY_CSRF_HEADER = "x-cadence-history-csrf";
+var retainedReaders = [
+  ...pageReaders,
+  "entity",
+  "graph",
+  "detail",
+  "search"
+];
+function retainedHistoryBody(operation) {
+  return retainedReaders.includes(operation);
+}
 function mutation(operation) {
   return [
     "preflight",
@@ -7632,16 +7645,12 @@ function decodeHttpOutput(operation, value) {
 }
 function readonlyBody(operation) {
   const operations = [
-    ...pageReaders,
+    ...retainedReaders,
     "workbenchRead",
     "current",
     "currentChanges",
     "checkObligations",
-    "entity",
-    "graph",
     "snapshot",
-    "detail",
-    "search",
     "export",
     "download",
     "receipt"
@@ -8573,6 +8582,7 @@ class CheckoutStore {
 // src/service/contracts/activity.ts
 var ACTIVITY_PHASES = [
   "turn",
+  "starting",
   "queued",
   "running",
   "research",
@@ -11128,18 +11138,41 @@ function requestBoundary(req, policy, directOrigin) {
 class HttpAuthentication {
   material;
   epoch;
+  workspaceId;
   localCapability;
-  csrf = randomUUID7();
+  executionCsrf = randomUUID7();
+  get csrf() {
+    return this.executionCsrf;
+  }
+  history;
   cookieName;
   constructor(material, epoch, workspaceId, localCapability) {
     this.material = material;
     this.epoch = epoch;
+    this.workspaceId = workspaceId;
     this.localCapability = localCapability;
     decodeId(epoch);
     decodeId(workspaceId);
     if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
       throw new ContractError("invalid");
     this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+    material.onRevoke(() => {
+      this.history = undefined;
+      this.executionCsrf = randomUUID7();
+    });
+  }
+  historyChallenge(workspace) {
+    if (workspace.workspaceId !== this.workspaceId || workspace.epoch !== this.epoch)
+      throw new ContractError("stale");
+    if (this.history?.storeId !== workspace.storeId)
+      this.history = {
+        storeId: decodeId(workspace.storeId),
+        csrf: randomUUID7()
+      };
+    return this.history.csrf;
+  }
+  get historyStore() {
+    return this.history?.storeId;
   }
   bootstrap(value, boundary) {
     this.material.assertCurrent();
@@ -11172,14 +11205,14 @@ class HttpAuthentication {
     }
     return false;
   }
-  authenticate(boundary, attachmentId, mutation2 = false, websocket = false) {
+  authenticate(boundary, attachmentId, post = false, websocket = false) {
     this.material.assertCurrent();
     if (!this.material.available)
       throw new ContractError("quarantine");
     const h = boundary.headers;
     const local = h.get("x-cadence-local");
     if (local !== undefined) {
-      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
+      if (post === "retained-history" || !boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
         throw new ContractError("forbidden");
     } else {
       if (h.has("authorization") || h.has("x-cadence-token"))
@@ -11188,10 +11221,14 @@ class HttpAuthentication {
         throw new ContractError("unauthenticated");
       if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
         throw new ContractError("forbidden");
-      if ((mutation2 || websocket) && h.get("origin") !== boundary.origin)
+      if ((post || websocket) && h.get("origin") !== boundary.origin)
         throw new ContractError("forbidden");
-      if (mutation2 && h.get("x-cadence-csrf") !== this.csrf)
+      if (post === "retained-history") {
+        if (!this.history || h.get(HISTORY_CSRF_HEADER) !== this.history.csrf || h.has("x-cadence-attachment") || h.has("x-cadence-csrf"))
+          throw new ContractError("forbidden");
+      } else if (post && h.get("x-cadence-csrf") !== this.csrf) {
         throw new ContractError("forbidden");
+      }
     }
     return {
       attachmentId: decodeId(attachmentId),
@@ -15304,9 +15341,8 @@ var INTERRUPTED = "Interrupted: Cadence stopped before this reply finished. Noth
 var NOT_DELIVERED = "Not delivered: the reply ended before this message reached the model. Nothing was replayed; send it again.";
 var UNOBSERVED = "Not observed: the session could not be read when the reply ended, so whether this message was delivered was not recorded. Nothing was replayed.";
 var WITHDRAWN = "Withdrawn before it was delivered.";
-var LIVE = ["queued", "running"];
 function settledSteps(turn) {
-  if (LIVE.includes(turn.status) || !turn.items.some((item) => ["pending", "running", "streaming"].includes(item.state ?? "")))
+  if (isLiveChatStatus(turn.status) || !turn.items.some((item) => ["pending", "running", "streaming"].includes(item.state ?? "")))
     return turn;
   return {
     ...turn,
@@ -15365,20 +15401,11 @@ function decodeAccepted(value) {
     offset: integer(o.offset, 0)
   };
 }
-var statuses2 = [
-  "queued",
-  "running",
-  "completed",
-  "failed",
-  "canceled",
-  "timeout",
-  "unknown"
-];
 function decodeState(value) {
   const o = closed(value, ["status", "notice", "omitted", "user"]);
   const omitted = closed(o.omitted, ["thinking", "media", "other"]);
   return {
-    status: oneOf(o.status, statuses2),
+    status: oneOf(o.status, CHAT_STATUSES),
     notice: text(o.notice, 4096),
     omitted: {
       thinking: omitted.thinking === true,
@@ -15462,7 +15489,7 @@ class ConversationRecords {
     if (value === undefined)
       throw new ContractError("corrupt-selected");
     const decoded2 = decodeState(value);
-    const state = LIVE.includes(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
+    const state = isLiveChatStatus(decoded2.status) ? { ...decoded2, status: "unknown", notice: INTERRUPTED } : decoded2;
     if (this.states.size >= COMMAND_STATES)
       this.states.clear();
     this.states.set(commandId, { key: key2, state });
@@ -15597,7 +15624,10 @@ class ConversationRecords {
     const run = this.recordedRun(id);
     return run ? {
       commandId: run.commandId,
-      settled: ![run, ...run.inputs].some((message2) => ["queued", "running", "unknown"].includes(this.state(message2.commandId).status))
+      settled: ![run, ...run.inputs].some((message2) => {
+        const { status } = this.state(message2.commandId);
+        return status === "unknown" || isLiveChatStatus(status);
+      })
     } : null;
   }
   summary(id, live2, archived = this.archived(id)) {
@@ -15950,7 +15980,7 @@ class ConversationRecords {
     });
     return {
       turn: { ...settledSteps(turn), execution: live2.execution },
-      stable: LIVE.includes(live2.state.status) ? extended.stable : turn.steps.length
+      stable: isLiveChatStatus(live2.state.status) ? extended.stable : turn.steps.length
     };
   }
   turnSteps(id, leaf, ordinal, before) {
@@ -17066,7 +17096,10 @@ Content-Length: 0\r
         unavailable();
       const route = readRoute(target, req.method ?? "");
       const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID13();
-      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
+      const historyBody = route?.source === "body" && retainedHistoryBody(route.operation) && boundary.headers.has(HISTORY_CSRF_HEADER);
+      const caller = this.options.auth.authenticate(boundary, attachmentId, historyBody ? "retained-history" : route?.source === "body");
+      if (boundary.headers.has(HISTORY_CSRF_HEADER) && !historyBody)
+        throw new ContractError("forbidden");
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32)
           throw new ContractError("capacity");
@@ -17108,12 +17141,14 @@ Content-Length: 0\r
           this.attachments.set(attachmentId, attachment);
         }
         res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body" && (route.operation !== "detach" || this.attachments.has(attachmentId)))
+      } else if (route.source === "body" && !historyBody && (route.operation !== "detach" || this.attachments.has(attachmentId)))
         attachment = this.attachment(caller);
       const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
       if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
         throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
+      const decodedInput = decodeHttpInput(route.operation, input);
+      if (historyBody && (!decodedInput || typeof decodedInput !== "object" || !("storeId" in decodedInput) || decodedInput.storeId !== this.options.auth.historyStore))
+        throw new ContractError("stale");
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting)
         unavailable();
@@ -17130,7 +17165,14 @@ Content-Length: 0\r
         unavailable();
       if (route.operation === "session")
         this.attachment(caller);
-      const decoded2 = decodeHttpOutput(route.operation, value);
+      let decoded2;
+      if (route.operation === "workspace" && caller.authority === "browser") {
+        const workspace = decodeReply(value, decodeWorkspaceBootstrap);
+        if (workspace.kind === "ok")
+          res.setHeader(HISTORY_CSRF_HEADER, this.options.auth.historyChallenge(workspace.value));
+        decoded2 = workspace;
+      } else
+        decoded2 = decodeHttpOutput(route.operation, value);
       const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
       const compressible = route.operation === "workbenchRead";
       if (compressible)
@@ -17861,7 +17903,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "19fd0c2865c6c7dd75a2e8c76d45558366c029db000f150306f80b5beea12abd",
+    contractHash: "986cfb92f4b9606a93a831f2dfe07984a5fb9883db777d386349f0b5b6409e86",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17936,8 +17978,11 @@ Content-Length: 0\r
       conversations.close();
       const grouped = new Map;
       for (const [id, target2] of attachments) {
-        const key2 = `${target2.projectId}:${target2.epoch}`;
-        const group = grouped.get(key2) ?? { ...target2, ids: [] };
+        if (target2.rejected)
+          continue;
+        const projectId = target2.project.id, epoch = target2.project.epoch;
+        const key2 = `${projectId}:${epoch}`;
+        const group = grouped.get(key2) ?? { projectId, epoch, ids: [] };
         group.ids.push(id);
         grouped.set(key2, group);
       }
@@ -18232,7 +18277,7 @@ Content-Length: 0\r
   function isAssociated(id) {
     return store.associatedProjects().some((project) => project.id === id);
   }
-  function binding(id) {
+  function binding(id, allowBootstrap = true) {
     let project = store.projects().find((p) => p.id === id);
     if (!project)
       throw new ContractError("unavailable");
@@ -18247,6 +18292,8 @@ Content-Length: 0\r
     const previous = bindings.get(id);
     if (previous?.epoch === local.epoch)
       return previous.result;
+    if (!allowBootstrap)
+      throw new ContractError("stale");
     const result = (async () => {
       const raw = closed(await nativeCall(c, "token-link", true), ["link"]), link = new URL(text(raw.link, 4096, true));
       const secret = link.searchParams.get("token");
@@ -18267,7 +18314,11 @@ Content-Length: 0\r
       });
       if (c.localAccess().epoch !== project.epoch)
         throw new ContractError("stale");
-      return { project, endpoint: local.endpoint, cookie };
+      return {
+        project: { ...project, epoch: local.epoch },
+        endpoint: local.endpoint,
+        cookie
+      };
     })();
     const pending2 = { epoch: local.epoch, result };
     bindings.set(id, pending2);
@@ -18276,6 +18327,16 @@ Content-Length: 0\r
         bindings.delete(id);
     });
     return result;
+  }
+  function rejectBinding(b, original) {
+    b.rejected = true;
+    if (bindings.get(b.project.id)?.result !== original)
+      return;
+    bindings.delete(b.project.id);
+    for (const viewer of attachments.values()) {
+      if (viewer.project.id === b.project.id && viewer.project.epoch === b.project.epoch && viewer.cookie === b.cookie)
+        viewer.rejected = true;
+    }
   }
   function stop() {
     if (stopping)
@@ -18510,6 +18571,10 @@ Content-Length: 0\r
           throw new ContractError("invalid");
         if (req.headers["content-encoding"] || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes)
           throw new ContractError("oversize");
+        const attachment = boundary.headers.get("x-cadence-attachment");
+        const historyCsrf = boundary.headers.get(HISTORY_CSRF_HEADER);
+        if (historyCsrf !== undefined && (route2.source !== "body" || !retainedHistoryBody(route2.operation) || attachment !== undefined || boundary.headers.has("x-cadence-csrf")))
+          throw new ContractError("forbidden");
         if (route2.operation === "workbenchRead" && req.method === "GET") {
           const selected2 = store.projects().find((p) => p.id === project.id);
           if (!selected2)
@@ -18527,20 +18592,24 @@ Content-Length: 0\r
         }
         if (route2.operation === "session" && !isAssociated(project.id))
           throw new ContractError("unavailable");
-        const attachment = boundary.headers.get("x-cadence-attachment");
-        if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.projectId !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment)
+        if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.project.id !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment && historyCsrf === undefined)
           throw new ContractError("stale");
-        if (route2.operation === "session" && (!attachment || !attachments.has(attachment)) && attachments.size >= 2048)
-          throw new ContractError("capacity");
+        if (route2.operation === "session" && (!attachment || !attachments.has(attachment)) && attachments.size >= 2048) {
+          for (const [id, previous] of attachments)
+            if (previous.rejected)
+              attachments.delete(id);
+          if (attachments.size >= 2048)
+            throw new ContractError("capacity");
+        }
         if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
           throw new ContractError("forbidden");
         const attached = attachment ? attachments.get(attachment) : undefined;
-        if (route2.operation === "detach" && attachment && attached) {
+        if (route2.operation === "detach" && attachment && attached && !attached.rejected) {
           const selected2 = store.projects().find((p) => p.id === project.id);
           if (!selected2)
             throw new ContractError("unavailable");
           const observed = new ServiceCoordination(selected2.path, input.stateHome).inspect();
-          if (observed.status === "stopped" && observed.epoch === attached.epoch) {
+          if (observed.status === "stopped" && observed.epoch === attached.project.epoch) {
             auth.current(caller);
             assert();
             attachments.delete(attachment);
@@ -18555,10 +18624,31 @@ Content-Length: 0\r
             throw new ContractError("forbidden");
           commandBody = canonicalJson(command, LIMITS.controlBytes);
         }
-        const b = await binding(project.id);
+        auth.current(caller);
+        if (attached?.rejected) {
+          if (attachment && route2.operation === "detach")
+            attachments.delete(attachment);
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated")
+          });
+          return;
+        }
+        const original = binding(project.id, historyCsrf === undefined);
+        const b = await original;
         auth.current(caller);
         assert();
-        if (attachment && attached && attached.epoch !== b.project.epoch) {
+        if (bindings.get(project.id)?.result !== original)
+          throw new ContractError("stale");
+        if (attachment && attached && attached.project.epoch === b.project.epoch && attached.cookie !== b.cookie) {
+          attached.rejected = true;
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated")
+          });
+          return;
+        }
+        if (attachment && attached && attached.project.epoch !== b.project.epoch) {
           attachments.delete(attachment);
           reply(res, route2.operation === "detach" ? 200 : 409, route2.operation === "detach" ? { kind: "ok", value: null } : {
             kind: "error",
@@ -18570,6 +18660,11 @@ Content-Length: 0\r
           Cookie: b.cookie,
           Origin: b.endpoint
         };
+        if (historyCsrf !== undefined) {
+          if (!b.history || b.history.browser !== historyCsrf)
+            throw new ContractError("forbidden");
+          headers2[HISTORY_CSRF_HEADER] = b.history.owner;
+        }
         for (const key2 of [
           "accept-encoding",
           "content-type",
@@ -18588,19 +18683,35 @@ Content-Length: 0\r
           const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers: headers2, agent: false }, (incoming) => {
             try {
               auth.current(caller);
+              if (incoming.statusCode === 401) {
+                const cookieName = b.cookie.split("=", 1)[0];
+                if (incoming.headers["set-cookie"]?.some((line) => {
+                  const [cookie, ...attributes] = line.split(/;\s*/);
+                  return cookie === `${cookieName}=` && attributes.includes("Max-Age=0");
+                }))
+                  rejectBinding(b, original);
+              } else if (bindings.get(project.id)?.result !== original) {
+                throw new ContractError("stale");
+              }
+              if (route2.operation === "workspace" && incoming.statusCode === 200 && incoming.headers[HISTORY_CSRF_HEADER] !== undefined) {
+                const owner = decodeId(incoming.headers[HISTORY_CSRF_HEADER]);
+                if (b.history?.owner !== owner)
+                  b.history = { owner, browser: randomUUID14() };
+                res.setHeader(HISTORY_CSRF_HEADER, b.history.browser);
+              }
             } catch {
               close();
               return;
             }
             if (route2.operation === "session" && incoming.statusCode === 200) {
               try {
-                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), { projectId: project.id, epoch: b.project.epoch });
+                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), b);
               } catch {
                 close();
                 return;
               }
             }
-            if (route2.operation === "detach" && incoming.statusCode === 200 && attachment)
+            if (route2.operation === "detach" && incoming.statusCode === 200 && attachment && attachments.get(attachment) === attached)
               attachments.delete(attachment);
             res.statusCode = incoming.statusCode ?? 502;
             for (const key2 of [
@@ -18792,10 +18903,14 @@ Content-Length: 0\r
         if (req.method !== "GET" || !t)
           throw new ContractError("invalid");
         const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
-        if (attachments.get(attachment)?.projectId !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
+        if (attachments.get(attachment)?.project.id !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
           throw new ContractError("invalid");
-        const b = await binding(t.id);
-        if (attachments.get(attachment)?.epoch !== b.project.epoch)
+        const attached = attachments.get(attachment);
+        if (!attached || attached.rejected)
+          throw new ContractError("unauthenticated");
+        const original = binding(t.id);
+        const b = await original;
+        if (bindings.get(t.id)?.result !== original || attachments.get(attachment) !== attached || attached.project.epoch !== b.project.epoch || attached.cookie !== b.cookie)
           throw new ContractError("stale");
         auth.current(caller);
         assert();
@@ -18813,6 +18928,12 @@ Content-Length: 0\r
         };
         relays.add(abort);
         socket.once("close", abort);
+        upstream.once("unexpected-response", (_request, response) => {
+          if (response.statusCode === 401)
+            rejectBinding(b, original);
+          response.destroy();
+          abort();
+        });
         upstream.once("error", abort);
         upstream.once("close", abort);
         upstream.once("open", () => {
@@ -33576,7 +33697,7 @@ class Conversations {
       epoch: live2.epoch,
       now: Date.now(),
       leaf: live2.accepted.parent,
-      phase: live2.abort.signal.aborted ? "stopping" : live2.state.status === "queued" ? "queued" : live2.state.status === "running" ? "running" : "settling"
+      phase: live2.abort.signal.aborted ? "stopping" : isLiveChatStatus(live2.state.status) ? live2.state.status : "settling"
     }));
   }
   constructor(o) {
@@ -33720,7 +33841,7 @@ class Conversations {
       epoch: input.model.epoch,
       title: listed ? summaryTitle(listed.summary) : [...command.text.trim()].slice(0, 100).join("") || "Conversation",
       state: {
-        status: "queued",
+        status: control ? "queued" : "starting",
         notice: "",
         omitted: { thinking: false, media: false, other: false },
         user: null
@@ -33991,7 +34112,6 @@ class Conversations {
   async run(live2, control) {
     const { accepted: accepted2, abort, state } = live2;
     const commandId = live2.commandId;
-    let barrier;
     let authSettled;
     let uncertain = false;
     let native = {
@@ -34012,6 +34132,7 @@ class Conversations {
     };
     const current2 = () => !abort.signal.aborted && this.o.owner.state === "idle" && this.currentDirectory(live2.execution.cwd);
     try {
+      this.o.owner.lease.assert();
       if (!current2())
         throw new ContractError("stale");
       if (control?.reply) {
@@ -34019,12 +34140,6 @@ class Conversations {
         state.notice = control.reply;
         return { status: "settled" };
       }
-      if (!control) {
-        barrier = await this.o.gate.acquire(commandId, abort.signal);
-        barrier.assertHeld();
-      }
-      if (!current2())
-        throw new ContractError("stale");
       const selected2 = live2.execution.model;
       if (!selected2)
         throw new ContractError("stale");
@@ -34151,8 +34266,6 @@ CONVERSATION CONTEXT (data): cwd ${live2.execution.cwd}; checkout root ${live2.e
       }
       if (uncertain)
         this.o.owner.quarantine();
-      else if (this.o.owner.state === "idle")
-        barrier?.release();
       for (const input of live2.inputs)
         this.inputs.delete(input.commandId);
       this.active.delete(commandId);
@@ -35790,7 +35903,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "08175d388709580f3ac2d172e0738f81c235355959eb36e6ef813c83eb58af78",
+  build: "ead75098f5d2ea0a8d40d37b1b3cdc2e7e29dd170ea021a11848bcdc0a147162",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38378,9 +38491,14 @@ class Workbench {
   opening = new Map;
   constructor(o) {
     this.o = o;
-    this.conversations = new Conversations(o);
+    const { gate, ...common } = o;
+    this.conversations = new Conversations(common);
     this.contexts = this.conversations.contexts;
-    this.workflows = new Workflows({ ...o, contexts: this.contexts });
+    this.workflows = new Workflows({
+      ...common,
+      gate,
+      contexts: this.contexts
+    });
     this.files = new WorkbenchFiles(o.coordination.store.root, [o.coordination.files.namespace, o.agentDir], o.secrets);
     this.cadence = new ConversationWorkflow({
       ...o,
@@ -38810,7 +38928,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "19fd0c2865c6c7dd75a2e8c76d45558366c029db000f150306f80b5beea12abd";
+  const embedded = "986cfb92f4b9606a93a831f2dfe07984a5fb9883db777d386349f0b5b6409e86";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

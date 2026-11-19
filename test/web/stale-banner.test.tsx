@@ -224,7 +224,7 @@ vi.mock("../../web/src/components/workspace/AgentDock", async (original) => {
     ...real,
     useWorkflowRuns: (...args: Parameters<typeof real.useWorkflowRuns>) => {
       const view = real.useWorkflowRuns(...args);
-      return workflow
+      return workflow && !liveChat
         ? { ...view, runs: new Map([[workflow.id, workflow]]) }
         : view;
     },
@@ -815,7 +815,9 @@ it("an independent owner is browse-only until explicit preparation; even a same-
   const oldPrepare = chatProps.prepareForSend;
   connectionAction();
   expect(reads.viewer).not.toHaveBeenCalled();
-  await expect(oldPrepare?.(new AbortController().signal)).rejects.toThrow("stale");
+  await expect(oldPrepare?.(new AbortController().signal)).rejects.toThrow(
+    "stale",
+  );
   expect(prepare).not.toHaveBeenCalled();
   render("en", options);
   reads.prepared.mockImplementationOnce(() => {
@@ -1702,7 +1704,14 @@ async function connectedTaskViewer() {
     error: publicError("unavailable"),
   };
   const snapshot = { ...viewer.observation?.snapshot, context: ctx };
-  const active = {epoch,taskId:task,runId:id(),operationId:id(),kind:"start",stage:"active"};
+  const active = {
+    epoch,
+    taskId: task,
+    runId: id(),
+    operationId: id(),
+    kind: "start",
+    stage: "active",
+  };
   const running = () =>
     Response.json(
       { kind: "project-observation", status: "running", workspaceId, epoch },
@@ -1758,7 +1767,10 @@ async function connectedTaskViewer() {
       );
     if (path === "snapshot") return Promise.resolve(ok(snapshot));
     if (path === "detach") return Promise.resolve(ok(null));
-    if (path === "cancel") return Promise.resolve(Response.json({kind:"error",error:publicError("conflict")}));
+    if (path === "cancel")
+      return Promise.resolve(
+        Response.json({ kind: "error", error: publicError("conflict") }),
+      );
     throw new Error(`unexpected request: ${path}`);
   });
   const options = { project: true, task: true };
@@ -1877,12 +1889,16 @@ it("a task viewer replaced between React commits cannot lend its new allocation 
   expect(sessions[1].attachment).not.toBe(sessions[0].attachment);
   old?.onClick();
   oldCancel?.onClick();
-  expect(calls.filter((c) => c.path === "command" || c.path === "cancel")).toEqual([]);
+  expect(
+    calls.filter((c) => c.path === "command" || c.path === "cancel"),
+  ).toEqual([]);
   render("en", options); // No new WS frame; safety still uses the exact viewer.
   const currentCancel = controls.get(cancelLabel);
   expect(currentCancel?.disabled).toBe(false);
   currentCancel?.onClick();
-  expect(calls.filter((c) => c.path === "cancel")).toEqual([{path:"cancel",method:"POST",attachment:sessions[1].attachment}]);
+  expect(calls.filter((c) => c.path === "cancel")).toEqual([
+    { path: "cancel", method: "POST", attachment: sessions[1].attachment },
+  ]);
 });
 
 it("a completed readiness callback cannot finish preparation after access was denied", async () => {
@@ -2212,6 +2228,12 @@ function openedChat(project: boolean, running = false) {
           { status: 503 },
         ),
       );
+    if (kind === "workflow" && workflow)
+      return ok({
+        kind,
+        commandId: null,
+        response: { type: "run", run: workflow },
+      });
     if (kind === "conversation-context")
       return ok({ kind, context: { id: chat, cwd, revision: 0, model: null } });
     if (kind === "cadence-conversation")
@@ -2308,6 +2330,31 @@ for (const locale of ["en", "zh"] as const) {
     },
   );
 }
+it("retrying an unreadable live workflow retains its line until a new observation replaces it", async () => {
+  workflow = activeWorkflow();
+  const f = openedChat(true);
+  const line = 'class="workflow-line running"';
+  expect((await f.settle()).html).toContain(line);
+  f.failures.add("workflow");
+  await vi.advanceTimersByTimeAsync(1000);
+  const failed = await f.settle();
+  expect(failed.details).toContain("Recorded workflows: unavailable.");
+  expect(failed.html).toContain(line);
+  const attempts = () => f.calls.filter((kind) => kind === "workflow").length;
+  const before = attempts();
+  connectionAction();
+  const stillFailed = await f.settle();
+  expect(attempts()).toBe(before + 1);
+  expect(stillFailed.details).toContain("Recorded workflows: unavailable.");
+  expect(stillFailed.html).toContain(line);
+  f.failures.clear();
+  connectionAction();
+  const recovered = await f.settle();
+  expect(attempts()).toBe(before + 2);
+  expect(recovered.details).not.toContain("Recorded workflows:");
+  expect(recovered.html).toContain(line);
+  expect(prepare).not.toHaveBeenCalled();
+});
 it.each([
   ["Stop response", "interrupt"],
   ["Steer this reply", "conversation-input"],

@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { CadencePreferences } from "../src/cadence-preferences.ts";
 import type {
   ConversationLocation,
@@ -21,6 +21,13 @@ import type { ServiceClient } from "../src/service-client.ts";
 import { BROWSER_COMMAND_ENTRY } from "../src/session-entries.mjs";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
 import { seedPiSessions } from "./helpers/retained-conversations.ts";
+import { deferred } from "./helpers/service-http-fixture.ts";
+import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const chosen = (model: string) => ({
   provider: "fixture",
@@ -50,10 +57,20 @@ async function choose(
   expect(r.kind, JSON.stringify(r)).toBe("ok");
   return catalog(client, location);
 }
-it("one checkout, two conversation directories/models: queued work keeps its snapshot and restart restores only its own preference", async () => {
-  const f = await acceptingFixture("generated", undefined, null, {
-    models: ["fixed", "alternate"],
-  });
+it("one checkout, two conversation directories/models: admitted work keeps its snapshot and restart restores only its own preference", async () => {
+  // The first owner runs in-process so this test can pause B at its actual
+  // preparation. Give it only the fixture's environment, as for the generated
+  // owner used on restart. Both use the real worker, SDK and provider route.
+  const f = await acceptingFixture(
+    "source",
+    (env) => {
+      keepOnlyEnvironment(Object.keys(env));
+      for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    },
+    null,
+    { models: ["fixed", "alternate"] },
+  );
+  const openB = deferred();
   try {
     expect((await f.client.session()).kind).toBe("ok");
     execFileSync("git", ["init", "-q"], { cwd: f.root });
@@ -172,6 +189,20 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
       }),
     ).toMatchObject({ kind: "ok" });
     await expect.poll(() => f.held(), { timeout: 10000 }).toBe(1);
+    const models = f.host!.models;
+    const prepare = models.prepareTracked.bind(models);
+    const preparations = vi
+      .spyOn(models, "prepareTracked")
+      .mockImplementation((input) => {
+        const original = prepare(input);
+        if (input.request.runId !== rb) return original;
+        return {
+          ...original,
+          result: Promise.all([original.result, openB.promise]).then(
+            ([result]) => result,
+          ),
+        };
+      });
     expect(
       await f.client.workbenchCommand({
         kind: "send",
@@ -182,8 +213,15 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
         model: cb.version,
       }),
     ).toMatchObject({ kind: "ok" });
-    // A holds the gate, so B has not opened its SDK manager yet. A terminal
-    // sends the exact same text from B's captured parent first.
+    await expect
+      .poll(
+        () =>
+          preparations.mock.calls.some(([input]) => input.request.runId === rb),
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    // B is admitted, but cannot yet open its session. The terminal appends the
+    // identical text after B's captured offset, from the same parent, first.
     const bDirectory = sessionDirectory(b.cwd, join(f.dir, "agent"), {});
     const bFile = join(bDirectory, readdirSync(bDirectory)[0]);
     const oldEntries = readFileSync(bFile, "utf8")
@@ -225,7 +263,8 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
     await choose(f.client, b, "fixed");
     expect((await catalog(f.client, a)).version).toEqual(ca.version);
     f.mode("single");
-    f.fail();
+    preparations.mockRestore();
+    openB.resolve();
     await expect
       .poll(
         async () => {
@@ -243,6 +282,8 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
       )
       .toBe("completed");
     expect(f.modelRequests).toEqual(["fixed", "alternate"]);
+    expect(f.held()).toBe(1); // B completed before A was released.
+    f.fail();
     const bState = JSON.parse(
       readFileSync(
         join(
@@ -445,6 +486,7 @@ it("one checkout, two conversation directories/models: queued work keeps its sna
     expect(restoredB.version.catalogId).not.toBe(inactiveB.version.catalogId);
     expect(f.contacts()).toBe(3);
   } finally {
+    openB.resolve();
     await f.close();
   }
 }, 30000);

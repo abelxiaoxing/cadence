@@ -61,7 +61,7 @@ import {
   wholePendingText,
   withdrawCommand,
 } from "../../client/conversation-inputs";
-import type { LoadedTurn } from "../../client/conversation-reader";
+import { type LoadedTurn, unsettled } from "../../client/conversation-reader";
 import {
   assertSendModel,
   captureSend,
@@ -159,9 +159,8 @@ export interface ConversationActivity {
   id: string;
   /** Turns on the branch shown. */
   turns: number;
-  /** When the live turn began (epoch ms), 0 when unrecorded; null when no
-   * reply is queued or running. */
-  runningSince: number | null;
+  /** Phase and recorded beginning of the live reply, even before Pi writes it. */
+  reply: { status: ChatSummary["status"]; since: number } | null;
   /** The branch's context size as of its last completed model response;
    * absent when the head read states none. */
   context?: ContextUsage;
@@ -558,18 +557,15 @@ export function ChatWorkspace({
     !awaitingModel &&
     !pending;
   const summary = conversation.summary ?? undefined;
-  const running =
-    summary && (summary.status === "queued" || summary.status === "running");
+  const status = summary?.status;
+  const running = unsettled(status);
   // A failed or interrupted reply stays in the session; the next message
   // continues the branch as it would in the terminal.
   const settledBadly = !!summary && summary.status !== "completed" && !running;
-  // The live turn ends the branch; before Pi lists it the start is unrecorded.
+  // A pinned branch need not show the session's live turn. In that case
+  // report the phase, not an elapsed time from an unrelated turn.
   const lastTurn = turns.at(-1)?.header;
-  const runningSince = !running
-    ? null
-    : lastTurn && ["queued", "running"].includes(lastTurn.status)
-      ? lastTurn.at
-      : 0;
+  const since = lastTurn && unsettled(lastTurn.status) ? lastTurn.at : 0;
   // The branch's context size beside the window of the model that reported
   // it, from the catalog already read here; each head read is a new object.
   const {
@@ -616,14 +612,13 @@ export function ChatWorkspace({
     onActivityRef.current?.({
       id,
       turns: conversation.count,
-      runningSince,
+      reply: running ? { status, since } : null,
       ...(usage ? { context: usage } : {}),
       ...(cache ? { cache } : {}),
     });
-  }, [id, conversation.count, runningSince, usage, cache]);
+  }, [id, conversation.count, running, status, since, usage, cache]);
   const newest = turns.at(-1);
-  const unsettled =
-    !!newest && ["queued", "running"].includes(newest.header.status);
+  const newestLive = unsettled(newest?.header.status);
   // One tree read for the branch shown feeds the version pagers, the question
   // rail and the Branches tab. It is made again when the branch gains or
   // changes a message, not for every entry a reply appends.
@@ -635,7 +630,7 @@ export function ChatWorkspace({
       newest?.header.id ?? "",
       conversation.count,
       conversation.branches,
-      unsettled,
+      newestLive,
     ].join(),
     available && !!summary,
   );
@@ -653,13 +648,13 @@ export function ChatWorkspace({
     }));
     if (
       !newest ||
-      !unsettled ||
+      !newestLive ||
       listed.some((question) => question.id === newest.header.id)
     )
       return listed;
     const text = turnParts(newest.steps).user[0]?.step.text ?? "";
     return [...listed, { id: newest.header.id, text: firstLine(text) }];
-  }, [tree, newest, unsettled]);
+  }, [tree, newest, newestLive]);
   // A message to bring into view; once its turn is shown, the row jumped to
   // (a new object per jump, kept mounted until the next one).
   const [target, setTarget] = useState<Target | null>(null);
@@ -973,54 +968,18 @@ export function ChatWorkspace({
     ],
     [conversation.runs, state?.runs, windows, approving],
   );
-  // A missing terminal attempt was never an observed run. Diagnose failed
-  // re-reads of *known* runs and keep the code until that run is read again.
-  const runReads = useMemo(
-    () => ({ reader, codes: new Map<string, string>() }),
-    [reader],
-  );
-  const [flowRetry, setFlowRetry] = useState(0);
-  const flowReader = useMemo<Pick<ServiceClient, "workbenchRead">>(() => {
-    void flowRetry; // Explicit retry restarts the bounded workflow reader.
-    return {
-      async workbenchRead(request, signal) {
-        const reply = await runReads.reader.workbenchRead(request, signal);
-        if (request.kind === "workflow" && !signal?.aborted) {
-          if (
-            reply.kind === "ok" &&
-            reply.value.kind === "workflow" &&
-            reply.value.response.type === "run"
-          )
-            runReads.codes.set(request.id, "");
-          else if (runReads.codes.has(request.id))
-            runReads.codes.set(
-              request.id,
-              reply.kind === "error" ? reply.error.code : "unavailable",
-            );
-        }
-        return reply;
-      },
-    };
-  }, [runReads, flowRetry]);
-  const flows = useWorkflowRuns(flowReader, available ? watched : [], 1000);
-  useEffect(() => {
-    const selected = new Set(watched);
-    for (const id of runReads.codes.keys())
-      if (!selected.has(id)) runReads.codes.delete(id);
-  }, [runReads, watched]);
+  const flows = useWorkflowRuns(reader, available ? watched : [], 1000);
   const contextError = available ? contextRead.error : undefined;
   const headError = available ? conversation.error || undefined : undefined;
   const workflowError = available ? workflow.error : undefined;
-  const runsError = available
-    ? watched.map((id) => runReads.codes.get(id)).find(Boolean)
-    : undefined;
+  const runsError = available ? flows.error : undefined;
   const retryRead = useRef(() => {});
   retryRead.current = () => {
     if (!alive.current || access?.signal.aborted) return;
     if (contextError) contextRead.refresh();
     if (headError) conversation.refresh();
     if (workflow.error) workflow.refresh();
-    if (runsError) setFlowRetry((n) => n + 1);
+    if (runsError) flows.refresh();
   };
   useEffect(() => {
     onDiagnostics?.({
@@ -1665,7 +1624,7 @@ export function ChatWorkspace({
     turn.current?.epoch === liveRun.epoch;
   const inputCurrent = () =>
     turnCurrent() && actionsReady && (!viewer || viewer.current());
-  const canInput = inputCurrent() && !busy && !attaching;
+  const canInput = inputCurrent() && !busy && !pending && !attaching;
   const sendInput = async (mode: InputMode) => {
     if (!liveRun || !canInput || !inputCurrent() || inputBlock || !draft.trim())
       return;
@@ -1869,7 +1828,7 @@ export function ChatWorkspace({
       target.id,
       turns,
       conversation.count,
-      unsettled,
+      newestLive,
     );
     // Not in the tree read, or the turn in its place is another message.
     if (ordinal === undefined || turns.some((turn) => turn.ordinal === ordinal))
@@ -1877,7 +1836,7 @@ export function ChatWorkspace({
     conversation.showFrom(ordinal);
   });
   const imagesLocked =
-    busy || awaitingModel || !!pending || !!running || attaching;
+    busy || awaitingModel || !!pending || running || attaching;
   const addImages = (files: File[]) => {
     if (imagesLocked) return;
     try {
@@ -2052,6 +2011,9 @@ export function ChatWorkspace({
                   : t("Started in the WebUI")
               }`}
           </span>
+          {status === "starting" && (
+            <span className="ep-state starting">{tx(status)}</span>
+          )}
           {/* Read by link while the history leaves it out; shown on phones too. */}
           {summary?.archived && (
             <span className="conversation-badge">{t("Archived")}</span>
@@ -2369,7 +2331,7 @@ export function ChatWorkspace({
           known: cadenceKnown,
           disabled: cadence
             ? !canExit
-            : !!running || busy || !!pending || awaitingModel,
+            : running || busy || !!pending || awaitingModel,
           onClick: () => {
             if (cadence) {
               void send("exit cadence");
@@ -2397,7 +2359,7 @@ export function ChatWorkspace({
             ? (choice) => chosenModel(choice, false)
             : undefined,
           locked:
-            !!running ||
+            running ||
             busy ||
             !!pending ||
             (availability.status === "ready" && !actionsReady),
@@ -2419,7 +2381,7 @@ export function ChatWorkspace({
                 ? t("Your next message turns on Cadence mode.")
                 : ""
         }
-        running={!!running}
+        running={running}
         canStop={!busy && turnCurrent()}
         onStop={() => void interrupt()}
         canSend={

@@ -1165,6 +1165,7 @@ it("a reply the previous owner's death interrupted does not refuse the next star
     ["completed", false],
     ["failed", false],
     // Cut short by the owner's death: startup healing stopped its worker.
+    ["starting", false],
     ["queued", false],
     ["running", false],
     // An owner recorded that it could not establish closure itself.
@@ -1173,15 +1174,26 @@ it("a reply the previous owner's death interrupted does not refuse the next star
     const g = fixture(),
       id = randomUUID();
     const command = g.command(id, persisted, null);
+    const path = g.records.path(command, "state.json");
+    const before = readFileSync(path);
     const start = () => owner(g).assertSettled();
     if (refuses) expect(start, persisted).toThrow("quarantine");
     else expect(start, persisted).not.toThrow();
-    // Either way the reader still reports an unfinished reply as interrupted.
-    if (persisted === "queued" || persisted === "running")
-      expect(g.records.state(command)).toMatchObject({
+    if (["starting", "queued", "running"].includes(persisted)) {
+      const observed = {
         status: "unknown",
         notice: expect.stringContaining("Interrupted"),
+      };
+      expect(g.records.state(command)).toMatchObject(observed);
+      expect(
+        decodeWorkbenchResult(g.records.conversation(id, null, null)),
+      ).toMatchObject({
+        attempt: { commandId: command, ...observed },
+        turns: 0,
       });
+      expect(g.records.activeConversations().entries).toEqual([]);
+    }
+    expect(readFileSync(path)).toEqual(before);
   }
 });
 

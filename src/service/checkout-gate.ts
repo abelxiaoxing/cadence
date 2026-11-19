@@ -1,4 +1,4 @@
-/** Fair reader/writer checkout gate for current conversations and workflows.
+/** Fair reader/writer checkout gate between workflows on the target checkout.
  * It owns no tasks, graphs, model choice, process launcher or history writer. */
 import { ContractError, decodeId } from "../service-contract.ts";
 import type { ServiceOwner } from "./owner.ts";

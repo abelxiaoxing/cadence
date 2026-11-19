@@ -12,7 +12,7 @@ Read this before moving a responsibility between modules, adding an import or ch
 | `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,system-service,launchd,login-run}.ts` | Single-owner composition, explicit project launch and generated system/user service definitions; management stays SDK-free |
 | `src/service/{coordination,private-files,owner}.ts`                                                        | Canonical overlap exclusion, exact locks and original-operation lifetime                                                   |
 | `src/service/{liveness,self-heal,process-ledger,recovery-log,doctor}.ts`                                   | Holder liveness evidence, startup self-healing, recovery log/archive and `cadence doctor`                                  |
-| `src/service/checkout-gate.ts`, `src/service/workflows.ts`                                                 | Fair shared/exclusive checkout access and the sole current engineering orchestrator                                        |
+| `src/service/checkout-gate.ts`, `src/service/workflows.ts`                                                 | Shared/exclusive checkout permits between workflows and the sole current engineering orchestrator                          |
 | `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`              | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy              |
 | `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                            | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it  |
 | `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts`     | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                        |
@@ -60,9 +60,10 @@ The gateway preparation route cannot carry message text, select a model or grant
 Directory entries retain distinct cwd identities even when they resolve to the same checkout owner; old root-keyed entries remain readable without migration.
 Preparation binds the original Send's conversation location independently of its directory-navigation entry; it never replaces that entry's identity.
 Only successfully prepared epochs join whole-workbench Stop; browsing an independently running owner never adopts it, and directory aliases are joined once per exact owner epoch.
-Their original Stop lifetime and checkout access belong to the existing service owner and checkout gate; isolation and integration lifetimes are defined in [lifetimes](lifetimes.md).
+Each project owner handles Stop for its admitted work: it signals the original workers and waits for process, auth and storage settlement.
+Uncertain settlement keeps the owner quarantined.
 
-The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared checkout gate/process owner`.
+Native conversation mode routes workflow requests through `index → cadence-mode → native client → Workbench → Workflows`.
 `src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, explicit unchanged-plan revalidation, owner-accounted delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
 `src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
 `src/worker-toolkit.mjs` composes the inherited Pi standard-tool selection and owns tool originals; `src/worker-workspace.mjs` binds immutable tool placement and maps the existing execution context into an owner-selected tree.
@@ -81,10 +82,13 @@ Its readonly directory validator is shared with the repository verification guar
 `src/cadence-preferences.ts` stores only the credential-free default for new conversations.
 The readonly diagnostics path is `index → history-shell → native client → history/workflow readers`; it cannot create, approve, execute, check, review or select a model.
 `TaskActions`, `TaskScheduler`, `ActionAdmission`, the old graph executor and foreground `TaskController` are removed, along with their execution-only tests and prospective-plan helper.
-`Workbench`, `Workflows` and `Conversations` take `CheckoutGate` directly.
-Research shares bounded read access; isolated candidate work holds no target checkout permit.
-Candidate creation, direct writes and final delivery are exclusive, with FIFO writer fairness.
-A canceled waiter is removed; an aborted holder remains held until original settlement, and quarantine/Stop cannot refund it.
+`Workbench` passes `CheckoutGate` to `Workflows`, not to `Conversations`.
+Ordinary Sends neither acquire nor wait for a checkout permit.
+Between workflows, research shares read access; direct working-copy delivery, target preflight, candidate creation and final Git integration require exclusive access.
+Isolated candidate work holds no target checkout permit.
+Cancellation removes a pending permit request.
+Once granted, a permit stays held until the original operation settles, even on Stop or quarantine.
+See [Conversation workflow lifetime](lifetimes.md#conversation-workflow-lifetime) for stage boundaries and writer fairness.
 `ServiceCoordination` owns a `CheckoutStore`, not task CRUD.
 Retained task readers/writers use an explicit `legacyTaskStore` adapter; current path/filesystem consumers import `workspace.ts` directly.
 Conversation choice versions bind their durable preference revision, identity/cwd, live source selection, owner epoch and access generation; no model is reconstructed from task history.

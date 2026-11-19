@@ -48,7 +48,11 @@ The JSON result reports the canonical checkout, saved default cwd and endpoint; 
 Keep that link private.
 Open Pi in the same project and use `/cadence` for the native client; explicit `cadence stop --workspace <path>` stops only that project.
 Opening another project never changes the cwd or cancels work in the former one.
-Different folders of one checkout share its owner and execution gate, but conversations keep independent directories and model choices; an admitted run keeps its original snapshot.
+Different folders of one checkout share the project owner and its on-disk lease, not a queue for ordinary Sends.
+Each admitted run keeps its conversation's working directory and model.
+The owner allows one active browser run per Pi session and refuses new runs at capacity.
+Different Pi sessions can use host tools concurrently, even while a workflow holds an exclusive checkout permit.
+If two sessions, or a session and a workflow, edit the same file, either can overwrite the other's changes; see [Execution and delivery](conversation-mode.md#execution-and-delivery).
 The owner launches from the checkout root.
 A removed saved default subdirectory does not prevent other conversation directories from starting; no old conversation is redirected or rewritten.
 The default workbench routes all associated projects through one origin, including a configured HTTPS proxy.

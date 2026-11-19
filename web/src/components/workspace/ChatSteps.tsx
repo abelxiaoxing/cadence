@@ -19,8 +19,11 @@ import {
   FiX,
 } from "react-icons/fi";
 import type { ChatStep } from "../../../../src/service/contracts/workbench.ts";
-import type { TurnSource } from "../../client/conversation-reader";
-import { stepIdentity } from "../../client/conversation-reader";
+import {
+  stepIdentity,
+  type TurnSource,
+  unsettled,
+} from "../../client/conversation-reader";
 import { describeError, type MessageKey, useT } from "../../i18n/locale";
 import { parseFileMutationArgs } from "../../rich/file-diff";
 import { CopyButton } from "../rich/CopyButton";
@@ -86,12 +89,7 @@ export function toolState(turn: TurnSource, index: number): ToolState {
   const step = turn.steps[index];
   if (step?.error || step?.state === "failed") return "err";
   if (step?.state === "completed") return "ok";
-  if (
-    step &&
-    stepActive(step) &&
-    (turn.header.status === "queued" || turn.header.status === "running")
-  )
-    return "run";
+  if (step && stepActive(step) && unsettled(turn.header.status)) return "run";
   return "idle";
 }
 const STATE_LABEL: Readonly<Record<ToolState, MessageKey>> = {
@@ -311,9 +309,7 @@ export function ThinkingStep({
   const { t } = useT();
   const [open, setOpen] = useState(false);
   const detail = useStepDetail(turn, index, step, open && step.parts > 0);
-  const recording =
-    stepActive(step) &&
-    (turn.header.status === "queued" || turn.header.status === "running");
+  const recording = stepActive(step) && unsettled(turn.header.status);
   if (step.parts === 0)
     return (
       <div className="thinking">
