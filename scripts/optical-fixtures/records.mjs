@@ -248,7 +248,9 @@ const long = Array.from(
   (_, i) =>
     `### Study ${i + 1}\n\nLocal observation. Glass remains outside the reading column. 材质照明不应打断阅读。`,
 ).join("\n\n");
-const code = '```ts\nconst crystal = "' + "0123456789".repeat(32) + '";\n```';
+export const readingCode = `const crystal = "${"0123456789".repeat(32)}";`;
+export const readingTurn = leaf;
+const code = ["```ts", readingCode, "```"].join("\n");
 const steps = (id, question) =>
   (question
     ? [
