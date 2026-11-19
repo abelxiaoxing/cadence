@@ -769,6 +769,49 @@ These are point samples, not continuous paint or physical-phone, hardware-GPU or
 The no-filter fallback is covered by the stylesheet test, not an engine without filter support.
 No live workspace, performance windows, full candidate check or independent review is claimed by these targeted runs.
 
+### Reading the design card and tabbing into the history view menu
+
+On pre-repair HEAD `c18484584fec` (build `f1b112df9bbf`), the owner's `optical-evidence-l5GjLf` recorded four failures.
+At light/320 the empty input's top was −414px; the submit button received Tab focus but its visible height was zero and all five pointer hits missed.
+At dark/320 Timeline remained selected while Tools had focus, but Timeline's computed ink changed from RGB(204,209,217) to (203,208,216) across the PNG.
+In the same sequence on that build, `design-view-initial-8GkJUx` recorded a CSS `color` transition **on Timeline itself** from (138,147,162) to (203,208,216), as well as background transitions.
+Its later screenshot did not reproduce the mismatch.
+
+In the same integration worktree and task branch over `c18484584fec`, `bun run build:web` produced `a39cd87b62872931b63f97e7765833c4f8e1370868cc94382837b4a0a2f8c61f`.
+Only the history view options opt out of the generic button transition.
+Select Timeline, reopen the menu, move the pointer away and Tab onto Tools: the selected stroke, separate focus outline and menu material are all measured in one unmodified PNG.
+Neither the `@` menu nor production scroll-follow logic changed.
+
+**Targeted matrix:** `$TMPDIR/design-view-card-tRMBSX/summary.json` and 30 viewport PNGs; installed headless Chrome 151.0.7922.34, fresh profile, DPR 1, synthetic loopback projections, both themes at 320×820, 390×820 and 1440×900 (320 first).
+In each design chat one wheel event hit the transcript; bottom distance went from 0 to 180px and Latest appeared.
+Each control was positioned once.
+`pickerStates[].positions` records pane metrics, target bounds and active control before/after positioning and on both sides of each shot.
+At 320px the pane was 526px tall and the card 608px: the option group, empty input and submit button were fully visible **in turn**, at scrollTop 1932, 2117 and 2264 of scrollHeight 3376.
+The input's top was 318.53px.
+Submit occupied x=33–277, y=308.72–365.47; across all six views its clipping intersection equalled its full rect and all five hits succeeded before and after Tab.
+No answer was edited, submitted or approved.
+Real wheel/Tab reading did not snap back to the end in these observations.
+
+| Worst ratio across widths                                | Obsidian                 | Alabaster              |
+| -------------------------------------------------------- | ------------------------ | ---------------------- |
+| Painted selected `Frames` / unselected `Everywhere`      | 16.569 / 17.134          | 17.813 / 15.456        |
+| Other idea resting border on card / fill                 | 5.783 / 5.818            | 5.589 / 5.682          |
+| Tab outline on card (empty input and submit)             | 11.568                   | 10.378                 |
+| Timeline text / stroke against row / stroke against menu | 10.157 / 10.182 / 11.105 | 9.497 / 9.515 / 10.475 |
+| Tools Tab outline against menu                           | 11.221                   | 10.558                 |
+
+The design audit also measures under-text backings on the visible card: the minima were 5.498:1 (Other idea) and 4.808:1 (More compositing).
+It cannot pass using text in the header or status bar.
+An intermediate whole-page comparison failed on dark/1440 (`design-view-settled-70dxrZ`) although the two design option readings agreed.
+The instrumented `design-view-sequence-5YKcH0` retained a light/1440 failed capture and both point lists: only the real latency numeral changed, from 1 to 0.
+A clock or timing sample elsewhere is not part of a design control's identity.
+The final design comparison targets the actual card, without retrying a changed frame; the other page audits retain their coverage.
+Neither intermediate failure counts as a passing frame.
+
+These are point samples on Chromium, not continuous paint, physical-device or cross-engine qualification.
+The targeted run included the following open agreement but not the full collector, performance windows, final `verify` or independent review.
+The owner checks the actual delivery candidate separately.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

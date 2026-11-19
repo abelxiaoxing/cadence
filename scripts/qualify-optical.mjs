@@ -11,8 +11,8 @@ import {
   observeUnknownMode,
 } from "./optical-fixtures/composer-observations.mjs";
 import {
+  observeDesign,
   observeOpenMaterial,
-  observeOtherIdea,
   observeRetainedCopy,
 } from "./optical-fixtures/detail-observations.mjs";
 import { observeGestures } from "./optical-fixtures/drawer-gestures.mjs";
@@ -212,9 +212,9 @@ try {
         modifiers,
       });
   };
-  const observeButton = async (role, selector, expected) => {
+  const observeButton = async (role, selector, expected, scroll = true) => {
     await wait(`document.querySelector(${q(selector)})`);
-    const geometry = await run(controlGeometry, selector);
+    const geometry = await run(controlGeometry, selector, scroll);
     const row = {
       width,
       theme,
@@ -345,7 +345,23 @@ try {
         format: "png",
         captureBeyondViewport: false,
       });
-      if (JSON.stringify(points) !== JSON.stringify(await locate())) continue;
+      const after = await locate();
+      if (JSON.stringify(points) !== JSON.stringify(after)) {
+        if (scene === "design") {
+          const file = `design-${theme}-${width}-unstable.png`;
+          await writeFile(
+            join(reportDir, file),
+            Buffer.from(png.data, "base64"),
+            { flag: "wx" },
+          );
+          assert.deepEqual(
+            after,
+            points,
+            `Design samples changed across ${file}`,
+          );
+        }
+        continue;
+      }
       return run(contrastPixels, png.data, points);
     }
     throw Error(`Unstable screenshot geometry: ${scene}`);
@@ -360,8 +376,8 @@ try {
       await ev(`document.body.style.removeProperty('-webkit-text-fill-color')`);
     }
   };
-  const audit = async (scene, selectors) => {
-    await sleep(250);
+  const audit = async (scene, selectors, { textRoot, ...facts } = {}) => {
+    if (scene !== "design") await sleep(250);
     const geometry = await run(dimensions, selectors);
     assert.ok(
       selectors.every((s) => geometry[s]?.box[0] > 0),
@@ -370,7 +386,7 @@ try {
     const indicators = await capture(scene, async () =>
       (await run(textSamples)).filter((p) => p.ink),
     );
-    const contrast = await textContrast(scene);
+    const contrast = await textContrast(scene, textRoot);
     if (indicators?.failures.length)
       problems.push({ width, theme, scene, indicators: indicators.failures });
     assert.ok(contrast.samples, `no visible text sampled for ${scene}`);
@@ -382,6 +398,8 @@ try {
       worst: contrast.worst,
       indicator: indicators?.worst,
       samples: contrast.samples,
+      ...(textRoot && { textRoot }),
+      ...facts,
       ...(scene === "requested edit" ? { words: contrast.words } : {}),
     });
     if (scene === "requested edit") {
@@ -412,6 +430,38 @@ try {
       )
         problems.push({ width, theme, scene, overflow: s, g });
     }
+  };
+  // Leave end-follow by real reader input before positioning a taller card's
+  // individual controls. Never correct a position during its measurement.
+  const wheelAway = async () => {
+    const point = await run(() => {
+      const pane = document.querySelector(".chat-messages");
+      const r = pane.getBoundingClientRect(),
+        x = r.left + 12,
+        y = r.top + r.height / 2;
+      if (!pane.contains(document.elementFromPoint(x, y)))
+        throw Error("Transcript wheel target obstructed");
+      return { x, y };
+    });
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      ...point,
+      deltaX: 0,
+      deltaY: -180,
+    });
+    await wait(
+      `(() => {const p=document.querySelector('.chat-messages');return p.scrollHeight-p.clientHeight-p.scrollTop>80 && document.querySelector('.scroll-bottom')})()`,
+    );
+    // The first crossing of 80px may still be mid-wheel. Observe the final
+    // offset before issuing a separate positioning operation, never after it.
+    await run(() => {
+      const pane = document.querySelector(".chat-messages");
+      return opticalProbe.stableFrames(
+        () => pane.scrollTop,
+        "transcript wheel",
+      );
+    });
+    return point;
   };
   const parkPointer = () =>
     send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 });
@@ -922,19 +972,11 @@ try {
         { shownLines: 400 },
       );
       await go(chat("design"), ".design-track input:checked");
-      await scrollTo(".design-track");
-      await audit("design", [
-        ".chat-messages",
-        ".design-card",
-        ".design-track",
-        ".design-track label",
-      ]);
-      await picker("other-idea", observeOtherIdea);
-      await observeButton(
-        "submit design",
-        ".design-card > button:last-child",
-        "Submit design and use recommendations for unanswered questions",
-      );
+      await picker("other-idea", observeDesign, {
+        audit,
+        observeButton,
+        wheelAway,
+      });
       await scrollTo(".plan-context");
       await audit("plan", [
         ".workflow-plan:not(.design-card)",
@@ -954,16 +996,7 @@ try {
       await click(`${agreement} > summary`, "Complete delivery agreement");
       // Opening the agreement grows the transcript. Explicitly leave end
       // follow before positioning a paragraph for the typography sample.
-      const readingEdge = await ev(
-        `(()=>{const pane=document.querySelector('.chat-messages'),r=pane.getBoundingClientRect(),x=r.left+12,y=r.top+r.height/2;if(!pane.contains(document.elementFromPoint(x,y))) throw Error('Transcript wheel target obstructed');return {x,y}})()`,
-      );
-      await send("Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        ...readingEdge,
-        deltaX: 0,
-        deltaY: -180,
-      });
-      await wait(`document.querySelector('.scroll-bottom')`);
+      await wheelAway();
       await observeLeading(
         "open agreement",
         `${agreement}[open] > .md p:has(a[href="#plan-notes"])`,

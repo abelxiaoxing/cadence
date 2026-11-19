@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { controlGeometry } from "./measure.mjs";
+import { controlGeometry, textSamples } from "./measure.mjs";
 import { painted } from "./picker-observations.mjs";
 import { dockResult, dockRun } from "./records.mjs";
 
@@ -81,39 +81,148 @@ function designPixels(focused) {
   }
   return { rect: r.toJSON(), focused, value: el.value, points };
 }
-export async function observeOtherIdea(probe, row) {
+function designPosition(selector) {
+  const pane = document.querySelector(".chat-messages"),
+    target = pane.querySelector(selector).getBoundingClientRect(),
+    rect = pane.getBoundingClientRect(),
+    active = document.activeElement;
+  const { scrollTop, scrollHeight, clientHeight } = pane;
+  const left = rect.left + pane.clientLeft,
+    top = rect.top + pane.clientTop;
+  return {
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+    bottom: scrollHeight - clientHeight - scrollTop,
+    latest: !!document.querySelector(".scroll-bottom"),
+    focus: {
+      tag: active.tagName,
+      type: active.type,
+      name:
+        active.getAttribute("aria-label") ||
+        (active.matches("button") ? active.textContent : active.className),
+    },
+    pane: rect.toJSON(),
+    rect: target.toJSON(),
+    visible:
+      target.width > 0 &&
+      target.height > 0 &&
+      target.left >= Math.max(0, left) &&
+      target.right <= Math.min(innerWidth, left + pane.clientWidth) &&
+      target.top >= Math.max(0, top) &&
+      target.bottom <= Math.min(innerHeight, top + clientHeight),
+  };
+}
+
+export async function observeDesign(
+  probe,
+  row,
+  { wheelAway, audit, observeButton },
+) {
   const { run, wait, parkPointer, press } = probe;
+  const options = ".design-card .design-track",
+    input = ".design-card .design-custom input",
+    submit = ".design-card > button:last-child";
+  const position = (selector) => run(designPosition, selector);
   await wait(
-    `document.querySelector('.design-card .design-custom input:enabled:read-write')`,
+    `document.querySelector('${submit}:enabled') && document.querySelector('.plan-context') && (()=>{const p=document.querySelector('.chat-messages');return p.scrollTop>0 && p.scrollHeight-p.clientHeight-p.scrollTop<3})()`,
   );
-  // Allow the transcript and plan to finish their initial size/follow work
-  // before scrolling this particular input (not just its enclosing card).
-  await run(() =>
-    opticalProbe.stableFrames(() => {
-      const pane = document.querySelector(".chat-messages"),
-        input = pane.querySelector(".design-custom input");
-      return [
-        pane.scrollHeight,
-        pane.scrollTop,
-        input.getBoundingClientRect().top,
-      ];
-    }, "design layout"),
-  );
-  await run(() =>
-    document
-      .querySelector(".design-custom input")
-      .scrollIntoView({ block: "center", behavior: "instant" }),
-  );
+  row.wheel = { before: await position(options) };
+  assert.ok(!row.wheel.before.latest && row.wheel.before.bottom < 3);
+  try {
+    row.wheel.point = await wheelAway();
+  } finally {
+    row.wheel.after = await position(options);
+  }
+  assert.ok(row.wheel.after.latest && row.wheel.after.bottom > 80);
   await parkPointer();
-  await painted(probe, row, "rest", () => run(designPixels, false));
-  // Focus the checked radio, not the input. No changes to the draft.
+  row.positions = [];
+  const place = async (selector) => {
+    const entry = { selector, before: await position(selector), captures: [] };
+    row.positions.push(entry);
+    await run(
+      (s) =>
+        document.querySelector(s).scrollIntoView({
+          block: "center",
+          inline: "nearest",
+          behavior: "instant",
+        }),
+      selector,
+    );
+    entry.after = await position(selector);
+    assert.ok(entry.after.visible, `Could not position ${selector}`);
+    // painted() calls locate on either side of one unmodified viewport PNG.
+    // Read only: a lost reading position must fail, not be centered again.
+    return async (state, sample) => {
+      const sides = [];
+      entry.captures.push({ state, sides });
+      await painted(probe, row, state, async () => {
+        const reading = await position(selector);
+        sides.push(reading);
+        assert.ok(
+          reading.visible && reading.latest,
+          `Lost ${selector} while reading`,
+        );
+        assert.equal(reading.scrollTop, entry.after.scrollTop);
+        return { reading, ...(await sample()) };
+      });
+    };
+  };
+  const optionFrame = await place(options);
+  await optionFrame("options", () =>
+    run(() => ({
+      points: [
+        ["label:has(input:checked)", "Frames"],
+        ["label:has(input:not(:checked))", "Everywhere"],
+      ].map(([s, name]) => ({
+        ...opticalProbe.glyphSample(`.design-track ${s}`, name, null, "label"),
+        record: true,
+      })),
+    })),
+  );
+  // Under-text contrast on the visible card, paired with the unmodified
+  // option frame. A live status-bar reading is not a design answer.
+  const { file, sample } = row.frames.at(-1);
+  await audit(
+    "design",
+    [".chat-messages", ".design-card", ".design-track", ".design-track label"],
+    { textRoot: ".design-card", options: { file, readings: sample.readings } },
+  );
+  const inputFrame = await place(input);
+  await inputFrame("rest", () => run(designPixels, false));
+  // Tab from the checked radio, leaving the draft and its selection intact.
   await run(() =>
     document
       .querySelector(".design-track input:checked")
       .focus({ preventScroll: true }),
   );
   await press("Tab", 9);
-  await painted(probe, row, "tab", () => run(designPixels, true));
+  await inputFrame("tab", () => run(designPixels, true));
+  const submitFrame = await place(submit);
+  const button = await observeButton(
+    "submit design",
+    submit,
+    "Submit design and use recommendations for unanswered questions",
+    false,
+  );
+  assert.equal(button.keyboardFocus, true);
+  await submitFrame("submit-tab", async () => {
+    const control = await run(controlGeometry, submit, false);
+    assert.deepEqual(control.visible, control.rect);
+    assert.ok(Object.values(control.hit).every((p) => p.hit));
+    const point = (await run(textSamples)).find(
+      (p) => p.name === "BUTTON focus",
+    );
+    assert.ok(
+      point &&
+        (await run(
+          (s) => document.activeElement.matches(`${s}:enabled:focus-visible`),
+          submit,
+        )),
+      "Missing submit Tab focus",
+    );
+    return { control, points: [{ ...point, record: true }] };
+  });
 }
 
 // Outer frame and sample ownership on the actual open control, not an empty
@@ -193,6 +302,7 @@ function panelPixels(panel, control) {
   const button = el.querySelector(control),
     r = button.getBoundingClientRect();
   const views = panel === ".view-menu-items";
+  let viewState;
   if (mention) {
     if (
       !document.activeElement.matches("textarea") ||
@@ -241,8 +351,27 @@ function panelPixels(panel, control) {
       min: 3,
       record: true,
     });
-    if (views) glyph('[aria-pressed="true"]', "timeline");
-    else if (panel === ".more-menu-items") {
+    if (views) {
+      const selected = el.querySelector('[aria-pressed="true"]');
+      viewState = {
+        selected: selected?.textContent,
+        focus: document.activeElement.textContent,
+        transitions: selected
+          ?.getAnimations()
+          .map((a) => a.transitionProperty || a.id),
+      };
+      if (
+        viewState.selected !== "timeline" ||
+        viewState.focus !== "tools" ||
+        !button.matches('[aria-pressed="false"]') ||
+        selected.matches(":focus,:hover") ||
+        viewState.transitions.length
+      )
+        throw Error(
+          `Expected static Timeline selection and separate Tools focus: ${JSON.stringify(viewState)}`,
+        );
+      glyph('[aria-pressed="true"]', "timeline");
+    } else if (panel === ".more-menu-items") {
       glyph("[aria-pressed]", "Ambient light");
       const state = button.getAttribute("aria-pressed");
       glyph("[aria-pressed] > span", state === "true" ? "●" : "○");
@@ -274,7 +403,7 @@ function panelPixels(panel, control) {
       });
     }
   }
-  return { rect: rect.toJSON(), material, points };
+  return { rect: rect.toJSON(), material, ...(views && { viewState }), points };
 }
 // The fixed gutter point already used for stroke/menu contrast must actually
 // show the plate, not just offer a high ratio on some unrelated backing. Bound

@@ -2701,6 +2701,10 @@ summary:focus-visible,
   padding: 8px 10px;
   text-transform: capitalize;
 }
+/* Selection stays on the current view as keyboard focus moves elsewhere. */
+.view-menu-items > button[aria-pressed] {
+  transition: none;
+}
 .view-menu-items button[aria-pressed="true"] {
   box-shadow: inset 2px 0 var(--accent);
   color: var(--accent-text);
