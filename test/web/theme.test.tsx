@@ -383,7 +383,9 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
     ".more-menu-items",
     ".img-lightbox-panel",
   ])("%s uses the raised menu material with an opaque fallback", (panel) => {
-    const plate = panel === ".model-popover" ? `${panel}::before` : panel;
+    const plate = [".model-popover", ".mention-menu"].includes(panel)
+      ? `${panel}::before`
+      : panel;
     expect(declaration(panel, "border")).toBe("1px solid var(--glass-border)");
     expect(declaration(panel, "border-top-color")).toBe(
       "var(--glass-border-top)",
@@ -402,6 +404,27 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
         scheme,
       )[3],
     ).toBe(1);
+  });
+  it("keeps the mention hint, names and selection rule distinct on the raised plate", () => {
+    const plate = ".mention-menu::before";
+    expect(declaration(plate, "pointer-events")).toBe("none");
+    expect(declaration(".mention-list", "overflow-y")).toBe("auto");
+    const menu = over(
+      ruleColor(plate, "background", scheme),
+      color("--bg", scheme),
+    );
+    const hint = ruleColor(".mention-menu-hint", "color", scheme);
+    const name = ruleColor(".mention-name", "color", scheme);
+    const selected = ".mention-item.active";
+    const stroke = ruleColor(selected, "border-left-color", scheme);
+    for (const backing of [menu, over(color("--grain", scheme), menu)]) {
+      expect(contrast(hint, backing)).toBeGreaterThanOrEqual(AA);
+      const row = over(ruleColor(selected, "background", scheme), backing);
+      for (const side of [row, backing]) {
+        expect(contrast(name, side)).toBeGreaterThanOrEqual(AA);
+        expect(contrast(stroke, side)).toBeGreaterThanOrEqual(GRAPHIC);
+      }
+    }
   });
   it("does not fade the disabled model's label and reason as a group", () => {
     expect(declaration(".model-option:disabled", "opacity")).toBe("1");

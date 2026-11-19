@@ -710,7 +710,11 @@ try {
       await click(".chat-composer textarea");
       await send("Input.insertText", { text: "@" });
       await wait(`document.querySelector('.mention-item')`);
-      await audit("path suggestions", [".mention-menu", ".mention-item"]);
+      await audit("path suggestions", [
+        ".mention-menu",
+        ".mention-list",
+        ".mention-item",
+      ]);
       await picker("mention-material", observeOpenMaterial, ".mention-menu");
       await press("Escape", 27);
       await press("Backspace", 8);
