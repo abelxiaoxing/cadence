@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -73,8 +74,10 @@ import {
   type BranchesView,
 } from "./components/workspace/BranchesPanel";
 import {
+  type ChatDiagnostics,
   ChatWorkspace,
   type ConversationActivity,
+  type ViewerTicket,
 } from "./components/workspace/ChatWorkspace";
 import { FilesPanel } from "./components/workspace/FilesPanel";
 import { InspectorPanel } from "./components/workspace/InspectorPanel";
@@ -339,38 +342,6 @@ export function App({
   if (workspace.workspace || execution.value?.workspaceId)
     chatWorkspace.current =
       workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
-  const preparation = (purpose: ExecutionPreparation) =>
-    onPrepareExecution && !signInRequired
-      ? async (
-          signal: AbortSignal,
-          location?: ConversationLocation,
-          progress?: PreparationProgress,
-        ) => {
-          access.check();
-          // Invalidate captured stop handlers before the preparation or any
-          // render it schedules. A same-epoch viewer replacement is still a handoff.
-          lifetime.current.depart();
-          setHandoffs((count) => count + 1);
-          try {
-            const epoch = await onPrepareExecution(
-              purpose,
-              signal,
-              location,
-              progress,
-            );
-            access.check();
-            if (signal.aborted) throw new Error("stale");
-            execution.prepared(epoch);
-            const observation = workspace.reconnect();
-            await workspace.whenReady(epoch, signal, observation);
-            access.check();
-          } finally {
-            setHandoffs((count) => count - 1);
-          }
-        }
-      : undefined;
-  const prepareSend = preparation("send");
-  const preparePlan = preparation("plan-validation");
   const chats = useConversationHistory(api.client, conversationAvailable);
   const observingRoster =
     workspace.attached && workspace.workspace && !detached && !signInRequired;
@@ -380,6 +351,7 @@ export function App({
     1000,
     access,
     workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const activeChats =
     chatActivity.value?.kind === "conversation-active"
@@ -401,6 +373,7 @@ export function App({
     2000,
     access,
     workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const background =
     workflowActivity.value?.kind === "workflow-active"
@@ -421,6 +394,7 @@ export function App({
     0,
     access,
     workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const initialCwd =
     newConversationCwd ??
@@ -507,8 +481,15 @@ export function App({
     });
   };
   const lifetime = useRef(new ViewLifetime());
+  const navigation = useRef(0);
+  const departView = useCallback(() => {
+    navigation.current++;
+    lifetime.current.depart();
+  }, []);
   const viewIdentity = canonicalJson({
     taskId,
+    chatId,
+    leaf: activitySelection.leaf ?? null,
     scope,
     selectedSnapshot: selectedSnapshot ?? null,
     detached,
@@ -525,9 +506,9 @@ export function App({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      lifetime.current.depart();
+      departView();
     };
-  }, []);
+  }, [departView]);
   const selectChat = (selected?: string) => {
     setActivityHash("");
     const id = selected ?? crypto.randomUUID();
@@ -537,7 +518,7 @@ export function App({
       setChatRuns([]);
       setReference(undefined);
     }
-    lifetime.current.depart();
+    departView();
     setChatId(id);
     setTaskId(null);
     setScope(null);
@@ -574,7 +555,7 @@ export function App({
     setTaskTitle(title ?? "");
     setScopeTitle("");
     setSelectedSnapshot(undefined);
-    lifetime.current.depart();
+    departView();
     setTaskId(id);
     setScope({ kind: "task", id });
     setHit(undefined);
@@ -599,7 +580,7 @@ export function App({
           setTaskId(null);
           setScope(null);
           setRightTab((tab) => (tab === "task" ? "files" : tab));
-          lifetime.current.depart();
+          departView();
           closeDrawer();
         }
         return;
@@ -610,7 +591,7 @@ export function App({
       setRightTab("task");
       // Same-document links/back navigation observe the exact new task too.
       // Changing a hash never refreshes a grant or replays an action.
-      lifetime.current.depart();
+      departView();
       setSelectedSnapshot(target.snapshotSeq);
       setTaskTitle("");
       setScopeTitle("");
@@ -627,12 +608,12 @@ export function App({
       window.removeEventListener("hashchange", navigate);
       window.removeEventListener("popstate", navigate);
     };
-  }, [closeDrawer]);
+  }, [closeDrawer, departView]);
   const selectScope = (value: Scope, snapshot?: string, label?: string) => {
     setAgent(null);
     setSelectedSnapshot(snapshot);
     setScopeTitle(label ?? "");
-    lifetime.current.depart();
+    departView();
     setScope(value);
     setHit(undefined);
     setDetail(undefined);
@@ -713,34 +694,176 @@ export function App({
   const runs = taskObservation?.snapshot.runs ?? [];
   const resultTicket = lifetime.current.ticket();
   const renderedSignal = workspace.allocationSignal;
+  const roster = workspace.activeRuns;
+  const activeRuns = roster?.status === "complete" ? roster.runs : [];
+  // A matching HTTP workspace is not a current task subscription. In
+  // particular, render-time scope/epoch changes precede observer cleanup.
+  const viewerFresh =
+    attached &&
+    workspace.readCurrent &&
+    !!workspace.epoch &&
+    workspace.workspace?.epoch === workspace.epoch &&
+    !workspace.error &&
+    workspace.transportStatus === "current" &&
+    (taskId
+      ? taskObservation?.connection === "current"
+      : !workspace.observation);
+  const observationFresh = executionReady && viewerFresh;
   // Safety stop needs the exact rendered viewer and run, not a complete
   // history read or live task socket. Never let a retained button borrow the
   // mutable client's next attachment, even when the owner epoch is unchanged.
+  const viewCurrent = useCallback(
+    () =>
+      mounted.current &&
+      lifetime.current.current(resultTicket) &&
+      !access.signal.aborted,
+    [resultTicket, access],
+  );
+  const allocated = useCallback(
+    (epoch?: string) =>
+      viewCurrent() &&
+      renderedSignal?.aborted === false &&
+      attached &&
+      !!workspace.epoch &&
+      workspace.epoch === epoch,
+    [viewCurrent, renderedSignal, attached, workspace.epoch],
+  );
+  const actionsReady = observationFresh && workspace.actions;
+  const actions = useRef(new ViewLifetime());
+  actions.current.select(String(actionsReady));
+  const actionId = actions.current.ticket();
+  const ticket = useMemo<ViewerTicket>(
+    () => ({
+      allocation: renderedSignal,
+      epoch: workspace.epoch,
+      attached: allocated,
+      current: () =>
+        actionsReady &&
+        actions.current.current(actionId) &&
+        allocated(workspace.epoch),
+    }),
+    [renderedSignal, workspace.epoch, allocated, actionsReady, actionId],
+  );
   const canCancelWorkflow: CanCancelWorkflow = (run) =>
-    mounted.current &&
-    lifetime.current.current(resultTicket) &&
-    renderedSignal?.aborted === false &&
-    !access.signal.aborted &&
-    !signInRequired &&
-    attached &&
-    workspace.attachmentVersion > 0 &&
-    run.epoch === workspace.epoch &&
-    workflowLive(run);
+    allocated(run.epoch) && workflowLive(run);
+  const latestRoster = useRef(roster);
+  latestRoster.current = roster;
+  // Only the explicit operation that requested a new observation may receive
+  // its committed action ticket. Older handlers retain their original signal.
+  const claim = useRef<{
+    epoch: string;
+    previous?: AbortSignal;
+    accept(ticket: ViewerTicket): void;
+  }>(undefined);
+  useLayoutEffect(() => {
+    const request = claim.current;
+    if (
+      request &&
+      request.epoch === ticket.epoch &&
+      request.previous !== ticket.allocation &&
+      ticket.current()
+    )
+      request.accept(ticket);
+  });
+  const preparation = (purpose: ExecutionPreparation) =>
+    onPrepareExecution && !signInRequired
+      ? async (
+          signal: AbortSignal,
+          location?: ConversationLocation,
+          progress?: PreparationProgress,
+        ) => {
+          access.check();
+          if (
+            signal.aborted ||
+            !viewCurrent() ||
+            !actions.current.current(actionId) ||
+            renderedSignal?.aborted ||
+            handoffs ||
+            claim.current
+          )
+            throw new Error("stale");
+          const selected = navigation.current;
+          const departed = () =>
+            signal.aborted || navigation.current !== selected;
+          lifetime.current.depart();
+          setHandoffs((count) => count + 1);
+          try {
+            const epoch = await onPrepareExecution(
+              purpose,
+              signal,
+              location,
+              progress,
+            );
+            access.check();
+            if (departed()) throw new Error("stale");
+            execution.prepared(epoch);
+            const observation = workspace.reconnect();
+            await workspace.whenReady(epoch, signal, observation);
+            access.check();
+            if (departed()) throw new Error("stale");
+            // whenReady observes service data, not a React commit. Release
+            // the handoff in finally and wait within the same caller deadline.
+            return new Promise<ViewerTicket>((resolve, reject) => {
+              const clear = () => {
+                claim.current = undefined;
+                signal.removeEventListener("abort", stop);
+                access.signal.removeEventListener("abort", stop);
+              };
+              const stop = () => {
+                clear();
+                reject(new Error("stale"));
+              };
+              signal.addEventListener("abort", stop, { once: true });
+              access.signal.addEventListener("abort", stop, { once: true });
+              claim.current = {
+                epoch,
+                previous: renderedSignal,
+                accept(next) {
+                  clear();
+                  resolve(next);
+                },
+              };
+            }).then(async (next) => {
+              // Pin the committed allocation through the final observer check.
+              if (departed() || !next.current()) throw new Error("stale");
+              await workspace.whenReady(epoch, signal, observation);
+              if (departed() || !next.current()) throw new Error("stale");
+              return next;
+            });
+          } finally {
+            setHandoffs((count) => count - 1);
+          }
+        }
+      : undefined;
+  const prepareSend = preparation("send");
+  const preparePlan = preparation("plan-validation");
   const result = (value: CommandObservation) => {
     setReceipt(value);
-    if (value.receipt && lifetime.current.current(resultTicket))
+    if (value.receipt && lifetime.current.current(resultTicket)) {
+      actions.current.depart();
       workspace.refresh();
+    }
   };
   const cancel = (runId: string) => {
+    const original = activeRuns.find((run) => run.runId === runId);
+    const latest = latestRoster.current;
     if (
-      access.signal.aborted ||
-      canceling.has(runId) ||
-      !attached ||
-      !workspace.activeRuns
+      !original ||
+      !allocated(original.epoch) ||
+      latest?.status !== "complete" ||
+      latest.epoch !== original.epoch ||
+      !latest.runs.some(
+        (run) =>
+          run.runId === runId &&
+          run.taskId === original.taskId &&
+          run.operationId === original.operationId &&
+          run.epoch === original.epoch,
+      ) ||
+      canceling.has(runId)
     )
       return;
     const commandId = crypto.randomUUID(),
-      epoch = workspace.activeRuns.epoch;
+      epoch = original.epoch;
     setCanceling((prev) => new Set(prev).add(runId));
     setReceipt({
       commandId,
@@ -779,6 +902,38 @@ export function App({
           });
       });
   };
+  const chatKey = JSON.stringify([
+    project?.id,
+    chatId,
+    activitySelection.leaf,
+    project?.epoch,
+    execution.value?.epoch ?? workspace.epoch,
+  ]);
+  const latestChat = useRef(chatKey);
+  latestChat.current = chatKey;
+  const navTicket = navigation.current;
+  const readSelected = useCallback(
+    () =>
+      mounted.current &&
+      !access.signal.aborted &&
+      navigation.current === navTicket &&
+      latestChat.current === chatKey,
+    [chatKey, navTicket, access],
+  );
+  const [report, setReport] = useState<{
+    key: string;
+    diagnostics: ChatDiagnostics;
+  }>();
+  const onDiagnostics = useCallback(
+    (diagnostics: ChatDiagnostics) => {
+      if (readSelected()) setReport({ key: chatKey, diagnostics });
+    },
+    [chatKey, readSelected],
+  );
+  const chatIssues =
+    report?.key === chatKey && conversationAvailable
+      ? report.diagnostics
+      : undefined;
   if (detached)
     return (
       <main className="entry">
@@ -802,20 +957,6 @@ export function App({
         </button>
       </main>
     );
-  const roster = workspace.activeRuns;
-  const activeRuns = roster?.status === "complete" ? roster.runs : [];
-  // A matching HTTP workspace is not a current task subscription. In
-  // particular, render-time scope/epoch changes precede observer cleanup.
-  const viewerFresh =
-    attached &&
-    !!workspace.epoch &&
-    workspace.workspace?.epoch === workspace.epoch &&
-    !workspace.error &&
-    workspace.transportStatus === "current" &&
-    (taskId
-      ? taskObservation?.connection === "current"
-      : !workspace.observation);
-  const observationFresh = executionReady && viewerFresh;
   const connecting = initialViewer.current && !projectError && !viewerError;
   const modelAvailability: ModelAvailability = executionStopped
     ? {
@@ -835,7 +976,12 @@ export function App({
               : "unavailable",
         };
   const refreshConnection = () => {
-    if (access.signal.aborted || entryRevoked) return;
+    if (!readSelected() || entryRevoked) return;
+    actions.current.depart();
+    chatIssues?.retry();
+    if (workflowActivity.error) workflowActivity.refresh();
+    if (chatActivity.error) chatActivity.refresh();
+    if (projects.error) projects.refresh();
     entryObservation?.refresh();
     retained.refresh();
     if (observeExecution) workspace.refresh();
@@ -850,7 +996,7 @@ export function App({
         onDisconnect={() => {
           setSearchOpen(false);
           setExportOpen(false);
-          lifetime.current.depart();
+          departView();
           setDetached(true);
         }}
         inspectorLabel={
@@ -1087,8 +1233,9 @@ export function App({
                 conversationId={chatId}
                 onConversation={selectChat}
                 onNewConversation={() => selectChat()}
+                actionCurrent={ticket.current}
                 actionsUnavailable={
-                  observationFresh
+                  actionsReady
                     ? ""
                     : executionStopped
                       ? t(
@@ -1212,12 +1359,20 @@ export function App({
                 }
                 prepareForSend={prepareSend}
                 prepareForPlan={preparePlan}
-                actionsReady={observationFresh}
+                actionsReady={actionsReady}
+                viewer={ticket}
+                access={access}
+                readSelected={readSelected}
+                onDiagnostics={onDiagnostics}
                 observe={summaryChanges}
                 available={conversationAvailable}
                 canInterrupt={attached}
                 canCancelWorkflow={canCancelWorkflow}
-                enabled={prepareSend ? conversationAvailable : observationFresh}
+                enabled={
+                  prepareSend
+                    ? conversationAvailable && !handoffs
+                    : actionsReady
+                }
                 modelAvailability={modelAvailability}
                 previewModels={signInRequired ? undefined : previewModels}
                 initialDraft={
@@ -1227,11 +1382,11 @@ export function App({
                 }
                 onDraftApplied={() => onDraftApplied?.(chatId)}
                 onModelChanged={() => {
-                  lifetime.current.depart();
                   refreshConnection();
                 }}
                 onChanged={() => {
                   chats.refresh();
+                  actions.current.depart();
                   workspace.refresh();
                 }}
                 reference={reference}
@@ -1482,7 +1637,7 @@ export function App({
         status={
           <>
             <WorkspaceConnection
-              key={`${project?.id ?? "direct"}:${taskId ?? "chat"}`}
+              key={`${chatKey}:${taskId ?? "chat"}`}
               phase={
                 entryObservation?.pending
                   ? "updating"
@@ -1504,6 +1659,16 @@ export function App({
               projectStatus={project && execution.readiness}
               projectError={projectError}
               viewerError={viewerError}
+              prepareOnly={chatIssues?.prepareOnly}
+              readErrors={[
+                ["Project directories: {code}.", projects.error],
+                ["Conversation activity: {code}.", chatActivity.error],
+                ["Workflow activity: {code}.", workflowActivity.error],
+                ["Conversation context: {code}.", chatIssues?.context],
+                ["Conversation read: {code}.", chatIssues?.head],
+                ["Workflow observation: {code}.", chatIssues?.workflow],
+                ["Recorded workflows: {code}.", chatIssues?.runs],
+              ]}
               historyError={historyError}
               retained={
                 !!workspace.workspace ||

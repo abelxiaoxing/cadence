@@ -311,6 +311,13 @@ export const zh = {
     "消息未被接受（{code}）。草稿已保留。",
   "Send outcome is unknown ({code}). Observe the original command before sending again; no automatic retry.":
     "发送结果未知（{code}）。再次发送前请观察原命令的结果；不会自动重试。",
+  "Conversation context: {code}.": "对话上下文：{code}。",
+  "Conversation read: {code}.": "对话读取：{code}。",
+  "Project directories: {code}.": "项目目录：{code}。",
+  "Conversation activity: {code}.": "活跃对话：{code}。",
+  "Workflow activity: {code}.": "活跃工作流：{code}。",
+  "Recorded workflows: {code}.": "已记录的工作流：{code}。",
+  "Workflow observation: {code}.": "工作流观察：{code}。",
   "Project observation: {code}.": "项目观察：{code}。",
   "Project readiness unknown": "项目准备状态未知",
   "Project observation stale": "项目观察已过期",

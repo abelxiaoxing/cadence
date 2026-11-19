@@ -261,6 +261,7 @@ export function TaskSidebar({
   onConversation,
   onNewConversation,
   actionsUnavailable = "",
+  actionCurrent = () => !actionsUnavailable,
   onConversationsChanged,
   workflows,
   workflowLinks = [],
@@ -295,6 +296,7 @@ export function TaskSidebar({
   /** Why rename and archive cannot be requested now (they need a live
    * authenticated execution owner); empty when they can. */
   actionsUnavailable?: string;
+  actionCurrent?(): boolean;
   /** A rename or archive was accepted, or its outcome is unknown: the
    * conversation lists should be read again. */
   onConversationsChanged?: (id: string) => void;
@@ -453,12 +455,18 @@ export function TaskSidebar({
         row={commands.states.get(chat.id)}
         unavailable={actionsUnavailable}
         onArchive={
-          live ? undefined : (value) => commands.archive(chat.id, value)
+          live
+            ? undefined
+            : (value) => {
+                if (actionCurrent()) commands.archive(chat.id, value);
+              }
         }
         onRename={
           live || chat.archived
             ? undefined
-            : (name) => commands.rename(chat.id, name)
+            : (name) => {
+                if (actionCurrent()) commands.rename(chat.id, name);
+              }
         }
       />
     );

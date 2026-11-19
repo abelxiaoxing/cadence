@@ -32,6 +32,8 @@ export function WorkspaceConnection({
   projectError,
   viewerError,
   historyError,
+  readErrors = [],
+  prepareOnly,
   retained,
   latency,
   onRefresh,
@@ -42,6 +44,8 @@ export function WorkspaceConnection({
   projectError?: string;
   viewerError?: string;
   historyError?: string;
+  readErrors?: readonly (readonly [MessageKey, string | undefined])[];
+  prepareOnly?: boolean;
   retained: boolean;
   latency: number | null;
   onRefresh(): void;
@@ -87,7 +91,8 @@ export function WorkspaceConnection({
     const timer = setTimeout(() => setOverdue(true), LIMITS.staleMs);
     return () => clearTimeout(timer);
   }, [pending]);
-  const unavailable = !!cause || (pending && overdue);
+  const unavailable =
+    !!cause || readErrors.some(([, code]) => code) || (pending && overdue);
   const label = t(
     revoked
       ? "Sign-in required"
@@ -167,6 +172,17 @@ export function WorkspaceConnection({
               reason: diagnostic(cause.historyError),
             })}
           </p>
+        )}
+        {prepareOnly && (
+          <p>
+            {t(
+              "Conversation context is unavailable. Send can prepare execution, but cannot submit this draft until the context is observed.",
+            )}
+          </p>
+        )}
+        {readErrors.map(
+          ([label, code]) =>
+            code && <p key={label}>{t(label, { code: diagnostic(code) })}</p>,
         )}
         {cause?.viewerError && (
           <p>

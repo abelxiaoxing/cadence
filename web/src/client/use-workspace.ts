@@ -10,6 +10,7 @@ import {
 } from "./observer";
 
 const closed: ViewerState = {
+  readCurrent: false,
   actions: false,
   attached: false,
   transportStatus: "closed",

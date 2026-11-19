@@ -15,6 +15,7 @@ import type {
 import { PROJECT_ASSOCIATION_HEADER } from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { LIMITS, publicError } from "../../src/service-contract.ts";
+import { HISTORY_CSRF_HEADER } from "../../src/service-wire.ts";
 import { App } from "../../web/src/App";
 import { browserClient } from "../../web/src/client/browser";
 import { LAST_PROJECT_STORAGE_KEY } from "../../web/src/client/last-project";
@@ -31,6 +32,7 @@ import { Workbench } from "../../web/src/Workbench";
 import { context, coverage, hash, id } from "./fixtures";
 
 const viewer: ViewerState = {
+  readCurrent: false,
   actions: false,
   attached: false,
   transportStatus: "closed",
@@ -44,6 +46,7 @@ const execution = {
 };
 let readProjectHeader = false,
   liveViewer = false,
+  liveChat = false,
   readTaskHistory = false;
 const reads = {
   project: vi.fn(),
@@ -139,10 +142,33 @@ let workflow: WorkflowRun | undefined;
 type StopSurface = "line" | "sidebar" | "card";
 type StopButton = { disabled: boolean; onClick(): void };
 const stopButtons = new Map<StopSurface, StopButton>();
+const controls = new Map<string, StopButton>();
+let submit: (() => void) | undefined;
 vi.mock("react/jsx-dev-runtime", async (original) => {
   const actual = await original<typeof import("react/jsx-dev-runtime")>();
   const jsxDEV: typeof actual.jsxDEV = (...args) => {
     const el = actual.jsxDEV(...args);
+    if (
+      (readTaskHistory || liveChat || liveViewer) &&
+      el.type === "button" &&
+      isValidElement<ComponentProps<"button">>(el)
+    ) {
+      const label =
+        el.props["aria-label"] ??
+        Children.toArray(el.props.children).find((c) => typeof c === "string");
+      if (typeof label === "string")
+        controls.set(label, el.props as StopButton);
+    }
+    if (
+      liveChat &&
+      el.type === "form" &&
+      isValidElement<{
+        className: string;
+        onSubmit(event: { preventDefault(): void }): void;
+      }>(el) &&
+      el.props.className === "chat-composer"
+    )
+      submit = () => el.props.onSubmit({ preventDefault() {} });
     if (
       workflow &&
       el.type === "button" &&
@@ -267,6 +293,7 @@ function attachViewer() {
 }
 function ready() {
   if (!viewer.attached) attachViewer();
+  viewer.readCurrent = true;
   viewer.actions = true;
   viewer.transportStatus = "current";
   viewer.workspace = {
@@ -316,6 +343,7 @@ const pageCells: Record<"tasks" | "messages" | "runs", unknown[]> = {
   messages: [],
   runs: [],
 };
+const chatCells: unknown[] = [];
 const retainedCells: unknown[] = [];
 const appCells: unknown[] = [],
   workbenchCells: unknown[] = [],
@@ -362,7 +390,13 @@ vi.mock("react", async (original) => {
     },
     useMemo<T>(factory: () => T, deps: readonly unknown[]) {
       const value = real.useMemo(factory, deps);
-      if (active !== workspaceCells && active !== retainedCells) return value;
+      if (
+        active !== workspaceCells &&
+        active !== retainedCells &&
+        active !== chatCells &&
+        active !== appCells
+      )
+        return value;
       const at = index++;
       const previous = active[at] as
         | { value: T; deps: readonly unknown[] }
@@ -374,7 +408,12 @@ vi.mock("react", async (original) => {
     },
     useCallback(fn: unknown, deps: readonly unknown[]) {
       const callback = real.useCallback(fn as () => void, deps);
-      if (active !== workbenchCells) return callback;
+      if (
+        active !== workbenchCells &&
+        active !== chatCells &&
+        active !== appCells
+      )
+        return callback;
       const at = index++;
       const prior = active[at] as
         | { fn: unknown; deps: readonly unknown[] }
@@ -383,9 +422,14 @@ vi.mock("react", async (original) => {
       active[at] = { fn, deps };
       return fn;
     },
+    useLayoutEffect(effect: EffectCallback, deps?: readonly unknown[]) {
+      real.useLayoutEffect(effect, deps);
+      if (active === appCells) effects.set(appCells, effect);
+    },
     useEffect(effect: EffectCallback, deps?: readonly unknown[]) {
       real.useEffect(effect, deps);
       if (
+        active !== chatCells &&
         active !== footerCells &&
         active !== projectCells &&
         active !== workspaceCells &&
@@ -419,7 +463,11 @@ vi.mock(
       ...real,
       ChatWorkspace: (props: typeof chatProps) => {
         chatProps = props;
-        return <real.ChatWorkspace {...props} />;
+        return liveChat ? (
+          retain(chatCells, () => real.ChatWorkspace(props))
+        ) : (
+          <real.ChatWorkspace {...props} />
+        );
       },
     };
   },
@@ -527,6 +575,11 @@ function connectionMarkup(html: string) {
     /workspace-notice|workspace-connection|Latest state unavailable|当前无法获取最新状态|Started work may still|已开始的工作可能仍在/,
   );
   expect(html.match(/class="workspace-connection"/g)).toHaveLength(1);
+  const transcript = html.split('class="chat-workspace"')[1];
+  if (transcript?.includes('class="conversation-header"'))
+    expect(transcript.split("</header>")[1]).toMatch(
+      /^<div class="chat-messages-wrap">/,
+    );
   const details = footer.match(
     /<details class="workspace-connection">(.*?)<\/details>/s,
   )?.[1];
@@ -537,6 +590,8 @@ function connectionMarkup(html: string) {
 }
 afterEach(() => {
   workflow = undefined;
+  controls.clear();
+  submit = undefined;
   stopButtons.clear();
   for (const cleanup of cleanups.values()) cleanup();
   effects.clear();
@@ -549,7 +604,8 @@ afterEach(() => {
       0;
   for (const cells of [retainedCells, ...Object.values(pageCells)])
     cells.length = 0;
-  readTaskHistory = readProjectHeader = liveViewer = false;
+  chatCells.length = 0;
+  liveChat = readTaskHistory = readProjectHeader = liveViewer = false;
   execution.value = undefined;
   execution.error = undefined;
   execution.fresh = true;
@@ -561,6 +617,7 @@ afterEach(() => {
     error: undefined,
     observation: undefined,
     activeRuns: undefined,
+    readCurrent: false,
     actions: false,
     transportStatus: "closed",
     attachmentVersion: 0,
@@ -656,6 +713,11 @@ for (const locale of ["en", "zh"] as const) {
     execution.error = undefined;
     expect(render(locale, options).details).toContain("timeout");
     execution.fresh = true;
+    viewer.readCurrent = false; // the project has replied; this viewer has not
+    expect(render(locale, options).summary).not.toContain(readyLabel);
+    expect(chatProps.actionsReady).toBe(false);
+    expect(chatProps.modelAvailability.status).not.toBe("ready");
+    viewer.readCurrent = true;
     expect(render(locale, options).summary).toContain(readyLabel);
     expect(chatProps.actionsReady).toBe(true);
   });
@@ -750,9 +812,12 @@ it("an independent owner is browse-only until explicit preparation; even a same-
   expect(chatProps.available).toBe(true);
   expect(chatProps.enabled).toBe(true);
   expect(chatProps.actionsReady).toBe(false);
+  const oldPrepare = chatProps.prepareForSend;
   connectionAction();
   expect(reads.viewer).not.toHaveBeenCalled();
+  await expect(oldPrepare?.(new AbortController().signal)).rejects.toThrow("stale");
   expect(prepare).not.toHaveBeenCalled();
+  render("en", options);
   reads.prepared.mockImplementationOnce(() => {
     execution.association = "associated";
   });
@@ -784,6 +849,8 @@ it("an independent owner is browse-only until explicit preparation; even a same-
   expect(chatProps.canInterrupt).toBe(false);
   expect(sidebar.canCancel).toBe(false);
   release();
+  await Promise.resolve();
+  render("en", options); // commit the new viewer and claim its ticket
   await pending;
   expect(render("en", options).summary).toContain("Chat ready");
   expect(chatProps.actionsReady).toBe(true);
@@ -996,6 +1063,8 @@ it.each(["sidebar", "line", "card"] as const)(
     waiting.onClick();
     attachViewer();
     finish();
+    await Promise.resolve();
+    draw();
     await handoff;
     expect(button().disabled).toBe(false);
     original.onClick(); // cannot borrow the replacement
@@ -1118,12 +1187,16 @@ it("the selected project GET's actual association header reaches App; changing o
   // Authenticated confirmation is also real evidence. No session should be
   // needed to *begin* this preparation, nor a second GET to confirm its reply.
   const signal = new AbortController().signal;
-  await chatProps.prepareForSend?.(signal);
+  const handoff = chatProps.prepareForSend?.(signal);
+  await flush();
   render("en", options);
   expect(prepare).toHaveBeenCalledTimes(1);
   expect(reads.whenReady).toHaveBeenCalledWith(epoch, signal, 7);
   expect(reads.observe.mock.lastCall?.slice(1, 4)).toEqual([null, true, epoch]);
   expect(chatProps.actionsReady).toBe(false); // viewer has not supplied data
+  ready();
+  render("en", options);
+  await handoff;
 });
 
 // Retain the real Workbench effects and render its actual setup / selected App.
@@ -1629,6 +1702,7 @@ async function connectedTaskViewer() {
     error: publicError("unavailable"),
   };
   const snapshot = { ...viewer.observation?.snapshot, context: ctx };
+  const active = {epoch,taskId:task,runId:id(),operationId:id(),kind:"start",stage:"active"};
   const running = () =>
     Response.json(
       { kind: "project-observation", status: "running", workspaceId, epoch },
@@ -1676,7 +1750,7 @@ async function connectedTaskViewer() {
       );
     if (path === "active-runs")
       return Promise.resolve(
-        ok({ workspaceId, storeId, epoch, status: "complete", runs: [] }),
+        ok({ workspaceId, storeId, epoch, status: "complete", runs: [active] }),
       );
     if (path === "workspace")
       return Promise.resolve(
@@ -1684,6 +1758,7 @@ async function connectedTaskViewer() {
       );
     if (path === "snapshot") return Promise.resolve(ok(snapshot));
     if (path === "detach") return Promise.resolve(ok(null));
+    if (path === "cancel") return Promise.resolve(Response.json({kind:"error",error:publicError("conflict")}));
     throw new Error(`unexpected request: ${path}`);
   });
   const options = { project: true, task: true };
@@ -1710,6 +1785,21 @@ async function connectedTaskViewer() {
     },
   };
 }
+it("a successful project refresh cannot settle the viewer's outstanding snapshot", async () => {
+  const f = await connectedTaskViewer();
+  f.hold();
+  connectionAction();
+  render("en", f.options);
+  await flush();
+  f.waiting.get(hash)?.reply(f.running());
+  await flush();
+  expect(render("en", f.options).summary).toContain("Updating state…");
+  expect(sidebar.actionsUnavailable).toBeTruthy();
+  f.waiting.get("snapshot")?.reply(f.ok(f.snapshot));
+  await flush();
+  expect(render("en", f.options).summary).toContain("Task up to date");
+  expect(sidebar.actionsUnavailable).toBe("");
+});
 it.each(["project", "viewer"])(
   "a %s refusal wins the race with the other chain's pending 200 and the old task subscription",
   async (source) => {
@@ -1770,7 +1860,10 @@ it.each(["project", "viewer"])(
 
 it("a task viewer replaced between React commits cannot lend its new allocation to the previous workflow Stop button", async () => {
   workflow = activeWorkflow();
-  const { socket, sockets, calls } = await connectedTaskViewer();
+  const { options, socket, sockets, calls } = await connectedTaskViewer();
+  const cancelLabel = "Cancel run — request stop";
+  const oldCancel = controls.get(cancelLabel);
+  expect(oldCancel?.disabled).toBe(false);
   const old = stopButtons.get("sidebar");
   expect(old?.disabled).toBe(false);
   socket.dispatchEvent(new Event("close"));
@@ -1783,7 +1876,13 @@ it("a task viewer replaced between React commits cannot lend its new allocation 
   expect(sessions[1].attachment).toBeTruthy();
   expect(sessions[1].attachment).not.toBe(sessions[0].attachment);
   old?.onClick();
-  expect(calls.filter((c) => c.path === "command")).toEqual([]);
+  oldCancel?.onClick();
+  expect(calls.filter((c) => c.path === "command" || c.path === "cancel")).toEqual([]);
+  render("en", options); // No new WS frame; safety still uses the exact viewer.
+  const currentCancel = controls.get(cancelLabel);
+  expect(currentCancel?.disabled).toBe(false);
+  currentCancel?.onClick();
+  expect(calls.filter((c) => c.path === "cancel")).toEqual([{path:"cancel",method:"POST",attachment:sessions[1].attachment}]);
 });
 
 it("a completed readiness callback cannot finish preparation after access was denied", async () => {
@@ -1811,7 +1910,7 @@ it("a completed readiness callback cannot finish preparation after access was de
   expect(prepare).toHaveBeenCalledOnce();
 });
 
-function independentHistory() {
+function independentHistory(paged = false) {
   readTaskHistory = liveViewer = true;
   vi.useFakeTimers();
   observed();
@@ -1827,7 +1926,12 @@ function independentHistory() {
   vi.stubGlobal("WebSocket", socket);
   const message = id(),
     resultCall = id();
-  const ok = (value: unknown) => Response.json({ kind: "ok", value });
+  const challenge = id();
+  const ok = (value: unknown) =>
+    Response.json(
+      { kind: "ok", value },
+      { headers: { [HISTORY_CSRF_HEADER]: challenge } },
+    );
   const bootstrap = (seq: string, changed = {}) =>
     ok({
       workspaceId,
@@ -1856,7 +1960,25 @@ function independentHistory() {
       return new Promise<Response>((reply) =>
         workspaces.push({ reply, signal: init?.signal }),
       );
-    const req = JSON.parse(target.searchParams.get("request") ?? "null");
+    const req = JSON.parse(
+      String(init?.body ?? target.searchParams.get("request") ?? "null"),
+    );
+    if (paged && route === "messages") {
+      if (init?.method === "GET")
+        return Promise.resolve(
+          ok({
+            kind: "progress",
+            request: req,
+            coverage,
+            next: { ...req, navigation: "fixture-proof" },
+          }),
+        );
+      expect(target.search).toBe("");
+      expect(new Headers(init?.headers).get(HISTORY_CSRF_HEADER)).toBe(
+        challenge,
+      );
+      expect(req.navigation).toBe("fixture-proof");
+    }
     if (route === "messages" && refusePage)
       return Promise.resolve(new Response("", { status: 401 }));
     expect(req).toMatchObject({
@@ -1929,7 +2051,7 @@ function independentHistory() {
 it.each(["en", "zh"] as const)(
   "%s: #task reads a retained task and its message without a viewer, even after a hung bootstrap",
   async (locale) => {
-    const f = independentHistory();
+    const f = independentHistory(true);
     render(locale, f.options);
     const late = partialBody({
       kind: "error",
@@ -1949,6 +2071,15 @@ it.each(["en", "zh"] as const)(
     await flush();
     render(locale, f.options);
     await flush();
+    const first = render(locale, f.options);
+    expect(first.html).not.toContain(`data-msg-id="${f.message}"`);
+    const continuation = controls.get(
+      locale === "en" ? "Continue validation" : "继续验证",
+    );
+    expect(continuation?.disabled).toBe(false);
+    continuation?.onClick();
+    render(locale, f.options);
+    await flush();
     const view = render(locale, f.options);
     expect(view.summary).toContain(
       locale === "en" ? "Browsing only" : "仅浏览",
@@ -1960,11 +2091,12 @@ it.each(["en", "zh"] as const)(
     expect(sidebar.activeRuns).toBeUndefined();
     expect(sidebar.canCancel).toBe(false);
     expect(sidebar.actionsUnavailable).toBeTruthy();
-    expect(f.paths.sort()).toEqual(
-      ["messages", "runs", "tasks", "workspace", "workspace"].map(
+    expect(f.paths.sort()).toEqual([
+      ...["messages", "runs", "tasks", "workspace", "workspace"].map(
         (route) => `GET /projects/${hash}/api/v1/${route}`,
       ),
-    );
+      `POST /projects/${hash}/api/v1/messages`,
+    ]);
     expect(f.socket).not.toHaveBeenCalled();
     expect(prepare).not.toHaveBeenCalled();
   },
@@ -2031,3 +2163,313 @@ it.each(["task", "owner", "project", "association", "access", "unmount"])(
     expect(prepare).not.toHaveBeenCalled();
   },
 );
+
+/** Actual ChatWorkspace hooks and controls under the selected App. Only the
+ * network, viewer lifecycle, commit clock and DOM measurement are fixtures. */
+function openedChat(project: boolean, running = false) {
+  liveChat = true;
+  vi.useFakeTimers();
+  observed();
+  ready();
+  const cwd = "/fixture";
+  const location = new URL(`http://127.0.0.1:43210/app#chat=${chat}`);
+  vi.stubGlobal("window", { location });
+  vi.stubGlobal("history", {
+    state: { cadenceConversationId: chat, cadenceCwd: cwd },
+    replaceState: vi.fn(),
+  });
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) => (key.endsWith(`:${chat}`) ? "my draft" : null),
+    setItem() {},
+    removeItem() {},
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const calls: string[] = [];
+  const failures = new Set<string>();
+  const turnId = id(),
+    inputId = id();
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    const target = new URL(url);
+    expect(target.pathname).toBe(
+      `${project ? `/projects/${hash}` : ""}/api/v1/workbench/read`,
+    );
+    expect(init?.method).toBe("GET");
+    const { kind } = JSON.parse(target.searchParams.get("request") ?? "null");
+    calls.push(kind);
+    const ok = (value: unknown) =>
+      Promise.resolve(Response.json({ kind: "ok", value }));
+    if (failures.has(kind))
+      return Promise.resolve(
+        Response.json(
+          { kind: "error", error: publicError("unavailable") },
+          { status: 503 },
+        ),
+      );
+    if (kind === "conversation-context")
+      return ok({ kind, context: { id: chat, cwd, revision: 0, model: null } });
+    if (kind === "cadence-conversation")
+      return ok({
+        kind,
+        state: {
+          id: chat,
+          enabled: false,
+          revision: 0,
+          head: null,
+          proposal: null,
+          runs: [],
+        },
+      });
+    if (kind === "conversation")
+      return ok({
+        kind,
+        summary: running
+          ? {
+              id: chat,
+              title: "Active reply",
+              status: "running",
+              origin: "webui",
+              updatedAt: 1,
+              leaf: null,
+              live: { epoch, commandId: turnId },
+            }
+          : null,
+        leaf: null,
+        continues: true,
+        turns: 0,
+        branches: 0,
+        runs: [],
+        attempt: null,
+        pending: running
+          ? [{ commandId: inputId, mode: "queue", text: "waiting" }]
+          : [],
+      });
+    if (kind === "conversation-tree")
+      return ok({ kind, conversationId: chat, nodes: [], truncated: false });
+    return Promise.resolve(
+      Response.json({ kind: "error", error: publicError("unavailable") }),
+    );
+  });
+  const api = browserClient(project ? hash : undefined);
+  const draw = (locale: "en" | "zh" = "en") => render(locale, { project, api });
+  // Advance only ready microtasks/commits, never an idle poll or retry timer.
+  const settle = async (locale: "en" | "zh" = "en") => {
+    for (let i = 0; i < 4; i++) {
+      draw(locale);
+      await flush();
+    }
+    return draw(locale);
+  };
+  return { api, draw, settle, failures, calls, turnId, inputId };
+}
+for (const locale of ["en", "zh"] as const) {
+  it.each([true, false])(
+    `${locale}: project=%s chat read faults and recovery stay in the fixed disclosure; retry reads each failed source`,
+    async (project) => {
+      const f = openedChat(project);
+      const sources = [
+        "conversation-context",
+        "conversation",
+        "cadence-conversation",
+      ];
+      for (const kind of sources) f.failures.add(kind);
+      const failed = await f.settle(locale);
+      expect(failed.summary).toContain(
+        locale === "en" ? "Last known state" : "仅有上次读取的状态",
+      );
+      for (const label of locale === "en"
+        ? [
+            "Conversation context:",
+            "Conversation read:",
+            "Workflow observation:",
+          ]
+        : ["对话上下文：", "对话读取：", "工作流观察："])
+        expect(failed.details).toContain(label);
+      const transcript = failed.html
+        .split('class="chat-workspace"')[1]
+        .split("</form>")[0];
+      expect(transcript).not.toContain('class="banner-notice"');
+      f.failures.clear();
+      const before = f.calls.length;
+      connectionAction();
+      const recovered = await f.settle(locale);
+      for (const kind of sources) expect(f.calls.slice(before)).toContain(kind);
+      expect(recovered.summary).toContain(
+        locale === "en" ? "Chat ready" : "可以开始对话",
+      );
+      expect(recovered.details).not.toContain("unavailable");
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+}
+it.each([
+  ["Stop response", "interrupt"],
+  ["Steer this reply", "conversation-input"],
+  ["Queue behind this reply", "conversation-input"],
+  ["Withdraw", "conversation-input-cancel"],
+  ["Cancel run — request stop", "cancel"],
+] as const)(
+  "%s checks the rendered allocation and exact target at dispatch, not the next same-epoch viewer",
+  async (label, kind) => {
+    const f = openedChat(true, true);
+    const runId = id();
+    viewer.activeRuns = {
+      epoch,
+      workspaceId,
+      storeId,
+      status: "complete",
+      runs: [
+        {
+          epoch,
+          taskId: task,
+          runId,
+          operationId: id(),
+          kind: "start",
+          stage: "active",
+        },
+      ],
+    };
+    const refusal = { kind: "error" as const, error: publicError("conflict") };
+    const command = vi
+      .spyOn(f.api.client, "workbenchCommand")
+      .mockResolvedValue(refusal);
+    const cancel = vi.spyOn(f.api.client, "cancel").mockResolvedValue(refusal);
+    await f.settle();
+    const old = controls.get(label);
+    expect(old).toBeDefined();
+    expect(old?.disabled).not.toBe(true);
+    attachViewer(); // no React render yet; mutable transport now serves the successor
+    old?.onClick();
+    expect(command).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    if (kind === "interrupt" || kind === "cancel") {
+      viewer.readCurrent = viewer.actions = false;
+      viewer.error = "timeout";
+    }
+    f.draw();
+    const current = controls.get(label);
+    expect(current).toBeDefined();
+    expect(current?.disabled).not.toBe(true);
+    current?.onClick();
+    if (kind === "cancel")
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({
+        epoch,
+        runId,
+        commandId: expect.any(String),
+      });
+    else
+      expect(command).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          kind,
+          conversationId: chat,
+          epoch,
+          turnId: f.turnId,
+          ...(kind === "conversation-input-cancel"
+            ? { inputId: f.inputId }
+            : {}),
+        }),
+      );
+    expect(prepare).not.toHaveBeenCalled();
+  },
+);
+
+const sendCatalog = () => ({
+  kind: "ok" as const,
+  value: {
+    version: {
+      epoch,
+      accessGeneration: 1,
+      configRev: 1,
+      catalogId: id(),
+      conversation: { id: chat, cwd: "/fixture" },
+    },
+    selected: context().model,
+    entries: [],
+    status: "complete" as const,
+    withheld: 0,
+    remembered: null,
+  },
+});
+it.each([true, false])(
+  "project=%s: a retained Send cannot use the replacement viewer, including while its model read is outstanding",
+  async (project) => {
+    const f = openedChat(project);
+    const command = vi
+      .spyOn(f.api.client, "workbenchCommand")
+      .mockResolvedValue({
+        kind: "error",
+        error: publicError("conflict", "uncertain"),
+      });
+    await f.settle();
+    const old = submit;
+    expect(old).toBeDefined();
+    attachViewer();
+    old?.();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(command).not.toHaveBeenCalled();
+    await f.settle();
+    let finish!: () => void;
+    const models = vi.spyOn(f.api.client, "models").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(sendCatalog());
+        }),
+    );
+    submit?.();
+    await flush();
+    if (project) {
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(models).not.toHaveBeenCalled();
+      attachViewer(); // the allocation requested by the explicit Send
+      f.draw();
+      await flush();
+    }
+    expect(models).toHaveBeenCalledOnce();
+    attachViewer(); // same epoch again, before the outstanding body settles
+    finish();
+    await flush();
+    expect(command).not.toHaveBeenCalled();
+    expect(f.draw().html).toContain("my draft");
+  },
+);
+it("one explicit prepared Send uses only its own newly confirmed viewer, and its uncertain reply remains visible after a read retry", async () => {
+  const f = openedChat(true);
+  await f.settle();
+  const models = vi
+    .spyOn(f.api.client, "models")
+    .mockResolvedValue(sendCatalog());
+  const command = vi.spyOn(f.api.client, "workbenchCommand").mockResolvedValue({
+    kind: "error",
+    error: publicError("unavailable", "uncertain"),
+  });
+  submit?.();
+  await flush();
+  const preparing = f.draw();
+  expect(preparing.html).toMatch(
+    /class="composer-status"[^>]*>Preparing execution for this Send…/,
+  );
+  expect(command).not.toHaveBeenCalled();
+  attachViewer();
+  ready();
+  await f.settle();
+  expect(models).toHaveBeenCalled();
+  expect(command).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      kind: "send",
+      conversationId: chat,
+      text: "my draft",
+    }),
+  );
+  connectionAction();
+  const after = await f.settle();
+  expect(after.html).toContain("Send outcome is unknown");
+  expect(after.html).toContain("Send outcome not yet observed");
+  expect(command).toHaveBeenCalledOnce();
+  expect(prepare).toHaveBeenCalledOnce();
+});

@@ -26,10 +26,12 @@ import {
   decodeLiveEvent,
   decodePublicError,
   decodeReceiptLookup,
+  decodeReply,
   decodeScope,
   decodeServiceBuild,
   decodeSessionBootstrap,
   decodeSnapshot,
+  decodeWorkspaceBootstrap,
   ExportTracker,
   encodeExportFrame,
   errorStatus,
@@ -47,9 +49,11 @@ import {
   decodeHttpInput,
   decodeHttpOutput,
   decodeSocketInput,
+  HISTORY_CSRF_HEADER,
   type HttpOperation,
   mutation,
   readRoute,
+  retainedHistoryBody,
   type SocketOutput,
   WS_PATH,
 } from "../service-wire.ts";
@@ -571,11 +575,17 @@ export class ServiceHttpServer {
         boundary.headers.get("x-cadence-attachment") ?? randomUUID();
       // POST Origin/CSRF security applies to readonly bodies too; this does not
       // change admission, effect reporting, grants or the readonly reader pool.
+      const historyBody =
+        route?.source === "body" &&
+        retainedHistoryBody(route.operation) &&
+        boundary.headers.has(HISTORY_CSRF_HEADER);
       const caller = this.options.auth.authenticate(
         boundary,
         attachmentId,
-        route?.source === "body",
+        historyBody ? "retained-history" : route?.source === "body",
       );
+      if (boundary.headers.has(HISTORY_CSRF_HEADER) && !historyBody)
+        throw new ContractError("forbidden");
       // Authentication occurs before parsing any private request JSON/control body.
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32) throw new ContractError("capacity");
@@ -620,6 +630,7 @@ export class ServiceHttpServer {
         res.setHeader("X-Cadence-Attachment", attachmentId);
       } else if (
         route.source === "body" &&
+        !historyBody &&
         (route.operation !== "detach" || this.attachments.has(attachmentId))
       )
         attachment = this.attachment(caller);
@@ -637,7 +648,15 @@ export class ServiceHttpServer {
             req.headers["content-length"] !== "0"))
       )
         throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
+      const decodedInput = decodeHttpInput(route.operation, input);
+      if (
+        historyBody &&
+        (!decodedInput ||
+          typeof decodedInput !== "object" ||
+          !("storeId" in decodedInput) ||
+          decodedInput.storeId !== this.options.auth.historyStore)
+      )
+        throw new ContractError("stale");
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting) unavailable();
       if (
@@ -674,7 +693,16 @@ export class ServiceHttpServer {
       this.options.auth.current(caller);
       if (abort.signal.aborted) unavailable();
       if (route.operation === "session") this.attachment(caller);
-      const decoded = decodeHttpOutput(route.operation, value);
+      let decoded: unknown;
+      if (route.operation === "workspace" && caller.authority === "browser") {
+        const workspace = decodeReply(value, decodeWorkspaceBootstrap);
+        if (workspace.kind === "ok")
+          res.setHeader(
+            HISTORY_CSRF_HEADER,
+            this.options.auth.historyChallenge(workspace.value),
+          );
+        decoded = workspace;
+      } else decoded = decodeHttpOutput(route.operation, value);
       const status =
         value &&
         typeof value === "object" &&

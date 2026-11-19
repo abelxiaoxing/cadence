@@ -41,8 +41,10 @@ import {
   decodeHttpInput,
   decodeHttpOutput,
   decodeSocketOutput,
+  HISTORY_CSRF_HEADER,
   type HttpOperation,
   httpOutputLimit,
+  retainedHistoryBody,
   type SocketOutput,
   WS_PATH,
   wireRequest,
@@ -64,6 +66,8 @@ export interface ReadSocket {
 export class HttpServiceTransport implements ServiceTransport {
   private attachment: string | undefined;
   private csrf: string | null = null;
+  private historyCsrf?: string;
+  private bootstrapRevision = 0;
   private readonly fetcher: typeof fetch;
   private readonly origin: string;
   constructor(
@@ -71,6 +75,8 @@ export class HttpServiceTransport implements ServiceTransport {
       origin: string;
       /** Authenticated same-origin project routing; never an arbitrary URL. */
       project?: string;
+      /** Dedicated retained reader: never allocates an attachment or sends work. */
+      retainedHistory?: boolean;
       /** Diagnostic metadata only; authentication never depends on a build. */
       build?: ClientBuild;
       fetch?: typeof fetch;
@@ -91,6 +97,8 @@ export class HttpServiceTransport implements ServiceTransport {
       options.project !== undefined &&
       !/^[a-f0-9]{64}$/.test(options.project)
     )
+      throw new ContractError("invalid");
+    if (options.retainedHistory && options.localCapability)
       throw new ContractError("invalid");
     this.origin = options.origin;
     if (options.build) options.build = decodeClientBuild(options.build);
@@ -128,6 +136,12 @@ export class HttpServiceTransport implements ServiceTransport {
     value: unknown,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    if (
+      this.options.retainedHistory &&
+      operation !== "workspace" &&
+      !retainedHistoryBody(operation)
+    )
+      throw new ContractError("forbidden");
     const input = decodeHttpInput(operation, value),
       wire = wireRequest(operation, input),
       write = wire.method === "POST";
@@ -143,11 +157,26 @@ export class HttpServiceTransport implements ServiceTransport {
       // One client-chosen observation ID survives a lost header/body. Repeating
       // session reuses that slot and recovers CSRF, never a command or grant.
       if (operation === "session") this.attachment ??= crypto.randomUUID();
+      const bootstrap =
+        this.options.retainedHistory && operation === "workspace"
+          ? ++this.bootstrapRevision
+          : undefined;
+      if (bootstrap !== undefined) this.historyCsrf = undefined;
+      const historyBody = this.options.retainedHistory && write;
+      const headers = this.headers(
+        write && !historyBody,
+        operation === "session",
+      );
+      if (historyBody) {
+        if (!this.historyCsrf) throw new ContractError("stale");
+        headers[HISTORY_CSRF_HEADER] = this.historyCsrf;
+        headers["Content-Type"] = "application/json";
+      }
       const response = await this.fetcher(
         `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
         {
           method: wire.method,
-          headers: this.headers(write, operation === "session"),
+          headers,
           credentials: "same-origin",
           redirect: "error",
           signal: requestSignal,
@@ -176,6 +205,15 @@ export class HttpServiceTransport implements ServiceTransport {
       if (utf8Bytes(source) > httpOutputLimit(operation, parsed))
         throw new ContractError("oversize");
       const result = decodeHttpOutput(operation, parsed);
+      if (
+        bootstrap !== undefined &&
+        response.ok &&
+        Object.getOwnPropertyDescriptor(result ?? {}, "kind")?.value === "ok"
+      ) {
+        if (requestSignal?.aborted || this.bootstrapRevision !== bootstrap)
+          throw new ContractError("stale");
+        this.historyCsrf = decodeId(response.headers.get(HISTORY_CSRF_HEADER));
+      }
       if (operation === "session") {
         const reply = decodeReply(result, decodeSessionBootstrap);
         if (reply.kind === "ok") {
@@ -345,6 +383,7 @@ export class HttpServiceTransport implements ServiceTransport {
     input: ExportRequest,
     signal: AbortSignal,
   ): AsyncGenerator<unknown> {
+    if (this.options.retainedHistory) throw new ContractError("forbidden");
     const request = decodeExportRequest(input),
       wire = wireRequest("export", request);
     const response = await this.fetcher(
