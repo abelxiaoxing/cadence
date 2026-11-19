@@ -94,7 +94,7 @@ export interface ChatComposerProps {
   cadence: Parameters<typeof CadenceModeButton>[0];
   model: Parameters<typeof ModelPicker>[0];
   hint: string;
-  /** A reply is queued or running: Stop takes Send's place. */
+  /** A live reply: Stop takes Send's place. */
   running: boolean;
   canStop: boolean;
   onStop(): void;

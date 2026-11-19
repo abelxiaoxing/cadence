@@ -200,6 +200,7 @@ it("the sidebar gives history rows their actions, Running work none, and states 
   const chats = [
     chat("Live reply", { status: "running" }),
     chat("Done today"),
+    chat("Admitted reply", { status: "starting" }),
     chat("Broke yesterday", {
       status: "failed",
       updatedAt: new Date(2026, 10, 9, 22).getTime(),
@@ -223,6 +224,9 @@ it("the sidebar gives history rows their actions, Running work none, and states 
       />,
     );
   const [running, history] = sidebar().split("Conversation history");
+  expect(running).toContain('title="Admitted reply"');
+  expect(running).toContain('session-state starting">starting</span>');
+  expect(history).not.toContain("Admitted reply");
   expect(running).not.toContain("session-action");
   expect(history.match(/aria-label="Rename /g)).toHaveLength(2);
   expect(history.match(/aria-label="Archive /g)).toHaveLength(2);

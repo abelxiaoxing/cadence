@@ -7,8 +7,8 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 Separate conversations may admit independent workflows in one checkout; one conversation has at most one accepted implementation, and the existing per-owner active-run bound still applies.
-Research holds shared checkout access until all original workers/auth/storage settle.
-Direct working-copy delivery and ordinary host-tool turns hold exclusive access through original settlement.
+The checkout gate coordinates workflows with one another, not ordinary browser turns or external editors.
+Research holds shared checkout access until all original workers/auth/storage settle; direct working-copy delivery holds exclusive access through original settlement.
 A local-merge run starts exclusively through pinned-target validation, target preflight and stable-candidate creation, then releases the target checkout permit while its isolated implementation/check/review stages run.
 Its owner and workspace reservations still fence original operations; a shared checkout permit here would incorrectly block the next candidate's exclusive creation.
 It reacquires exclusive access for candidate refresh, shared project-knowledge maintenance, publication, fast-forward, post-merge checks and cleanup.
@@ -33,7 +33,7 @@ Git mutation groups also hold a short common-directory lease, after the checkout
 Managed candidate worktrees cannot start another owner; exact-owner healing releases coordination records without deleting retained Git artifacts.
 See [worktree delivery](worktree-delivery.md) for creation, exact acceptance and retention.
 Retained task worktrees from earlier releases remain untouched.
-Direct working-copy delivery serializes edits without Git mutation.
+Direct working-copy delivery serializes workflow edits without Git mutation.
 Only a sibling's actual fast-forward followed by successful post-merge checks may advance a pending peer's in-memory integration frontier.
 The peer merges that verified frontier into its isolated candidate and repeats checks and automatic Agent review; it never rebases or automatically resolves a conflict.
 External HEAD/branch drift, overlapping writes or changed `AGENTS.md` refuse integration and retain the candidate.
@@ -84,7 +84,7 @@ A reply resolves only its own caller, while disconnect rejects queued observers 
 ## Retired task execution
 
 The old task action/admission/graph scheduler and foreground controller are deleted.
-Current workflows and ordinary turns use the independent `CheckoutGate`, not an old task object.
+Current workflows use the independent `CheckoutGate`, not an old task object; ordinary turns neither acquire a permit nor wait for its holders.
 Legacy HTTP task preflight/command/cancel operations refuse; an archived run ID is not a handle to a live process.
 Current workflow Cancel, conversation Interrupt and exact-owner Stop remain independent.
 Historical graph/check/publication facts retain their original meaning, but no task execution is reconstructed from them.
@@ -93,6 +93,7 @@ The remaining historical writer and transport coupling is documented in [archite
 ## Admission, execution and original lifetimes
 
 - One canonical checkout/state-home domain has one persistent owner, including while idle.
+  The on-disk checkout lease excludes another owner, not turns within that owner.
   Explicit project launch uses a new port only for a new checkout selection; reopened projects retain their saved default cwd/port/history, and no project navigation changes another owner's execution.
   Root Git observations require Git's own ownership check: reset `safe.directory` exceptions per command, drop inherited `SUDO_UID` and disable fsmonitor, without configuration writes or ownership changes.
   Merely selecting a foreign-owned repository cannot grant permission to run its clean/process filters; use its owning account instead.
@@ -129,7 +130,7 @@ The remaining historical writer and transport coupling is documented in [archite
   Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
   Unknown process/auth/storage settlement quarantines the running owner; late completion never retroactively repairs an unknown result.
   A quarantined owner lets original work settle (bounded), stops its own ledger-recorded workers and exits; the replacement (a successor it spawns, or its systemd unit) recovers it at startup.
-- A message sent into a running reply (`conversation-input`) is no admission of its own: it joins the admitted run, which keeps its checkout gate, context snapshot, worker and native settlement, and adds no accepted work for Stop to join.
+- A message sent into a running reply (`conversation-input`) is no admission of its own: it joins the admitted run, which keeps its context snapshot, worker and native settlement, and adds no accepted work for Stop to join.
   Durable acceptance still precedes the hand-over, and the worker is told only once it listens.
   The worker holds such a message in memory and gives it to Pi itself, so it ends with that worker: after a failed reply, Cancel, Stop or a restart nothing is delivered, resumed or replayed, and each undelivered message is recorded as such.
   Its closure is the run's: an unknown one leaves it unknown and refuses the next start, while one the owner's death cut short is interrupted like the run.

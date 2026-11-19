@@ -64,6 +64,12 @@ Browsing, reconnecting and choosing a model alone never start the execution serv
 
 ## Messages while a reply is running
 
+An ordinary browser turn starts independently of turns in other Pi sessions, even in the same directory.
+**Starting** means the service has accepted the turn and is preparing it, not that it is queued or the model has replied.
+You can stop it without stopping the other sessions.
+Only one browser run at a time is allowed in a session.
+If the owner refuses a new Send at capacity, no turn is created; your draft stays editable and nothing sends it later.
+
 The service accepts a further message for a reply that is still running, in one of two ways.
 A **steer** reaches the model at its next opportunity, after the tool calls in progress and before its next request, and continues the conversation as its own turn from there.
 A **queued** message waits and is sent once the reply has ended normally.
@@ -130,8 +136,8 @@ With no choice and no saved preference, Send opens the model list and continues 
 Closing the picker or stopping/replacing that service ends the unsent continuation; your draft stays, and choosing a model never restarts a stopped service.
 Exiting Cadence changes mode, not your pending model choice.
 If no usable preference exists, choose once; an unreadable preference file falls back to the current Pi model, and choosing a model rewrites it.
-An accepted message or workflow keeps its original directory and exact model, including while queued.
-Different subdirectories of one repository can have independent conversations while sharing one checkout owner and execution gate.
+An accepted message or workflow keeps its original directory and exact model.
+Conversations in different subdirectories of one checkout share the same owner, not one working directory.
 Tools and check commands use the conversation directory; a plan's declared write paths stay relative to the displayed checkout root, including in isolated Git worktrees.
 Changing the current conversation's model makes its older unaccepted plan require fresh validation and approval in the browser, not another chat message; changing another conversation's model does not.
 An unavailable remembered model is not silently substituted.
@@ -162,7 +168,7 @@ The plan chooses one delivery policy:
   Local task commits and the merge are included in the plan approval.
   Git hooks and commit signing are disabled for these internal commits; verification is explicitly declared instead.
   No remote push occurs.
-- **Working copy:** explicit direct host-tool editing, serialized, including for non-Git directories.
+- **Working copy:** explicit direct host-tool editing, serialized among workflows, including for non-Git directories.
   No commit or merge.
   Failed or canceled work leaves actual edits in place; this is not transactional application or a sandbox.
 
@@ -177,9 +183,10 @@ Only owned worktrees at the delivered commit, after successful post-merge checks
 Ignored setup/build output such as `node_modules` also retains the worktree; failures, cancellation and unknown outcomes never trigger cleanup.
 Separate WebUI or terminal conversations may run independent local-merge workflows concurrently, within the owner's four-active-run limit including investigations.
 A single conversation still permits only one approved implementation at a time; open another conversation for an independent goal.
-Target preflight and candidate creation are exclusive.
-Implementation, checks and automatic review then run in isolated candidates without holding the target checkout gate; working-copy edits and ordinary host-tool conversations remain exclusive.
-Final delivery is exclusive and serialized from candidate refresh through shared project-knowledge maintenance, post-merge checks and cleanup.
+Local-merge workflows take exclusive checkout access for target preflight and candidate creation, release it during isolated implementation, checks and automatic review, then take it again from candidate refresh through shared project-knowledge maintenance, post-merge checks and cleanup.
+Ordinary browser conversations do not wait for this access.
+Like separate Pi terminals, they can edit the same files as each other or as a workflow.
+Coordinate overlapping edits yourself: delivery rechecks the target branch, HEAD and declared paths, but these checks are not a file transaction and do not merge concurrent edits or prevent overwrites.
 There is no fixed delivery-duration or repair-round quota.
 Agents have no fixed total runtime deadline.
 Setup/check commands default to no timeout; an explicitly approved per-command timeout still applies, including in older plans.
@@ -207,7 +214,7 @@ Failed candidate/worktree setup, baseline, implementation, checks or review ente
 A failed target preflight ends without dispatching an editor into the original checkout.
 Incomplete assignment reports show `partial` or `blocked`, not a process crash; their outputs remain available, but dependencies and final delivery still require completion and real verification.
 Cadence can preserve partial outputs, split remaining work and choose alternative implementations within the approval; it never expands permissions or weakens acceptance.
-Transient model-request failures recover inside the original SDK worker, with visible, cancellable backoff; completed tool results and the checkout gate stay with that worker.
+Transient model-request failures recover inside the original SDK worker, with visible, cancellable backoff; completed tool results stay with that worker, and a workflow stage that holds checkout access keeps it.
 A subagent keeps retrying far longer than an interactive session does (12 retries, about half an hour of backoff, unless you turned Pi's retries off), and the retry line shows what the provider said.
 An exhausted or nonretryable model request stops the delivery with partial work preserved and the provider's reason on the failed step, rather than rerunning the entire step or launching another model just to diagnose an unavailable provider.
 An unchanged failure and identical recovery strategy cannot become an endless replay loop.
@@ -302,7 +309,7 @@ A revision may also change the assignments that have not started yet (drop, rewr
 
 The unified WebUI sidebar automatically lists active work in this account and state home, including projects you have never selected.
 An interactive terminal must load the Cadence extension: a real model/tool round appears even without `/cadence`, but an idle terminal or idle owner does not.
-Terminal rounds are observe-only; owner turns and workflows retain their actual queue, execution, recovery and settlement phases and existing authorized controls.
+Terminal rounds are observe-only; owner turns and workflows show their actual phases (including ordinary turn startup and workflow queueing) and existing authorized controls.
 Separate terminal instances and owner work keep their own rows; work already shown under **Running work** is not repeated.
 
 Click an activity to remember its directory and read the shared Pi session at the observed branch.

@@ -100,7 +100,7 @@ export const IDLE_MS = 10000;
 const READS = 4;
 
 export const unsettled = (status: ChatStatus | undefined) =>
-  status === "queued" || status === "running";
+  status === "starting" || status === "queued" || status === "running";
 class ReadError extends Error {}
 
 export class ConversationReader {
