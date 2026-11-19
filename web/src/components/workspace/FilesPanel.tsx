@@ -122,7 +122,6 @@ export function FilesPanel({
     refreshPreview();
   }, [observed, refreshFiles, refreshPreview]);
   const listing = files.value?.kind === "files" ? files.value : undefined;
-  const file = preview.value?.kind === "file" ? preview.value : undefined;
   const open = (next: string) => {
     setPath(next);
     setFilter(null);
@@ -315,10 +314,16 @@ export function FilesPanel({
             <button
               type="button"
               className="file-main"
+              aria-current={selected === entry.path ? "true" : undefined}
               title={entry.path}
-              onClick={() =>
-                entry.directory ? open(entry.path) : setSelected(entry.path)
-              }
+              onClick={() => {
+                if (entry.directory) open(entry.path);
+                else if (selected !== entry.path) {
+                  setSelected(entry.path);
+                  // Reopening the last settled path is a new observation too.
+                  refreshPreview();
+                }
+              }}
             >
               {entry.directory ? (
                 <FiFolder className="file-icon" aria-hidden="true" />
@@ -407,36 +412,59 @@ export function FilesPanel({
           </p>
         )}
       </section>
-      {selected && (
-        <section className="file-preview">
-          <header>
-            <FiFile aria-hidden="true" />
-            <span title={selected}>{lastSegment(selected)}</span>
-            <button
-              type="button"
-              className="crumb"
-              aria-label={t("Close preview")}
-              title={t("Close preview")}
-              onClick={() => setSelected(null)}
-            >
-              <FiX aria-hidden="true" />
-            </button>
-          </header>
-          {preview.error && (
-            <p role="alert">{describeError(t, preview.error)}</p>
-          )}
-          {file && (
-            <>
-              <FilePreviewText path={file.path} text={file.text} />
-              {file.limited && (
-                <p className="inspector-note">
-                  {t("File preview is limited; this is not the complete file.")}
-                </p>
-              )}
-            </>
-          )}
-        </section>
-      )}
+      <FilePreview
+        path={enabled ? selected : null}
+        preview={preview}
+        onClose={() => setSelected(null)}
+      />
     </div>
+  );
+}
+
+export function FilePreview({
+  path,
+  preview,
+  onClose,
+}: {
+  path: string | null;
+  preview: Pick<ReturnType<typeof useWorkbench>, "value" | "loading" | "error">;
+  onClose(): void;
+}) {
+  const { t } = useT();
+  if (!path) return null;
+  const file =
+    preview.value?.kind === "file" && preview.value.path === path
+      ? preview.value
+      : undefined;
+  return (
+    <section className="file-preview">
+      <header>
+        <FiFile aria-hidden="true" />
+        <span title={path}>{lastSegment(path)}</span>
+        <button
+          type="button"
+          className="crumb"
+          aria-label={t("Close preview")}
+          title={t("Close preview")}
+          onClick={onClose}
+        >
+          <FiX aria-hidden="true" />
+        </button>
+      </header>
+      {preview.loading && <p role="status">{t("Reading…")}</p>}
+      {!preview.loading && preview.error && (
+        <p role="alert">{describeError(t, preview.error)}</p>
+      )}
+      {file && (
+        <>
+          <FilePreviewText path={file.path} text={file.text} />
+          {file.limited && (
+            <p className="inspector-note">
+              {t("File preview is limited; this is not the complete file.")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }

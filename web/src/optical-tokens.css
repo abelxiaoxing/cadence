@@ -1,0 +1,183 @@
+/* Mineral Alabaster / Obsidian Optical. Adapted families consume these roles,
+ * including the separately loaded run trace. No remote textures or fonts. */
+:root {
+  color-scheme: light dark;
+  --bg-canvas: light-dark(#f4f5f7, #090a0d);
+  --bg-elev: light-dark(#fafafb, #141519);
+  --bg-elev2: light-dark(#eeeff2, #1b1c21);
+  --text-primary: light-dark(#111318, #f2f4f8);
+  --text-secondary: light-dark(#5e6675, #8a93a2);
+  --accent: light-dark(#393e48, #cbd0d8);
+  --focus: light-dark(#525964, #adb6c5);
+  --prism-a: light-dark(#445065, #c0ccde);
+  --prism-b: light-dark(#5c5069, #d1c6dc);
+  --lens-silver: light-dark(#949fb1, #c0ccde);
+  --lens-violet: light-dark(#ad9cb5, #d1c6dc);
+  --on-accent: light-dark(#ffffff, #141519);
+  --border: light-dark(#c4c7cf, #42454d);
+  --border-soft: light-dark(#d9dce2, #2b2c32);
+  --green: light-dark(#355e4a, #a3c8ad);
+  --red: light-dark(#843f50, #e3a6ae);
+  --amber: light-dark(#77532f, #d6b591);
+  --blue: light-dark(#445a73, #a9bfd6);
+  --code-bg: light-dark(#e9eaee, #101115);
+  --code-text: light-dark(#23252d, #d5d9e0);
+  --notice-err-bg: light-dark(#f8eaeb, #302125);
+  --notice-warn-bg: light-dark(#f6eee5, #29241f);
+  --notice-info-bg: light-dark(#e8ecf2, #20232a);
+  --hl-title: light-dark(#604676, #d4bcde);
+  --hl-string: light-dark(#3e5c64, #a6c8cb);
+  --hl-addition-bg: light-dark(#e0ece4, #24312a);
+  --hl-deletion-bg: light-dark(#f1e4e6, #34272b);
+  --scroll-thumb: light-dark(#a9adb6, #555963);
+  --scroll-thumb-hover: light-dark(#828794, #747984);
+  --glass-surface: light-dark(rgba(255, 255, 255, 0.72), rgba(22, 23, 27, 0.8));
+  --glass-border-top: light-dark(
+    rgba(255, 255, 255, 0.94),
+    rgba(241, 244, 252, 0.22)
+  );
+  --glass-border: light-dark(rgba(56, 59, 70, 0.16), rgba(208, 214, 227, 0.1));
+  --glass-card-bg: light-dark(
+    rgba(251, 251, 252, 0.92),
+    rgba(23, 24, 28, 0.94)
+  );
+  --menu-solid-bg: light-dark(
+    rgba(253, 253, 254, 0.98),
+    rgba(26, 27, 31, 0.98)
+  );
+  --accent-soft: light-dark(
+    rgba(35, 39, 48, 0.055),
+    rgba(214, 221, 234, 0.045)
+  );
+  --green-soft: light-dark(rgba(75, 104, 83, 0.1), rgba(137, 177, 147, 0.1));
+  --word-add-bg: light-dark(rgba(75, 104, 83, 0.14), rgba(137, 177, 147, 0.16));
+  --word-del-bg: light-dark(rgba(125, 63, 72, 0.14), rgba(209, 151, 161, 0.16));
+  --red-soft: light-dark(rgba(125, 63, 72, 0.08), rgba(209, 151, 161, 0.08));
+  --shadow-1: light-dark(rgba(29, 31, 39, 0.07), rgba(0, 0, 0, 0.22));
+  --shadow-2: light-dark(rgba(29, 31, 39, 0.12), rgba(0, 0, 0, 0.34));
+  --shadow-3: light-dark(rgba(29, 31, 39, 0.17), rgba(0, 0, 0, 0.46));
+  --scrim: light-dark(rgba(34, 36, 42, 0.4), rgba(0, 0, 0, 0.6));
+  --grain: light-dark(rgba(25, 27, 34, 0.025), rgba(240, 244, 250, 0.025));
+  --bg: var(--bg-canvas);
+  --text: var(--text-primary);
+  --md-strong: var(--text-primary);
+  --link-hover: var(--text-primary);
+  --text-dim: var(--text-secondary);
+  --text-faint: var(--text-secondary);
+  --control-fg: var(--text-secondary);
+  --hl-comment: var(--text-secondary);
+  --accent-text: var(--accent);
+  --accent-strong: var(--accent);
+  --link: var(--accent);
+  --link-soft: var(--accent);
+  --brand-grad-a: var(--prism-a);
+  --brand-grad-b: var(--prism-b);
+  --plugin-purple: var(--prism-b);
+  --term-bright-magenta: var(--prism-b);
+  --err-text: var(--red);
+  --red-text: var(--red);
+  --notice-err-border: var(--red);
+  --hl-deletion: var(--red);
+  --hl-keyword: var(--red);
+  --term-bright-red: var(--red);
+  --stop-red: var(--red);
+  --stop-red-hover: var(--red);
+  --auth-green: var(--green);
+  --hl-tag: var(--green);
+  --hl-addition: var(--green);
+  --term-bright-green: var(--green);
+  --amber-text: var(--amber);
+  --hl-bullet: var(--amber);
+  --hl-builtin: var(--amber);
+  --notice-warn-border: var(--amber);
+  --info-blue: var(--blue);
+  --hl-constant: var(--blue);
+  --hl-section: var(--blue);
+  --notice-info-border: var(--blue);
+  --skill-blue: var(--blue);
+  --term-bright-blue: var(--blue);
+  --term-bright-cyan: var(--blue);
+  --tooltip-bg: var(--bg-elev);
+  --chip-bg: var(--bg-elev);
+  --control-bg: var(--bg-elev2);
+  --control-border: var(--border);
+  --code-border: var(--border-soft);
+  --bg-elev3: var(--accent-soft);
+  --sunken-bg: var(--accent-soft);
+  --blue-soft: var(--accent-soft);
+  --search-active-fg: var(--on-accent);
+  --on-amber: var(--on-accent);
+  --panel-bg: var(--glass-surface);
+  --statusbar-bg: var(--glass-surface);
+  --glass-bg: var(--glass-surface);
+  --inputbox-bg: var(--glass-surface);
+  --card-bg: var(--glass-card-bg);
+  --glass-card-border: var(--glass-border);
+  --menu-bg: var(--menu-solid-bg);
+  --glass-card-shadow: var(--shadow-1);
+  --primary-glow: var(--shadow-1);
+  --glass-shadow: var(--shadow-2);
+  --glow-015: color-mix(in srgb, var(--text) 1.5%, transparent);
+  --glow-025: color-mix(in srgb, var(--text) 2.5%, transparent);
+  --glow-03: color-mix(in srgb, var(--text) 3%, transparent);
+  --glow-04: color-mix(in srgb, var(--text) 4%, transparent);
+  --glow-05: color-mix(in srgb, var(--text) 5%, transparent);
+  --glow-12: color-mix(in srgb, var(--text) 12%, transparent);
+  --glow-18: color-mix(in srgb, var(--text) 18%, transparent);
+  --glow-22: color-mix(in srgb, var(--text) 22%, transparent);
+  --glow-38: color-mix(in srgb, var(--text) 38%, transparent);
+  --primary-gradient: linear-gradient(135deg, var(--prism-a), var(--prism-b));
+  --primary-hover: linear-gradient(135deg, var(--accent), var(--prism-b));
+  --sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono:
+    ui-monospace, "SFMono-Regular", Menlo, Consolas, "Microsoft YaHei Mono",
+    monospace;
+  --glass-shell-blur: 14px;
+  --glass-card-blur: 5px;
+  --glass-filter: blur(var(--glass-shell-blur)) saturate(112%);
+  --card-filter: blur(var(--glass-card-blur)) saturate(105%);
+  --code-pad: 9px 12px;
+  --card-body-pad: 4px 14px 12px;
+  --reading-width: 800px;
+  --reading-leading: 1.65;
+  --ambient-fps: 24;
+  --ambient-pixels: 256000;
+  --grain-image:
+    radial-gradient(ellipse at 28% 69%, var(--grain) 0.65px, transparent 1px),
+    radial-gradient(circle at 79% 17%, var(--grain) 0.6px, transparent 1px);
+  --grain-size: 5px 7px, 7px 11px;
+  --inset-shadow: inset 0 2px 5px var(--shadow-1);
+  --msgs-bg: transparent;
+  --tl-palette-0: light-dark(#405878, #a9c0e0);
+  --tl-palette-1: light-dark(#3f6449, #a8c9ac);
+  --tl-palette-2: light-dark(#7b475f, #d2a9bc);
+  --tl-palette-3: light-dark(#3c626a, #9bc7cc);
+  --tl-palette-4: light-dark(#854b38, #daa999);
+  --tl-palette-5: light-dark(#586139, #bec8a1);
+  --tl-palette-6: light-dark(#594e7c, #c0b5de);
+  --tl-palette-7: light-dark(#794851, #d4adb6);
+  --tl-palette-8: light-dark(#725932, #cdbb9a);
+  --tl-palette-9: light-dark(#386756, #9ac8b7);
+  --tl-input: var(--text-secondary);
+  --tl-model: var(--tl-palette-0);
+  --tl-tools: var(--tl-palette-1);
+  --tl-tool-read: var(--tl-palette-9);
+  --tl-tool-write: var(--tl-palette-8);
+  --tl-tool-bash: var(--tl-palette-6);
+  --tl-model-thinking: var(--tl-palette-3);
+  --tl-model-text: var(--tl-model);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (max-width: 900px) {
+  :root {
+    --glass-shell-blur: 8px;
+    --glass-card-blur: 3px;
+  }
+}

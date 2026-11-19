@@ -98,13 +98,21 @@ it("gateway entry points use the script-free 401 password page and one-year cook
     expect(home.status).toBe(303);
     expect(home.headers.location).toBe("/app");
     // Authenticated /app?project= serves the app asset.
+    const app = await request(origin, `/app?project=${"a".repeat(64)}`, {
+      headers: { cookie },
+    });
+    expect(app.status).toBe(200);
+    expect(app.headers["cache-control"]).toBe("no-store");
+    const asset = `/ui/${app.headers["x-cadence-web-build"]}/assets/react.js`;
+    expect(app.text).toContain(asset);
+    expect((await request(origin, asset, { headers: { cookie } })).status).toBe(
+      200,
+    );
+    expect((await request(origin, asset)).status).toBe(401);
     expect(
-      (
-        await request(origin, `/app?project=${"a".repeat(64)}`, {
-          headers: { cookie },
-        })
-      ).status,
-    ).toBe(200);
+      (await request(origin, "/assets/react.js", { headers: { cookie } }))
+        .status,
+    ).not.toBe(200);
     // POST /auth wrong key -> 303 /?auth_error=1 (neutral notice page).
     const wrong = await request(origin, "/auth", {
       method: "POST",

@@ -32,6 +32,9 @@ import {
 import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { HalfRingSpinner } from "./ChatSteps";
+import { RetainedStepResult } from "./RetainedStepResult";
+
+export type CanCancelWorkflow = (run: WorkflowRun) => boolean;
 
 const LIVE = ["queued", "running"];
 export const workflowLive = (run: WorkflowRun) => LIVE.includes(run.status);
@@ -130,11 +133,13 @@ function workflowDuration(run: WorkflowRun, t: Translator["t"]): string {
 export function WorkflowLine({
   client,
   run,
+  canCancelWorkflow,
   onOpen,
   onChanged,
 }: {
   client: ServiceClient;
   run: WorkflowRun;
+  canCancelWorkflow?: CanCancelWorkflow;
   onOpen(): void;
   onChanged?(): void;
 }) {
@@ -225,11 +230,12 @@ export function WorkflowLine({
           className="ghost workflow-line-stop"
           aria-label={t("Cancel workflow — request stop")}
           title={t("Cancel workflow — request stop")}
-          disabled={busy}
+          disabled={busy || !canCancelWorkflow?.(run)}
           onClick={() => {
+            if (busy || !canCancelWorkflow?.(run)) return;
             setBusy(true);
             setError("");
-            void cancelWorkflow(client, run)
+            void cancelWorkflow(client, run, canCancelWorkflow)
               .then((code) => {
                 if (!alive.current) return;
                 setError(code);
@@ -259,6 +265,19 @@ export function WorkflowLine({
   );
 }
 /** The plan awaiting approval: the conversation's one pending decision. */
+/** A local paint-only highlight: never route pointer movement into React
+ * state or treat a click on the context as an approval. */
+function highlight(event: import("react").PointerEvent<HTMLElement>) {
+  if (
+    event.pointerType !== "mouse" ||
+    matchMedia("(prefers-reduced-motion: reduce)").matches
+  )
+    return;
+  const el = event.currentTarget,
+    rect = el.getBoundingClientRect();
+  el.style.setProperty("--spot-x", `${event.clientX - rect.left}px`);
+  el.style.setProperty("--spot-y", `${event.clientY - rect.top}px`);
+}
 export function PlanCard({
   proposal,
   canApprove,
@@ -319,20 +338,24 @@ export function PlanCard({
         </p>
       )}
       <p>{t("Tools and checks run on the service host, not in a sandbox.")}</p>
-      <p>
-        <code>{proposal.cwd}</code> · {proposal.display?.model}
-      </p>
-      <p>
-        {t("Declared write paths use the checkout root:")}{" "}
-        <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
-      </p>
-      {proposal.display?.runtime && <p>{proposal.display.runtime}</p>}
-      {proposal.display?.branch && (
-        <p>
-          <code>{proposal.display.branch}</code> ·{" "}
-          <code>{proposal.display.baseCommit}</code>
+      <div className="plan-context">
+        <p onPointerMove={highlight}>
+          <code>{proposal.cwd}</code> · {proposal.display?.model}
         </p>
-      )}
+        <p onPointerMove={highlight}>
+          {t("Declared write paths use the checkout root:")}{" "}
+          <code>{proposal.checkoutRoot ?? proposal.cwd}</code>
+        </p>
+        {proposal.display?.runtime && (
+          <p onPointerMove={highlight}>{proposal.display.runtime}</p>
+        )}
+        {proposal.display?.branch && (
+          <p>
+            <code>{proposal.display.branch}</code> ·{" "}
+            <code>{proposal.display.baseCommit}</code>
+          </p>
+        )}
+      </div>
       <p>
         {t(
           "Approval covers this goal, its decisions, acceptance and assumptions. The service then finishes on its own: it may revise the route and write scope inside the repository, and records any deviation from the acceptance for the automatic review and the final report. No push, publication or deployment.",
@@ -354,7 +377,10 @@ export function PlanCard({
       <button
         type="button"
         className="primary"
-        disabled={action === "approve" ? !canApprove : !canValidate}
+        aria-busy={validating || undefined}
+        disabled={
+          validating || (action === "approve" ? !canApprove : !canValidate)
+        }
         onClick={action === "approve" ? onApprove : onValidate}
       >
         {t(
@@ -370,7 +396,11 @@ export function PlanCard({
         )}
       </button>
       {action === "approve" && onValidate && (
-        <button type="button" disabled={!canValidate} onClick={onValidate}>
+        <button
+          type="button"
+          disabled={validating || !canValidate}
+          onClick={onValidate}
+        >
           {t("Validate plan again")}
         </button>
       )}
@@ -397,8 +427,10 @@ export function PlanCard({
 /** Request orderly closure of one workflow; the reply is an observation, never a retry. */
 export async function cancelWorkflow(
   client: Pick<ServiceClient, "workbenchCommand">,
-  run: { id: string; epoch: string },
+  run: WorkflowRun,
+  canCancelWorkflow: CanCancelWorkflow,
 ): Promise<string> {
+  if (!canCancelWorkflow(run)) return "stale";
   const reply = await client.workbenchCommand({
     kind: "workflow-cancel",
     commandId: crypto.randomUUID(),
@@ -409,10 +441,20 @@ export async function cancelWorkflow(
 }
 type WorkflowCardProps = {
   client: ServiceClient;
+  canCancelWorkflow?: CanCancelWorkflow;
   id: string;
   onChanged?(): void;
   onOpenAgent?(agent: WorkflowAgent): void;
 };
+export function WorkflowRunState({ run }: { run: WorkflowRun }) {
+  const { tx } = useT();
+  return (
+    <span>
+      {tx(run.phase)} ·{" "}
+      <span className={`workflow-status ${run.status}`}>{tx(run.status)}</span>
+    </span>
+  );
+}
 export function WorkflowCard(props: WorkflowCardProps) {
   // A different run must not inherit an archive cursor, stopped polling or a
   // selected step belonging to the previous run.
@@ -423,8 +465,9 @@ function WorkflowCardView({
   id,
   onChanged,
   onOpenAgent,
+  canCancelWorkflow,
 }: WorkflowCardProps) {
-  const { t, tx } = useT();
+  const { t } = useT();
   const [poll, setPoll] = useState(1000);
   const [before, setBefore] = useState<number | undefined>();
   // Archived steps are immutable, but their run's status and Stop affordance
@@ -468,11 +511,7 @@ function WorkflowCardView({
     >
       <header>
         <strong>{run?.goal ?? t("Observing workflow")}</strong>
-        {run && (
-          <span className={`ep-state ${run.status}`}>
-            {tx(run.phase)} · {tx(run.status)}
-          </span>
-        )}
+        {run && <WorkflowRunState run={run} />}
       </header>
       {(page.error || history.error || error) && (
         <p role="alert">
@@ -609,7 +648,7 @@ function WorkflowCardView({
             {t("Read retained step result")}
           </button>
           {detail === step.id && result.value?.kind === "file" && (
-            <pre className="workflow-detail">{result.value.text}</pre>
+            <RetainedStepResult file={result.value} />
           )}
           {detail === step.id && result.error && (
             <p role="alert">{result.error}</p>
@@ -620,11 +659,11 @@ function WorkflowCardView({
         <button
           type="button"
           className="danger"
-          disabled={busy}
+          disabled={busy || !canCancelWorkflow?.(run)}
           onClick={() => {
-            if (!run) return;
+            if (busy || !canCancelWorkflow?.(run)) return;
             setBusy(true);
-            void cancelWorkflow(client, run)
+            void cancelWorkflow(client, run, canCancelWorkflow)
               .then((code) => {
                 if (!alive.current) return;
                 setError(code);
@@ -693,7 +732,10 @@ export function WorkflowStepSummary({
   const { t, tx } = useT();
   return (
     <>
-      {`${tx(step.kind)} · ${workflowAgentLabel(step.id)} · ${tx(step.status)}`}
+      {`${tx(step.kind)} · ${workflowAgentLabel(step.id)} · `}
+      <span className={`workflow-status ${step.status}`}>
+        {tx(step.status)}
+      </span>
       {checkSetAside(run, step) && (
         <span className="workflow-set-aside">
           {t("set aside by a recorded deviation")}
@@ -816,7 +858,7 @@ export function AssignmentBoard({
       )}
       <ul>
         {assignmentRows(run, steps).map(({ task, steps: own, artifact }) => (
-          <li className="workflow-task" key={task.id}>
+          <li className="workflow-task" key={task.id} onPointerMove={highlight}>
             <span className={`workflow-task-state ${task.state}`}>
               <AssignmentIcon state={task.state} />
               {tx(task.state)}

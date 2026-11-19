@@ -1,7 +1,8 @@
 /* Adapted from pi-web-ui web/src/components/Markdown.tsx (e8bab487af208bc9a1ab60a821652323f598127f).
  * Copyright (c) 2026 xing-shuyin. MIT; see licenses/pi-web-ui-MIT.txt.
  * Cadence removes plugin fences, file-path access and automatic external resources. */
-import { type JSX, memo, type ReactNode } from "react";
+import { type JSX, memo, type ReactNode, useState } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
@@ -12,6 +13,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
 import "katex/dist/katex.min.css";
+import { useT } from "../../i18n/locale";
+import "./reading.css";
 import { splitCodeLines } from "../../rich/code-lines";
 import remarkBackslashMath from "../../rich/remark-backslash-math";
 import { CopyButton } from "./CopyButton";
@@ -26,7 +29,13 @@ const remarkPluginsHardBreaks = [
 const rehypePlugins: PluggableList = [
   [
     rehypeKatex,
-    { strict: false, throwOnError: false, trust: false, maxExpand: 1000 },
+    {
+      strict: false,
+      throwOnError: false,
+      errorColor: "var(--err-text)",
+      trust: false,
+      maxExpand: 1000,
+    },
   ],
   [rehypeHighlight, { detect: false, ignoreMissing: true }],
 ];
@@ -60,6 +69,12 @@ export function MarkdownBody({
   return (
     <ReactMarkdown
       remarkPlugins={hardBreaks ? remarkPluginsHardBreaks : remarkPlugins}
+      remarkRehypeOptions={{
+        footnoteLabelProperties: {
+          className: ["sr-only"],
+          dataFieldChrome: "",
+        },
+      }}
       rehypePlugins={
         rawHtml ? [rehypeRaw, rehypeSanitize, ...rehypePlugins] : rehypePlugins
       }
@@ -81,7 +96,9 @@ export function MarkdownBody({
         a: MdLink,
         img: ({ alt }) => (
           <span className="omission">
-            [Image omitted: {alt || "external/media content"}]
+            <span data-field-chrome="">[Image omitted: </span>
+            {alt || <span data-field-chrome="">external/media content</span>}
+            <span data-field-chrome="">]</span>
           </span>
         ),
       }}
@@ -101,10 +118,15 @@ export const Markdown = memo(function Markdown(props: {
     </div>
   );
 });
-function MdLink({ href, children }: JSX.IntrinsicElements["a"]) {
+function MdLink({ href, children, ...props }: JSX.IntrinsicElements["a"]) {
   const target = href && safeLink(href);
   return target ? (
     <a
+      data-field-chrome={
+        "data-footnote-ref" in props || "data-footnote-backref" in props
+          ? ""
+          : undefined
+      }
       href={target}
       target={target.startsWith("#") ? undefined : "_blank"}
       rel="noreferrer noopener"
@@ -113,8 +135,20 @@ function MdLink({ href, children }: JSX.IntrinsicElements["a"]) {
       {children}
     </a>
   ) : (
-    <span>{children} [link unavailable]</span>
+    <span>
+      {children}
+      <span data-field-chrome=""> [link unavailable]</span>
+    </span>
   );
+}
+// Only mounted, folded disclosures register an opener. Commit the one reveal
+// before the history reader measures its Range; no deferred jump can outlive
+// a new query, field page, or reader.
+const folded = new WeakMap<HTMLPreElement, () => void>();
+export function revealCodeMatch(range: Range) {
+  const pre = range.startContainer.parentElement?.closest("pre");
+  const open = pre && folded.get(pre);
+  if (open) flushSync(open);
 }
 function PlainCodeBlock({
   children,
@@ -128,6 +162,14 @@ function PlainCodeBlock({
     children && typeof children === "object" && "props" in children
       ? (children as { props?: { children?: ReactNode } }).props?.children
       : children;
+  const language =
+    children && typeof children === "object" && "props" in children
+      ? String(
+          (children.props as { className?: string }).className ?? "",
+        ).match(/(?:^|\s)language-([^\s]+)/)?.[1]
+      : undefined;
+  const { locale } = useT();
+  const [expanded, setExpanded] = useState(true);
   let offset = 0;
   const lines = splitCodeLines(inner).map((nodes) => {
     const key = `code-offset:${offset}`;
@@ -138,12 +180,37 @@ function PlainCodeBlock({
   const numWidth = multi ? `${String(lines.length).length + 1}ch` : undefined;
   return (
     <div className="codeblock">
-      <CopyButton text={codeText(children)} />
-      <pre {...props}>
+      <div data-field-chrome="" className="code-caption">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          {language || (locale === "zh" ? "代码" : "Code")}
+        </button>
+        <CopyButton text={codeText(children)} className="output-copy" />
+      </div>
+      <pre
+        {...props}
+        hidden={!expanded}
+        ref={
+          expanded
+            ? undefined
+            : (pre) => {
+                if (!pre) return;
+                folded.set(pre, () => setExpanded(true));
+                return () => {
+                  folded.delete(pre);
+                };
+              }
+        }
+      >
         {lines.map(({ nodes, key }, i) => (
           <div className="code-line" key={key}>
             {multi && (
               <span
+                data-field-chrome=""
                 className="code-num"
                 style={numWidth ? { width: numWidth } : undefined}
               >

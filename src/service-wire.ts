@@ -93,6 +93,21 @@ const pageReaders = [
   "changes",
   "reviews",
 ] as const;
+/** Only bounded original history readers, never live state, archives or work.
+ * A separate CSRF challenge for these bodies does not authorize other POSTs. */
+export const HISTORY_CSRF_HEADER = "x-cadence-history-csrf";
+const retainedReaders = [
+  ...pageReaders,
+  "entity",
+  "graph",
+  "detail",
+  "search",
+] as const;
+export function retainedHistoryBody(
+  operation: HttpOperation,
+): operation is (typeof retainedReaders)[number] {
+  return (retainedReaders as readonly HttpOperation[]).includes(operation);
+}
 /** Encoded HTTP Reply category, including wire whitespace/escaping. Graph data
  * is a control document; only its proof-only branch shares the page ceiling. */
 export function httpOutputLimit(
@@ -245,16 +260,12 @@ export function decodeHttpOutput(
 /** Body transport and POST security are independent of execution semantics. */
 export function readonlyBody(operation: HttpOperation): boolean {
   const operations: readonly HttpOperation[] = [
-    ...pageReaders,
+    ...retainedReaders,
     "workbenchRead",
     "current",
     "currentChanges",
     "checkObligations",
-    "entity",
-    "graph",
     "snapshot",
-    "detail",
-    "search",
     "export",
     "download",
     "receipt",
@@ -268,7 +279,10 @@ function queryUrl(operation: HttpOperation, input: unknown): string {
     : `${path}?request=${encodeURIComponent(canonicalJson(input))}`;
 }
 export function wireUrl(operation: HttpOperation, value: unknown): string {
-  const result = queryUrl(operation, decodeHttpInput(operation, value));
+  const input = decodeHttpInput(operation, value);
+  if (input && typeof input === "object" && Object.hasOwn(input, "navigation"))
+    throw new ContractError("invalid"); // Navigation travels only in the request body.
+  const result = queryUrl(operation, input);
   if (utf8Bytes(result) > LIMITS.headerBytes)
     throw new ContractError("oversize");
   return result;

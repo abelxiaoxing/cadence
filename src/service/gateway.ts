@@ -24,7 +24,13 @@ import {
   parseWireJson,
   publicError,
 } from "../service-contract.ts";
-import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
+import {
+  assertRequestTarget,
+  HISTORY_CSRF_HEADER,
+  readRoute,
+  retainedHistoryBody,
+  WS_PATH,
+} from "../service-wire.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
 import { effectiveWorkspace } from "../workspace.ts";
 import { ActivityDiscoveryReader } from "./activity-discovery.ts";
@@ -66,6 +72,7 @@ import {
   decodeWorkbenchCommand,
   decodeWorkbenchRead,
   decodeWorkbenchResult,
+  PROJECT_ASSOCIATION_HEADER,
 } from "./contracts/workbench.ts";
 import { ConversationContextRecords } from "./conversation-contexts.ts";
 import { ServiceCoordination } from "./coordination.ts";
@@ -105,9 +112,11 @@ import { WorkbenchFiles } from "./workbench-files.ts";
 
 declare const __CADENCE_SERVICE_CONTRACT__: string;
 interface Binding {
-  project: GatewayProject;
+  project: GatewayProject & { epoch: string };
   endpoint: string;
   cookie: string;
+  history?: { owner: string; browser: string };
+  rejected?: boolean;
 }
 /** Bind the confirmation to an exact set of work, independent of phase and order. */
 export function maintenanceWorkDigest(
@@ -184,7 +193,7 @@ export async function createGateway(
     { identity: string; result: Promise<GatewayProject> }
   >();
   const retirements = new Set<Promise<void>>();
-  const attachments = new Map<string, { projectId: string; epoch: string }>();
+  const attachments = new Map<string, Binding>();
   const bindings = new Map<
     string,
     { epoch: string; result: Promise<Binding> }
@@ -259,8 +268,11 @@ export async function createGateway(
         { projectId: string; epoch: string; ids: string[] }
       >();
       for (const [id, target] of attachments) {
-        const key = `${target.projectId}:${target.epoch}`;
-        const group = grouped.get(key) ?? { ...target, ids: [] };
+        if (target.rejected) continue; // Owner rotation already retired its viewers.
+        const projectId = target.project.id,
+          epoch = target.project.epoch;
+        const key = `${projectId}:${epoch}`;
+        const group = grouped.get(key) ?? { projectId, epoch, ids: [] };
         group.ids.push(id);
         grouped.set(key, group);
       }
@@ -628,7 +640,10 @@ export async function createGateway(
     );
     return result;
   }
-  function binding(id: string): Promise<Binding> {
+  function isAssociated(id: string): boolean {
+    return store.associatedProjects().some((project) => project.id === id);
+  }
+  function binding(id: string, allowBootstrap = true): Promise<Binding> {
     let project = store.projects().find((p) => p.id === id);
     if (!project) throw new ContractError("unavailable");
     const c = new ServiceCoordination(project.path, input.stateHome),
@@ -640,11 +655,11 @@ export async function createGateway(
       project = { ...project, epoch: local.epoch };
       // Merely reading a selected directory never adopts its owner's Stop
       // lifetime. Only Send preparation associates an exact epoch.
-      if (store.associatedProjects().some((p) => p.id === id))
-        store.saveProject(project);
+      if (isAssociated(id)) store.saveProject(project);
     }
     const previous = bindings.get(id);
     if (previous?.epoch === local.epoch) return previous.result;
+    if (!allowBootstrap) throw new ContractError("stale");
     const result = (async () => {
       const raw = closed(await nativeCall(c, "token-link", true), ["link"]),
         link = new URL(text(raw.link, 4096, true));
@@ -670,7 +685,11 @@ export async function createGateway(
       });
       if (c.localAccess().epoch !== project.epoch)
         throw new ContractError("stale");
-      return { project, endpoint: local.endpoint, cookie };
+      return {
+        project: { ...project, epoch: local.epoch },
+        endpoint: local.endpoint,
+        cookie,
+      };
     })();
     const pending = { epoch: local.epoch, result };
     bindings.set(id, pending);
@@ -680,6 +699,23 @@ export async function createGateway(
       if (bindings.get(id) === pending) bindings.delete(id);
     });
     return result;
+  }
+  /** Do not replay the request. Only its own binding can be retired; a late
+   * refusal must not evict a successful new login at the same owner epoch. */
+  function rejectBinding(b: Binding, original: Promise<Binding>) {
+    b.rejected = true;
+    if (bindings.get(b.project.id)?.result !== original) return;
+    bindings.delete(b.project.id);
+    // An explicit warm preparation may have rebound the same valid cookie
+    // while viewers retained their allocation. Those viewers are now revoked too.
+    for (const viewer of attachments.values()) {
+      if (
+        viewer.project.id === b.project.id &&
+        viewer.project.epoch === b.project.epoch &&
+        viewer.cookie === b.cookie
+      )
+        viewer.rejected = true;
+    }
   }
   function stop(): void {
     if (stopping) return;
@@ -967,6 +1003,16 @@ export async function createGateway(
           Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes
         )
           throw new ContractError("oversize");
+        const attachment = boundary.headers.get("x-cadence-attachment");
+        const historyCsrf = boundary.headers.get(HISTORY_CSRF_HEADER);
+        if (
+          historyCsrf !== undefined &&
+          (route.source !== "body" ||
+            !retainedHistoryBody(route.operation) ||
+            attachment !== undefined ||
+            boundary.headers.has("x-cadence-csrf"))
+        )
+          throw new ContractError("forbidden");
         // Retained conversation reads use the workbench's access cookie, not
         // an execution attachment. An old attachment can be gone after Stop;
         // it cannot prevent reading, nor grant any authority on this route.
@@ -992,33 +1038,37 @@ export async function createGateway(
             return;
           }
         }
-        if (
-          route.operation === "session" &&
-          !store.associatedProjects().some((p) => p.id === project.id)
-        )
+        if (route.operation === "session" && !isAssociated(project.id))
           throw new ContractError("unavailable");
-        const attachment = boundary.headers.get("x-cadence-attachment");
         if (
           (attachment &&
             (attachments.has(attachment)
-              ? attachments.get(attachment)?.projectId !== project.id
+              ? attachments.get(attachment)?.project.id !== project.id
               : route.operation !== "session")) ||
-          (req.method === "POST" && !attachment)
+          (req.method === "POST" && !attachment && historyCsrf === undefined)
         )
           throw new ContractError("stale");
         if (
           route.operation === "session" &&
           (!attachment || !attachments.has(attachment)) &&
           attachments.size >= 2048
-        )
-          throw new ContractError("capacity");
+        ) {
+          for (const [id, previous] of attachments)
+            if (previous.rejected) attachments.delete(id);
+          if (attachments.size >= 2048) throw new ContractError("capacity");
+        }
         if (
           req.method === "POST" &&
           boundary.headers.get("origin") !== boundary.origin
         )
           throw new ContractError("forbidden");
         const attached = attachment ? attachments.get(attachment) : undefined;
-        if (route.operation === "detach" && attachment && attached) {
+        if (
+          route.operation === "detach" &&
+          attachment &&
+          attached &&
+          !attached.rejected
+        ) {
           const selected = store.projects().find((p) => p.id === project.id);
           if (!selected) throw new ContractError("unavailable");
           const observed = new ServiceCoordination(
@@ -1027,7 +1077,7 @@ export async function createGateway(
           ).inspect();
           if (
             observed.status === "stopped" &&
-            observed.epoch === attached.epoch
+            observed.epoch === attached.project.epoch
           ) {
             auth.current(caller);
             assert();
@@ -1048,13 +1098,47 @@ export async function createGateway(
             throw new ContractError("forbidden");
           commandBody = canonicalJson(command, LIMITS.controlBytes);
         }
-        const b = await binding(project.id);
+        // Reading a command body can suspend across either credential's revocation.
+        // Check before even attempting a binding, not just before forwarding it.
+        auth.current(caller);
+        if (attached?.rejected) {
+          if (attachment && route.operation === "detach")
+            attachments.delete(attachment);
+          // Project access, not the gateway login, was revoked. In particular
+          // a retiring viewer must not bootstrap new credentials on detach.
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated"),
+          });
+          return;
+        }
+        const original = binding(project.id, historyCsrf === undefined);
+        const b = await original;
         auth.current(caller);
         assert();
         // Do not forward an old epoch's CSRF/attachment through a new owner's
         // cookie. The authenticated successor proves this viewer superseded,
         // not that any earlier message was unaccepted or canceled.
-        if (attachment && attached && attached.epoch !== b.project.epoch) {
+        if (bindings.get(project.id)?.result !== original)
+          throw new ContractError("stale");
+        if (
+          attachment &&
+          attached &&
+          attached.project.epoch === b.project.epoch &&
+          attached.cookie !== b.cookie
+        ) {
+          attached.rejected = true;
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated"),
+          });
+          return;
+        }
+        if (
+          attachment &&
+          attached &&
+          attached.project.epoch !== b.project.epoch
+        ) {
           attachments.delete(attachment);
           reply(
             res,
@@ -1075,6 +1159,11 @@ export async function createGateway(
           Cookie: b.cookie,
           Origin: b.endpoint,
         };
+        if (historyCsrf !== undefined) {
+          if (!b.history || b.history.browser !== historyCsrf)
+            throw new ContractError("forbidden");
+          headers[HISTORY_CSRF_HEADER] = b.history.owner;
+        }
         for (const key of [
           "accept-encoding",
           "content-type",
@@ -1095,6 +1184,32 @@ export async function createGateway(
             (incoming) => {
               try {
                 auth.current(caller);
+                if (incoming.statusCode === 401) {
+                  // The owner explicitly expired the cookie used for this request.
+                  const cookieName = b.cookie.split("=", 1)[0];
+                  if (
+                    incoming.headers["set-cookie"]?.some((line) => {
+                      const [cookie, ...attributes] = line.split(/;\s*/);
+                      return (
+                        cookie === `${cookieName}=` &&
+                        attributes.includes("Max-Age=0")
+                      );
+                    })
+                  )
+                    rejectBinding(b, original);
+                } else if (bindings.get(project.id)?.result !== original) {
+                  throw new ContractError("stale");
+                }
+                if (
+                  route.operation === "workspace" &&
+                  incoming.statusCode === 200 &&
+                  incoming.headers[HISTORY_CSRF_HEADER] !== undefined
+                ) {
+                  const owner = decodeId(incoming.headers[HISTORY_CSRF_HEADER]);
+                  if (b.history?.owner !== owner)
+                    b.history = { owner, browser: randomUUID() };
+                  res.setHeader(HISTORY_CSRF_HEADER, b.history.browser);
+                }
               } catch {
                 close();
                 return;
@@ -1106,7 +1221,7 @@ export async function createGateway(
                 try {
                   attachments.set(
                     decodeId(incoming.headers["x-cadence-attachment"]),
-                    { projectId: project.id, epoch: b.project.epoch as string },
+                    b,
                   );
                 } catch {
                   close();
@@ -1116,7 +1231,8 @@ export async function createGateway(
               if (
                 route.operation === "detach" &&
                 incoming.statusCode === 200 &&
-                attachment
+                attachment &&
+                attachments.get(attachment) === attached
               )
                 attachments.delete(attachment);
               res.statusCode = incoming.statusCode ?? 502;
@@ -1181,7 +1297,7 @@ export async function createGateway(
           observed && typeof observed === "object" && "status" in observed
             ? observed.status
             : "unavailable";
-        reply(res, 200, {
+        const value = {
           kind: "project-observation",
           status:
             status === "alive"
@@ -1196,7 +1312,12 @@ export async function createGateway(
               ? observed.epoch
               : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null,
-        });
+        };
+        res.setHeader(
+          PROJECT_ASSOCIATION_HEADER,
+          isAssociated(project.id) ? "associated" : "unassociated",
+        );
+        reply(res, 200, value);
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
@@ -1327,6 +1448,7 @@ export async function createGateway(
             [...url.searchParams.keys()].join() === "project"));
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset) throw new ContractError("invalid");
+      if (app) res.setHeader("X-Cadence-Web-Build", build.assets.buildId);
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {
@@ -1362,12 +1484,21 @@ export async function createGateway(
         const url = new URL(t.tail, endpoint),
           attachment = decodeId(url.searchParams.get("attachment"));
         if (
-          attachments.get(attachment)?.projectId !== t.id ||
+          attachments.get(attachment)?.project.id !== t.id ||
           t.tail !== `${WS_PATH}?attachment=${attachment}`
         )
           throw new ContractError("invalid");
-        const b = await binding(t.id);
-        if (attachments.get(attachment)?.epoch !== b.project.epoch)
+        const attached = attachments.get(attachment);
+        if (!attached || attached.rejected)
+          throw new ContractError("unauthenticated");
+        const original = binding(t.id);
+        const b = await original;
+        if (
+          bindings.get(t.id)?.result !== original ||
+          attachments.get(attachment) !== attached ||
+          attached.project.epoch !== b.project.epoch ||
+          attached.cookie !== b.cookie
+        )
           throw new ContractError("stale");
         auth.current(caller);
         assert();
@@ -1388,6 +1519,12 @@ export async function createGateway(
         };
         relays.add(abort);
         socket.once("close", abort);
+        upstream.once("unexpected-response", (_request, response) => {
+          // Owner WS admission returns 401 only for failed authentication.
+          if (response.statusCode === 401) rejectBinding(b, original);
+          response.destroy();
+          abort();
+        });
         upstream.once("error", abort);
         upstream.once("close", abort);
         upstream.once("open", () => {

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { abortScope } from "../../src/abort-scope.ts";
 import type { Activity } from "../../src/service/contracts/activity.ts";
-import {
-  decodeWorkbenchEntry,
-  type ExecutionPreparation,
-  type ProjectEntry,
-  type WorkbenchEntry,
+import type {
+  ExecutionPreparation,
+  ProjectEntry,
+  WorkbenchEntry,
 } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
 import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts";
@@ -26,10 +26,13 @@ import {
 } from "./client/folder-draft";
 import {
   projectReadable,
+  rememberedProject,
   rememberProject,
   restorableProject,
 } from "./client/last-project";
 import { readModelPreview } from "./client/model-preview";
+import { observationRetryMs, refusedAccess } from "./client/observation-read";
+import { ObservationAccess } from "./client/observer";
 import {
   prepareDirectoryExecution,
   selectActivity,
@@ -38,10 +41,10 @@ import {
 import { currentProject } from "./client/project-route";
 import { errorCode, readJson as read } from "./client/service";
 import { useActivity } from "./client/use-activity";
+import { readEntry } from "./client/workbench-entry";
 import type { ActivityListProps } from "./components/workspace/ActivityList";
 import { FolderSetup } from "./components/workspace/FolderSetup";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
-import { RecoveryNotices } from "./components/workspace/RecoveryNotices";
 import { ServiceDialog } from "./components/workspace/ServiceDialog";
 import { describeError, useT } from "./i18n/locale";
 
@@ -69,91 +72,194 @@ export function Workbench() {
   const [picker, setPicker] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [openError, setOpenError] = useState("");
-  const [error, setError] = useState("");
-  const [revision, refresh] = useState(0);
   const [serviceOpen, setServiceOpen] = useState(false);
-  const [restore, setRestore] = useState<{
-    status: "checking" | "unavailable";
-    path: string;
-  } | null>(null);
-  const epochChanged = useCallback(() => refresh((n) => n + 1), []);
-  const activities = useActivity(entry?.epoch, epochChanged);
+  const [reading, setReading] = useState<{
+    pending: boolean;
+    entryError?: string;
+    restoreError?: string;
+    restoring?: string;
+    missing?: boolean;
+  }>({ pending: true });
   const navigation = useRef<AbortController | null>(null);
-  useEffect(() => () => navigation.current?.abort(), []);
   const hashes = useRef(new Map<string, string>());
-  const firstEntry = useRef(!selected);
-  const restoring = useRef<AbortController | null>(null);
-  // Clears a pending check; an unavailable-history notice stays until navigation.
-  const cancelRestore = useCallback(() => {
-    if (!restoring.current) return;
-    restoring.current.abort();
-    restoring.current = null;
-    setRestore(null);
+  const restoreAllowed = useRef(
+    !selected && !folderDraft.text && !folderDraft.model,
+  );
+  const [holdingSetup, setHoldingSetup] = useState(false);
+  const reader = useRef<AbortController | null>(null);
+  const retire = useCallback(() => {
+    reader.current?.abort();
+    reader.current = null;
   }, []);
-  useEffect(() => {
-    void revision;
+  const checkingNewEpoch = useRef(false);
+  // A delayed activity callback, picker result or history event cannot undo
+  // revocation. Signing in again reloads the page with a new lifetime.
+  const refusal = useRef<string>(undefined);
+  const selectedAccess = useRef<{
+    selected: string | null;
+    access: ObservationAccess;
+  }>(null);
+  if (
+    !selectedAccess.current ||
+    (!refusal.current && selectedAccess.current.selected !== selected)
+  )
+    selectedAccess.current = { selected, access: new ObservationAccess() };
+  const { access } = selectedAccess.current;
+  const refuseEntry = useCallback(
+    (code: string, restoring?: string) => {
+      if (refusal.current) return;
+      refusal.current = code;
+      retire();
+      navigation.current?.abort();
+      selectedAccess.current?.access.refuse("entry", code);
+      setReading({
+        pending: false,
+        entryError: restoring ? undefined : code,
+        restoreError: restoring ? code : undefined,
+        restoring,
+      });
+    },
+    [retire],
+  );
+  const refreshEntry = useCallback(() => {
+    if (refusal.current) return;
+    retire();
     const abort = new AbortController();
-    void (async () => {
+    reader.current = abort;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const online = () => {
+      if (timer !== undefined) void load();
+    };
+    window.addEventListener("online", online);
+    const clean = () => {
+      clearTimeout(timer);
+      window.removeEventListener("online", online);
+    };
+    abort.signal.addEventListener("abort", clean, { once: true });
+    const load = async () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (abort.signal.aborted) return;
+      setReading((previous) => ({
+        ...previous,
+        restoring: undefined,
+        pending: true,
+      }));
+      let restoring: string | undefined;
       try {
-        const response = await fetch("/workbench/v1", {
-          credentials: "same-origin",
-          redirect: "error",
-          cache: "no-store",
-          signal: abort.signal,
-        });
-        const value = await read(response);
-        // A direct legacy project owner has no gateway route. No fallback for an
-        // authentication, network or corrupt-entry failure.
-        if (response.status === 400 && errorCode(value) === "invalid")
-          setEntry(null);
-        else if (!response.ok) setError(errorCode(value));
-        else {
-          setEntry(decodeWorkbenchEntry(value));
-          setError("");
+        const next = await readEntry(abort.signal);
+        if (abort.signal.aborted) return;
+        checkingNewEpoch.current = false;
+        setEntry(next);
+        const last =
+          restoreAllowed.current && next ? restorableProject(next) : undefined;
+        if (last) {
+          restoring = last.cwd;
+          setReading((previous) => ({
+            ...previous,
+            entryError: undefined,
+            restoring,
+            pending: true,
+          }));
+          const readable = await projectReadable(last.id, abort.signal);
+          if (abort.signal.aborted) return;
+          if (!readable) throw new Error("unavailable");
+          restoreAllowed.current = false;
+          history.replaceState(null, "", `/app?project=${last.id}`);
+          setSelected(last.id);
         }
-      } catch {
-        if (!abort.signal.aborted) setError("unavailable");
+        setReading({
+          pending: false,
+          missing: !!(
+            next &&
+            restoreAllowed.current &&
+            rememberedProject() &&
+            !last
+          ),
+        });
+        clean();
+        reader.current = null;
+      } catch (error) {
+        if (abort.signal.aborted) return;
+        const code = error instanceof Error ? error.message : "unavailable";
+        if (refusedAccess(code)) return refuseEntry(code, restoring);
+        setReading({
+          pending: false,
+          entryError: restoring ? undefined : code,
+          restoreError: restoring ? code : undefined,
+          restoring,
+        });
+        timer = setTimeout(load, observationRetryMs);
       }
-    })();
-    return () => abort.abort();
-  }, [revision]);
+    };
+    void load();
+  }, [retire, refuseEntry]);
+  const revoked =
+    refusedAccess(reading.entryError) || refusedAccess(reading.restoreError);
+  // Several activity polls can report the same mismatch while entry headers or
+  // body are stuck. Retire the former epoch once; don't starve its replacement.
+  const invalidateEntry = useCallback(
+    (code?: string) => {
+      if (code && refusedAccess(code)) return refuseEntry(code);
+      if (checkingNewEpoch.current) return;
+      checkingNewEpoch.current = true;
+      refreshEntry();
+    },
+    [refreshEntry, refuseEntry],
+  );
+  const activities = useActivity(
+    revoked ? undefined : entry?.epoch,
+    invalidateEntry,
+  );
   useEffect(() => {
+    refreshEntry();
     const changed = () => {
       navigation.current?.abort();
-      cancelRestore();
-      setRestore(null);
+      restoreAllowed.current = false;
+      setHoldingSetup(false);
       setSelected(currentProject());
+      refreshEntry();
     };
+    const hashChanged = () => {
+      // A hash-only navigation can also supersede automatic return. If the
+      // browser already reported popstate, changed() disarmed restoration.
+      if (restoreAllowed.current && reader.current) changed();
+    };
+    window.addEventListener("hashchange", hashChanged);
     window.addEventListener("popstate", changed);
-    return () => window.removeEventListener("popstate", changed);
-  }, [cancelRestore]);
-  useEffect(() => {
-    if (!entry || !firstEntry.current) return;
-    firstEntry.current = false;
-    // An unfinished first-use draft needs an explicit destination, not the last folder.
-    if (folderDraft.text || folderDraft.model) return;
-    const project = restorableProject(entry);
-    if (!project) return;
-    const abort = new AbortController();
-    restoring.current = abort;
-    setRestore({ status: "checking", path: project.cwd });
-    void projectReadable(project.id, abort.signal).then((readable) => {
-      // Any explicit navigation, Open or folder choice meanwhile wins.
-      if (abort.signal.aborted) return;
-      restoring.current = null;
-      if (!readable) {
-        setRestore({ status: "unavailable", path: project.cwd });
-        return;
-      }
-      history.replaceState(null, "", `/app?project=${project.id}`);
-      setRestore(null);
-      setSelected(project.id);
-    });
-  }, [entry, folderDraft]);
+    return () => {
+      window.removeEventListener("hashchange", hashChanged);
+      window.removeEventListener("popstate", changed);
+      retire();
+      navigation.current?.abort();
+    };
+  }, [refreshEntry, retire]);
+  // In setup, a draft or explicit destination beats either automatic return
+  // or late discovery of a deep link's project. A fresh entry can enable the
+  // picker, but must not take this composer away while the user is typing.
+  const claimSetup = () => {
+    restoreAllowed.current = false;
+    setHoldingSetup(true);
+    if (revoked || holdingSetup) return;
+    if (entry && reading.restoring) {
+      retire();
+      setReading({ pending: false });
+    } else if (reader.current) refreshEntry();
+  };
+  const adoptEntry = useCallback(
+    (next: WorkbenchEntry) => {
+      if (refusal.current) throw new Error(refusal.current);
+      retire();
+      checkingNewEpoch.current = false;
+      setReading({ pending: false });
+      setEntry(next);
+    },
+    [retire],
+  );
   const navigate = useCallback(
     (project: ProjectEntry, activity?: Activity) => {
-      cancelRestore();
-      setRestore(null);
+      restoreAllowed.current = false;
+      setHoldingSetup(false);
       if (
         selected &&
         history.state?.cadenceCwd ===
@@ -164,7 +270,7 @@ export function Workbench() {
       // Only an explicit folder choice from setup owns this draft. Activity
       // links and automatic restoration must never inject it into a session.
       const handoff =
-        !entry?.projects.some((p) => p.id === selected) &&
+        (holdingSetup || !entry?.projects.some((p) => p.id === selected)) &&
         !activity &&
         !!(folderDraft.text || folderDraft.model);
       if (handoff) {
@@ -183,74 +289,86 @@ export function Workbench() {
       );
       setSelected(project.id);
       setPicker(null);
-      window.dispatchEvent(new PopStateEvent("popstate"));
+      // App also listens for hash changes when the chosen project stays mounted.
+      window.dispatchEvent(new Event("hashchange"));
     },
-    [selected, cancelRestore, entry, folderDraft],
+    [selected, holdingSetup, entry, folderDraft],
   );
   const open = useCallback(
     async (path: string) => {
+      if (refusal.current) throw new Error(refusal.current);
       navigation.current?.abort();
       const abort = new AbortController();
       navigation.current = abort;
       const selected = await selectDirectory(path, abort.signal);
       if (abort.signal.aborted) return;
-      setEntry(selected.entry);
+      adoptEntry(selected.entry);
       navigate(selected.project);
     },
-    [navigate],
+    [navigate, adoptEntry],
   );
-  const discovery: ActivityListProps | undefined = entry
-    ? {
-        value: activities.value,
-        error: activities.error,
-        opening: !!opening,
-        project: entry.projects.find((p) => p.id === selected)?.path,
-        onOpen: (path, activity) => {
-          navigation.current?.abort();
-          cancelRestore();
-          const abort = new AbortController();
-          navigation.current = abort;
-          setOpening(activity.cwd);
-          setOpenError("");
-          void selectActivity(path, activity, abort.signal)
-            .then((selected) => {
-              if (abort.signal.aborted) return;
-              setEntry(selected.entry);
-              navigate(selected.project, activity);
-            })
-            .catch((error: unknown) => {
-              if (!abort.signal.aborted)
-                setOpenError(
-                  describeError(
-                    t,
-                    error instanceof Error ? error.message : "unavailable",
-                  ),
-                );
-            })
-            .finally(() => {
-              if (navigation.current === abort) setOpening(null);
-            });
-        },
-      }
-    : undefined;
+  const discovery: ActivityListProps | undefined =
+    entry && !revoked
+      ? {
+          value: activities.value,
+          error: activities.error,
+          opening: !!opening,
+          project: entry.projects.find((p) => p.id === selected)?.path,
+          onOpen: (path, activity) => {
+            navigation.current?.abort();
+            if (!project) claimSetup();
+            const abort = new AbortController();
+            navigation.current = abort;
+            setOpening(activity.cwd);
+            setOpenError("");
+            void selectActivity(path, activity, abort.signal)
+              .then((selected) => {
+                if (abort.signal.aborted) return;
+                adoptEntry(selected.entry);
+                navigate(selected.project, activity);
+              })
+              .catch((error: unknown) => {
+                if (!abort.signal.aborted)
+                  setOpenError(
+                    describeError(
+                      t,
+                      error instanceof Error ? error.message : "unavailable",
+                    ),
+                  );
+              })
+              .finally(() => {
+                if (navigation.current === abort) setOpening(null);
+              });
+          },
+        }
+      : undefined;
   const prepareExecution = async (
     purpose: ExecutionPreparation,
     signal: AbortSignal,
     location?: ConversationLocation,
     progress?: PreparationProgress,
   ) => {
+    access.check();
+    if (refusal.current) throw new Error(refusal.current);
     const selectedProject = entry?.projects.find((p) => p.id === selected);
     if (!selectedProject) throw new Error("unavailable");
-    const ready = await prepareDirectoryExecution(
-      selectedProject,
-      purpose,
-      signal,
-      location,
-      progress,
-    );
-    if (signal.aborted) throw new Error("stale");
-    setEntry(ready.entry);
-    return ready.project.epoch as string;
+    const wait = abortScope([signal, access.signal]);
+    try {
+      const ready = await prepareDirectoryExecution(
+        selectedProject,
+        purpose,
+        wait.signal,
+        location,
+        progress,
+      );
+      access.check();
+      if (wait.signal.aborted || selectedAccess.current?.access !== access)
+        throw new Error("stale");
+      adoptEntry(ready.entry);
+      return ready.project.epoch as string;
+    } finally {
+      wait.dispose();
+    }
   };
   const directories = useMemo<Pick<ServiceClient, "workbenchRead">>(
     () => ({
@@ -282,15 +400,26 @@ export function Workbench() {
     }),
     [],
   );
-  const api = useMemo(
-    () => (selected ? browserClient(selected) : undefined),
-    [selected],
-  );
-  const project = entry?.projects.find((p) => p.id === selected);
+  const entryEpoch = entry?.epoch;
+  const api = useMemo(() => {
+    // A remounted entry must not share its transport/CSRF with a detach
+    // still settling for the previous authenticated entry.
+    void entryEpoch;
+    return selected ? browserClient(selected) : undefined;
+  }, [selected, entryEpoch]);
+  const project = holdingSetup
+    ? undefined
+    : entry?.projects.find((p) => p.id === selected);
   useEffect(() => {
     if (project) rememberProject(project.id);
   }, [project]);
-  if (entry === null) return <App />;
+  const entryObservation = {
+    pending: reading.pending,
+    error: reading.entryError ?? reading.restoreError,
+    refresh: refreshEntry,
+  };
+  if (entry === null)
+    return <App entryObservation={entryObservation} projectAccess={access} />;
   const service = entry && serviceOpen && (
     <ServiceDialog
       epoch={entry.epoch}
@@ -319,7 +448,9 @@ export function Workbench() {
     return (
       <>
         <App
-          key={project.id}
+          key={`${entry.epoch}:${project.id}`}
+          entryObservation={entryObservation}
+          projectAccess={access}
           api={api}
           project={project}
           previewModels={previewModels}
@@ -333,6 +464,7 @@ export function Workbench() {
           onPrepareExecution={prepareExecution}
           onChooseFolder={(cwd) => {
             navigation.current?.abort();
+            if (reader.current && !revoked) refreshEntry();
             setPicker(cwd ?? project.cwd);
           }}
           onOpenProject={open}
@@ -341,15 +473,7 @@ export function Workbench() {
             path: p.cwd,
             current: p.id === selected,
           }))}
-          notices={
-            <>
-              {openError && <p role="alert">{openError}</p>}
-              <RecoveryNotices
-                notices={entry.recoveries}
-                project={project.path}
-              />{" "}
-            </>
-          }
+          notices={openError && <p role="alert">{openError}</p>}
           onOpenService={openService}
         />
         {service}
@@ -360,47 +484,39 @@ export function Workbench() {
     <>
       <FolderSetup
         discovery={discovery}
-        ready={!!entry}
-        previewModels={entry ? previewModels : undefined}
+        ready={!!entry && !revoked}
+        previewModels={entry && !revoked ? previewModels : undefined}
         draft={folderDraft}
         onDraftChange={(draft) => {
-          cancelRestore();
+          claimSetup();
           setFolderDraft(draft);
           rememberFolderDraft(draft);
         }}
-        restore={restore}
-        onRefresh={() => refresh((n) => n + 1)}
+        restoring={reading.restoring}
+        missing={
+          !reading.pending &&
+          !reading.entryError &&
+          !reading.restoreError &&
+          (reading.missing ||
+            !!(!holdingSetup && selected && !project && entry))
+        }
+        pending={reading.pending}
+        entryError={reading.entryError}
+        restoreError={reading.restoreError}
+        onRefresh={refreshEntry}
         onOpenService={entry ? openService : undefined}
         onChooseFolder={() => {
-          cancelRestore();
+          claimSetup();
           setOpenError("");
           navigation.current?.abort();
           setPicker(entry?.home ?? "");
         }}
         notices={
-          <>
-            {openError && (
-              <p role="alert" className="banner-notice">
-                {openError}
-              </p>
-            )}
-            {entry && <RecoveryNotices notices={entry.recoveries} />}
-            {error && (
-              <p role="alert" className="banner-notice">
-                {error}{" "}
-                <button type="button" onClick={() => refresh((n) => n + 1)}>
-                  {t("Reload observation")}
-                </button>
-              </p>
-            )}
-            {selected && !project && entry && (
-              <p role="alert" className="banner-notice">
-                {t(
-                  "This folder is unavailable. Choose another folder; nothing was moved or recreated.",
-                )}
-              </p>
-            )}
-          </>
+          openError && (
+            <p role="alert" className="banner-notice">
+              {openError}
+            </p>
+          )
         }
       />
       {folderPicker}

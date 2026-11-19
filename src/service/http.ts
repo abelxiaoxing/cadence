@@ -26,10 +26,12 @@ import {
   decodeLiveEvent,
   decodePublicError,
   decodeReceiptLookup,
+  decodeReply,
   decodeScope,
   decodeServiceBuild,
   decodeSessionBootstrap,
   decodeSnapshot,
+  decodeWorkspaceBootstrap,
   ExportTracker,
   encodeExportFrame,
   errorStatus,
@@ -47,9 +49,11 @@ import {
   decodeHttpInput,
   decodeHttpOutput,
   decodeSocketInput,
+  HISTORY_CSRF_HEADER,
   type HttpOperation,
   mutation,
   readRoute,
+  retainedHistoryBody,
   type SocketOutput,
   WS_PATH,
 } from "../service-wire.ts";
@@ -138,6 +142,7 @@ interface Viewer {
   sentBytes: number;
   sentMessages: number;
   reading: boolean;
+  resyncPending: boolean;
   closed: boolean;
   lastPing: number;
   lastReconcile: number;
@@ -234,7 +239,7 @@ export class ServiceHttpServer {
     for (const asset of options.assets ?? []) {
       total += asset.bytes.byteLength;
       if (
-        !/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(
+        !/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(
           asset.path,
         ) ||
         this.assets.has(asset.path) ||
@@ -570,11 +575,17 @@ export class ServiceHttpServer {
         boundary.headers.get("x-cadence-attachment") ?? randomUUID();
       // POST Origin/CSRF security applies to readonly bodies too; this does not
       // change admission, effect reporting, grants or the readonly reader pool.
+      const historyBody =
+        route?.source === "body" &&
+        retainedHistoryBody(route.operation) &&
+        boundary.headers.has(HISTORY_CSRF_HEADER);
       const caller = this.options.auth.authenticate(
         boundary,
         attachmentId,
-        route?.source === "body",
+        historyBody ? "retained-history" : route?.source === "body",
       );
+      if (boundary.headers.has(HISTORY_CSRF_HEADER) && !historyBody)
+        throw new ContractError("forbidden");
       // Authentication occurs before parsing any private request JSON/control body.
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32) throw new ContractError("capacity");
@@ -587,6 +598,11 @@ export class ServiceHttpServer {
         if (!asset || req.method !== "GET") throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
+        if (target === "/app" && this.options.build)
+          res.setHeader(
+            "X-Cadence-Web-Build",
+            this.options.build.assets.buildId,
+          );
         if (target !== "/app") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);
@@ -619,6 +635,7 @@ export class ServiceHttpServer {
         res.setHeader("X-Cadence-Attachment", attachmentId);
       } else if (
         route.source === "body" &&
+        !historyBody &&
         (route.operation !== "detach" || this.attachments.has(attachmentId))
       )
         attachment = this.attachment(caller);
@@ -636,7 +653,15 @@ export class ServiceHttpServer {
             req.headers["content-length"] !== "0"))
       )
         throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
+      const decodedInput = decodeHttpInput(route.operation, input);
+      if (
+        historyBody &&
+        (!decodedInput ||
+          typeof decodedInput !== "object" ||
+          !("storeId" in decodedInput) ||
+          decodedInput.storeId !== this.options.auth.historyStore)
+      )
+        throw new ContractError("stale");
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting) unavailable();
       if (
@@ -673,7 +698,16 @@ export class ServiceHttpServer {
       this.options.auth.current(caller);
       if (abort.signal.aborted) unavailable();
       if (route.operation === "session") this.attachment(caller);
-      const decoded = decodeHttpOutput(route.operation, value);
+      let decoded: unknown;
+      if (route.operation === "workspace" && caller.authority === "browser") {
+        const workspace = decodeReply(value, decodeWorkspaceBootstrap);
+        if (workspace.kind === "ok")
+          res.setHeader(
+            HISTORY_CSRF_HEADER,
+            this.options.auth.historyChallenge(workspace.value),
+          );
+        decoded = workspace;
+      } else decoded = decodeHttpOutput(route.operation, value);
       const status =
         value &&
         typeof value === "object" &&
@@ -1108,6 +1142,7 @@ export class ServiceHttpServer {
       sentBytes: 0,
       sentMessages: 0,
       reading: false,
+      resyncPending: false,
       closed: false,
       lastPing: Date.now(),
       lastReconcile: Date.now(),
@@ -1131,8 +1166,14 @@ export class ServiceHttpServer {
         );
         viewer.lastPing = Date.now();
         if (command.kind === "ping") this.heartbeatViewer(viewer);
-        else if (viewer.reading) this.closeViewer(viewer);
-        else void this.subscribe(viewer, command.scope);
+        else if (!viewer.reading) void this.subscribe(viewer, command.scope);
+        else if (
+          command.kind === "resync" &&
+          viewer.scope?.kind === command.scope.kind &&
+          viewer.scope.id === command.scope.id
+        )
+          viewer.resyncPending = true;
+        else this.closeViewer(viewer);
       } catch {
         this.closeViewer(viewer);
       }
@@ -1227,26 +1268,30 @@ export class ServiceHttpServer {
         viewer.unsubscribe();
         return;
       }
-      const snapshot = decodeSnapshot(await p.snapshot(scope));
-      if (viewer.closed || viewer.subscription !== generation) return;
-      this.attachment(viewer.attachment.caller);
-      if (
-        snapshot.epoch !== this.options.auth.epoch ||
-        canonicalJson(snapshot.scope) !== canonicalJson(scope)
-      )
-        throw new ContractError("stale");
-      viewer.snapshot = snapshot;
-      // Transfer buffered events before sending snapshot, retaining the same bounds.
-      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot })) return;
-      viewer.reading = false;
-      viewer.lastReconcile = Date.now();
-      for (const event of viewer.pending.splice(0)) {
-        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
-        this.deliver(viewer, event);
-        // A gap can synchronously start a new snapshot while this queue drains.
-        // Do not subtract its bytes or clear its ingress state from this attempt.
-        if (viewer.closed || viewer.subscription !== generation) break;
-      }
+      // An overlapping request needs a snapshot taken AFTER the request. Keep
+      // one trailing read, on the same subscribed event stream and readonly slot.
+      do {
+        viewer.resyncPending = false;
+        const snapshot = decodeSnapshot(await p.snapshot(scope));
+        if (viewer.closed || viewer.subscription !== generation) return;
+        this.attachment(viewer.attachment.caller);
+        if (
+          snapshot.epoch !== this.options.auth.epoch ||
+          canonicalJson(snapshot.scope) !== canonicalJson(scope)
+        )
+          throw new ContractError("stale");
+        viewer.snapshot = snapshot;
+        if (!this.sendViewer(viewer, { kind: "snapshot", snapshot })) return;
+        viewer.lastReconcile = Date.now();
+        for (const event of viewer.pending.splice(0)) {
+          viewer.bytes -= Buffer.byteLength(canonicalJson(event));
+          // A gap retires this buffer. The trailing snapshot covers its commits.
+          if (!this.deliver(viewer, event)) {
+            viewer.bytes = 0;
+            break;
+          }
+        }
+      } while (!viewer.closed && viewer.resyncPending);
     } catch {
       this.closeViewer(viewer);
     } finally {
@@ -1254,35 +1299,35 @@ export class ServiceHttpServer {
       this.reads--;
     }
   }
-  private deliver(viewer: Viewer, event: LiveEvent): void {
+  private deliver(viewer: Viewer, event: LiveEvent): boolean {
     const snapshot = viewer.snapshot;
-    if (!snapshot || viewer.closed) return;
+    if (!snapshot || viewer.closed) return false;
     if (
       event.epoch !== snapshot.epoch ||
       event.storeId !== snapshot.storeId ||
       canonicalJson(event.scope) !== canonicalJson(snapshot.scope)
     ) {
       this.resync(viewer);
-      return;
+      return false;
     }
     const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
-    if (cmp < 0 || (cmp === 0 && event.kind !== "heartbeat")) return;
+    if (cmp < 0 || (cmp === 0 && event.kind !== "heartbeat")) return true;
     if (
       (event.kind === "update" &&
         event.previousSeq !== snapshot.committedSeq) ||
       (event.kind === "heartbeat" && cmp > 0)
     ) {
       this.resync(viewer);
-      return;
+      return false;
     }
-    if (this.sendViewer(viewer, { kind: "event", event }))
-      snapshot.committedSeq = event.committedSeq;
+    if (!this.sendViewer(viewer, { kind: "event", event })) return false;
+    snapshot.committedSeq = event.committedSeq;
+    return true;
   }
   private resync(viewer: Viewer): void {
-    if (!viewer.reading && viewer.scope) {
-      this.sendViewer(viewer, { kind: "resync" });
-      void this.subscribe(viewer, viewer.scope);
-    }
+    if (!viewer.scope || !this.sendViewer(viewer, { kind: "resync" })) return;
+    if (viewer.reading) viewer.resyncPending = true;
+    else void this.subscribe(viewer, viewer.scope);
   }
   private heartbeatViewer(viewer: Viewer): void {
     if (!viewer.scope || viewer.reading) return;
@@ -1300,7 +1345,10 @@ export class ServiceHttpServer {
     for (const viewer of this.viewers) {
       if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
         this.closeViewer(viewer);
-      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
+      else if (
+        !viewer.reading &&
+        Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs
+      )
         this.resync(viewer);
       else this.heartbeatViewer(viewer);
     }

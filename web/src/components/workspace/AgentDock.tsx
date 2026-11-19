@@ -33,8 +33,8 @@ const READS = 4;
  * one) is retried this often; it is never taken as a settled or absent run. */
 const UNREAD_RETRY_MS = 10000;
 /** Observe the named workflow runs: live ones on an interval, settled ones once.
- * `failed`: a run already observed could not be read again, so what it shows
- * may be out of date. `unreadable`: IDs not read successfully yet. */
+ * An error belongs to a previously observed run; keep its row and the cause
+ * until a successful reread. Unreadable IDs have not yielded any run yet. */
 export function useWorkflowRuns(
   client: Pick<ServiceClient, "workbenchRead">,
   ids: readonly string[],
@@ -42,85 +42,103 @@ export function useWorkflowRuns(
 ) {
   const [observation, setObservation] = useState<{
     runs: ReadonlyMap<string, WorkflowRun>;
-    failed: boolean;
+    error?: string;
     unreadable: ReadonlySet<string>;
-  }>(() => ({ runs: new Map(), failed: false, unreadable: new Set() }));
+  }>(() => ({ runs: new Map(), unreadable: new Set() }));
+  const refresh = useRef<() => void>(undefined);
   // Keep every observed run across changes to the watched IDs. A failed
   // re-read must not turn known live work into an unobserved/absent row.
-  const retained = useRef({ client, runs: new Map<string, WorkflowRun>() });
+  const retained = useRef({
+    client,
+    records: new Map<string, { run: WorkflowRun; error?: string }>(),
+  });
   const key = JSON.stringify([...new Set(ids)]);
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (retained.current.client !== client)
-      retained.current = { client, runs: new Map() };
+      retained.current = { client, records: new Map() };
+    const { records } = retained.current;
     const listed = JSON.parse(key) as string[];
     const wanted = new Set(listed);
-    for (const id of retained.current.runs.keys())
-      if (!wanted.has(id)) retained.current.runs.delete(id);
-    const known = new Map(retained.current.runs);
+    for (const id of records.keys()) if (!wanted.has(id)) records.delete(id);
     const missed = new Map<string, number>();
-    const publish = (failed: boolean) => {
+    const publish = () => {
+      let error: string | undefined;
       const runs = new Map<string, WorkflowRun>();
       for (const id of listed) {
-        const run = known.get(id);
-        if (run) runs.set(id, run);
+        const record = records.get(id);
+        if (record) {
+          runs.set(id, record.run);
+          error ??= record.error;
+        }
       }
-      setObservation({ runs, failed, unreadable: new Set(missed.keys()) });
+      setObservation({ runs, error, unreadable: new Set(missed.keys()) });
       return runs;
     };
-    /** Whether the read left an observed run without a current observation. */
     const read = async (id: string) => {
       const reply = await client.workbenchRead(
         { kind: "workflow", id },
         abort.signal,
       );
-      if (abort.signal.aborted) return false;
+      if (abort.signal.aborted) return;
       if (
         reply.kind === "ok" &&
         reply.value.kind === "workflow" &&
         reply.value.response.type === "run"
       ) {
-        const run = reply.value.response.run;
-        known.set(id, run);
+        records.set(id, { run: reply.value.response.run });
         missed.delete(id);
-        retained.current.runs.set(id, run);
-        return false;
+      } else {
+        const record = records.get(id);
+        if (record)
+          record.error =
+            reply.kind === "error" ? reply.error.code : "unavailable";
+        else missed.set(id, Date.now());
       }
-      if (known.has(id)) return true;
-      missed.set(id, Date.now());
-      return false;
     };
+    let reading = false;
+    let requested = false;
     const poll = async () => {
-      let failed = false;
+      clearTimeout(timer);
+      if (reading) {
+        requested = true;
+        return;
+      }
+      reading = true;
       const now = Date.now();
       const due = listed
         .filter((id) => {
-          const previous = known.get(id);
+          const previous = records.get(id);
           return previous
-            ? LIVE.includes(previous.status)
+            ? LIVE.includes(previous.run.status)
             : now - (missed.get(id) ?? 0) >= UNREAD_RETRY_MS;
         })
         .reverse();
       for (let i = 0; i < due.length; i += READS) {
-        const stale = await Promise.all(due.slice(i, i + READS).map(read));
+        await Promise.all(due.slice(i, i + READS).map(read));
         if (abort.signal.aborted) return;
-        failed ||= stale.includes(true);
-        if (i + READS < due.length) publish(failed);
+        if (i + READS < due.length) publish();
       }
-      const runs = publish(failed);
-      if (failed || [...runs.values()].some((run) => LIVE.includes(run.status)))
+      const runs = publish();
+      reading = false;
+      if (requested) {
+        requested = false;
+        void poll();
+      } else if ([...runs.values()].some((run) => LIVE.includes(run.status)))
         timer = setTimeout(() => void poll(), interval);
       else if (missed.size)
         timer = setTimeout(() => void poll(), UNREAD_RETRY_MS);
     };
+    refresh.current = poll;
     void poll();
     return () => {
+      refresh.current = undefined;
       abort.abort();
       clearTimeout(timer);
     };
   }, [client, key, interval]);
-  return observation;
+  return { ...observation, refresh: () => refresh.current?.() };
 }
 /** One run's subagents in the dock. Its head names the run and where its
  * assignments stand (the queued ones have no agent row yet) and opens the
@@ -140,11 +158,13 @@ export function WorkflowAgentGroup({
   const { t, tx } = useT();
   const counts = assignmentCounts(run);
   const chosen = selected?.runId === run.id ? selected.stepId : undefined;
+  const currentRun = chosen === null;
   return (
     <section className="agent-dock-run" aria-label={run.goal}>
       <button
         type="button"
-        className={`agent-dock-run-head${chosen === null ? " active" : ""}`}
+        className={`agent-dock-run-head${currentRun ? " active" : ""}`}
+        aria-current={currentRun || undefined}
         title={run.goal}
         onClick={() =>
           onOpen?.({ runId: run.id, stepId: null, label: run.goal })
@@ -158,12 +178,14 @@ export function WorkflowAgentGroup({
         )}
       </button>
       {steps.map((step) => {
+        const currentStep = chosen === step.id;
         const label = workflowAgentLabel(step.id);
         const task = run.tasks?.find((entry) => entry.id === label);
         return (
           <button
             type="button"
-            className={`agent-dock-row${chosen === step.id ? " active" : ""}`}
+            className={`agent-dock-row${currentStep ? " active" : ""}`}
+            aria-current={currentStep || undefined}
             key={step.childRunId}
             title={task ? `${task.title} · ${run.goal}` : run.goal}
             onClick={() => onOpen?.({ runId: run.id, stepId: step.id, label })}
@@ -302,7 +324,7 @@ export function AgentDock({
       </button>
       {open && (
         <div className="agent-dock-body">
-          {(error || active?.status !== "complete" || workflows.failed) && (
+          {(error || active?.status !== "complete" || workflows.error) && (
             <p className="panel-hint">{t("Subagent roster unavailable")}</p>
           )}
           {count === 0 && !error && active?.status === "complete" && (

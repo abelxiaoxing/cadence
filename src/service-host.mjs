@@ -5117,6 +5117,7 @@ var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
 var fixed = new Set([
   "index.html",
+  "assets/start.js",
   "assets/cadence.js",
   "assets/cadence.css",
   "assets/react.js",
@@ -5127,6 +5128,7 @@ var fixed = new Set([
   "assets/vis-timeline.css"
 ]);
 var font = /^assets\/KaTeX_(?:AMS-Regular|Caligraphic-(?:Bold|Regular)|Fraktur-(?:Bold|Regular)|Main-(?:Bold|BoldItalic|Italic|Regular)|Math-(?:BoldItalic|Italic)|SansSerif-(?:Bold|Italic|Regular)|Script-Regular|Size[1-4]-Regular|Typewriter-Regular)\.(?:woff2|woff|ttf)$/;
+var webBuildBase = (buildId) => `/ui/${buildId}/`;
 function assetMime(name) {
   if (!fixed.has(name) && !font.test(name))
     throw new Error("asset-name-refused");
@@ -5227,7 +5229,7 @@ function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.
     if (!body || body.length !== a.bytes || createHash6("sha256").update(body).digest("hex") !== a.sha256)
       throw new Error("asset-body-refused");
     return {
-      path: a.name === "index.html" ? "/app" : `/${a.name}`,
+      path: a.name === "index.html" ? "/app" : a.name === "assets/start.js" ? `/${a.name}` : `${webBuildBase(manifest.buildId)}${a.name}`,
       contentType: assetMime(a.name),
       bytes: body
     };
@@ -5324,141 +5326,6 @@ function validateImageBytes(bytes, mimeType) {
   if (!width || !height)
     throw new Error("Invalid image dimensions or header");
   return { width, height };
-}
-
-// src/service/contracts/design.ts
-var label = (v) => text(v, 1024, true);
-var key = (v) => {
-  const s = text(v, 48, true);
-  if (!/^[a-z][a-z0-9-]*$/u.test(s))
-    throw new Error("id: use lowercase letters, digits and hyphens");
-  return s;
-};
-function designQuestions(input) {
-  const { questions } = closed(input, ["questions"]);
-  const seen = new Map;
-  const rows = list(questions, 12, (raw) => {
-    const q = closed(raw, [
-      "id",
-      "question",
-      "options",
-      "recommended",
-      "reason",
-      "acceptance",
-      ...Object.hasOwn(raw ?? {}, "when") ? ["when"] : []
-    ]);
-    const id = key(q.id);
-    const options = list(q.options, 6, (raw2) => {
-      const o = closed(raw2, ["id", "label", "cost"]);
-      return { id: key(o.id), label: label(o.label), cost: label(o.cost) };
-    });
-    const ids = new Set(options.map((o) => o.id));
-    const recommended = key(q.recommended);
-    if (seen.has(id) || ids.size !== options.length || ids.size < 2 || !ids.has(recommended))
-      throw new Error("questions: use distinct question and option IDs and identify one recommended option");
-    const dep = q.when === undefined ? null : closed(q.when, ["question", "option"]);
-    const when = dep && {
-      question: key(dep.question),
-      option: key(dep.option)
-    };
-    if (when && !seen.get(when.question)?.has(when.option))
-      throw new Error("when: name an option of an earlier question");
-    seen.set(id, ids);
-    return {
-      id,
-      question: label(q.question),
-      options,
-      recommended,
-      reason: label(q.reason),
-      acceptance: label(q.acceptance),
-      ...when ? { when } : {}
-    };
-  });
-  if (!rows.length)
-    throw new Error("questions: supply a material product decision");
-  canonicalJson(rows, 24 * 1024);
-  return rows;
-}
-function designAnswers(v) {
-  return list(v, 12, (raw) => {
-    const other = Object.hasOwn(raw ?? {}, "other");
-    const a = closed(raw, ["question", other ? "other" : "option"]);
-    const question = key(a.question);
-    return other ? { question, other: label(a.other) } : { question, option: key(a.option) };
-  });
-}
-function available(q, answers) {
-  const dep = q.when;
-  return !dep || answers.some((a) => a.question === dep.question && ("option" in a) && a.option === dep.option);
-}
-function selectDesign(questions, choices, fill = false) {
-  const answers = [];
-  const indexed = new Map(choices.map((a) => [a.question, a]));
-  if (indexed.size !== choices.length || choices.some((a) => !questions.some((q) => q.id === a.question)))
-    throw new ContractError("invalid");
-  for (const q of questions) {
-    if (!available(q, answers))
-      continue;
-    const a = indexed.get(q.id);
-    if (a && "option" in a && !q.options.some((o) => o.id === a.option))
-      throw new ContractError("invalid");
-    if (a)
-      answers.push(a);
-    else if (fill)
-      answers.push({ question: q.id, option: q.recommended });
-  }
-  return answers;
-}
-function decodeDesign(v) {
-  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
-  const questions = designQuestions({ questions: o.questions });
-  const submitted = bool(o.submitted);
-  const answers = designAnswers(o.answers);
-  if (canonicalJson(selectDesign(questions, answers, submitted)) !== canonicalJson(answers))
-    throw new ContractError("invalid");
-  return {
-    id: decodeId(o.id),
-    revision: integer(o.revision, 1),
-    questions,
-    answers,
-    submitted
-  };
-}
-function newDesign(id, input, previous) {
-  const questions = designQuestions(input);
-  const retained = previous?.answers.filter((a) => {
-    const before = previous.questions.find((q) => q.id === a.question);
-    const after = questions.find((q) => q.id === a.question);
-    return before && after && canonicalJson(before) === canonicalJson(after);
-  }) ?? [];
-  return {
-    id,
-    revision: 1,
-    questions,
-    answers: selectDesign(questions, retained),
-    submitted: false
-  };
-}
-function answerText(q, a) {
-  return a && ("other" in a ? a.other : q.options.find((o) => o.id === a.option)?.label);
-}
-function designSummary(d) {
-  return d.questions.filter((q) => available(q, d.answers)).map((q) => `- ${q.question} — ${answerText(q, d.answers.find((a) => a.question === q.id)) ?? "…"}
-  Acceptance: ${q.acceptance}`).join(`
-`);
-}
-function designMessage(d, maximum) {
-  const summary = designSummary(d);
-  return new TextEncoder().encode(summary).length <= maximum ? summary : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
-}
-var recommendsDesign = (s) => /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(s.trim());
-function reviseDesign(d, answers, submit) {
-  return {
-    ...d,
-    revision: d.revision + 1,
-    answers: selectDesign(d.questions, answers, submit),
-    submitted: submit
-  };
 }
 
 // src/service/contracts/workflow.ts
@@ -5592,8 +5459,8 @@ function workflowOrder(tasks) {
 }
 function workflowAncestors(tasks, id) {
   const needed = new Set;
-  const visit = (key2) => {
-    for (const dep of tasks.find((t) => t.id === key2)?.after ?? []) {
+  const visit = (key) => {
+    for (const dep of tasks.find((t) => t.id === key)?.after ?? []) {
       if (!needed.has(dep)) {
         needed.add(dep);
         visit(dep);
@@ -5772,9 +5639,9 @@ function workflowPlanInput(v) {
     return issue("plan", "must be an object");
   const completed = (source, defaults) => {
     const result = { ...defaults };
-    for (const [key2, value] of Object.entries(source))
+    for (const [key, value] of Object.entries(source))
       if (value !== null && value !== undefined)
-        result[key2] = value;
+        result[key] = value;
     return result;
   };
   const plan = completed(v, {
@@ -5796,7 +5663,7 @@ function workflowPlanInput(v) {
 function researchInput(v) {
   if (v === null || typeof v !== "object" || Array.isArray(v))
     return issue("request", "must be an object with a goal and questions");
-  const given = (key2) => Object.getOwnPropertyDescriptor(v, key2)?.value ?? undefined;
+  const given = (key) => Object.getOwnPropertyDescriptor(v, key)?.value ?? undefined;
   const distinct = (name, value, maximum) => [
     ...new Set(entries(name, typeof value === "string" ? [value] : value, Number.MAX_SAFE_INTEGER, (entry, path) => words(path, entry, maximum).trim()).filter(Boolean))
   ];
@@ -6371,7 +6238,159 @@ function decodeWorkflowDiagnostics(v) {
   };
 }
 
+// src/service/contracts/design.ts
+var label = (v) => text(v, 1024, true);
+var key = (v, path = "id") => {
+  const s = words(path, v, 48, true);
+  if (!/^[a-z][a-z0-9-]*$/u.test(s))
+    return issue(path, "start with a lowercase letter; use lowercase letters, digits and hyphens");
+  return s;
+};
+function designQuestions(input, source) {
+  const { questions } = fields2("design", input, ["questions"]);
+  const seen = new Map;
+  const rows = entries("questions", questions, 12, (raw, path) => {
+    const q = fields2(path, raw, ["id", "question", "options", "recommended", "reason", "acceptance"], ["when"]);
+    const id = key(q.id, `${path}.id`);
+    if (seen.has(id))
+      return issue(`${path}.id`, "use a distinct question ID");
+    const ids = new Set;
+    const options = entries(`${path}.options`, q.options, 6, (raw2, path2) => {
+      const o = fields2(path2, raw2, ["id", "label", "cost"]);
+      const id2 = key(o.id, `${path2}.id`);
+      if (ids.has(id2))
+        return issue(`${path2}.id`, "use a distinct option ID");
+      ids.add(id2);
+      return {
+        id: id2,
+        label: words(`${path2}.label`, o.label, 1024, true),
+        cost: words(`${path2}.cost`, o.cost, 1024, true)
+      };
+    });
+    if (options.length < 2)
+      return issue(`${path}.options`, "supply at least two alternatives");
+    const recommended = key(q.recommended, `${path}.recommended`);
+    if (!ids.has(recommended))
+      return issue(`${path}.recommended`, "name an option ID of this question");
+    let when;
+    if (q.when !== undefined && !(source === "tool" && q.when === null)) {
+      const dep = fields2(`${path}.when`, q.when, ["question", "option"]);
+      if (!(source === "tool" && dep.question === "" && dep.option === "")) {
+        const question = key(dep.question, `${path}.when.question`);
+        if (!seen.has(question))
+          return issue(`${path}.when.question`, "name an earlier question, or omit when for an independent question");
+        const option = key(dep.option, `${path}.when.option`);
+        if (!seen.get(question)?.has(option))
+          return issue(`${path}.when.option`, "name an option ID of the earlier question");
+        when = { question, option };
+      }
+    }
+    seen.set(id, ids);
+    return {
+      id,
+      question: words(`${path}.question`, q.question, 1024, true),
+      options,
+      recommended,
+      reason: words(`${path}.reason`, q.reason, 1024, true),
+      acceptance: words(`${path}.acceptance`, q.acceptance, 1024, true),
+      ...when ? { when } : {}
+    };
+  });
+  if (!rows.length)
+    throw new Error("questions: supply a material product decision");
+  try {
+    canonicalJson(rows, 24 * 1024);
+  } catch (error) {
+    if (!(error instanceof ContractError) || error.code !== "oversize")
+      throw error;
+    return issue("questions", "the complete batch must fit in 24 KiB of encoded JSON");
+  }
+  return rows;
+}
+function designAnswers(v) {
+  return list(v, 12, (raw) => {
+    const other = Object.hasOwn(raw ?? {}, "other");
+    const a = closed(raw, ["question", other ? "other" : "option"]);
+    const question = key(a.question);
+    return other ? { question, other: label(a.other) } : { question, option: key(a.option) };
+  });
+}
+function available(q, answers) {
+  const dep = q.when;
+  return !dep || answers.some((a) => a.question === dep.question && ("option" in a) && a.option === dep.option);
+}
+function selectDesign(questions, choices, fill = false) {
+  const answers = [];
+  const indexed = new Map(choices.map((a) => [a.question, a]));
+  if (indexed.size !== choices.length || choices.some((a) => !questions.some((q) => q.id === a.question)))
+    throw new ContractError("invalid");
+  for (const q of questions) {
+    if (!available(q, answers))
+      continue;
+    const a = indexed.get(q.id);
+    if (a && "option" in a && !q.options.some((o) => o.id === a.option))
+      throw new ContractError("invalid");
+    if (a)
+      answers.push(a);
+    else if (fill)
+      answers.push({ question: q.id, option: q.recommended });
+  }
+  return answers;
+}
+function decodeDesign(v) {
+  const o = closed(v, ["id", "revision", "questions", "answers", "submitted"]);
+  const questions = designQuestions({ questions: o.questions }, "record");
+  const submitted = bool(o.submitted);
+  const answers = designAnswers(o.answers);
+  if (canonicalJson(selectDesign(questions, answers, submitted)) !== canonicalJson(answers))
+    throw new ContractError("invalid");
+  return {
+    id: decodeId(o.id),
+    revision: integer(o.revision, 1),
+    questions,
+    answers,
+    submitted
+  };
+}
+function newDesign(id, input, previous) {
+  const questions = designQuestions(input, "tool");
+  const retained = previous?.answers.filter((a) => {
+    const before = previous.questions.find((q) => q.id === a.question);
+    const after = questions.find((q) => q.id === a.question);
+    return before && after && canonicalJson(before) === canonicalJson(after);
+  }) ?? [];
+  return {
+    id,
+    revision: 1,
+    questions,
+    answers: selectDesign(questions, retained),
+    submitted: false
+  };
+}
+function answerText(q, a) {
+  return a && ("other" in a ? a.other : q.options.find((o) => o.id === a.option)?.label);
+}
+function designSummary(d) {
+  return d.questions.filter((q) => available(q, d.answers)).map((q) => `- ${q.question} — ${answerText(q, d.answers.find((a) => a.question === q.id)) ?? "…"}
+  Acceptance: ${q.acceptance}`).join(`
+`);
+}
+function designMessage(d, maximum) {
+  const summary = designSummary(d);
+  return new TextEncoder().encode(summary).length <= maximum ? summary : `Submit design ${d.id}, revision ${d.revision}. Read the confirmed decisions in cadence_status and publish the implementation plan.`;
+}
+var recommendsDesign = (s) => /^(?:按你推荐的来|采用全部推荐|use (?:all |your )?recommendations)[。.!！]?$/iu.test(s.trim());
+function reviseDesign(d, answers, submit) {
+  return {
+    ...d,
+    revision: d.revision + 1,
+    answers: selectDesign(d.questions, answers, submit),
+    submitted: submit
+  };
+}
+
 // src/service/contracts/workbench.ts
+var PROJECT_ASSOCIATION_HEADER = "x-cadence-project-association";
 function decodeCadenceConversation(v) {
   const degraded = v !== null && typeof v === "object" && Object.hasOwn(v, "notice");
   const o = closed(v, [
@@ -7514,6 +7533,17 @@ var pageReaders = [
   "changes",
   "reviews"
 ];
+var HISTORY_CSRF_HEADER = "x-cadence-history-csrf";
+var retainedReaders = [
+  ...pageReaders,
+  "entity",
+  "graph",
+  "detail",
+  "search"
+];
+function retainedHistoryBody(operation) {
+  return retainedReaders.includes(operation);
+}
 function mutation(operation) {
   return [
     "preflight",
@@ -7633,16 +7663,12 @@ function decodeHttpOutput(operation, value) {
 }
 function readonlyBody(operation) {
   const operations = [
-    ...pageReaders,
+    ...retainedReaders,
     "workbenchRead",
     "current",
     "currentChanges",
     "checkObligations",
-    "entity",
-    "graph",
     "snapshot",
-    "detail",
-    "search",
     "export",
     "download",
     "receipt"
@@ -11130,18 +11156,41 @@ function requestBoundary(req, policy, directOrigin) {
 class HttpAuthentication {
   material;
   epoch;
+  workspaceId;
   localCapability;
-  csrf = randomUUID7();
+  executionCsrf = randomUUID7();
+  get csrf() {
+    return this.executionCsrf;
+  }
+  history;
   cookieName;
   constructor(material, epoch, workspaceId, localCapability) {
     this.material = material;
     this.epoch = epoch;
+    this.workspaceId = workspaceId;
     this.localCapability = localCapability;
     decodeId(epoch);
     decodeId(workspaceId);
     if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
       throw new ContractError("invalid");
     this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+    material.onRevoke(() => {
+      this.history = undefined;
+      this.executionCsrf = randomUUID7();
+    });
+  }
+  historyChallenge(workspace) {
+    if (workspace.workspaceId !== this.workspaceId || workspace.epoch !== this.epoch)
+      throw new ContractError("stale");
+    if (this.history?.storeId !== workspace.storeId)
+      this.history = {
+        storeId: decodeId(workspace.storeId),
+        csrf: randomUUID7()
+      };
+    return this.history.csrf;
+  }
+  get historyStore() {
+    return this.history?.storeId;
   }
   bootstrap(value, boundary) {
     this.material.assertCurrent();
@@ -11174,14 +11223,14 @@ class HttpAuthentication {
     }
     return false;
   }
-  authenticate(boundary, attachmentId, mutation2 = false, websocket = false) {
+  authenticate(boundary, attachmentId, post = false, websocket = false) {
     this.material.assertCurrent();
     if (!this.material.available)
       throw new ContractError("quarantine");
     const h = boundary.headers;
     const local = h.get("x-cadence-local");
     if (local !== undefined) {
-      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
+      if (post === "retained-history" || !boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
         throw new ContractError("forbidden");
     } else {
       if (h.has("authorization") || h.has("x-cadence-token"))
@@ -11190,10 +11239,14 @@ class HttpAuthentication {
         throw new ContractError("unauthenticated");
       if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
         throw new ContractError("forbidden");
-      if ((mutation2 || websocket) && h.get("origin") !== boundary.origin)
+      if ((post || websocket) && h.get("origin") !== boundary.origin)
         throw new ContractError("forbidden");
-      if (mutation2 && h.get("x-cadence-csrf") !== this.csrf)
+      if (post === "retained-history") {
+        if (!this.history || h.get(HISTORY_CSRF_HEADER) !== this.history.csrf || h.has("x-cadence-attachment") || h.has("x-cadence-csrf"))
+          throw new ContractError("forbidden");
+      } else if (post && h.get("x-cadence-csrf") !== this.csrf) {
         throw new ContractError("forbidden");
+      }
     }
     return {
       attachmentId: decodeId(attachmentId),
@@ -11252,27 +11305,24 @@ var styles = `
 :root {
   color-scheme: light dark;
   font-family:
-    Inter, Geist, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-synthesis: none;
-  --page: light-dark(#f5f7ff, #020617);
-  --text: light-dark(#0f172a, #e6edf7);
-  --muted: light-dark(#536176, #94a3b8);
-  --glass: light-dark(rgba(255, 255, 255, 0.62), rgba(15, 23, 42, 0.62));
-  --glass-line: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.1));
-  --field: light-dark(rgba(255, 255, 255, 0.5), rgba(2, 6, 23, 0.48));
-  --field-line: light-dark(rgba(100, 116, 139, 0.28), rgba(255, 255, 255, 0.12));
-  --primary-a: light-dark(#0e7490, #22d3ee);
-  --primary-b: light-dark(#1d4ed8, #60a5fa);
-  --on-primary: light-dark(#ffffff, #082f49);
-  --focus: light-dark(#2563eb, #22d3ee);
-  --glow: light-dark(rgba(37, 99, 235, 0.22), rgba(34, 211, 238, 0.2));
-  --shadow: light-dark(rgba(30, 64, 175, 0.14), rgba(0, 0, 0, 0.42));
-  --mesh-a: light-dark(rgba(147, 197, 253, 0.64), rgba(34, 211, 238, 0.1));
-  --mesh-b: light-dark(rgba(196, 181, 253, 0.58), rgba(37, 99, 235, 0.16));
-  --mesh-c: light-dark(rgba(165, 243, 252, 0.52), rgba(99, 102, 241, 0.1));
-  --grid: light-dark(rgba(37, 99, 235, 0.04), rgba(56, 189, 248, 0.055));
-  --error: light-dark(#b91c1c, #fda4af);
-  --error-bg: light-dark(rgba(254, 226, 226, 0.7), rgba(159, 18, 57, 0.12));
+  --page: light-dark(#f4f5f7, #090a0d);
+  --text: light-dark(#111318, #f2f4f8);
+  --muted: light-dark(#5e6675, #8a93a2);
+  --glass: light-dark(rgba(255,255,255,.72), rgba(22,23,27,.9));
+  --glass-line: light-dark(rgba(56,59,70,.16), rgba(208,214,227,.14));
+  --rim: light-dark(#ffffff, #45464c);
+  --field: light-dark(#f4f5f7, #101115);
+  --field-line: light-dark(#777e89, #69707d);
+  --primary-a: light-dark(#445065, #c0ccde);
+  --primary-b: light-dark(#5c5069, #d1c6dc);
+  --on-primary: light-dark(#ffffff, #141519);
+  --focus: light-dark(#525964, #adb6c5);
+  --glow: light-dark(rgba(62,65,80,.09), rgba(194,188,220,.05));
+  --shadow: light-dark(rgba(31,32,39,.12), rgba(0,0,0,.46));
+  --error: light-dark(#843f50, #e3a6ae);
+  --error-bg: light-dark(#f8eaeb, #302125);
 }
 * {
   box-sizing: border-box;
@@ -11285,28 +11335,7 @@ body {
   place-items: center;
   padding: 28px 20px;
   color: var(--text);
-  background: var(--page);
-}
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-body::before {
-  background:
-    radial-gradient(circle at 12% 10%, var(--mesh-a), transparent 42%),
-    radial-gradient(circle at 90% 16%, var(--mesh-b), transparent 44%),
-    radial-gradient(circle at 52% 100%, var(--mesh-c), transparent 48%);
-}
-body::after {
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse at center, #000, transparent 78%);
+  background: radial-gradient(ellipse at 50% 36%, var(--glow), transparent 46%), var(--page);
 }
 main {
   position: relative;
@@ -11315,7 +11344,8 @@ main {
   padding: 40px;
   overflow: hidden;
   border: 1px solid var(--glass-line);
-  border-radius: 28px;
+  border-top-color: var(--rim);
+  border-radius: 24px;
   background: var(--glass);
   box-shadow:
     0 28px 80px var(--shadow),
@@ -11324,7 +11354,7 @@ main {
   backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
   text-align: center;
-  animation: arrive 0.45s ease-out both;
+
 }
 main::before {
   content: "";
@@ -11396,13 +11426,15 @@ input[type="password"] {
 }
 input::placeholder {
   color: var(--muted);
-  font-family: Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  font-family: ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0;
 }
 input:hover {
   border-color: var(--focus);
 }
 input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
   border-color: var(--focus);
   box-shadow: 0 0 0 4px var(--glow);
 }
@@ -11420,7 +11452,7 @@ button {
   border-radius: 14px;
   background: linear-gradient(135deg, var(--primary-a), var(--primary-b));
   color: var(--on-primary);
-  font: 600 14px Inter, Geist, ui-sans-serif, system-ui, sans-serif;
+  font: 600 14px ui-sans-serif, system-ui, sans-serif;
   cursor: pointer;
   box-shadow: 0 10px 28px var(--glow);
   transition:
@@ -11449,7 +11481,7 @@ button:focus-visible {
   outline-offset: 4px;
 }
 .notice {
-  margin: 0 0 16px;
+  margin: 16px 0;
   padding: 10px 12px;
   border: 1px solid var(--error);
   border-radius: 12px;
@@ -11470,12 +11502,6 @@ button:focus-visible {
   white-space: nowrap;
   border: 0;
 }
-@keyframes arrive {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
 @media (max-width: 420px) {
   body {
     padding: 18px 14px;
@@ -11494,11 +11520,12 @@ button:focus-visible {
   }
 }
 @media (forced-colors: active) {
-  body::before,
-  body::after,
   main::before {
     display: none;
   }
+  body, main, .brand-mark, .notice { background:Canvas; color:CanvasText; box-shadow:none; backdrop-filter:none; }
+  button { background:ButtonFace; color:ButtonText; }
+  input[type="password"] { background:Field; color:FieldText; }
   main,
   input[type="password"],
   button,
@@ -11506,6 +11533,7 @@ button:focus-visible {
   .notice {
     border: 1px solid CanvasText;
   }
+  :focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px; }
 }
 `;
 var AUTH_PAGE_CSP = `default-src 'none'; style-src 'sha256-${createHash9("sha256").update(styles).digest("base64")}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`;
@@ -11525,7 +11553,7 @@ function renderAuthPage(options) {
 <body>
 <main aria-labelledby="welcome">
 <div class="brand">
-<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="M25 11a9 9 0 1 0 0 14M12 18h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="m18 2 13 9-4 16-9 7-9-7-4-16Zm-13 9 13 5 13-5M18 2v14l-9 11m9-11 9 11m-9-11v18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
 <h1 id="welcome">Cadence</h1>
 </div>
 ${options.authError ? '<p id="auth-notice" class="notice" role="alert">Invalid access token.</p>' : ""}
@@ -16779,7 +16807,7 @@ class ServiceHttpServer {
     let total = 0;
     for (const asset of options.assets ?? []) {
       total += asset.bytes.byteLength;
-      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
+      if (!/^\/(?:app|assets\/start\.js|ui\/[a-f0-9]{64}\/assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
         throw new ContractError("invalid");
       this.assets.set(asset.path, {
         ...asset,
@@ -17061,7 +17089,10 @@ Content-Length: 0\r
         unavailable();
       const route = readRoute(target, req.method ?? "");
       const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID13();
-      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
+      const historyBody = route?.source === "body" && retainedHistoryBody(route.operation) && boundary.headers.has(HISTORY_CSRF_HEADER);
+      const caller = this.options.auth.authenticate(boundary, attachmentId, historyBody ? "retained-history" : route?.source === "body");
+      if (boundary.headers.has(HISTORY_CSRF_HEADER) && !historyBody)
+        throw new ContractError("forbidden");
       if (!route || !mutation(route.operation)) {
         if (this.reads >= 32)
           throw new ContractError("capacity");
@@ -17075,6 +17106,8 @@ Content-Length: 0\r
           throw new ContractError("invalid");
         this.options.auth.current(caller);
         res.setHeader("Content-Type", asset.contentType);
+        if (target === "/app" && this.options.build)
+          res.setHeader("X-Cadence-Web-Build", this.options.build.assets.buildId);
         if (target !== "/app") {
           res.setHeader("Cache-Control", "private, no-cache");
           res.setHeader("ETag", asset.etag);
@@ -17103,12 +17136,14 @@ Content-Length: 0\r
           this.attachments.set(attachmentId, attachment);
         }
         res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body" && (route.operation !== "detach" || this.attachments.has(attachmentId)))
+      } else if (route.source === "body" && !historyBody && (route.operation !== "detach" || this.attachments.has(attachmentId)))
         attachment = this.attachment(caller);
       const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
       if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
         throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
+      const decodedInput = decodeHttpInput(route.operation, input);
+      if (historyBody && (!decodedInput || typeof decodedInput !== "object" || !("storeId" in decodedInput) || decodedInput.storeId !== this.options.auth.historyStore))
+        throw new ContractError("stale");
       this.options.auth.current(caller);
       if (abort.signal.aborted || !this.accepting)
         unavailable();
@@ -17125,7 +17160,14 @@ Content-Length: 0\r
         unavailable();
       if (route.operation === "session")
         this.attachment(caller);
-      const decoded2 = decodeHttpOutput(route.operation, value);
+      let decoded2;
+      if (route.operation === "workspace" && caller.authority === "browser") {
+        const workspace = decodeReply(value, decodeWorkspaceBootstrap);
+        if (workspace.kind === "ok")
+          res.setHeader(HISTORY_CSRF_HEADER, this.options.auth.historyChallenge(workspace.value));
+        decoded2 = workspace;
+      } else
+        decoded2 = decodeHttpOutput(route.operation, value);
       const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
       const compressible = route.operation === "workbenchRead";
       if (compressible)
@@ -17461,6 +17503,7 @@ Content-Length: 0\r
       sentBytes: 0,
       sentMessages: 0,
       reading: false,
+      resyncPending: false,
       closed: false,
       lastPing: Date.now(),
       lastReconcile: Date.now()
@@ -17481,10 +17524,12 @@ Content-Length: 0\r
         viewer.lastPing = Date.now();
         if (command.kind === "ping")
           this.heartbeatViewer(viewer);
-        else if (viewer.reading)
-          this.closeViewer(viewer);
-        else
+        else if (!viewer.reading)
           this.subscribe(viewer, command.scope);
+        else if (command.kind === "resync" && viewer.scope?.kind === command.scope.kind && viewer.scope.id === command.scope.id)
+          viewer.resyncPending = true;
+        else
+          this.closeViewer(viewer);
       } catch {
         this.closeViewer(viewer);
       }
@@ -17567,23 +17612,26 @@ Content-Length: 0\r
         viewer.unsubscribe();
         return;
       }
-      const snapshot = decodeSnapshot(await p.snapshot(scope));
-      if (viewer.closed || viewer.subscription !== generation)
-        return;
-      this.attachment(viewer.attachment.caller);
-      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
-        throw new ContractError("stale");
-      viewer.snapshot = snapshot;
-      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
-        return;
-      viewer.reading = false;
-      viewer.lastReconcile = Date.now();
-      for (const event of viewer.pending.splice(0)) {
-        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
-        this.deliver(viewer, event);
+      do {
+        viewer.resyncPending = false;
+        const snapshot = decodeSnapshot(await p.snapshot(scope));
         if (viewer.closed || viewer.subscription !== generation)
-          break;
-      }
+          return;
+        this.attachment(viewer.attachment.caller);
+        if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
+          throw new ContractError("stale");
+        viewer.snapshot = snapshot;
+        if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
+          return;
+        viewer.lastReconcile = Date.now();
+        for (const event of viewer.pending.splice(0)) {
+          viewer.bytes -= Buffer.byteLength(canonicalJson(event));
+          if (!this.deliver(viewer, event)) {
+            viewer.bytes = 0;
+            break;
+          }
+        }
+      } while (!viewer.closed && viewer.resyncPending);
     } catch {
       this.closeViewer(viewer);
     } finally {
@@ -17595,26 +17643,30 @@ Content-Length: 0\r
   deliver(viewer, event) {
     const snapshot = viewer.snapshot;
     if (!snapshot || viewer.closed)
-      return;
+      return false;
     if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
       this.resync(viewer);
-      return;
+      return false;
     }
     const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
     if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
-      return;
+      return true;
     if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
       this.resync(viewer);
-      return;
+      return false;
     }
-    if (this.sendViewer(viewer, { kind: "event", event }))
-      snapshot.committedSeq = event.committedSeq;
+    if (!this.sendViewer(viewer, { kind: "event", event }))
+      return false;
+    snapshot.committedSeq = event.committedSeq;
+    return true;
   }
   resync(viewer) {
-    if (!viewer.reading && viewer.scope) {
-      this.sendViewer(viewer, { kind: "resync" });
+    if (!viewer.scope || !this.sendViewer(viewer, { kind: "resync" }))
+      return;
+    if (viewer.reading)
+      viewer.resyncPending = true;
+    else
       this.subscribe(viewer, viewer.scope);
-    }
   }
   heartbeatViewer(viewer) {
     if (!viewer.scope || viewer.reading)
@@ -17632,7 +17684,7 @@ Content-Length: 0\r
     for (const viewer of this.viewers) {
       if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
         this.closeViewer(viewer);
-      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
+      else if (!viewer.reading && Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
         this.resync(viewer);
       else
         this.heartbeatViewer(viewer);
@@ -17846,7 +17898,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "33292110530233090849e118094f76ec8c12a127b3f73f69fd8f6015f03efb4c",
+    contractHash: "190a21e723f753a233225a9f4bcf12a99d71b294a58728961846cd110cd60a17",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -17921,8 +17973,11 @@ Content-Length: 0\r
       conversations.close();
       const grouped = new Map;
       for (const [id, target2] of attachments) {
-        const key2 = `${target2.projectId}:${target2.epoch}`;
-        const group = grouped.get(key2) ?? { ...target2, ids: [] };
+        if (target2.rejected)
+          continue;
+        const projectId = target2.project.id, epoch = target2.project.epoch;
+        const key2 = `${projectId}:${epoch}`;
+        const group = grouped.get(key2) ?? { projectId, epoch, ids: [] };
         group.ids.push(id);
         grouped.set(key2, group);
       }
@@ -18214,7 +18269,10 @@ Content-Length: 0\r
     });
     return result;
   }
-  function binding(id) {
+  function isAssociated(id) {
+    return store.associatedProjects().some((project) => project.id === id);
+  }
+  function binding(id, allowBootstrap = true) {
     let project = store.projects().find((p) => p.id === id);
     if (!project)
       throw new ContractError("unavailable");
@@ -18223,12 +18281,14 @@ Content-Length: 0\r
       throw new ContractError("stale");
     if (local.epoch !== project.epoch) {
       project = { ...project, epoch: local.epoch };
-      if (store.associatedProjects().some((p) => p.id === id))
+      if (isAssociated(id))
         store.saveProject(project);
     }
     const previous = bindings.get(id);
     if (previous?.epoch === local.epoch)
       return previous.result;
+    if (!allowBootstrap)
+      throw new ContractError("stale");
     const result = (async () => {
       const raw = closed(await nativeCall(c, "token-link", true), ["link"]), link = new URL(text(raw.link, 4096, true));
       const secret = link.searchParams.get("token");
@@ -18249,7 +18309,11 @@ Content-Length: 0\r
       });
       if (c.localAccess().epoch !== project.epoch)
         throw new ContractError("stale");
-      return { project, endpoint: local.endpoint, cookie };
+      return {
+        project: { ...project, epoch: local.epoch },
+        endpoint: local.endpoint,
+        cookie
+      };
     })();
     const pending2 = { epoch: local.epoch, result };
     bindings.set(id, pending2);
@@ -18258,6 +18322,16 @@ Content-Length: 0\r
         bindings.delete(id);
     });
     return result;
+  }
+  function rejectBinding(b, original) {
+    b.rejected = true;
+    if (bindings.get(b.project.id)?.result !== original)
+      return;
+    bindings.delete(b.project.id);
+    for (const viewer of attachments.values()) {
+      if (viewer.project.id === b.project.id && viewer.project.epoch === b.project.epoch && viewer.cookie === b.cookie)
+        viewer.rejected = true;
+    }
   }
   function stop() {
     if (stopping)
@@ -18492,6 +18566,10 @@ Content-Length: 0\r
           throw new ContractError("invalid");
         if (req.headers["content-encoding"] || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes)
           throw new ContractError("oversize");
+        const attachment = boundary.headers.get("x-cadence-attachment");
+        const historyCsrf = boundary.headers.get(HISTORY_CSRF_HEADER);
+        if (historyCsrf !== undefined && (route2.source !== "body" || !retainedHistoryBody(route2.operation) || attachment !== undefined || boundary.headers.has("x-cadence-csrf")))
+          throw new ContractError("forbidden");
         if (route2.operation === "workbenchRead" && req.method === "GET") {
           const selected2 = store.projects().find((p) => p.id === project.id);
           if (!selected2)
@@ -18507,22 +18585,26 @@ Content-Length: 0\r
             return;
           }
         }
-        if (route2.operation === "session" && !store.associatedProjects().some((p) => p.id === project.id))
+        if (route2.operation === "session" && !isAssociated(project.id))
           throw new ContractError("unavailable");
-        const attachment = boundary.headers.get("x-cadence-attachment");
-        if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.projectId !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment)
+        if (attachment && (attachments.has(attachment) ? attachments.get(attachment)?.project.id !== project.id : route2.operation !== "session") || req.method === "POST" && !attachment && historyCsrf === undefined)
           throw new ContractError("stale");
-        if (route2.operation === "session" && (!attachment || !attachments.has(attachment)) && attachments.size >= 2048)
-          throw new ContractError("capacity");
+        if (route2.operation === "session" && (!attachment || !attachments.has(attachment)) && attachments.size >= 2048) {
+          for (const [id, previous] of attachments)
+            if (previous.rejected)
+              attachments.delete(id);
+          if (attachments.size >= 2048)
+            throw new ContractError("capacity");
+        }
         if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
           throw new ContractError("forbidden");
         const attached = attachment ? attachments.get(attachment) : undefined;
-        if (route2.operation === "detach" && attachment && attached) {
+        if (route2.operation === "detach" && attachment && attached && !attached.rejected) {
           const selected2 = store.projects().find((p) => p.id === project.id);
           if (!selected2)
             throw new ContractError("unavailable");
           const observed = new ServiceCoordination(selected2.path, input.stateHome).inspect();
-          if (observed.status === "stopped" && observed.epoch === attached.epoch) {
+          if (observed.status === "stopped" && observed.epoch === attached.project.epoch) {
             auth.current(caller);
             assert();
             attachments.delete(attachment);
@@ -18537,10 +18619,31 @@ Content-Length: 0\r
             throw new ContractError("forbidden");
           commandBody = canonicalJson(command, LIMITS.controlBytes);
         }
-        const b = await binding(project.id);
+        auth.current(caller);
+        if (attached?.rejected) {
+          if (attachment && route2.operation === "detach")
+            attachments.delete(attachment);
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated")
+          });
+          return;
+        }
+        const original = binding(project.id, historyCsrf === undefined);
+        const b = await original;
         auth.current(caller);
         assert();
-        if (attachment && attached && attached.epoch !== b.project.epoch) {
+        if (bindings.get(project.id)?.result !== original)
+          throw new ContractError("stale");
+        if (attachment && attached && attached.project.epoch === b.project.epoch && attached.cookie !== b.cookie) {
+          attached.rejected = true;
+          reply(res, 401, {
+            kind: "error",
+            error: publicError("unauthenticated")
+          });
+          return;
+        }
+        if (attachment && attached && attached.project.epoch !== b.project.epoch) {
           attachments.delete(attachment);
           reply(res, route2.operation === "detach" ? 200 : 409, route2.operation === "detach" ? { kind: "ok", value: null } : {
             kind: "error",
@@ -18552,6 +18655,11 @@ Content-Length: 0\r
           Cookie: b.cookie,
           Origin: b.endpoint
         };
+        if (historyCsrf !== undefined) {
+          if (!b.history || b.history.browser !== historyCsrf)
+            throw new ContractError("forbidden");
+          headers2[HISTORY_CSRF_HEADER] = b.history.owner;
+        }
         for (const key2 of [
           "accept-encoding",
           "content-type",
@@ -18570,19 +18678,35 @@ Content-Length: 0\r
           const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers: headers2, agent: false }, (incoming) => {
             try {
               auth.current(caller);
+              if (incoming.statusCode === 401) {
+                const cookieName = b.cookie.split("=", 1)[0];
+                if (incoming.headers["set-cookie"]?.some((line) => {
+                  const [cookie, ...attributes] = line.split(/;\s*/);
+                  return cookie === `${cookieName}=` && attributes.includes("Max-Age=0");
+                }))
+                  rejectBinding(b, original);
+              } else if (bindings.get(project.id)?.result !== original) {
+                throw new ContractError("stale");
+              }
+              if (route2.operation === "workspace" && incoming.statusCode === 200 && incoming.headers[HISTORY_CSRF_HEADER] !== undefined) {
+                const owner = decodeId(incoming.headers[HISTORY_CSRF_HEADER]);
+                if (b.history?.owner !== owner)
+                  b.history = { owner, browser: randomUUID14() };
+                res.setHeader(HISTORY_CSRF_HEADER, b.history.browser);
+              }
             } catch {
               close();
               return;
             }
             if (route2.operation === "session" && incoming.statusCode === 200) {
               try {
-                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), { projectId: project.id, epoch: b.project.epoch });
+                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), b);
               } catch {
                 close();
                 return;
               }
             }
-            if (route2.operation === "detach" && incoming.statusCode === 200 && attachment)
+            if (route2.operation === "detach" && incoming.statusCode === 200 && attachment && attachments.get(attachment) === attached)
               attachments.delete(attachment);
             res.statusCode = incoming.statusCode ?? 502;
             for (const key2 of [
@@ -18643,12 +18767,14 @@ Content-Length: 0\r
         auth.current(caller);
         assert();
         const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
-        reply(res, 200, {
+        const value2 = {
           kind: "project-observation",
           status: status === "alive" ? "running" : status === "stopped" ? "stopped" : unpreparedDirectory(c, project2) ? "not-started" : "unavailable",
           epoch: observed && typeof observed === "object" && "epoch" in observed ? observed.epoch : null,
           workspaceId: HistoryFiles.open(c)?.format.workspaceId ?? null
-        });
+        };
+        res.setHeader(PROJECT_ASSOCIATION_HEADER, isAssociated(project2.id) ? "associated" : "unassociated");
+        reply(res, 200, value2);
         return;
       }
       if (url.pathname === "/workbench/v1/models" && req.method === "GET") {
@@ -18743,6 +18869,8 @@ Content-Length: 0\r
       const asset = assets.get(app ? "/app" : raw);
       if (req.method !== "GET" || !asset)
         throw new ContractError("invalid");
+      if (app)
+        res.setHeader("X-Cadence-Web-Build", build2.assets.buildId);
       res.setHeader("Content-Type", asset.contentType);
       res.end(asset.bytes);
     } catch (error) {
@@ -18772,10 +18900,14 @@ Content-Length: 0\r
         if (req.method !== "GET" || !t)
           throw new ContractError("invalid");
         const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
-        if (attachments.get(attachment)?.projectId !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
+        if (attachments.get(attachment)?.project.id !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
           throw new ContractError("invalid");
-        const b = await binding(t.id);
-        if (attachments.get(attachment)?.epoch !== b.project.epoch)
+        const attached = attachments.get(attachment);
+        if (!attached || attached.rejected)
+          throw new ContractError("unauthenticated");
+        const original = binding(t.id);
+        const b = await original;
+        if (bindings.get(t.id)?.result !== original || attachments.get(attachment) !== attached || attached.project.epoch !== b.project.epoch || attached.cookie !== b.cookie)
           throw new ContractError("stale");
         auth.current(caller);
         assert();
@@ -18793,6 +18925,12 @@ Content-Length: 0\r
         };
         relays.add(abort);
         socket.once("close", abort);
+        upstream.once("unexpected-response", (_request, response) => {
+          if (response.statusCode === 401)
+            rejectBinding(b, original);
+          response.destroy();
+          abort();
+        });
         upstream.once("error", abort);
         upstream.once("close", abort);
         upstream.once("open", () => {
@@ -31317,7 +31455,7 @@ import { join as join39 } from "node:path";
 var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
 You are the sole user-facing coordinator. Understand the desired result, not a task-management form. Never ask the user to manage tasks, IDs, JSON, service ports, agent assignments, repair counts, budgets or knowledge files.
 Start with existing evidence. Use cadence_knowledge to read a named project document or heading directly (the route table, AGENTS.md and the project index identify sources). Reuse recorded investigation answers from this conversation by passing their investigation ID to cadence_knowledge, which rechecks their cited files; older conclusions are leads until checked against current sources. For a directly verifiable fact, use cadence_knowledge with path and match to read the actual source line and nearby context. Read the returned results before broadening an investigation. Surface material user choices as soon as the tradeoffs are understood. Exact implementation values, selectors and file inventories ordinarily belong to implementation workers and need not delay the design or plan. Zero research runs is appropriate when evidence suffices. Use cadence_research only for unresolved questions whose answers could change the design or acceptance. Ask focused independent questions together and reuse answered results by investigation ID.
-For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan. Describe each option's cost, the recommendation and reason, and what acceptance it affects. Give stable lowercase IDs; use when for predictable dependencies on earlier options. Keep routine implementation decisions yourself. Do not invent a questionnaire for a settled task. The user can edit any question, enter other ideas, fill remaining recommendations and submit once. A submitted design or "按你推荐的来" calls for the final implementation card in the same conversation; it never authorizes execution. Respect the submitted decisions, including custom answers, throughout the plan and review.
+For material choices about experience, scope or expensive tradeoffs, call cadence_design with one batch of real alternatives in the user's language before publishing a plan. Describe each option's cost, the recommendation and reason, and what acceptance it affects. Give stable lowercase IDs; omit when (or use null) unless the question depends on an earlier option. Publish the choices through the tool, not a Markdown questionnaire asking for a typed reply. If publication is refused for invalid input, correct the named field and repeat the complete batch yourself. Keep routine implementation decisions yourself. Do not invent a questionnaire for a settled task. The user can edit any question, enter other ideas, fill remaining recommendations and submit once. A submitted design or "按你推荐的来" calls for the final implementation card in the same conversation; it never authorizes execution. Respect the submitted decisions, including custom answers, throughout the plan and review.
 Once the result is clear, use cadence_plan. Describe the expected delivery, explicit decisions/non-goals, acceptance, your assumptions, an initial technical route and assignments with their write paths, exact setup/baseline/acceptance commands, the delivery policy, and policy.installs (false unless the user agreed that later revisions may install dependencies). Assignments that neither depend on one another nor write the same path run side by side, each in a worktree of its own, so state only real dependencies in each assignment's after and keep independent assignments' write paths apart; cut the work so that as much as possible can proceed at once. Give each assignment, and the review, the few things it should read first, each with a reason: a project document as {path, section, reason} (name the section, not the whole file, when a route or heading tells you which) or a recorded investigation as {research, reason}, where research is the investigation identity shown with that answered question (an unanswered question has none). Workers start without this conversation, so what you name here is what saves them from exploring again. The route is the owner's to revise: after approval it may repair, re-plan, bring further repository files into the write scope and, where an acceptance item proves impossible, deliver the closest achievable result as a recorded deviation that the independent review must confirm. Goal, decisions, acceptance and assumptions stay as approved. Focus on the project, its implementation and its real checks. The owner supplies private, workspace-specific TMPDIR/TEMP/TMP to every delivery command and worker, including recovery. Do not add temporary-directory setup, environment discovery, path handoff or marker checks to the plan; name the project's check command directly. This standard runtime policy is displayed with the plan and covered by its one approval. For local preparation, use cadence_knowledge with checkout: [the needed dependency directory names] to observe the original checkout, Git placement and local entries directly. Use the original entry by path if the user authorizes sharing installed dependencies; the link target and its contents are unnecessary. cadence_plan checks the actual write targets and Git commit identity. Leave those checks to the owner. Do not send researchers to enumerate Git internals, ignored dependencies or private workflow records for these facts. Worktrees do not inherit ignored dependencies. Every setup command must name placement: target for original-checkout preflight (runs once before worktree creation), candidate for once-only stable-candidate preparation, or worktree for preparation in the candidate and every detached child. Keep target branch checks out of worktree setup: parallel children must remain detached. The owner already checks Git placement and target identity. Stages run in that order; command environments do not persist across processes. Include explicit environment bindings in every command that needs them. Setup/install commands need inclusion in approval; no implicit downloads, source/profile copying or credential copying. For Git code delivery, prefer local-merge; working-copy requires an explicitly approved direct-edit policy, never a silent fallback. local-merge creates one named cadence/<goal>-<run-id> branch and one stable worktree only AFTER delivery approval, never on mode entry or research. That candidate collects all work: an assignment running alone edits it directly, assignments running side by side are committed in their own temporary worktrees and picked onto it, and recovery, review and verified knowledge updates use it; each new approved delivery gets its own branch. The original conversation cwd stays unchanged. Checks and independent Agent review must bind the exact candidate before fast-forward delivery into the displayed target. Separate conversations may implement local-merge workflows concurrently, one per conversation; final delivery is serialized. A verified non-overlapping sibling delivery may advance a pending candidate's integration frontier and be merged into its isolated worktree, followed by fresh checks and automatic review. Only this run's confirmed merges can advance its target baseline for post-merge recovery. Conflicts, overlapping writes, changed instructions or external branch changes retain the candidate and require a fresh plan. Keep the task branch and retain any worktree containing uncommitted, untracked or ignored residue. No automatic rebase, reset, cleanup of user data or mutation replay. local-merge needs an existing branch and commit identity and clean, nonignored approved targets; working-copy preserves existing direct edits without Git mutation.
 The service maintains the project's knowledge store (.cadence/project.md and .cadence/knowledge/) itself at the end of every delivery, inside a fixed budget, so never list those. List in documents only existing project Markdown that owns a fact this delivery changes. Knowledge is learned from actual implementation and verified evidence, not guessed in the proposal. Avoid duplicate documentation systems.
 When a tool refuses your own call it names the field at fault: correct exactly that and call again in the same turn. There is one plan. Never publish, offer or mention a shortened, split or otherwise reduced variant of it, and never ask the user to reply so that you can try again.
@@ -32963,25 +33101,25 @@ Current design ${design.id}, revision ${design.revision}, ${design.submitted ? "
             }
           }
           if (name === "cadence_design") {
+            let design2;
             try {
-              const design2 = newDesign(randomUUID25(), args, current2.state.design);
-              if (sanitizeText(canonicalJson(design2), this.o.secrets()) !== canonicalJson(design2))
-                return refusal3("forbidden", "Design contains protected text.");
-              this.save({
-                ...current2.state,
-                design: design2,
-                proposal: null,
-                revision: current2.state.revision + 1
-              }, current2.file);
-              return {
-                designId: design2.id,
-                notice: "Design choices displayed. Finish this turn and wait for the user's batch submission."
-              };
+              design2 = newDesign(randomUUID25(), args, current2.state.design);
             } catch (error) {
-              if (this.o.owner.state !== "idle")
-                throw error;
               return refusal3("invalid", diagnosticText(error instanceof Error ? error.message : "questions: invalid design", 512, this.o.secrets()));
             }
+            const encoded2 = canonicalJson(design2);
+            if (sanitizeText(encoded2, this.o.secrets()) !== encoded2)
+              return refusal3("forbidden", "Design contains protected text.");
+            this.save({
+              ...current2.state,
+              design: design2,
+              proposal: null,
+              revision: current2.state.revision + 1
+            }, current2.file);
+            return {
+              designId: design2.id,
+              notice: "Design choices published. Finish this turn and wait for the user's batch submission; do not ask for a typed answer."
+            };
           }
           const epoch = this.o.owner.lease.registration.epoch;
           const model2 = c.model.conversation && this.o.contexts ? this.o.contexts.snapshot(c.model.conversation).version : this.o.choice.snapshot().version;
@@ -35762,7 +35900,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.0",
-  build: "cc38a41f120d6df83c4cec14f6418821e53b42354e0563f0cd7f72b470b3b73f",
+  build: "a00e54093398520b297b4fa2a520c8519e5f947a49f61dae258493ec2903ab39",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -38787,7 +38925,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "33292110530233090849e118094f76ec8c12a127b3f73f69fd8f6015f03efb4c";
+  const embedded = "190a21e723f753a233225a9f4bcf12a99d71b294a58728961846cd110cd60a17";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

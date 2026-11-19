@@ -19,11 +19,14 @@ import {
 } from "../../web/src/client/workflow-entry";
 import {
   AgentDock,
+  type WorkflowAgent,
   WorkflowAgentGroup,
 } from "../../web/src/components/workspace/AgentDock";
 import { DesignCard } from "../../web/src/components/workspace/DesignCard.tsx";
+import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import {
   AssignmentBoard,
+  cancelWorkflow,
   DeliveryDetails,
   Deviations,
   nextRunWindow,
@@ -31,6 +34,7 @@ import {
   placeWorkflows,
   WorkflowAttemptSummary,
   WorkflowLine,
+  WorkflowRunState,
   WorkflowStepSummary,
 } from "../../web/src/components/workspace/WorkflowPanel";
 import { LocaleProvider } from "../../web/src/i18n/locale";
@@ -195,6 +199,36 @@ it("plan cards expose actual checks and local delivery, not old Save/Start/Revie
   expect(html).toContain("outcome is unknown");
   expect(html).not.toContain("Confirm start");
 });
+it.each(["validate", "restore", "approve"] as const)(
+  "%s plan action marks only pending validation busy and prevents duplicate decisions",
+  (action) => {
+    const proposal = state().proposal;
+    if (!proposal) throw Error("fixture proposal");
+    const draw = (validating: boolean, allowed: boolean) =>
+      renderToStaticMarkup(
+        <PlanCard
+          proposal={proposal}
+          action={action}
+          canApprove={allowed}
+          canValidate={allowed}
+          validating={validating}
+          onValidate={() => {}}
+          onApprove={() => {}}
+        />,
+      );
+    for (const allowed of [true, false]) {
+      const busy = draw(true, allowed);
+      expect(busy).toMatch(
+        /<button[^>]*aria-busy="true"[^>]*disabled=""[^>]*>Validating plan…<\/button>/,
+      );
+      expect(busy.match(/<button(?![^>]*disabled)/g)).toBeNull();
+      const idle = draw(false, allowed);
+      expect(idle).not.toContain("aria-busy");
+      expect(idle).not.toContain("Validating plan…");
+      expect(idle.includes('disabled=""')).toBe(!allowed);
+    }
+  },
+);
 it("workflow subagent rows use the readable assignment, not the step's random suffix", () => {
   expect(
     workflowAgentLabel("implement-a-1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
@@ -267,6 +301,29 @@ const line = (r: WorkflowRun, locale: "en" | "zh" = "en") =>
       />
     </LocaleProvider>,
   );
+it("workflow-cancel rechecks the supplied attachment gate at dispatch, not just when drawing Stop", async () => {
+  const live = run();
+  const { api, commands } = client(state());
+  let attached = true;
+  const allowed = (r: WorkflowRun) => attached && r.epoch === live.epoch;
+  expect(allowed(live)).toBe(true);
+  attached = false;
+  expect(await cancelWorkflow(api, live, allowed)).toBe("stale");
+  attached = true;
+  expect(
+    await cancelWorkflow(api, { ...live, epoch: randomUUID() }, allowed),
+  ).toBe("stale");
+  expect(commands).toEqual([]);
+  expect(await cancelWorkflow(api, live, allowed)).toBe("");
+  expect(commands).toEqual([
+    {
+      kind: "workflow-cancel",
+      epoch: live.epoch,
+      runId: live.id,
+      commandId: expect.any(String),
+    },
+  ]);
+});
 it("a workflow is one line: what it is doing while live, never its step list", () => {
   const live = run();
   const html = line(live);
@@ -574,17 +631,22 @@ it("the dock groups subagents per run, live first, and shows each one's assignme
     "Five assignments",
     "Earlier research",
   ]);
-  const group = (index: number, locale: "en" | "zh" = "en") =>
+  const selectedStep = {
+    runId: live.id,
+    stepId: groups[0].steps[2].id,
+    label: "ui",
+  };
+  const group = (
+    index: number,
+    locale: "en" | "zh" = "en",
+    selected: WorkflowAgent | null = selectedStep,
+  ) =>
     renderToStaticMarkup(
       <LocaleProvider initial={locale}>
         <WorkflowAgentGroup
           run={groups[index].run}
           steps={groups[index].steps}
-          selected={{
-            runId: live.id,
-            stepId: groups[0].steps[2].id,
-            label: "ui",
-          }}
+          selected={selected}
         />
       </LocaleProvider>,
     );
@@ -594,6 +656,29 @@ it("the dock groups subagents per run, live first, and shows each one's assignme
   );
   expect(html.match(/class="agent-dock-row/g)).toHaveLength(6);
   expect(html.match(/class="agent-dock-row active"/g)).toHaveLength(1);
+  const head = group(0, "en", {
+    runId: live.id,
+    stepId: null,
+    label: live.goal,
+  });
+  const currentButtons = (markup: string) =>
+    markup.match(
+      /<button\b[^>]*aria-current="true"[^>]*>[\s\S]*?<\/button>/g,
+    ) ?? [];
+  expect(currentButtons(html)).toHaveLength(1);
+  expect(currentButtons(html)[0]).toContain('class="agent-dock-row active"');
+  expect(currentButtons(html)[0]).toContain("implementation · ui</strong>");
+  expect(currentButtons(head)).toHaveLength(1);
+  expect(currentButtons(head)[0]).toContain(
+    'class="agent-dock-run-head active"',
+  );
+  expect(head.match(/ active"/g)).toHaveLength(1);
+  for (const none of [
+    group(0, "en", null),
+    group(1),
+    group(0, "en", { ...selectedStep, stepId: "not-listed" }),
+  ])
+    expect(none).not.toMatch(/aria-current| active"/);
   // The step's own status, and under its name the assignment's state: a
   // finished worker is not an integrated assignment, and the reverse.
   expect(html).toMatch(
@@ -681,6 +766,18 @@ it("a completed delivery states its deviations on its line and leads its view wi
   expect(view(delivered, "zh")).toContain("与约定的偏离：2 处");
   expect(view(run())).toBe("");
 });
+it("shows unknown from the run and the step independently of phase and task state", () => {
+  const r = run({ status: "unknown", phase: "verifying" });
+  const probe = step("probe", "check", "unknown");
+  expect(renderToStaticMarkup(<WorkflowRunState run={r} />)).toContain(
+    'verifying · <span class="workflow-status unknown">unknown</span>',
+  );
+  expect(
+    renderToStaticMarkup(<WorkflowStepSummary run={run()} step={probe} />),
+  ).toBe(
+    'check · probe · <span class="workflow-status unknown">unknown</span>',
+  );
+});
 it("a check a deviation set aside reads as set aside and failed, never as passed", () => {
   const perf = step("perf-budget", "check", "failed");
   const unit = step("unit", "check", "completed");
@@ -728,10 +825,14 @@ it("a check a deviation set aside reads as set aside and failed, never as passed
       </LocaleProvider>,
     );
   expect(summary(accepted, perf)).toBe(
-    'check · perf-budget · failed<span class="workflow-set-aside">set aside by a recorded deviation</span>',
+    'check · perf-budget · <span class="workflow-status failed">failed</span><span class="workflow-set-aside">set aside by a recorded deviation</span>',
   );
-  expect(summary(accepted, earlier)).toBe("check · perf-budget · failed");
-  expect(summary(accepted, unit)).toBe("check · unit · completed");
+  expect(summary(accepted, earlier)).toBe(
+    'check · perf-budget · <span class="workflow-status failed">failed</span>',
+  );
+  expect(summary(accepted, unit)).toBe(
+    'check · unit · <span class="workflow-status completed">completed</span>',
+  );
   expect(summary(accepted, perf, "zh")).toContain("已被记录的偏离搁置");
   // A direct working-copy delivery has no acceptance record: its verification
   // lists the round, and only a failed check a deviation names is set aside.
@@ -1024,15 +1125,19 @@ it.each(["en", "zh"] as const)(
 
 it("the Web design card shows active questions, option costs, recommendation, custom input and one submission", () => {
   const d = newDesign(randomUUID(), { questions: designQuestionsFixture });
-  const render = (draft: typeof d) =>
+  const render = (draft: typeof d, active = true, disabled = false) =>
     renderToStaticMarkup(
       <DesignCard
         draft={draft}
-        disabled={false}
+        active={active}
+        disabled={disabled}
         onEdit={() => {}}
         onSubmit={() => {}}
       />,
     );
+  expect(render(d)).toContain("<dialog");
+  expect(render(d, false)).not.toContain("<dialog");
+  expect(render(d, true, true)).not.toContain("<dialog");
   expect(render(d)).toContain("Quieter surfaces");
   expect(render(d)).toContain("Which motion?");
   expect(render(d)).toContain("Other idea");
@@ -1044,5 +1149,26 @@ it("the Web design card shows active questions, option costs, recommendation, cu
   );
   expect(render(selected)).toContain("How much blur?");
   expect(render(selected)).toContain("Design submitted");
+  expect(render(selected)).toContain("Review choices");
+  expect(render(selected)).not.toContain("<dialog");
   expect(render(selected)).not.toContain("Confirm implementation");
+});
+
+it("labels the displayed bounded file and its copy action in the selected locale", () => {
+  const html = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <RetainedStepResult
+        file={{
+          kind: "file",
+          path: "result",
+          text: "  bounded result\n",
+          limited: true,
+        }}
+      />
+    </LocaleProvider>,
+  );
+  expect(html).toContain('aria-label="复制输出"');
+  expect(html).toContain("步骤结果");
+  expect(html).toContain("预览已截断。");
+  expect(html).toContain("  bounded result\n</pre>");
 });

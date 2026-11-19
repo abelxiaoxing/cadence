@@ -3,7 +3,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { ServiceClient } from "../../src/service-client.ts";
-import { HttpServiceTransport } from "../../src/service-http-client.ts";
+import { LIMITS } from "../../src/service-contract.ts";
+import {
+  HttpServiceTransport,
+  type ReadSocket,
+} from "../../src/service-http-client.ts";
 import {
   type ViewerState,
   WorkspaceObserver,
@@ -21,9 +25,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const stop of stops.splice(0)) stop();
+  vi.useRealTimers();
   for (const f of fixtures.splice(0)) await f.server.close();
 });
-async function setup() {
+async function setup(socketFactory?: (url: string) => ReadSocket) {
   const f = await httpFixture();
   fixtures.push(f);
   f.projection.workspace = async () => ({
@@ -44,12 +49,14 @@ async function setup() {
       error: { code: "unavailable", effect: "none", recovery: "operator" },
     },
   });
+  const writes: string[] = [];
   let sessions = 0;
   const sessionAttachments: (string | null)[] = [];
   const sockets: WebSocket[] = [];
   const transport = new HttpServiceTransport({
     origin: f.origin,
     fetch: async (url, init) => {
+      if (init?.method === "POST") writes.push(new URL(String(url)).pathname);
       if (String(url).endsWith("/session")) {
         sessions++;
         sessionAttachments.push(
@@ -65,13 +72,15 @@ async function setup() {
         },
       });
     },
-    socket: (url) => {
-      const socket = new WebSocket(url, {
-        headers: { cookie: f.cookie, origin: f.origin },
-      });
-      sockets.push(socket);
-      return socket;
-    },
+    socket:
+      socketFactory ??
+      ((url) => {
+        const socket = new WebSocket(url, {
+          headers: { cookie: f.cookie, origin: f.origin },
+        });
+        sockets.push(socket);
+        return socket;
+      }),
   });
   const observer = new WorkspaceObserver({
     transport,
@@ -96,6 +105,7 @@ async function setup() {
     transport,
     observer,
     sockets,
+    writes,
     select,
     state: () => state,
     states,
@@ -139,8 +149,9 @@ it("serial task switching and repeated refresh do not exhaust 16 attachments", a
   }
   const count = s.sessions();
   for (let i = 0; i < 25; i++) s.observer.refresh();
-  await expect.poll(() => s.state()?.workspace?.storeId).toBe(s.f.storeId);
-  expect(s.sessions()).toBe(count + 1); // concurrent refreshes share one poll
+  await expect.poll(() => s.state()?.readCurrent).toBe(true);
+  expect(s.state()?.workspace?.storeId).toBe(s.f.storeId);
+  expect(s.sessions()).toBe(count + 2); // leading poll and one shared trailing demand
   stop?.();
   await expect
     .poll(() =>
@@ -162,7 +173,7 @@ it("lost attachment acquires fresh readonly session; rotation stops instead of r
   await expect.poll(() => s.state()?.actions).toBe(false);
   await expect
     .poll(() => s.state()?.error, { timeout: 2000 })
-    .toMatch(/re-entry/);
+    .toBe("unauthenticated");
   const count = s.sessions();
   s.observer.refresh();
   expect(s.sessions()).toBe(count);
@@ -309,8 +320,12 @@ it("cookie revocation without a selected task/socket clears private state and st
   await expect.poll(() => state?.workspace?.storeId).toBe(s.f.storeId);
   expect(s.sockets).toHaveLength(0);
   s.f.material.rotate();
+  const before = s.sessions();
   s.observer.refresh();
-  await expect.poll(() => state?.error).toMatch(/Access revoked/);
+  s.observer.refresh(); // supersedes the first read ticket, not its authenticated refusal
+  await expect.poll(() => state?.error).toBe("unauthenticated");
+  expect(s.sessions()).toBe(before + 1);
+  expect(state?.readCurrent).toBe(false);
   expect(state?.workspace).toBeUndefined();
   expect(state?.actions).toBe(false);
   const count = s.sessions();
@@ -396,6 +411,70 @@ it("ordinary polling renews its existing attachment even with no socket or model
   await expect.poll(() => s.sessions()).toBe(original + 1);
   expect(new Set(s.sessionAttachments).size).toBe(1);
   expect(s.sockets).toHaveLength(0);
+});
+it("an explicit chat refresh supersedes an in-flight reconcile; only the newest viewer read satisfies the confirmed project epoch", async () => {
+  const s = await setup();
+  s.f.adapters.workbench = { read: vi.fn(), command: vi.fn() };
+  vi.useFakeTimers();
+  s.select(null);
+  await vi.waitFor(() => expect(s.state()?.actions).toBe(true));
+  const initial = s.state()?.workspace;
+  expect(initial).toBeDefined();
+  const old = deferred(),
+    latest = deferred();
+  const workspace = s.f.projection.workspace;
+  const reads = vi
+    .spyOn(s.f.projection, "workspace")
+    .mockImplementationOnce(async () => {
+      await old.promise;
+      return { ...(await workspace()), rootLabel: "obsolete" };
+    })
+    .mockImplementationOnce(async () => {
+      await latest.promise;
+      return { ...(await workspace()), rootLabel: "new model selection" };
+    });
+  // The healthy timer read isn't an explicit demand; it does not revoke the
+  // previous read's freshness every reconcile interval.
+  await vi.advanceTimersByTimeAsync(LIMITS.reconcileMs);
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledOnce());
+  expect(s.state()?.readCurrent).toBe(true);
+
+  const start = s.states.length;
+  for (let i = 0; i < 10; ++i) s.observer.refresh();
+  expect(s.state()?.readCurrent).toBe(false);
+  expect(s.state()?.workspace).toBe(initial);
+  // The caller already has a positive project result for the exact epoch.
+  // That input to whenReady is not viewer evidence (no App or gateway here).
+  const ready = vi.fn();
+  const waiting = s.observer
+    .whenReady(s.f.epoch, new AbortController().signal)
+    .then(ready);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(ready).not.toHaveBeenCalled();
+  expect(reads).toHaveBeenCalledOnce();
+  // The trailing read will be readonly-capable but not action-capable.
+  s.f.adapters.workbench = undefined;
+  old.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(ready).not.toHaveBeenCalled();
+  expect(
+    s.states
+      .slice(start)
+      .every((v) => !v.readCurrent && !v.actions && v.workspace === initial),
+  ).toBe(true);
+
+  latest.resolve();
+  await waiting;
+  expect(ready).toHaveBeenCalledOnce();
+  expect(s.state()).toMatchObject({
+    readCurrent: true,
+    actions: false,
+    workspace: { epoch: s.f.epoch, rootLabel: "new model selection" },
+  });
+  expect(s.sessions()).toBe(3);
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.sockets).toHaveLength(0);
+  expect(s.writes).toEqual([]);
 });
 it.each(["poll", "reconnect"])(
   "%s follows a replacement owner without mixed-epoch readiness or command replay",
@@ -540,4 +619,369 @@ it("default browser fetch retains its native global receiver (public API mock)",
     origin: "http://127.0.0.1:17423",
   }).workspace();
   expect(receivers).toEqual([globalThis]);
+});
+
+// The HTTP owner/auth/attachment paths above are real loopback. This socket
+// deliberately never reports close, and can deliver callbacks after retirement.
+class SilentSocket implements ReadSocket {
+  private listeners = new Map<string, (event: { data: unknown }) => void>();
+  readonly close = vi.fn();
+  readonly send = vi.fn<(frame: string) => void>();
+  addEventListener(type: string, listener: (event: { data: unknown }) => void) {
+    this.listeners.set(type, listener);
+  }
+  fire(type: "message" | "open" | "close", frame?: unknown) {
+    this.listeners.get(type)?.({ data: JSON.stringify(frame) });
+  }
+}
+async function silentTask() {
+  const sockets: SilentSocket[] = [];
+  const s = await setup(() => {
+    const socket = new SilentSocket();
+    sockets.push(socket);
+    return socket;
+  });
+  s.f.adapters.workbench = { read: vi.fn(), command: vi.fn() };
+  vi.useFakeTimers();
+  const scope = { kind: "task" as const, id: id() };
+  const stop = s.select(scope.id);
+  await vi.waitFor(() => expect(sockets).toHaveLength(1));
+  const snapshot = async () => ({
+    kind: "snapshot",
+    snapshot: await s.f.projection.snapshot(scope),
+  });
+  return { ...s, sockets, snapshot, scope, stop };
+}
+it("a valid task frame cannot discharge a newer explicit viewer read, or cancel its one trailing poll", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  socket.fire("open");
+  socket.fire("message", await s.snapshot());
+  const previous = s.state()?.workspace;
+  const old = deferred(),
+    latest = deferred();
+  const snapshot = s.f.projection.snapshot;
+  const reads = vi
+    .spyOn(s.f.projection, "snapshot")
+    .mockImplementationOnce(async (scope) => {
+      const reply = await snapshot(scope);
+      await old.promise;
+      return reply;
+    })
+    .mockImplementationOnce(async (scope) => {
+      await latest.promise;
+      return snapshot(scope);
+    });
+  const workspace = s.f.projection.workspace;
+  s.f.projection.workspace = async () => ({
+    ...(await workspace()),
+    rootLabel: "superseded",
+  });
+  s.f.setSeq("2");
+  s.observer.refresh();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledOnce());
+  for (let i = 0; i < 10; ++i) s.observer.refresh();
+  const start = s.states.length;
+  const ready = vi.fn();
+  const waiting = s.observer
+    .whenReady(s.f.epoch, new AbortController().signal)
+    .then(ready);
+  socket.fire("message", { kind: "resync" });
+  s.f.setSeq("3");
+  socket.fire("message", {
+    kind: "snapshot",
+    snapshot: await snapshot(s.scope),
+  });
+  expect(s.state()?.transportStatus).toBe("current");
+  expect(s.state()?.readCurrent).toBe(false);
+  s.f.projection.workspace = async () => ({
+    ...(await workspace()),
+    rootLabel: "latest",
+  });
+  old.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(
+    s.states
+      .slice(start)
+      .every((v) => !v.readCurrent && !v.actions && v.workspace === previous),
+  ).toBe(true);
+  expect(ready).not.toHaveBeenCalled();
+  latest.resolve();
+  await waiting;
+  expect(s.state()).toMatchObject({
+    readCurrent: true,
+    actions: true,
+    workspace: { rootLabel: "latest" },
+    observation: { snapshot: { scope: s.scope, committedSeq: "3" } },
+  });
+  expect(s.sessions()).toBe(3);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual([]);
+});
+it.each(["handshake", "silent open connection"])(
+  "%s retires without a close event; HTTP alone never restores task readiness",
+  async (failure) => {
+    const s = await silentTask(),
+      first = s.sockets[0];
+    const oldFrame = await s.snapshot();
+    if (failure === "handshake") {
+      // Never opened. Even a message delivered before open isn't evidence.
+      first.fire("message", oldFrame);
+      expect(s.state()?.transportStatus).not.toBe("current");
+      await vi.advanceTimersByTimeAsync(LIMITS.staleMs);
+      expect(first.close).toHaveBeenCalledOnce();
+      // Manual/timed recovery share one serialized release and acquisition.
+      s.observer.refresh();
+      s.observer.refresh();
+      await vi.advanceTimersByTimeAsync(1000);
+    } else {
+      first.fire("open");
+      first.fire("message", oldFrame);
+      expect(s.state()?.actions).toBe(true);
+      await vi.advanceTimersByTimeAsync(LIMITS.staleMs + LIMITS.heartbeatMs);
+      expect(s.state()?.transportStatus).toBe("stale");
+      s.f.setSeq("2");
+      s.observer.refresh();
+      await vi.waitFor(() =>
+        expect(s.state()?.observation?.snapshot.committedSeq).toBe("2"),
+      );
+      expect(s.state()?.transportStatus).toBe("stale");
+      expect(s.state()?.error).toBe("socket-timeout");
+      expect(s.state()?.readCurrent).toBe(true); // HTTP is healthy; WS is not
+      expect(s.state()?.actions).toBe(false);
+      // Neither the successful HTTP read nor outbound pings/resyncs renew
+      // the watchdog. Only automatic retries from here.
+      await vi.advanceTimersByTimeAsync(
+        LIMITS.reconcileMs - LIMITS.staleMs + LIMITS.heartbeatMs + 1000,
+      );
+    }
+    await vi.waitFor(() => expect(s.sockets).toHaveLength(2));
+    const since = s.states.length,
+      replacement = s.sockets[1];
+    expect(new Set(s.sessionAttachments).size).toBe(2);
+    expect(first.close).toHaveBeenCalledOnce();
+    let ready = false;
+    const waiting = s.observer
+      .whenReady(s.f.epoch, new AbortController().signal)
+      .then(() => {
+        ready = true;
+      });
+    first.fire("open");
+    first.fire("message", oldFrame);
+    first.fire("close");
+    replacement.fire("open");
+    s.f.setSeq("3");
+    replacement.fire("message", { kind: "resync" });
+    await vi.waitFor(() =>
+      expect(s.state()?.observation?.snapshot.committedSeq).toBe("3"),
+    );
+    expect(
+      s.states
+        .slice(since)
+        .some((v) => v.transportStatus === "current" || v.actions),
+    ).toBe(false);
+    expect(ready).toBe(false);
+    expect(s.state()?.error).toBe("socket-timeout");
+    replacement.fire("message", await s.snapshot());
+    await waiting;
+    expect(s.state()).toMatchObject({
+      transportStatus: "current",
+      actions: true,
+      error: undefined,
+      observation: {
+        snapshot: { scope: s.scope, epoch: s.f.epoch, committedSeq: "3" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.sockets).toHaveLength(2);
+    expect(
+      s.sockets
+        .flatMap((sock) =>
+          sock.send.mock.calls.map(([frame]) => JSON.parse(frame).kind),
+        )
+        .every((kind) => ["ping", "subscribe", "resync"].includes(kind)),
+    ).toBe(true);
+    expect(
+      replacement.send.mock.calls.map(([frame]) => JSON.parse(frame).kind),
+    ).toEqual(["subscribe"]);
+    expect(s.writes).toEqual(["/api/v1/detach"]);
+  },
+);
+it.each(["scope", "epoch"])(
+  "a validly encoded %s mismatch cannot make a task current",
+  async (fault) => {
+    const s = await silentTask();
+    const original = await s.snapshot();
+    const snapshot =
+      fault === "epoch"
+        ? { ...original.snapshot, epoch: id() }
+        : await s.f.projection.snapshot({ ...s.scope, id: id() });
+    s.sockets[0].fire("open");
+    s.sockets[0].fire("message", { kind: "snapshot", snapshot });
+    expect(
+      s.states.some((v) => v.transportStatus === "current" || v.actions),
+    ).toBe(false);
+    expect(s.state()?.observation?.snapshot.scope).toEqual(s.scope);
+    expect(s.state()?.observation?.snapshot.epoch).toBe(s.f.epoch);
+    expect(s.sockets[0].close).toHaveBeenCalledOnce();
+  },
+);
+it.each(["unauthenticated", "forbidden read", "forbidden detach"])(
+  "an explicit %s during watchdog recovery stops automatic retries",
+  async (refusal) => {
+    const s = await silentTask();
+    const original = await s.snapshot();
+    await vi.advanceTimersByTimeAsync(LIMITS.staleMs);
+    expect(s.sockets[0].close).toHaveBeenCalledOnce();
+    if (refusal === "unauthenticated") s.f.material.rotate();
+    else {
+      // The same-ID CSRF check is refused, or it succeeds and detach is
+      // still forbidden. Neither case proves release or permits a new ID.
+      const actual = globalThis.fetch;
+      vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+        const headers = new Headers(init?.headers);
+        if (refusal === "forbidden read")
+          headers.set("Sec-Fetch-Site", "cross-site");
+        else if (init?.method === "POST") headers.delete("Origin");
+        return actual(url, { ...init, headers });
+      });
+    }
+    await vi.advanceTimersByTimeAsync(1000);
+    const code = refusal === "unauthenticated" ? refusal : "forbidden";
+    await vi.waitFor(() => expect(s.state()?.error).toBe(code));
+    expect(new Set(s.sessionAttachments).size).toBe(1);
+    expect(s.writes).toEqual(
+      Array(refusal === "forbidden detach" ? 2 : 1).fill("/api/v1/detach"),
+    );
+    expect(s.state()?.observation).toBeUndefined();
+    const count = s.sessions();
+    s.observer.refresh();
+    s.sockets[0].fire("message", original);
+    await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
+    expect(s.sessions()).toBe(count);
+    expect(s.sockets).toHaveLength(1);
+    expect(s.state()?.error).toBe(code);
+  },
+);
+
+it("a newer resync supersedes a pending snapshot; ticks and repeated requests share one trailing read", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  socket.fire("open");
+  socket.fire("message", await s.snapshot());
+  expect(s.state()?.actions).toBe(true);
+  const release = deferred(),
+    followup = deferred();
+  const original = s.transport.snapshot.bind(s.transport);
+  const reads = vi
+    .spyOn(s.transport, "snapshot")
+    .mockImplementationOnce(async (...args) => {
+      const reply = await original(...args);
+      await release.promise;
+      return reply;
+    })
+    .mockImplementationOnce(async (...args) => {
+      await followup.promise;
+      return original(...args);
+    });
+  s.f.setSeq("2");
+  s.observer.refresh();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1));
+  const heartbeat = (committedSeq: string) =>
+    socket.fire("message", {
+      kind: "event",
+      event: {
+        kind: "heartbeat",
+        committedSeq,
+        epoch: s.f.epoch,
+        storeId: s.f.storeId,
+        scope: s.scope,
+      },
+    });
+  // The owner announces a watermark the view hasn't installed. Neither the
+  // pending read nor a later heartbeat at the old watermark proves it current.
+  heartbeat("3");
+  for (let i = 0; i < 8; ++i) socket.fire("message", { kind: "resync" });
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(reads).toHaveBeenCalledTimes(1);
+  expect(s.state()?.transportStatus).toBe("stale");
+  release.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(s.state()?.observation?.snapshot.committedSeq).toBe("1");
+  socket.fire("message", await s.snapshot()); // even a WS snapshot at 2 is behind the gap
+  heartbeat("1");
+  expect(s.state()?.actions).toBe(false);
+  expect(s.state()?.transportStatus).toBe("stale");
+  s.f.setSeq("3");
+  followup.resolve();
+  await vi.waitFor(() =>
+    expect(s.state()?.observation?.snapshot.committedSeq).toBe("3"),
+  );
+  expect(s.state()?.transportStatus).toBe("stale");
+  heartbeat("2");
+  expect(s.state()?.actions).toBe(false);
+  heartbeat("3");
+  expect(s.state()?.actions).toBe(true);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(reads).toHaveBeenCalledTimes(2);
+  expect(s.sessions()).toBe(3); // acquire and exactly two existing-ID polls
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual([]);
+});
+
+it("project denial retires an open subscription, a queued resync, a waiting Send and late viewer reads without allocating a replacement", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  const frame = await s.snapshot();
+  socket.fire("open");
+  socket.fire("message", frame);
+  const late = deferred();
+  const read = vi
+    .spyOn(s.transport, "snapshot")
+    .mockImplementationOnce(async () => {
+      await late.promise; // Deliberately ignores abort.
+      return { kind: "ok", value: frame.snapshot };
+    });
+  s.observer.refresh();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  socket.fire("message", { kind: "resync" });
+  const waiting = s.observer.whenReady(s.f.epoch, new AbortController().signal);
+  const sessions = s.sessions();
+  s.observer.access.refuse("project", "forbidden");
+  await expect(waiting).rejects.toThrow("forbidden");
+  expect(read.mock.calls[0][1]?.aborted).toBe(true);
+  expect(socket.close).toHaveBeenCalledOnce();
+  expect(s.state()).toMatchObject({
+    attached: false,
+    actions: false,
+    error: "forbidden",
+  });
+  socket.fire("message", frame);
+  socket.fire("close");
+  late.resolve();
+  s.observer.refresh();
+  s.select(id()); // React can reselect a scope/epoch after its cleanup.
+  await vi.waitFor(() => expect(s.writes).toEqual(["/api/v1/detach"]));
+  await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
+  expect(s.sessions()).toBe(sessions);
+  expect(read).toHaveBeenCalledOnce();
+  expect(s.sockets).toHaveLength(1);
+  expect(s.state()?.workspace).toBeUndefined();
+  expect(s.state()?.observation).toBeUndefined();
+  expect(s.state()?.error).toBe("forbidden");
+  expect(s.writes).toEqual(["/api/v1/detach"]);
+});
+
+it("the final detach denial during scope change stops the queued acquisition", async () => {
+  const s = await silentTask();
+  const count = s.sessions();
+  s.f.material.rotate();
+  s.select(id());
+  await vi.waitFor(() => expect(s.state()?.error).toBe("unauthenticated"));
+  s.observer.refresh();
+  await vi.advanceTimersByTimeAsync(2 * LIMITS.reconcileMs);
+  expect(s.sessions()).toBe(count);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual(["/api/v1/detach"]);
 });

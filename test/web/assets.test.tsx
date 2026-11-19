@@ -121,7 +121,24 @@ it("loads exact compiled closure and all 60 actual KaTeX fonts, preserving full 
     );
     expect(font.sha256).toBe(createHash("sha256").update(body).digest("hex"));
   }
-  expect(assets.some((a) => a.path === "/assets/vis-timeline.css")).toBe(true);
+  const base = `/ui/${manifest.buildId}/assets/`;
+  const paths = new Set(assets.map((a) => a.path));
+  const html = new TextDecoder().decode(
+    assets.find((a) => a.path === "/app")?.bytes,
+  );
+  const urls = Array.from(
+    html.matchAll(/(?:src|href)="([^"]+)"/g),
+    ([, url]) => url,
+  );
+  expect(urls[0]).toBe("/assets/start.js");
+  expect(
+    urls.slice(1).every((url) => url.startsWith(base) && paths.has(url)),
+  ).toBe(true);
+  expect(urls).toContain(`${base}vis-timeline.css`);
+  for (const file of manifest.assets.filter(
+    (file) => file.name !== "index.html" && file.name !== "assets/start.js",
+  ))
+    expect(paths.has(`/ui/${manifest.buildId}/${file.name}`)).toBe(true);
   for (const a of manifest.assets)
     for (const ref of a.references)
       expect(manifest.assets.some((b) => b.name === ref)).toBe(true);
@@ -172,7 +189,7 @@ it("refuses unknown names, collision, missing reference, size overflow, changed 
 it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit CSP policy", async () => {
   const f = await httpFixture();
   fixtures.push(f);
-  const { assets } = loadWebAssets(source);
+  const { manifest, assets } = loadWebAssets(source);
   const server = new ServiceHttpServer({
     policy: {
       schema: "cadence-service-http/1",
@@ -182,6 +199,14 @@ it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit C
     },
     auth: f.auth,
     adapters: f.adapters,
+    build: {
+      contractHash: manifest.contractHash,
+      assets: {
+        buildId: manifest.buildId,
+        sourceHash: manifest.sourceHash,
+        contractHash: manifest.contractHash,
+      },
+    },
     assets,
   });
   servers.push(server);
@@ -212,6 +237,16 @@ it("serves compiled flat fonts/JS/CSS behind auth with exact MIME and explicit C
     "unsafe-eval",
   );
   expect(response.headers["referrer-policy"]).toBe("no-referrer");
+  expect(response.headers["cache-control"]).toBe("no-store");
+  expect(response.headers["x-cadence-web-build"]).toBe(manifest.buildId);
+  for (const old of [
+    "/assets/cadence.js",
+    `/ui/${"0".repeat(64)}/assets/cadence.js`,
+  ])
+    expect(
+      (await request(origin, old, { headers: { "x-cadence-local": f.local } }))
+        .status,
+    ).not.toBe(200);
   expect((await request(origin, "/assets/KaTeX_Main-Regular.ttf")).status).toBe(
     401,
   );

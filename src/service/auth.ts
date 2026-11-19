@@ -14,6 +14,7 @@ import {
   LIMITS,
   utf8Bytes,
 } from "../service-contract.ts";
+import { HISTORY_CSRF_HEADER } from "../service-wire.ts";
 import { type HttpPolicy, loopbackAddress } from "./config.ts";
 import { closed, integer, literal, oneOf } from "./contracts/core.ts";
 import type { Caller } from "./ports.ts";
@@ -495,12 +496,17 @@ export function requestBoundary(
   };
 }
 export class HttpAuthentication {
-  readonly csrf = randomUUID();
+  private executionCsrf = randomUUID();
+  get csrf() {
+    return this.executionCsrf;
+  }
+  private history?: { storeId: string; csrf: string };
+
   readonly cookieName: string;
   constructor(
     readonly material: AccessMaterial,
     readonly epoch: string,
-    workspaceId: string,
+    private readonly workspaceId: string,
     private readonly localCapability: string,
   ) {
     decodeId(epoch);
@@ -508,6 +514,31 @@ export class HttpAuthentication {
     if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
       throw new ContractError("invalid");
     this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+    material.onRevoke(() => {
+      this.history = undefined;
+      this.executionCsrf = randomUUID();
+    });
+  }
+  /** One store in this owner/access lifetime; no viewer slot or execution CSRF. */
+  historyChallenge(workspace: {
+    workspaceId: string;
+    storeId: string;
+    epoch: string;
+  }) {
+    if (
+      workspace.workspaceId !== this.workspaceId ||
+      workspace.epoch !== this.epoch
+    )
+      throw new ContractError("stale");
+    if (this.history?.storeId !== workspace.storeId)
+      this.history = {
+        storeId: decodeId(workspace.storeId),
+        csrf: randomUUID(),
+      };
+    return this.history.csrf;
+  }
+  get historyStore(): string | undefined {
+    return this.history?.storeId;
   }
   bootstrap(value: string, boundary: RequestBoundary): string {
     this.material.assertCurrent();
@@ -563,7 +594,7 @@ export class HttpAuthentication {
   authenticate(
     boundary: RequestBoundary,
     attachmentId: string,
-    mutation = false,
+    post: boolean | "retained-history" = false,
     websocket = false,
   ): Caller {
     this.material.assertCurrent();
@@ -572,6 +603,7 @@ export class HttpAuthentication {
     const local = h.get("x-cadence-local");
     if (local !== undefined) {
       if (
+        post === "retained-history" ||
         !boundary.local ||
         h.has("cookie") ||
         // Node's native Fetch supplies this lone mode header too. Site/dest/user
@@ -598,10 +630,19 @@ export class HttpAuthentication {
         !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? "")
       )
         throw new ContractError("forbidden");
-      if ((mutation || websocket) && h.get("origin") !== boundary.origin)
+      if ((post || websocket) && h.get("origin") !== boundary.origin)
         throw new ContractError("forbidden");
-      if (mutation && h.get("x-cadence-csrf") !== this.csrf)
+      if (post === "retained-history") {
+        if (
+          !this.history ||
+          h.get(HISTORY_CSRF_HEADER) !== this.history.csrf ||
+          h.has("x-cadence-attachment") ||
+          h.has("x-cadence-csrf")
+        )
+          throw new ContractError("forbidden");
+      } else if (post && h.get("x-cadence-csrf") !== this.csrf) {
         throw new ContractError("forbidden");
+      }
     }
     return {
       attachmentId: decodeId(attachmentId),

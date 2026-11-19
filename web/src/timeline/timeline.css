@@ -3,26 +3,6 @@
 /* Run-trace palette: one tool keeps one hue in both schemes — the light-dark()
  * pair only adjusts lightness/alpha per scheme. The swatch classes map the
  * client's stable encodings to these tokens, so no fixed colour reaches the DOM. */
-:root {
-  --tl-input: light-dark(#475569, #64748b);
-  --tl-model: light-dark(#2563eb, #3b82f6);
-  --tl-tools: light-dark(#15803d, #22c55e);
-  --tl-tool-read: light-dark(#0f766e, #2dd4bf);
-  --tl-tool-write: light-dark(#b45309, #f59e0b);
-  --tl-tool-bash: light-dark(#7c3aed, #a78bfa);
-  --tl-model-thinking: light-dark(#0369a1, #38bdf8);
-  --tl-model-text: light-dark(#2563eb, #3b82f6);
-  --tl-palette-0: light-dark(#2563eb, #3b82f6);
-  --tl-palette-1: light-dark(#15803d, #22c55e);
-  --tl-palette-2: light-dark(#be185d, #ec4899);
-  --tl-palette-3: light-dark(#0e7490, #06b6d4);
-  --tl-palette-4: light-dark(#c2410c, #f97316);
-  --tl-palette-5: light-dark(#4d7c0f, #84cc16);
-  --tl-palette-6: light-dark(#4f46e5, #818cf8);
-  --tl-palette-7: light-dark(#be123c, #fb7185);
-  --tl-palette-8: light-dark(#854d0e, #eab308);
-  --tl-palette-9: light-dark(#0f766e, #14b8a6);
-}
 .rtr-tc-0 {
   --tl-tool: var(--tl-palette-0);
 }
@@ -80,15 +60,18 @@
   /* Content-card tier of the shared glass language; the dense surfaces inside
      (tracks, list, detail pre) keep their opaque bases. */
   border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
   border-radius: 14px;
-  background: var(--card-bg, var(--bg-elev));
+  background-color: var(--card-bg, var(--bg-elev));
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   box-shadow: 0 10px 30px var(--glass-shadow);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: var(--card-filter);
+  backdrop-filter: var(--card-filter);
 }
 @supports not (backdrop-filter: blur(1px)) {
   .rtr {
-    background: var(--bg-elev);
+    background-color: var(--bg-elev);
   }
 }
 .rtr-hd {
@@ -153,14 +136,13 @@
 .rtr-conv {
   border: 1px solid var(--border);
   background: transparent;
-  color: inherit;
   font: inherit;
   border-radius: 99px;
   padding: 3px 12px;
   cursor: pointer;
   white-space: nowrap;
   font-size: 12px;
-  opacity: 0.65;
+  color: var(--text-dim);
 }
 .rtr-conv.sel {
   opacity: 1;
@@ -183,7 +165,7 @@
 }
 .rtr-rulerbar .hint {
   font-size: 11px;
-  opacity: 0.5;
+  color: var(--text-dim);
 }
 .rtr-rulerbar .sp {
   flex: 1;
@@ -246,7 +228,7 @@
   margin-bottom: 2px;
 }
 .rtr-tip .tm {
-  opacity: 0.65;
+  color: var(--text-dim);
   font-size: 11px;
 }
 .rtr-tlbody .vis-item .vis-item-content {
@@ -295,7 +277,7 @@
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  opacity: 0.55;
+  color: var(--text-dim);
   margin-bottom: 4px;
 }
 .rtr-legend {
@@ -336,7 +318,7 @@
   width: 34px;
   flex: none;
   font-size: 11px;
-  opacity: 0.6;
+  color: var(--text-dim);
   text-align: right;
 }
 .rtr-track {
@@ -445,7 +427,7 @@
 .rtr-row time {
   flex: none;
   font-size: 11px;
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 .rtr-row.err .rtr-chip {
   border-color: var(--red);
@@ -461,6 +443,7 @@
 }
 .rtr-dtabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 10px;
@@ -469,11 +452,10 @@
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
-  color: inherit;
   font: inherit;
   padding: 6px 12px;
   cursor: pointer;
-  opacity: 0.6;
+  color: var(--text-dim);
 }
 .rtr-dtab.on {
   opacity: 1;
@@ -487,7 +469,7 @@
   margin-bottom: 12px;
 }
 .rtr-kv dt {
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 .rtr-kv dd {
   margin: 0;
@@ -497,7 +479,7 @@
   font-size: 12px;
   font-weight: 700;
   margin: 12px 0 6px;
-  opacity: 0.8;
+  color: var(--text-dim);
 }
 .rtr-bar {
   height: 8px;
@@ -517,7 +499,7 @@
   margin: 0;
 }
 .rtr-empty {
-  opacity: 0.6;
+  color: var(--text-dim);
   text-align: center;
   padding: 40px 20px;
 }
@@ -657,7 +639,7 @@
     row-gap: 6px;
   }
   .rtr-kv {
-    grid-template-columns: 72px 1fr;
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 }
 /* 粗指针（触屏）：时间轴色块点击热区再放大一圈，仍纯 CSS */

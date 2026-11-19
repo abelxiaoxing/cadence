@@ -1,0 +1,383 @@
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { WebSocketServer } from "ws";
+import { AUTH_PAGE_CSP, renderAuthPage } from "../../src/service/auth-page.ts";
+import { PROJECT_ASSOCIATION_HEADER } from "../../src/service/contracts/workbench.ts";
+import { loadWebAssets } from "../../src/service-assets.ts";
+import { publicError } from "../../src/worker-public.mjs";
+import { browserIdentity } from "../build-identity.mjs";
+import {
+  artifactPage,
+  catalog,
+  change,
+  controlContext,
+  csrf,
+  cwd,
+  epoch,
+  events,
+  fieldPage,
+  fieldTask,
+  flowCase,
+  historyMessage,
+  project,
+  readRecord,
+  recentFolder,
+  searchPage,
+  storeId,
+  workspaceId,
+} from "./records.mjs";
+export const degradedMode = {
+  id: "optical-unknown",
+  notice: "The mode record for this specimen is unavailable.",
+};
+
+export function fixture(root) {
+  const { manifest, assets: members } = loadWebAssets(join(root, "web/dist"));
+  const identity = browserIdentity(root);
+  if (manifest.buildId !== identity.buildId) throw Error("web-build-stale");
+  const assets = new Map(members.map((asset) => [asset.path, asset]));
+  const build = { contractHash: identity.contractHash, assets: identity };
+  const failures = [];
+  const stepReads = [];
+  const detailReads = [];
+  let directoryGate, fileGate, entryGate, readGate;
+  let directEntry = false;
+  const snapshot = (scope) => ({
+    protocol: 1,
+    storeId,
+    epoch,
+    scope,
+    committedSeq: change.committedSeq,
+    runs: [],
+    context: controlContext(scope.id),
+    horizon: {
+      policy: "active-and-recent",
+      historicalRuns: {
+        reader: "runs",
+        storeId,
+        scope,
+        snapshotSeq: change.committedSeq,
+        after: null,
+        limit: 50,
+      },
+    },
+  });
+  const server = createServer((req, res) => {
+    const u = new URL(req.url, "http://127.0.0.1"),
+      p = u.pathname;
+    const respond = (status, type, body) => {
+      res.writeHead(status, {
+        "content-type": type,
+        "cache-control": "no-store",
+      });
+      res.end(body);
+    };
+    const json = (v) => respond(200, "application/json", JSON.stringify(v));
+    const ok = (value) => json({ kind: "ok", value });
+    const invalid = () =>
+      respond(
+        400,
+        "application/json",
+        JSON.stringify({ kind: "error", error: publicError("invalid") }),
+      );
+    const directories = (path, deliver) => {
+      const listing = readRecord({ kind: "directories", path });
+      if (!listing) return refuse();
+      if (directoryGate?.route === p && directoryGate.path === path) {
+        directoryGate.respond = (fail) => (fail ? invalid() : deliver(listing));
+        directoryGate = undefined; // Only hold the next matching GET.
+        return;
+      }
+      return deliver(listing);
+    };
+    const refuse = () =>
+      respond(
+        403,
+        "application/json",
+        JSON.stringify({
+          kind: "error",
+          error: { code: "forbidden", effect: "none", recovery: "operator" },
+        }),
+      );
+    if (req.method === "POST" && p.endsWith("/detach")) return ok(null);
+    if (req.method !== "GET") {
+      failures.push(`${req.method} ${p}`);
+      return refuse();
+    }
+    if (p === "/login") {
+      res.setHeader("content-security-policy", AUTH_PAGE_CSP);
+      return respond(
+        401,
+        "text/html",
+        renderAuthPage({
+          authError: u.searchParams.has("error"),
+          nextPath: "/app",
+        }),
+      );
+    }
+    if (p === "/app") {
+      res.setHeader(
+        "content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      );
+      res.setHeader("X-Cadence-Web-Build", manifest.buildId);
+    }
+    const asset = assets.get(p);
+    if (asset) return respond(200, asset.contentType, asset.bytes);
+    if (p === "/workbench/v1") {
+      if (directEntry) {
+        directEntry = false;
+        return invalid(); // Direct owner discovery: no gateway entry here.
+      }
+      const reply = () =>
+        json({
+          kind: "workbench",
+          epoch,
+          csrf,
+          home: cwd,
+          projects: [
+            { id: project, path: cwd, cwd, epoch },
+            {
+              id: "e".repeat(64),
+              path: recentFolder,
+              cwd: recentFolder,
+              epoch: null,
+            },
+          ],
+          recoveries: [],
+          build,
+        });
+      return entryGate ? entryGate.promise.then(reply) : reply();
+    }
+    if (p === "/workbench/v1/service")
+      return json({
+        kind: "service",
+        version: "1.0.0",
+        unit: null,
+        upgrade: "unsupported-install",
+        work: null,
+        job: null,
+      });
+    if (p === "/workbench/v1/models") return json(catalog);
+    if (p === "/workbench/v1/activity")
+      return json({
+        kind: "activity-discovery",
+        epoch,
+        observedAt: 1,
+        completeness: "complete",
+        unavailable: 0,
+        projects: [],
+      });
+    if (p === "/workbench/v1/directories")
+      return directories(u.searchParams.get("path"), json);
+    if (p === `/workbench/v1/projects/${project}`) {
+      res.setHeader(PROJECT_ASSOCIATION_HEADER, "associated");
+      return json({
+        kind: "project-observation",
+        status: "running",
+        epoch,
+        workspaceId,
+      });
+    }
+    const q = JSON.parse(u.searchParams.get("request") ?? "null");
+    if (p.endsWith("/session")) {
+      res.setHeader(
+        "x-cadence-attachment",
+        req.headers["x-cadence-attachment"],
+      );
+      return ok({
+        build,
+        protocol: 1,
+        storeId,
+        epoch,
+        accessGeneration: 1,
+        authority: "browser",
+        csrf,
+        capabilities: { actions: false, manualChecks: false, history: true },
+      });
+    }
+    if (p.endsWith("/workspace"))
+      return ok({
+        storeId,
+        workspaceId,
+        epoch,
+        committedSeq: change.committedSeq,
+        rootLabel: cwd,
+        context: controlContext(),
+        models: [],
+      });
+    if (p.endsWith("/active-runs"))
+      return ok({ storeId, workspaceId, epoch, status: "complete", runs: [] });
+    if (p.endsWith("/snapshot")) return ok(snapshot(q));
+    if (p.endsWith("/workbench/read")) {
+      if (q.kind === "directories") return directories(q.path, ok);
+      if (
+        q.kind === "conversation-turn" &&
+        q.id === "optical-flow" &&
+        flowCase.failTurn
+      )
+        return json({ kind: "error", error: publicError("stale") });
+      if (q.kind === "workflow-detail") detailReads.push(q);
+      if (readGate && isDeepStrictEqual(q, readGate.request)) {
+        const gate = readGate;
+        readGate = undefined;
+        gate.resolve({
+          request: q,
+          respond: (fail) => (fail ? invalid() : ok(readRecord(q))),
+        });
+        return;
+      }
+      const v = readRecord(q);
+      if (q.kind === "file" && fileGate?.path === q.path && v) {
+        fileGate.resolve(() => ok(v));
+        fileGate = undefined; // Hold one response, not every read of this path.
+        return;
+      }
+      if (v?.kind === "cadence-conversation" && q.id === degradedMode.id)
+        return ok({ ...v, state: { ...v.state, notice: degradedMode.notice } });
+      if (q.kind === "conversation-step") {
+        const { id, leaf, turnId, step, part } = q;
+        const read = { id, leaf, turnId, step, part, result: "pending" };
+        stepReads.push(read);
+        res.once("finish", () => {
+          read.result =
+            v?.item?.name && res.statusCode === 200
+              ? v.item.name
+              : `HTTP ${res.statusCode}`;
+        });
+      }
+      if (v) return ok(v);
+    }
+    if (p === `/projects/${project}/api/v1/search`) {
+      const page = searchPage(q);
+      if (page) return ok(page);
+      failures.push("Unexpected synthetic search cursor");
+      return refuse();
+    }
+    if (
+      p === `/projects/${project}/api/v1/entity` &&
+      q?.kind === "message" &&
+      q.id === historyMessage.owner.entity.id
+    )
+      return ok({ request: q, record: historyMessage });
+    if (p.endsWith("/details") && q) {
+      const page = artifactPage(q) ?? fieldPage(q);
+      if (page) return ok(page);
+    }
+    if (q?.reader)
+      return ok({
+        request: { ...q, snapshotSeq: change.committedSeq },
+        records:
+          q.scope?.id === fieldTask && q.reader === "messages"
+            ? [historyMessage]
+            : q.reader === "events"
+              ? events
+              : q.reader === "changes"
+                ? [change]
+                : [],
+        next: null,
+        coverage: {
+          observed: "complete",
+          source: "complete",
+          redacted: false,
+          omissions: [],
+        },
+      });
+    refuse();
+  });
+  const ws = new WebSocketServer({ server });
+  ws.on("connection", (socket) =>
+    socket.on("message", (data) => {
+      const m = JSON.parse(data);
+      if (m.scope)
+        socket.send(
+          JSON.stringify({ kind: "snapshot", snapshot: snapshot(m.scope) }),
+        );
+    }),
+  );
+  return {
+    build: identity,
+    failures,
+    stepReads,
+    detailReads,
+    // Hold exactly one matching GET, before constructing its response. This
+    // cannot grant a command. Fail if the UI never actually requests it.
+    holdRead(request) {
+      if (readGate) throw Error("Read gate already armed");
+      const gate = Promise.withResolvers();
+      readGate = { request, resolve: gate.resolve };
+      return async () => {
+        let timer;
+        try {
+          return await Promise.race([
+            gate.promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(Error(`No matching GET: ${JSON.stringify(request)}`)),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+          readGate = undefined;
+        }
+      };
+    },
+    holdWorkbenchEntry() {
+      entryGate = Promise.withResolvers();
+      return () => {
+        entryGate.resolve();
+        entryGate = undefined;
+      };
+    },
+    holdFile(path) {
+      const gate = Promise.withResolvers();
+      fileGate = { path, resolve: gate.resolve };
+      return async () => {
+        // Wait for the actual matching GET, not a latency chosen for the UI.
+        let timeout;
+        try {
+          return await Promise.race([
+            gate.promise,
+            new Promise((_, reject) => {
+              timeout = setTimeout(
+                () => reject(Error(`Missing preview request: ${path}`)),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
+    },
+    nextEntryIsOwner() {
+      directEntry = true;
+    },
+    holdDirectory(path, route = "/workbench/v1/directories") {
+      const gate = { path, route, respond: null };
+      directoryGate = gate;
+      return ({ fail = false } = {}) => {
+        if (!gate.respond)
+          throw Error(`No pending directory response: ${route} ${path}`);
+        gate.respond(fail);
+        gate.respond = null;
+      };
+    },
+    async open() {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return `http://127.0.0.1:${server.address().port}`;
+    },
+    async close() {
+      for (const s of ws.clients) s.terminate();
+      ws.close();
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}

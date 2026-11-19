@@ -5,9 +5,11 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { IconType } from "react-icons";
 import {
@@ -19,7 +21,6 @@ import {
   FiLayers,
   FiLink,
   FiMessageSquare,
-  FiServer,
   FiSquare,
   FiTool,
 } from "react-icons/fi";
@@ -28,12 +29,13 @@ import type {
   ProjectEntry,
 } from "../../src/service/contracts/gateway.ts";
 import type { ConversationLocation } from "../../src/service/contracts/models.ts";
-import { canonicalJson } from "../../src/service-contract.ts";
+import { canonicalJson, compareSequence } from "../../src/service-contract.ts";
 import { type BrowserClient, browserClient } from "./client/browser";
 import type { PreparationProgress } from "./client/conversation-send";
 import type { FolderDraft } from "./client/folder-draft";
 import { useLatency } from "./client/latency";
 import type { PreviewModels } from "./client/model-preview";
+import { ObservationAccess } from "./client/observer";
 import {
   activityRoute,
   branchHash,
@@ -44,6 +46,7 @@ import { mergeObservation } from "./client/receipts";
 import { useConversationHistory } from "./client/use-conversation-history";
 import type { ModelAvailability } from "./client/use-model-catalog";
 import { useProjectObservation } from "./client/use-project-observation";
+import { useRetainedTaskWorkspace } from "./client/use-retained-task-workspace";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
@@ -71,8 +74,10 @@ import {
   type BranchesView,
 } from "./components/workspace/BranchesPanel";
 import {
+  type ChatDiagnostics,
   ChatWorkspace,
   type ConversationActivity,
+  type ViewerTicket,
 } from "./components/workspace/ChatWorkspace";
 import { FilesPanel } from "./components/workspace/FilesPanel";
 import { InspectorPanel } from "./components/workspace/InspectorPanel";
@@ -80,22 +85,26 @@ import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
-import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
+import {
+  type CanCancelWorkflow,
+  cancelWorkflow,
+  workflowLive,
+} from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
-import { WorkspaceNotice } from "./components/workspace/WorkspaceNotice";
+import {
+  accessRevoked,
+  WorkspaceConnection,
+} from "./components/workspace/WorkspaceNotice";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { useT } from "./i18n/locale";
 import { AppShell } from "./layout/AppShell";
 import { CacheStatus } from "./layout/CacheStatus";
 import { ContextStatus } from "./layout/ContextStatus";
-import {
-  ConnectionStatus,
-  StatusItem,
-  WorkingStatus,
-} from "./layout/StatusItem";
+import { ReplyStatus, StatusItem } from "./layout/StatusItem";
 import { notify } from "./layout/toasts";
 import { usePanelLayout } from "./layout/use-panel-layout";
+import { Crystal } from "./optics/Crystal";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
 import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
@@ -109,6 +118,8 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
 export function App({
   api: provided,
   onOpenProject,
+  entryObservation,
+  projectAccess,
   homeFolder,
   projectEntries,
   notices,
@@ -123,6 +134,8 @@ export function App({
   onDraftApplied,
 }: {
   api?: BrowserClient;
+  projectAccess?: ObservationAccess;
+  entryObservation?: { pending: boolean; error?: string; refresh(): void };
   previewModels?: PreviewModels;
   initialDraft?: FolderDraft & { conversationId: string };
   onDraftApplied?(conversationId: string): void;
@@ -138,14 +151,14 @@ export function App({
   onOpenProject?(path: string): Promise<void>;
   homeFolder?: string;
   projectEntries?: { path: string; current: boolean }[];
-  /** Workbench-supplied banners (automatic recovery). */
+  /** Result of an explicit workbench action. */
   notices?: ReactNode;
   discovery?: ActivityListProps;
   /** The workbench's service restart and upgrade; absent on a direct owner. */
   onOpenService?(): void;
 }) {
   const { t, tx } = useT();
-  const [api] = useState(() => provided ?? browserClient());
+  const [api] = useState(() => provided ?? browserClient(project?.id));
   const [activityHash, setActivityHash] = useState(() =>
     typeof window === "undefined" ? "" : window.location.hash,
   );
@@ -190,71 +203,156 @@ export function App({
   const [scope, setScope] = useState<Scope | null>(
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
-  const execution = useProjectObservation(project?.id, project?.epoch);
-  const executionReady = !project || execution.readiness === "running";
+  const [localAccess] = useState(() => new ObservationAccess());
+  const access = projectAccess ?? localAccess;
+  const refusal = useSyncExternalStore(
+    access.subscribe,
+    access.snapshot,
+    access.snapshot,
+  );
+  const entryError =
+    refusal?.source === "entry" ? refusal.code : entryObservation?.error;
+  const entryRevoked = accessRevoked(entryError);
+  const execution = useProjectObservation(
+    entryRevoked ? undefined : project?.id,
+    project?.epoch,
+    access,
+  );
+  const running = !!project && execution.readiness === "running";
+  const independent = running && execution.association === "unassociated";
+  const executionReady =
+    !project ||
+    (running &&
+      execution.association === "associated" &&
+      !!execution.value?.epoch);
   const executionStopped =
     !!project &&
     (execution.readiness === "stopped" ||
       execution.readiness === "not-started");
-  // A failed readiness read must not discard an existing safety attachment.
-  // Only a positive Stop or replacement epoch changes that lifetime.
-  const executionEpoch = useRef<string | null>(null);
-  if (executionReady && execution.value?.epoch)
-    executionEpoch.current = execution.value.epoch;
+  // Preserve a previously eligible safety viewer across an inconclusive read,
+  // not across a positive stop, lost association, or revoked access.
+  const eligible = useRef<{
+    projectId: string;
+    selected: string | null;
+    epoch: string;
+  }>(null);
+  if (project) {
+    if (executionReady && execution.value?.epoch)
+      eligible.current = {
+        projectId: project.id,
+        selected: project.epoch,
+        epoch: execution.value.epoch,
+      };
+    else if (
+      eligible.current?.projectId !== project.id ||
+      eligible.current.selected !== project.epoch ||
+      running ||
+      executionStopped ||
+      refusal ||
+      accessRevoked(execution.error)
+    )
+      eligible.current = null;
+  }
+  const executionEpoch = eligible.current?.epoch ?? null;
   const observeExecution =
-    !project ||
-    (!executionStopped && (executionReady || executionEpoch.current !== null));
+    !entryRevoked && !refusal && (!project || executionEpoch !== null);
   const workspace = useWorkspace(
     api,
     taskId ? { kind: "task", id: taskId } : null,
     !detached && observeExecution,
-    executionEpoch.current,
+    executionEpoch,
+    access,
   );
-  // Presentation only: an empty first attachment is still loading, not stale.
-  // Once data or a failure was observed, a reset/reconnect must not look new.
+  const [handoffs, setHandoffs] = useState(0);
+  const expectedWorkspace = execution.value?.workspaceId;
+  const wrongWorkspace =
+    !!project &&
+    workspace.epoch === executionEpoch &&
+    !!expectedWorkspace &&
+    [workspace.workspace, workspace.activeRuns].some(
+      (read) => read && read.workspaceId !== expectedWorkspace,
+    );
+  const attached =
+    !detached &&
+    !entryObservation?.pending &&
+    !entryError &&
+    observeExecution &&
+    !handoffs &&
+    !wrongWorkspace &&
+    workspace.attached &&
+    !accessRevoked(workspace.error) &&
+    (!project || workspace.epoch === executionEpoch);
+  const projectError =
+    (refusal?.source === "project" ? refusal.code : undefined) ??
+    execution.error ??
+    (execution.value?.status === "unavailable"
+      ? "unavailable"
+      : running && !executionReady && !independent
+        ? "Viewer access not confirmed"
+        : undefined);
+  // Resync invalidates freshness without diagnosing a failure. Keep the
+  // viewer's explicit cause separate from the current-data gate below.
+  const viewerError =
+    (refusal?.source === "viewer" ? refusal.code : undefined) ??
+    (observeExecution
+      ? (workspace.error ?? (wrongWorkspace ? "stale" : undefined))
+      : undefined);
   const initialViewer = useRef(true);
   if (
     workspace.workspace ||
     workspace.observation ||
-    workspace.error ||
-    workspace.transportStatus === "stale"
+    projectError ||
+    viewerError ||
+    independent ||
+    executionStopped
   )
     initialViewer.current = false;
   // A readiness refusal is not a conversation identity failure. Keep readonly
   // history and drafts reachable; only an explicit user action can prepare execution.
-  const projectObserved = !!(project && (execution.value || execution.error));
+  const projectObserved = !!(
+    project &&
+    (execution.value || execution.error || refusal)
+  );
+  const signInRequired =
+    !!refusal ||
+    entryRevoked ||
+    accessRevoked(projectError) ||
+    accessRevoked(viewerError);
   const conversationAvailable =
-    !detached && !!(workspace.workspace || projectObserved);
+    !detached && !signInRequired && !!(workspace.workspace || projectObserved);
+  const retained = useRetainedTaskWorkspace(
+    independent && !detached && !signInRequired ? project?.id : undefined,
+    taskId,
+    execution.value?.workspaceId,
+    execution.value?.epoch,
+    access,
+  );
+  const viewerHistoryWorkspace =
+    observeExecution &&
+    !wrongWorkspace &&
+    !signInRequired &&
+    (!project || workspace.workspace?.epoch === executionEpoch)
+      ? workspace.workspace
+      : undefined;
+  const historyWorkspace = independent
+    ? retained.history?.workspace
+    : viewerHistoryWorkspace;
+  const historyClient = retained.history?.client ?? api.client;
+  const historyKey = `${independent ? "retained" : "viewer"}:${project?.id ?? "direct"}:${historyWorkspace?.epoch ?? ""}:${historyWorkspace?.storeId ?? ""}`;
   const chatWorkspace = useRef<string | null>(null);
   if (workspace.workspace || execution.value?.workspaceId)
     chatWorkspace.current =
       workspace.workspace?.workspaceId ?? execution.value?.workspaceId ?? null;
-  const preparation = (purpose: ExecutionPreparation) =>
-    onPrepareExecution
-      ? async (
-          signal: AbortSignal,
-          location?: ConversationLocation,
-          progress?: PreparationProgress,
-        ) => {
-          const epoch = await onPrepareExecution(
-            purpose,
-            signal,
-            location,
-            progress,
-          );
-          if (signal.aborted) throw new Error("stale");
-          execution.prepared(epoch);
-          const observation = workspace.reconnect();
-          await workspace.whenReady(epoch, signal, observation);
-        }
-      : undefined;
-  const prepareSend = preparation("send");
-  const preparePlan = preparation("plan-validation");
   const chats = useConversationHistory(api.client, conversationAvailable);
+  const observingRoster =
+    workspace.attached && workspace.workspace && !detached && !signInRequired;
   const chatActivity = useWorkbench(
     api.client,
-    workspace.workspace && !detached ? { kind: "conversation-active" } : null,
+    observingRoster ? { kind: "conversation-active" } : null,
     1000,
+    access,
+    workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const activeChats =
     chatActivity.value?.kind === "conversation-active"
@@ -268,8 +366,15 @@ export function App({
   ];
   const workflowActivity = useWorkbench(
     api.client,
-    workspace.workspace && !detached ? { kind: "workflow-active" } : null,
+    // Unlike full history, the safety roster is useful as soon as this
+    // viewer can reach the owner, including during a task resync.
+    observeExecution && workspace.attached && !detached && !signInRequired
+      ? { kind: "workflow-active" }
+      : null,
     2000,
+    access,
+    workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const background =
     workflowActivity.value?.kind === "workflow-active"
@@ -286,7 +391,11 @@ export function App({
   );
   const projects = useWorkbench(
     api.client,
-    !project && workspace.workspace && !detached ? { kind: "projects" } : null,
+    !project && observingRoster ? { kind: "projects" } : null,
+    0,
+    access,
+    workspace.attachmentVersion,
+    workspace.allocationSignal,
   );
   const initialCwd =
     newConversationCwd ??
@@ -296,7 +405,10 @@ export function App({
       : undefined);
   const currentChatLocation =
     chatLocation?.id === chatId ? chatLocation : undefined;
-  const activity = reported?.id === chatId ? reported : undefined;
+  const activity =
+    (!project || projectObserved) && reported?.id === chatId
+      ? reported
+      : undefined;
   const latency = useLatency();
   useEffect(() => {
     if (currentChatLocation && chatFromLocation() === currentChatLocation.id)
@@ -322,16 +434,16 @@ export function App({
       ? projects.value.entries.find((entry) => entry.current)?.path
       : undefined) ??
     workspace.workspace?.rootLabel;
-  const observation = {
-    state: workspace.observation,
-    transportStatus: workspace.transportStatus,
-    error: workspace.error,
-    refresh: workspace.refresh,
-  };
-  const current =
-    observation.state?.snapshot.scope.kind === "task" &&
-    observation.state.snapshot.scope.id === taskId
-      ? observation.state.snapshot.context
+  // Scope/epoch selection can change before the previous observer's cleanup.
+  // Never borrow another task's snapshot (including just its watermark).
+  const candidate = workspace.observation?.snapshot;
+  const taskObservation =
+    candidate?.scope.kind === "task" &&
+    candidate.scope.id === taskId &&
+    candidate.storeId === viewerHistoryWorkspace?.storeId &&
+    candidate.epoch === workspace.epoch &&
+    (!project || candidate.epoch === executionEpoch)
+      ? workspace.observation
       : undefined;
   const panels = usePanelLayout();
   const { closeDrawer } = panels;
@@ -373,11 +485,22 @@ export function App({
     });
   };
   const lifetime = useRef(new ViewLifetime());
+  const navigation = useRef(0);
+  const departView = useCallback(() => {
+    navigation.current++;
+    lifetime.current.depart();
+  }, []);
   const viewIdentity = canonicalJson({
     taskId,
+    chatId,
+    leaf: activitySelection.leaf ?? null,
     scope,
     selectedSnapshot: selectedSnapshot ?? null,
     detached,
+    project: project?.id ?? null,
+    selectedEpoch: project?.epoch ?? null,
+    viewerEpoch: workspace.epoch ?? null,
+    attached,
     attachment: workspace.attachmentVersion,
     workspaceContext: workspace.workspace?.context ?? null,
     observationError: workspace.error ?? null,
@@ -387,9 +510,9 @@ export function App({
     mounted.current = true;
     return () => {
       mounted.current = false;
-      lifetime.current.depart();
+      departView();
     };
-  }, []);
+  }, [departView]);
   const selectChat = (selected?: string) => {
     setActivityHash("");
     const id = selected ?? crypto.randomUUID();
@@ -399,7 +522,7 @@ export function App({
       setChatRuns([]);
       setReference(undefined);
     }
-    lifetime.current.depart();
+    departView();
     setChatId(id);
     setTaskId(null);
     setScope(null);
@@ -436,7 +559,7 @@ export function App({
     setTaskTitle(title ?? "");
     setScopeTitle("");
     setSelectedSnapshot(undefined);
-    lifetime.current.depart();
+    departView();
     setTaskId(id);
     setScope({ kind: "task", id });
     setHit(undefined);
@@ -461,7 +584,7 @@ export function App({
           setTaskId(null);
           setScope(null);
           setRightTab((tab) => (tab === "task" ? "files" : tab));
-          lifetime.current.depart();
+          departView();
           closeDrawer();
         }
         return;
@@ -472,7 +595,7 @@ export function App({
       setRightTab("task");
       // Same-document links/back navigation observe the exact new task too.
       // Changing a hash never refreshes a grant or replays an action.
-      lifetime.current.depart();
+      departView();
       setSelectedSnapshot(target.snapshotSeq);
       setTaskTitle("");
       setScopeTitle("");
@@ -489,12 +612,12 @@ export function App({
       window.removeEventListener("hashchange", navigate);
       window.removeEventListener("popstate", navigate);
     };
-  }, [closeDrawer]);
+  }, [closeDrawer, departView]);
   const selectScope = (value: Scope, snapshot?: string, label?: string) => {
     setAgent(null);
     setSelectedSnapshot(snapshot);
     setScopeTitle(label ?? "");
-    lifetime.current.depart();
+    departView();
     setScope(value);
     setHit(undefined);
     setDetail(undefined);
@@ -507,11 +630,47 @@ export function App({
         historyUrl(taskId, undefined, { scope: value, snapshotSeq: snapshot }),
       );
   };
+  // A deep link may pin an older commit but cannot invent a watermark or
+  // borrow an anchor from a different store/scope.
+  const historical = retained.history?.workspace;
+  const anchorMismatch =
+    historical &&
+    ((selectedSnapshot &&
+      compareSequence(selectedSnapshot, historical.committedSeq) > 0) ||
+      (detail &&
+        (detail.storeId !== historical.storeId ||
+          detail.scope.kind !== scope?.kind ||
+          detail.scope.id !== scope?.id ||
+          compareSequence(detail.snapshotSeq, historical.committedSeq) > 0)));
+  const historyError =
+    retained.error ??
+    (anchorMismatch
+      ? "History anchor does not match the selected workspace"
+      : undefined);
   const snapshotSeq =
-    selectedSnapshot ??
-    observation.state?.snapshot.committedSeq ??
-    workspace.workspace?.committedSeq;
-  const storeId = workspace.workspace?.storeId;
+    historyWorkspace && !anchorMismatch
+      ? (selectedSnapshot ??
+        taskObservation?.snapshot.committedSeq ??
+        historyWorkspace.committedSeq)
+      : undefined;
+  const storeId = historyWorkspace?.storeId;
+  const unavailableReason =
+    historyError ??
+    entryError ??
+    projectError ??
+    viewerError ??
+    (signInRequired
+      ? "Sign-in required"
+      : executionStopped
+        ? execution.readiness === "stopped"
+          ? "Execution stopped"
+          : "Execution not started"
+        : undefined);
+  const historyPlaceholder = unavailableReason
+    ? t("Recorded history unavailable: {reason}.", {
+        reason: tx(unavailableReason),
+      })
+    : t("Reading recorded history…");
   const seed: ListRequest | null =
     scope && storeId && snapshotSeq
       ? {
@@ -536,18 +695,179 @@ export function App({
           offset: 0,
         }
       : null;
-  const runs = current ? (observation.state?.snapshot.runs ?? []) : [];
+  const runs = taskObservation?.snapshot.runs ?? [];
   const resultTicket = lifetime.current.ticket();
+  const renderedSignal = workspace.allocationSignal;
+  const roster = workspace.activeRuns;
+  const activeRuns = roster?.status === "complete" ? roster.runs : [];
+  // A matching HTTP workspace is not a current task subscription. In
+  // particular, render-time scope/epoch changes precede observer cleanup.
+  const viewerFresh =
+    attached &&
+    workspace.readCurrent &&
+    !!workspace.epoch &&
+    workspace.workspace?.epoch === workspace.epoch &&
+    !workspace.error &&
+    workspace.transportStatus === "current" &&
+    (taskId
+      ? taskObservation?.connection === "current"
+      : !workspace.observation);
+  const observationFresh = executionReady && viewerFresh;
+  // Safety stop needs the exact rendered viewer and run, not a complete
+  // history read or live task socket. Never let a retained button borrow the
+  // mutable client's next attachment, even when the owner epoch is unchanged.
+  const viewCurrent = useCallback(
+    () =>
+      mounted.current &&
+      lifetime.current.current(resultTicket) &&
+      !access.signal.aborted,
+    [resultTicket, access],
+  );
+  const allocated = useCallback(
+    (epoch?: string) =>
+      viewCurrent() &&
+      renderedSignal?.aborted === false &&
+      attached &&
+      !!workspace.epoch &&
+      workspace.epoch === epoch,
+    [viewCurrent, renderedSignal, attached, workspace.epoch],
+  );
+  const actionsReady = observationFresh && workspace.actions;
+  const actions = useRef(new ViewLifetime());
+  actions.current.select(String(actionsReady));
+  const actionId = actions.current.ticket();
+  const ticket = useMemo<ViewerTicket>(
+    () => ({
+      allocation: renderedSignal,
+      epoch: workspace.epoch,
+      attached: allocated,
+      current: () =>
+        actionsReady &&
+        actions.current.current(actionId) &&
+        allocated(workspace.epoch),
+    }),
+    [renderedSignal, workspace.epoch, allocated, actionsReady, actionId],
+  );
+  const canCancelWorkflow: CanCancelWorkflow = (run) =>
+    allocated(run.epoch) && workflowLive(run);
+  const latestRoster = useRef(roster);
+  latestRoster.current = roster;
+  // Only the explicit operation that requested a new observation may receive
+  // its committed action ticket. Older handlers retain their original signal.
+  const claim = useRef<{
+    epoch: string;
+    previous?: AbortSignal;
+    accept(ticket: ViewerTicket): void;
+  }>(undefined);
+  useLayoutEffect(() => {
+    const request = claim.current;
+    if (
+      request &&
+      request.epoch === ticket.epoch &&
+      request.previous !== ticket.allocation &&
+      ticket.current()
+    )
+      request.accept(ticket);
+  });
+  const preparation = (purpose: ExecutionPreparation) =>
+    onPrepareExecution && !signInRequired
+      ? async (
+          signal: AbortSignal,
+          location?: ConversationLocation,
+          progress?: PreparationProgress,
+        ) => {
+          access.check();
+          if (
+            signal.aborted ||
+            !viewCurrent() ||
+            !actions.current.current(actionId) ||
+            renderedSignal?.aborted ||
+            handoffs ||
+            claim.current
+          )
+            throw new Error("stale");
+          const selected = navigation.current;
+          const departed = () =>
+            signal.aborted || navigation.current !== selected;
+          lifetime.current.depart();
+          setHandoffs((count) => count + 1);
+          try {
+            const epoch = await onPrepareExecution(
+              purpose,
+              signal,
+              location,
+              progress,
+            );
+            access.check();
+            if (departed()) throw new Error("stale");
+            execution.prepared(epoch);
+            const observation = workspace.reconnect();
+            await workspace.whenReady(epoch, signal, observation);
+            access.check();
+            if (departed()) throw new Error("stale");
+            // whenReady observes service data, not a React commit. Release
+            // the handoff in finally and wait within the same caller deadline.
+            return new Promise<ViewerTicket>((resolve, reject) => {
+              const clear = () => {
+                claim.current = undefined;
+                signal.removeEventListener("abort", stop);
+                access.signal.removeEventListener("abort", stop);
+              };
+              const stop = () => {
+                clear();
+                reject(new Error("stale"));
+              };
+              signal.addEventListener("abort", stop, { once: true });
+              access.signal.addEventListener("abort", stop, { once: true });
+              claim.current = {
+                epoch,
+                previous: renderedSignal,
+                accept(next) {
+                  clear();
+                  resolve(next);
+                },
+              };
+            }).then(async (next) => {
+              // Pin the committed allocation through the final observer check.
+              if (departed() || !next.current()) throw new Error("stale");
+              await workspace.whenReady(epoch, signal, observation);
+              if (departed() || !next.current()) throw new Error("stale");
+              return next;
+            });
+          } finally {
+            setHandoffs((count) => count - 1);
+          }
+        }
+      : undefined;
+  const prepareSend = preparation("send");
+  const preparePlan = preparation("plan-validation");
   const result = (value: CommandObservation) => {
     setReceipt(value);
-    if (value.receipt && lifetime.current.current(resultTicket))
+    if (value.receipt && lifetime.current.current(resultTicket)) {
+      actions.current.depart();
       workspace.refresh();
+    }
   };
   const cancel = (runId: string) => {
-    if (canceling.has(runId) || !workspace.attached || !workspace.activeRuns)
+    const original = activeRuns.find((run) => run.runId === runId);
+    const latest = latestRoster.current;
+    if (
+      !original ||
+      !allocated(original.epoch) ||
+      latest?.status !== "complete" ||
+      latest.epoch !== original.epoch ||
+      !latest.runs.some(
+        (run) =>
+          run.runId === runId &&
+          run.taskId === original.taskId &&
+          run.operationId === original.operationId &&
+          run.epoch === original.epoch,
+      ) ||
+      canceling.has(runId)
+    )
       return;
     const commandId = crypto.randomUUID(),
-      epoch = workspace.activeRuns.epoch;
+      epoch = original.epoch;
     setCanceling((prev) => new Set(prev).add(runId));
     setReceipt({
       commandId,
@@ -586,6 +906,38 @@ export function App({
           });
       });
   };
+  const chatKey = JSON.stringify([
+    project?.id,
+    chatId,
+    activitySelection.leaf,
+    project?.epoch,
+    execution.value?.epoch ?? workspace.epoch,
+  ]);
+  const latestChat = useRef(chatKey);
+  latestChat.current = chatKey;
+  const navTicket = navigation.current;
+  const readSelected = useCallback(
+    () =>
+      mounted.current &&
+      !access.signal.aborted &&
+      navigation.current === navTicket &&
+      latestChat.current === chatKey,
+    [chatKey, navTicket, access],
+  );
+  const [report, setReport] = useState<{
+    key: string;
+    diagnostics: ChatDiagnostics;
+  }>();
+  const onDiagnostics = useCallback(
+    (diagnostics: ChatDiagnostics) => {
+      if (readSelected()) setReport({ key: chatKey, diagnostics });
+    },
+    [chatKey, readSelected],
+  );
+  const chatIssues =
+    report?.key === chatKey && conversationAvailable
+      ? report.diagnostics
+      : undefined;
   if (detached)
     return (
       <main className="entry">
@@ -609,85 +961,46 @@ export function App({
         </button>
       </main>
     );
-  const roster = workspace.activeRuns;
-  const activeRuns = roster?.status === "complete" ? roster.runs : [];
-  const viewerFresh =
-    !detached &&
-    !workspace.error &&
-    workspace.transportStatus === "current" &&
-    (!observation.state || observation.state.connection === "current");
-  const observationFresh = executionReady && viewerFresh;
-  // What an owner-side action needs: an authenticated owner, freshly observed.
-  const actionsReady =
-    executionReady &&
-    !!workspace.workspace &&
-    workspace.attached &&
-    !workspace.error &&
-    viewerFresh;
-  const connecting =
-    initialViewer.current &&
-    !observation.state &&
-    !observation.error &&
-    !execution.error &&
-    (!project ||
-      (!execution.value && execution.readiness === "unknown") ||
-      execution.readiness === "running");
+  const connecting = initialViewer.current && !projectError && !viewerError;
   const modelAvailability: ModelAvailability = executionStopped
     ? {
         status:
           execution.readiness === "not-started" ? "not-started" : "stopped",
       }
-    : executionReady &&
-        viewerFresh &&
-        workspace.attached &&
-        workspace.epoch &&
-        (!project || execution.value?.epoch === workspace.epoch)
+    : observationFresh && workspace.epoch
       ? {
           status: "ready",
           epoch: workspace.epoch,
           attachmentVersion: workspace.attachmentVersion,
         }
-      : { status: connecting ? "connecting" : "unavailable" };
-  const connection = detached
-    ? "Viewer disconnected"
-    : connecting
-      ? "Connecting…"
-      : project && execution.readiness === "unknown"
-        ? "Project readiness unknown"
-        : project && execution.readiness === "stale"
-          ? "Project observation stale"
-          : executionStopped
-            ? "Ready to prepare execution"
-            : !viewerFresh
-              ? "Viewer observation stale"
-              : !workspace.workspace
-                ? "Viewer observation unavailable"
-                : (observation.state?.connection ??
-                  (taskId ? "Task snapshot not observed yet" : "Chat ready"));
-  const connectionDot = connecting
-    ? "busy"
-    : executionStopped
-      ? ""
-      : !observationFresh || !workspace.workspace
-        ? "error"
-        : observation.transportStatus !== "current"
-          ? "busy"
-          : !observation.state || observation.state.connection === "current"
-            ? "ok"
-            : "busy";
+      : {
+          status:
+            !projectError && !viewerError && !independent
+              ? "connecting"
+              : "unavailable",
+        };
+  const refreshConnection = () => {
+    if (!readSelected() || entryRevoked) return;
+    actions.current.depart();
+    chatIssues?.retry();
+    if (workflowActivity.error) workflowActivity.refresh();
+    if (chatActivity.error) chatActivity.refresh();
+    if (projects.error) projects.refresh();
+    entryObservation?.refresh();
+    retained.refresh();
+    if (observeExecution) workspace.refresh();
+    execution.refresh();
+  };
   return (
     <>
       <AppShell
         panels={panels}
         onOpenService={onOpenService}
-        onRefresh={() => {
-          workspace.refresh();
-          execution.refresh();
-        }}
+        onRefresh={refreshConnection}
         onDisconnect={() => {
           setSearchOpen(false);
           setExportOpen(false);
-          lifetime.current.depart();
+          departView();
           setDetached(true);
         }}
         inspectorLabel={
@@ -807,74 +1120,72 @@ export function App({
         }
         notices={
           <>
-            {!workspace.workspace && activeRuns.length > 0 && (
-              <section
-                className="run-strip"
-                aria-label={t("Execution and cancellation")}
-              >
-                {activeRuns.map((r) => (
-                  <div className="run-strip-row" key={r.runId}>
-                    <span className="status-dot busy" aria-hidden="true" />
-                    <span className="run-strip-label">
-                      {tx(r.kind)} {r.runId} · {tx(r.stage)}
-                    </span>
-                    <button type="button" onClick={() => selectTask(r.taskId)}>
-                      {t("Open active task")}
-                    </button>
-                    <button
-                      type="button"
-                      className="danger"
-                      disabled={!workspace.attached || canceling.has(r.runId)}
-                      onClick={() => cancel(r.runId)}
-                    >
-                      <FiSquare aria-hidden="true" />
-                      {t("Cancel run — request stop")}
-                    </button>
-                  </div>
-                ))}
-              </section>
-            )}
             {notices}
-            <WorkspaceNotice
-              error={error}
-              projectObservationError={execution.error}
-              observationError={workspace.error}
-              unavailable={
-                !connecting && !executionStopped && !observationFresh
-              }
-              onRefresh={() => {
-                workspace.refresh();
-                execution.refresh();
-              }}
-            />
+            {error && (
+              <p className="banner-notice" role="alert">
+                {error}
+              </p>
+            )}
           </>
         }
         navigation={
           <>
-            {!conversationAvailable && (
+            {!conversationAvailable && !background?.runs.length && (
               <aside className="panel panel-left lp-panel">
                 {discovery && <ActivityList {...discovery} />}
+                {activeRuns.length > 0 && (
+                  <section
+                    className="run-strip"
+                    aria-label={t("Execution and cancellation")}
+                  >
+                    {activeRuns.map((r) => (
+                      <div className="run-strip-row" key={r.runId}>
+                        <span className="status-dot busy" aria-hidden="true" />
+                        <span className="run-strip-label">
+                          {tx(r.kind)} {r.runId} · {tx(r.stage)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => selectTask(r.taskId)}
+                        >
+                          {t("Open active task")}
+                        </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          disabled={!attached || canceling.has(r.runId)}
+                          onClick={() => cancel(r.runId)}
+                        >
+                          <FiSquare aria-hidden="true" />
+                          {t("Cancel run — request stop")}
+                        </button>
+                      </div>
+                    ))}
+                  </section>
+                )}
                 <p className="panel-empty" role="status">
-                  {connecting
-                    ? t("Reading conversation history…")
-                    : t(
+                  {projectError || viewerError
+                    ? t(
                         "Conversation history could not be read. This is not an empty history.",
-                      )}
+                      )
+                    : t("Reading conversation history…")}
                 </p>
               </aside>
             )}
-            {conversationAvailable && (
+            {(conversationAvailable || !!background?.runs.length) && (
               <TaskSidebar
+                key={`${historyKey}:${independent ? (taskId ?? "chat") : ""}`}
                 discovery={discovery}
                 client={api.client}
-                workspace={workspace.workspace}
+                workspace={viewerHistoryWorkspace}
+                retained={retained.history}
                 executionStopped={executionStopped}
                 taskId={taskId}
                 scope={scope}
                 runs={runs}
-                snapshot={observation.state?.snapshot.committedSeq}
+                snapshot={taskObservation?.snapshot.committedSeq}
                 activeRuns={workspace.activeRuns}
-                canCancel={workspace.attached}
+                canCancel={attached}
                 canceling={canceling}
                 onCancel={cancel}
                 chats={chatEntries}
@@ -926,6 +1237,7 @@ export function App({
                 conversationId={chatId}
                 onConversation={selectChat}
                 onNewConversation={() => selectChat()}
+                actionCurrent={ticket.current}
                 actionsUnavailable={
                   actionsReady
                     ? ""
@@ -954,10 +1266,14 @@ export function App({
                     closeDrawer();
                   }
                 }}
+                canCancelWorkflow={canCancelWorkflow}
                 onCancelWorkflow={async (run) => {
                   // The banner holds the last request's refusal: an accepted
                   // request clears it, nothing else does.
-                  setError(await cancelWorkflow(api.client, run));
+                  if (!canCancelWorkflow(run)) return;
+                  setError(
+                    await cancelWorkflow(api.client, run, canCancelWorkflow),
+                  );
                   workflowActivity.refresh();
                 }}
                 onTask={selectTask}
@@ -1002,11 +1318,12 @@ export function App({
                 {t("Reading this conversation…")}
               </p>
             )}
-            {agent && (
+            {agent && !signInRequired && (
               <WorkflowAgentView
                 key={`${agent.runId}:${agent.stepId ?? ""}`}
                 client={api.client}
                 agent={agent}
+                canCancelWorkflow={canCancelWorkflow}
                 backLabel={
                   chatId
                     ? t("Back to conversation")
@@ -1047,18 +1364,21 @@ export function App({
                 prepareForSend={prepareSend}
                 prepareForPlan={preparePlan}
                 actionsReady={actionsReady}
+                viewer={ticket}
+                access={access}
+                readSelected={readSelected}
+                onDiagnostics={onDiagnostics}
                 observe={summaryChanges}
                 available={conversationAvailable}
-                canInterrupt={workspace.attached}
+                canInterrupt={attached}
+                canCancelWorkflow={canCancelWorkflow}
                 enabled={
                   prepareSend
-                    ? conversationAvailable
-                    : !!workspace.workspace &&
-                      workspace.attached &&
-                      !workspace.error
+                    ? conversationAvailable && !handoffs
+                    : actionsReady
                 }
                 modelAvailability={modelAvailability}
-                previewModels={previewModels}
+                previewModels={signInRequired ? undefined : previewModels}
                 initialDraft={
                   initialDraft?.conversationId === chatId
                     ? initialDraft
@@ -1066,12 +1386,11 @@ export function App({
                 }
                 onDraftApplied={() => onDraftApplied?.(chatId)}
                 onModelChanged={() => {
-                  lifetime.current.depart();
-                  workspace.refresh();
-                  execution.refresh();
+                  refreshConnection();
                 }}
                 onChanged={() => {
                   chats.refresh();
+                  actions.current.depart();
                   workspace.refresh();
                 }}
                 reference={reference}
@@ -1119,17 +1438,17 @@ export function App({
                 </details>
               </header>
             )}
-            <div className="workspace-content" hidden={!!chatId || !!agent}>
+            <div
+              key={`${historyKey}:${taskId ?? "chat"}`}
+              className="workspace-content"
+              hidden={!!chatId || !!agent}
+            >
               {!seed && (
                 <section className="empty-state">
                   <span className="empty-logo" aria-hidden="true">
-                    C
+                    <Crystal />
                   </span>
-                  <h2>
-                    {workspace.error
-                      ? t("Recorded history could not be read.")
-                      : t("Reading recorded history…")}
-                  </h2>
+                  <h2>{historyPlaceholder}</h2>
                   <p>
                     {t(
                       "History is readonly. Start new work in a conversation with /cadence.",
@@ -1145,7 +1464,7 @@ export function App({
                       hit.owner.entity.kind === "tool") && (
                       <EntityPane
                         key={`${hit.owner.entity.id}:${hit.owner.entity.version}`}
-                        client={api.client}
+                        client={historyClient}
                         seed={{
                           storeId: detail.storeId,
                           scope: detail.scope,
@@ -1158,7 +1477,7 @@ export function App({
                     )}
                   <DetailPane
                     key={`${detail.recordId}:${detail.recordVersion}`}
-                    client={api.client}
+                    client={historyClient}
                     cursor={detail}
                     highlight={hit?.range}
                   />
@@ -1174,17 +1493,17 @@ export function App({
                     }
                   >
                     {tab === "messages" && (
-                      <MessageList client={api.client} seed={seed} />
+                      <MessageList client={historyClient} seed={seed} />
                     )}
                     {tab === "tools" && (
-                      <Tools client={api.client} seed={seed} />
+                      <Tools client={historyClient} seed={seed} />
                     )}
                     {tab === "context" && (
-                      <ContentExplorer client={api.client} seed={seed} />
+                      <ContentExplorer client={historyClient} seed={seed} />
                     )}
                     {tab === "timeline" && (
                       <TimelineView
-                        client={api.client}
+                        client={historyClient}
                         seed={seed}
                         onSearch={() => setSearchOpen(true)}
                       />
@@ -1202,7 +1521,7 @@ export function App({
                             ))
                           ) : (
                             <p className="panel-empty">
-                              {current && observation.state
+                              {taskObservation
                                 ? t("No owner run projection in this snapshot.")
                                 : t(
                                     "No snapshot observed yet; absence is not proof of settlement.",
@@ -1213,7 +1532,7 @@ export function App({
                         <h3>{t("Retained runs")}</h3>
                         <RunBrowser
                           key={taskId}
-                          client={api.client}
+                          client={historyClient}
                           seed={{
                             ...seed,
                             scope: {
@@ -1306,8 +1625,8 @@ export function App({
             />
           ) : seed ? (
             <InspectorPanel
-              key={taskId}
-              client={api.client}
+              key={`${historyKey}:${taskId}`}
+              client={historyClient}
               seed={{
                 ...seed,
                 scope: { kind: "task", id: taskId ?? seed.scope.id },
@@ -1315,32 +1634,55 @@ export function App({
             />
           ) : (
             <p className="panel-empty" role="status">
-              {workspace.error
-                ? t("Recorded history could not be read.")
-                : t("Reading recorded history…")}
+              {historyPlaceholder}
             </p>
           )
         }
         status={
           <>
-            <ConnectionStatus
-              tip={t("Connection freshness is not execution outcome.")}
-              dot={connectionDot}
-              // A round trip describes a reachable service, not a connection
-              // still being made or one whose observation has gone stale.
-              latency={
-                connectionDot === "ok" || connectionDot === "" ? latency : null
+            <WorkspaceConnection
+              key={`${chatKey}:${taskId ?? "chat"}`}
+              phase={
+                entryObservation?.pending
+                  ? "updating"
+                  : executionStopped
+                    ? execution.readiness === "not-started"
+                      ? "not-started"
+                      : "stopped"
+                    : independent
+                      ? "independent"
+                      : observationFresh
+                        ? taskId
+                          ? "task"
+                          : "chat"
+                        : connecting
+                          ? "connecting"
+                          : "updating"
               }
-            >
-              {tx(connection)}
-            </ConnectionStatus>
-            {project && (
-              <StatusItem tone="faint" icon={<FiServer />}>
-                {t("Execution service: {status}", {
-                  status: tx(execution.readiness),
-                })}
-              </StatusItem>
-            )}
+              entryError={entryError}
+              projectStatus={project && execution.readiness}
+              projectError={projectError}
+              viewerError={viewerError}
+              prepareOnly={chatIssues?.prepareOnly}
+              readErrors={[
+                ["Project directories: {code}.", projects.error],
+                ["Conversation activity: {code}.", chatActivity.error],
+                ["Workflow activity: {code}.", workflowActivity.error],
+                ["Conversation context: {code}.", chatIssues?.context],
+                ["Conversation read: {code}.", chatIssues?.head],
+                ["Workflow observation: {code}.", chatIssues?.workflow],
+                ["Recorded workflows: {code}.", chatIssues?.runs],
+              ]}
+              historyError={historyError}
+              retained={
+                !!workspace.workspace ||
+                (execution.readiness === "stale" &&
+                  !!execution.value &&
+                  execution.value.status !== "unavailable")
+              }
+              latency={latency}
+              onRefresh={refreshConnection}
+            />
             {activity && <ContextStatus usage={activity.context} />}
             {activity && <CacheStatus cache={activity.cache} />}
             {activity && activity.turns > 0 && (
@@ -1353,37 +1695,21 @@ export function App({
                 {activity.turns}
               </StatusItem>
             )}
-            {activity?.reply && (
-              <WorkingStatus
-                since={activity.reply.since}
-                label={
-                  activity.reply.status === "running"
-                    ? t("Working")
-                    : tx(activity.reply.status)
-                }
-              />
+            {chatId && (
+              <ReplyStatus clock={activity?.replyClock ?? "unavailable"} />
             )}
-            {roster?.status === "complete"
-              ? activeRuns.length > 0 && (
-                  <StatusItem tone="warn">
-                    {t(
-                      !observationFresh
-                        ? "Last observed: {count} active runs"
-                        : activeRuns.length === 1
-                          ? "{count} active run"
-                          : "{count} active runs",
-                      { count: activeRuns.length },
-                    )}
-                  </StatusItem>
-                )
-              : !connecting &&
-                !executionStopped && (
-                  <StatusItem tone="faint">
-                    {t(
-                      "Active roster unavailable; absence is not proof of settlement.",
-                    )}
-                  </StatusItem>
+            {roster?.status === "complete" && activeRuns.length > 0 && (
+              <StatusItem tone="warn">
+                {t(
+                  !observationFresh
+                    ? "Last observed: {count} active runs"
+                    : activeRuns.length === 1
+                      ? "{count} active run"
+                      : "{count} active runs",
+                  { count: activeRuns.length },
                 )}
+              </StatusItem>
+            )}
           </>
         }
         folder={
@@ -1416,7 +1742,8 @@ export function App({
       )}
       {searchOpen && searchSeed && (
         <GlobalSearchModal
-          client={api.client}
+          key={`${historyKey}:${scope?.id}`}
+          client={historyClient}
           seed={searchSeed}
           onClose={() => setSearchOpen(false)}
           onHit={(value) => {
@@ -1437,6 +1764,7 @@ export function App({
       )}
       {exportOpen && searchSeed && (
         <ExportDialog
+          key={`${historyKey}:${scope?.id}`}
           request={{
             storeId: searchSeed.storeId,
             scope: searchSeed.scope,

@@ -21,15 +21,14 @@ export interface DiffHunk {
   added: number;
   lines: DiffLine[];
 }
-export interface FileDiffData {
+export type FileDiffData = {
   filePath: string;
-  isWrite: boolean;
   language: string;
   additions: number;
   deletions: number;
   /** An edit's replacements in recorded order; a write's content as one hunk. */
   hunks: DiffHunk[];
-}
+} & ({ isWrite: true; content: string } | { isWrite: false });
 
 /** File extension to a highlight.js language of the bundled (lowlight common)
  * set, so the same name labels a change and fences a preview. */
@@ -162,14 +161,16 @@ function textLines(text: string): string[] {
   return lines;
 }
 
-export function buildHunksFromEdits(
-  edits: readonly { oldText?: unknown; newText?: unknown }[],
-): { hunks: DiffHunk[]; additions: number; deletions: number } {
+type Replacement = { oldText: string; newText: string };
+
+export function buildHunksFromEdits(edits: readonly Replacement[]): {
+  hunks: DiffHunk[];
+  additions: number;
+  deletions: number;
+} {
   let additions = 0;
   let deletions = 0;
-  const hunks = edits.map((edit) => {
-    const oldText = typeof edit.oldText === "string" ? edit.oldText : "";
-    const newText = typeof edit.newText === "string" ? edit.newText : "";
+  const hunks = edits.map(({ oldText, newText }) => {
     const oldLines = textLines(oldText);
     const newLines = textLines(newText);
     deletions += oldLines.length;
@@ -193,6 +194,14 @@ export function buildHunksFromEdits(
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
+
+function isReplacement(value: unknown): value is Replacement {
+  return (
+    record(value) &&
+    typeof value.oldText === "string" &&
+    typeof value.newText === "string"
+  );
+}
 
 /** An `edit` or `write` call's recorded arguments as a change to show, or null
  * when they are not such a call's complete, readable arguments (the card then
@@ -223,6 +232,7 @@ export function parseFileMutationArgs(
     return {
       ...base,
       isWrite: true,
+      content: args.content,
       additions: lines.length,
       deletions: 0,
       hunks: [
@@ -234,12 +244,10 @@ export function parseFileMutationArgs(
       ],
     };
   }
-  const edits = [
-    ...(Array.isArray(args.edits) ? args.edits.filter(record) : []),
-    ...(typeof args.oldText === "string" || typeof args.newText === "string"
-      ? [{ oldText: args.oldText, newText: args.newText }]
-      : []),
-  ];
-  if (edits.length === 0) return null;
+  const edits: unknown = "edits" in args ? args.edits : [];
+  if (!Array.isArray(edits)) return null;
+  if ("oldText" in args || "newText" in args)
+    edits.push({ oldText: args.oldText, newText: args.newText });
+  if (!edits.length || !edits.every(isReplacement)) return null;
   return { ...base, isWrite: false, ...buildHunksFromEdits(edits) };
 }

@@ -6,9 +6,11 @@ import { notify } from "../../layout/toasts";
 import { useCopyFeedback } from "../../rich/use-copy-feedback";
 export const CopyButton = memo(function CopyButton({
   text,
+  label,
   className = "copy-btn",
 }: {
   text: string;
+  label?: string;
   /** The pi button family it belongs to: a code block, a card head or a message. */
   className?: string;
 }) {
@@ -18,8 +20,8 @@ export const CopyButton = memo(function CopyButton({
     <button
       type="button"
       className={copied ? `${className} copied` : className}
-      title={t("Copy displayed text")}
-      aria-label={t("Copy displayed text")}
+      title={label ?? t("Copy displayed text")}
+      aria-label={label ?? t("Copy displayed text")}
       onClick={() => {
         // The check glyph is the success; only a failure needs words.
         void copy(text).then((ok) => {

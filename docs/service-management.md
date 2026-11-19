@@ -398,7 +398,7 @@ The next start (`cadence start`, `cadence project open`, the workbench, the back
 Cadence recovered project /home/me/app automatically: the machine restarted while Cadence was running; released its locks, continued its history after the last complete entry.
 ```
 
-The WebUI shows the same recovery once at the top of the page.
+The WebUI recovers silently; `cadence doctor` reports the recorded recovery.
 Nothing is asked of you unless Cadence cannot prove the old process is gone.
 
 What a start does, in order:

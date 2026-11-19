@@ -156,11 +156,12 @@ it("owner/gateway identity changes cannot become fresh old-context data; a new s
   vi.useFakeTimers();
   const publish = vi.fn(),
     changed = vi.fn();
+  const replacement = randomUUID();
   const close = observeActivity(epoch, publish, changed, async () => ({
     ...discovery(),
-    epoch: randomUUID(),
+    epoch: replacement,
   }));
-  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(9000);
   expect(changed).toHaveBeenCalledTimes(1);
   expect(publish).toHaveBeenCalledWith(undefined, "stale");
   close();
