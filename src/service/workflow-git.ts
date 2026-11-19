@@ -46,7 +46,7 @@ const CHUNK = 1024 * 1024;
 /** A refusal with an explanation; the public code stays one of ERROR_CODES. */
 export class WorkflowRefusal extends ContractError {
   constructor(
-    code: "conflict" | "stale" | "forbidden" | "invalid",
+    code: "conflict" | "stale" | "forbidden" | "invalid" | "unavailable",
     readonly detail: string,
   ) {
     super(code);
@@ -668,20 +668,40 @@ export function workflowObservation(
     identity: hash(JSON.stringify({ head, branch, contents })),
   };
 }
+/** Observe the target checkout, never the isolated candidate. Keep both Git
+ * answers even when one is unavailable. No later reread supplies failure facts. */
+export async function assertTargetPosition(
+  cwd: string,
+  expected: { head: string; branch: string },
+  stage: string,
+): Promise<void> {
+  const [ref, oid] = await Promise.all([
+    gitRun(cwd, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => null),
+    gitRun(cwd, ["rev-parse", "--verify", "HEAD"]).catch(() => null),
+  ]);
+  const branch =
+    ref?.code === 0
+      ? ref.stdout.trim()
+      : ref?.code === 1
+        ? "(detached HEAD)"
+        : null;
+  const head = oid?.code === 0 ? oid.stdout.trim() : null;
+  if (head === expected.head && branch === expected.branch) return;
+  const unreadable = !head || !branch;
+  throw new WorkflowRefusal(
+    unreadable ? "unavailable" : "stale",
+    `${stage}: target ${unreadable ? "identity could not be verified" : "position changed"}; expected ${expected.branch} at ${expected.head}, observed ${branch || "(unreadable ref)"} at ${head || "(unreadable HEAD)"}. Refused to proceed; this check made no merge.`,
+  );
+}
 /** Only what a safe fast-forward needs: the same branch and HEAD, and no dirty
  * declared/generated target. Unrelated user changes are left to `merge --ff-only`. */
 export async function assertTarget(
   cwd: string,
   expected: { head: string; branch: string },
   scope: readonly string[],
+  stage: string,
 ): Promise<void> {
-  const head = await gitHead(cwd);
-  const branch = (await gitText(cwd, ["symbolic-ref", "HEAD"])).trim();
-  if (head !== expected.head || branch !== expected.branch)
-    throw new WorkflowRefusal(
-      "stale",
-      `The target branch changed during the run (expected ${expected.branch} at ${expected.head.slice(0, 12)}); nothing was integrated.`,
-    );
+  await assertTargetPosition(cwd, expected, stage);
   assertVisibleIndex(
     overlapping(scope, indexHidden(await gitText(cwd, INDEX_FLAGS))),
   );

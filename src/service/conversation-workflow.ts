@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { CADENCE_INSTRUCTIONS } from "../cadence-instructions.ts";
+import { knowledgeToolInput } from "../coordinator-tools.mjs";
 import type { InputImage } from "../image-content.mjs";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
@@ -24,7 +25,6 @@ import {
   type CadenceConversation,
   CONVERSATION_SEND_BYTES,
   decodeCadenceConversation,
-  decodeKnowledgeLookup,
   decodeSessionId,
   type KnowledgeLookup,
   type WorkbenchCommand,
@@ -530,12 +530,38 @@ export class ConversationWorkflow {
           if (name === "cadence_knowledge") {
             if (!this.o.cwd)
               return refusal("unavailable", "Project directory unavailable.");
+            let source: KnowledgeLookup;
             try {
-              return await this.knowledge(decodeKnowledgeLookup(args));
-            } catch {
+              source = knowledgeToolInput(args);
+            } catch (error) {
               return refusal(
                 "invalid",
-                "checkout/path/section/match/investigation: supply checkout with a list of local dependency paths, a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.",
+                diagnosticText(
+                  error instanceof Error
+                    ? error.message
+                    : "Expected a knowledge lookup.",
+                  512,
+                  this.o.secrets(),
+                ),
+              );
+            }
+            try {
+              return await this.knowledge(source);
+            } catch (error) {
+              if (this.o.owner.state !== "idle") throw error;
+              const field =
+                "checkout" in source
+                  ? "checkout"
+                  : "investigation" in source
+                    ? "investigation"
+                    : "path";
+              const code =
+                error instanceof ContractError ? error.code : "unavailable";
+              return refusal(
+                code,
+                field === "checkout"
+                  ? "checkout: the owner could not observe that entry. Name an allowed dependency directly, not through a linked ancestor."
+                  : `${field}: the owner could not read that source; use an allowed project source.`,
               );
             }
           }

@@ -1,6 +1,6 @@
 /** Real plan/receipt persistence and Git observations; no SDK, listener or worker. */
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { canonicalJson } from "../src/service/contracts/core.ts";
@@ -222,3 +222,101 @@ it("a retained agreement without named placement stays readable but cannot autho
     await f.close();
   }
 });
+
+it.each(["verified", "external", "overlap"])(
+  "checks %s movement while admission waits for checkout access",
+  { tags: ["slow"] },
+  async (kind) => {
+    const f = fixture();
+    const engine = f.workflows as any;
+    let release!: () => void;
+    const permit = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    engine.o.gate = {
+      acquire: async () => {
+        await permit;
+        return { assertHeld() {}, release() {} };
+      },
+    };
+    f.execute.mockRestore();
+    const implement = vi
+      .spyOn(engine, "implement")
+      .mockResolvedValue(undefined);
+    try {
+      const grant = f.workflows.command(randomUUID(), f.epoch, {
+        action: "prepare",
+        proposalId: f.proposal.id,
+        digest: f.proposal.digest,
+      });
+      if (grant.kind !== "workflow" || grant.response.type !== "grant")
+        throw Error("grant");
+      const id = randomUUID();
+      f.workflows.command(id, f.epoch, {
+        action: "execute",
+        proposalId: f.proposal.id,
+        digest: f.proposal.digest,
+        grant: grant.response.grant,
+      });
+      await Promise.resolve();
+      const live = engine.active.get(id);
+      const target = f.proposal.delivery!.target;
+      writeFileSync(
+        join(f.root, kind === "overlap" ? "a.txt" : "sibling.txt"),
+        "different bytes",
+      );
+      f.git("add", ".");
+      f.git("commit", "-qm", "movement");
+      const head = f.head(f.root);
+      if (kind !== "external")
+        engine.advanceSiblings({
+          run: { mergedCommit: head },
+          delivery: {
+            view: {
+              binding: { target },
+              integration: { status: "applied", after: head },
+              postChecks: "passed",
+            },
+            frontierHead: () => f.base,
+          },
+        });
+      release();
+      await live.original;
+      const observation = f.workflows.view(id);
+      if (
+        observation.kind !== "workflow" ||
+        observation.response.type !== "run"
+      )
+        throw Error("run");
+      const { run } = observation.response;
+      if (kind === "verified") {
+        expect(run.status).toBe("completed");
+        expect(implement).toHaveBeenCalledOnce();
+        expect(live.delivery.candidateBase()).toBe(f.base);
+        expect(live.delivery.needsRefresh()).toBe(true);
+      } else {
+        expect(implement).not.toHaveBeenCalled();
+        expect(run).toMatchObject({
+          status: "failed",
+          mergedCommit: null,
+          steps: [],
+          delivery: {
+            workspace: null,
+            candidate: null,
+            integration: { status: "blocked", reason: run.notice },
+          },
+        });
+        expect(run.notice).toContain("start preflight");
+        expect(run.notice).toContain(target.branch);
+        expect(run.notice).toContain(f.base);
+        expect(run.notice).toContain(head);
+        expect(run.notice).toContain(kind === "external" ? "stale:" : "a.txt");
+      }
+      expect(f.git("rev-parse", "HEAD")).toBe(head);
+      expect(f.git("branch", "--list", "cadence/*")).toBe("");
+    } finally {
+      release();
+      await f.close();
+    }
+  },
+);

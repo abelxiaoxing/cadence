@@ -1,5 +1,9 @@
 import { IMAGE_LIMITS, IMAGE_TYPES } from "../../image-content.mjs";
-import { decodeModelRetry, type ModelRetry } from "../../worker-public.mjs";
+import {
+  decodeModelRetry,
+  knowledgeFields,
+  type ModelRetry,
+} from "../../worker-public.mjs";
 /** Finite, authenticated workbench API. Ordinary chat is not task admission. */
 import {
   bool,
@@ -117,17 +121,19 @@ export type KnowledgeLookup =
 export function decodeKnowledgeLookup(v: unknown): KnowledgeLookup {
   if (Object.hasOwn(v ?? {}, "checkout")) {
     const { checkout } = closed(v, ["checkout"]);
-    return { checkout: list(checkout, 8, (path) => text(path, 1024, true)) };
+    return { checkout: knowledgeFields.checkout(checkout) };
   }
   if (Object.hasOwn(v ?? {}, "investigation"))
     return {
-      investigation: decodeId(closed(v, ["investigation"]).investigation),
+      investigation: knowledgeFields.investigation(
+        closed(v, ["investigation"]).investigation,
+      ),
     };
   if (Object.hasOwn(v ?? {}, "match")) {
     const raw = closed(v, ["path", "match"]);
     return {
-      path: text(raw.path, 1024, true),
-      match: text(raw.match, 256, true),
+      path: knowledgeFields.path(raw.path),
+      match: knowledgeFields.match(raw.match),
     };
   }
   const raw = closed(v, [
@@ -135,10 +141,10 @@ export function decodeKnowledgeLookup(v: unknown): KnowledgeLookup {
     ...(Object.hasOwn(v ?? {}, "section") ? ["section"] : []),
   ]);
   return {
-    path: text(raw.path, 1024, true),
+    path: knowledgeFields.path(raw.path),
     ...(raw.section === undefined
       ? {}
-      : { section: text(raw.section, 512, true) }),
+      : { section: knowledgeFields.section(raw.section) }),
   };
 }
 export type WorkbenchRead =

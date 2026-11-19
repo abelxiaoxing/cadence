@@ -20,6 +20,7 @@ import { CadencePreferences } from "./cadence-preferences.ts";
 import {
   DESIGN_PARAMETERS,
   KNOWLEDGE_PARAMETERS,
+  knowledgeToolInput,
   PLAN_PARAMETERS,
   RESEARCH_PARAMETERS,
 } from "./coordinator-tools.mjs";
@@ -40,10 +41,7 @@ import {
   selectDesign,
 } from "./service/contracts/design.ts";
 import { decodeSessionId } from "./service/contracts/models.ts";
-import {
-  type ChatTurn,
-  decodeKnowledgeLookup,
-} from "./service/contracts/workbench.ts";
+import type { ChatTurn } from "./service/contracts/workbench.ts";
 import {
   investigationId,
   readableDelivery,
@@ -396,7 +394,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     context = ctx;
   };
   const summarize = (run: WorkflowRun) =>
-    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\n${run.steps.map((s) => `${s.kind} ${s.id}${s.kind === "research" && s.status === "completed" ? ` · investigation ${s.childRunId ?? investigationId(s.id)}` : ""}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
+    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id} · route revision ${run.revision ?? 0} · stepsBefore ${run.stepsBefore ?? 0}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}${s.kind === "research" && s.status === "completed" ? ` · investigation ${s.childRunId ?? investigationId(s.id)}` : ""}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
   /** The project's route table for this turn's system prompt. A turn never
    * fails because the table, or the workspace it is in, cannot be read. */
@@ -1074,9 +1072,10 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     description:
       "Read current checkout preparation facts, a project heading, a literal in a named source file, or a retained investigation without a research worker.",
     parameters: KNOWLEDGE_PARAMETERS,
+    prepareArguments: knowledgeToolInput,
     async execute(_id, input, _signal, _update, ctx) {
       active(ctx);
-      const source = decodeKnowledgeLookup(input);
+      const source = knowledgeToolInput(input);
       await connect(ctx, false);
       const observed = value(
         await client().workbenchRead({ kind: "project-knowledge", source }),

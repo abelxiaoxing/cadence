@@ -62,6 +62,9 @@ The coordinator keeps its own conversation small: the route table, up to its bud
 For a directly verifiable source fact, the same tool accepts a checkout-relative file and a literal match.
 It returns a bounded list of matching lines, their total count in the observed prefix, and the context around the first occurrence from the owner’s redacted preview.
 The response includes the observed source digest and truncation status.
+Both model-tool adapters ignore only known empty string placeholders and, when another lookup is selected, an empty `checkout` list.
+A lone `checkout: []` still reads Git placement; nonempty selectors must identify exactly one lookup and literal matches are not trimmed.
+This adaptation is not part of the owner read protocol: a direct request must already have the exact lookup shape, and the reader still enforces path access.
 For worktree preparation, a coordinator can request Git branch and HEAD and inspect named checkout-relative dependency entries in one read.
 A leaf symlink is reported by kind without following it or exposing its destination.
 The exact plan checks Git identity and conflicts with its declared writes; unrelated dirty files do not require a clean checkout or a research worker.

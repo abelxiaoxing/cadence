@@ -31,7 +31,7 @@ export async function workflowDetails(
       throw new ContractError("invalid");
     const run = view.response.run;
     await ui.show(
-      `${run.goal}\n${run.id} • ${run.status} / ${run.phase}\n${run.notice}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run.delivery)}\nMerged commit: ${run.mergedCommit ?? "none"}\nAutomatic Agent review is not human review. Step summaries are previews; select a step for its retained result.\n${pretty(run.steps)}`,
+      `${run.goal}\n${run.id} • ${run.status} / ${run.phase}\n${run.notice}\n${workflowDiagnostics(run)}\n${readableDeliveryRun(run)}\nMerged commit: ${run.mergedCommit ?? "none"}\nAutomatic Agent review is not human review. Step summaries are previews; select a step for its retained result.\n${pretty(run.steps)}`,
     );
     const labels = run.steps.map(
       (s, i) => `${i + 1}. ${s.kind} • ${s.id} • ${s.status}`,

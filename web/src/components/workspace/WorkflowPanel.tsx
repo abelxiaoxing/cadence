@@ -10,6 +10,7 @@ import {
 import {
   type DeliveryArtifact,
   type DeliveryObservation,
+  deliveryLabels,
   readableDelivery,
   readableWorkflowPlan,
   type WorkflowProposal,
@@ -568,7 +569,9 @@ function WorkflowCardView({
           )}
         </section>
       )}
-      {run?.delivery && <DeliveryDetails delivery={run.delivery} />}
+      {run?.delivery && (
+        <DeliveryDetails delivery={run.delivery} status={run.status} />
+      )}
       {run && (
         <details>
           <summary>Owner timing and runtime</summary>
@@ -929,10 +932,13 @@ export function AssignmentBoard({
 /** Only owner-recorded facts; an accepted candidate is not an applied merge. */
 export function DeliveryDetails({
   delivery: d,
+  status,
 }: {
   delivery: DeliveryObservation;
+  status: WorkflowRun["status"];
 }) {
   const { t, tx } = useT();
+  const labels = deliveryLabels(d, status);
   const rows = [
     [t("Task branch"), d.taskBranch],
     [t("Task worktree"), d.worktreeRoot],
@@ -940,8 +946,8 @@ export function DeliveryDetails({
       t("Delivery target"),
       `${d.binding.target.branch} @ ${d.binding.target.head}`,
     ],
-    [t("Worktree preparation"), tx(d.preparation)],
-    [t("Candidate commit"), d.candidate ?? t("Not recorded")],
+    [t("Worktree preparation"), tx(labels.preparation)],
+    [t("Candidate commit"), d.candidate ?? t(labels.missingCandidate)],
     [
       t("Candidate acceptance"),
       d.acceptance
@@ -957,14 +963,14 @@ export function DeliveryDetails({
                 )
               : t("Checks and automatic Agent review passed")
           } · ${d.acceptance.candidate}`
-        : t("Not recorded"),
+        : t(labels.missingCandidate),
     ],
     [
       t("Local integration"),
-      `${tx(d.integration.status)}${d.integration.after ? ` · ${d.integration.after}` : ""}`,
+      `${tx(labels.integration)}${d.integration.after ? ` · ${d.integration.after}` : ""}`,
     ],
     [t("Post-merge checks"), tx(d.postChecks)],
-    [t("Worktree cleanup"), tx(d.cleanup.status)],
+    [t("Worktree cleanup"), tx(labels.cleanup)],
   ];
   return (
     <section

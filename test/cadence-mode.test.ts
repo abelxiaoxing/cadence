@@ -1124,3 +1124,65 @@ it("a native batch returns confirmed answers in one tool result and editing it r
   await expect(h.call("cadence_start")).rejects.toThrow("No current plan");
   await h.emit("session_shutdown");
 });
+
+it("the registered knowledge tool sends exactly one canonical lookup or names the bad field without a read", async () => {
+  const h = host();
+  await h.start();
+  const read = injected.client.workbenchRead;
+  expect(() =>
+    h.tools
+      .get("cadence_knowledge")
+      .prepareArguments({ checkout: "node_modules" }),
+  ).toThrow("checkout");
+  const padded = {
+    checkout: [],
+    path: "",
+    section: "",
+    match: "",
+    investigation: "",
+  };
+  const investigation = randomUUID();
+  for (const source of [
+    { checkout: ["node_modules"] },
+    { checkout: [] },
+    { path: "docs.md" },
+    { path: "docs.md", section: "Build" },
+    { path: "package.json", match: "verify" },
+    { path: "package.json", match: " verify " },
+    { investigation },
+  ]) {
+    for (const args of [source, { ...padded, ...source }]) {
+      read
+        .mockClear()
+        .mockResolvedValueOnce(
+          ok({ kind: "file", path: "project-knowledge", text: "observed" }),
+        );
+      expect((await h.call("cadence_knowledge", args)).content[0].text).toBe(
+        "observed",
+      );
+      expect(read.mock.calls).toEqual([
+        [{ kind: "project-knowledge", source }],
+      ]);
+    }
+  }
+  for (const [args, field] of [
+    [{ extra: "", path: "x" }, "extra"],
+    [{ path: 0 }, "path"],
+    [{ checkout: null }, "checkout"],
+    [{ checkout: [""] }, "checkout"],
+    [{ checkout: ["node_modules"], path: "x" }, "checkout"],
+    [{ investigation: "bad" }, "investigation"],
+    [{ path: "x", investigation }, "investigation"],
+    [{ match: "x", checkout: [] }, "path"],
+    [{ section: "x" }, "path"],
+    [{ path: "x", match: "x", section: "y" }, "match"],
+    [{ path: "  " }, "path"],
+    [{ path: "x", match: "x".repeat(257) }, "match"],
+    [{ path: "../x" }, "path"],
+    [{}, "path"],
+  ] as const) {
+    read.mockClear();
+    await expect(h.call("cadence_knowledge", args)).rejects.toThrow(field);
+    expect(read).not.toHaveBeenCalled();
+  }
+});

@@ -516,6 +516,13 @@ function decodeId(v) {
     invalid();
   return s;
 }
+var knowledgeFields = Object.freeze({
+  checkout: (v) => list(v, 8, (entry) => text(entry, 1024, true)),
+  path: (v) => text(v, 1024, true),
+  section: (v) => text(v, 512, true),
+  match: (v) => text(v, 256, true),
+  investigation: decodeId
+});
 function decodeHash(v) {
   const s = text(v, 64);
   if (!/^[0-9a-f]{64}$/.test(s))
@@ -6423,17 +6430,17 @@ function decodeEntryId(v) {
 function decodeKnowledgeLookup(v) {
   if (Object.hasOwn(v ?? {}, "checkout")) {
     const { checkout } = closed(v, ["checkout"]);
-    return { checkout: list(checkout, 8, (path) => text(path, 1024, true)) };
+    return { checkout: knowledgeFields.checkout(checkout) };
   }
   if (Object.hasOwn(v ?? {}, "investigation"))
     return {
-      investigation: decodeId(closed(v, ["investigation"]).investigation)
+      investigation: knowledgeFields.investigation(closed(v, ["investigation"]).investigation)
     };
   if (Object.hasOwn(v ?? {}, "match")) {
     const raw2 = closed(v, ["path", "match"]);
     return {
-      path: text(raw2.path, 1024, true),
-      match: text(raw2.match, 256, true)
+      path: knowledgeFields.path(raw2.path),
+      match: knowledgeFields.match(raw2.match)
     };
   }
   const raw = closed(v, [
@@ -6441,8 +6448,8 @@ function decodeKnowledgeLookup(v) {
     ...Object.hasOwn(v ?? {}, "section") ? ["section"] : []
   ]);
   return {
-    path: text(raw.path, 1024, true),
-    ...raw.section === undefined ? {} : { section: text(raw.section, 512, true) }
+    path: knowledgeFields.path(raw.path),
+    ...raw.section === undefined ? {} : { section: knowledgeFields.section(raw.section) }
   };
 }
 var FILE_PART_BYTES = 192 * 1024;
@@ -17898,7 +17905,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "190a21e723f753a233225a9f4bcf12a99d71b294a58728961846cd110cd60a17",
+    contractHash: "80875479add4b7830419060b7e5018a39de200665edfbdec20fc10d50861bfea",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -31463,6 +31470,179 @@ Present a concise delivery expectation with the complete returned agreement avai
 During accepted work the service owns progress, recovery and revision, and finishes without the user. Report actual cadence_status observations; do not start replacement workflows or ask for 'continue' after an individual child fails. Child failure is not delivery failure. Report recorded plan revisions as progress and lead with any recorded deviation when the run completes. Agents have no total runtime deadline; explicit command timeouts and actual closure still apply. A run stops only for a condition outside the repository; then explain that condition and the preserved outcomes, not a generic request to continue.
 For follow-up to a settled or interrupted run, inspect retained outcomes first. Partial outputs are not unexplained user edits. Unknown results must be observed and reconciled, never blindly replayed; a new delivery requires fresh approval. No automatic replay after owner restart. cadence_cancel is explicit cancellation, not navigation or exit. Worker prose is not passing checks; automatic review is never human review. Completion leaves Cadence ON and ready. Tools operate on the host; this is not a sandbox.`;
 
+// src/coordinator-tools.mjs
+import { Type } from "typebox";
+var CHECK = Type.Object({
+  name: Type.String(),
+  command: Type.String(),
+  timeoutMs: Type.Optional(Type.Integer({
+    description: "Milliseconds, from 100. Leave out for no timeout."
+  }))
+});
+var READING = Type.Union([
+  Type.Object({
+    path: Type.String({ description: "Project document to read first." }),
+    section: Type.Optional(Type.String({ description: "One heading of that document." })),
+    reason: Type.String()
+  }),
+  Type.Object({
+    research: Type.String({
+      description: 'A recorded investigation: the "investigation" value of a completed research step.'
+    }),
+    reason: Type.String()
+  })
+]);
+var RESEARCH_PARAMETERS = Type.Object({
+  goal: Type.String(),
+  questions: Type.Array(Type.String({
+    description: "One focused, independent question."
+  }), {
+    description: "Split independent questions freely; the service runs as many at once as this machine is configured for and queues the rest."
+  }),
+  roots: Type.Optional(Type.Array(Type.String({
+    description: "Specific investigation directories, relative to this conversation's cwd by default. Avoid filesystem roots and broad parent trees."
+  })))
+});
+var lookupExample = 'Use {checkout:["node_modules"]}, {checkout:[]}, {path:"docs.md"} with optional section or match, or {investigation:"<retained UUID>"}.';
+function knowledgeToolInput(input) {
+  const bad12 = (field, why) => {
+    throw new Error(`${field}: ${why}. ${lookupExample}`);
+  };
+  const keys2 = Object.keys(input ?? {});
+  let raw;
+  try {
+    raw = closed(input, keys2);
+  } catch {
+    bad12("cadence_knowledge", "expected an object with named lookup fields");
+  }
+  const fields3 = Object.create(null);
+  for (const key3 of keys2) {
+    if (!Object.hasOwn(knowledgeFields, key3))
+      bad12(JSON.stringify(key3.slice(0, 80)), "unknown field; omit it");
+    if (key3 !== "checkout" && raw[key3] === "")
+      continue;
+    try {
+      fields3[key3] = knowledgeFields[key3](raw[key3]);
+    } catch {
+      bad12(key3, key3 === "checkout" ? "give an array of up to eight nonempty dependency paths (each at most 1024 bytes)" : key3 === "investigation" ? "give a retained investigation UUID" : "give a nonblank string within the field limit");
+    }
+  }
+  const { checkout, path, section, match, investigation } = fields3;
+  if ((section || match) && !path)
+    bad12(section ? "section/path" : "match/path", "name the source file in path");
+  if (section && match)
+    bad12("section/match", "choose one selector");
+  if (checkout?.length && (path || investigation))
+    bad12("checkout", "cannot combine dependencies with path or investigation");
+  if (investigation && path)
+    bad12("investigation/path", "choose one source");
+  const relative9 = (name) => !/[\\:\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) && name.split("/").every((part) => part && part !== "." && part !== ".." && part.toLowerCase() !== ".git");
+  if (path && !relative9(path))
+    bad12("path", "give a plain checkout-relative file path");
+  if (checkout?.some((name) => !relative9(name) || name.split("/").some((part) => part.startsWith("."))))
+    bad12("checkout", "give plain checkout-relative dependency names");
+  if (investigation)
+    return { investigation };
+  if (path)
+    return match ? { path, match } : section ? { path, section } : { path };
+  if (checkout)
+    return { checkout };
+  bad12("path/checkout/investigation", "no lookup selected");
+}
+var KNOWLEDGE_PARAMETERS = Type.Object({
+  checkout: Type.Optional(Type.Array(Type.String(), {
+    description: "Instead of other fields, give up to eight checkout-relative dependency directory names (e.g. node_modules and web/node_modules), or [] for Git placement only. Observe the original checkout, Git branch and HEAD, and whether each named entry is a directory, symlink or absent. Never follows a dependency link."
+  })),
+  path: Type.Optional(Type.String({
+    description: "One checkout-relative document, or the exact project source file containing a known fact."
+  })),
+  section: Type.Optional(Type.String({
+    description: "Exact Markdown heading. Use either section or match."
+  })),
+  match: Type.Optional(Type.String({
+    description: "A literal on a line of this source file (such as a token, assertion or build script). Return matching line numbers with short previews and context at the first occurrence, without a research worker."
+  })),
+  investigation: Type.Optional(Type.String({
+    description: "Instead of path/section, supply a retained investigation ID to recheck its sources and reuse the answer."
+  }))
+});
+var DESIGN_PARAMETERS = Type.Object({
+  questions: Type.Array(Type.Object({
+    id: Type.String(),
+    question: Type.String(),
+    options: Type.Array(Type.Object({
+      id: Type.String(),
+      label: Type.String(),
+      cost: Type.String()
+    })),
+    recommended: Type.String({ description: "Recommended option ID" }),
+    reason: Type.String(),
+    acceptance: Type.String({
+      description: "Acceptance item this decision affects"
+    }),
+    when: Type.Optional(Type.Union([
+      Type.Null(),
+      Type.Object({ question: Type.String(), option: Type.String() })
+    ], {
+      description: "Omit or use null for an independent question. For a conditional question give an earlier question ID and one of its option IDs."
+    }))
+  }))
+});
+var PLAN_PARAMETERS = Type.Object({
+  goal: Type.String(),
+  design: Type.String({ description: "The initial technical route." }),
+  decisions: Type.Optional(Type.String({ description: "Explicit decisions and non-goals." })),
+  acceptance: Type.String(),
+  assumptions: Type.Optional(Type.String({
+    description: "What you decided on the user's behalf without asking; approval confirms it. Leave out when there is none."
+  })),
+  documents: Type.Optional(Type.Array(Type.String({
+    description: "Existing project Markdown this delivery may update."
+  }))),
+  reviewReads: Type.Optional(Type.Array(READING, {
+    description: "What the independent review reads first."
+  })),
+  policy: Type.Optional(Type.Object({
+    installs: Type.Optional(Type.Boolean({
+      description: "Whether a later revision may add dependency-installation commands. False unless the user agreed."
+    }))
+  })),
+  tasks: Type.Array(Type.Object({
+    id: Type.String({
+      description: "Lowercase letters, digits and hyphens, starting with a letter."
+    }),
+    title: Type.String(),
+    instructions: Type.String({ description: "At most 8KiB." }),
+    writes: Type.Array(Type.String()),
+    after: Type.Optional(Type.Array(Type.String(), {
+      description: "Ids of the assignments this one really depends on. Leave out when it depends on none."
+    })),
+    reads: Type.Optional(Type.Array(READING, {
+      description: "The few things this assignment should read first."
+    }))
+  }), { description: "One to 16 assignments." }),
+  checks: Type.Array(CHECK, {
+    description: "The real acceptance commands: at least one, at most 16."
+  }),
+  setup: Type.Optional(Type.Array(Type.Object({
+    ...CHECK.properties,
+    placement: Type.Union([
+      Type.Literal("target"),
+      Type.Literal("candidate"),
+      Type.Literal("worktree")
+    ], {
+      description: "target: preflight once in the original checkout before creating worktrees; candidate: once in the stable candidate; worktree: prepare the candidate and every detached child. Target branch checks belong to target, never worktree. Commands do not export environment into later processes."
+    })
+  }), {
+    description: "Explicit preparation commands with their execution placement, at most four. Run in target, candidate, then worktree stages, preserving order within each stage."
+  })),
+  baselineChecks: Type.Optional(Type.Array(CHECK)),
+  delivery: Type.Union([
+    Type.Literal("local-merge"),
+    Type.Literal("working-copy")
+  ])
+});
+
 // src/service/project-knowledge.ts
 import { isUtf8 } from "node:buffer";
 import { createHash as createHash31 } from "node:crypto";
@@ -31966,11 +32146,20 @@ function workflowObservation(cwd, plan) {
     identity: hash(JSON.stringify({ head, branch, contents }))
   };
 }
-async function assertTarget(cwd, expected, scope) {
-  const head = await gitHead(cwd);
-  const branch = (await gitText(cwd, ["symbolic-ref", "HEAD"])).trim();
-  if (head !== expected.head || branch !== expected.branch)
-    throw new WorkflowRefusal("stale", `The target branch changed during the run (expected ${expected.branch} at ${expected.head.slice(0, 12)}); nothing was integrated.`);
+async function assertTargetPosition(cwd, expected, stage) {
+  const [ref, oid] = await Promise.all([
+    gitRun(cwd, ["symbolic-ref", "--quiet", "HEAD"]).catch(() => null),
+    gitRun(cwd, ["rev-parse", "--verify", "HEAD"]).catch(() => null)
+  ]);
+  const branch = ref?.code === 0 ? ref.stdout.trim() : ref?.code === 1 ? "(detached HEAD)" : null;
+  const head = oid?.code === 0 ? oid.stdout.trim() : null;
+  if (head === expected.head && branch === expected.branch)
+    return;
+  const unreadable = !head || !branch;
+  throw new WorkflowRefusal(unreadable ? "unavailable" : "stale", `${stage}: target ${unreadable ? "identity could not be verified" : "position changed"}; expected ${expected.branch} at ${expected.head}, observed ${branch || "(unreadable ref)"} at ${head || "(unreadable HEAD)"}. Refused to proceed; this check made no merge.`);
+}
+async function assertTarget(cwd, expected, scope, stage) {
+  await assertTargetPosition(cwd, expected, stage);
   assertVisibleIndex(overlapping(scope, indexHidden(await gitText(cwd, INDEX_FLAGS))));
   const dirty = overlapping(scope, await changedPaths(cwd));
   if (dirty.length)
@@ -33094,10 +33283,20 @@ Current design ${design.id}, revision ${design.revision}, ${design.submitted ? "
           if (name === "cadence_knowledge") {
             if (!this.o.cwd)
               return refusal3("unavailable", "Project directory unavailable.");
+            let source;
             try {
-              return await this.knowledge(decodeKnowledgeLookup(args));
-            } catch {
-              return refusal3("invalid", "checkout/path/section/match/investigation: supply checkout with a list of local dependency paths, a Markdown path and optional heading, a file path and literal match, or one retained investigation ID.");
+              source = knowledgeToolInput(args);
+            } catch (error) {
+              return refusal3("invalid", diagnosticText(error instanceof Error ? error.message : "Expected a knowledge lookup.", 512, this.o.secrets()));
+            }
+            try {
+              return await this.knowledge(source);
+            } catch (error) {
+              if (this.o.owner.state !== "idle")
+                throw error;
+              const field = "checkout" in source ? "checkout" : ("investigation" in source) ? "investigation" : "path";
+              const code2 = error instanceof ContractError ? error.code : "unavailable";
+              return refusal3(code2, field === "checkout" ? "checkout: the owner could not observe that entry. Name an allowed dependency directly, not through a linked ancestor." : `${field}: the owner could not read that source; use an allowed project source.`);
             }
           }
           if (name === "cadence_design") {
@@ -35258,7 +35457,7 @@ class WorkflowDelivery {
     await assertTarget(this.view.binding.target.checkoutRoot, {
       branch: this.view.binding.target.branch,
       head: targetHead
-    }, scope);
+    }, scope, "integration preflight");
     if ((await gitRun(this.view.worktreeRoot, [
       "merge-base",
       "--is-ancestor",
@@ -35900,7 +36099,7 @@ var runtimeSummary = (runtime) => `${describeWorkerRuntime(runtime)}
 ${RUN_ENVIRONMENT_POLICY}`;
 var OWNER_RUNTIME = Object.freeze({
   version: "2.2.1",
-  build: "a00e54093398520b297b4fa2a520c8519e5f947a49f61dae258493ec2903ab39",
+  build: "cc7851ae7cfa57703a732dd79f6f12da1875f2e8521aac5f007d71cb5cab3ee4",
   entry: fileURLToPath7(import.meta.url),
   pid: process.pid,
   node: process.versions.node,
@@ -36610,6 +36809,8 @@ class Workflows {
     effect();
     if (request3.action === "execute")
       this.grants.delete(request3.grant);
+    if (live2.run.delivery)
+      live2.delivery = new WorkflowDelivery(live2.run.delivery, new RepositoryCoordination(this.o.coordination, this.cwd, live2.run.epoch, live2.run.id, () => this.o.owner.lease.assert(), () => this.o.owner.quarantine()), () => this.save(live2));
     this.active.set(commandId, live2);
     this.o.owner.trackConversation(live2.original, () => abort.abort({ source: "service", reason: "stop", target: commandId }));
     try {
@@ -37439,9 +37640,9 @@ ${diagnosticText(lines.join(`
       await assertTarget(this.cwd, {
         branch: live2.target.branch,
         head: live2.delivery?.targetHead() ?? live2.target.head
-      }, paths);
+      }, paths, "scope revision");
     } catch (error) {
-      if (!(error instanceof WorkflowRefusal) || error.code === "stale")
+      if (!(error instanceof WorkflowRefusal) || error.code === "stale" || error.code === "unavailable")
         throw error;
       throw new InvalidDecision(`These paths cannot join the write scope because the target checkout has its own changes to them or hides them: ${paths.join(", ")} (${error.detail})`);
     }
@@ -37752,8 +37953,10 @@ Preserve prior outputs. Write only: ${work.writes.join(", ")}`, work.writes);
       await assertTarget(this.cwd, {
         branch: live2.target.branch,
         head: live2.delivery?.targetHead() ?? live2.target.head
-      }, KNOWLEDGE_SCOPE);
-    } catch {
+      }, KNOWLEDGE_SCOPE, "knowledge placement");
+    } catch (error) {
+      if (error instanceof WorkflowRefusal && (error.code === "stale" || error.code === "unavailable"))
+        throw error;
       return skip("the target checkout has its own changes to the knowledge store.");
     }
     return true;
@@ -38107,19 +38310,7 @@ ${result.output}`}`);
     if (pathIdentity(this.cwd, "AGENTS.md") !== live2.guidance.agents)
       throw new WorkflowRefusal("conflict", "AGENTS.md changed during the run. The candidate is retained; review a fresh plan before integration.");
   }
-  async refreshCandidate(live2, integration, p) {
-    const delivery = live2.delivery;
-    const target2 = live2.target;
-    if (!delivery || !target2)
-      throw new ContractError("invalid");
-    const scope = this.scope(live2, p);
-    const frontier = delivery.frontierHead();
-    await assertTarget(this.cwd, { branch: target2.branch, head: frontier }, scope);
-    this.assertGuidance(live2);
-    if (!delivery.needsRefresh())
-      return;
-    await delivery.assertAcceptedCandidate(p.digest, live2.execution, scope);
-    const base = delivery.candidateBase();
+  async assertSiblingScope(branch, base, frontier, scope, stage) {
     const changed = await committedPaths(this.cwd, base, frontier);
     const conflicts = [
       ...new Set([
@@ -38128,7 +38319,22 @@ ${result.output}`}`);
       ])
     ].sort();
     if (conflicts.length)
-      throw new WorkflowRefusal("conflict", `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`);
+      throw new WorkflowRefusal("conflict", `${stage}: verified sibling advanced ${branch} from ${base} to ${frontier} and changed approved inputs: ${conflicts.join(", ")}. Refused to integrate overlapping work.`);
+  }
+  async refreshCandidate(live2, integration, p) {
+    const delivery = live2.delivery;
+    const target2 = live2.target;
+    if (!delivery || !target2)
+      throw new ContractError("invalid");
+    const scope = this.scope(live2, p);
+    const frontier = delivery.frontierHead();
+    await assertTarget(this.cwd, { branch: target2.branch, head: frontier }, scope, "candidate refresh");
+    this.assertGuidance(live2);
+    if (!delivery.needsRefresh())
+      return;
+    await delivery.assertAcceptedCandidate(p.digest, live2.execution, scope);
+    const base = delivery.candidateBase();
+    await this.assertSiblingScope(target2.branch, base, frontier, scope, "candidate refresh");
     let merged = "";
     await this.gitStep(live2, integration, "integrate-parallel-deliveries", async (git) => {
       await git(["merge", "--no-ff", "--no-edit", frontier]);
@@ -38163,7 +38369,7 @@ ${result.output}`}`);
     const integration = delivery?.view.worktreeRoot ?? this.cwd;
     if (plan.setup.some((c) => c.placement === "target")) {
       await this.setup(live2, this.cwd, p, "target");
-      await this.assertStartable(live2, p);
+      await this.assertStartable(live2, p, "after target setup");
     }
     if (delivery) {
       delivery.prepareHome();
@@ -38245,7 +38451,7 @@ ${result.output}`}`);
         if (!expected)
           throw new ContractError("quarantine");
         assertRepository(delivery.view.binding.target);
-        await assertTarget(this.cwd, { head: expected, branch: target2.branch }, scope);
+        await assertTarget(this.cwd, { head: expected, branch: target2.branch }, scope, "before post-merge checks");
         delivery.view.postChecks = "unknown";
         this.save(live2);
         const beforeSource = await sourceIdentityAsync(this.cwd, scope, live2.abort.signal);
@@ -38257,9 +38463,7 @@ ${result.output}`}`);
         const deliveredHead = live2.run.mergedCommit;
         if (!deliveredHead)
           throw new ContractError("quarantine");
-        await this.unchangedHead(this.cwd, deliveredHead);
-        if ((await gitText(this.cwd, ["symbolic-ref", "HEAD"])).trim() !== target2.branch)
-          throw new ContractError("stale");
+        await assertTargetPosition(this.cwd, { head: deliveredHead, branch: target2.branch }, "after post-merge checks");
         delivery.view.postChecks = checked2 ? "passed" : "failed";
         this.save(live2);
         if (!checked2) {
@@ -38281,7 +38485,7 @@ ${result.output}`}`);
       });
     });
   }
-  async assertStartable(live2, p) {
+  async assertStartable(live2, p, stage) {
     this.current();
     if (!live2.execution.model)
       throw new ContractError("stale");
@@ -38289,9 +38493,15 @@ ${result.output}`}`);
     if (p.epoch !== this.o.owner.lease.registration.epoch || p.cwd !== live2.execution.cwd)
       throw new ContractError("stale");
     const writes = workflowWrites(p.plan);
-    if (live2.target)
-      await assertTarget(this.cwd, live2.target, writes);
-    else if (await contentsIdentityAsync(this.cwd, writes) !== live2.declared)
+    if (live2.target) {
+      const { branch, head: base } = live2.target;
+      const head = live2.delivery?.frontierHead() ?? base;
+      await assertTarget(this.cwd, { branch, head }, writes, stage);
+      if (base !== head) {
+        await this.assertSiblingScope(branch, base, head, writes, stage);
+        this.assertGuidance(live2);
+      }
+    } else if (await contentsIdentityAsync(this.cwd, writes) !== live2.declared)
       throw new WorkflowRefusal("stale", "Declared targets changed between approval and start; nothing was edited.");
   }
   async investigate(live2, request3) {
@@ -38386,7 +38596,7 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
       if (live2.run.diagnostics)
         live2.run.diagnostics.acquiredAt = Date.now();
       if (live2.proposal) {
-        await this.assertStartable(live2, live2.proposal);
+        await this.assertStartable(live2, live2.proposal, "start preflight");
         let environmentFile;
         live2.environment = new RunEnvironment(this.o.coordination.stateHome, this.cwd, (directories) => {
           environmentFile = this.write(this.path(live2.run.id, "environment.json"), { directories }, environmentFile);
@@ -38396,8 +38606,6 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
             throw new ContractError("unavailable");
         });
       }
-      if (live2.run.delivery)
-        live2.delivery = new WorkflowDelivery(live2.run.delivery, new RepositoryCoordination(this.o.coordination, this.cwd, live2.run.epoch, live2.run.id, () => this.o.owner.lease.assert(), () => this.o.owner.quarantine()), () => this.save(live2));
       live2.run.status = "running";
       this.save(live2);
       if (request3.action === "research") {
@@ -38414,8 +38622,13 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
     } catch (error) {
       outcome = this.o.owner.state === "quarantined" ? "unknown" : live2.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
       failure2 = this.describe(error);
+      const integration = live2.run.delivery?.integration;
+      if (error instanceof WorkflowRefusal && integration?.status === "pending") {
+        integration.status = "blocked";
+        integration.reason = this.notice(failure2);
+      }
     } finally {
-      if (live2.delivery && this.o.owner.state === "idle") {
+      if (live2.delivery && live2.environment && this.o.owner.state === "idle") {
         try {
           live2.delivery.finish();
         } catch {
@@ -38925,7 +39138,7 @@ var processLifetime = {
   }
 };
 async function createServiceHost(value, sourceBuild, lifetime) {
-  const embedded = "190a21e723f753a233225a9f4bcf12a99d71b294a58728961846cd110cd60a17";
+  const embedded = "80875479add4b7830419060b7e5018a39de200665edfbdec20fc10d50861bfea";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

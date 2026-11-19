@@ -180,6 +180,13 @@ function decodeId(v) {
     invalid();
   return s;
 }
+var knowledgeFields = Object.freeze({
+  checkout: (v) => list(v, 8, (entry) => text(entry, 1024, true)),
+  path: (v) => text(v, 1024, true),
+  section: (v) => text(v, 512, true),
+  match: (v) => text(v, 256, true),
+  investigation: decodeId
+});
 function decodeHash(v) {
   const s = text(v, 64);
   if (!/^[0-9a-f]{64}$/.test(s))
