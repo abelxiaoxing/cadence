@@ -198,6 +198,36 @@ it("plan cards expose actual checks and local delivery, not old Save/Start/Revie
   expect(html).toContain("outcome is unknown");
   expect(html).not.toContain("Confirm start");
 });
+it.each(["validate", "restore", "approve"] as const)(
+  "%s plan action marks only pending validation busy and prevents duplicate decisions",
+  (action) => {
+    const proposal = state().proposal;
+    if (!proposal) throw Error("fixture proposal");
+    const draw = (validating: boolean, allowed: boolean) =>
+      renderToStaticMarkup(
+        <PlanCard
+          proposal={proposal}
+          action={action}
+          canApprove={allowed}
+          canValidate={allowed}
+          validating={validating}
+          onValidate={() => {}}
+          onApprove={() => {}}
+        />,
+      );
+    for (const allowed of [true, false]) {
+      const busy = draw(true, allowed);
+      expect(busy).toMatch(
+        /<button[^>]*aria-busy="true"[^>]*disabled=""[^>]*>Validating plan…<\/button>/,
+      );
+      expect(busy.match(/<button(?![^>]*disabled)/g)).toBeNull();
+      const idle = draw(false, allowed);
+      expect(idle).not.toContain("aria-busy");
+      expect(idle).not.toContain("Validating plan…");
+      expect(idle.includes('disabled=""')).toBe(!allowed);
+    }
+  },
+);
 it("workflow subagent rows use the readable assignment, not the step's random suffix", () => {
   expect(
     workflowAgentLabel("implement-a-1b4e28ba-2fa1-11d2-883f-0016d3cca427"),

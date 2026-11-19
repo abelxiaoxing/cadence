@@ -594,11 +594,33 @@ it.each([
 // persisted-file claim, or hand-written replacement detail function.
 function workflowAgentFixture() {
   vi.useFakeTimers();
+  // Clamp like a scrollport, but deliver scroll/resize separately: a scroll
+  // event need not arrive in the same layout as the write that caused it.
+  let top = 0;
+  const root = {
+    scrollHeight: 2000,
+    clientHeight: 600,
+    get scrollTop() {
+      return top;
+    },
+    set scrollTop(y: number) {
+      top = Math.min(y, this.scrollHeight - this.clientHeight);
+    },
+  };
+  const bodyElement = {};
+  let resized: (() => void) | undefined;
+  let scrolled: (() => void) | undefined;
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe() {}
-      disconnect() {}
+      constructor(readonly callback: () => void) {}
+      observe(el: unknown) {
+        expect(el).toBe(bodyElement);
+        resized = this.callback;
+      }
+      disconnect() {
+        resized = undefined;
+      }
     },
   );
   const runId = crypto.randomUUID(),
@@ -726,6 +748,22 @@ function workflowAgentFixture() {
       const body = (wrapper.type as (p: typeof props) => ReactNode)(
         wrapper.props,
       );
+      const messages = required(
+        elements<{
+          className?: string;
+          ref: { current: unknown };
+          children: ReactNode;
+          onScroll(event: { currentTarget: typeof root }): void;
+        }>(body, "div").find((el) => el.props.className === "chat-messages"),
+      );
+      messages.props.ref.current = root;
+      required(
+        elements<{ ref: { current: unknown } }>(
+          messages.props.children,
+          "div",
+        )[0],
+      ).props.ref.current = bodyElement;
+      scrolled = () => messages.props.onScroll({ currentTarget: root });
       commit();
       return body;
     });
@@ -794,6 +832,14 @@ function workflowAgentFixture() {
     reads,
     pending,
     draw,
+    root,
+    resize: () => required(resized)(),
+    scroll: () => required(scrolled)(),
+    latest: () =>
+      elements<{ className?: string; onClick(): void }>(
+        draw().tree,
+        "button",
+      ).find((el) => el.props.className === "scroll-bottom")?.props,
     tool: () => required(draw().tool),
   };
 }
@@ -978,6 +1024,56 @@ it.each(["completed", "failed", "canceled", "unknown"] as const)(
     expect(final.turn?.detail).toHaveBeenCalledTimes(1);
   },
 );
+
+it("workflow transcript polls respect the reading offset; only resizing while following or Latest moves it", async () => {
+  const f = workflowAgentFixture();
+  f.draw();
+  const reply = async (output: string) => {
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(f.snapshot(output));
+    await vi.advanceTimersByTimeAsync(0);
+    f.draw();
+  };
+  await reply("first");
+  f.resize();
+  f.scroll();
+  expect(f.root.scrollTop).toBe(1400);
+  f.root.scrollTop -= 48;
+  f.scroll();
+  for (const output of ["second", "third"]) {
+    await vi.advanceTimersByTimeAsync(1000);
+    await reply(output);
+    expect(f.root.scrollTop).toBe(1352);
+    expect(f.latest()).toBeUndefined();
+  }
+  f.root.scrollHeight += 200;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1600);
+  // More layout before the event from the last follow write arrives.
+  f.root.scrollHeight += 100;
+  f.scroll();
+  f.resize();
+  f.scroll();
+  expect(f.root.scrollTop).toBe(1700);
+  f.root.scrollTop -= 80;
+  f.scroll();
+  f.root.scrollHeight += 100;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1620);
+  // A shrink can put the same reading offset back inside the threshold. A
+  // late event there is not a request to jump on the next growth.
+  f.root.scrollHeight -= 150;
+  f.scroll();
+  f.root.scrollHeight += 150;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1620);
+  required(f.latest()).onClick();
+  expect(f.root.scrollTop).toBe(1800);
+  expect(f.latest()).toBeUndefined();
+  f.root.scrollHeight += 100;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1900);
+});
 
 it("closed workflow tool and step-result details remain lazy through updates and settlement", async () => {
   const f = workflowAgentFixture();

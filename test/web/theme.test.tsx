@@ -263,18 +263,23 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       ).toBeGreaterThanOrEqual(AA);
     }
   });
-  it("keeps the busy folder action readable without the primary gradient or disabled group fade", () => {
-    const busy = '.cwd-footer > button:disabled[aria-busy="true"]';
-    expect(declaration(busy, "opacity")).toBe("1");
-    const face = ruleColor(busy, "background", scheme);
-    expect(face[3]).toBe(1); // The button itself backs its state text.
-    const ink = ruleColor(busy, "color", scheme);
-    expect(contrast(over(ink, face), face)).toBeGreaterThanOrEqual(AA);
-    for (const stop of ["--prism-a", "--prism-b"])
-      expect(contrast(face, color(stop, scheme))).toBeGreaterThanOrEqual(
-        GRAPHIC,
-      );
-  });
+  it.each([
+    '.cwd-footer > button:disabled[aria-busy="true"]',
+    '.workflow-plan > .primary:disabled[aria-busy="true"]',
+  ])(
+    "keeps busy action %s readable without the primary gradient or disabled group fade",
+    (busy) => {
+      expect(declaration(busy, "opacity")).toBe("1");
+      const face = ruleColor(busy, "background", scheme);
+      expect(face[3]).toBe(1); // The button itself backs its state text.
+      const ink = ruleColor(busy, "color", scheme);
+      expect(contrast(over(ink, face), face)).toBeGreaterThanOrEqual(AA);
+      for (const stop of ["--prism-a", "--prism-b"])
+        expect(contrast(face, color(stop, scheme))).toBeGreaterThanOrEqual(
+          GRAPHIC,
+        );
+    },
+  );
   it("underlines only the current panel independently of hover and focus", () => {
     const current = '.rp-tab:is([aria-pressed="true"], [aria-current="true"])';
     expect(declaration(`${current}::after`, "border-bottom")).toBe(
@@ -785,12 +790,13 @@ it("applies the reading budget to shared Markdown prose, not all controls", () =
   );
 });
 
-it("applies the same reading budget to plain attempt and waiting message bodies", () => {
-  expect(declaration(".chat-attempt-text", "line-height")).toBe(
-    "var(--reading-leading)",
-  );
-  expect(declaration(".chat-attempt-text", "white-space")).toBe("pre-wrap");
-});
+it.each([".chat-attempt-text", ".thinking-body"])(
+  "applies the same reading budget to plain %s text",
+  (selector) => {
+    expect(declaration(selector, "line-height")).toBe("var(--reading-leading)");
+    expect(declaration(selector, "white-space")).toBe("pre-wrap");
+  },
+);
 
 it("defines each scheme-dependent colour once, as a light-dark() pair", () => {
   // A parser that silently matched nothing would pass every check above.

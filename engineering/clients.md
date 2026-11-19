@@ -164,6 +164,14 @@ In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback t
 That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
 Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
 
+The subagent view is not windowed: `useFollowResize` observes the mounted transcript body for initial layout and size changes.
+A new `workflow-transcript` response updates the displayed turn and its open details, but is never by itself a reason to scroll.
+Within 80px of the bottom, a same-height poll leaves the exact offset alone; real growth follows the new end.
+Scrolling up to a gap of 80px or more pauses follow for that view.
+A disclosure, poll, or late scroll event (even after shrinking content) cannot resume it.
+**Latest messages** jumps to the end and resumes resize-follow.
+Selecting another child starts a fresh scroll lifetime.
+
 ## Browser
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.

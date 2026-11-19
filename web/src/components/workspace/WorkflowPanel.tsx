@@ -372,7 +372,10 @@ export function PlanCard({
       <button
         type="button"
         className="primary"
-        disabled={action === "approve" ? !canApprove : !canValidate}
+        aria-busy={validating || undefined}
+        disabled={
+          validating || (action === "approve" ? !canApprove : !canValidate)
+        }
         onClick={action === "approve" ? onApprove : onValidate}
       >
         {t(
@@ -388,7 +391,11 @@ export function PlanCard({
         )}
       </button>
       {action === "approve" && onValidate && (
-        <button type="button" disabled={!canValidate} onClick={onValidate}>
+        <button
+          type="button"
+          disabled={validating || !canValidate}
+          onClick={onValidate}
+        >
           {t("Validate plan again")}
         </button>
       )}

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { controlGeometry, textSamples } from "./measure.mjs";
 import { painted } from "./picker-observations.mjs";
-import { dockResult, dockRun } from "./records.mjs";
+import { leading } from "./reader-observations.mjs";
+import { dockResult, dockRun, recordedThinking } from "./records.mjs";
 
 function designPixels(focused) {
   const el = document.querySelector(".design-card .design-custom input");
@@ -741,6 +742,7 @@ export async function observeChatMaterials(probe, report) {
     await observeCardMaterial(probe, selector, label);
     await observeSurfaceContrast(contrast, selector, button, label, text);
   }
+  await observeThinkingBody(probe, report);
   if (width > 900) return;
   const section = ".running-conversations .lp-section-heading";
   const tab = ".rp-tabs > button.rp-tab:nth-child(2)";
@@ -773,6 +775,20 @@ export async function observeChatMaterials(probe, report) {
     await press("Escape", 27);
     await wait(`document.activeElement.matches(${JSON.stringify(toggle)})`);
   }
+}
+
+export async function observeThinkingBody(probe, report) {
+  const body = ".chat-turn .thinking.open .thinking-body";
+  await probe.click('.chat-turn .thinking .chead-main[aria-expanded="false"]');
+  await probe.wait(
+    `document.querySelector('${body}')?.textContent === ${JSON.stringify(recordedThinking)}`,
+  );
+  report.leading.push({
+    width: probe.width,
+    theme: probe.theme,
+    surface: "recorded thinking",
+    ...(await leading(probe, body, recordedThinking)),
+  });
 }
 
 export async function observeRetainedCopy(

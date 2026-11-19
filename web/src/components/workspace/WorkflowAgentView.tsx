@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FiCpu } from "react-icons/fi";
+import { FiArrowDown, FiCpu } from "react-icons/fi";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
-import { useFollowResize } from "../../transcript/use-lazy-window";
+import {
+  followResize,
+  useFollowResize,
+} from "../../transcript/use-lazy-window";
 import { Markdown } from "../rich/Markdown";
 import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
@@ -90,12 +93,10 @@ function AgentView({
   const scroll = useRef<HTMLDivElement>(null),
     stick = useRef(true);
   const body = useRef<HTMLDivElement>(null);
+  const [away, setAway] = useState(false);
+  const lastTop = useRef(0);
+  // A fresh retained read can replace same-size text; it is not a resize.
   useFollowResize(scroll, body, stick);
-  // Follow a live transcript while the reader stays at its end.
-  useEffect(() => {
-    if (turn && stick.current && scroll.current)
-      scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [turn]);
   return (
     <section
       className="chat-workspace workflow-agent"
@@ -125,7 +126,18 @@ function AgentView({
         ref={scroll}
         onScroll={(event) => {
           const el = event.currentTarget;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          // A queued event for a follow write may arrive after more growth.
+          // Only travel back up through the boundary pauses following. Once
+          // paused, layout/scroll events cannot opt the reader back in.
+          if (
+            stick.current &&
+            el.scrollTop < lastTop.current &&
+            el.scrollHeight - el.scrollTop - el.clientHeight >= 80
+          ) {
+            stick.current = false;
+            setAway(true);
+          }
+          lastTop.current = el.scrollTop;
         }}
       >
         <div ref={body}>
@@ -196,6 +208,21 @@ function AgentView({
           )}
         </div>
       </div>
+      {away && (
+        <button
+          type="button"
+          className="scroll-bottom"
+          onClick={() => {
+            stick.current = true;
+            followResize(scroll.current, true);
+            lastTop.current = scroll.current?.scrollTop ?? 0;
+            setAway(false);
+          }}
+        >
+          <FiArrowDown aria-hidden="true" />
+          {t("Latest messages")}
+        </button>
+      )}
     </section>
   );
 }

@@ -4,38 +4,52 @@ import { fieldRoute } from "./records.mjs";
 
 // Use a rendered prose paragraph, not its Markdown wrapper (or a hidden copy
 // of the agreement). The scroll is only for typography sampling, never find.
-export async function leading({ run, scrollTo }, selector) {
+export async function leading({ run, scrollTo }, selector, plainText = null) {
   await scrollTo(selector);
-  const sample = await run((s) => {
-    const p = document.querySelector(s);
-    if (p?.tagName !== "P" || !p.textContent.trim())
-      throw Error(`Missing prose: ${s}`);
-    const range = new Range();
-    range.selectNodeContents(p);
-    if (
-      ![...range.getClientRects()].some(
-        (r) =>
-          r.width &&
-          r.height &&
-          p.contains(
-            document.elementFromPoint(
-              r.left + r.width / 2,
-              r.top + r.height / 2,
-            ),
-          ),
+  const sample = await run(
+    (s, plain) => {
+      const p = document.querySelector(s);
+      const node = plain === null ? p : p?.firstChild;
+      if (
+        plain !== null &&
+        !(
+          node?.nodeType === Node.TEXT_NODE &&
+          node.textContent === plain &&
+          node.parentElement === p
+        )
       )
-    )
-      throw Error(`Hidden prose: ${s}`);
-    const css = getComputedStyle(p),
-      lineHeight = parseFloat(css.lineHeight),
-      fontSize = parseFloat(css.fontSize);
-    return {
-      text: p.textContent.trim().slice(0, 48),
-      lineHeight,
-      fontSize,
-      ratio: lineHeight / fontSize,
-    };
-  }, selector);
+        throw Error(`Missing recorded text: ${s}`);
+      if ((plain === null && p?.tagName !== "P") || !p.textContent.trim())
+        throw Error(`Missing prose: ${s}`);
+      const range = new Range();
+      range.selectNodeContents(node);
+      if (
+        ![...range.getClientRects()].some(
+          (r) =>
+            r.width &&
+            r.height &&
+            p.contains(
+              document.elementFromPoint(
+                r.left + r.width / 2,
+                r.top + r.height / 2,
+              ),
+            ),
+        )
+      )
+        throw Error(`Hidden prose: ${s}`);
+      const css = getComputedStyle(p),
+        lineHeight = parseFloat(css.lineHeight),
+        fontSize = parseFloat(css.fontSize);
+      return {
+        text: p.textContent.trim().slice(0, 48),
+        lineHeight,
+        fontSize,
+        ratio: lineHeight / fontSize,
+      };
+    },
+    selector,
+    plainText,
+  );
   assert.ok(
     Math.abs(sample.lineHeight - 1.65 * sample.fontSize) <= 1 / 64,
     `Wrong leading ${selector}: ${sample.ratio}`,
