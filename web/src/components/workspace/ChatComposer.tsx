@@ -96,6 +96,7 @@ export interface ChatComposerProps {
   hint: string;
   /** A live reply: Stop takes Send's place. */
   running: boolean;
+  flow?: boolean;
   canStop: boolean;
   onStop(): void;
   canSend: boolean;
@@ -132,6 +133,7 @@ export function ChatComposer({
   model,
   hint,
   running,
+  flow,
   canStop,
   onStop,
   canSend,
@@ -351,6 +353,7 @@ export function ChatComposer({
     <form
       ref={form}
       className="chat-composer"
+      data-flow={flow || undefined}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}
@@ -455,52 +458,54 @@ export function ChatComposer({
           // Choosing a row must not take the caret out of the message.
           onMouseDown={(event) => event.preventDefault()}
         >
-          <div className="mention-menu-hint">
-            <span className="mention-menu-folder">
-              {query.folder
-                ? `@${query.folder}`
-                : t("Files in the conversation folder")}
-            </span>
-            <span>{t("Enter inserts the path · Esc closes")}</span>
+          <div className="mention-list">
+            <div className="mention-menu-hint">
+              <span className="mention-menu-folder">
+                {query.folder
+                  ? `@${query.folder}`
+                  : t("Files in the conversation folder")}
+              </span>
+              <span>{t("Enter inserts the path · Esc closes")}</span>
+            </div>
+            {listing.error ? (
+              <p className="mention-menu-note" role="alert">
+                {describeError(t, listing.error)}
+              </p>
+            ) : !listed ? (
+              <p className="mention-menu-note">{t("Reading files…")}</p>
+            ) : entries.length === 0 ? (
+              <p className="mention-menu-note">{t("No matching files")}</p>
+            ) : null}
+            {entries.map((entry, index) => (
+              <button
+                type="button"
+                role="option"
+                key={entry.path}
+                id={`${listId}-${index}`}
+                className={`mention-item${entry === row ? " active" : ""}`}
+                aria-selected={entry === row}
+                tabIndex={-1}
+                title={entry.path}
+                onMouseEnter={() => setPicked(index)}
+                onClick={() => accept(entry)}
+              >
+                {entry.directory ? (
+                  <FiFolder aria-hidden="true" />
+                ) : (
+                  <FiFile aria-hidden="true" />
+                )}
+                <span className="mention-name">{entry.name}</span>
+                {entry.path !== entry.name && (
+                  <span className="mention-path">{entry.path}</span>
+                )}
+              </button>
+            ))}
+            {listed?.limited && (
+              <p className="mention-menu-note">
+                {t("Bounded listing; narrow the directory to see more.")}
+              </p>
+            )}
           </div>
-          {listing.error ? (
-            <p className="mention-menu-note" role="alert">
-              {describeError(t, listing.error)}
-            </p>
-          ) : !listed ? (
-            <p className="mention-menu-note">{t("Reading files…")}</p>
-          ) : entries.length === 0 ? (
-            <p className="mention-menu-note">{t("No matching files")}</p>
-          ) : null}
-          {entries.map((entry, index) => (
-            <button
-              type="button"
-              role="option"
-              key={entry.path}
-              id={`${listId}-${index}`}
-              className={`mention-item${entry === row ? " active" : ""}`}
-              aria-selected={entry === row}
-              tabIndex={-1}
-              title={entry.path}
-              onMouseEnter={() => setPicked(index)}
-              onClick={() => accept(entry)}
-            >
-              {entry.directory ? (
-                <FiFolder aria-hidden="true" />
-              ) : (
-                <FiFile aria-hidden="true" />
-              )}
-              <span className="mention-name">{entry.name}</span>
-              {entry.path !== entry.name && (
-                <span className="mention-path">{entry.path}</span>
-              )}
-            </button>
-          ))}
-          {listed?.limited && (
-            <p className="mention-menu-note">
-              {t("Bounded listing; narrow the directory to see more.")}
-            </p>
-          )}
         </div>
       )}
       <textarea

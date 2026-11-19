@@ -105,6 +105,34 @@ describe("file-diff parser and model", () => {
     ).toMatchObject({ filePath: "b.md", language: "markdown", deletions: 0 });
   });
 
+  it("requires complete string pairs throughout the record, not just one valid replacement", () => {
+    const parse = (args: object) =>
+      parseFileMutationArgs("edit", JSON.stringify({ path: "a.ts", ...args }));
+    const insert = { oldText: "", newText: "next" };
+    const remove = { oldText: "keep", newText: "" };
+    expect(parse({ edits: [remove, insert] })).toMatchObject({
+      additions: 1,
+      deletions: 1,
+      hunks: [
+        { lines: [{ type: "del", content: "keep" }] },
+        { lines: [{ type: "add", content: "next" }] },
+      ],
+    });
+    expect(parse(remove)).toMatchObject({ additions: 0, deletions: 1 });
+    for (const invalid of [
+      { oldText: "keep" },
+      { newText: "next" },
+      { oldText: null, newText: "next" },
+      { oldText: "keep", newText: 0 },
+    ]) {
+      expect(parse(invalid)).toBeNull();
+      expect(parse({ edits: [insert, invalid] })).toBeNull();
+      expect(parse({ edits: [remove], ...invalid })).toBeNull();
+    }
+    for (const invalid of [null, 1, "", [], {}])
+      expect(parse({ edits: [insert, invalid, remove] })).toBeNull();
+  });
+
   it("reads a write's content as additions", () => {
     const content = "line1\nline2\nline3\n";
     const data = parseFileMutationArgs(
@@ -114,6 +142,7 @@ describe("file-diff parser and model", () => {
     expect(data).toMatchObject({
       filePath: "README.md",
       isWrite: true,
+      content,
       additions: 3,
       deletions: 0,
     });
@@ -182,7 +211,10 @@ describe("file change card", () => {
         data={parsed("write", { path: "a.yaml", content: "a: 1\n" })}
       />,
     );
-    expect(write).toContain("Requested content");
+    expect(write).toContain(">Requested content</span>");
+    expect(write).toContain(
+      'aria-label="Copy full retained field · Requested content"',
+    );
     expect(write).toContain('<span class="add">+1</span>');
     expect(write).not.toContain('class="del"');
     expect(write).not.toContain("diff-hunk-header");
@@ -195,6 +227,7 @@ describe("file change card", () => {
     expect(failed).toContain('<div class="file-diff-card is-err">');
     expect(failed).toContain("Error recorded: requested, not applied");
     expect(failed).not.toContain("Requested change<");
+    expect(failed).not.toContain("write-copy");
     expect(
       renderToStaticMarkup(
         <FileChangeCard data={parsed("write", { path: "", content: "" })} />,

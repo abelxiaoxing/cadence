@@ -185,3 +185,73 @@ it("lost final command body remains unknown with one POST; disposal sends no Can
   expect(JSON.parse(String(posts[0][1]?.body))).toEqual(command);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("a late session body cannot reinstall a retired attachment or its CSRF", async () => {
+  const epoch = randomUUID(),
+    storeId = randomUUID();
+  const sessions: string[] = [],
+    detaches: [string, string | null][] = [];
+  const challenges = [randomUUID(), randomUUID(), randomUUID()];
+  let release!: () => void, bodyStarted!: () => void;
+  const entered = new Promise<void>((r) => {
+    bodyStarted = r;
+  });
+  const transport = new HttpServiceTransport({
+    origin,
+    fetch: async (url, init) => {
+      const headers = new Headers(init?.headers),
+        attachment = headers.get("x-cadence-attachment")!;
+      if (String(url).endsWith("/detach")) {
+        detaches.push([attachment, headers.get("x-cadence-csrf")]);
+        return Response.json({ kind: "ok", value: null });
+      }
+      expect(String(url)).toBe(`${origin}/api/v1/session`);
+      const csrf = challenges[sessions.length];
+      sessions.push(attachment);
+      const reply = JSON.stringify({
+        kind: "ok",
+        value: {
+          protocol: 1,
+          storeId,
+          epoch,
+          accessGeneration: 1,
+          authority: "browser",
+          csrf,
+          capabilities: { actions: true, manualChecks: false, history: true },
+        },
+      });
+      const body =
+        sessions.length === 2
+          ? new ReadableStream<Uint8Array>(
+              {
+                pull(controller) {
+                  bodyStarted();
+                  release = () => {
+                    controller.enqueue(new TextEncoder().encode(reply));
+                    controller.close();
+                  };
+                },
+              },
+              { highWaterMark: 0 },
+            )
+          : reply;
+      return new Response(body, {
+        headers: { "x-cadence-attachment": attachment },
+      });
+    },
+  });
+  await transport.session();
+  const pending = transport.session();
+  await entered;
+  await transport.detach();
+  await transport.session();
+  expect(sessions[1]).toBe(sessions[0]);
+  expect(sessions[2]).not.toBe(sessions[0]);
+  release();
+  await expect(pending).rejects.toThrow("stale");
+  await transport.detach();
+  expect(detaches).toEqual([
+    [sessions[0], challenges[0]],
+    [sessions[2], challenges[2]],
+  ]);
+});

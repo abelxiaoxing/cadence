@@ -324,7 +324,7 @@ export type WorkflowResponse =
 /** A plan or an investigation request that its author can correct: the message
  * names the field, what it holds and what is accepted there. */
 export class WorkflowInputError extends Error {}
-function issue(path: string, problem: string): never {
+export function issue(path: string, problem: string): never {
   throw new WorkflowInputError(`${path}: ${problem}`);
 }
 const quoted = (value: string) => JSON.stringify(clipUnits(value, 80));
@@ -346,7 +346,7 @@ function at<T>(path: string, read: () => T): T {
     );
   }
 }
-function words(
+export function words(
   path: string,
   v: unknown,
   maximum: number,
@@ -360,7 +360,7 @@ function words(
     return issue(path, `is ${bytes} bytes; at most ${maximum}`);
   return at(path, () => text(v, maximum, nonempty));
 }
-function entries<T>(
+export function entries<T>(
   path: string,
   v: unknown,
   maximum: number,
@@ -375,7 +375,7 @@ function entries<T>(
   );
 }
 /** A closed object: every required field present, nothing unknown. */
-function fields(
+export function fields(
   path: string,
   v: unknown,
   required: readonly string[],

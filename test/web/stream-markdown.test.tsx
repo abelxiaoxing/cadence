@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import rehypeRaw from "rehype-raw";
 import { unified } from "unified";
 import { describe, expect, it } from "vitest";
+import { ArtifactPreview } from "../../web/src/components/review/ArtifactPreview";
 import { MarkdownBody } from "../../web/src/components/rich/Markdown";
 import { StreamMarkdown as WorkflowStreamMarkdown } from "../../web/src/components/rich/StreamMarkdown";
 import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
@@ -209,6 +210,25 @@ it("ordinary markdown keeps its prefix and open-code renderer unchanged on settl
   expect(segmentStream(text).inFence).toBe(true);
 });
 
+it("uses the theme error ink for both KaTeX failure shapes without replacing the formula", () => {
+  const formula = (tex: string) =>
+    renderToStaticMarkup(<MarkdownBody text={`$${tex}$`} />);
+  const missing = formula("\\frac");
+  expect(missing).toContain('class="katex-error"');
+  expect(missing).toMatch(/title="[^"]*KaTeX parse error:[^"]+"/);
+  expect(missing).toMatch(
+    /style="color:var\(--err-text\)"[^>]*>\\frac<\/span>/,
+  );
+
+  const unknown = formula("\\faceted");
+  expect(unknown).toMatch(
+    /class="katex-html"[\s\S]*<span[^>]*style="color:var\(--err-text\)"[^>]*>\\faceted<\/span>/,
+  );
+  const valid = formula("\\frac{1}{2}");
+  expect(valid).toContain("<mfrac>");
+  expect(valid).not.toMatch(/katex-error|--err-text/);
+});
+
 it("retains document-wide Markdown references without a terminal-state renderer swap", () => {
   const text =
     "See [reference][r].\n\nAnother paragraph.\n\n[r]: https://example.com/";
@@ -380,3 +400,51 @@ it("the shared workflow renderer retains its existing pacer and consumes semanti
     semanticHtml(renderToStaticMarkup(<MarkdownBody text={text} />)),
   );
 });
+
+it("exposes the recorded fence language and separate keyboard fold/copy actions outside the scroller", () => {
+  const html = renderToStaticMarkup(
+    <MarkdownBody text={"```python\nx = 1\nx\n```"} />,
+  );
+  expect(html).toMatch(
+    /data-field-chrome="" class="code-caption"><button type="button" aria-expanded="true">.*?python<\/button><button[^>]*aria-label="Copy displayed text"/,
+  );
+  expect(html.match(/data-field-chrome="" class="code-num"/g)).toHaveLength(2);
+  expect(html).not.toMatch(/<(pre|code)[^>]*data-field-chrome/);
+  expect(html.indexOf("code-caption")).toBeLessThan(html.indexOf("<pre"));
+});
+
+// Markup ownership only. The CDP probe searches the mounted Inspector and
+// inspects actual Highlight ranges, including after a view or page change.
+it.each(["raw", "markdown", "diff"] as const)(
+  "marks the artifact %s body separately from preview chrome",
+  (view) => {
+    const html = renderToStaticMarkup(
+      <ArtifactPreview
+        text={"# Facet\n\n[facet 7](relative) ![quartz](#image)"}
+        view={view}
+        setView={() => {}}
+      />,
+    );
+    expect(html).not.toMatch(
+      /<(button|select|option|footer|nav)[^>]*data-retained-field/,
+    );
+    if (view === "markdown") {
+      expect(html).toMatch(
+        /class="fp-markdown-zoom" data-retained-field="true"><div class="md">/,
+      );
+      expect(html).toContain(
+        'facet 7<span data-field-chrome=""> [link unavailable]</span>',
+      );
+      expect(html).toContain(
+        '<span data-field-chrome="">[Image omitted: </span>quartz<span data-field-chrome="">]</span>',
+      );
+    } else {
+      expect(html.match(/data-retained-field="true"/g)).toHaveLength(2);
+      expect(html).toMatch(
+        view === "raw"
+          ? /class="fp-code-text" data-retained-field="true"># Facet/
+          : /class="scm-diff-line " data-retained-field="true"># Facet/,
+      );
+    }
+  },
+);

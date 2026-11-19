@@ -29,9 +29,13 @@ export function extractVisStyles(code: string): { code: string; css: string } {
 }
 export function localVisStyles(): Plugin {
   let css: string | undefined;
+  let base: string;
   return {
     name: "cadence-local-vendor-style",
     apply: "build",
+    configResolved(config) {
+      base = config.base;
+    },
     transform(code, id) {
       if (
         !id
@@ -56,7 +60,7 @@ export function localVisStyles(): Plugin {
       handler: () => [
         {
           tag: "link",
-          attrs: { rel: "stylesheet", href: "/assets/vis-timeline.css" },
+          attrs: { rel: "stylesheet", href: `${base}assets/vis-timeline.css` },
           injectTo: "head",
         },
       ],

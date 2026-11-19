@@ -6,6 +6,7 @@
  * conversation's context size and cache hit are their own items
  * (`ContextStatus.tsx`, `CacheStatus.tsx`). */
 import { type ReactNode, useEffect, useState } from "react";
+import type { ReplyClock } from "../components/workspace/ChatWorkspace";
 import { useT } from "../i18n/locale";
 
 export function StatusItem({
@@ -91,15 +92,22 @@ export function formatElapsed(milliseconds: number): string {
     : `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
 }
 
+export function ReplyStatus({ clock }: { clock: ReplyClock }) {
+  const { t } = useT();
+  if (clock === "unavailable")
+    return (
+      <StatusItem tone="faint" role="status">
+        {t("Conversation activity unavailable.")}
+      </StatusItem>
+    );
+  return clock === "idle" ? null : (
+    <WorkingStatus since={clock} label={t("Working")} />
+  );
+}
+
 /** A live reply: a spinner, its label and the time since the turn began.
  * `since` is the turn's recorded start (epoch ms); 0 shows no duration. */
-export function WorkingStatus({
-  since,
-  label,
-}: {
-  since: number;
-  label: string;
-}) {
+function WorkingStatus({ since, label }: { since: number; label: string }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!since) return;

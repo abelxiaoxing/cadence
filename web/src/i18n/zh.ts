@@ -3,7 +3,14 @@
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
   "Design choices": "设计选项",
-  "Use all recommendations": "采用全部推荐",
+  "Fill unanswered with recommendations": "为未回答的问题填入推荐项",
+  "Discard typed answer": "放弃未采用的回答",
+  "Choose answers": "选择答案",
+  "Review choices": "查看或修改选择",
+  "{answered} of {total} questions answered":
+    "已回答 {answered} / {total} 个问题",
+  "Submitting answers requests a plan, not implementation.":
+    "提交后将根据你的选择生成实施计划，不会开始实施。",
   "Plan identity": "计划标识",
   Questions: "问题",
   Recommended: "推荐",
@@ -71,14 +78,38 @@ export const zh = {
     "模型选择结果尚未确认，请读取当前模型后再决定是否重新选择。",
 
   "Recorded history could not be read.": "暂时无法读取历史证据。",
+  "Recorded history unavailable: {reason}.": "无法读取历史记录：{reason}。",
+  "History workspace does not match the selected owner":
+    "历史工作区与所选执行服务不匹配",
+  "History anchor does not match the selected workspace":
+    "历史链接与所选工作区不匹配",
+  "History identity not confirmed": "未能确认历史工作区的身份",
   "Reading recorded history…": "正在读取历史证据…",
   "The context changed ({code}). Read the current state before trying this action again.":
     "上下文已变化（{code}）。请先读取当前状态，再决定是否重新操作。",
   "Observation status": "状态读取",
+  "Connection status: {state}": "连接状态：{state}",
+  "Updating state…": "正在更新状态…",
+  "Task up to date": "任务状态已更新",
+  "Execution stopped": "执行服务已停止",
+  "Execution not started": "执行服务尚未启动",
+  "Browsing only": "仅浏览",
+  "Last known state": "仅有上次读取的状态",
+  "Sign-in required": "需要重新登录",
+  "Sign in again": "重新登录",
+  "Viewer access not confirmed": "未能确认此入口可连接执行服务",
+  "No recent update from the task connection": "最近未收到任务实时连接的更新",
+  "The task connection closed": "任务实时连接已关闭",
+  stopped: "已停止",
+  "Waiting for current state from this connection.":
+    "正在等待此连接返回最新状态。",
+  "This owner is running independently. Browsing history does not connect it to this workbench.":
+    "执行服务正在独立运行。浏览历史不会将它关联到此工作台。",
   "Latest state unavailable.": "当前无法获取最新状态。",
   "Started work may still be running. No message is resent.":
     "已开始的工作可能仍在运行，不会重发消息。",
   "Diagnostic details": "诊断详情",
+  "Workbench observation: {code}.": "工作台入口读取：{code}。",
   "Viewer observation: {code}.": "页面状态读取：{code}。",
   "Context changed. Read the current state before confirming a plan.":
     "上下文已变化，请先读取当前状态，再确认计划。",
@@ -272,8 +303,6 @@ export const zh = {
     "输入消息，发送前请选择文件夹…",
   "Choose a folder before sending.": "发送前请选择文件夹。",
   "Returning to your last folder {path}…": "正在返回上次的文件夹 {path}…",
-  "Could not restore {path}. Choose a folder to continue; nothing was started.":
-    "无法恢复 {path}，请选择文件夹以继续；没有启动任何服务。",
   "Choose a folder on the service host. Conversations stay with their folder and running work continues. Nothing starts until you send.":
     "选择服务所在主机上的文件夹。会话保留在原文件夹中，运行中的工作不受影响；仅在发送消息时按需启动执行服务。",
   "Connecting…": "正在连接…",
@@ -289,6 +318,13 @@ export const zh = {
     "消息未被接受（{code}）。草稿已保留。",
   "Send outcome is unknown ({code}). Observe the original command before sending again; no automatic retry.":
     "发送结果未知（{code}）。再次发送前请观察原命令的结果；不会自动重试。",
+  "Conversation context: {code}.": "对话上下文：{code}。",
+  "Conversation read: {code}.": "对话读取：{code}。",
+  "Project directories: {code}.": "项目目录：{code}。",
+  "Conversation activity: {code}.": "活跃对话：{code}。",
+  "Workflow activity: {code}.": "活跃工作流：{code}。",
+  "Recorded workflows: {code}.": "已记录的工作流：{code}。",
+  "Workflow observation: {code}.": "工作流观察：{code}。",
   "Project observation: {code}.": "项目观察：{code}。",
   "Project readiness unknown": "项目准备状态未知",
   "Project observation stale": "项目观察已过期",
@@ -591,6 +627,9 @@ export const zh = {
   "No execution result is inferred. Reconnect to observe the owner; accepted work continues.":
     "不会推断任何执行结果。重新连接以观察所有者服务；已接受的工作会继续进行。",
   "Reload observation": "重新加载观察",
+  "The choices changed before this answer was saved.":
+    "保存前选项已变化，本次答案未保存。",
+  Connection: "连接",
 
   // Conversation-first workspace
   "Build information": "构建信息",
@@ -900,6 +939,12 @@ export const zh = {
   "Inspect full retained {field}": "查看完整保留的{field}",
 
   // Transcript and tools
+  Command: "命令",
+  Arguments: "参数",
+  "Copy tool summary": "复制工具摘要",
+  "Copy command": "复制命令",
+  "Copy arguments": "复制参数",
+  "Copy output": "复制输出",
   "Copy displayed text": "复制显示的文本",
   "Copy unavailable": "无法复制",
   "Copy message": "复制消息",

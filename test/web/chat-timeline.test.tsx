@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { newDesign, reviseDesign } from "../../src/service/contracts/design.ts";
 import {
   type ChatStep,
   type ChatTreeNode,
@@ -27,6 +28,8 @@ import {
 } from "../../web/src/client/conversation-reader";
 import { useConversation } from "../../web/src/client/use-conversation";
 import { useWorkbench } from "../../web/src/client/use-workbench";
+import { ActionDialog } from "../../web/src/components/actions/ActionDialog";
+import { CopyButton } from "../../web/src/components/rich/CopyButton";
 import { MarkdownBody } from "../../web/src/components/rich/Markdown";
 import { StreamMarkdown } from "../../web/src/components/StreamMarkdown";
 import { CollapsibleHead } from "../../web/src/components/transcript/CollapsibleHead";
@@ -37,11 +40,21 @@ import {
   ToolStep,
 } from "../../web/src/components/workspace/ChatSteps";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatTurnView";
+import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatWorkspace } from "../../web/src/components/workspace/ChatWorkspace";
+import { DesignCard } from "../../web/src/components/workspace/DesignCard";
+import { FileChangeCard } from "../../web/src/components/workspace/FileChangeCard";
 import { QuestionRail } from "../../web/src/components/workspace/QuestionRail";
+import { RetainedStepResult } from "../../web/src/components/workspace/RetainedStepResult";
 import { useStepDetail } from "../../web/src/components/workspace/turn-source";
+import { WaitingMessages } from "../../web/src/components/workspace/WaitingMessages";
 import { WorkflowAgentView } from "../../web/src/components/workspace/WorkflowAgentView";
-import { WorkflowLine } from "../../web/src/components/workspace/WorkflowPanel";
+import {
+  WorkflowCard,
+  WorkflowLine,
+} from "../../web/src/components/workspace/WorkflowPanel";
+import { translate } from "../../web/src/i18n/locale";
+import { designQuestionsFixture } from "../helpers/design-questions.ts";
 import {
   type IndependentCase,
   type IndependentCheckpoint,
@@ -121,6 +134,11 @@ const workspace = vi.hoisted(() => ({
   nodes: [] as ChatTreeNode[],
   runs: new Map<string, WorkflowRun>(),
   no: () => {},
+  mockWorkbench: false,
+  modeActive: false,
+  design: undefined as ReturnType<typeof newDesign> | undefined,
+  refreshMode: vi.fn(),
+  modeError: "",
   t: (key: string) => key,
 }));
 vi.mock("../../web/src/client/use-conversation", async (original) => {
@@ -139,9 +157,16 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
   return {
     ...actual,
     useWorkbench: (...args: Parameters<typeof useWorkbench>) =>
-      workspace.conversation
+      workspace.mockWorkbench
         ? {
-            refresh: workspace.no,
+            refresh:
+              args[1]?.kind === "cadence-conversation"
+                ? workspace.refreshMode
+                : workspace.no,
+            error:
+              args[1]?.kind === "cadence-conversation"
+                ? workspace.modeError
+                : undefined,
             value:
               args[1]?.kind === "conversation-context"
                 ? {
@@ -157,8 +182,9 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
                     kind: "cadence-conversation",
                     state: {
                       id: "chat",
-                      enabled: false,
-                      revision: 0,
+                      enabled: workspace.modeActive,
+                      design: workspace.design,
+                      revision: workspace.design?.revision ?? 0,
                       runs: [],
                       head: null,
                       proposal: null,
@@ -242,6 +268,12 @@ afterEach(() => {
   hooks.effects.clear();
   children.clear();
   workspace.conversation = undefined;
+  workspace.mockWorkbench = false;
+  workspace.modeActive = false;
+  workspace.design = undefined;
+  workspace.refreshMode.mockReset();
+  workspace.modeError = "";
+  workspace.t = (key: string) => key;
   workspace.nodes = [];
   workspace.runs = new Map();
   vi.unstubAllGlobals();
@@ -463,20 +495,20 @@ it("conversation navigation hides the previous observation and its actions befor
       },
     }),
   };
-  render(() => useConversation(client, "first", true));
+  render(() => useConversation(client, "first", true, null));
   commit();
-  render(() => useConversation(client, "first", true));
+  render(() => useConversation(client, "first", true, null));
   commit();
   await vi.advanceTimersByTimeAsync(0);
   expect(
-    render(() => useConversation(client, "first", true)).summary,
+    render(() => useConversation(client, "first", true, null)).summary,
   ).toBeNull();
-  const next = render(() => useConversation(client, "next", true));
+  const next = render(() => useConversation(client, "next", true, null));
   expect(next.summary).toBeUndefined();
   expect(next.turns).toEqual([]);
   next.choose("old-branch"); // No retired reader is exposed before initialization.
   commit();
-  expect(render(() => useConversation(client, "next", true)).pinned).toBe(
+  expect(render(() => useConversation(client, "next", true, null)).pinned).toBe(
     false,
   );
 });
@@ -498,16 +530,166 @@ function elements<P = { children?: ReactNode }>(
     ...elements<P>(node.props.children, type),
   ];
 }
+it("presents one batch after settlement, preserves dismissal across edits and only submits on click", () => {
+  let draft = newDesign(crypto.randomUUID(), {
+    questions: designQuestionsFixture,
+  });
+  const onSubmit = vi.fn();
+  const card = (disabled = false) =>
+    render(() =>
+      DesignCard({
+        draft,
+        active: true,
+        disabled,
+        onSubmit,
+        onEdit: (answers) => {
+          draft = reviseDesign(draft, answers, false);
+        },
+      }),
+    );
+  const dialog = (node: ReactNode) =>
+    elements<ComponentProps<typeof ActionDialog>>(node, ActionDialog)[0];
+  const button = (node: ReactNode, label: string) =>
+    required(
+      elements<{ children: ReactNode; onClick(): void }>(node, "button").find(
+        (e) => e.props.children === label,
+      ),
+    ).props;
+  expect(dialog(card(true))).toBeUndefined();
+  commit();
+  card();
+  commit();
+  dialog(card()).props.onClose?.();
+  draft = { ...draft, revision: draft.revision + 1 };
+  expect(dialog(card())).toBeUndefined();
+  button(card(), "Choose answers").onClick();
+  elements<{ type: string; onChange(): void }>(card(), "input")
+    .filter((e) => e.props.type === "radio")[1]
+    .props.onChange();
+  expect(draft.answers).toEqual([
+    { question: "surface", option: "everywhere" },
+  ]);
+  button(card(), "Fill unanswered with recommendations").onClick();
+  expect(draft.answers).toHaveLength(3); // preserves the explicit answer and unlocks its dependent question
+  expect(onSubmit).not.toHaveBeenCalled();
+  button(
+    card(),
+    "Submit design and use recommendations for unanswered questions",
+  ).onClick();
+  expect(onSubmit).toHaveBeenCalledExactlyOnceWith({
+    ...draft,
+    submitted: true,
+    revision: draft.revision + 1,
+  });
+  expect(dialog(card())).toBeUndefined();
+});
+
+it.each([
+  {
+    tool: "bash",
+    label: "Copy command",
+    args: { command: "  specimen\n\tmineral  \n" },
+    displayed: "  specimen\n\tmineral  \n",
+    tag: "code",
+  },
+  {
+    tool: "bash",
+    label: "Copy arguments",
+    args: { path: "opal" },
+    displayed: '{\n  "path": "opal"\n}',
+    tag: "pre",
+  },
+  {
+    tool: "edit",
+    label: "Copy arguments",
+    args: { path: "a.ts", edits: [{ oldText: "keep" }] },
+    displayed: JSON.stringify(
+      { path: "a.ts", edits: [{ oldText: "keep" }] },
+      null,
+      2,
+    ),
+    tag: "pre",
+  },
+])(
+  "ToolStep keeps the $tool summary, $label and output distinct through lazy expansion",
+  async ({ tool, label, args, displayed, tag }) => {
+    const { turn, step, detail, requests } = fixture();
+    step.name = tool;
+    step.target = "summary only";
+    const draw = () => {
+      const tree = render(() => ToolStep({ turn, index: 0, step }));
+      commit();
+      const head = elements<ComponentProps<typeof CollapsibleHead>>(
+        tree,
+        CollapsibleHead,
+      )[0].props;
+      const buttons = elements<ComponentProps<typeof CopyButton>>(
+        [head.after, tree],
+        CopyButton,
+      );
+      return {
+        tree,
+        head,
+        copies: buttons.map((b) => [b.props.label, b.props.text]),
+      };
+    };
+    const summary = ["Copy tool summary", step.target];
+    const closed = draw();
+    expect(closed.copies).toEqual([summary]);
+    expect(detail).not.toHaveBeenCalled();
+    closed.head.onToggle();
+    expect(draw().copies).toEqual([summary]);
+    const text = "recorded output\n";
+    requests[0].resolve({ args: JSON.stringify(args), text });
+    await settle();
+    const open = draw();
+    expect(elements(open.tree, tag)[0].props.children).toBe(displayed);
+    expect(elements(open.tree, FileChangeCard)).toHaveLength(0);
+    const spans = elements<{ className?: string }>(open.tree, "span");
+    for (const name of ["file-diff-stat-badge", "add", "del"])
+      expect(spans.map((s) => s.props.className)).not.toContain(name);
+    expect(open.copies).toEqual([
+      summary,
+      [label, displayed],
+      ["Copy output", text],
+    ]);
+    open.head.onToggle();
+    expect(draw().copies).toEqual([summary]);
+    expect(detail).toHaveBeenCalledTimes(1);
+  },
+);
 // The real workflow component owns recordedTurn and the detail closure. Only
 // transport replies and hook scheduling are controlled here; no backend import,
 // persisted-file claim, or hand-written replacement detail function.
 function workflowAgentFixture() {
   vi.useFakeTimers();
+  // Clamp like a scrollport, but deliver scroll/resize separately: a scroll
+  // event need not arrive in the same layout as the write that caused it.
+  let top = 0;
+  const root = {
+    scrollHeight: 2000,
+    clientHeight: 600,
+    get scrollTop() {
+      return top;
+    },
+    set scrollTop(y: number) {
+      top = Math.min(y, this.scrollHeight - this.clientHeight);
+    },
+  };
+  const bodyElement = {};
+  let resized: (() => void) | undefined;
+  let scrolled: (() => void) | undefined;
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      observe() {}
-      disconnect() {}
+      constructor(readonly callback: () => void) {}
+      observe(el: unknown) {
+        expect(el).toBe(bodyElement);
+        resized = this.callback;
+      }
+      disconnect() {
+        resized = undefined;
+      }
     },
   );
   const runId = crypto.randomUUID(),
@@ -635,6 +817,22 @@ function workflowAgentFixture() {
       const body = (wrapper.type as (p: typeof props) => ReactNode)(
         wrapper.props,
       );
+      const messages = required(
+        elements<{
+          className?: string;
+          ref: { current: unknown };
+          children: ReactNode;
+          onScroll(event: { currentTarget: typeof root }): void;
+        }>(body, "div").find((el) => el.props.className === "chat-messages"),
+      );
+      messages.props.ref.current = root;
+      required(
+        elements<{ ref: { current: unknown } }>(
+          messages.props.children,
+          "div",
+        )[0],
+      ).props.ref.current = bodyElement;
+      scrolled = () => messages.props.onScroll({ currentTarget: root });
       commit();
       return body;
     });
@@ -703,9 +901,120 @@ function workflowAgentFixture() {
     reads,
     pending,
     draw,
+    root,
+    resize: () => required(resized)(),
+    scroll: () => required(scrolled)(),
+    latest: () =>
+      elements<{ className?: string; onClick(): void }>(
+        draw().tree,
+        "button",
+      ).find((el) => el.props.className === "scroll-bottom")?.props,
     tool: () => required(draw().tool),
   };
 }
+
+// Inspect the shared renderer reached from each real view, including the text
+// handed to CopyButton (not a copy of the preview or a separate fetch).
+function displayedFiles(tree: ReactNode) {
+  return elements<ComponentProps<typeof RetainedStepResult>>(
+    tree,
+    RetainedStepResult,
+  ).map(({ props }) => {
+    const body = RetainedStepResult(props);
+    const buttons = elements<ComponentProps<typeof CopyButton>>(
+      body,
+      CopyButton,
+    );
+    const pre = elements(body, "pre");
+    expect(pre).toHaveLength(1);
+    expect(elements(pre[0], CopyButton)).toHaveLength(0);
+    expect(buttons.map((b) => [b.props.label, b.props.text])).toEqual([
+      ["Copy output", pre[0].props.children],
+    ]);
+    return pre[0].props.children;
+  });
+}
+
+it("the overview offers the selected step's returned file only, not its preview or a late read", async () => {
+  const f = workflowAgentFixture();
+  const props = { client: f.props.client, id: f.props.agent.runId };
+  const wrapper = WorkflowCard(props);
+  const draw = () => {
+    const tree = render(() =>
+      (wrapper.type as (p: typeof props) => ReactNode)(props),
+    );
+    commit();
+    return tree;
+  };
+  draw();
+  const reply = f.run();
+  if (reply.kind !== "workflow" || reply.response.type !== "run")
+    throw Error("run fixture");
+  const steps = reply.response.run.steps;
+  steps[0].text = "First preview";
+  steps.push({ ...steps[0], id: "second", text: "Second preview" });
+  f.pending("workflow").reply(reply);
+  await settle();
+  const read = (tree: ReactNode, index: number) =>
+    elements<{ children: ReactNode; onClick(): void }>(tree, "button")
+      .filter((b) => b.props.children === "Read retained step result")
+      [index].props.onClick();
+  const closed = draw();
+  expect(f.reads("workflow-detail")).toHaveLength(0);
+  expect(displayedFiles(closed)).toEqual([]);
+  read(closed, 0);
+  const pending = draw();
+  const old = f.pending("workflow-detail");
+  expect(displayedFiles(pending)).toEqual([]);
+  read(pending, 1);
+  expect(displayedFiles(draw())).toEqual([]);
+  expect(old.signal?.aborted).toBe(true);
+  const next = f.pending("workflow-detail");
+  expect(next.read).toEqual({
+    kind: "workflow-detail",
+    id: props.id,
+    stepId: "second",
+  });
+  const text = "  second file\n\tfinal line  \n";
+  next.reply({ kind: "file", path: "second.txt", limited: false, text });
+  old.reply({ kind: "file", path: "first.txt", limited: false, text: "late" });
+  await settle();
+  expect(displayedFiles(draw())).toEqual([text]);
+  expect(f.reads("workflow-detail")).toHaveLength(2);
+});
+
+it("an open subagent result copies the current file including its final refresh; folding removes it", async () => {
+  const f = workflowAgentFixture();
+  f.draw();
+  f.pending("workflow").reply(f.run());
+  await settle();
+  const closed = f.draw();
+  expect(displayedFiles(closed.tree)).toEqual([]);
+  required(closed.result).onClick();
+  expect(displayedFiles(f.draw().tree)).toEqual([]);
+  const file = {
+    kind: "file" as const,
+    path: "result",
+    limited: false,
+    text: "  first  \n",
+  };
+  f.pending("workflow-detail").reply(file);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(displayedFiles(f.draw().tree)).toEqual([file.text]);
+  const obsolete = f.pending("workflow-detail");
+  f.pending("workflow").reply(f.run("failed"));
+  await settle();
+  f.draw();
+  expect(obsolete.signal?.aborted).toBe(true);
+  const text = "  failed step\n\tfinal result  \n";
+  f.pending("workflow-detail").reply({ ...file, text });
+  await settle();
+  const final = f.draw();
+  expect(displayedFiles(final.tree)).toEqual([text]);
+  required(final.result).onClick();
+  expect(displayedFiles(f.draw().tree)).toEqual([]);
+  expect(f.reads("workflow-detail")).toHaveLength(3);
+});
 
 it.each(["completed", "failed", "canceled", "unknown"] as const)(
   "WorkflowAgentView polls equal-part tool snapshots, keeps expanded output until refreshed, and reads a final %s snapshot",
@@ -784,6 +1093,56 @@ it.each(["completed", "failed", "canceled", "unknown"] as const)(
     expect(final.turn?.detail).toHaveBeenCalledTimes(1);
   },
 );
+
+it("workflow transcript polls respect the reading offset; only resizing while following or Latest moves it", async () => {
+  const f = workflowAgentFixture();
+  f.draw();
+  const reply = async (output: string) => {
+    f.pending("workflow").reply(f.run());
+    f.pending("workflow-transcript").reply(f.snapshot(output));
+    await vi.advanceTimersByTimeAsync(0);
+    f.draw();
+  };
+  await reply("first");
+  f.resize();
+  f.scroll();
+  expect(f.root.scrollTop).toBe(1400);
+  f.root.scrollTop -= 48;
+  f.scroll();
+  for (const output of ["second", "third"]) {
+    await vi.advanceTimersByTimeAsync(1000);
+    await reply(output);
+    expect(f.root.scrollTop).toBe(1352);
+    expect(f.latest()).toBeUndefined();
+  }
+  f.root.scrollHeight += 200;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1600);
+  // More layout before the event from the last follow write arrives.
+  f.root.scrollHeight += 100;
+  f.scroll();
+  f.resize();
+  f.scroll();
+  expect(f.root.scrollTop).toBe(1700);
+  f.root.scrollTop -= 80;
+  f.scroll();
+  f.root.scrollHeight += 100;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1620);
+  // A shrink can put the same reading offset back inside the threshold. A
+  // late event there is not a request to jump on the next growth.
+  f.root.scrollHeight -= 150;
+  f.scroll();
+  f.root.scrollHeight += 150;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1620);
+  required(f.latest()).onClick();
+  expect(f.root.scrollTop).toBe(1800);
+  expect(f.latest()).toBeUndefined();
+  f.root.scrollHeight += 100;
+  f.resize();
+  expect(f.root.scrollTop).toBe(1900);
+});
 
 it("closed workflow tool and step-result details remain lazy through updates and settlement", async () => {
   const f = workflowAgentFixture();
@@ -910,11 +1269,7 @@ it.each(["client", "run", "step"] as const)(
     expect(settled.tool?.output).toContain("current tool output");
     expect(settled.tool?.output).not.toContain("late old tool output");
     expect(settled.turn?.header.status).toBe("running");
-    expect(
-      elements<{ children?: ReactNode }>(settled.tree, "pre").map(
-        (pre) => pre.props.children,
-      ),
-    ).toEqual(["current step result"]);
+    expect(displayedFiles(settled.tree)).toEqual(["current step result"]);
   },
 );
 
@@ -1007,6 +1362,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
   }
   vi.stubGlobal("ResizeObserver", Observer);
   const conversation: ReturnType<typeof useConversation> = {
+    observation: { epoch: "epoch", attachmentVersion: 1 },
     summary: {
       id: "chat",
       title: "Fixture",
@@ -1033,6 +1389,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
     loadEarlier: vi.fn(),
     showFrom: vi.fn(),
   };
+  workspace.mockWorkbench = true;
   workspace.conversation = conversation;
   workspace.nodes = turns.map((turn, i) => ({
     id: turn.header.id,
@@ -1094,7 +1451,10 @@ function workspaceFixture(turns: LoadedTurn[]) {
   >();
   const onActivity = vi.fn();
   let tree: ReactNode;
-  const draw = (hidden = false) => {
+  const draw = (
+    hidden = false,
+    props: Partial<ComponentProps<typeof ChatWorkspace>> = {},
+  ) => {
     tree = render(() =>
       ChatWorkspace({
         client: client as never,
@@ -1112,6 +1472,7 @@ function workspaceFixture(turns: LoadedTurn[]) {
         onModelChanged: workspace.no,
         onChanged: workspace.no,
         onReferenceUsed: workspace.no,
+        ...props,
       }),
     );
     const messages = required(
@@ -1193,6 +1554,36 @@ function workspaceFixture(turns: LoadedTurn[]) {
   };
 }
 
+it("a stale choice refreshes the open design without resubmitting or requiring a page reload", async () => {
+  const f = workspaceFixture([]);
+  workspace.modeActive = true;
+  const original = newDesign(crypto.randomUUID(), {
+    questions: designQuestionsFixture,
+  });
+  workspace.design = original;
+  const updated = reviseDesign(
+    original,
+    [{ question: "surface", option: "everywhere" }],
+    false,
+  );
+  const card = () =>
+    elements<ComponentProps<typeof DesignCard>>(f.draw().tree, DesignCard)[0]
+      .props;
+  const displayed = card();
+  f.client.workbenchCommand.mockResolvedValueOnce({
+    kind: "error",
+    error: publicError("stale", "none"),
+  });
+  workspace.refreshMode.mockImplementationOnce(() => {
+    workspace.design = updated;
+  });
+  await displayed.onEdit([]);
+  expect(workspace.refreshMode).toHaveBeenCalledOnce();
+  expect(card()).toMatchObject({ draft: updated, disabled: false });
+  await displayed.onEdit([]); // an event retained from the previous render
+  expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
+});
+
 it("a starting turn is navigable, accepts only in-reply input, and Stop names that exact run", async () => {
   vi.useFakeTimers();
   const prior = loaded("prior", undefined, 0);
@@ -1209,7 +1600,7 @@ it("a starting turn is navigable, accepts only in-reply input, and Stop names th
   const f = workspaceFixture([prior, start]);
   // The browser turn exists before Pi lists it in the branch tree.
   workspace.nodes.pop();
-  const live = { commandId: start.header.id, epoch: "this-owner" };
+  const live = { commandId: start.header.id, epoch: "epoch" };
   Object.assign(required(f.conversation.summary), { status: "starting", live });
   const initial = f.draw();
   expect(initial.rail.questions.map((q) => q.id)).toEqual([
@@ -1220,7 +1611,7 @@ it("a starting turn is navigable, accepts only in-reply input, and Stop names th
   expect(initial.rows[0].view.props.onEdit).toBeUndefined();
   expect(f.onActivity).toHaveBeenLastCalledWith(
     expect.objectContaining({
-      reply: { status: "starting", since: start.header.at },
+      replyClock: start.header.at,
     }),
   );
   for (const mode of ["steer", "queue"] as const) {
@@ -1325,6 +1716,291 @@ it.each(["none", "uncertain"] as const)(
     await vi.advanceTimersByTimeAsync(10000);
     f.draw();
     expect(f.client.workbenchCommand).toHaveBeenCalledTimes(1);
+  },
+);
+
+// Only auxiliary workbench reads are stubbed. The workspace consumes the real
+// hook/reader; each transport Promise settles on request, even after abort.
+it.each([
+  { change: "paused history", held: "head" },
+  { change: "readable without owner", held: "turn" },
+  { change: "attachment version", held: "turn" },
+  { change: "epoch", held: "head" },
+])(
+  "$change fences a late $held before the new complete observation",
+  async ({ change, held }) => {
+    vi.useFakeTimers();
+    const turn = loaded("live", "live:user", 0);
+    const f = workspaceFixture([turn]);
+    workspace.conversation = undefined;
+    const requests: {
+      read: WorkbenchRead;
+      signal: AbortSignal;
+      resolve(value: WorkbenchResult): void;
+      reject(error: Error): void;
+    }[] = [];
+    Object.assign(f.client, {
+      workbenchRead: (read: WorkbenchRead, signal: AbortSignal) =>
+        new Promise((resolve, reject) =>
+          requests.push({
+            read,
+            signal,
+            resolve: (value) => resolve({ kind: "ok", value }),
+            reject,
+          }),
+        ),
+    });
+    const take = (kind: WorkbenchRead["kind"]) => {
+      const pending = required(requests.shift());
+      expect(pending.read).toMatchObject({ kind, leaf: "leaf" });
+      return pending;
+    };
+    // No summary.live, so an epoch check on that optional field cannot help.
+    const head: WorkbenchResult = {
+      kind: "conversation",
+      leaf: "leaf",
+      continues: true,
+      turns: 1,
+      branches: 2,
+      runs: [],
+      attempt: null,
+      summary: { ...required(f.conversation.summary), status: "running" },
+    };
+    const body = (text: string): WorkbenchResult => ({
+      kind: "conversation-turn",
+      conversationId: "chat",
+      leaf: "leaf",
+      ordinal: 0,
+      start: 0,
+      turn: { ...turn.header, activity: { kind: "thinking", sequence: 1 } },
+      steps: turn.steps.map((s) =>
+        s.role === "assistant" ? { ...s, text } : s,
+      ),
+    });
+    // Flush microtasks at a fixed fake instant; no poll interval is advanced.
+    const flush = () => vi.advanceTimersByTimeAsync(0);
+    const acceptHead = async () => {
+      take("conversation").resolve(head);
+      await flush();
+    };
+    const acceptTurn = async (text: string) => {
+      take("conversation-turn").resolve(body(text));
+      await flush();
+    };
+    const onActivity =
+      vi.fn<NonNullable<ComponentProps<typeof ChatWorkspace>["onActivity"]>>();
+    const prepare = vi.fn(async () => {});
+    const props: Partial<ComponentProps<typeof ChatWorkspace>> = {
+      initialLeaf: "leaf",
+      available: true,
+      enabled: false,
+      onActivity,
+      prepareForPlan: prepare,
+      prepareForSend: prepare,
+    };
+    const draw = () => f.draw(false, props);
+    const check = (flow: boolean, text: string) => {
+      const view = draw();
+      expect(view.composer.flow).toBe(flow);
+      expect(onActivity.mock.lastCall?.[0].replyClock).toBe(
+        flow ? turn.header.at : "unavailable",
+      );
+      expect(view.rows[0].view.props.turn.steps[1].text).toBe(text);
+      expect(view.composer.draft).toBe("keep this draft");
+      expect(f.root.scrollTop).toBe(1234);
+      expect(requests).toHaveLength(0);
+      return view.rows[0].view.props.turn;
+    };
+    draw(); // Mount, then activate the reader.
+    draw();
+    await acceptHead();
+    await acceptTurn("displayed");
+    const shown = draw();
+    expect(shown.composer.flow).toBe(true); // Send is not observation.
+    shown.composer.onDraft("keep this draft");
+    f.root.scrollTop = 1234;
+    shown.scroll();
+    props.observe = 1;
+    draw(); // Start a sync which the transport will not finish on abort.
+    if (held === "turn") await acceptHead();
+    const obsolete = take(
+      held === "turn" ? "conversation-turn" : "conversation",
+    );
+    let retained = "displayed";
+    if (change === "paused history") {
+      props.available = false;
+      check(false, retained);
+      props.available = true;
+    } else if (change === "readable without owner") {
+      props.modelAvailability = { status: "unavailable" };
+      expect(draw().composer.flow).toBe(false);
+      await acceptHead();
+      retained = "readable history";
+      await acceptTurn(retained);
+      check(false, retained);
+      delete props.modelAvailability; // Reattach with exactly the original IDs.
+    } else {
+      props.modelAvailability = {
+        status: "ready",
+        epoch: change === "epoch" ? "next" : "epoch",
+        attachmentVersion: change === "epoch" ? 1 : 2,
+      };
+    }
+    // This render, not a later render after the effect, already hides live UI.
+    expect(draw().composer.flow).toBe(false);
+    const current = take("conversation"); // Replacement starts without manual Refresh.
+    expect(obsolete.signal.aborted).toBe(true);
+    check(false, retained);
+    const lateFailure = change === "epoch";
+    if (!lateFailure) {
+      obsolete.resolve(
+        held === "turn"
+          ? body("obsolete")
+          : { ...head, turns: 0, summary: null },
+      );
+      await flush();
+      check(false, retained);
+    }
+    current.resolve(head);
+    await flush();
+    const lastPage = take("conversation-turn");
+    check(false, retained);
+    lastPage.resolve(body("current"));
+    await flush();
+    const confirmed = check(true, "current");
+    if (lateFailure) {
+      obsolete.reject(new Error("obsolete failure"));
+      await flush();
+      check(true, "current");
+    }
+    // A current read error, unlike a retired one, does invalidate activity.
+    props.observe++;
+    draw();
+    await acceptHead();
+    take("conversation-turn").reject(new Error("read failed"));
+    await flush();
+    expect(check(false, "current")).toBe(confirmed);
+    props.observe++;
+    draw();
+    await acceptHead();
+    await acceptTurn("recovered");
+    check(true, "recovered");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+  },
+);
+
+it("passes flow only for thinking or tool activity of the last running turn on the observed branch", () => {
+  const turn = loaded("live", "live:user", 0);
+  const f = workspaceFixture([turn]);
+  const view = f.conversation;
+  const summary = { ...required(view.summary), status: "running" as const };
+  view.summary = summary;
+  const flow = () => f.draw().composer.flow;
+  for (const kind of ["waiting", "text", "tool", "thinking"] as const) {
+    turn.header.activity = { kind, sequence: 2 };
+    expect(flow()).toBe(kind === "tool" || kind === "thinking");
+  }
+  view.summary = {
+    ...required(view.summary),
+    live: { epoch: "old", commandId: "old" },
+  };
+  expect(flow()).toBe(false);
+  view.summary = { ...required(view.summary), live: undefined, id: "other" };
+  expect(flow()).toBe(false);
+  view.summary = { ...required(view.summary), id: "chat", status: "completed" };
+  expect(flow()).toBe(false);
+  view.summary = summary;
+  view.count++;
+  expect(flow()).toBe(false); // Last displayed turn isn't the branch's last turn.
+  view.count--;
+  turn.header.status = "completed";
+  expect(flow()).toBe(false);
+  view.summary = undefined; // Branch change awaiting its first head.
+  expect(flow()).toBe(false);
+});
+
+it.each(["en", "zh"] as const)(
+  "%s: composer hint prioritizes unobserved mode over retained on or next-Send intent",
+  (locale) => {
+    workspace.t = (key) => translate(locale, key);
+    const f = workspaceFixture([loaded("one", undefined, 0)]);
+    for (const active of [false, true]) {
+      workspace.modeActive = active;
+      for (const slash of [false, true]) {
+        f.draw().composer.onDraft(
+          slash ? "/cadence specimen" : "ordinary message",
+        );
+        workspace.modeError = "unavailable";
+        const unknown = f.draw().composer;
+        expect(unknown.hint).toBe(
+          locale === "en" ? "Cadence state unavailable" : "Cadence 状态未确认",
+        );
+        expect(unknown.cadence).toMatchObject({
+          known: false,
+          active,
+          armed: active || slash,
+        });
+        if (!active && !slash) expect(unknown.canSend).toBe(true);
+        workspace.modeError = "";
+        const known = f.draw().composer;
+        expect(known.hint).toBe(
+          active
+            ? translate(
+                locale,
+                "Cadence stays on. Confirm one plan before implementation.",
+              )
+            : slash
+              ? translate(locale, "Your next message turns on Cadence mode.")
+              : "",
+        );
+        expect(f.client.workbenchCommand).not.toHaveBeenCalled();
+      }
+    }
+  },
+);
+
+it.each(["failed", "canceled"] as const)(
+  "an unsaved first %s attempt is a reading scene, not an empty Hero",
+  (status) => {
+    const f = workspaceFixture([]);
+    Object.assign(f.conversation, {
+      summary: null,
+      count: 0,
+      leaf: null,
+      branches: 0,
+    });
+    expect(elements(f.draw().tree, ChatWelcome)).toHaveLength(1);
+    const attempt = {
+      commandId: "first",
+      status,
+      text: "First specimen",
+      notice: "Not saved",
+    };
+    f.conversation.attempt = attempt;
+    const { tree } = f.draw();
+    expect(elements(tree, ChatWelcome)).toHaveLength(0);
+    expect(
+      elements(tree, "p").some((el) => el.props.children === attempt.text),
+    ).toBe(true);
+    expect(
+      elements(tree, "span").some((el) => el.props.children === status),
+    ).toBe(true);
+    f.conversation.attempt = null;
+    f.conversation.undelivered = [attempt];
+    const recovery = f.draw().tree;
+    expect(elements(recovery, ChatWelcome)).toHaveLength(0);
+    const waiting = elements<ComponentProps<typeof WaitingMessages>>(
+      recovery,
+      WaitingMessages,
+    )[0].props;
+    expect(waiting.undelivered).toEqual([attempt]);
+    expect(waiting.onRestore).toBeTypeOf("function");
+    f.conversation.undelivered = [];
+    f.conversation.pending = [
+      { commandId: "waiting", text: "Next specimen", mode: "queue" },
+    ];
+    expect(elements(f.draw().tree, ChatWelcome)).toHaveLength(0);
   },
 );
 
@@ -1733,6 +2409,61 @@ it("registered row resize follows without a new observation, respects the 80px i
   expect(observer.disconnect).toHaveBeenCalledTimes(1);
   expect(observer.targets.size).toBe(0);
   expect(f.frames.size).toBe(0);
+});
+
+it("a fresh poll with unchanged content leaves the visible near-end control in place; content growth still follows", () => {
+  const f = workspaceFixture([loaded("pi-user", "command:user", 0)]);
+  const view = f.draw();
+  const near = f.root.scrollHeight - f.root.clientHeight - 48;
+  f.root.scrollTop = near;
+  view.scroll();
+  // A new observation with the same settled turn, not reader input or growth.
+  f.conversation.turns = [...f.conversation.turns];
+  f.draw();
+  expect(f.root.scrollTop).toBe(near);
+  // The mounted row may be observed again after that render. Its initial
+  // resize delivery isn't evidence that the scrollable extent changed.
+  f.observers[0].resize(f.rowAt("pi-user").el);
+  expect(f.root.scrollTop).toBe(near);
+  // Growth outside the measured turn (e.g. a newly displayed queued input).
+  f.root.scrollHeight += 120;
+  f.draw();
+  expect(f.root.scrollTop).toBe(f.root.scrollHeight);
+  // A real scrollport resize also changes the end, without a taller row.
+  f.root.scrollTop = f.root.scrollHeight - f.root.clientHeight - 48;
+  view.scroll();
+  f.root.clientHeight -= 32;
+  f.observers[0].resize(f.root as unknown as Element);
+  expect(f.root.scrollTop).toBe(f.root.scrollHeight);
+});
+
+it("does not mistake a queued bottom-follow scroll for reader intent when lazy detail replaces its loading row", () => {
+  const f = workspaceFixture([loaded("pi-tool", undefined, 0)]);
+  const view = f.draw();
+  const row = f.rowAt("pi-tool");
+  // Model browser clamping and queued scroll delivery independently of RO.
+  let top = f.root.scrollHeight - f.root.clientHeight;
+  Object.defineProperty(f.root, "scrollTop", {
+    get: () => top,
+    set: (y: number) => {
+      top = Math.min(y, f.root.scrollHeight - f.root.clientHeight);
+    },
+  });
+  row.height += 48;
+  f.root.scrollHeight += 48;
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1448);
+  row.height += 428;
+  f.root.scrollHeight += 428;
+  view.scroll(); // The event for 1448 arrives after the detail layout.
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1876);
+  f.root.scrollTop -= 144; // A different offset really is the reader's scroll.
+  view.scroll();
+  f.root.scrollHeight += 300;
+  f.observers[0].resize(row.el);
+  expect(top).toBe(1732);
+  expect(f.draw().latest).toBeTypeOf("function");
 });
 
 it("up-scroll survives hiding and earlier-page anchoring, while user return to the bottom restores resize following", () => {

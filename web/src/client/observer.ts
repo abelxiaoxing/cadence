@@ -3,24 +3,54 @@ import {
   type ObservationState,
   ProjectionTracker,
 } from "../../../src/service-client.ts";
+import { compareSequence } from "../../../src/service-contract.ts";
 import type { Scope, WorkspaceBootstrap } from "../types";
 import type { BrowserClient } from "./browser";
+import { refusedAccess } from "./observation-read";
+
 export interface ViewerState {
   workspace?: WorkspaceBootstrap;
   epoch?: string;
   activeRuns?: import("../types").ActiveRuns;
+  /** This allocation has completed the latest requested HTTP observation.
+   * Independent of action capability and the selected task's live transport. */
+  readCurrent: boolean;
   actions: boolean;
   attached: boolean;
   observation?: ObservationState;
   transportStatus: "current" | "stale" | "closed";
   attachmentVersion: number;
+  /** Aborted synchronously on retirement, even before the next render. */
+  readonly allocationSignal?: AbortSignal;
   error?: string;
 }
-const revoked = (code: string) =>
-  code === "unauthenticated" || code === "forbidden";
+/** Denial belongs to the selected project/page, not one poll, scope or owner
+ * epoch. All its observation chains retire synchronously on the first refusal. */
+export class ObservationAccess {
+  private readonly controller = new AbortController();
+  readonly signal = this.controller.signal;
+  private denial?: { source: "entry" | "project" | "viewer"; code: string };
+  get refusal() {
+    return this.denial;
+  }
+  refuse(source: "entry" | "project" | "viewer", code: string) {
+    if (!refusedAccess(code) || this.refusal) return;
+    this.denial = { source, code };
+    this.controller.abort(new Error(code));
+  }
+  check() {
+    if (this.signal.aborted) throw this.signal.reason;
+  }
+  subscribe = (notify: () => void) => {
+    this.signal.addEventListener("abort", notify);
+    return () => this.signal.removeEventListener("abort", notify);
+  };
+  snapshot = () => this.refusal;
+}
 export class WorkspaceObserver {
   private serial: Promise<void> = Promise.resolve();
   private version = 0;
+  private attachmentVersion = 0;
   private stopCurrent: (() => void) | undefined;
   private pollCurrent: (() => void) | undefined;
   private latest: ViewerState | undefined;
@@ -33,36 +63,49 @@ export class WorkspaceObserver {
   whenReady(
     epoch: string,
     signal: AbortSignal,
-    minimumVersion = 0,
+    expectedVersion = 0,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const finish = (error?: Error) => {
         this.readiness.delete(check);
         signal.removeEventListener("abort", abort);
+        this.access.signal.removeEventListener("abort", abort);
         error ? reject(error) : resolve();
       };
       const check = (state: ViewerState) => {
-        if (this.version < minimumVersion || state.epoch !== epoch) return;
+        if (expectedVersion && this.version > expectedVersion)
+          return finish(new Error("stale"));
+        if (this.version < expectedVersion || state.epoch !== epoch) return;
         if (
           state.workspace?.epoch === epoch &&
+          state.readCurrent &&
           state.attached &&
           !state.error &&
-          state.transportStatus === "current"
+          state.transportStatus === "current" &&
+          (!state.observation || state.observation.connection === "current")
         )
           finish();
       };
       const abort = () =>
-        finish(new Error(this.latest?.error ?? "unavailable"));
-      if (signal.aborted) {
+        finish(
+          new Error(
+            this.access.refusal?.code ?? this.latest?.error ?? "unavailable",
+          ),
+        );
+      if (signal.aborted || this.access.signal.aborted) {
         abort();
         return;
       }
       this.readiness.add(check);
+      this.access.signal.addEventListener("abort", abort, { once: true });
       signal.addEventListener("abort", abort, { once: true });
       if (this.latest) check(this.latest);
     });
   }
-  constructor(private readonly api: BrowserClient) {}
+  constructor(
+    private readonly api: BrowserClient,
+    readonly access = new ObservationAccess(),
+  ) {}
   refresh(): void {
     this.pollCurrent?.();
   }
@@ -80,15 +123,25 @@ export class WorkspaceObserver {
     let tracker = new ProjectionTracker();
     let generation = 0;
     let socketVersion = 0;
-    let reading = false;
+    let reading: Promise<void> | undefined;
+    let storeId: string | undefined;
+    // An HTTP poll can repair the projection, not prove a task socket alive.
+    let socketError: string | undefined;
     let acquiring = false;
     let lastPoll = 0;
     // A failed read (e.g. a passive read fenced by publication) is observed
     // again soon rather than after the full reconcile period. Readonly only.
     let failed = false;
     let blocked = false;
+    let allocationPendingRelease = false;
+    let readDemand = 0;
+    let repairRevision = 0;
+    let repairNeeded = false;
+    let followup = false;
+    let minimumSeq = "0";
     let actionCapability = false;
     let state: ViewerState = {
+      readCurrent: false,
       actions: false,
       attached: false,
       transportStatus: "closed",
@@ -96,21 +149,49 @@ export class WorkspaceObserver {
     };
     this.latest = state;
     const current = () => !disposed && version === this.version;
+    const matchesOwner = (data: { epoch: string; storeId: string }) =>
+      data.epoch === state.epoch && data.storeId === storeId;
     const emit = () => {
       if (!current()) return;
-      this.latest = { ...state, observation: tracker.state };
+      const observation = tracker.state;
+      this.latest = {
+        ...state,
+        error: state.error ?? socketError,
+        observation,
+        actions:
+          state.readCurrent &&
+          state.actions &&
+          state.transportStatus === "current" &&
+          (!scope || observation?.connection === "current"),
+      };
       publish(this.latest);
       for (const check of this.readiness) check(this.latest);
+    };
+    const retire = () => {
+      socketVersion++;
+      abort.abort();
+      stopSocket?.();
+      stopSocket = undefined;
+      state = {
+        ...state,
+        attached: false,
+        readCurrent: false,
+        actions: false,
+        allocationSignal: undefined,
+      };
     };
     const stop = () => {
       if (disposed) return;
       disposed = true;
-      abort.abort();
+      this.access.signal.removeEventListener("abort", revoked);
+      retire();
       clearInterval(timer);
       clearTimeout(retry);
-      socketVersion++;
-      stopSocket?.();
-      if (version === this.version) this.pollCurrent = undefined;
+      if (version === this.version) {
+        this.pollCurrent = undefined;
+        this.latest = undefined;
+      }
+      if (!blocked) enqueue(detach);
     };
     this.stopCurrent = stop;
     // One serialized observation lifetime. Session retries reuse the transport's
@@ -122,12 +203,8 @@ export class WorkspaceObserver {
     const enqueue = (job: () => Promise<void>) => {
       this.serial = this.serial.then(job).catch((error: unknown) => {
         if (current() && !blocked) {
-          abort.abort();
-          socketVersion++;
-          stopSocket?.();
-          state.attached = false;
+          retire();
           state.error = error instanceof Error ? error.message : "unavailable";
-          state.actions = false;
           state.transportStatus = "stale";
           emit();
           retryAttachment();
@@ -147,190 +224,299 @@ export class WorkspaceObserver {
       });
     };
     const detach = async () => {
-      await this.api.transport.detach();
+      // A poll may already be reading this allocation's session body. Join
+      // its bounded, aborted read before releasing or replacing the viewer.
+      await reading;
+      const released = await this.api.transport.detach();
+      allocationPendingRelease = false;
+      // A final authenticated detach refusal concerns this project's access
+      // even when navigation has already queued the next scope's acquisition.
+      if (released?.kind === "error" && refusedAccess(released.error.code))
+        this.access.refuse("viewer", released.error.code);
     };
-    const poll = async (refreshSession = true) => {
-      if (!current() || !state.attached || reading || blocked) return;
-      reading = true;
-      state.actions = false;
-      let succeeded = false;
-      emit();
-      lastPoll = Date.now();
+    const poll = (refreshSession = true) => {
+      if (!current() || !state.attached || blocked || reading) return reading;
       const signal = abort.signal;
+      const ticket = readDemand;
+      state.actions = false;
+      lastPoll = Date.now();
+      reading = read(refreshSession, signal, ticket, repairRevision).then(
+        (workspace) => {
+          reading = undefined;
+          if (!current() || signal.aborted) return;
+          if (ticket !== readDemand) {
+            // All newer explicit demands share one trailing read. A live
+            // snapshot can clear a repair request, never this HTTP demand.
+            followup = false;
+            void poll();
+            return;
+          }
+          failed = !workspace;
+          if (workspace) {
+            state.workspace = workspace;
+            state.error = undefined;
+            if (!scope) state.transportStatus = "current";
+          }
+          state.readCurrent = !!workspace;
+          state.actions = !!workspace && actionCapability;
+          emit();
+          if (!workspace && state.error === "stale") {
+            if (acquiring) retryAttachment();
+            else reconnect();
+          } else if (followup) {
+            followup = false;
+            void poll();
+          }
+        },
+      );
+      emit();
+      return reading;
+    };
+    const read = async (
+      refreshSession: boolean,
+      signal: AbortSignal,
+      ticket: number,
+      revision: number,
+    ) => {
+      // Access is scoped to the allocation, not to one read ticket. A
+      // superseded success is inert; a denial on this live viewer still wins.
+      const applicable = (
+        reply: { kind: "ok" } | { kind: "error"; error: { code: string } },
+      ) => {
+        if (!current() || signal.aborted) return false;
+        if (reply.kind === "error" && refusedAccess(reply.error.code)) {
+          this.access.refuse("viewer", reply.error.code);
+          return false;
+        }
+        return ticket === readDemand;
+      };
       try {
         // Keep the same attachment alive and notice a replacement owner even
         // in ordinary chat, where there is no WebSocket or changed model list.
         if (refreshSession) {
           const session = await this.api.client.session(signal);
-          if (!current() || signal.aborted) return;
+          if (!applicable(session)) return;
           if (session.kind === "error") {
-            state.actions = false;
             state.error = session.error.code;
-            if (revoked(session.error.code)) revoke();
             return;
           }
-          if (session.value.epoch !== state.epoch) {
+          if (!matchesOwner(session.value)) {
             state.error = "stale";
             return;
           }
           actionCapability = session.value.capabilities.actions;
         }
-        if (!scope) state.transportStatus = "current";
         // Safety roster is independent of selected history/workspace proof progress.
         // Inconclusive history must not make active work undiscoverable for Cancel.
         const active = await this.api.client.activeRuns(signal);
-        if (!current() || signal.aborted) return;
+        if (!applicable(active)) return;
         if (active.kind === "ok") {
-          if (active.value.epoch !== state.epoch) {
+          if (!matchesOwner(active.value)) {
             state.error = "stale";
             return;
           }
           state.activeRuns = active.value;
-        } else if (revoked(active.error.code)) {
-          revoke();
-          return;
         } else state.activeRuns = undefined;
         emit();
         const workspace = await this.api.client.workspace(signal);
-        if (!current() || signal.aborted) return;
+        if (!applicable(workspace)) return;
         if (workspace.kind === "error") {
           state.error = workspace.error.code;
-          if (revoked(workspace.error.code)) revoke();
           return;
         }
-        if (workspace.value.epoch !== state.epoch) {
+        if (!matchesOwner(workspace.value)) {
           state.error = "stale";
           return;
         }
-        state.workspace = workspace.value;
         if (scope) {
-          const ticket = tracker.beginSnapshot();
+          const snapshotTicket = tracker.beginSnapshot();
           const reply = await this.api.client.snapshot(scope, signal);
-          if (!current() || signal.aborted) return;
+          if (!applicable(reply)) return;
           if (reply.kind === "error") {
             state.error = reply.error.code;
-            if (revoked(reply.error.code)) revoke();
-          } else if (reply.value.epoch !== state.epoch) {
-            state.error = "stale";
-          } else {
-            const installed = tracker.install(reply.value, Date.now(), ticket);
-            if (installed !== undefined) generation = installed;
-            state.error = undefined;
-            succeeded = true;
+            return;
           }
-        } else {
-          state.error = undefined;
-          succeeded = true;
+          if (!matchesOwner(reply.value)) {
+            state.error = "stale";
+            return;
+          }
+          // A snapshot begun before a new synchronization demand cannot
+          // satisfy it, even at the same watermark.
+          if (revision !== repairRevision) return;
+          if (compareSequence(reply.value.committedSeq, minimumSeq) < 0) return;
+          const previous = tracker.state;
+          const installed = tracker.install(
+            reply.value,
+            Date.now(),
+            snapshotTicket,
+          );
+          if (installed !== undefined) {
+            generation = installed;
+            repairNeeded = false;
+            if (
+              state.transportStatus === "current" &&
+              (previous?.connection !== "current" ||
+                previous.snapshot.committedSeq !== reply.value.committedSeq)
+            )
+              state.transportStatus = "stale";
+          }
         }
+        return workspace.value;
       } catch {
-        if (current() && !signal.aborted) {
+        if (current() && !signal.aborted && ticket === readDemand) {
           state.error = "Observation unavailable.";
           state.actions = false;
           state.transportStatus = "stale";
         }
-      } finally {
-        reading = false;
-        if (current() && !signal.aborted) {
-          failed = !succeeded;
-          state.actions = succeeded && actionCapability;
-          emit();
-          if (!succeeded && state.error === "stale") reconnect();
-        }
       }
     };
-    const revoke = () => {
+    const revoked = () => {
       blocked = true;
-      state.attached = false;
-      state.actions = false;
+      retire();
       state.transportStatus = "closed";
-      state.error = "Access revoked; explicit token re-entry required.";
+      state.error = this.access.refusal?.code;
       state.workspace = undefined;
       state.activeRuns = undefined;
       tracker = new ProjectionTracker();
-      abort.abort();
       clearInterval(timer);
       clearTimeout(retry);
-      socketVersion++;
-      stopSocket?.();
-      enqueue(detach);
+      if (allocationPendingRelease) enqueue(detach);
       emit();
     };
     const acquire = async () => {
       if (!current() || blocked) return;
-      state.attached = false;
-      state.actions = false;
-      abort.abort();
-      socketVersion++;
-      stopSocket?.();
+      retire();
+      emit();
       await detach();
       if (!current() || blocked) return;
-      const session = await this.api.client.session();
-      if (!current() || blocked) {
-        await detach();
-        return;
-      }
+      allocationPendingRelease = true;
+      const acquisitionTicket = readDemand;
+      const session = await this.api.client.session(this.access.signal);
+      if (!current() || blocked) return; // its stop/refusal already enqueued release
       if (session.kind === "error") {
-        if (revoked(session.error.code)) {
-          revoke();
+        if (refusedAccess(session.error.code)) {
+          // No viewer was granted by this initial allocation.
+          allocationPendingRelease = false;
+          this.access.refuse("viewer", session.error.code);
           return;
         }
         throw new Error(session.error.code);
       }
       abort = new AbortController();
       tracker = new ProjectionTracker();
+      storeId = session.value.storeId;
+      repairRevision = 0;
+      repairNeeded = followup = false;
+      minimumSeq = "0";
       state = {
         epoch: session.value.epoch,
         attached: true,
-        actions: session.value.capabilities.actions,
+        allocationSignal: abort.signal,
+        readCurrent: false,
+        actions: false,
         transportStatus: "closed",
-        attachmentVersion: state.attachmentVersion + 1,
+        attachmentVersion: ++this.attachmentVersion,
       };
       actionCapability = session.value.capabilities.actions;
       emit();
-      await poll(false); // acquire already read this exact session
-      if (!current() || blocked || !scope) return;
+      await poll(acquisitionTicket !== readDemand); // reuse only a matching session read
+      if (!current() || blocked || !scope || state.error === "stale") return;
       const socket = ++socketVersion;
+      const lost = (error: string) => {
+        retire();
+        socketError = error;
+        state.transportStatus = "closed";
+        state.attachmentVersion = ++this.attachmentVersion;
+        retryAttachment();
+        emit();
+      };
       stopSocket = this.api.transport.subscribe(
         scope,
         (message) => {
           if (!current() || blocked || socket !== socketVersion) return;
+          const data =
+            message.kind === "snapshot"
+              ? message.snapshot
+              : message.kind === "event"
+                ? message.event
+                : undefined;
+          if (
+            data &&
+            (!matchesOwner(data) ||
+              data.scope.kind !== scope.kind ||
+              data.scope.id !== scope.id)
+          ) {
+            lost("stale");
+            return;
+          }
+          let accepted = false;
           if (message.kind === "snapshot") {
+            if (compareSequence(message.snapshot.committedSeq, minimumSeq) < 0)
+              return;
             const installed = tracker.install(
               message.snapshot,
               Date.now(),
               tracker.beginSnapshot(),
             );
-            if (installed !== undefined) generation = installed;
+            if (installed !== undefined) {
+              generation = installed;
+              repairNeeded = followup = false;
+              accepted = true;
+            }
           } else if (message.kind === "event") {
             if (
-              tracker.receive(message.event, generation, Date.now()) ===
-              "resync"
+              repairNeeded &&
+              compareSequence(message.event.committedSeq, minimumSeq) <= 0
             )
-              void poll();
-          } else void poll();
+              return;
+            const result = repairNeeded
+              ? "resync"
+              : tracker.receive(message.event, generation, Date.now());
+            if (result === "duplicate") return;
+            accepted = result === "applied";
+          }
+          if (accepted) {
+            socketError = undefined;
+            state.transportStatus = "current";
+          } else {
+            state.transportStatus = "stale";
+            if (data && compareSequence(data.committedSeq, minimumSeq) > 0)
+              minimumSeq = data.committedSeq;
+            repairNeeded = true;
+            repairRevision++;
+            // One trailing poll per outstanding demand, not per timer tick.
+            if (reading) followup = true;
+            else void poll();
+          }
           emit();
         },
         (status) => {
           if (!current() || blocked || socket !== socketVersion) return;
-          state.transportStatus = status;
-          if (status === "closed") {
-            state.attached = false;
-            state.actions = false;
-            state.attachmentVersion++;
-            abort.abort();
-            socketVersion++;
-            // The server revoked this socket's attachment. Acquire observation only;
-            // dialogs/grants are invalidated, never silently renewed.
-            retryAttachment();
+          if (status === "closed") lost(socketError ?? "socket-closed");
+          else {
+            socketError = "socket-timeout";
+            state.transportStatus = "stale";
+            emit();
           }
-          emit();
         },
       );
     };
+    if (this.access.signal.aborted) {
+      revoked();
+      return stop;
+    }
+    this.access.signal.addEventListener("abort", revoked, { once: true });
     reconnect();
     this.pollCurrent = () => {
-      if (state.attached) void poll();
-      else reconnect();
+      if (!current() || blocked) return;
+      // Explicit re-observation (including a model change) retires the
+      // previous ticket immediately. Timer reconciliation alone does not.
+      readDemand++;
+      state.readCurrent = false;
+      state.actions = false;
+      if (!state.attached) reconnect();
+      else if (reading) emit();
+      else void poll();
     };
     timer = setInterval(() => {
       if (!current() || blocked) return;
@@ -342,12 +528,6 @@ export class WorkspaceObserver {
       )
         void poll();
     }, 1000);
-    return () => {
-      // Cleanup may be called after a replacement scope has already taken over.
-      // It must neither clear the new poll hook nor detach the new attachment.
-      if (!current()) return;
-      stop();
-      enqueue(detach);
-    };
+    return stop;
   }
 }

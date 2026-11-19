@@ -2,15 +2,17 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
+import { ServiceClient } from "../../src/service-client.ts";
 import type {
   HistoryRecord,
   RunProjection,
 } from "../../src/service-contract.ts";
+import { GlobalSearchModal } from "../../web/src/components/history/GlobalSearchModal";
 import { RunSummary } from "../../web/src/components/workspace/RunSummary";
 import { emptySearchWindow } from "../../web/src/history/search-summary";
 import { timelineBridge } from "../../web/src/timeline/timeline-adapter";
 import type { TimelineData } from "../../web/src/timeline/timeline-client.mjs";
-import { context, coverage, cursor, hash, id } from "./fixtures";
+import { context, coverage, cursor, hash, id, transport } from "./fixtures";
 
 it("a zero-hit window with continuation is never search completion", () => {
   const seed = { ...cursor(), query: "needle" };
@@ -25,6 +27,23 @@ it("a zero-hit window with continuation is never search completion", () => {
   expect(
     emptySearchWindow({ cursor: seed, hits: [], next: null, coverage }),
   ).toContain("final retained window");
+});
+it("binds the empty history combobox to its own listbox with no stale selection", () => {
+  const html = renderToStaticMarkup(
+    <GlobalSearchModal
+      seed={cursor()}
+      client={new ServiceClient(transport())}
+      onHit={() => {}}
+      onClose={() => {}}
+    />,
+  );
+  const input = html.match(/<input[^>]+role="combobox"[^>]*>/)?.[0];
+  const list = html.match(/<div role="listbox"[^>]+>/)?.[0];
+  const id = input?.match(/aria-controls="([^"]+)"/)?.[1];
+  expect(id).toBeTruthy();
+  expect(list).toContain(`id="${id}"`);
+  expect(input).toContain('aria-expanded="false"');
+  expect(html).not.toMatch(/aria-activedescendant|role="option"/);
 });
 it("whole timeline bridge retains real worker-local clock domains without inventing overlap/duration", () => {
   const taskId = id(),
@@ -114,4 +133,132 @@ it("unknown native outcomes stay unknown even in historical summaries", () => {
   expect(html).toContain("No settlement recorded");
   expect(html).toContain("historical projection");
   expect(html).not.toContain("completed");
+});
+
+it("carries the observed tool name into the shared list, legend and lane palette", () => {
+  const ids = { taskId: id(), runId: id(), childRunId: id(), epoch: id() };
+  const facts: HistoryRecord[] = ["read", "write", "read"].map((name, n) => ({
+    kind: "capture-fact",
+    recordId: id(),
+    committedSeq: String(n + 1),
+    link: ids,
+    capture: {
+      source: {
+        first: n + 1,
+        last: n + 1,
+        firstObservedMs: n,
+        lastObservedMs: n,
+      },
+      event: {
+        kind: "tool-start",
+        name,
+        callId: id(),
+        argsDetailId: null,
+        source: { disposition: "unavailable", value: null },
+        declaration: null,
+      },
+    },
+  }));
+  const bridge = timelineBridge(
+    ids.taskId,
+    facts,
+    () => {},
+    () => {},
+  );
+  const messages: TimelineData[] = [];
+  bridge.onData((data) => messages.push(data));
+  bridge.readSegments(ids.taskId);
+  const message = messages[0];
+  expect(
+    message.kind === "segs" && message.segs.map((s) => s.meta?.tool),
+  ).toEqual(["read", "write", "read"]);
+});
+
+it("attributes updates only to a unique named endpoint on this page for the same epoch, run, worker and call", () => {
+  type Capture = Extract<HistoryRecord, { kind: "capture-fact" }>;
+  const link = { taskId: id(), runId: id(), childRunId: id(), epoch: id() };
+  const other = { ...link, childRunId: id() };
+  const shared = id(),
+    noName = id(),
+    conflict = id();
+  const facts: Capture[] = [];
+  const fact = (event: Capture["capture"]["event"], scope = link) => {
+    const n = facts.length + 1;
+    facts.push({
+      kind: "capture-fact",
+      committedSeq: String(n),
+      recordId: id(),
+      link: scope,
+      capture: {
+        event,
+        source: { first: n, last: n, firstObservedMs: n, lastObservedMs: n },
+      },
+    });
+  };
+  const source = { disposition: "unavailable" as const, value: null };
+  const start = (callId: string, name: string) => ({
+    kind: "tool-start" as const,
+    callId,
+    name,
+    argsDetailId: null,
+    declaration: null,
+    source,
+  });
+  const end = (callId: string, name: string) => ({
+    kind: "tool-end" as const,
+    callId,
+    name,
+    resultDetailId: id(),
+    declaration: null,
+    source,
+    isError: false,
+    association: "execution-only" as const,
+    startObserved: true,
+  });
+  const update = (callId: string) => ({
+    kind: "tool-update" as const,
+    callId,
+    semantics: "snapshot" as const,
+    detailId: id(),
+  });
+  fact(start(shared, "read"));
+  fact(update(shared));
+  fact(end(shared, "read"));
+  fact(update(shared), other); // Only the later end is loaded.
+  fact(end(shared, "write"), other);
+  fact(update(shared), { ...link, epoch: id() });
+  fact(update(shared), { ...link, runId: id() });
+  fact(update(noName));
+  fact(start(conflict, "read"));
+  fact(update(conflict));
+  fact(end(conflict, "write"));
+  const original = structuredClone(facts);
+  const bridge = timelineBridge(
+    link.taskId,
+    facts,
+    () => {},
+    () => {},
+  );
+  const messages: TimelineData[] = [];
+  bridge.onData((data) => messages.push(data));
+  bridge.readSegments(link.taskId);
+  const message = messages[0];
+  if (message.kind !== "segs") throw Error("missing-segments");
+  expect(message.segs.map((s) => s.meta?.tool)).toEqual([
+    "read",
+    "read",
+    "read",
+    "write",
+    "write",
+    undefined,
+    undefined,
+    undefined,
+    "read",
+    undefined,
+    "write",
+  ]);
+  expect(message.segs.map((s) => s.key)).toEqual(
+    original.map((f) => f.recordId),
+  );
+  expect(facts).toEqual(original);
 });

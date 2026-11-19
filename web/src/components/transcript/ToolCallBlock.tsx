@@ -6,6 +6,7 @@ import { FiTool } from "react-icons/fi";
 import { useT } from "../../i18n/locale";
 import type { HistoryRecord, ListRequest, ServiceClient } from "../../types";
 import { ContentExplorer } from "../history/ContentExplorer";
+import { CopyButton } from "../rich/CopyButton";
 import { CollapsibleHead } from "./CollapsibleHead";
 export const ToolCallBlock = memo(function ToolCallBlock({
   record,
@@ -82,6 +83,12 @@ export const ToolCallBlock = memo(function ToolCallBlock({
           <div className="toolcall-output">
             <div className="toolcall-output-label">
               {t("Recorded tool end (not parsed from output)")}
+              {record.result && (
+                <CopyButton
+                  text={JSON.stringify(record.result, null, 2)}
+                  className="output-copy"
+                />
+              )}
             </div>
             <pre>
               {record.result

@@ -37,9 +37,14 @@ export type DrawerSide = "left" | "right";
 /** 手势轴向：none = 还没定性（位移太小），定性后不再改。 */
 export type GestureAxis = "none" | "horizontal" | "vertical";
 
-/** 移动端抽屉宽度（px）—— 必须与 styles.css 的 `width: min(300px, 86vw)` 一致。 */
-export function drawerWidth(viewportWidth: number): number {
-  return Math.min(300, viewportWidth * 0.86);
+/** Effective compact pane width, shared by layout and horizontal tracking. */
+export function drawerWidth(
+  viewportWidth: number,
+  side: DrawerSide = "left",
+): number {
+  return side === "left"
+    ? Math.min(300, viewportWidth * 0.86)
+    : Math.min(380, viewportWidth * 0.92);
 }
 
 /**

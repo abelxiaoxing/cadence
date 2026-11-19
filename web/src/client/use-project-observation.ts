@@ -5,7 +5,22 @@ import {
   decodeProjectObservation,
   type ProjectObservation,
 } from "../../../src/service/contracts/gateway.ts";
-import { errorCode, readJson } from "./service";
+import {
+  decodeProjectAssociation,
+  PROJECT_ASSOCIATION_HEADER,
+} from "../../../src/service/contracts/workbench.ts";
+import {
+  observationRead,
+  observationRetryMs,
+  refusedAccess,
+} from "./observation-read";
+
+import type { ObservationAccess } from "./observer";
+
+interface ProjectRead {
+  value: ProjectObservation;
+  association: ReturnType<typeof decodeProjectAssociation>;
+}
 
 export function projectReadiness(
   value?: ProjectObservation,
@@ -19,16 +34,21 @@ export function projectReadiness(
 /** A failed observation keeps history identity, not a claim of live readiness. */
 export function projectObservationResult(
   previous: ProjectObservation | undefined,
-  value?: ProjectObservation,
+  read?: ProjectRead,
   error?: string,
 ) {
-  if (!value || value.status === "unavailable")
-    return { value: previous ?? value, error: error ?? "unavailable" };
-  return { value, error: undefined };
+  if (!read || read.value.status === "unavailable")
+    return {
+      value: previous ?? read?.value,
+      association: "unknown" as const,
+      error: error ?? "unavailable",
+    };
+  return { ...read, error: undefined };
 }
 export function useProjectObservation(
-  id?: string,
-  selectedEpoch?: string | null,
+  id: string | undefined,
+  selectedEpoch: string | null | undefined,
+  access: ObservationAccess,
 ) {
   const [revision, setRevision] = useState(0);
   const nextRevision = useRef(0);
@@ -36,76 +56,86 @@ export function useProjectObservation(
   const [state, setState] = useState<{
     id?: string;
     value?: ProjectObservation;
+    association?: ProjectRead["association"];
     error?: string;
     revision?: number;
     selectedEpoch?: string | null;
   }>({});
   useEffect(() => {
-    void revision;
-    void selectedEpoch;
-    if (!id) return;
+    if (!id || access.signal.aborted) return;
     const version = ++serial.current;
     const abort = new AbortController();
     const current = () => !abort.signal.aborted && serial.current === version;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = async () => {
-      if (!current()) return;
-      try {
-        const response = await fetch(`/workbench/v1/projects/${id}`, {
-          credentials: "same-origin",
-          redirect: "error",
-          cache: "no-store",
-          signal: abort.signal,
-        });
-        const value = await readJson(response);
-        if (!response.ok) throw new Error(errorCode(value));
-        const observed = decodeProjectObservation(value);
-        if (current())
-          setState((previous) => ({
-            id,
-            revision,
-            selectedEpoch,
-            ...projectObservationResult(
-              previous.id === id ? previous.value : undefined,
-              observed,
-            ),
-          }));
-      } catch (error) {
-        if (current())
-          setState((previous) => ({
-            id,
-            revision,
-            selectedEpoch,
-            ...projectObservationResult(
-              previous.id === id ? previous.value : undefined,
-              undefined,
-              error instanceof Error ? error.message : "unavailable",
-            ),
-          }));
-      }
-      if (current()) timer = setTimeout(() => void load(), 5000);
-    };
-    void load();
-    return () => {
+    const stop = () => {
       abort.abort();
       clearTimeout(timer);
     };
-  }, [id, revision, selectedEpoch]);
+    const unsubscribe = access.subscribe(stop);
+    const finish = (read?: ProjectRead, error?: string) => {
+      if (!current()) return;
+      if (error && refusedAccess(error)) {
+        access.refuse("project", error);
+        return;
+      }
+      setState((previous) => ({
+        id,
+        revision,
+        selectedEpoch,
+        ...projectObservationResult(
+          previous.id === id ? previous.value : undefined,
+          read,
+          error,
+        ),
+      }));
+      timer = setTimeout(() => void load(), observationRetryMs);
+    };
+    const load = async () => {
+      if (!current()) return;
+      try {
+        finish(
+          await observationRead(
+            `/workbench/v1/projects/${id}`,
+            abort.signal,
+            (value, response) => ({
+              value: decodeProjectObservation(value),
+              association: decodeProjectAssociation(
+                response.headers.get(PROJECT_ASSOCIATION_HEADER),
+              ),
+            }),
+          ),
+        );
+      } catch (error) {
+        finish(
+          undefined,
+          error instanceof Error ? error.message : "unavailable",
+        );
+      }
+    };
+    void load();
+    return () => {
+      unsubscribe();
+      stop();
+    };
+  }, [id, revision, selectedEpoch, access]);
   const refresh = useCallback(() => {
+    if (access.signal.aborted) return nextRevision.current;
     ++serial.current;
     const revision = ++nextRevision.current;
     setRevision(revision);
     return revision;
-  }, []);
+  }, [access]);
   // Only authenticated explicit execution preparation supplies this readiness.
   // Retire older reads synchronously so none can overwrite its new epoch.
   // The parent adopts this confirmed epoch, not the callback's old selection.
   const prepared = (epoch: string) => {
+    access.check();
     const revision = refresh();
     setState((previous) => ({
       id,
       revision,
       selectedEpoch: epoch,
+      association: "associated",
       value: {
         kind: "project-observation",
         status: "running",
@@ -115,15 +145,20 @@ export function useProjectObservation(
       },
     }));
   };
-  const selected = state.id === id ? state : {};
+  const selected = access.refusal
+    ? {
+        error:
+          access.refusal.source === "project" ? access.refusal.code : undefined,
+      }
+    : state.id === id
+      ? state
+      : {};
+  const fresh =
+    selected.revision === revision && selected.selectedEpoch === selectedEpoch;
   return {
     ...selected,
-    readiness: projectReadiness(
-      selected.value,
-      selected.error,
-      selected.revision === revision &&
-        selected.selectedEpoch === selectedEpoch,
-    ),
+    association: fresh ? (selected.association ?? "unknown") : "unknown",
+    readiness: projectReadiness(selected.value, selected.error, fresh),
     refresh,
     prepared,
   };

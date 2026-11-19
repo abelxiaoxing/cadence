@@ -3926,6 +3926,69 @@ import {
 } from "node:crypto";
 import { dirname as dirname7, isAbsolute as isAbsolute5, join as join7 } from "node:path";
 
+// src/image-content.mjs
+var IMAGE_LIMITS = Object.freeze({
+  chunkChars: 256 * 1024,
+  idleMs: 10 * 60 * 1000
+});
+var IMAGE_TYPES = Object.freeze([
+  "image/png",
+  "image/jpeg",
+  "image/webp"
+]);
+
+// src/service/contracts/workflow.ts
+var WORKFLOW_LIMITS = {
+  tasks: 16,
+  route: 48,
+  questions: 32,
+  checks: 16,
+  bytes: 256 * 1024,
+  context: 32768,
+  reason: 1024,
+  historyScanEntries: 200,
+  historyPage: 20,
+  historyScans: 16,
+  historyIdleMs: 120000
+};
+// src/service/contracts/workbench.ts
+var FILE_PART_BYTES = 192 * 1024;
+var FILE_DOWNLOAD_BYTES = 64 * 1024 * 1024;
+var CONVERSATION_SEND_BYTES = 16 * 1024;
+var UNDELIVERED_TEXT_BYTES = 2 * CONVERSATION_SEND_BYTES;
+var workflowTurnStatuses = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+var CHAT_STATUSES = ["starting", ...workflowTurnStatuses];
+var STEP_TEXT_BYTES = 16 * 1024;
+
+// src/service-wire.ts
+var pageReaders = [
+  "tasks",
+  "runs",
+  "messages",
+  "tools",
+  "contents",
+  "events",
+  "checks",
+  "changes",
+  "reviews"
+];
+var HISTORY_CSRF_HEADER = "x-cadence-history-csrf";
+var retainedReaders = [
+  ...pageReaders,
+  "entity",
+  "graph",
+  "detail",
+  "search"
+];
+
 // src/service/config.ts
 import { isIP } from "node:net";
 function decodeHttpPolicy(value) {
@@ -4241,18 +4304,41 @@ function readExternal(path2) {
 class HttpAuthentication {
   material;
   epoch;
+  workspaceId;
   localCapability;
-  csrf = randomUUID4();
+  executionCsrf = randomUUID4();
+  get csrf() {
+    return this.executionCsrf;
+  }
+  history;
   cookieName;
   constructor(material, epoch, workspaceId, localCapability) {
     this.material = material;
     this.epoch = epoch;
+    this.workspaceId = workspaceId;
     this.localCapability = localCapability;
     decodeId(epoch);
     decodeId(workspaceId);
     if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
       throw new ContractError("invalid");
     this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+    material.onRevoke(() => {
+      this.history = undefined;
+      this.executionCsrf = randomUUID4();
+    });
+  }
+  historyChallenge(workspace) {
+    if (workspace.workspaceId !== this.workspaceId || workspace.epoch !== this.epoch)
+      throw new ContractError("stale");
+    if (this.history?.storeId !== workspace.storeId)
+      this.history = {
+        storeId: decodeId(workspace.storeId),
+        csrf: randomUUID4()
+      };
+    return this.history.csrf;
+  }
+  get historyStore() {
+    return this.history?.storeId;
   }
   bootstrap(value, boundary) {
     this.material.assertCurrent();
@@ -4285,14 +4371,14 @@ class HttpAuthentication {
     }
     return false;
   }
-  authenticate(boundary, attachmentId, mutation = false, websocket = false) {
+  authenticate(boundary, attachmentId, post = false, websocket = false) {
     this.material.assertCurrent();
     if (!this.material.available)
       throw new ContractError("quarantine");
     const h = boundary.headers;
     const local = h.get("x-cadence-local");
     if (local !== undefined) {
-      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
+      if (post === "retained-history" || !boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
         throw new ContractError("forbidden");
     } else {
       if (h.has("authorization") || h.has("x-cadence-token"))
@@ -4301,10 +4387,14 @@ class HttpAuthentication {
         throw new ContractError("unauthenticated");
       if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
         throw new ContractError("forbidden");
-      if ((mutation || websocket) && h.get("origin") !== boundary.origin)
+      if ((post || websocket) && h.get("origin") !== boundary.origin)
         throw new ContractError("forbidden");
-      if (mutation && h.get("x-cadence-csrf") !== this.csrf)
+      if (post === "retained-history") {
+        if (!this.history || h.get(HISTORY_CSRF_HEADER) !== this.history.csrf || h.has("x-cadence-attachment") || h.has("x-cadence-csrf"))
+          throw new ContractError("forbidden");
+      } else if (post && h.get("x-cadence-csrf") !== this.csrf) {
         throw new ContractError("forbidden");
+      }
     }
     return {
       attachmentId: decodeId(attachmentId),
@@ -4671,28 +4761,28 @@ function object2(value, at) {
     return fail(at, "must be a plain object without reserved keys");
   }
 }
-function shape(fields2, required = [], retired = {}) {
+function shape(fields3, required = [], retired = {}) {
   const check = (value, at) => {
     const o = object2(value, at);
     for (const key of Object.keys(o))
-      if (!Object.hasOwn(fields2, key))
+      if (!Object.hasOwn(fields3, key))
         fail(child(at, key), Object.hasOwn(retired, key) ? retired[key] : UNSUPPORTED);
     for (const key of required)
       if (o[key] === undefined)
         fail(child(at, key), "is required");
-    for (const [key, field] of Object.entries(fields2))
+    for (const [key, field] of Object.entries(fields3))
       if (o[key] !== undefined)
         field(o[key], child(at, key));
   };
-  check.fields = fields2;
+  check.fields = fields3;
   return check;
 }
-function record(entries) {
+function record(entries2) {
   const check = (value, at) => {
     for (const [key, entry] of Object.entries(object2(value, at)))
-      entries(entry, child(at, key));
+      entries2(entry, child(at, key));
   };
-  check.entries = entries;
+  check.entries = entries2;
   return check;
 }
 function list2(items, maximum = ENTRY_LIMIT) {
@@ -5126,7 +5216,7 @@ function decodeRecoveryEvent(value) {
     archive
   };
 }
-function entries(path2, maximum = 4096) {
+function entries2(path2, maximum = 4096) {
   const out = [];
   let dir;
   try {
@@ -5154,7 +5244,7 @@ function size(path2, limit = { left: 1e5 }) {
   if (!st.isDirectory())
     return st.size;
   let total = 0;
-  for (const name of entries(path2, 1e5))
+  for (const name of entries2(path2, 1e5))
     total += size(join10(path2, name), limit);
   return total;
 }
@@ -5214,7 +5304,7 @@ class RecoveryLog {
     return value;
   }
   latestFile() {
-    for (const name of entries(this.logDirectory).reverse()) {
+    for (const name of entries2(this.logDirectory).reverse()) {
       if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
         continue;
       const path2 = join10(this.logDirectory, name);
@@ -5231,7 +5321,7 @@ class RecoveryLog {
   }
   events(limit = 20) {
     const out = [];
-    for (const name of entries(this.logDirectory).reverse()) {
+    for (const name of entries2(this.logDirectory).reverse()) {
       if (out.length >= limit)
         break;
       if (!/^[0-9]{13}-[0-9a-f-]{36}\.json$/.test(name))
@@ -5245,10 +5335,10 @@ class RecoveryLog {
     return out;
   }
   prune(now = Date.now()) {
-    const names2 = entries(this.logDirectory);
+    const names2 = entries2(this.logDirectory);
     for (const name of names2.slice(0, Math.max(0, names2.length - RECOVERY_EVENTS)))
       rmSync2(join10(this.logDirectory, name), { force: true });
-    const archived = entries(this.archiveDirectory).filter((name) => /^[0-9]{13}-[0-9a-f-]{36}$/.test(name));
+    const archived = entries2(this.archiveDirectory).filter((name) => /^[0-9]{13}-[0-9a-f-]{36}$/.test(name));
     const kept = [];
     for (const name of archived) {
       const path2 = join10(this.archiveDirectory, name);
@@ -5281,7 +5371,7 @@ class RecoveryLog {
     }));
   }
   usage() {
-    const names2 = entries(this.archiveDirectory);
+    const names2 = entries2(this.archiveDirectory);
     return {
       entries: names2.length,
       bytes: names2.reduce((sum, name) => sum + size(join10(this.archiveDirectory, name)), 0)
@@ -5289,7 +5379,7 @@ class RecoveryLog {
   }
 }
 function strayTemporaries(directory2) {
-  return entries(directory2).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join10(directory2, name));
+  return entries2(directory2).filter((name) => /^pending-[0-9a-f-]{36}\.json$/.test(name)).map((name) => join10(directory2, name));
 }
 
 // src/service/runtime.ts
@@ -5506,7 +5596,7 @@ function describePiProblem(problem) {
 }
 function decodePiProblem(value) {
   const o = closed(value, ["file", "check", "field", "reason"]);
-  const words = (v) => {
+  const words2 = (v) => {
     const s = text(v, 512, true);
     if (/[\p{Cc}\p{Cf}]/u.test(s))
       throw new ContractError("invalid");
@@ -5515,8 +5605,8 @@ function decodePiProblem(value) {
   return {
     file: oneOf(o.file, Object.keys(PI_SOURCE_STAGES)),
     check: oneOf(o.check, ["file", "json", "schema", "sdk"]),
-    field: o.field === null ? null : words(o.field),
-    reason: words(o.reason)
+    field: o.field === null ? null : words2(o.field),
+    reason: words2(o.reason)
   };
 }
 function decodeStartupReport(value) {
@@ -6164,14 +6254,14 @@ class RegistryHealer {
           archive.keep(this.path(name));
         }
       }
-      const entries2 = [];
+      const entries3 = [];
       for (const row of liveReservations(this.c))
-        entries2.push(row);
+        entries3.push(row);
       this.c.files.create(this.path("format.json"), encoded({
         schema: "cadence-service-registry-format/1",
         stateHome: this.c.stateHome
       }));
-      this.c.files.create(this.path("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: entries2 }), 1024 * 1024);
+      this.c.files.create(this.path("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: entries3 }), 1024 * 1024);
     } finally {
       this.c.files.remove(lockPath, lock);
     }

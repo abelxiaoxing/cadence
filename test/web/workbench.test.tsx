@@ -1,9 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
 import {
   type ChatItem,
   type ChatTurn,
+  PROJECT_ASSOCIATION_HEADER,
   toolTarget,
 } from "../../src/service/contracts/workbench.ts";
 import { ServiceClient } from "../../src/service-client.ts";
@@ -14,6 +15,7 @@ import {
   rememberProject,
   restorableProject,
 } from "../../web/src/client/last-project";
+import { ObservationAccess } from "../../web/src/client/observer";
 import { recordedTurn } from "../../web/src/client/turn-source";
 import { cadenceInput } from "../../web/src/client/use-workbench";
 import {
@@ -806,28 +808,25 @@ it("restoration and missing-folder guidance stay inside the conversation, withou
   const checking = renderToStaticMarkup(
     <FolderSetup
       ready
-      restore={{ status: "checking", path: "/work/alpha" }}
+      pending
+      restoring="/work/alpha"
       onChooseFolder={open}
       onRefresh={open}
     />,
   );
-  expect(checking).toContain("Returning to your last folder /work/alpha…");
+  expect(checking).not.toContain("Returning to your last folder /work/alpha…");
   expect(checking).not.toContain("project-item");
   expect(checking).not.toContain("Recent folders");
   const unavailable = renderToStaticMarkup(
     <LocaleProvider initial="zh">
-      <FolderSetup
-        ready
-        restore={{ status: "unavailable", path: "/work/alpha" }}
-        onChooseFolder={open}
-        onRefresh={open}
-      />
+      <FolderSetup ready missing onChooseFolder={open} onRefresh={open} />
     </LocaleProvider>,
   );
-  expect(unavailable).toContain("无法恢复 /work/alpha");
-  expect(unavailable).toContain("没有启动任何服务");
+  expect(unavailable).toContain("此文件夹不可用，请选择其他文件夹");
+  expect(unavailable).toContain("没有移动或重建任何目录");
   expect(unavailable).toContain("历史会话");
   expect(unavailable).not.toContain("工作台");
+  expect(unavailable).not.toContain("banner-notice");
   const loading = renderToStaticMarkup(
     <FolderSetup ready={false} onChooseFolder={open} onRefresh={open} />,
   );
@@ -915,17 +914,19 @@ it("restoring observes retained identity even for a stopped owner, without a sca
     kind: "error",
     error: { code: "unavailable", effect: "none", recovery: "operator" },
   };
-  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
-    false,
-  );
+  await expect(
+    projectReadable(key("a"), new AbortController().signal),
+  ).rejects.toThrow("invalid");
   reply = new Error("network");
-  expect(await projectReadable(key("a"), new AbortController().signal)).toBe(
-    false,
-  );
+  await expect(
+    projectReadable(key("a"), new AbortController().signal),
+  ).rejects.toThrow("network");
   const aborted = new AbortController();
   aborted.abort();
   reply = { kind: "ok", value: { kind: "conversations", entries: [] } };
-  expect(await projectReadable(key("a"), aborted.signal)).toBe(false);
+  await expect(projectReadable(key("a"), aborted.signal)).rejects.toBe(
+    aborted.signal.reason,
+  );
   expect(requests.every((request) => !request.method)).toBe(true);
 });
 
@@ -939,7 +940,11 @@ it("a failed project observation retains identity but not readiness; unavailable
     undefined,
     "offline",
   );
-  expect(failedFirstRead).toEqual({ value: undefined, error: "offline" });
+  expect(failedFirstRead).toEqual({
+    value: undefined,
+    association: "unknown",
+    error: "offline",
+  });
   expect(projectReadiness(failedFirstRead.value, failedFirstRead.error)).toBe(
     "unknown",
   );
@@ -953,11 +958,15 @@ it("a failed project observation retains identity but not readiness; unavailable
   expect(lost.value).toBe(running);
   expect(projectReadiness(lost.value, lost.error)).toBe("stale");
   const unavailable = projectObservationResult(running, {
-    ...running,
-    status: "unavailable",
-    epoch: null,
-    workspaceId: null,
+    value: {
+      ...running,
+      status: "unavailable",
+      epoch: null,
+      workspaceId: null,
+    },
+    association: "associated",
   });
+  expect(unavailable.association).toBe("unknown");
   expect(unavailable.value).toBe(running);
   expect(projectReadiness(unavailable.value, unavailable.error)).toBe("stale");
   expect(projectReadiness(undefined, "offline")).toBe("unknown");
@@ -968,62 +977,104 @@ it("a failed project observation retains identity but not readiness; unavailable
   expect(projectReadiness({ ...running, status: "stopped" }, "offline")).toBe(
     "stale",
   );
-  const restored = projectObservationResult(lost.value, running);
+  const restored = projectObservationResult(lost.value, {
+    value: running,
+    association: "associated",
+  });
   expect(projectReadiness(restored.value, restored.error)).toBe("running");
 });
+
+async function projectObservationFixture() {
+  // Controlled hook callbacks, not a DOM or browser lifecycle test.
+  const React = await vi.importActual<typeof import("react")>("react");
+  vi.useFakeTimers();
+  const cells: unknown[] = [];
+  let cursor = 0;
+  let deps: readonly unknown[] | undefined;
+  let pendingEffect: import("react").EffectCallback | undefined;
+  let cleanup: (() => void) | undefined;
+  const unmount = () => {
+    cleanup?.();
+    cleanup = undefined;
+  };
+  onTestFinished(() => {
+    unmount();
+    vi.doUnmock("react");
+    vi.resetModules();
+    vi.useRealTimers();
+  });
+  const updates = vi.fn();
+  vi.doMock("react", () => ({
+    ...React,
+    useState: ((initial: unknown) => {
+      const at = cursor++;
+      if (!Object.hasOwn(cells, at)) cells[at] = initial;
+      return [
+        cells[at],
+        (update: unknown) => {
+          updates();
+          cells[at] = typeof update === "function" ? update(cells[at]) : update;
+        },
+      ];
+    }) as typeof React.useState,
+    useRef: ((initial: unknown) => {
+      const at = cursor++;
+      if (!Object.hasOwn(cells, at)) cells[at] = { current: initial };
+      return cells[at];
+    }) as typeof React.useRef,
+    useCallback: ((fn) => fn) as typeof React.useCallback,
+    useEffect: ((effect, next) => {
+      if (!deps || next?.some((value, i) => !Object.is(value, deps?.[i]))) {
+        deps = next;
+        pendingEffect = effect;
+      }
+    }) as typeof React.useEffect,
+  }));
+  vi.resetModules();
+  const { useProjectObservation } = await import(
+    "../../web/src/client/use-project-observation"
+  );
+  const requests: {
+    signal?: AbortSignal | null;
+    resolve(response: Response): void;
+    reject(error: Error): void;
+  }[] = [];
+  const fetcher = vi.fn<typeof fetch>(
+    (_url, init) =>
+      new Promise((resolve, reject) => {
+        requests.push({ resolve, reject, signal: init?.signal });
+      }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const access = new ObservationAccess();
+  const render = (selectedEpoch: string | null = null, id = key("a")) => {
+    cursor = 0;
+    return useProjectObservation(id, selectedEpoch, access);
+  };
+  const flushEffect = () => {
+    if (!pendingEffect) return;
+    cleanup?.();
+    const effect = pendingEffect;
+    pendingEffect = undefined;
+    const result = effect();
+    cleanup = typeof result === "function" ? result : undefined;
+  };
+  return { access, render, flushEffect, unmount, requests, fetcher, updates };
+}
+
+const projectReply = (value: unknown, association?: string) =>
+  Response.json(value, {
+    headers:
+      association === undefined
+        ? {}
+        : { [PROJECT_ASSOCIATION_HEADER]: association },
+  });
 
 it.each(["cold", "same-epoch", "replacement"])(
   "%s: confirmed preparation is current before its GET; older reads cannot undo it",
   async (scenario) => {
-    // Controlled hook callbacks, not a DOM or browser lifecycle test.
-    const React = await vi.importActual<typeof import("react")>("react");
-    vi.useFakeTimers();
-    const cells: unknown[] = [];
-    let cursor = 0;
-    let deps: readonly unknown[] | undefined;
-    let pendingEffect: import("react").EffectCallback | undefined;
-    let cleanup: (() => void) | undefined;
-    vi.doMock("react", () => ({
-      ...React,
-      useState: ((initial: unknown) => {
-        const at = cursor++;
-        if (!Object.hasOwn(cells, at)) cells[at] = initial;
-        return [
-          cells[at],
-          (update: unknown) => {
-            cells[at] =
-              typeof update === "function" ? update(cells[at]) : update;
-          },
-        ];
-      }) as typeof React.useState,
-      useRef: ((initial: unknown) => {
-        const at = cursor++;
-        if (!Object.hasOwn(cells, at)) cells[at] = { current: initial };
-        return cells[at];
-      }) as typeof React.useRef,
-      useCallback: ((fn) => fn) as typeof React.useCallback,
-      useEffect: ((effect, next) => {
-        if (!deps || next?.some((value, i) => !Object.is(value, deps?.[i]))) {
-          deps = next;
-          pendingEffect = effect;
-        }
-      }) as typeof React.useEffect,
-    }));
-    vi.resetModules();
-    const { useProjectObservation } = await import(
-      "../../web/src/client/use-project-observation"
-    );
-    const requests: {
-      resolve(response: Response): void;
-      reject(error: Error): void;
-    }[] = [];
-    const fetcher = vi.fn<typeof fetch>(
-      () =>
-        new Promise((resolve, reject) => {
-          requests.push({ resolve, reject });
-        }),
-    );
-    vi.stubGlobal("fetch", fetcher);
+    const { render, flushEffect, requests, fetcher } =
+      await projectObservationFixture();
     const epoch = crypto.randomUUID();
     const before =
       scenario === "cold"
@@ -1031,62 +1082,243 @@ it.each(["cold", "same-epoch", "replacement"])(
         : scenario === "same-epoch"
           ? epoch
           : crypto.randomUUID();
-    const render = (selectedEpoch: string | null) => {
-      cursor = 0;
-      // biome-ignore lint/correctness/useHookAtTopLevel: controlled hook harness, not a React render.
-      return useProjectObservation("a".repeat(64), selectedEpoch);
-    };
-    const flushEffect = () => {
-      if (!pendingEffect) return;
-      cleanup?.();
-      const effect = pendingEffect;
-      pendingEffect = undefined;
-      const result = effect();
-      cleanup = typeof result === "function" ? result : undefined;
-    };
-    try {
-      const initial = render(before);
-      flushEffect();
-      expect(requests).toHaveLength(1);
-      initial.prepared(epoch);
-      // Resolve the old GET before effect cleanup: synchronous invalidation,
-      // not abort timing, must prevent this result overwriting confirmation.
-      requests[0].resolve(
-        Response.json({
+    const initial = render(before);
+    flushEffect();
+    expect(requests).toHaveLength(1);
+    initial.prepared(epoch);
+    // Resolve the old GET before effect cleanup: synchronous invalidation,
+    // not abort timing, must prevent this result overwriting confirmation.
+    requests[0].resolve(
+      projectReply(
+        {
           kind: "project-observation",
-          status: "stopped",
-          epoch: null,
+          status: scenario === "same-epoch" ? "running" : "stopped",
+          epoch: before,
           workspaceId: null,
+        },
+        "unassociated",
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const confirmed = render(epoch);
+    expect(confirmed.readiness).toBe("running");
+    expect(confirmed.association).toBe("associated");
+    expect(confirmed.value?.epoch).toBe(epoch);
+    expect(confirmed.error).toBeUndefined();
+    flushEffect();
+    expect(requests).toHaveLength(2);
+    requests[1].reject(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(0);
+    const stale = render(epoch);
+    expect(stale.readiness).toBe("stale");
+    expect(stale.association).toBe("unknown");
+    expect(stale.value?.epoch).toBe(epoch);
+    expect(stale.error).toBe("offline");
+    stale.refresh();
+    stale.prepared(epoch);
+    expect(render(epoch)).toMatchObject({
+      readiness: "running",
+      association: "associated",
+    });
+    expect(
+      fetcher.mock.calls.every(
+        ([, init]) => !init?.method || init.method === "GET",
+      ),
+    ).toBe(true);
+  },
+);
+
+const runningObservation = () => ({
+  kind: "project-observation",
+  status: "running",
+  epoch: crypto.randomUUID(),
+  workspaceId: crypto.randomUUID(),
+});
+
+it.each(["missing header", "invalid header", "invalid body"])(
+  "%s: a running observation and its association must come from the same validated GET",
+  async (scenario) => {
+    const { render, flushEffect, requests } = await projectObservationFixture();
+    render();
+    flushEffect();
+    const first = runningObservation();
+    requests[0].resolve(projectReply(first, "associated"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render().association).toBe("associated");
+    const next = runningObservation();
+    requests[1].resolve(
+      scenario === "missing header"
+        ? projectReply(next)
+        : scenario === "invalid header"
+          ? projectReply(next, "invalid")
+          : projectReply({ ...next, extra: true }, "associated"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const observed = render();
+    expect(observed.association).toBe("unknown");
+    if (scenario === "missing header") {
+      expect(observed.value).toEqual(next);
+      expect(observed.readiness).toBe("running");
+      expect(observed.error).toBeUndefined();
+    } else {
+      expect(observed.value).toEqual(first);
+      expect(observed.readiness).toBe("stale");
+      expect(observed.error).toBe("invalid");
+    }
+  },
+);
+
+it.each(["headers", "body"])(
+  "a project GET stalled at %s retires at one total deadline; polling recovers before its late reply",
+  async (stage) => {
+    const { render, flushEffect, requests, fetcher } =
+      await projectObservationFixture();
+    render();
+    flushEffect();
+    const first = runningObservation();
+    requests[0].resolve(projectReply(first, "unassociated"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render()).toMatchObject({
+      readiness: "running",
+      association: "unassociated",
+    });
+    expect(requests).toHaveLength(2);
+
+    // Approach the deadline before returning any headers. The partial body
+    // deliberately ignores abort, so neither phase can rely on a rejection.
+    await vi.advanceTimersByTimeAsync(9000);
+    let late = () => requests[1].resolve(projectReply(first, "associated"));
+    if (stage === "body") {
+      const bytes = new TextEncoder().encode(JSON.stringify(first));
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes.subarray(0, -1));
+          late = () => {
+            controller.enqueue(bytes.subarray(-1));
+            controller.close();
+          };
+        },
+      });
+      requests[1].resolve(
+        new Response(body, {
+          headers: { [PROJECT_ASSOCIATION_HEADER]: "associated" },
         }),
       );
       await vi.advanceTimersByTimeAsync(0);
-      const confirmed = render(epoch);
-      expect(confirmed.readiness).toBe("running");
-      expect(confirmed.value?.epoch).toBe(epoch);
-      expect(confirmed.error).toBeUndefined();
-      flushEffect();
-      expect(requests).toHaveLength(2);
-      requests[1].reject(new Error("offline"));
-      await vi.advanceTimersByTimeAsync(0);
-      const stale = render(epoch);
-      expect(stale.readiness).toBe("stale");
-      expect(stale.value?.epoch).toBe(epoch);
-      expect(stale.error).toBe("offline");
-      stale.refresh();
-      stale.prepared(epoch);
-      expect(render(epoch).readiness).toBe("running");
-      expect(
-        fetcher.mock.calls.every(
-          ([, init]) => !init?.method || init.method === "GET",
-        ),
-      ).toBe(true);
-    } finally {
-      cleanup?.();
-      vi.doUnmock("react");
-      vi.resetModules();
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
+      expect(body.locked).toBe(true);
+      expect(render().association).toBe("unassociated"); // Headers alone cannot admit a viewer.
     }
+    await vi.advanceTimersByTimeAsync(999);
+    expect(requests[1].signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requests[1].signal?.aborted).toBe(true);
+    expect(render()).toMatchObject({
+      readiness: "stale",
+      association: "unknown",
+      value: first,
+      error: "timeout",
+    });
+    expect(requests).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    const recovered = runningObservation();
+    expect(requests).toHaveLength(3);
+    requests[2].resolve(projectReply(recovered, "unassociated"));
+    await vi.advanceTimersByTimeAsync(0);
+    const current = render();
+    expect(current).toMatchObject({
+      readiness: "running",
+      association: "unassociated",
+      value: recovered,
+    });
+    expect(current.error).toBeUndefined();
+    late();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(render()).toMatchObject({
+      association: "unassociated",
+      value: recovered,
+    });
+    expect(vi.getTimerCount()).toBe(1); // One next poll, no retired deadline or second chain.
+    expect(
+      fetcher.mock.calls.every(
+        ([url, init]) =>
+          url === `/workbench/v1/projects/${key("a")}` &&
+          (init?.method ?? "GET") === "GET",
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each(["project", "epoch", "refresh"])(
+  "%s change and unmount retire the project read, without publishing a failure or scheduling another retry",
+  async (change) => {
+    const { render, flushEffect, unmount, requests, updates } =
+      await projectObservationFixture();
+    const first = runningObservation();
+    render(first.epoch);
+    flushEffect();
+    requests[0].resolve(projectReply(first, "associated"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(requests).toHaveLength(2);
+    if (change === "refresh") render(first.epoch).refresh();
+    const project = key(change === "project" ? "b" : "a");
+    const epoch = change === "epoch" ? crypto.randomUUID() : first.epoch;
+    const pending = render(epoch, project);
+    expect(pending.readiness).toBe(change === "project" ? "unknown" : "stale");
+    expect(pending.association).toBe("unknown");
+    if (change === "project") expect(pending.value).toBeUndefined();
+    flushEffect();
+    expect(requests[1].signal?.aborted).toBe(true);
+    expect(render(epoch, project).error).toBeUndefined();
+    expect(requests).toHaveLength(3);
+    const next = { ...runningObservation(), epoch };
+    requests[2].resolve(Response.json(next));
+    await vi.advanceTimersByTimeAsync(0);
+    requests[1].reject(new Error("retired"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render(epoch, project)).toMatchObject({
+      readiness: "running",
+      value: next,
+    });
+    expect(requests).toHaveLength(4);
+    const count = updates.mock.calls.length;
+    unmount();
+    expect(requests[3].signal?.aborted).toBe(true);
+    requests[3].resolve(Response.json(first));
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(updates).toHaveBeenCalledTimes(count);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(requests).toHaveLength(4);
+  },
+);
+
+it.each(["unauthenticated", "forbidden"])(
+  "%s project read keeps its diagnosis and stops automatic retries",
+  async (code) => {
+    const { render, flushEffect, requests } = await projectObservationFixture();
+    render();
+    flushEffect();
+    requests[0].resolve(
+      Response.json(
+        { kind: "error", error: { code } },
+        { status: code === "unauthenticated" ? 401 : 403 },
+      ),
+    );
+    await vi.advanceTimersByTimeAsync(20000);
+    const revoked = render();
+    expect(revoked).toMatchObject({
+      error: code,
+      readiness: "unknown",
+      association: "unknown",
+    });
+    expect(requests).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    revoked.refresh();
+    const epoch = crypto.randomUUID();
+    expect(() => revoked.prepared(epoch)).toThrow(code);
+    expect(render(epoch).error).toBe(code);
+    flushEffect();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(requests).toHaveLength(1);
   },
 );
 
@@ -1290,3 +1522,28 @@ it.each(["en", "zh"] as const)(
     );
   },
 );
+
+it("a viewer refusal aborts the selected project attempt; its late 200 and an old preparation callback cannot restore readiness", async () => {
+  const { access, render, flushEffect, requests } =
+    await projectObservationFixture();
+  const original = render();
+  flushEffect();
+  const first = runningObservation();
+  requests[0].resolve(projectReply(first, "associated"));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(render().readiness).toBe("running");
+  expect(requests).toHaveLength(2);
+  access.refuse("viewer", "forbidden");
+  expect(requests[1].signal?.aborted).toBe(true);
+  const replacement = runningObservation();
+  requests[1].resolve(projectReply(replacement, "associated"));
+  original.refresh();
+  expect(() => original.prepared(replacement.epoch)).toThrow("forbidden");
+  const after = render(replacement.epoch);
+  flushEffect();
+  expect(after.readiness).toBe("unknown");
+  expect(after.association).toBe("unknown");
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(requests).toHaveLength(2);
+  expect(vi.getTimerCount()).toBe(0);
+});

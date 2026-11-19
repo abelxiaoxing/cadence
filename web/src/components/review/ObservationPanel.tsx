@@ -7,7 +7,7 @@ import { useT } from "../../i18n/locale";
 import type { ListRequest, ReadCursor, ServiceClient } from "../../types";
 import { DetailPane } from "../history/DetailPane";
 import { PageControls } from "../history/PageControls";
-import { ArtifactPreview } from "./ArtifactPreview";
+import { ArtifactPreview, type ArtifactView } from "./ArtifactPreview";
 export function ObservationPanel({
   client,
   seed,
@@ -17,7 +17,8 @@ export function ObservationPanel({
 }) {
   const { t, tx } = useT();
   const pager = usePage(client, seed),
-    [selected, setSelected] = useState<ReadCursor>();
+    [selected, setSelected] = useState<ReadCursor>(),
+    [view, setView] = useState<ArtifactView>("raw");
   const page = pager.page;
   return (
     <section className="scm-body">
@@ -52,7 +53,8 @@ export function ObservationPanel({
                       if (
                         page.request.scope.kind !== "workspace" &&
                         page.request.snapshotSeq !== null
-                      )
+                      ) {
+                        setView("raw");
                         setSelected(
                           contentCursor(
                             page.request.storeId,
@@ -61,6 +63,7 @@ export function ObservationPanel({
                             content,
                           ),
                         );
+                      }
                     }}
                   >
                     {t("Inspect full retained {field}", {
@@ -77,7 +80,12 @@ export function ObservationPanel({
           key={`${selected.recordId}:${selected.recordVersion}`}
           client={client}
           cursor={selected}
-          render={(text) => <ArtifactPreview text={text} />}
+          preview={{
+            view,
+            render: (text) => (
+              <ArtifactPreview text={text} view={view} setView={setView} />
+            ),
+          }}
         />
       )}
     </section>

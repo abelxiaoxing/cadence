@@ -6,7 +6,7 @@ import type {
   WorkbenchEntry,
 } from "../../../src/service/contracts/gateway.ts";
 import { decodeProjectObservation } from "../../../src/service/contracts/gateway.ts";
-import { readJson } from "./service";
+import { observationRead } from "./observation-read";
 
 export const LAST_PROJECT_STORAGE_KEY = "cadence-last-project";
 
@@ -37,20 +37,10 @@ export async function projectReadable(
   id: string,
   signal: AbortSignal,
 ): Promise<boolean> {
-  try {
-    const response = await fetch(`/workbench/v1/projects/${id}`, {
-      credentials: "same-origin",
-      redirect: "error",
-      cache: "no-store",
-      signal,
-    });
-    if (!response.ok) return false;
-    const value = decodeProjectObservation(await readJson(response));
-    return (
-      (value.workspaceId !== null || value.status === "not-started") &&
-      !signal.aborted
-    );
-  } catch {
-    return false;
-  }
+  const value = await observationRead(
+    `/workbench/v1/projects/${id}`,
+    signal,
+    decodeProjectObservation,
+  );
+  return value.workspaceId !== null || value.status === "not-started";
 }

@@ -1,4 +1,5 @@
 @import "tailwindcss" source(none);
+@import "./optical-tokens.css";
 @import "./reference.css";
 @source "./**/*.{ts,tsx}";
 /* Cadence task-workspace chrome restyled from pi-web-ui web/src/styles.css
@@ -6,49 +7,7 @@
  * data-tip, panel/lp-section/session-item, resize handle, statusbar, msg-meta/body,
  * empty-state, scroll-bottom and scrollbar families) and, from b627452c, the
  * notices and img-lightbox families. MIT (c) 2026 xing-shuyin;
- * source-family lineage in provenance/webui-reuse.json. Tokens come from reference.css. */
-:root {
-  /* Scheme tokens follow the system until `data-theme` names one. Glass and
-   * Cyan → Blue accents share the same tokens across every workspace surface. */
-  color-scheme: light dark;
-  /* WCAG AA (4.5:1) for small safety statements, selected-tab text and the
-   * primary button, on the page, raised and tinted surfaces of either scheme
-   * (test/web/theme.test.tsx). pi's #6b7284 and #8b5cf6 text read 3.5–4.2:1 on
-   * the dark surfaces and white.css's #818b98 3.2–3.5:1 on the light ones. */
-  --text-faint: light-dark(#5b6675, #8e99ad);
-  --accent-text: light-dark(#1d4ed8, #67e8f9);
-  --accent-strong: light-dark(#1d4ed8, #22d3ee);
-  /* Dark glyphs keep the Cyan end of the dark gradient readable. */
-  --on-accent: light-dark(#ffffff, #082f49);
-  /* Elevation: resting cards, floating menus and tooltips, dialogs and
-   * drawers. Soft on light, navy-tinted on dark so glass lifts without a
-   * hard black edge. */
-  --shadow-1: light-dark(rgba(31, 35, 40, 0.07), rgba(2, 6, 23, 0.26));
-  --shadow-2: light-dark(rgba(31, 35, 40, 0.11), rgba(2, 6, 23, 0.44));
-  --shadow-3: light-dark(rgba(31, 35, 40, 0.16), rgba(2, 6, 23, 0.56));
-  --scrim: light-dark(rgba(31, 35, 40, 0.38), rgba(2, 6, 23, 0.56));
-  /* Syntax colours: highlight.js's GitHub and GitHub Dark themes, the light
-   * comment darkened from #6e7781 (4.27:1 on the code surface) to AA. */
-  --hl-keyword: light-dark(#cf222e, #ff7b72);
-  --hl-title: light-dark(#8250df, #d2a8ff);
-  --hl-constant: light-dark(#0550ae, #79c0ff);
-  --hl-string: light-dark(#0a3069, #a5d6ff);
-  --hl-builtin: light-dark(#953800, #ffa657);
-  --hl-comment: light-dark(#636c76, #8b949e);
-  --hl-tag: light-dark(#116329, #7ee787);
-  --hl-section: light-dark(#0550ae, #1f6feb);
-  --hl-bullet: light-dark(#0550ae, #f2cc60);
-  --hl-addition: light-dark(#116329, #aff5b4);
-  --hl-addition-bg: light-dark(#dafbe1, #033a16);
-  --hl-deletion: light-dark(#82071e, #ffdcd7);
-  --hl-deletion-bg: light-dark(#ffebe9, #67060c);
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
+ * source-family lineage in provenance/webui-reuse.json. Material roles come from optical-tokens.css. */
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -86,29 +45,14 @@ body {
   font-size: 14px;
   line-height: 1.6;
 }
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-body::before {
-  background:
-    radial-gradient(circle at 12% 8%, var(--mesh-a), transparent 42%),
-    radial-gradient(circle at 88% 12%, var(--mesh-b), transparent 44%),
-    radial-gradient(circle at 52% 96%, var(--mesh-c), transparent 48%);
-}
-body::after {
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
 #root {
   position: relative;
   z-index: 1;
+}
+input::placeholder,
+textarea::placeholder {
+  opacity: 1;
+  color: var(--text-secondary);
 }
 button > svg {
   min-width: 1em;
@@ -323,6 +267,8 @@ code {
   align-items: flex-start;
   gap: 8px;
 }
+input:focus-visible,
+select:focus-visible,
 button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
@@ -341,6 +287,7 @@ summary:focus-visible,
    App shell
    ============================================================ */
 .app {
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   height: 100dvh;
@@ -356,11 +303,8 @@ summary:focus-visible,
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--glass-border);
-  background: var(--topbar-bg, var(--bg-elev));
-  box-shadow: 0 8px 32px var(--glass-shadow);
+  background: transparent;
   flex-shrink: 0;
-  backdrop-filter: blur(var(--glass-shell-blur));
   --topbar-ctl-h: 28px;
 }
 .topbar-flow {
@@ -401,6 +345,22 @@ summary:focus-visible,
   line-height: 1;
   flex-shrink: 0;
   box-shadow: 0 6px 20px var(--primary-glow);
+}
+.brand-logo svg {
+  width: 21px;
+}
+.chat-welcome h2 {
+  color: var(--text-primary);
+  font-size: clamp(22px, 3vw, 36px);
+  font-weight: 540;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+/* The Hero hint stays legible even beneath the edge of an open menu. */
+.chat-welcome > p {
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 3px 10px;
 }
 .brand-name {
   margin: 0;
@@ -539,27 +499,6 @@ summary:focus-visible,
 .banner-notice code {
   color: var(--text);
 }
-.recovery-notice {
-  border-left-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
-.recovery-notice button {
-  font: inherit;
-  color: var(--accent-text);
-  background: none;
-  border: none;
-  padding: 0 4px;
-  cursor: pointer;
-  text-decoration: underline;
-}
-.recovery-details {
-  margin: 6px 0 0;
-  padding-left: 18px;
-}
-.recovery-details time {
-  color: var(--text-faint);
-}
 
 /* ---- Toasts (pi .notices / .notice): transient local results. The stack
    sits under the topbar, clear of the composer, and lets clicks through
@@ -666,7 +605,47 @@ summary:focus-visible,
   flex: none;
   min-height: 0;
   overflow: hidden;
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 16px;
+  background-color: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  box-shadow:
+    0 8px 22px var(--shadow-1),
+    inset 0 1px var(--glass-border-top);
+}
+@media (min-width: 901px) {
+  .panel-drawer {
+    margin: 0 9px 10px;
+  }
+  .panel-drawer.drawer-left {
+    width: calc(var(--left-w) - 18px);
+  }
+  .panel-drawer.drawer-right {
+    width: calc(var(--right-w) - 18px);
+    background: transparent;
+    backdrop-filter: none;
+  }
+  /* The opaque toolbar and the filtered wing body occupy disjoint rectangles.
+     Moving keyboard focus must not erase the current page's face or marker. */
+  .workbench-right-body {
+    isolation: isolate;
+    position: relative;
+  }
+  .workbench-right-body::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--glass-surface);
+    background-image: var(--grain-image);
+    background-size: var(--grain-size);
+    backdrop-filter: var(--glass-filter);
+  }
 }
 .drawer-left {
   width: var(--left-w);
@@ -675,6 +654,8 @@ summary:focus-visible,
   width: var(--right-w);
 }
 .panel-drawer .panel {
+  background: transparent;
+  border: 0;
   width: 100%;
   min-height: 0;
   overflow: hidden;
@@ -703,12 +684,21 @@ summary:focus-visible,
   touch-action: none;
   writing-mode: horizontal-tb;
 }
-.resize-handle:hover,
-.resize-handle:focus-visible {
+.resize-handle:hover:not(:focus-visible) {
   background:
     linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
   opacity: 0.55;
+}
+.resize-handle:focus-visible {
+  border-left: 2px solid var(--accent);
+  box-shadow: none;
+  transition: none;
   outline: none;
+}
+@media (forced-colors: active) {
+  .resize-handle:focus-visible {
+    border-color: Highlight;
+  }
 }
 .resize-handle::-webkit-slider-runnable-track {
   height: 100%;
@@ -862,9 +852,31 @@ summary:focus-visible,
   background: var(--bg-elev2);
   color: var(--text);
 }
+/* A solid leading mark sits inside the row padding; the keyboard outline and
+ * trailing actions have their own space. Selection changes no dimensions. */
+:is(
+  .session-item.active,
+  .file-item.selected,
+  .agent-dock-run > .active,
+  .cwd-recent-list > button[aria-current="true"]
+) {
+  position: relative;
+}
+:is(
+  .session-item.active,
+  .file-item.selected,
+  .agent-dock-run > .active,
+  .cwd-recent-list > button[aria-current="true"]
+)::before {
+  content: "";
+  position: absolute;
+  inset-block: 6px;
+  inset-inline-start: 2px;
+  border-inline-start: 3px solid var(--accent);
+  pointer-events: none;
+}
 .session-item.active,
 .session-item.active:hover {
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: var(--accent-soft);
   color: var(--text);
 }
@@ -1135,7 +1147,13 @@ summary:focus-visible,
   overflow-x: auto;
   scrollbar-width: none;
 }
+@media (min-width: 901px) {
+  .drawer-right .rp-tabs {
+    background: var(--bg-elev);
+  }
+}
 .rp-tab {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -1155,11 +1173,19 @@ summary:focus-visible,
   background: var(--bg-elev2);
   color: var(--text);
 }
-.rp-tab[aria-pressed="true"],
-.rp-tab[aria-pressed="true"]:hover,
-.rp-tab[aria-current] {
+.rp-tab:is([aria-pressed="true"], [aria-current="true"]) {
   background: var(--bg-elev2);
   color: var(--text);
+}
+.rp-tab:is([aria-pressed="true"], [aria-current="true"])::after {
+  content: "";
+  position: absolute;
+  inset: auto 7px 2px;
+  border-bottom: 2px solid var(--accent);
+  pointer-events: none;
+}
+.rp-tab:focus-visible {
+  outline-offset: -2px;
 }
 /* Folds the panel away (pi .panel-collapse-btn); the topbar toggle reopens it. */
 .panel-collapse-btn {
@@ -1754,12 +1780,23 @@ summary:focus-visible,
 .card {
   margin: 8px 0;
   padding: 12px 14px;
-  border: 1px solid var(--glass-card-border);
-  border-radius: 14px;
-  background: var(--card-bg, var(--bg-elev));
-  box-shadow: 0 10px 30px var(--glass-card-shadow);
   font-size: 12.5px;
-  backdrop-filter: blur(var(--glass-card-blur));
+}
+.receipt,
+.run-summary,
+.scm-file,
+.card,
+.toolcall,
+.thinking,
+.workflow-card {
+  border: 1px solid var(--glass-card-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 14px;
+  background-color: var(--card-bg, var(--bg-elev));
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  box-shadow: 0 10px 30px var(--glass-card-shadow);
+  backdrop-filter: var(--card-filter);
 }
 .run-summary > h3,
 .receipt > h3 {
@@ -1837,7 +1874,7 @@ summary:focus-visible,
 .entry > * {
   max-width: 520px;
 }
-.empty-state h2,
+.empty-state:not(.chat-welcome) h2,
 .entry h1 {
   margin: 8px 0 2px;
   font-size: 18px;
@@ -1858,14 +1895,17 @@ summary:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: var(--primary-gradient);
-  color: var(--on-accent);
-  font-size: 22px;
-  font-weight: 700;
-  box-shadow: 0 6px 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  width: 64px;
+  height: 64px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 20px;
+  background: var(--glass-surface);
+  color: var(--prism-b);
+  box-shadow:
+    0 16px 36px var(--shadow-2),
+    inset 0 1px 1px var(--glass-border-top);
 }
 
 /* ---- Statusbar (pi .statusbar / .bar-item / .status-item / .status-dot /
@@ -1883,8 +1923,8 @@ summary:focus-visible,
   padding: 1px 4px;
   border-top: 1px solid var(--glass-border);
   background: var(--statusbar-bg, var(--bg-elev));
-  font-size: 11px;
-  backdrop-filter: blur(var(--glass-shell-blur));
+  font: 11px var(--mono);
+  /* Keep the connection glyph on the same stable paint surface as its label. */
   line-height: 1.4;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
@@ -1958,8 +1998,7 @@ summary:focus-visible,
 }
 /* An item with no figure yet (pi .is-zero): present, but quiet. */
 .statusbar .status-item.is-zero {
-  opacity: 0.6;
-  transition: opacity 0.15s ease;
+  color: var(--text-faint);
 }
 .statusbar .status-item.is-zero:hover {
   opacity: 1;
@@ -2106,7 +2145,7 @@ summary:focus-visible,
   white-space: nowrap;
 }
 
-/* ---- Banners under the topbar ---- */
+/* Safety controls in navigation while the full workspace is unavailable. */
 .run-strip {
   flex: none;
   display: flex;
@@ -2158,6 +2197,7 @@ summary:focus-visible,
   flex: 1;
 }
 .gs-modal > p {
+  overflow-wrap: anywhere;
   font-size: 12px;
   color: var(--text-faint);
 }
@@ -2172,13 +2212,15 @@ summary:focus-visible,
   gap: 2px;
   width: 100%;
   margin-bottom: 4px;
-  border-color: transparent;
+  transition: none;
+  border-inline-start: 3px solid transparent;
   background: transparent;
+  overflow-wrap: anywhere;
   white-space: normal;
   text-align: left;
 }
-.gs-item.active {
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+.gs-item[aria-selected="true"] {
+  border-inline-start-color: var(--focus);
   background: var(--accent-soft);
 }
 .gs-item-title {
@@ -2186,6 +2228,7 @@ summary:focus-visible,
   color: var(--text);
 }
 .gs-item-sub {
+  max-width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2206,14 +2249,17 @@ summary:focus-visible,
   border: 1px solid var(--glass-border);
   border-radius: 18px;
   background: var(--menu-bg);
+  border-top-color: var(--glass-border-top);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
   color: var(--text);
   box-shadow: 0 20px 60px var(--shadow-3);
-  backdrop-filter: blur(var(--glass-shell-blur));
+  backdrop-filter: var(--glass-filter);
   font-size: 13px;
 }
 /* A ::backdrop inherits custom properties only in 2024 and later engines. */
 .action-dialog::backdrop {
-  background: var(--scrim, rgba(0, 0, 0, 0.5));
+  background: var(--scrim);
 }
 .action-dialog > header,
 .action-dialog > footer {
@@ -2327,6 +2373,9 @@ summary:focus-visible,
   width: 4em;
   color: var(--text-faint);
 }
+.fp-line.sel .fp-num {
+  background: var(--bg-elev2);
+}
 .fp-code-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -2436,13 +2485,16 @@ summary:focus-visible,
     display: none;
   }
   .panel-drawer {
+    /* The compact wing lies over the scrim and the transcript, not just the
+       canvas. Keep its quiet labels legible without opacifying the glass. */
+    --text-secondary: var(--accent);
+    --text-dim: var(--text-secondary);
+    --text-faint: var(--text-secondary);
+    --control-fg: var(--text-secondary);
     position: absolute;
     top: 0;
     bottom: 0;
-    width: min(300px, 86vw);
     z-index: 20;
-    background: var(--bg-elev);
-    box-shadow: 0 0 40px var(--shadow-3);
     @media (prefers-reduced-motion: no-preference) {
       transition: transform 0.18s ease;
     }
@@ -2453,11 +2505,23 @@ summary:focus-visible,
   }
   .drawer-right {
     right: 0;
-    width: min(380px, 92vw);
     transform: translateX(105%);
+  }
+  /* A parked drawer is not a scrollable second viewport. Swipe tracking
+     makes it visible before applying the gesture transform. */
+  .panel-drawer:not(.open):not(.drawer-dragging) {
+    display: none;
   }
   .panel-drawer.open {
     transform: translateX(0);
+  }
+  @starting-style {
+    .panel-drawer.drawer-right.open {
+      transform: translateX(105%);
+    }
+    .panel-drawer.drawer-left.open {
+      transform: translateX(-105%);
+    }
   }
   .panel-drawer.drawer-dragging {
     transition: none;
@@ -2555,6 +2619,9 @@ summary:focus-visible,
   }
 }
 @media (max-width: 360px) {
+  .panel-right .rp-tab {
+    padding-inline: 8px;
+  }
   .brand {
     margin-right: 0;
   }
@@ -2618,10 +2685,7 @@ summary:focus-visible,
   z-index: 60;
   width: 180px;
   padding: 5px;
-  border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px var(--shadow-2);
 }
 .view-menu-items button {
   display: flex;
@@ -2632,7 +2696,12 @@ summary:focus-visible,
   padding: 8px 10px;
   text-transform: capitalize;
 }
+/* Selection stays on the current view as keyboard focus moves elsewhere. */
+.view-menu-items > button[aria-pressed] {
+  transition: none;
+}
 .view-menu-items button[aria-pressed="true"] {
+  box-shadow: inset 2px 0 var(--accent);
   color: var(--accent-text);
   background: var(--accent-soft);
 }
@@ -2901,7 +2970,13 @@ summary:focus-visible,
   min-width: 0;
   min-height: 0;
 }
-.workbench-right > .panel {
+.workbench-right-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.workbench-right-body > .panel {
   flex: 1;
 }
 /* The dock is as tall as its rows, up to 190px; a drag sets an inline height
@@ -3076,7 +3151,7 @@ summary:focus-visible,
  * then the reply as message text and tool cards in recorded order. Turns are
  * already mounted lazily, so the cards inside never skip their own layout. */
 .chat-turn {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 8px;
 }
 .chat-turn .msg {
@@ -3124,10 +3199,11 @@ summary:focus-visible,
   margin-top: 0;
 }
 .chat-turn .msg-text.single {
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
 }
-.chat-turn .msg-text .md {
-  line-height: 1.75;
+.chat-turn .msg-text.single .msg-text-copy {
+  align-self: flex-end;
 }
 .chat-turn .msg-text .md > :first-child {
   margin-top: 0;
@@ -3145,6 +3221,27 @@ summary:focus-visible,
   display: inline-block;
   max-width: none;
   margin-bottom: 4px;
+}
+/* Keep a focused control out of the scrollport's filtered layer. On long
+   transcripts Chromium can drop the entire filtered card when tabbing. The
+   plate sits behind the card's fill and grain, in the same message body. */
+@supports (backdrop-filter: blur(1px)) {
+  .msg-body:has(> :is(.toolcall, .thinking):focus-within) {
+    isolation: isolate;
+  }
+  .msg-body > :is(.toolcall, .thinking):focus-within {
+    position: relative;
+    backdrop-filter: none;
+  }
+  .msg-body > :is(.toolcall, .thinking):focus-within::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    backdrop-filter: var(--card-filter);
+  }
 }
 .chat-turn .toolcall {
   margin: 6px 0;
@@ -3307,25 +3404,82 @@ summary:focus-visible,
   font-size: 12.5px;
   white-space: pre-line;
 }
-/* Composer (pi .composer): one rounded card, a text area over a toolbar whose
- * last control is the round Send or Stop. */
-.chat-composer {
+/* The native composer determines the dock's height. Its backing casts the
+ * shadow; only the glass below the form is clipped. Don't group the editor,
+ * range and toolbar into another full-width painted layer over the glass. */
+.composer-dock {
+  --capsule-radius: 24px;
   flex: none;
   position: relative;
+  z-index: 1;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
-  border: 1px solid var(--glass-border);
-  border-radius: 18px;
-  background: var(--glass-bg, var(--bg-elev));
+  border-radius: var(--capsule-radius);
   box-shadow:
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
-  backdrop-filter: blur(var(--glass-shell-blur));
 }
-.chat-composer:focus-within {
-  border-color: var(--accent);
+.composer-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  clip-path: inset(0 round var(--capsule-radius));
+  backdrop-filter: var(--glass-filter);
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+}
+.chat-composer {
+  position: relative;
+  border-radius: inherit;
+  border: 1px solid transparent;
+}
+.composer-dock:focus-within {
   box-shadow:
     0 0 0 3px var(--accent-soft),
     0 12px 40px var(--glass-shadow);
+}
+.chat-composer:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus);
+}
+.chat-composer::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: -1px 7% auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--prism-a),
+    var(--prism-b),
+    transparent
+  );
+  opacity: 0;
+}
+.chat-composer:focus-within::before,
+.chat-composer:has(.mode-toggle.on)::before,
+.chat-composer[data-flow]::before {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-composer[data-flow]::before {
+    animation: prism-flow 2.8s ease-in-out infinite alternate;
+  }
+}
+@keyframes prism-flow {
+  from {
+    transform: scaleX(0.5);
+  }
+  to {
+    transform: scaleX(0.96);
+  }
 }
 /* The text area grows with its text (ChatComposer sets its height); the
  * handle on the card's top edge sets a fixed height instead of a native
@@ -3346,7 +3500,8 @@ summary:focus-visible,
 }
 /* The height handle (pi .composer-resize), as a keyboard-operable range input
  * like the pane sashes: a short bar on the top edge, shown on hover or focus
- * and always on touch screens. */
+ * and always on touch screens. Keep the wide drag target stable; change only
+ * the short mark rather than fading a layer spanning the toolbar. */
 .composer-resize {
   -webkit-appearance: none;
   appearance: none;
@@ -3362,25 +3517,28 @@ summary:focus-visible,
   padding: 0;
   border: 0;
   border-radius: 0;
+  color: transparent;
   background:
-    linear-gradient(var(--border), var(--border)) center / 48px 4px no-repeat;
+    linear-gradient(currentColor, currentColor) center / 48px 4px no-repeat;
   cursor: ns-resize;
   touch-action: none;
-  opacity: 0;
-  transition: opacity 0.15s;
+  transition: none;
+  box-shadow: none;
 }
-.chat-composer:hover > .composer-resize,
-.composer-resize:focus-visible,
-.composer-resize:active {
-  opacity: 1;
+@media (hover: none) {
+  .composer-resize {
+    color: var(--control-fg);
+  }
+}
+:where(.chat-composer:hover) > .composer-resize {
+  color: var(--control-fg);
 }
 .composer-resize:hover,
 .composer-resize:focus-visible,
 .composer-resize:active {
-  background-image: linear-gradient(var(--accent), var(--accent));
+  color: var(--accent);
   background-size: 56px 4px;
   outline: none;
-  box-shadow: none;
 }
 /* A fixed height is said by the bar's shape too, not only its colour. */
 .composer-resize.is-manual {
@@ -3388,8 +3546,8 @@ summary:focus-visible,
     48px 4px,
     8px 8px;
   background-image:
-    linear-gradient(var(--border), var(--border)),
-    radial-gradient(circle, var(--accent) 60%, transparent 62%);
+    linear-gradient(currentColor, currentColor),
+    radial-gradient(circle, currentColor 60%, transparent 62%);
 }
 .composer-resize::-webkit-slider-runnable-track {
   height: 100%;
@@ -3481,14 +3639,20 @@ summary:focus-visible,
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 30;
+  display: flex;
+  flex-direction: column;
   max-height: min(320px, 45vh);
+  border-radius: 14px;
+}
+/* Only the stationary plate samples the backdrop. The list scrolls and
+ * paints its changing keyboard selection above it, without a filter. */
+.mention-list {
+  position: relative;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: 6px;
   padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--bg-elev2);
-  box-shadow: 0 -6px 24px var(--shadow-2);
+  border-radius: inherit;
 }
 .mention-menu-hint {
   display: flex;
@@ -3601,7 +3765,7 @@ summary:focus-visible,
   box-shadow: 0 0 0 4px var(--red-soft);
 }
 .composer-toolbar > .danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--red) 85%, #000);
+  background: color-mix(in srgb, var(--red) 85%, var(--bg-canvas));
   color: var(--on-accent);
 }
 /* The transcript's pill (pi .scroll-bottom) sits just above the composer. */
@@ -3680,7 +3844,7 @@ summary:focus-visible,
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 4px auto 12px;
   color: var(--text-dim);
   font-size: 12px;
@@ -3697,8 +3861,7 @@ summary:focus-visible,
 }
 .chat-turn.off-branch {
   padding-left: 12px;
-  border-left: 2px dashed var(--border);
-  opacity: 0.6;
+  border-left: 2px dashed var(--focus);
 }
 .chat-turn.off-branch:hover,
 .chat-turn.off-branch:focus-within {
@@ -3837,9 +4000,7 @@ button.file-item:hover:not(:disabled),
   flex-shrink: 0;
   color: var(--text-faint);
 }
-.file-item.dir .file-icon {
-  color: var(--amber);
-}
+
 .file-name {
   min-width: 0;
   overflow: hidden;
@@ -3914,6 +4075,7 @@ button.file-item:hover:not(:disabled),
   min-height: 0;
 }
 .file-preview .codeblock {
+  flex-direction: column;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -4051,9 +4213,6 @@ button.file-item:hover:not(:disabled),
   border: 1px solid var(--border-soft);
   border-radius: 8px;
 }
-.cwd-picker-list[aria-busy] > button {
-  opacity: 0.55;
-}
 .cwd-picker-note {
   margin: 0;
   padding: 8px 12px;
@@ -4062,6 +4221,15 @@ button.file-item:hover:not(:disabled),
 .action-dialog > .cwd-footer {
   justify-content: space-between;
   flex-wrap: wrap;
+}
+.cwd-footer > button:disabled[aria-busy="true"],
+.workflow-plan > .primary:disabled[aria-busy="true"] {
+  opacity: 1;
+  color: var(--text-primary);
+  background: var(--chip-bg);
+  border-color: var(--border);
+  box-shadow: none;
+  transition: none;
 }
 .cwd-target {
   flex: 1 1 240px;
@@ -4125,7 +4293,11 @@ button.file-item:hover:not(:disabled),
   background: transparent;
   padding: 6px 8px;
 }
-.cwd-recent-list > button[aria-current] {
+.cwd-recent-list > button:focus-visible {
+  /* Keep the ring inside the scrolling list, separate from the leading mark. */
+  outline-offset: -2px;
+}
+.cwd-recent-list > button[aria-current="true"] {
   color: var(--accent-text);
   background: var(--accent-soft);
 }
@@ -4143,14 +4315,17 @@ button.file-item:hover:not(:disabled),
   flex-wrap: wrap;
   align-items: center;
   gap: 0 4px;
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: -6px auto 16px;
   padding: 2px;
   border: 1px solid var(--glass-card-border);
   border-radius: 14px;
   background: var(--card-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border-top-color: var(--glass-border-top);
   box-shadow: 0 8px 24px var(--glass-card-shadow);
-  backdrop-filter: blur(var(--glass-card-blur));
+  backdrop-filter: var(--card-filter);
 }
 .workflow-line-open {
   display: flex;
@@ -4341,40 +4516,76 @@ button.file-item:hover:not(:disabled),
   padding: 0;
   list-style: none;
 }
+.workflow-board > ul,
+.plan-context {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 8px;
+}
+.workflow-task,
+.plan-context > p {
+  position: relative;
+  background: var(--bg-elev);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  border-radius: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+}
+@media (hover: hover) {
+  .workflow-task:hover,
+  .plan-context > p:hover {
+    background-image: radial-gradient(
+      ellipse at var(--spot-x, 50%) var(--spot-y, 0%),
+      var(--accent-soft),
+      transparent 70%
+    );
+  }
+}
 .workflow-task {
+  flex-direction: column;
   display: flex;
   align-items: baseline;
   gap: 4px 12px;
-  padding: 7px 2px;
-  border-top: 1px solid var(--border-soft);
+
   font-size: 12.5px;
   @media (max-width: 640px) {
     flex-direction: column;
   }
 }
+.workflow-status,
 .workflow-task-state {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: 7.5em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 8px;
   color: var(--text-faint);
   font-size: 12px;
   @media (max-width: 640px) {
     width: auto;
   }
 }
+.workflow-status.unknown {
+  color: var(--amber-text);
+}
 .workflow-task-state > svg {
   flex: none;
   width: 13px;
   height: 13px;
 }
+.workflow-status.running,
 .workflow-task-state.running {
   color: var(--accent-text);
 }
+.workflow-status.completed,
 .workflow-task-state.completed {
   color: var(--green);
 }
+.workflow-status.failed,
 .workflow-task-state.failed {
   color: var(--red-text);
 }
@@ -4450,16 +4661,18 @@ button.file-item:hover:not(:disabled),
   }
 }
 .workflow-plan {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 16px;
   padding: 16px;
   border: 1px solid var(--glass-card-border);
-  border-left: 3px solid var(--accent);
   border-radius: 16px;
   background: var(--card-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border-top-color: var(--glass-border-top);
   box-shadow: 0 12px 36px var(--glass-card-shadow);
   color: var(--text);
-  backdrop-filter: blur(var(--glass-card-blur));
+  backdrop-filter: var(--card-filter);
   overflow-wrap: anywhere;
 }
 .design-card nav,
@@ -4473,8 +4686,26 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   margin-block: 12px;
 }
+.design-card .design-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.design-option:has(input:checked) {
+  border-color: var(--accent);
+}
 .design-card label small {
   display: block;
+  color: var(--text-dim);
+}
+.design-card button,
+.action-dialog:has(.design-card) footer {
+  overflow-wrap: anywhere;
+  flex-wrap: wrap;
 }
 .design-card button[aria-current="step"] {
   border-color: var(--accent);
@@ -4510,19 +4741,19 @@ button.file-item:hover:not(:disabled),
   display: none;
 }
 .workflow-agent-goal {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 16px;
   overflow-wrap: anywhere;
 }
 .workflow-agent-result {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto 20px;
   padding-top: 12px;
   border-top: 1px solid var(--border-soft);
   overflow-wrap: anywhere;
 }
 .workflow-agent .workflow-card {
-  max-width: 920px;
+  max-width: var(--reading-width);
   margin: 0 auto;
 }
 
@@ -4719,9 +4950,6 @@ button.file-item:hover:not(:disabled),
   .branch-act:disabled {
     opacity: 0.35;
   }
-  .composer-resize {
-    opacity: 1;
-  }
   /* Room for a finger; the date gives way to the message. */
   .branch-row time {
     display: none;
@@ -4750,6 +4978,7 @@ button.file-item:hover:not(:disabled),
 }
 .chat-attempt-text {
   margin: 0 0 4px;
+  line-height: var(--reading-leading);
   white-space: pre-wrap;
 }
 /* Messages waiting for the running reply (pi-web-ui's queued message row):
@@ -4814,9 +5043,17 @@ button.file-item:hover:not(:disabled),
   background: transparent;
   color: var(--accent-text);
 }
+.composer-split > .composer-queue {
+  border-radius: 16px 0 0 16px;
+}
 .composer-split > .composer-steer {
+  border-radius: 0 16px 16px 0;
   background: var(--accent);
   color: var(--on-accent);
+}
+.composer-split > button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -4px;
 }
 .composer-split > button > svg {
   width: 16px;
@@ -4838,6 +5075,9 @@ button.file-item:hover:not(:disabled),
 .model-trigger {
   max-width: 260px;
   min-width: 0;
+  /* Commit the catalog caption and its face together. Animating the old
+   * button fill during that replacement can erase adjacent composer ink. */
+  transition: none;
   border-color: transparent;
   background: transparent;
   color: var(--text-dim);
@@ -4873,12 +5113,36 @@ button.file-item:hover:not(:disabled),
   flex-direction: column;
   width: 340px;
   max-height: min(460px, 62vh);
-  border: 1px solid var(--glass-border);
   border-radius: 16px;
-  background: var(--menu-bg);
-  box-shadow: 0 16px 40px var(--shadow-3);
   overflow: hidden;
-  backdrop-filter: blur(var(--glass-shell-blur));
+}
+.model-popover,
+.mention-menu,
+.view-menu-items,
+.more-menu-items,
+.img-lightbox-panel {
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+  box-shadow: 0 16px 40px var(--shadow-3);
+}
+.model-popover::before,
+.mention-menu::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.model-popover::before,
+.mention-menu::before,
+.view-menu-items,
+.more-menu-items,
+.img-lightbox-panel {
+  background: var(--menu-bg);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  backdrop-filter: var(--glass-filter);
 }
 .model-popover-lead {
   margin: 0;
@@ -4939,6 +5203,9 @@ button.file-item:hover:not(:disabled),
   color: var(--text);
   text-align: left;
 }
+.model-option:disabled {
+  opacity: 1;
+}
 .model-option:hover:not(:disabled),
 .model-option:focus-visible {
   border-color: transparent;
@@ -4986,6 +5253,9 @@ button.file-item:hover:not(:disabled),
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11.5px;
+}
+.model-thinking button:disabled {
+  opacity: 1;
 }
 .model-thinking button[aria-pressed="true"] {
   border-color: var(--accent-strong);
@@ -5057,14 +5327,23 @@ button.link:hover:not(:disabled) {
   transform: translateX(5px);
 }
 .mode-toggle.on {
-  color: var(--accent-text);
+  color: var(--prism-b);
 }
 .mode-toggle.on .mode-switch {
-  background: var(--accent-strong);
+  background: var(--prism-b);
 }
 .mode-toggle.on .mode-switch::after {
   background: var(--on-accent);
   transform: translateX(11px);
+}
+
+/* The label still reports mode state when the switch cannot be changed. */
+.mode-toggle:disabled {
+  opacity: 1;
+  color: var(--text-primary);
+}
+.mode-toggle:disabled .mode-switch {
+  opacity: 0.5;
 }
 
 /* ---- Topbar overflow menu: refresh, disconnect, build ---- */
@@ -5085,11 +5364,7 @@ button.link:hover:not(:disabled) {
   z-index: 60;
   width: 260px;
   padding: 5px;
-  border: 1px solid var(--glass-border);
   border-radius: 14px;
-  background: var(--menu-solid-bg);
-  box-shadow: 0 16px 40px var(--shadow-2);
-  backdrop-filter: blur(var(--glass-shell-blur));
 }
 .more-menu-items button {
   display: flex;
@@ -5218,7 +5493,7 @@ button.link:hover:not(:disabled) {
   justify-content: center;
 }
 .img-lightbox::backdrop {
-  background: var(--scrim, rgba(0, 0, 0, 0.5));
+  background: var(--scrim);
 }
 .img-lightbox-panel {
   --lb-image-max-w: min(78vw, 880px);
@@ -5230,10 +5505,7 @@ button.link:hover:not(:disabled) {
   max-width: 100%;
   max-height: 100%;
   padding: 6px;
-  border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--bg-elev);
-  box-shadow: 0 18px 48px -14px var(--shadow-3);
 }
 .img-lightbox-toolbar {
   display: flex;
@@ -5358,31 +5630,50 @@ button.link:hover:not(:disabled) {
   }
 }
 
-/* Observation uncertainty is not an operation failure or a plan decision. */
-.workspace-notice {
-  flex: none;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
-  background: var(--bg-elev);
-  color: var(--text-dim);
-  font-size: 12px;
+/* One reserved connection item. Its keyboard disclosure opens over the
+ * transcript, never in the flow of either the transcript or the footer. */
+.workspace-connection {
+  position: relative;
+  width: min(20em, 100%);
+  min-width: 0;
 }
-.workspace-notice-summary {
+.workspace-connection > summary {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  justify-content: space-between;
+  list-style: none;
+  cursor: pointer;
 }
-.workspace-notice-summary p {
-  flex: 1 1 260px;
-  margin: 0;
+.workspace-connection > summary::-webkit-details-marker {
+  display: none;
 }
-.workspace-notice details {
-  margin: 4px 0 0;
+.workspace-connection > summary:focus-visible {
+  outline: 2px solid var(--accent-strong);
 }
-.workspace-notice details p {
+.workspace-connection > summary > svg {
+  flex: none;
+}
+.connection-details {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  width: min(28em, calc(100vw - 16px));
+  max-height: 65vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--menu-solid-bg);
+  box-shadow: 0 6px 20px var(--shadow-2);
+  color: var(--text);
+  user-select: text;
+}
+.connection-details p {
   margin: 4px 0;
+}
+.connection-details button {
+  margin-top: 6px;
 }
 .composer-status {
   margin: 0;
@@ -5393,24 +5684,34 @@ button.link:hover:not(:disabled) {
 
 /* Without backdrop-filter the glass tiers would read as muddy: give every
  * glass surface an opaque, readable base. Last on purpose: these overrides
- * must win the cascade over each surface's own background. (.toolcall and
- * .thinking keep their fallback next to their own rules in reference.css.) */
+ * must win the cascade over each surface's own background. */
 @supports not (backdrop-filter: blur(1px)) {
   .topbar,
   .statusbar,
-  .chat-composer,
   .action-dialog,
-  .model-popover,
+  .model-popover::before,
+  .mention-menu::before,
+  .view-menu-items,
   .more-menu-items,
-  .panel-drawer {
+  .img-lightbox-panel {
     background: var(--bg-elev);
+  }
+  .workbench-right-body::before {
+    background: var(--bg-elev);
+  }
+  .composer-dock::before,
+  .panel-drawer,
+  .scm-file {
+    background-color: var(--bg-elev);
   }
   .receipt,
   .run-summary,
-  .scm-file,
   .card,
+  .toolcall,
+  .thinking,
   .workflow-line,
-  .workflow-plan {
-    background: var(--bg-elev2);
+  .workflow-plan,
+  .workflow-card {
+    background-color: var(--bg-elev2);
   }
 }

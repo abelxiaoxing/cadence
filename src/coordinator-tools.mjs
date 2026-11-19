@@ -101,11 +101,14 @@ export const DESIGN_PARAMETERS = Type.Object({
         description: "Acceptance item this decision affects",
       }),
       when: Type.Optional(
-        Type.Object(
-          { question: Type.String(), option: Type.String() },
+        Type.Union(
+          [
+            Type.Null(),
+            Type.Object({ question: Type.String(), option: Type.String() }),
+          ],
           {
             description:
-              "Only relevant for this earlier question and selected option.",
+              "Omit or use null for an independent question. For a conditional question give an earlier question ID and one of its option IDs.",
           },
         ),
       ),

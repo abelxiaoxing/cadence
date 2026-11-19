@@ -8,7 +8,6 @@ import type { PreviewModels } from "../../client/model-preview";
 import { useModelCatalog } from "../../client/use-model-catalog";
 import { useT } from "../../i18n/locale";
 import { AppShell } from "../../layout/AppShell";
-import { StatusItem } from "../../layout/StatusItem";
 import { usePanelLayout } from "../../layout/use-panel-layout";
 import { ModelPicker } from "../actions/ModelPicker";
 import { ActivityList, type ActivityListProps } from "./ActivityList";
@@ -16,12 +15,18 @@ import { ChatWelcome } from "./ChatWelcome";
 import { ConversationActions } from "./ConversationActions";
 import { WorkingFolderButton } from "./WorkingFolderButton";
 
+import { WorkspaceConnection } from "./WorkspaceNotice";
+
 export function FolderSetup({
   ready,
   previewModels,
   draft = emptyFolderDraft(),
   onDraftChange,
-  restore,
+  restoring,
+  missing,
+  pending = !ready,
+  entryError,
+  restoreError,
   onChooseFolder,
   onRefresh,
   onOpenService,
@@ -32,7 +37,11 @@ export function FolderSetup({
   previewModels?: PreviewModels;
   draft?: FolderDraft;
   onDraftChange?(draft: FolderDraft): void;
-  restore?: { status: "checking" | "unavailable"; path: string } | null;
+  restoring?: string;
+  missing?: boolean;
+  pending?: boolean;
+  entryError?: string;
+  restoreError?: string;
   onChooseFolder(): void;
   onRefresh(): void;
   onOpenService?(): void;
@@ -83,6 +92,7 @@ export function FolderSetup({
         >
           <div className="chat-messages">
             <ChatWelcome
+              visible={ready && !(restoring && pending)}
               hint={t(
                 "Choose a working folder to start. You can write a draft below.",
               )}
@@ -96,63 +106,60 @@ export function FolderSetup({
                 <FiFolder aria-hidden="true" />
                 {t("Choose a folder…")}
               </button>
-              {restore && (
+              {missing && (
                 <p className="panel-hint" role="status">
-                  {restore.status === "checking"
-                    ? t("Returning to your last folder {path}…", {
-                        path: restore.path,
-                      })
-                    : t(
-                        "Could not restore {path}. Choose a folder to continue; nothing was started.",
-                        { path: restore.path },
-                      )}
+                  {t(
+                    "This folder is unavailable. Choose another folder; nothing was moved or recreated.",
+                  )}
                 </p>
               )}
             </ChatWelcome>
           </div>
-          <div className="chat-composer">
-            <textarea
-              aria-label={t("Message")}
-              rows={3}
-              value={draft.text}
-              onChange={(event) =>
-                onDraftChange?.({ ...draft, text: event.target.value })
-              }
-              placeholder={t(
-                "Write a message. Choose a folder before sending…",
-              )}
-            />
-            <div className="composer-toolbar">
-              <ModelPicker
-                scope="next-conversation"
-                availability={{ status: "not-started" }}
-                read={modelRead}
-                draftModel={draft.model}
-                onPreviewChoice={
-                  onDraftChange
-                    ? (model) => onDraftChange({ ...draft, model })
-                    : undefined
+          <div className="composer-dock">
+            <div className="chat-composer">
+              <textarea
+                aria-label={t("Message")}
+                rows={3}
+                value={draft.text}
+                onChange={(event) =>
+                  onDraftChange?.({ ...draft, text: event.target.value })
                 }
-                locked={!ready}
-                open={modelOpen}
-                onOpenChange={(open) => {
-                  if (open) modelRead.reread();
-                  setModelOpen(open);
-                }}
-                onChanged={() => {}}
+                placeholder={t(
+                  "Write a message. Choose a folder before sending…",
+                )}
               />
-              <span className="composer-hint">
-                {t("Choose a folder before sending.")}
-              </span>
-              <button
-                type="button"
-                className="primary"
-                aria-label={t("Send")}
-                title={t("Send")}
-                disabled
-              >
-                <FiArrowUp aria-hidden="true" />
-              </button>
+              <div className="composer-toolbar">
+                <ModelPicker
+                  scope="next-conversation"
+                  availability={{ status: "not-started" }}
+                  read={modelRead}
+                  draftModel={draft.model}
+                  onPreviewChoice={
+                    onDraftChange
+                      ? (model) => onDraftChange({ ...draft, model })
+                      : undefined
+                  }
+                  locked={!ready}
+                  open={modelOpen}
+                  onOpenChange={(open) => {
+                    if (open) modelRead.reread();
+                    setModelOpen(open);
+                  }}
+                  onChanged={() => {}}
+                />
+                <span className="composer-hint">
+                  {t("Choose a folder before sending.")}
+                </span>
+                <button
+                  type="button"
+                  className="primary"
+                  aria-label={t("Send")}
+                  title={t("Send")}
+                  disabled
+                >
+                  <FiArrowUp aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -165,7 +172,14 @@ export function FolderSetup({
         </aside>
       }
       status={
-        <StatusItem tone="faint">{t("Choose a working folder")}</StatusItem>
+        <WorkspaceConnection
+          phase={pending ? (ready ? "updating" : "connecting") : "folder"}
+          entryError={entryError}
+          projectError={restoreError}
+          retained={ready && !restoring}
+          latency={null}
+          onRefresh={onRefresh}
+        />
       }
       folder={<WorkingFolderButton disabled={!ready} onClick={choose} />}
     />

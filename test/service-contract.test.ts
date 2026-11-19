@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { decodeProjectAssociation } from "../src/service/contracts/workbench.ts";
 import {
   ProjectionTracker,
   ServiceClient,
@@ -21,7 +22,65 @@ import type {
   WorkerPublicRequest,
 } from "../src/service-contract.ts";
 import * as facade from "../src/service-contract.ts";
+import {
+  HTTP_ROUTES,
+  type HttpOperation,
+  retainedHistoryBody,
+  wireRequest,
+  wireUrl,
+} from "../src/service-wire.ts";
 import * as worker from "../src/worker-public.mjs";
+
+it("requires explicit gateway evidence for project association independently of owner status", () => {
+  for (const value of ["associated", "unassociated"])
+    expect(decodeProjectAssociation(value)).toBe(value);
+  for (const absent of [null, undefined])
+    expect(decodeProjectAssociation(absent)).toBe("unknown");
+  for (const invalid of [
+    "running",
+    "",
+    "unavailable",
+    "associated, unassociated",
+  ])
+    expect(() => decodeProjectAssociation(invalid)).toThrow("invalid");
+});
+
+it("retained bodies are only the finite history readers and keep the original proof out of URLs", () => {
+  expect(
+    (Object.keys(HTTP_ROUTES) as HttpOperation[])
+      .filter(retainedHistoryBody)
+      .sort(),
+  ).toEqual(
+    [
+      "tasks",
+      "runs",
+      "messages",
+      "tools",
+      "contents",
+      "events",
+      "checks",
+      "changes",
+      "reviews",
+      "entity",
+      "graph",
+      "search",
+      "detail",
+    ].sort(),
+  );
+  const request = {
+    reader: "tasks",
+    storeId: crypto.randomUUID(),
+    scope: { kind: "workspace", id: crypto.randomUUID() },
+    snapshotSeq: "1",
+    after: null,
+    limit: 1,
+    navigation: "proof-only",
+  };
+  const wire = wireRequest("tasks", request);
+  expect([wire.method, wire.path]).toEqual(["POST", HTTP_ROUTES.tasks]);
+  expect(JSON.parse(String(wire.body))).toEqual(request);
+  expect(() => wireUrl("tasks", request)).toThrow("invalid");
+});
 
 describe.each([
   { name: "service facade", contract: facade },

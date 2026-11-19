@@ -171,6 +171,7 @@
   "package/web/dist/assets/markdown.js",
   "package/web/dist/assets/react.js",
   "package/web/dist/assets/rolldown-runtime.js",
+  "package/web/dist/assets/start.js",
   "package/web/dist/assets/timeline-client.js",
   "package/web/dist/assets/vis-timeline.css",
   "package/web/dist/assets/vis-timeline.js",

@@ -1,18 +1,20 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script src="/assets/start.js"></script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
     <title>Cadence task workspace</title>
-    <script type="module" crossorigin src="/assets/cadence.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/rolldown-runtime.js">
-    <link rel="modulepreload" crossorigin href="/assets/react.js">
-    <link rel="modulepreload" crossorigin href="/assets/markdown.js">
-    <link rel="stylesheet" crossorigin href="/assets/cadence.css">
-    <link rel="stylesheet" href="/assets/vis-timeline.css">
+    <script type="module" crossorigin src="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/cadence.js"></script>
+    <link rel="modulepreload" crossorigin href="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/rolldown-runtime.js">
+    <link rel="modulepreload" crossorigin href="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/react.js">
+    <link rel="modulepreload" crossorigin href="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/markdown.js">
+    <link rel="stylesheet" crossorigin href="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/cadence.css">
+    <link rel="stylesheet" href="/ui/ba3b09bde9dbda72da717b96c796a0bf4247b3f4050b37ea8314d6965393ccb5/assets/vis-timeline.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><p hidden id="startup-failure" role="status">Cadence could not load. <button type="button">Retry</button></p></div>
   </body>
 </html>

@@ -373,10 +373,13 @@ it("branch navigation retires pending readonly reads and cannot reuse the old ob
   reader.setActive(true);
   await vi.advanceTimersByTimeAsync(0);
   expect(reader.view().summary).toBeUndefined();
+  const firstSelection = [...signals];
   reader.choose(turns[0].id);
+  expect(firstSelection.every((signal) => signal.aborted)).toBe(true);
+  const beforeReturn = [...signals];
   reader.choose(null);
   expect(reader.view().summary).toBeUndefined();
-  expect(signals.every((signal) => signal.aborted)).toBe(true);
+  expect(beforeReturn.every((signal) => signal.aborted)).toBe(true);
   o.hold(undefined);
   release();
   await vi.advanceTimersByTimeAsync(0);
@@ -527,6 +530,58 @@ it("one image scope spans every page and closes on cancellation of a later page"
     await result;
     expect(remove).toHaveBeenCalledTimes(1);
   } finally {
+    reader.close();
+  }
+});
+it("reattachment waits for the earlier page of a live turn without retiring branch details", async () => {
+  vi.useFakeTimers();
+  const o = owner([
+    { ...settled(STEP_READ + 1), status: "running", stable: 0 },
+  ]);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let replacing = false;
+  const reader = new ConversationReader(
+    {
+      workbenchRead: async (request) => {
+        const reply = await o.client.workbenchRead(request);
+        if (
+          replacing &&
+          request.kind === "conversation-turn" &&
+          request.before !== null
+        )
+          await gate;
+        return reply;
+      },
+    },
+    id,
+    () => {},
+  );
+  try {
+    const original = { epoch: "owner", attachmentVersion: 1 };
+    reader.setActive(true, original);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reader.view().observation).toBe(original);
+    const turn = reader.view().turns[0];
+    replacing = true;
+    o.reads.length = 0;
+    const replacement = { ...original, attachmentVersion: 2 };
+    reader.setActive(true, replacement);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(kinds(o.reads)).toEqual(["conversation", "turn 0/null", "turn 0/1"]);
+    expect(reader.view().observation).toBeNull();
+    expect(reader.view().turns[0]).toBe(turn);
+    await expect(
+      turn.detail(1, 1, new AbortController().signal),
+    ).resolves.toEqual({ text: "out0", args: "{}" });
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reader.view().observation).toBe(replacement);
+    expect(reader.view().turns[0]).toBe(turn);
+  } finally {
+    release();
     reader.close();
   }
 });

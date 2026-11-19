@@ -19,6 +19,13 @@ Planning tools expose coordinated readonly subagents, proposals and observations
 Product choices use one batch with stable question and option IDs, tradeoffs, recommendations, related acceptance and optional dependencies on earlier answers.
 Native Pi keeps the editable draft in its branch entries and resumes it with `/cadence design`.
 The browser owner retains it with its conversation revision and rejects stale edits.
+At tool ingress only, omitted `when`, `null` and the provider's pair of empty dependency IDs mean an independent question.
+Partial, unknown and forward dependencies refuse the complete batch with a field path; the saved representation has no `when` for independent questions.
+A pending batch opens a modal in the visible conversation once answering is available.
+Closing it leaves the conversation card and saved choices intact; polling and editing the same draft do not reopen a dismissed modal.
+The card can reopen it and shows submitted answers without prompting again.
+Filling recommendations preserves explicit answers.
+No modal is inferred from assistant prose or from a refused publication.
 Selecting or revisiting a question requires no model turn.
 Submission sends the confirmed choices for the implementation card.
 Revising design retires the previous card.
@@ -133,7 +140,15 @@ Edit/continue anchors and Send retain their recorded parent/end branch entries, 
 A command-to-Pi handoff can therefore update those coordinates without replacing the rendered row and its opened details.
 Legacy history without explicit metadata falls back to its recorded identity; equal text or list positions never manufacture a link.
 The reader publishes a complete head/turn observation together and rejects mixed paged snapshots and obsolete navigation/detail replies; legitimate identical text from distinct occurrences stays distinct.
+History readability is independent of execution readiness.
+`useConversation` keeps the branch reader mounted and identifies each uninterrupted ready attachment by a local generation: loss and recovery start a different generation even with identical epoch and attachment version.
+Each head sync captures its generation **before** issuing the read.
+Only that head with all required turn pages can confirm activity; a replacement starts a readonly sync and retires the previous one's success or failure, not the displayed turns or their lazy detail readers.
+`observedReplyClock` and composer flow use the same observation.
+Until confirmed (or after a failed read), the footer says activity is unavailable rather than Working; a confirmed live reply resumes at its recorded start, without a duration if none was recorded.
+Only thinking or tool activity on the displayed branch’s last running turn lights the composer.
 An opened `edit` or `write` card shows those arguments as the requested change (each replacement's removed and added lines, or the content to write), built from the recorded call alone and never compared with the file; an errored call is labelled as requested and not applied, and arguments that are not such a call's complete ones stay as recorded.
+The initial change preview shows up to 400 lines; the write-body copy button takes the complete recorded `content`, including its final line break, not those displayed lines, the path or the tool output.
 Its glyph states only the explicit call state: pending/running, a recorded result, a recorded error, or no observed result.
 Neither a later assistant message, a stable step nor reply completion proves a tool result; old history without explicit state stays neutral unless it records an error.
 This rule also applies to workflow subagent cards: completed/failed tool observations survive a failed or canceled reply, while a pending/running call without a result becomes neutral once the reply ends, never an endless spinner or inferred success.
@@ -155,6 +170,14 @@ Content, image and opened-detail growth follows the bottom only while the reader
 In the main conversation, `ChatWorkspace` passes its stable `keepEnd` callback to `useLazyWindow`'s `onContentResize`: the hook observes both the scroll container and registered row elements, so image/detail height changes can follow without a new head read or parent render.
 That callback reads the current `stick` ref and is shared with composer resizing; height changes never turn following back on.
 Row removal unregisters its observation, and hook cleanup disconnects the observer and cancels its pending window sweep.
+
+The subagent view is not windowed: `useFollowResize` observes the mounted transcript body for initial layout and size changes.
+A new `workflow-transcript` response updates the displayed turn and its open details, but is never by itself a reason to scroll.
+Within 80px of the bottom, a same-height poll leaves the exact offset alone; real growth follows the new end.
+Scrolling up to a gap of 80px or more pauses follow for that view.
+A disclosure, poll, or late scroll event (even after shrinking content) cannot resume it.
+**Latest messages** jumps to the end and resumes resize-follow.
+Selecting another child starts a fresh scroll lifetime.
 
 ## Browser
 
@@ -179,10 +202,17 @@ The closed `/workbench/v1/prepare-send` and `/workbench/v1/prepare-plan` routes 
 The gateway rechecks its own epoch/CSRF and the exact selected directory, and the existing serialized observer supplies a fresh authenticated attachment.
 Build fingerprints are diagnostic metadata, not access or operation gates: different or absent client builds never disable history, activity, model selection, directory changes, Send or service controls.
 Requests still have to express a supported operation; no capability is inferred from a build header, and a browser cannot become a native caller by naming one.
-Connection and build changes never reload the browser or resend work; text drafts and unsent images stay in the current tab.
+Connection and build changes never reload a mounted conversation or resend work; text drafts and unsent images stay in the current tab.
+The initial workbench GET has a bounded read and retries transient failures at the observation retry interval; going online wakes a pending retry.
+Only the direct owner's explicit invalid-route reply selects its standalone UI.
+Authentication refusals stop retrying; explicit sign-in keeps validated chat/branch IDs for a one-time return to the same entry.
+The authenticated, uncached document names one build in every module, stylesheet and font URL.
+Its dependency-free startup script has a stable revalidated URL so a replaced build can still report a failed entry module.
+Before mounting only, an authenticated fresh document announcing a different build permits one guarded reload of the same address; auth failure, blocked tab storage, a failed recovery chain or the same build leaves a manual retry.
+No failed API request triggers navigation.
 The service dialog lists the project and identity of each affected workflow or conversation.
 The version button confirms an upgrade, and restart keeps its own confirmation.
-Only the requesting page reloads automatically, after observing its own successful upgrade and the target version serving; no command is replayed.
+For a mounted page, only the requesting page reloads automatically, after observing its own successful upgrade and the target version serving; no command is replayed.
 A Send claims its exact message and image File list, conversation head, mode revision, cwd, displayed model selector and command ID synchronously before preparation or model-selection waits; continuation never rebases these fields.
 An initially unchosen model may be resolved once, or changed by the waiting user's explicit picker choice; a concurrent newer default/selection cannot silently replace the captured selector.
 An unreadable conversation (including half-finished owner setup) permits preparation only: it cannot supply a head or mode revision, so the draft waits for the user to review the restored context and Send again; startup never rebases it.
@@ -306,7 +336,10 @@ Its title states the figures with the percentage (a figure above the window as m
 The cache item (`web/src/layout/CacheStatus.tsx`) states the share of the session's input tokens read from the provider's prompt cache, from the head read's session totals, green from 70%, amber from 40% and red below; its title gives the read, written and uncached counts, and it is a dash while those totals state no input tokens.
 The current conversation folder stays in the lower-right statusbar, without a duplicate directory line beneath the conversation heading; its chip shows the folder's own name, with the whole path as its title and in the picker.
 The conversation header is one line: the title (the session's name once it has one), a quiet note of the mode and where the session started (left out on phones, where the composer's Cadence control and the sidebar row say the same), an Archived mark for a conversation the history leaves out, the branch count of a forked session (it opens the Branches tab) with the way back to the latest branch, and a status only for a live workflow, a live or badly ended reply or a plan awaiting approval.
-One amber observation warning offers readonly Refresh and expandable per-source diagnostics; local operation errors stay separate, without repeating the same transport/error word in the statusbar.
+The connection item is an always-present keyboard disclosure.
+Its summary names confirmed states; during read recovery it stays neutral.
+Opening it shows per-source diagnostics, a readonly refresh, or a sign-in action when access was revoked.
+No observation failure inserts a row above the conversation or task; unrelated operation errors remain separate.
 A transient local result is a toast under the topbar (`web/src/layout/toasts.ts`, browser-local): a copied link, a failed copy, or a refusal that reached no owner (a Send, image, rename or archive the browser itself refused, or one the owner answered with `effect:none`).
 An error toast stays until dismissed or until its conversation's next attempt, the others pause while hovered or focused; an unknown outcome, an owner-side effect (execution prepared, a Stop or approval reply) and every observation statement stay in place, never in a toast.
 It never claims retained history is displayed when none was read, nor diagnoses a stale code as a model-source failure or prescribes service startup.
@@ -346,7 +379,13 @@ Backend cookies and native capabilities never reach the browser; proxied actions
 The gateway refuses the legacy project-level Open command and has no browser Open-start endpoint: selection and explicit execution preparation are separate routes, neither returns an independent backend token link.
 Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
-It has tiered light and dark glass colour schemes — strong glass for the shell (topbar, statusbar, composer, dialogs, popovers, drawers), lighter glass for content cards and stable opaque bases for dense reading surfaces such as code and tool output — both compiled into the one Tailwind stylesheet as `light-dark()` tokens, with local mesh/grid backgrounds, Cyan → Blue accents and text at WCAG AA: it follows the system's scheme, and the topbar's theme chip steps through system, light and dark, remembered only in that browser and applied before the first render.
+Mineral Alabaster and Obsidian Optical follow the system until the theme chip selects a scheme; the browser remembers that choice and applies it before the first render.
+`web/src/optical-tokens.css` supplies the palette, rims, recessed code surfaces, reading measure and material tiers, including history trace swatches.
+In More, **Ambient light** switches the decorative field off or on without changing a conversation.
+The shared shell draws a single low-resolution WebGL pass only for a visible empty Hero; reading uses a subdued static layer.
+A selected conversation with no durable turn still uses the reading scene when its head reports an attempt, waiting input or an undelivered message; the body, status and applicable recovery action remain in the transcript.
+Hidden tabs and reduced motion suspend the clock.
+A missing context leaves the CSS material in place.
 The script-free access page follows the system's scheme without storing a separate preference.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
@@ -505,15 +544,34 @@ History images keep one scope across all pages; parallel detail parts each dispo
 
 Complete project/chat selection is parsed in `project-route.ts` without storage; explicit links take precedence over same-browser recent-project restoration (user-facing resume boundaries are in `docs/conversation-mode.md`).
 The chat hash also names a chosen branch (`leaf`): the conversation replaces it in place when the branch shown changes, which is no navigation, so a refresh shows that branch again and following the latest removes it.
-Project readiness, viewer freshness and actual work status are separate observations.
+The owner running, this gateway being associated with its project, and the viewer having current data are separate facts; none states the outcome of work.
+A running but unassociated owner is browse-only: the history stays readable without allocating viewer sessions, and browsing does not invoke execution preparation.
+An authenticated workspace read supplies a history-only CSRF challenge for bounded read bodies.
+Pagination carries the reader's original continuation, not a new query or execution CSRF; the gateway translates the challenge only on the binding that issued it.
+Owner credential expiry retires that binding without expiring the gateway login, evicting a successor or replaying the request.
 A failed/unavailable readiness read retains earlier history identity but marks it stale/unknown; a pending re-observation or epoch change cannot make a retained value current.
 Positive stopped/not-started observations keep preparation guidance in the statusbar, not a global banner; explicit Send still displays its local preparation progress.
-Normal first observation and attachment waits show a neutral connecting status, not a stale warning or a ready claim, including after project readiness arrives but before the first viewer data.
-Once viewer data or a failure has been observed, resetting its attachment does not become a new quiet first load; unavailable, failed and retained stale observations remain visible.
-App preserves the existing attachment through uncertainty, labels retained work counts as last-observed, and keeps local, project and viewer errors visible together.
+First observation, transient failure and resync keep the same neutral connection item, without a recovery prompt, banner or ready claim.
+Readonly retries continue in the background; coming online wakes a waiting entry read.
+Explicit action errors and permanent access refusals remain distinct from read retries.
+The closed footer never announces automatic repairs.
+Recovery records remain available to the service diagnostics.
+A positive observation, not another attempt, clears the last failure.
+A successful project GET does not complete an outstanding explicit viewer read.
+Chat context, head and workflow read failures share the footer disclosure.
+Retry rereads the failing sources without discarding known workflow rows or clearing the outcome of a Send, approval or Stop.
+`test/web/stale-banner.test.tsx` renders the actual App in English and Chinese with controlled viewer/project results and callback lifetimes.
+Together with the protocol fixture in `send-observation` this checks state and handler wiring, not a mounted browser, actual keyboard focus, viewport geometry or live service availability.
+App preserves a safety attachment through an inconclusive read of the same selection, not across an epoch handoff or an observed workspace identity mismatch.
+Stop and running-reply input handlers check the rendered allocation at dispatch: replacement retires them before React commits, even at the same epoch.
+Only the explicit preparation awaiting a fresh viewer can take its new action ticket.
+A revoked viewer cannot regain authority from a successful project read; the sign-in action reloads the authenticated entry, without preparing execution.
+Retained work counts are labelled as last-observed, and local, project and viewer errors remain visible together.
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch.
+On the loaded history page, a tool update takes its list and lane swatch from an explicitly named start or end with the same epoch, run, child and call ID.
+An update with no matching name or disagreeing endpoints stays unassigned; the bridge never edits the raw event, clock or position.
 The browser is conversation-first, including before any project is selected: ordinary chat and explicitly enabled Cadence conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
 The empty entry has no project welcome screen or Create shortcut; its one central action, Choose a folder…, offers nonactivating selection, and its sidebar has no separate New conversation entry.
 The bottom-right folder control is always present, and its picker lists recent projects.
@@ -553,6 +611,7 @@ Its steps, checks, delivery and diagnostics are not in the chat: the line opens 
 That view leads with every recorded deviation (what could not be met, why, what was delivered instead, the checks it set aside and its revision), then a board of the current route's assignments from the run's own list: each one's state as an icon and a word, what it waits for, its own worktree when it ran beside others (integrated, kept for inspection with its path) and the listed steps that carry its ID.
 An assignment a route revision added, rewrote or dropped says which revision did; a dropped one is `superseded`, struck through and counted apart, never as waiting.
 It also states the number of route revisions and the paths they added to the write scope.
+The run header shows its phase beside its own status capsule; each expandable step summary shows the step identifier and its own status capsule, including `unknown` without inferring any task state.
 A check step that a recorded deviation set aside is labelled as set aside beside its failed status, and the acceptance line then says how many checks were set aside instead of that the checks passed.
 The label comes from the acceptance record, or for a direct working-copy delivery from the verified round whose failed check a deviation names; an earlier failure of the same check stays a plain failure.
 These views open in the center over the conversation, which stays mounted (draft, scroll and observations) behind them.
