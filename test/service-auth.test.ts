@@ -32,7 +32,7 @@ import type {
   ReadCursor,
 } from "../src/service-contract.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
-import { wireUrl } from "../src/service-wire.ts";
+import { HISTORY_CSRF_HEADER, wireUrl } from "../src/service-wire.ts";
 import {
   deferred,
   exportFrames,
@@ -844,6 +844,106 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
 });
 
 describe("real read-only WebSockets and bounded history transport", () => {
+  it("retained history CSRF is exclusive to one authenticated owner's store and access generation", async () => {
+    const f = await setup();
+    const workspace = {
+      storeId: f.storeId,
+      workspaceId: f.workspaceId,
+      epoch: f.epoch,
+      models: [],
+      committedSeq: "1",
+      rootLabel: "fixture",
+      context: f.snap(f.scope).context,
+    };
+    f.projection.workspace = async () => workspace;
+    const bootstrap = async (cookie: string) =>
+      (await request(f.origin, "/api/v1/workspace", { headers: { cookie } }))
+        .headers[HISTORY_CSRF_HEADER];
+    const first = await bootstrap(f.cookie);
+    if (typeof first !== "string") throw Error("missing history challenge");
+    expect(first).not.toBe(f.auth.csrf);
+    const read = vi
+      .spyOn(f.projection, "tasks")
+      .mockImplementation(async (request) => ({
+        request,
+        coverage: {
+          observed: "complete",
+          source: "complete",
+          redacted: false,
+          omissions: [],
+        },
+        records: [],
+        next: null,
+      }));
+    const seed = {
+      reader: "tasks",
+      storeId: f.storeId,
+      scope: { kind: "workspace", id: f.workspaceId },
+      snapshotSeq: "1",
+      after: null,
+      limit: 1,
+    };
+    const post = (
+      path: string,
+      h: Record<string, string>,
+      value: unknown = seed,
+    ) =>
+      request(f.origin, `/api/v1/${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...h },
+        body: JSON.stringify(value),
+      });
+    const challenge = { [HISTORY_CSRF_HEADER]: first };
+    const valid = { cookie: f.cookie, origin: f.origin, ...challenge };
+    expect(
+      (await post("tasks", { origin: f.origin, ...challenge })).status,
+    ).toBe(401);
+    for (const h of [
+      { cookie: f.cookie, ...challenge },
+      { ...valid, origin: "https://other.invalid" },
+      { ...valid, "x-cadence-csrf": f.auth.csrf },
+      { ...valid, "x-cadence-attachment": randomUUID() },
+      { "x-cadence-local": f.local, ...challenge },
+      { ...valid, [HISTORY_CSRF_HEADER]: f.auth.csrf },
+    ] as Record<string, string>[])
+      expect((await post("tasks", h)).status).toBe(403);
+    for (const path of [
+      "commands",
+      "receipt",
+      "snapshot",
+      "export",
+      "workbench/read",
+      "detach",
+    ])
+      expect((await post(path, valid)).status).toBe(403);
+    expect(
+      (await post("tasks", valid, { ...seed, storeId: randomUUID() })).status,
+    ).toBe(409);
+    expect(read).not.toHaveBeenCalled();
+    expect((await post("tasks", valid)).status).toBe(200);
+    expect(read).toHaveBeenCalledExactlyOnceWith(seed);
+    f.material.rotate();
+    expect((await post("tasks", valid)).status).toBe(401);
+    const login = await request(
+      f.origin,
+      `/${new URL(f.material.tokenLink(f.origin)).search}`,
+    );
+    const cookie = login.headers["set-cookie"]?.[0].split(";", 1)[0];
+    if (!cookie) throw Error("missing renewed fixture login");
+    const newer = await bootstrap(cookie);
+    expect(typeof newer).toBe("string");
+    expect(newer).not.toBe(first);
+    expect((await post("tasks", { ...valid, cookie })).status).toBe(403);
+    expect(
+      (
+        await post("tasks", {
+          ...valid,
+          cookie,
+          [HISTORY_CSRF_HEADER]: String(newer),
+        })
+      ).status,
+    ).toBe(200);
+  });
   it.each(["missing", "wrong", "origin", "scheme", "query", "control"])(
     "refuses socket %s admission/control",
     async (attack) => {

@@ -12,6 +12,9 @@ export interface ViewerState {
   workspace?: WorkspaceBootstrap;
   epoch?: string;
   activeRuns?: import("../types").ActiveRuns;
+  /** This allocation has completed the latest requested HTTP observation.
+   * Independent of action capability and the selected task's live transport. */
+  readCurrent: boolean;
   actions: boolean;
   attached: boolean;
   observation?: ObservationState;
@@ -75,6 +78,7 @@ export class WorkspaceObserver {
         if (this.version < expectedVersion || state.epoch !== epoch) return;
         if (
           state.workspace?.epoch === epoch &&
+          state.readCurrent &&
           state.attached &&
           !state.error &&
           state.transportStatus === "current" &&
@@ -130,12 +134,14 @@ export class WorkspaceObserver {
     let failed = false;
     let blocked = false;
     let allocationPendingRelease = false;
+    let readDemand = 0;
     let repairRevision = 0;
     let repairNeeded = false;
     let followup = false;
     let minimumSeq = "0";
     let actionCapability = false;
     let state: ViewerState = {
+      readCurrent: false,
       actions: false,
       attached: false,
       transportStatus: "closed",
@@ -153,6 +159,7 @@ export class WorkspaceObserver {
         error: state.error ?? socketError,
         observation,
         actions:
+          state.readCurrent &&
           state.actions &&
           state.transportStatus === "current" &&
           (!scope || observation?.connection === "current"),
@@ -168,6 +175,7 @@ export class WorkspaceObserver {
       state = {
         ...state,
         attached: false,
+        readCurrent: false,
         actions: false,
         allocationSignal: undefined,
       };
@@ -229,16 +237,30 @@ export class WorkspaceObserver {
     const poll = (refreshSession = true) => {
       if (!current() || !state.attached || blocked || reading) return reading;
       const signal = abort.signal;
+      const ticket = readDemand;
       state.actions = false;
       lastPoll = Date.now();
-      reading = read(refreshSession, signal, repairRevision).then(
-        (succeeded) => {
+      reading = read(refreshSession, signal, ticket, repairRevision).then(
+        (workspace) => {
           reading = undefined;
           if (!current() || signal.aborted) return;
-          failed = !succeeded;
-          state.actions = !!succeeded && actionCapability;
+          if (ticket !== readDemand) {
+            // All newer explicit demands share one trailing read. A live
+            // snapshot can clear a repair request, never this HTTP demand.
+            followup = false;
+            void poll();
+            return;
+          }
+          failed = !workspace;
+          if (workspace) {
+            state.workspace = workspace;
+            state.error = undefined;
+            if (!scope) state.transportStatus = "current";
+          }
+          state.readCurrent = !!workspace;
+          state.actions = !!workspace && actionCapability;
           emit();
-          if (!succeeded && state.error === "stale") {
+          if (!workspace && state.error === "stale") {
             if (acquiring) retryAttachment();
             else reconnect();
           } else if (followup) {
@@ -253,18 +275,29 @@ export class WorkspaceObserver {
     const read = async (
       refreshSession: boolean,
       signal: AbortSignal,
+      ticket: number,
       revision: number,
     ) => {
+      // Access is scoped to the allocation, not to one read ticket. A
+      // superseded success is inert; a denial on this live viewer still wins.
+      const applicable = (
+        reply: { kind: "ok" } | { kind: "error"; error: { code: string } },
+      ) => {
+        if (!current() || signal.aborted) return false;
+        if (reply.kind === "error" && refusedAccess(reply.error.code)) {
+          this.access.refuse("viewer", reply.error.code);
+          return false;
+        }
+        return ticket === readDemand;
+      };
       try {
         // Keep the same attachment alive and notice a replacement owner even
         // in ordinary chat, where there is no WebSocket or changed model list.
         if (refreshSession) {
           const session = await this.api.client.session(signal);
-          if (!current() || signal.aborted) return;
+          if (!applicable(session)) return;
           if (session.kind === "error") {
-            state.actions = false;
             state.error = session.error.code;
-            if (refusedAccess(session.error.code)) deny(session.error.code);
             return;
           }
           if (!matchesOwner(session.value)) {
@@ -276,37 +309,31 @@ export class WorkspaceObserver {
         // Safety roster is independent of selected history/workspace proof progress.
         // Inconclusive history must not make active work undiscoverable for Cancel.
         const active = await this.api.client.activeRuns(signal);
-        if (!current() || signal.aborted) return;
+        if (!applicable(active)) return;
         if (active.kind === "ok") {
           if (!matchesOwner(active.value)) {
             state.error = "stale";
             return;
           }
           state.activeRuns = active.value;
-        } else if (refusedAccess(active.error.code)) {
-          deny(active.error.code);
-          return;
         } else state.activeRuns = undefined;
         emit();
         const workspace = await this.api.client.workspace(signal);
-        if (!current() || signal.aborted) return;
+        if (!applicable(workspace)) return;
         if (workspace.kind === "error") {
           state.error = workspace.error.code;
-          if (refusedAccess(workspace.error.code)) deny(workspace.error.code);
           return;
         }
         if (!matchesOwner(workspace.value)) {
           state.error = "stale";
           return;
         }
-        state.workspace = workspace.value;
         if (scope) {
-          const ticket = tracker.beginSnapshot();
+          const snapshotTicket = tracker.beginSnapshot();
           const reply = await this.api.client.snapshot(scope, signal);
-          if (!current() || signal.aborted) return;
+          if (!applicable(reply)) return;
           if (reply.kind === "error") {
             state.error = reply.error.code;
-            if (refusedAccess(reply.error.code)) deny(reply.error.code);
             return;
           }
           if (!matchesOwner(reply.value)) {
@@ -318,7 +345,11 @@ export class WorkspaceObserver {
           if (revision !== repairRevision) return;
           if (compareSequence(reply.value.committedSeq, minimumSeq) < 0) return;
           const previous = tracker.state;
-          const installed = tracker.install(reply.value, Date.now(), ticket);
+          const installed = tracker.install(
+            reply.value,
+            Date.now(),
+            snapshotTicket,
+          );
           if (installed !== undefined) {
             generation = installed;
             repairNeeded = false;
@@ -329,19 +360,15 @@ export class WorkspaceObserver {
             )
               state.transportStatus = "stale";
           }
-        } else state.transportStatus = "current";
-        state.error = undefined;
-        return true;
+        }
+        return workspace.value;
       } catch {
-        if (current() && !signal.aborted) {
+        if (current() && !signal.aborted && ticket === readDemand) {
           state.error = "Observation unavailable.";
           state.actions = false;
           state.transportStatus = "stale";
         }
       }
-    };
-    const deny = (code: string) => {
-      this.access.refuse("viewer", code);
     };
     const revoked = () => {
       blocked = true;
@@ -363,13 +390,14 @@ export class WorkspaceObserver {
       await detach();
       if (!current() || blocked) return;
       allocationPendingRelease = true;
+      const acquisitionTicket = readDemand;
       const session = await this.api.client.session(this.access.signal);
       if (!current() || blocked) return; // its stop/refusal already enqueued release
       if (session.kind === "error") {
         if (refusedAccess(session.error.code)) {
           // No viewer was granted by this initial allocation.
           allocationPendingRelease = false;
-          deny(session.error.code);
+          this.access.refuse("viewer", session.error.code);
           return;
         }
         throw new Error(session.error.code);
@@ -384,13 +412,14 @@ export class WorkspaceObserver {
         epoch: session.value.epoch,
         attached: true,
         allocationSignal: abort.signal,
+        readCurrent: false,
         actions: false,
         transportStatus: "closed",
         attachmentVersion: ++this.attachmentVersion,
       };
       actionCapability = session.value.capabilities.actions;
       emit();
-      await poll(false); // acquire already read this exact session
+      await poll(acquisitionTicket !== readDemand); // reuse only a matching session read
       if (!current() || blocked || !scope || state.error === "stale") return;
       const socket = ++socketVersion;
       const lost = (error: string) => {
@@ -479,8 +508,15 @@ export class WorkspaceObserver {
     this.access.signal.addEventListener("abort", revoked, { once: true });
     reconnect();
     this.pollCurrent = () => {
-      if (state.attached) void poll();
-      else reconnect();
+      if (!current() || blocked) return;
+      // Explicit re-observation (including a model change) retires the
+      // previous ticket immediately. Timer reconciliation alone does not.
+      readDemand++;
+      state.readCurrent = false;
+      state.actions = false;
+      if (!state.attached) reconnect();
+      else if (reading) emit();
+      else void poll();
     };
     timer = setInterval(() => {
       if (!current() || blocked) return;

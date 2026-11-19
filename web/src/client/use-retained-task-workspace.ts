@@ -1,4 +1,4 @@
-/** The project GETs used by history do not need a viewer session. Retain only
+/** Recorded history does not need a viewer session. Retain only
  * pagination identity, never the workspace's controls, live roster or models. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ServiceClient } from "../../../src/service-client.ts";
@@ -52,16 +52,16 @@ export function useRetainedTaskWorkspace(
       new HttpServiceTransport({
         origin: window.location.origin,
         project,
+        retainedHistory: true,
         requestTimeoutMs: readTimeoutMs,
         fetch: async (url, init) => {
-          if (!currentSelection() || init?.method !== "GET")
-            throw new Error("stale");
+          if (!currentSelection()) throw new Error("stale");
           const response = await fetch(url, init);
-          if (
-            currentSelection() &&
-            !init.signal?.aborted &&
-            (response.status === 401 || response.status === 403)
-          )
+          if (!currentSelection() || init?.signal?.aborted) {
+            void response.body?.cancel().catch(() => {});
+            throw new Error("stale");
+          }
+          if (response.status === 401 || response.status === 403)
             access.refuse(
               "project",
               response.status === 401 ? "unauthenticated" : "forbidden",

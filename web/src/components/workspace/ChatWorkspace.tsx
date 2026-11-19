@@ -21,6 +21,7 @@ import {
   FiGitBranch,
   FiMessageSquare,
 } from "react-icons/fi";
+import { abortScope } from "../../../../src/abort-scope.ts";
 import {
   type DesignAnswer,
   designMessage,
@@ -91,6 +92,8 @@ import {
 import type { FolderDraft } from "../../client/folder-draft";
 import { uploadImages } from "../../client/images";
 import type { PreviewModels } from "../../client/model-preview";
+import { refusedAccess } from "../../client/observation-read";
+import type { ObservationAccess } from "../../client/observer";
 import {
   activityRoute,
   chatFromLocation,
@@ -166,6 +169,24 @@ export interface ConversationActivity {
    * read states none. */
   cache?: ChatCache;
 }
+/** Captured by the rendered control, never looked up on the next viewer. */
+export interface ViewerTicket {
+  epoch?: string;
+  allocation?: AbortSignal;
+  attached(epoch: string): boolean;
+  current(): boolean;
+}
+type PrepareChat =
+  | PrepareExecution
+  | ((...args: Parameters<PrepareExecution>) => Promise<ViewerTicket>);
+export interface ChatDiagnostics {
+  context?: string;
+  head?: string;
+  prepareOnly: boolean;
+  workflow?: string;
+  runs?: string;
+  retry(): void;
+}
 function stored(key: string, fallback = "") {
   try {
     return sessionStorage.getItem(key) ?? fallback;
@@ -191,6 +212,10 @@ export function ChatWorkspace({
   onActivity,
   enabled,
   actionsReady = enabled,
+  viewer,
+  access,
+  readSelected,
+  onDiagnostics,
   prepareForSend,
   prepareForPlan,
   legacyWorkspaceId,
@@ -223,9 +248,13 @@ export function ChatWorkspace({
   onActivity?(activity: ConversationActivity): void;
   enabled: boolean;
   actionsReady?: boolean;
-  prepareForSend?: PrepareExecution;
+  viewer?: ViewerTicket;
+  access?: ObservationAccess;
+  readSelected?(): boolean;
+  onDiagnostics?(diagnostics: ChatDiagnostics): void;
+  prepareForSend?: PrepareChat;
   /** Explicit plan validation may prepare an owner; never called by observation. */
-  prepareForPlan?: PrepareExecution;
+  prepareForPlan?: PrepareChat;
   legacyWorkspaceId?: string;
   directoryNamespaces?: string[];
   available?: boolean;
@@ -319,9 +348,11 @@ export function ChatWorkspace({
   const [resume, setResume] = useState(false);
   const [modelReads, setModelReads] = useState(0);
   const waitingSend = useRef<PendingSend | null>(null);
+  const waitingViewer = useRef<ViewerTicket>(undefined);
   const sending = useRef(false);
   const sendGeneration = useRef(0);
   const departure = useRef(new AbortController());
+  const renderedBranch = departure.current.signal;
   const [preparing, setPreparing] = useState(false);
   const [draftModel, setDraftModel] = useState<ModelSelector | null>(() => {
     try {
@@ -342,8 +373,30 @@ export function ChatWorkspace({
     }
   }, [draftKey, draftModel]);
 
+  // History GETs do not borrow an execution attachment. Attribute a denial
+  // only to the project/conversation that issued this read.
+  const reader = useMemo<Pick<ServiceClient, "workbenchRead">>(
+    () => ({
+      async workbenchRead(request, signal) {
+        const wait = abortScope([signal, access?.signal]);
+        try {
+          if (wait.signal.aborted || readSelected?.() === false)
+            return { kind: "error", error: publicError("stale") };
+          const reply = await client.workbenchRead(request, wait.signal);
+          if (wait.signal.aborted || readSelected?.() === false)
+            return { kind: "error", error: publicError("stale") };
+          if (reply.kind === "error" && refusedAccess(reply.error.code))
+            access?.refuse("viewer", reply.error.code);
+          return reply;
+        } finally {
+          wait.dispose();
+        }
+      },
+    }),
+    [client, readSelected, access],
+  );
   const contextRead = useWorkbench(
-    client,
+    reader,
     available && initialCwd
       ? { kind: "conversation-context", location: { id, cwd: initialCwd } }
       : null,
@@ -355,9 +408,7 @@ export function ChatWorkspace({
       : undefined;
   const contextKnown = !!context && !contextRead.error;
   const locationCwd = context?.cwd ?? initialCwd;
-  const modelClient = useMemo<
-    CatalogClient & Pick<ServiceClient, "chooseModel">
-  >(
+  const modelClient = useMemo<CatalogClient>(
     () => ({
       models: (signal, reload) =>
         locationCwd
@@ -366,15 +417,20 @@ export function ChatWorkspace({
               kind: "error",
               error: publicError("unavailable"),
             }),
-      chooseModel: (request) =>
-        locationCwd
-          ? client.chooseModel(request, { id, cwd: locationCwd })
-          : Promise.resolve({
-              kind: "error",
-              error: publicError("unavailable"),
-            }),
     }),
     [client, id, locationCwd],
+  );
+  const modelChoiceClient = useMemo<Pick<ServiceClient, "chooseModel">>(
+    () => ({
+      chooseModel: (request) =>
+        locationCwd &&
+        actionsReady &&
+        (!viewer ||
+          (viewer.current() && request.expected.epoch === viewer.epoch))
+          ? client.chooseModel(request, { id, cwd: locationCwd })
+          : Promise.resolve({ kind: "error", error: publicError("stale") }),
+    }),
+    [client, actionsReady, locationCwd, viewer, id],
   );
   const availability: ModelAvailability = preparing
     ? { status: "preparing" }
@@ -432,12 +488,12 @@ export function ChatWorkspace({
       ? activityRoute(window.location.hash, id).leaf
       : initialLeaf,
   );
-  const conversation = useConversation(client, id, available, entryLeaf);
+  const conversation = useConversation(reader, id, available, entryLeaf);
   const { turns } = conversation;
   // Undefined until observed; null is a conversation not started yet.
   const observed = conversation.summary !== undefined;
   const workflow = useWorkbench(
-    client,
+    reader,
     available ? { kind: "cadence-conversation", id } : null,
     1000,
   );
@@ -625,7 +681,7 @@ export function ChatWorkspace({
     !pending &&
     !awaitingModel;
   const canExit =
-    (canInterrupt || !!prepareForSend) &&
+    (actionsReady || !!prepareForSend) &&
     contextKnown &&
     observed &&
     cadenceKnown &&
@@ -917,7 +973,72 @@ export function ChatWorkspace({
     ],
     [conversation.runs, state?.runs, windows, approving],
   );
-  const flows = useWorkflowRuns(client, available ? watched : [], 1000);
+  // A missing terminal attempt was never an observed run. Diagnose failed
+  // re-reads of *known* runs and keep the code until that run is read again.
+  const runReads = useMemo(
+    () => ({ reader, codes: new Map<string, string>() }),
+    [reader],
+  );
+  const [flowRetry, setFlowRetry] = useState(0);
+  const flowReader = useMemo<Pick<ServiceClient, "workbenchRead">>(() => {
+    void flowRetry; // Explicit retry restarts the bounded workflow reader.
+    return {
+      async workbenchRead(request, signal) {
+        const reply = await runReads.reader.workbenchRead(request, signal);
+        if (request.kind === "workflow" && !signal?.aborted) {
+          if (
+            reply.kind === "ok" &&
+            reply.value.kind === "workflow" &&
+            reply.value.response.type === "run"
+          )
+            runReads.codes.set(request.id, "");
+          else if (runReads.codes.has(request.id))
+            runReads.codes.set(
+              request.id,
+              reply.kind === "error" ? reply.error.code : "unavailable",
+            );
+        }
+        return reply;
+      },
+    };
+  }, [runReads, flowRetry]);
+  const flows = useWorkflowRuns(flowReader, available ? watched : [], 1000);
+  useEffect(() => {
+    const selected = new Set(watched);
+    for (const id of runReads.codes.keys())
+      if (!selected.has(id)) runReads.codes.delete(id);
+  }, [runReads, watched]);
+  const contextError = available ? contextRead.error : undefined;
+  const headError = available ? conversation.error || undefined : undefined;
+  const workflowError = available ? workflow.error : undefined;
+  const runsError = available
+    ? watched.map((id) => runReads.codes.get(id)).find(Boolean)
+    : undefined;
+  const retryRead = useRef(() => {});
+  retryRead.current = () => {
+    if (!alive.current || access?.signal.aborted) return;
+    if (contextError) contextRead.refresh();
+    if (headError) conversation.refresh();
+    if (workflow.error) workflow.refresh();
+    if (runsError) setFlowRetry((n) => n + 1);
+  };
+  useEffect(() => {
+    onDiagnostics?.({
+      context: contextError,
+      head: headError,
+      prepareOnly: canPrepareOnly,
+      workflow: workflowError,
+      runs: runsError,
+      retry: () => retryRead.current(),
+    });
+  }, [
+    contextError,
+    headError,
+    workflowError,
+    runsError,
+    canPrepareOnly,
+    onDiagnostics,
+  ]);
   const firstAt = turns.find((turn) => turn.header.at > 0)?.header.at;
   const allTurns = !earlier && turns.length > 0;
   useEffect(() => {
@@ -979,8 +1100,17 @@ export function ChatWorkspace({
     const generation = sendGeneration.current;
     // The owner checks the captured revision/head. Its own successful write
     // may already reach polling before this command's reply comes back.
+    let authority = viewer;
+    const prepare = !actionsReady ? prepareForPlan : undefined;
+    let prepared = !prepare;
     const current = () =>
-      alive.current && sendGeneration.current === generation;
+      alive.current &&
+      !renderedBranch.aborted &&
+      sendGeneration.current === generation &&
+      (prepared
+        ? !authority || authority.current()
+        : !viewer?.allocation?.aborted);
+    if (!current()) return;
     decisionBusy.current = true;
     setBusy(true);
     setRevalidating(true);
@@ -994,7 +1124,13 @@ export function ChatWorkspace({
         head: conversation.leaf,
         signal: departure.current.signal,
         current,
-        prepare: !actionsReady ? prepareForPlan : undefined,
+        prepare: prepare
+          ? async (...args) => {
+              authority = (await prepare(...args)) || undefined;
+              if (viewer && !authority) throw new Error("stale");
+              prepared = true;
+            }
+          : undefined,
       });
       if (!alive.current || sendGeneration.current !== generation) return;
       setValidation({ before: proposal, after: next });
@@ -1059,6 +1195,8 @@ export function ChatWorkspace({
         current: () =>
           alive.current &&
           sendGeneration.current === generation &&
+          !renderedBranch.aborted &&
+          (!viewer || viewer.current()) &&
           latestState.current?.revision === observed.revision &&
           latestState.current?.enabled === true,
         submitting: rememberApproval,
@@ -1089,7 +1227,15 @@ export function ChatWorkspace({
     }
   };
   const editDesign = async (answers: DesignAnswer[]) => {
-    if (!state?.design || decisionBusy.current) return;
+    if (
+      !state?.design ||
+      decisionBusy.current ||
+      renderedBranch.aborted ||
+      !actionsReady ||
+      (viewer && !viewer.current()) ||
+      latestState.current?.revision !== state.revision
+    )
+      return;
     const generation = sendGeneration.current;
     decisionBusy.current = true;
     setBusy(true);
@@ -1168,13 +1314,28 @@ export function ChatWorkspace({
       );
       return;
     }
-    if (sending.current) return;
+    if (
+      sending.current ||
+      !alive.current ||
+      renderedBranch.aborted ||
+      viewer?.allocation?.aborted
+    )
+      return;
+    if ((!prepareForSend || retained) && viewer && !viewer.current()) return;
+    if (retained && waitingViewer.current?.allocation !== viewer?.allocation)
+      return;
     sending.current = true;
     setBusy(true);
     clearError();
     const generation = sendGeneration.current;
     const current = () =>
       alive.current && sendGeneration.current === generation;
+    let authority = viewer;
+    const admissible = () => current() && (!authority || authority.current());
+    const check = (epoch?: string) => {
+      if (!admissible() || (epoch && authority && authority.epoch !== epoch))
+        throw new Error("stale");
+    };
     let dispatched = false;
     let preparation: PreparationStage = "not-dispatched";
     // Only `effect: none` proves the owner took nothing.
@@ -1193,7 +1354,10 @@ export function ChatWorkspace({
       if (!prepareForSend) return;
       setPreparing(true);
       await waitForPreparation(
-        prepareForSend,
+        async (...args) => {
+          authority = (await prepareForSend(...args)) || undefined;
+          if (viewer && !authority) throw new Error("stale");
+        },
         departure.current.signal,
         location,
         (stage) => {
@@ -1259,6 +1423,7 @@ export function ChatWorkspace({
           throw new Error("stale");
       } else await prepare(intent.location);
       if (!current()) return;
+      check();
       if (intent.command.kind === "cadence-exit") {
         const command = sendCommand(intent);
         sentDraft.current = message;
@@ -1286,6 +1451,7 @@ export function ChatWorkspace({
           modelWaitDisposition(waitingModelSend(intent, prepared), observed) !==
             "cancel"
         ) {
+          waitingViewer.current = authority;
           waitingSend.current = waitingModelSend(intent, prepared);
           setAwaitingModel(true);
         } else {
@@ -1300,6 +1466,7 @@ export function ChatWorkspace({
       };
       let catalog = await client.models(undefined, intent.location);
       if (!current()) return;
+      check(catalog.kind === "ok" ? catalog.value.version.epoch : undefined);
       if (
         intent.preparedEpoch &&
         catalog.kind === "ok" &&
@@ -1314,7 +1481,12 @@ export function ChatWorkspace({
       if (intent.installModel && catalog.kind === "ok") {
         catalog = {
           kind: "ok",
-          value: await installSendModel(client, intent, catalog.value, current),
+          value: await installSendModel(
+            client,
+            intent,
+            catalog.value,
+            admissible,
+          ),
         };
         if (!current()) return;
         setModelReads((n) => n + 1);
@@ -1325,6 +1497,7 @@ export function ChatWorkspace({
         intent.model ??
         (catalog.kind === "ok" ? catalog.value.remembered : null);
       if (catalog.kind === "ok" && !catalog.value.selected && restoreChoice) {
+        check(catalog.value.version.epoch);
         const restored = await client.workbenchCommand({
           kind: "restore-model",
           commandId: crypto.randomUUID(),
@@ -1353,6 +1526,7 @@ export function ChatWorkspace({
         );
         return;
       }
+      check(catalog.value.version.epoch);
       assertSendModel(intent, catalog.value.selected);
       let command = sendCommand(intent, catalog.value.version);
       if (intent.images.length) {
@@ -1373,9 +1547,15 @@ export function ChatWorkspace({
           return;
         }
         if (command.kind === "cadence-exit") throw new Error("invalid");
-        command = await uploadImages(client, command, intent.images, current);
+        command = await uploadImages(
+          client,
+          command,
+          intent.images,
+          admissible,
+        );
         if (!current()) return;
       }
+      check(catalog.value.version.epoch);
       sentImages.current = intent.images;
       sentDraft.current = message;
 
@@ -1471,9 +1651,24 @@ export function ChatWorkspace({
     anchored: !!anchor,
     waiting: conversation.pending.length,
   });
-  const canInput = !!liveRun && canInterrupt && !busy && !attaching;
+  const turn = useRef(liveRun);
+  turn.current = liveRun;
+  const pendingInputs = useRef(conversation.pending);
+  pendingInputs.current = conversation.pending;
+  const turnCurrent = () =>
+    !!liveRun &&
+    alive.current &&
+    !renderedBranch.aborted &&
+    canInterrupt &&
+    (!viewer || viewer.attached(liveRun.epoch)) &&
+    turn.current?.commandId === liveRun.commandId &&
+    turn.current?.epoch === liveRun.epoch;
+  const inputCurrent = () =>
+    turnCurrent() && actionsReady && (!viewer || viewer.current());
+  const canInput = inputCurrent() && !busy && !attaching;
   const sendInput = async (mode: InputMode) => {
-    if (!liveRun || !canInput || inputBlock || !draft.trim()) return;
+    if (!liveRun || !canInput || !inputCurrent() || inputBlock || !draft.trim())
+      return;
     clearError();
     setBusy(true);
     const text = draft;
@@ -1497,7 +1692,15 @@ export function ChatWorkspace({
     conversation.refresh();
   };
   const withdrawInput = async (waiting: ChatPending, recall: boolean) => {
-    if (!liveRun || busy) return;
+    if (
+      !liveRun ||
+      busy ||
+      !inputCurrent() ||
+      !pendingInputs.current.some(
+        (item) => item.commandId === waiting.commandId,
+      )
+    )
+      return;
     setBusy(true);
     const outcome = inputOutcome(
       await client.workbenchCommand(
@@ -1530,7 +1733,7 @@ export function ChatWorkspace({
   };
   const interrupt = async () => {
     const live = summary?.live;
-    if (!live || busy) return;
+    if (!live || busy || !turnCurrent()) return;
     setBusy(true);
     const result = await client.workbenchCommand({
       kind: "interrupt",
@@ -1811,7 +2014,16 @@ export function ChatWorkspace({
             : t("Ordinary conversation")
       }
     >
-      <header className="conversation-header">
+      <header
+        className="conversation-header"
+        title={
+          headError && observed
+            ? t(
+                "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
+              )
+            : undefined
+        }
+      >
         <div className="conversation-heading">
           <FiMessageSquare aria-hidden="true" />
           <h2>
@@ -1827,7 +2039,9 @@ export function ChatWorkspace({
           {/* One quiet line: the mode, then where the session started. */}
           <span className="conversation-meta">
             {!cadenceKnown
-              ? t("Cadence state unavailable")
+              ? workflow.error
+                ? t("Cadence state unavailable")
+                : ""
               : cadence
                 ? t("Cadence on")
                 : t("Ordinary")}
@@ -1871,23 +2085,6 @@ export function ChatWorkspace({
           )}
         </div>
       </header>
-      {contextRead.error && !canPrepareOnly && (
-        <p role="alert" className="inspector-note">
-          {describeError(t, contextRead.error)}
-        </p>
-      )}
-      {canPrepareOnly && (
-        <p className="panel-hint" role="status">
-          {t(
-            "Conversation context is unavailable. Send can prepare execution, but cannot submit this draft until the context is observed.",
-          )}
-        </p>
-      )}
-      {preparing && (
-        <p className="panel-hint" role="status">
-          {t("Preparing execution for this Send…")}
-        </p>
-      )}
       <div className="chat-messages-wrap">
         <div
           className="chat-messages"
@@ -1910,7 +2107,7 @@ export function ChatWorkspace({
               )}
             </p>
           )}
-          {!available && (
+          {!available && !observed && (
             <p role="status" className="panel-hint">
               {t(
                 "Conversation content has not been read. You can keep a draft; nothing is sent until the context is available.",
@@ -2007,7 +2204,7 @@ export function ChatWorkspace({
           <WaitingMessages
             pending={conversation.pending}
             undelivered={conversation.undelivered}
-            canWithdraw={!!liveRun && canInterrupt && !busy}
+            canWithdraw={inputCurrent() && !busy}
             recallable={(waiting) =>
               sentInputs.current.has(waiting.commandId) ||
               wholePendingText(waiting.text)
@@ -2029,7 +2226,12 @@ export function ChatWorkspace({
               key={state.design.id}
               draft={state.design}
               disabled={
-                busy || running || !canSend || !cadenceKnown || !!approving
+                busy ||
+                running ||
+                !actionsReady ||
+                !canSend ||
+                !cadenceKnown ||
+                !!approving
               }
               onEdit={editDesign}
               onSubmit={(d) =>
@@ -2075,30 +2277,14 @@ export function ChatWorkspace({
               )}
             </p>
           )}
-          {flows.failed && (
-            <p className="inspector-note" role="status">
-              {t(
-                "Workflow activity unavailable; retained work may still be running.",
-              )}
-            </p>
-          )}
           {state?.notice && (
             <p role="alert" className="banner-notice">
               {tx(state.notice)}
             </p>
           )}
-          {[...new Set([error, conversation.error, workflow.error])]
-            .filter(Boolean)
-            .map((notice) => (
-              <p key={notice} role="alert" className="banner-notice">
-                {describeError(t, notice ?? "")}
-              </p>
-            ))}
-          {conversation.error && conversation.summary !== undefined && (
-            <p role="status" className="inspector-note">
-              {t(
-                "Conversation state is not current. Previously read content may be shown; this does not mean work has stopped.",
-              )}
+          {error && (
+            <p role="alert" className="banner-notice">
+              {describeError(t, error)}
             </p>
           )}
           {pending && (
@@ -2151,27 +2337,31 @@ export function ChatWorkspace({
         onRemoveImage={(file) => removeImages([file])}
         anchor={strip}
         status={
-          liveRun && draft.trim() && inputBlock
-            ? t(
-                inputBlock === "images"
-                  ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
-                  : inputBlock === "mode"
-                    ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
-                    : inputBlock === "full"
-                      ? "Eight messages already wait for this reply. Withdraw one, or wait."
-                      : "A message into a running reply continues that reply, not another entry.",
-              )
-            : running || canPrepareOnly || canSend || preparing
-              ? undefined
-              : pending
-                ? t("The last Send is not yet confirmed. No message is resent.")
-                : awaitingModel
-                  ? t("Choose a model; your message is sent right after.")
-                  : busy
-                    ? t("Sending…")
-                    : t(
-                        "Sending is unavailable until the current context is observed. Your draft stays here.",
-                      )
+          preparing
+            ? t("Preparing execution for this Send…")
+            : liveRun && draft.trim() && inputBlock
+              ? t(
+                  inputBlock === "images"
+                    ? "A message into a running reply carries no images. Remove them, or send after the reply ends."
+                    : inputBlock === "mode"
+                      ? "Cadence mode is not changed by a message into a running reply. Send this after the reply ends."
+                      : inputBlock === "full"
+                        ? "Eight messages already wait for this reply. Withdraw one, or wait."
+                        : "A message into a running reply continues that reply, not another entry.",
+                )
+              : running || canPrepareOnly || canSend
+                ? undefined
+                : pending
+                  ? t(
+                      "The last Send is not yet confirmed. No message is resent.",
+                    )
+                  : awaitingModel
+                    ? t("Choose a model; your message is sent right after.")
+                    : busy
+                      ? t("Sending…")
+                      : t(
+                          "Sending is unavailable until the current context is observed. Your draft stays here.",
+                        )
         }
         cadence={{
           active: cadence,
@@ -2193,15 +2383,24 @@ export function ChatWorkspace({
           },
         }}
         model={{
-          client: modelClient,
+          client: modelChoiceClient,
           availability,
-          read: modelRead,
+          read: {
+            ...modelRead,
+            isCurrent: () =>
+              modelRead.isCurrent() &&
+              (availability.status !== "ready" || !viewer || viewer.current()),
+          },
           lastModel: context?.model,
           draftModel,
           onPreviewChoice: previewModels
             ? (choice) => chosenModel(choice, false)
             : undefined,
-          locked: !!running || busy || !!pending,
+          locked:
+            !!running ||
+            busy ||
+            !!pending ||
+            (availability.status === "ready" && !actionsReady),
           open: modelOpen,
           onOpenChange: openModels,
           onChanged: () => {
@@ -2221,7 +2420,7 @@ export function ChatWorkspace({
                 : ""
         }
         running={!!running}
-        canStop={!busy && canInterrupt}
+        canStop={!busy && turnCurrent()}
         onStop={() => void interrupt()}
         canSend={
           ((cadence && cadenceExit(draft) ? canExit : canSend) ||

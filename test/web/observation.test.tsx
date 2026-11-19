@@ -149,8 +149,9 @@ it("serial task switching and repeated refresh do not exhaust 16 attachments", a
   }
   const count = s.sessions();
   for (let i = 0; i < 25; i++) s.observer.refresh();
-  await expect.poll(() => s.state()?.workspace?.storeId).toBe(s.f.storeId);
-  expect(s.sessions()).toBe(count + 1); // concurrent refreshes share one poll
+  await expect.poll(() => s.state()?.readCurrent).toBe(true);
+  expect(s.state()?.workspace?.storeId).toBe(s.f.storeId);
+  expect(s.sessions()).toBe(count + 2); // leading poll and one shared trailing demand
   stop?.();
   await expect
     .poll(() =>
@@ -319,8 +320,12 @@ it("cookie revocation without a selected task/socket clears private state and st
   await expect.poll(() => state?.workspace?.storeId).toBe(s.f.storeId);
   expect(s.sockets).toHaveLength(0);
   s.f.material.rotate();
+  const before = s.sessions();
   s.observer.refresh();
+  s.observer.refresh(); // supersedes the first read ticket, not its authenticated refusal
   await expect.poll(() => state?.error).toBe("unauthenticated");
+  expect(s.sessions()).toBe(before + 1);
+  expect(state?.readCurrent).toBe(false);
   expect(state?.workspace).toBeUndefined();
   expect(state?.actions).toBe(false);
   const count = s.sessions();
@@ -406,6 +411,70 @@ it("ordinary polling renews its existing attachment even with no socket or model
   await expect.poll(() => s.sessions()).toBe(original + 1);
   expect(new Set(s.sessionAttachments).size).toBe(1);
   expect(s.sockets).toHaveLength(0);
+});
+it("an explicit chat refresh supersedes an in-flight reconcile; only the newest viewer read satisfies the confirmed project epoch", async () => {
+  const s = await setup();
+  s.f.adapters.workbench = { read: vi.fn(), command: vi.fn() };
+  vi.useFakeTimers();
+  s.select(null);
+  await vi.waitFor(() => expect(s.state()?.actions).toBe(true));
+  const initial = s.state()?.workspace;
+  expect(initial).toBeDefined();
+  const old = deferred(),
+    latest = deferred();
+  const workspace = s.f.projection.workspace;
+  const reads = vi
+    .spyOn(s.f.projection, "workspace")
+    .mockImplementationOnce(async () => {
+      await old.promise;
+      return { ...(await workspace()), rootLabel: "obsolete" };
+    })
+    .mockImplementationOnce(async () => {
+      await latest.promise;
+      return { ...(await workspace()), rootLabel: "new model selection" };
+    });
+  // The healthy timer read isn't an explicit demand; it does not revoke the
+  // previous read's freshness every reconcile interval.
+  await vi.advanceTimersByTimeAsync(LIMITS.reconcileMs);
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledOnce());
+  expect(s.state()?.readCurrent).toBe(true);
+
+  const start = s.states.length;
+  for (let i = 0; i < 10; ++i) s.observer.refresh();
+  expect(s.state()?.readCurrent).toBe(false);
+  expect(s.state()?.workspace).toBe(initial);
+  // The caller already has a positive project result for the exact epoch.
+  // That input to whenReady is not viewer evidence (no App or gateway here).
+  const ready = vi.fn();
+  const waiting = s.observer
+    .whenReady(s.f.epoch, new AbortController().signal)
+    .then(ready);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(ready).not.toHaveBeenCalled();
+  expect(reads).toHaveBeenCalledOnce();
+  // The trailing read will be readonly-capable but not action-capable.
+  s.f.adapters.workbench = undefined;
+  old.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(ready).not.toHaveBeenCalled();
+  expect(
+    s.states
+      .slice(start)
+      .every((v) => !v.readCurrent && !v.actions && v.workspace === initial),
+  ).toBe(true);
+
+  latest.resolve();
+  await waiting;
+  expect(ready).toHaveBeenCalledOnce();
+  expect(s.state()).toMatchObject({
+    readCurrent: true,
+    actions: false,
+    workspace: { epoch: s.f.epoch, rootLabel: "new model selection" },
+  });
+  expect(s.sessions()).toBe(3);
+  expect(new Set(s.sessionAttachments).size).toBe(1);
+  expect(s.sockets).toHaveLength(0);
+  expect(s.writes).toEqual([]);
 });
 it.each(["poll", "reconnect"])(
   "%s follows a replacement owner without mixed-epoch readiness or command replay",
@@ -583,6 +652,72 @@ async function silentTask() {
   });
   return { ...s, sockets, snapshot, scope, stop };
 }
+it("a valid task frame cannot discharge a newer explicit viewer read, or cancel its one trailing poll", async () => {
+  const s = await silentTask();
+  const socket = s.sockets[0];
+  socket.fire("open");
+  socket.fire("message", await s.snapshot());
+  const previous = s.state()?.workspace;
+  const old = deferred(),
+    latest = deferred();
+  const snapshot = s.f.projection.snapshot;
+  const reads = vi
+    .spyOn(s.f.projection, "snapshot")
+    .mockImplementationOnce(async (scope) => {
+      const reply = await snapshot(scope);
+      await old.promise;
+      return reply;
+    })
+    .mockImplementationOnce(async (scope) => {
+      await latest.promise;
+      return snapshot(scope);
+    });
+  const workspace = s.f.projection.workspace;
+  s.f.projection.workspace = async () => ({
+    ...(await workspace()),
+    rootLabel: "superseded",
+  });
+  s.f.setSeq("2");
+  s.observer.refresh();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledOnce());
+  for (let i = 0; i < 10; ++i) s.observer.refresh();
+  const start = s.states.length;
+  const ready = vi.fn();
+  const waiting = s.observer
+    .whenReady(s.f.epoch, new AbortController().signal)
+    .then(ready);
+  socket.fire("message", { kind: "resync" });
+  s.f.setSeq("3");
+  socket.fire("message", {
+    kind: "snapshot",
+    snapshot: await snapshot(s.scope),
+  });
+  expect(s.state()?.transportStatus).toBe("current");
+  expect(s.state()?.readCurrent).toBe(false);
+  s.f.projection.workspace = async () => ({
+    ...(await workspace()),
+    rootLabel: "latest",
+  });
+  old.resolve();
+  await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  expect(
+    s.states
+      .slice(start)
+      .every((v) => !v.readCurrent && !v.actions && v.workspace === previous),
+  ).toBe(true);
+  expect(ready).not.toHaveBeenCalled();
+  latest.resolve();
+  await waiting;
+  expect(s.state()).toMatchObject({
+    readCurrent: true,
+    actions: true,
+    workspace: { rootLabel: "latest" },
+    observation: { snapshot: { scope: s.scope, committedSeq: "3" } },
+  });
+  expect(s.sessions()).toBe(3);
+  expect(s.sockets).toHaveLength(1);
+  expect(s.writes).toEqual([]);
+});
 it.each(["handshake", "silent open connection"])(
   "%s retires without a close event; HTTP alone never restores task readiness",
   async (failure) => {
@@ -612,6 +747,7 @@ it.each(["handshake", "silent open connection"])(
       );
       expect(s.state()?.transportStatus).toBe("stale");
       expect(s.state()?.error).toBe("socket-timeout");
+      expect(s.state()?.readCurrent).toBe(true); // HTTP is healthy; WS is not
       expect(s.state()?.actions).toBe(false);
       // Neither the successful HTTP read nor outbound pings/resyncs renew
       // the watchdog. Only automatic retries from here.
