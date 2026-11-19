@@ -912,6 +912,65 @@ This does not identify every rasterized glyph or qualify hardware GPUs, physical
 This is not an OS clipboard test or a claim about the file on disk.
 Final candidate verification and independent review are the owner's checks.
 
+### Composer paint bounds after artifact find
+
+**Failed baseline.**
+On integration HEAD `38b63ba9`, the owner's `optical-evidence-harqRF` failed dark/1440 on build `0f4271a12ed6`, despite a passing `verify` and an earlier clean browser run on the same build.
+The form was at (434,747), 832×119 CSS px in both frames.
+In `stable` a hard-edged patch began at (374,699), 60px left and 48px above the form, and ended at x=885 (exclusive).
+It covered part of the degraded-read notice as well as the placeholder, mode and model; their DOM rectangles had not disappeared.
+
+**Controlled comparisons.**
+The evidence directories below are in the inherited `TMPDIR`.
+Each series used a fresh local Chromium 151.0.7922.34 profile, DPR 1 and synthetic loopback reads from this worktree.
+Each round opened history → Inspector → Changes → retained artifact, ran `observeArtifactFind` through views and pages, closed Inspector, then entered `optical-unknown` via `observeUnknownMode`.
+Every first-ready and stable PNG was kept; neither a later phase nor a later round replaces a failed frame.
+For CSS-only comparisons the fixture served the canonical CSS plus the indicated declaration from initial load; those are diagnostic variants, not new build identities.
+
+- With unchanged styles, `bounds-baseline-Wp2jUl` passed 8/8 pairs.
+  With **only** the anchored plate removed, `bounds-noanchor-AMyq0t` lost ink in stable round 3 at the original (374,699) edge.
+- Shifting the broad shadow from (0,12) to (−48,−20), or increasing its blur from 40 to 72px, tinted the top notice witness: `bounds-offset-7gbAc0` and `bounds-radius-qi9dLd` each failed binding in all eight pairs.
+  Radius round 6 stable also lost the form paint.
+  These unbound frames are **not** passes.
+- Changing only horizontal offset to −48px or reducing only blur to 24px preserved binding (`bounds-sideways-fin9b2`, `bounds-compact-O1YPRh`, 16/16 pairs each).
+  Neither reproduced a translated hard rectangle: movement **with** the shadow was not established.
+- We compared filter bounds instead.
+  The anchor's resolved rectangle matched the form; an inset of 24px horizontally and 20px vertically moved it to (458,767), 784×79.
+  Stable round 6 still painted the bad rectangle from (374,699), not the inset edge (`bounds-layersB-ZyxR6f`, 7/8 pairs).
+  Neither the tool card at y=501–535 nor the left wing ending at x=251 intersected that patch.
+  The unchanged and no-anchor/shifted-shadow layer controls each passed 8/8 pairs (`bounds-layersA-jr3JcM`, `bounds-layersC-LDUovX`).
+  This compares CSS geometry and presented pixels, not an engine tile trace.
+- Bounding the glass, grain and edges to the naturally sized dock stopped the observed spill but did **not** by itself preserve the native foreground.
+  `bounds-local-d22zKb` (`e40998a35baf`) still lost ink on stable round 10 of 16; the notice remained at 7.542:1.
+  Flat, negative-underlay and rim-only diagnostics each passed 16/16 (`bounds-flat-zQVHL7`, `bounds-underlay-M0AE8J`, `bounds-rim-GyikNq`), but on the canonical negative-underlay build `15876c41c44b`, **4/32 stable** lost ink (`bounds-backing-zK0w37`).
+- On that last build, changing **only** the catalog trigger to replace its face immediately with its caption, rather than interpolating the old button colors, preserved all 32 ready and 32 stable foregrounds (`bounds-instant-hcNolJ`).
+  The production change keeps the full blur/saturate backing and multi-shadow dock; it does not condition paint on mode, theme, viewport or test timing.
+
+**Sampler negative controls.**
+The original five foreground readings and unique top-rule binding remain mandatory in both phases.
+`noticePaint` separately tests the lower stems of the notice's final word and its leading rule against adjacent padding on that same PNG.
+Replaying the saved owner pair and the new plate-removal round-3 pair through the collector (`bounds-negative-owner-ObOiBM`, `bounds-negative-new-ICcIg8`) accepted ready, rejected stable and exited 1 in both cases.
+In the latter stable the upper rule still bound the frame, but there was no lower word ink and the rule at (451,701) was RGB(64,51,57) on RGB(27,24,29), just **1.465:1**.
+
+**Repaired canonical build.** `bun run build:web` produced `a68f69d32931aaa85d76544ba8c77bda351ad303a9989360a887f32fcb54ba4d` in the same integration worktree over `38b63ba9`.
+`bounds-instant-build-KpnBYj` contains 32 dark/1440×900 pairs; `bounds-instant-matrix-per2T7` contains four rounds each of light/1440×900 and dark/light at 320×820 and 390×820.
+All 104 frames bound and passed, without CSS overrides, GPU switches or recaptures.
+Worst painted mode / model / placeholder / outside-notice word ratios were **15.917 / 11.879 / 5.939 / 7.542** in Obsidian and **17.355 / 10.468 / 5.637 / 6.396** in Alabaster.
+The weakest composer combination was the Alabaster placeholder, RGB(94,102,117) on RGB(252,252,253).
+
+In `capsule-bounds-height-4rXsug`, all six views kept the folder draft unsendable, the plate and form coincident, and the range hittable outside the form.
+Shift+Tab landed on the grip; ArrowUp stepped 64→80 and raised the actual textarea from 67→80px; Home restored automatic height.
+An earlier control harness incorrectly required a 16px geometry delta from a **snapped range value**, leaving manual height selected for its remaining grip samples (`capsule-bounds-interaction-vxKeWw`, failed).
+The corrected comparison measures the textarea and the dock independently.
+The four sides of the editor's keyboard outline contrasted at ≥5.558:1, and both Search models and an `@` item were hit outside the capsule at every size.
+Both desktop flow sequences retained actual activity and stopped animation on failed observation and reduced motion.
+
+**Limits.**
+These are two presented frames per navigation, not continuous raster or a Chromium root-cause proof.
+No physical device, hardware GPU, non-Chromium filter fallback or live service was qualified here.
+The opaque fallback is covered by the theme tests.
+Timing/follow measurements, full-candidate verification and independent review remain separate owner checks.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

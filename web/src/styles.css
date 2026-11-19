@@ -3424,49 +3424,49 @@ summary:focus-visible,
   font-size: 12.5px;
   white-space: pre-line;
 }
-/* Composer (pi .composer): one rounded card, a text area over a toolbar whose
- * last control is the round Send or Stop. */
-.chat-composer {
+/* The native composer determines the dock's height. Its backing casts the
+ * shadow; only the glass below the form is clipped. Don't group the editor,
+ * range and toolbar into another full-width painted layer over the glass. */
+.composer-dock {
+  --capsule-radius: 24px;
   flex: none;
   position: relative;
   z-index: 1;
-  anchor-name: --composer;
   margin: 0 max(8px, calc(var(--chat-inset) - 16px)) 12px;
-  background: var(--glass-surface);
-  background-image: var(--grain-image);
-  background-size: var(--grain-size);
-  border: 1px solid var(--glass-border);
-  border-radius: 24px;
-  border-top-color: var(--glass-border-top);
+  border-radius: var(--capsule-radius);
   box-shadow:
     0 12px 40px var(--glass-shadow),
     0 0 24px var(--primary-glow);
 }
-/* Only the optical plate samples the backdrop. It is a sibling behind the
-   entire form, sized by layout even when the toolbar wraps or drafts grow.
-   Without anchor positioning, keep just the capsule's base and static grain. */
-@supports (anchor-scope: --composer) and (backdrop-filter: blur(1px)) {
-  .chat-workspace {
-    anchor-scope: --composer;
-  }
-  .chat-workspace:has(> .chat-composer)::after {
-    content: "";
-    position: absolute;
-    position-anchor: --composer;
-    inset: anchor(top) anchor(right) anchor(bottom) anchor(left);
-    z-index: 0;
-    border-radius: 24px;
-    pointer-events: none;
-    backdrop-filter: var(--glass-filter);
-  }
+.composer-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  clip-path: inset(0 round var(--capsule-radius));
+  backdrop-filter: var(--glass-filter);
+  background: var(--glass-surface);
+  background-image: var(--grain-image);
+  background-size: var(--grain-size);
+  border: 1px solid var(--glass-border);
+  border-top-color: var(--glass-border-top);
+}
+.chat-composer {
+  position: relative;
+  border-radius: inherit;
+  border: 1px solid transparent;
+}
+.composer-dock:focus-within {
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 12px 40px var(--glass-shadow);
 }
 .chat-composer:focus-within {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
   border-color: var(--focus);
-  box-shadow:
-    0 0 0 3px var(--accent-soft),
-    0 12px 40px var(--glass-shadow);
 }
 .chat-composer::before {
   content: "";
@@ -5067,6 +5067,9 @@ button.file-item:hover:not(:disabled),
 .model-trigger {
   max-width: 260px;
   min-width: 0;
+  /* Commit the catalog caption and its face together. Animating the old
+   * button fill during that replacement can erase adjacent composer ink. */
+  transition: none;
   border-color: transparent;
   background: transparent;
   color: var(--text-dim);
@@ -5658,7 +5661,6 @@ button.link:hover:not(:disabled) {
 @supports not (backdrop-filter: blur(1px)) {
   .topbar,
   .statusbar,
-  .chat-composer,
   .action-dialog,
   .model-popover::before,
   .mention-menu::before,
@@ -5670,6 +5672,7 @@ button.link:hover:not(:disabled) {
   .workbench-right-body::before {
     background: var(--bg-elev);
   }
+  .composer-dock::before,
   .panel-drawer,
   .scm-file {
     background-color: var(--bg-elev);

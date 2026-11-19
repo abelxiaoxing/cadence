@@ -49,6 +49,15 @@ function modeFrame(selector, label, notice) {
     )
   )
     throw Error("Hidden placeholder");
+  // The reported spill crossed the lower half of the notice, but left its
+  // top rule (our independent frame witness) intact. Sample the last word
+  // on its actual line, and the rule against its padding at the same height.
+  const word = new Range();
+  word.selectNodeContents(alert.firstChild);
+  word.setStart(alert.firstChild, notice.lastIndexOf(" ") + 1);
+  const wr = word.getBoundingClientRect(),
+    middle = Math.floor((wr.top + wr.bottom) / 2),
+    pad = rule + 7;
   let alpha = Number(placeholder.opacity);
   for (let p = input; p; p = p.parentElement)
     alpha *= Number(getComputedStyle(p).opacity);
@@ -70,6 +79,26 @@ function modeFrame(selector, label, notice) {
       outside: [x, y - 2],
       inside: [x, y + 4],
     },
+    noticePoints: [
+      {
+        name: "Notice: lower stems of final word",
+        glyph: [wr.left, middle, wr.right, wr.bottom],
+        x: pad,
+        y: middle + 1,
+        fg: getComputedStyle(alert).color,
+        alpha: 1,
+        min: 4.5,
+        record: true,
+      },
+      {
+        name: "Notice: rule beside final word",
+        ink: [rule, middle + 1],
+        x: pad,
+        y: middle + 1,
+        min: 3,
+        record: true,
+      },
+    ],
     points: [
       ...[0.1, 0.5, 0.9].map((f) =>
         opticalProbe.glyphSample(selector, label, f),
@@ -153,7 +182,12 @@ export async function observeUnknownMode({
       const observations = [];
       // Only one PNG. If the layout moved during its capture, bind by the
       // notice edge, NEVER retry or pick the better-looking label.
-      for (const { points, landmarks, ...geometry } of candidates) {
+      for (const {
+        points,
+        noticePoints,
+        landmarks,
+        ...geometry
+      } of candidates) {
         assert.equal(geometry.route, route);
         assert.equal(geometry.heading, heading);
         assert.equal(geometry.notice, degradedMode.notice);
@@ -171,12 +205,14 @@ export async function observeUnknownMode({
           isRule(pixels.noticeTop) && !isRule(pixels.aboveNotice);
         const { frame, ...sample } = observed;
         row.bindings.push({ geometry, frame, matchesNotice });
-        observations.push(sample);
+        observations.push({ ...sample, noticePoints });
       }
       const matches = row.bindings.filter((g) => g.matchesNotice);
       assert.equal(matches.length, 1, "No unique presented notice geometry");
       row.bound = row.bindings.indexOf(matches[0]);
-      Object.assign(row, observations[row.bound]);
+      const { noticePoints, ...composer } = observations[row.bound];
+      Object.assign(row, composer);
+      row.noticePaint = await run(contrastPixels, png, noticePoints);
       const { samples, readings, failures } = row;
       assert.equal(samples, 5);
       assert.equal(readings?.length, 5);
@@ -189,6 +225,10 @@ export async function observeUnknownMode({
         assert.equal(r.alpha, 1);
       }
       assert.deepEqual(failures, []);
+      const [word, rule] = row.noticePaint.readings;
+      assert.ok(word.paintedGlyph?.ratio >= word.min, "Obscured notice text");
+      assert.ok(rule.ratio >= rule.min, "Obscured notice rule");
+      assert.deepEqual(row.noticePaint.failures, []);
     } catch (error) {
       row.error = String(error);
       problems.push({ ...base, phase, error: row.error });
@@ -201,7 +241,7 @@ export async function observeUnknownMode({
 function gripFrame() {
   return opticalProbe.stableFrames(() => {
     const grip = document.querySelector(
-        ".chat-workspace:not([hidden]) > .chat-composer > input.composer-resize[type=range]",
+        ".chat-workspace:not([hidden]) > .composer-dock > .chat-composer > input.composer-resize[type=range]",
       ),
       rect = grip.getBoundingClientRect(),
       css = getComputedStyle(grip),
