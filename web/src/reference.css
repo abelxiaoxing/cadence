@@ -187,12 +187,12 @@
   border-left: 2px solid transparent;
 }
 
-.scm-file:hover {
-  background: var(--accent-soft);
+.scm-file:hover,
+.scm-file.active {
+  background-color: var(--bg-elev2);
 }
 
 .scm-file.active {
-  background: var(--accent-soft);
   border-left-color: var(--accent);
 }
 

@@ -812,6 +812,40 @@ These are point samples on Chromium, not continuous paint, physical-device or cr
 The targeted run included the following open agreement but not the full collector, performance windows, final `verify` or independent review.
 The owner checks the actual delivery candidate separately.
 
+### Invalid math in chat and the history/Changes card material
+
+Use the `questions` conversation for the missing-argument `\frac`; it is separate from the fixed idle, scroll and incremental timing specimens.
+`readingStates` → `incomplete formula` targets the visible error span with its parse-error title, not other text in the scene.
+An unmodified viewport PNG must contain a glyph stem inside the hit-tested source text range; compare it with the adjacent paragraph pixel.
+A second capture suppresses only the text fill to sample the actual backing under the range.
+Both checks require samples and at least 4.5:1.
+The Markdown SSR test separately renders an unknown command: KaTeX colors a normal HTML math child there rather than emitting a `.katex-error` span.
+It also checks that a valid fraction still renders.
+
+**Local observation:** build `5ddac3383d1541b663e9c6eea60d0dd424e53cba5d7997ba99d227603b2a3771`, in the integration worktree over `44056c909532` before the repair commit.
+`$TMPDIR/optical-evidence-7afNXD/summary.json` records the branch and build, with 143 scenes, no reported problems or unavailable scenarios.
+Installed headless Chrome 151.0.7922.34, SwiftShader, DPR 1, synthetic loopback data; 320×820, 390×820 and 1440×900 in each theme.
+Each of the six formula captures had one painted stem and three under-text samples.
+The worst ratios were the same at all three widths:
+
+| Theme             | Painted error text RGB | Backing RGB   | Worst ratio |
+| ----------------- | ---------------------- | ------------- | ----------: |
+| Obsidian Optical  | 227, 166, 174          | 9, 10, 13     |     9.739:1 |
+| Mineral Alabaster | 132, 63, 80            | 244, 245, 247 |     6.856:1 |
+
+`cardMaterials` records 18 states: the actual `.rtr` shell in History → Timeline, and the `.scm-file` article at rest and under the pointer in Inspector → Changes, for each theme/viewport pair.
+The probe hit-tests each heading and compares the card's computed material on either side of one unmodified PNG.
+All four edges were 1px solid; top/other edge alpha was .22/.10 in Obsidian and .94/.16 in Alabaster.
+Both gradient tiles (5×7 and 7×11px) stayed in place, with no card animation.
+The filter was 3px blur at compact widths and 5px at desktop, both with 105% saturation.
+The 10px-offset, 30px-blur shadow stayed present.
+Hover changed only the file fill, from .94/.92 alpha to opaque in dark/light respectively.
+
+These are point-in-time Chromium readings, not physical-device or cross-engine results.
+The material fields are computed styles, not isolated pixel measurements of each texture layer.
+The no-filter fallback, `.scm-file.active`, the other shared card selectors and the unknown-command error shape have stylesheet or SSR coverage, not additional browser scenes.
+The owner's final candidate checks and independent review remain separate.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

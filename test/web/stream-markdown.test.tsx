@@ -210,6 +210,25 @@ it("ordinary markdown keeps its prefix and open-code renderer unchanged on settl
   expect(segmentStream(text).inFence).toBe(true);
 });
 
+it("uses the theme error ink for both KaTeX failure shapes without replacing the formula", () => {
+  const formula = (tex: string) =>
+    renderToStaticMarkup(<MarkdownBody text={`$${tex}$`} />);
+  const missing = formula("\\frac");
+  expect(missing).toContain('class="katex-error"');
+  expect(missing).toMatch(/title="[^"]*KaTeX parse error:[^"]+"/);
+  expect(missing).toMatch(
+    /style="color:var\(--err-text\)"[^>]*>\\frac<\/span>/,
+  );
+
+  const unknown = formula("\\faceted");
+  expect(unknown).toMatch(
+    /class="katex-html"[\s\S]*<span[^>]*style="color:var\(--err-text\)"[^>]*>\\faceted<\/span>/,
+  );
+  const valid = formula("\\frac{1}{2}");
+  expect(valid).toContain("<mfrac>");
+  expect(valid).not.toMatch(/katex-error|--err-text/);
+});
+
 it("retains document-wide Markdown references without a terminal-state renderer swap", () => {
   const text =
     "See [reference][r].\n\nAnother paragraph.\n\n[r]: https://example.com/";

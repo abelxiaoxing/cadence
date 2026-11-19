@@ -470,6 +470,78 @@ export async function observeOpenMaterial(probe, row, panel) {
   if (panel === ".mention-menu") checkMentionBacking(row.frames.at(-1));
 }
 
+// Read the mounted history/Inspector card, not a swatch or one of its rows.
+function cardMaterial(selector) {
+  const card = document.querySelector(selector),
+    heading = card.querySelector("h2,h3"),
+    rect = heading.getBoundingClientRect(),
+    x = rect.left + rect.width / 2,
+    y = rect.top + rect.height / 2;
+  if (!heading.contains(document.elementFromPoint(x, y)))
+    throw Error(`Obscured ${selector} heading`);
+  const css = getComputedStyle(card);
+  return {
+    heading: heading.textContent,
+    point: { x, y },
+    hovered: card.matches(":hover"),
+    fill: css.backgroundColor,
+    grain: css.backgroundImage,
+    size: css.backgroundSize,
+    position: css.backgroundPosition,
+    animations: card.getAnimations().map((a) => a.playState),
+    filter: css.backdropFilter,
+    shadow: css.boxShadow,
+    edges: ["Top", "Right", "Bottom", "Left"].map((side) => ({
+      style: css[`border${side}Style`],
+      width: css[`border${side}Width`],
+      color: css[`border${side}Color`],
+    })),
+  };
+}
+export async function observeCardMaterial(
+  { run, send, scrollTo, parkPointer, screenshot, width, theme, rows },
+  selector,
+) {
+  await scrollTo(`${selector} :is(h2,h3)`);
+  await parkPointer();
+  const alpha = (s) => Number(s.match(/^rgba\(.*?, ([\d.]+)\)$/)?.[1] ?? 1);
+  const capture = async (state) => {
+    const material = await run(cardMaterial, selector);
+    const file = `${selector.slice(1)}-${theme}-${width}-${state}.png`;
+    rows.push({ width, theme, selector, state, file, ...material });
+    await screenshot(file);
+    assert.deepEqual(await run(cardMaterial, selector), material);
+    assert.equal(material.hovered, state === "hover");
+    assert.ok(alpha(material.fill) >= 0.9);
+    assert.equal(material.grain.match(/radial-gradient\(/g)?.length, 2);
+    assert.match(material.size, /^\d+px \d+px, \d+px \d+px$/);
+    assert.deepEqual(material.animations, []);
+    assert.match(material.filter, /blur\([\d.]+px\) saturate\(/);
+    assert.notEqual(material.shadow, "none");
+    const [top, right, bottom, left] = material.edges;
+    assert.ok(
+      material.edges.every(
+        (edge) => edge.style === "solid" && parseFloat(edge.width) > 0,
+      ),
+    );
+    assert.deepEqual(right, bottom);
+    assert.deepEqual(right, left);
+    assert.ok(alpha(top.color) > alpha(right.color));
+    return material;
+  };
+  const rest = await capture("rest");
+  if (selector === ".scm-file") {
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...rest.point,
+    });
+    const hover = await capture("hover");
+    assert.notEqual(hover.fill, rest.fill);
+    assert.deepEqual(hover, { ...rest, fill: hover.fill, hovered: true });
+    await parkPointer();
+  }
+}
+
 export async function observeRetainedCopy(
   { run, click, wait, observeCopy, site },
   subagent,

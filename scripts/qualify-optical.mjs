@@ -11,6 +11,7 @@ import {
   observeUnknownMode,
 } from "./optical-fixtures/composer-observations.mjs";
 import {
+  observeCardMaterial,
   observeDesign,
   observeOpenMaterial,
   observeRetainedCopy,
@@ -36,6 +37,7 @@ import {
 import {
   observeLockedLevels,
   observeRecentFolders,
+  painted,
 } from "./optical-fixtures/picker-observations.mjs";
 import {
   leading,
@@ -79,6 +81,7 @@ const report = {
   copies: [],
   copyIndicators: [],
   readingStates: [],
+  cardMaterials: [],
   toolCards: [],
   drawerGestures: [],
   directoryReads: [],
@@ -608,6 +611,23 @@ try {
   const observeQuestions = async () => {
     const rail = ".qn-rail";
     await go(chat("questions"), rail);
+    const error = '.msg-text .md .katex-error[title*="KaTeX parse error"]';
+    await scrollTo(error);
+    const row = { scene: "formula-error", frames: [] };
+    await painted({ run, screenshot, width, theme }, row, "text", async () => ({
+      points: [
+        {
+          ...(await run(glyphSample, error, "\\frac", null, "p")),
+          record: true,
+        },
+      ],
+    }));
+    recordState(
+      "incomplete formula",
+      error,
+      await textContrast(row.scene, error),
+      row,
+    );
     await observeLink(
       "chat",
       '.msg-text p > a[href="#specimen-notes"]',
@@ -1082,6 +1102,17 @@ try {
       await click(".view-menu summary");
       await picker("view-material", observeOpenMaterial, ".view-menu-items");
       await press("Escape", 27);
+      const cardProbe = {
+        run,
+        send,
+        scrollTo,
+        parkPointer,
+        screenshot,
+        width,
+        theme,
+        rows: report.cardMaterials,
+      };
+      await observeCardMaterial(cardProbe, ".rtr");
       await scrollTo(".rtr-list");
       await audit("history", [
         ".workspace-content",
@@ -1122,6 +1153,7 @@ try {
       ]);
       await click('.rp-tabs[aria-label="Inspector"] button', "changes");
       await wait(`document.querySelector('.scm-file button')`);
+      await observeCardMaterial(cardProbe, ".scm-file");
       await click(".scm-file button");
       await wait(`document.querySelector('.fp-preview')`);
       // Observe the actual selection before any glyph-suppressed page audit.
