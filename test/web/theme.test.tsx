@@ -405,6 +405,29 @@ describe.each(["light", "dark"] as const)("%s scheme", (scheme) => {
       )[3],
     ).toBe(1);
   });
+  it("keeps the selected view legible and marked without interpolating when focus moves", () => {
+    expect(
+      declaration(".view-menu-items > button[aria-pressed]", "transition"),
+    ).toBe("none");
+    const selected = '.view-menu-items button[aria-pressed="true"]';
+    expect(declaration(selected, "box-shadow")).toBe(
+      "inset 2px 0 var(--accent)",
+    );
+    const menu = over(
+      ruleColor(".view-menu-items", "background", scheme),
+      color("--bg", scheme),
+    );
+    for (const face of [menu, over(color("--grain", scheme), menu)]) {
+      const row = over(ruleColor(selected, "background", scheme), face);
+      expect(
+        contrast(ruleColor(selected, "color", scheme), row),
+      ).toBeGreaterThanOrEqual(AA);
+      for (const surface of [face, row])
+        expect(
+          contrast(color("--accent", scheme), surface),
+        ).toBeGreaterThanOrEqual(GRAPHIC);
+    }
+  });
   it("keeps the mention hint, names and selection rule distinct on the raised plate", () => {
     const plate = ".mention-menu::before";
     expect(declaration(plate, "pointer-events")).toBe("none");
