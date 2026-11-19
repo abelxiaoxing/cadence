@@ -208,7 +208,7 @@ vi.mock("../../web/src/client/conversation-tree", async (original) => ({
 vi.mock("../../web/src/client/use-model-catalog", () => ({
   useModelCatalog: () => ({ loading: false, reread: workspace.no }),
 }));
-vi.mock("../../web/src/components/workspace/AgentDock", () => ({
+vi.mock("../../web/src/client/use-workflow-runs", () => ({
   useWorkflowRuns: () => ({ runs: workspace.runs, unreadable: new Set() }),
 }));
 vi.mock("../../web/src/components/workspace/ChatImages", () => ({

@@ -12,7 +12,10 @@ import type {
   ProjectObservation,
   WorkbenchEntry,
 } from "../../src/service/contracts/gateway.ts";
-import { PROJECT_ASSOCIATION_HEADER } from "../../src/service/contracts/workbench.ts";
+import {
+  PROJECT_ASSOCIATION_HEADER,
+  type WorkbenchResult,
+} from "../../src/service/contracts/workbench.ts";
 import type { WorkflowRun } from "../../src/service/contracts/workflow.ts";
 import { LIMITS, publicError } from "../../src/service-contract.ts";
 import { HISTORY_CSRF_HEADER } from "../../src/service-wire.ts";
@@ -140,6 +143,9 @@ vi.mock("../../web/src/history/use-page", async (original) => {
 // Feed the three actual workflow surfaces one retained run. Capture only
 // their rendered HTML button props so we can also invoke a retired handler.
 let workflow: WorkflowRun | undefined;
+let projectRoster:
+  | Extract<WorkbenchResult, { kind: "workflow-active" }>
+  | undefined;
 type StopSurface = "line" | "sidebar" | "card";
 type StopButton = { disabled: boolean; onClick(): void };
 const stopButtons = new Map<StopSurface, StopButton>();
@@ -198,6 +204,8 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
     ...real,
     useWorkbench: (...args: Parameters<typeof real.useWorkbench>) => {
       const read = real.useWorkbench(...args);
+      if (projectRoster && args[1]?.kind === "workflow-active")
+        return { ...read, value: projectRoster };
       if (workflow && args[1]?.kind === "workflow-active")
         return {
           ...read,
@@ -216,11 +224,9 @@ vi.mock("../../web/src/client/use-workbench", async (original) => {
     },
   };
 });
-vi.mock("../../web/src/components/workspace/AgentDock", async (original) => {
+vi.mock("../../web/src/client/use-workflow-runs", async (original) => {
   const real =
-    await original<
-      typeof import("../../web/src/components/workspace/AgentDock")
-    >();
+    await original<typeof import("../../web/src/client/use-workflow-runs")>();
   return {
     ...real,
     useWorkflowRuns: (...args: Parameters<typeof real.useWorkflowRuns>) => {
@@ -605,6 +611,7 @@ function connectionMarkup(html: string) {
 }
 afterEach(() => {
   workflow = undefined;
+  projectRoster = undefined;
   controls.clear();
   submit = undefined;
   stopButtons.clear();
@@ -1020,6 +1027,18 @@ function activeWorkflow(): WorkflowRun {
   return {
     id: id(),
     epoch,
+    execution: {
+      cwd: "/fixture",
+      checkoutRoot: "/fixture",
+      model: null,
+      version: {
+        epoch,
+        accessGeneration: 1,
+        configRev: 1,
+        catalogId: id(),
+        conversation: { id: chat, cwd: "/fixture" },
+      },
+    },
     goal: "Retained workflow",
     phase: "implementing",
     status: "running",
@@ -2341,6 +2360,115 @@ for (const locale of ["en", "zh"] as const) {
     },
   );
 }
+it("the project roster stays global but the dock follows only the open Pi session, including after a late poll", async () => {
+  const f = openedChat(true);
+  vi.stubGlobal("location", window.location);
+  const other = id();
+  const child = (goal: string, session: string | null) => {
+    const run = activeWorkflow();
+    if (session && run.execution)
+      run.execution.version.conversation = { id: session, cwd: "/fixture" };
+    else delete run.execution;
+    run.goal = goal;
+    run.steps = [
+      {
+        id: goal,
+        childRunId: id(),
+        kind: "research",
+        status: "running",
+        text: "",
+        exitCode: null,
+        truncated: false,
+      },
+    ];
+    return run;
+  };
+  const a = child("only-A", chat),
+    b = child("only-B", other),
+    past = child("retained-A", chat),
+    unbound = child("no-session", null),
+    copied = child("copied-from-B", other);
+  past.steps[0].status = past.status = "completed";
+  projectRoster = {
+    kind: "workflow-active",
+    runs: [a, b, unbound],
+    links: [
+      { runId: a.id, conversationId: chat },
+      { runId: b.id, conversationId: other },
+    ],
+  };
+  const read = f.api.client.workbenchRead.bind(f.api.client);
+  const details: string[] = [];
+  let delay = false,
+    release: (() => void) | undefined,
+    lateSignal: AbortSignal | undefined;
+  vi.spyOn(f.api.client, "workbenchRead").mockImplementation(
+    async (request, signal) => {
+      if (request.kind === "workflow") {
+        details.push(request.id);
+        const run = [a, b, past, unbound, copied].find(
+          (r) => r.id === request.id,
+        );
+        if (!run) throw Error("unexpected run");
+        if (delay && run === a) {
+          lateSignal = signal;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return {
+          kind: "ok",
+          value: {
+            kind: "workflow",
+            commandId: null,
+            response: { type: "run", run },
+          },
+        };
+      }
+      const result = await read(request, signal);
+      if (
+        request.kind === "conversation" &&
+        result.kind === "ok" &&
+        result.value.kind === "conversation"
+      )
+        result.value.runs =
+          request.id === chat ? [copied.id, unbound.id, past.id] : [];
+      return result;
+    },
+  );
+  const dock = (html: string) =>
+    html.match(/<section class="agent-dock(?: collapsed)?">(.*?)<main /s)?.[1];
+  const first = await f.settle();
+  expect(sidebar.workflows).toEqual([a, b, unbound]);
+  expect(details).not.toContain(b.id); // never read another chat's project-only live ID
+  expect(dock(first.html)).toContain("1 active · 2 total");
+  expect(dock(first.html)).toContain(past.goal);
+  expect(dock(first.html)).toContain(a.goal);
+  expect(dock(first.html)).not.toMatch(/only-B|copied-from-B|no-session/);
+  delay = true;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(release).toBeDefined();
+  expect(details.filter((id) => id === copied.id || id === unbound.id)).toEqual(
+    expect.arrayContaining([copied.id, unbound.id]),
+  );
+  expect(
+    details.filter((id) => id === copied.id || id === unbound.id),
+  ).toHaveLength(2);
+  sidebar.onConversation?.(other);
+  const switched = f.draw(); // even before B's first observation
+  expect(dock(switched.html)).not.toMatch(/only-A|retained-A/);
+  release?.();
+  const second = await f.settle();
+  expect(lateSignal?.aborted).toBe(true);
+  expect(dock(second.html)).toContain("1 active · 1 total");
+  expect(dock(second.html)).toContain(b.goal);
+  expect(dock(second.html)).not.toMatch(/only-A|retained-A|no-session/);
+  sidebar.onNewConversation?.();
+  expect(dock((await f.settle()).html)).not.toMatch(
+    /agent-dock-row|only-A|only-B/,
+  );
+  expect(prepare).not.toHaveBeenCalled();
+});
 it("retrying an unreadable live workflow retains its line until a new observation replaces it", async () => {
   workflow = activeWorkflow();
   const f = openedChat(true);

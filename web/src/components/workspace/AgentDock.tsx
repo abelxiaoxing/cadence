@@ -1,6 +1,6 @@
 /* pi-web-ui's compact agent rows, backed only by Cadence retained child IDs.
  * MIT (c) 2026 xing-shuyin. This observer never launches or cancels an agent. */
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { FiChevronDown, FiCpu } from "react-icons/fi";
 import type {
   WorkflowRun,
@@ -10,136 +10,22 @@ import { useT } from "../../i18n/locale";
 import {
   assignmentCounts,
   describeCounts,
-  dockGroups,
+  type dockGroups,
   workflowAgentLabel,
 } from "../../navigation/workflow-assignments";
-import type { ActiveRuns, RunProjection, ServiceClient } from "../../types";
+import type { RunProjection } from "../../types";
 
-interface Row {
-  taskId: string;
-  run: RunProjection;
-  snapshot: string;
-}
 /** One workflow subagent (a step with a child run) opened in the main area. */
 export interface WorkflowAgent {
   runId: string;
   stepId: string | null;
   label: string;
 }
-const LIVE = ["queued", "running"];
-/** Reads in flight at once, newest first, so current work shows soonest. */
-const READS = 4;
-/** An ID never read successfully (a terminal attempt the owner refused leaves
- * one) is retried this often; it is never taken as a settled or absent run. */
-const UNREAD_RETRY_MS = 10000;
-/** Observe the named workflow runs: live ones on an interval, settled ones once.
- * An error belongs to a previously observed run; keep its row and the cause
- * until a successful reread. Unreadable IDs have not yielded any run yet. */
-export function useWorkflowRuns(
-  client: Pick<ServiceClient, "workbenchRead">,
-  ids: readonly string[],
-  interval = 2000,
-) {
-  const [observation, setObservation] = useState<{
-    runs: ReadonlyMap<string, WorkflowRun>;
-    error?: string;
-    unreadable: ReadonlySet<string>;
-  }>(() => ({ runs: new Map(), unreadable: new Set() }));
-  const refresh = useRef<() => void>(undefined);
-  // Keep every observed run across changes to the watched IDs. A failed
-  // re-read must not turn known live work into an unobserved/absent row.
-  const retained = useRef({
-    client,
-    records: new Map<string, { run: WorkflowRun; error?: string }>(),
-  });
-  const key = JSON.stringify([...new Set(ids)]);
-  useEffect(() => {
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    if (retained.current.client !== client)
-      retained.current = { client, records: new Map() };
-    const { records } = retained.current;
-    const listed = JSON.parse(key) as string[];
-    const wanted = new Set(listed);
-    for (const id of records.keys()) if (!wanted.has(id)) records.delete(id);
-    const missed = new Map<string, number>();
-    const publish = () => {
-      let error: string | undefined;
-      const runs = new Map<string, WorkflowRun>();
-      for (const id of listed) {
-        const record = records.get(id);
-        if (record) {
-          runs.set(id, record.run);
-          error ??= record.error;
-        }
-      }
-      setObservation({ runs, error, unreadable: new Set(missed.keys()) });
-      return runs;
-    };
-    const read = async (id: string) => {
-      const reply = await client.workbenchRead(
-        { kind: "workflow", id },
-        abort.signal,
-      );
-      if (abort.signal.aborted) return;
-      if (
-        reply.kind === "ok" &&
-        reply.value.kind === "workflow" &&
-        reply.value.response.type === "run"
-      ) {
-        records.set(id, { run: reply.value.response.run });
-        missed.delete(id);
-      } else {
-        const record = records.get(id);
-        if (record)
-          record.error =
-            reply.kind === "error" ? reply.error.code : "unavailable";
-        else missed.set(id, Date.now());
-      }
-    };
-    let reading = false;
-    let requested = false;
-    const poll = async () => {
-      clearTimeout(timer);
-      if (reading) {
-        requested = true;
-        return;
-      }
-      reading = true;
-      const now = Date.now();
-      const due = listed
-        .filter((id) => {
-          const previous = records.get(id);
-          return previous
-            ? LIVE.includes(previous.run.status)
-            : now - (missed.get(id) ?? 0) >= UNREAD_RETRY_MS;
-        })
-        .reverse();
-      for (let i = 0; i < due.length; i += READS) {
-        await Promise.all(due.slice(i, i + READS).map(read));
-        if (abort.signal.aborted) return;
-        if (i + READS < due.length) publish();
-      }
-      const runs = publish();
-      reading = false;
-      if (requested) {
-        requested = false;
-        void poll();
-      } else if ([...runs.values()].some((run) => LIVE.includes(run.status)))
-        timer = setTimeout(() => void poll(), interval);
-      else if (missed.size)
-        timer = setTimeout(() => void poll(), UNREAD_RETRY_MS);
-    };
-    refresh.current = poll;
-    void poll();
-    return () => {
-      refresh.current = undefined;
-      abort.abort();
-      clearTimeout(timer);
-    };
-  }, [client, key, interval]);
-  return { ...observation, refresh: () => refresh.current?.() };
+export interface ConversationAgents {
+  groups: ReturnType<typeof dockGroups>;
+  unavailable: boolean;
 }
+const LIVE = ["queued", "running"];
 /** One run's subagents in the dock. Its head names the run and where its
  * assignments stand (the queued ones have no agent row yet) and opens the
  * run's own view; each row is one subagent with its step's status, and under
@@ -206,102 +92,46 @@ export function WorkflowAgentGroup({
     </section>
   );
 }
-export function AgentDock({
-  client,
-  active,
-  taskId,
-  runs,
-  snapshot,
-  workflowRuns = [],
-  selected,
-  onOpen,
-  onOpenWorkflow,
-}: {
-  client: ServiceClient;
-  active?: ActiveRuns;
-  taskId: string | null;
-  runs: RunProjection[];
-  snapshot?: string;
-  /** Active workflow runs plus the current conversation's recent runs. */
-  workflowRuns?: readonly string[];
-  selected?: WorkflowAgent | null;
-  onOpen(
-    taskId: string,
-    childId: string,
-    snapshot: string,
-    label: string,
-  ): void;
-  onOpenWorkflow?(agent: WorkflowAgent): void;
-}) {
+
+type DockProps = { unavailable: boolean } & (
+  | {
+      kind: "conversation";
+      groups: ConversationAgents["groups"];
+      selected: WorkflowAgent | null;
+      onOpen(agent: WorkflowAgent): void;
+    }
+  | {
+      kind: "task";
+      runs: RunProjection[];
+      onOpen(childId: string, label: string): void;
+    }
+);
+/** Display only the current chat observation OR the selected task snapshot.
+ * The independent project-wide safety roster belongs to Running work. */
+export function AgentDock(props: DockProps) {
   const { t, tx } = useT();
-  // Unset follows the roster: folded while empty, open once agents appear.
-  const [opened, setOpen] = useState<boolean | null>(null),
-    [rows, setRows] = useState<Row[]>([]),
-    [error, setError] = useState(false);
-  const workflows = useWorkflowRuns(client, workflowRuns);
-  const key = JSON.stringify(
-    active?.status === "complete"
-      ? [...new Set(active.runs.map((run) => run.taskId))]
-      : [],
-  );
-  useEffect(() => {
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      const next: Row[] = [];
-      let failed = false;
-      for (const id of JSON.parse(key) as string[]) {
-        const result = await client.snapshot(
-          { kind: "task", id },
-          abort.signal,
-        );
-        if (abort.signal.aborted) return;
-        if (result.kind === "ok") {
-          for (const run of result.value.runs) {
-            if (run.childRunId)
-              next.push({
-                taskId: id,
-                run,
-                snapshot: result.value.committedSeq,
-              });
-          }
-        } else failed = true;
-      }
-      if (!abort.signal.aborted) {
-        setRows(next);
-        setError(failed);
-        timer = setTimeout(() => void poll(), 3000);
-      }
-    };
-    void poll();
-    return () => {
-      abort.abort();
-      clearTimeout(timer);
-    };
-  }, [client, key]);
-  const current =
-    taskId && snapshot
-      ? runs
-          .filter((run) => run.childRunId)
-          .map((run) => ({ taskId, run, snapshot }))
+  const [opened, setOpen] = useState<boolean | null>(null);
+  const agents =
+    props.kind === "conversation"
+      ? props.groups.flatMap((group) => group.steps)
       : [];
-  const merged = [
-    ...rows,
-    ...current.filter(
-      (row) => !rows.some((r) => r.run.childRunId === row.run.childRunId),
-    ),
-  ].sort(
-    (a, b) =>
-      Number(a.run.lifecycle === "settled") -
-      Number(b.run.lifecycle === "settled"),
-  );
-  const groups = dockGroups(workflowRuns, workflows.runs);
-  const agents = groups.flatMap((group) => group.steps);
-  const count = merged.length + agents.length;
+  const children =
+    props.kind === "task"
+      ? props.runs
+          .flatMap((run) =>
+            run.childRunId ? [{ run, id: run.childRunId }] : [],
+          )
+          .sort(
+            (a, b) =>
+              Number(a.run.lifecycle === "settled") -
+              Number(b.run.lifecycle === "settled"),
+          )
+      : [];
+  const count = agents.length + children.length;
   const live =
     agents.filter((step) => LIVE.includes(step.status)).length +
-    merged.filter((row) => row.run.lifecycle !== "settled").length;
-  const open = opened ?? (count > 0 || !!error);
+    children.filter(({ run }) => run.lifecycle !== "settled").length;
+  const open = opened ?? count > 0;
   return (
     <section className={`agent-dock${open ? "" : " collapsed"}`}>
       <button
@@ -319,58 +149,52 @@ export function AgentDock({
                 active: live,
                 total: count,
               })
-            : count}
+            : count || (props.unavailable ? "—" : 0)}
         </span>
       </button>
       {open && (
         <div className="agent-dock-body">
-          {(error || active?.status !== "complete" || workflows.error) && (
+          {props.unavailable ? (
             <p className="panel-hint">{t("Subagent roster unavailable")}</p>
+          ) : (
+            count === 0 && (
+              <p className="panel-hint">
+                {t(
+                  "Cadence research, implementation and review agents appear here.",
+                )}
+              </p>
+            )
           )}
-          {count === 0 && !error && active?.status === "complete" && (
-            <p className="panel-hint">
-              {t(
-                "Cadence research, implementation and review agents appear here.",
-              )}
-            </p>
-          )}
-          {groups.map(({ run, steps }) => (
-            <WorkflowAgentGroup
-              key={run.id}
-              run={run}
-              steps={steps}
-              selected={selected}
-              onOpen={onOpenWorkflow}
-            />
-          ))}
-          {merged.map((row) => (
-            <button
-              type="button"
-              className="agent-dock-row"
-              key={row.run.childRunId}
-              onClick={() =>
-                onOpen(
-                  row.taskId,
-                  row.run.childRunId as string,
-                  row.snapshot,
-                  row.run.assignmentId ?? t("Subagent"),
-                )
-              }
-            >
-              <span
-                className={`agent-dot ${row.run.outcome ?? row.run.lifecycle}`}
-              />
-              <span className="agent-dock-label">
-                <strong>{row.run.assignmentId ?? t("Subagent")}</strong>
-                <small>{t("Task {id}", { id: row.taskId.slice(0, 8) })}</small>
-              </span>
-              <span
-                className={`ep-state ${row.run.outcome ?? row.run.lifecycle}`}
-              >
-                {tx(row.run.outcome ?? row.run.lifecycle)}
-              </span>
-            </button>
-          ))}
+          {props.kind === "conversation"
+            ? props.groups.map(({ run, steps }) => (
+                <WorkflowAgentGroup
+                  key={run.id}
+                  run={run}
+                  steps={steps}
+                  selected={props.selected}
+                  onOpen={props.onOpen}
+                />
+              ))
+            : children.map(({ run, id }) => (
+                <button
+                  type="button"
+                  className="agent-dock-row"
+                  key={id}
+                  onClick={() =>
+                    props.onOpen(id, run.assignmentId ?? t("Subagent"))
+                  }
+                >
+                  <span
+                    className={`agent-dot ${run.outcome ?? run.lifecycle}`}
+                  />
+                  <span className="agent-dock-label">
+                    <strong>{run.assignmentId ?? t("Subagent")}</strong>
+                  </span>
+                  <span className={`ep-state ${run.outcome ?? run.lifecycle}`}>
+                    {tx(run.outcome ?? run.lifecycle)}
+                  </span>
+                </button>
+              ))}
         </div>
       )}
     </section>

@@ -46,7 +46,7 @@ import {
   sideBySideCounts,
   workflowAgentLabel,
 } from "../../web/src/navigation/workflow-assignments";
-import type { ActiveRuns, RunProjection } from "../../web/src/types";
+import type { RunProjection } from "../../web/src/types";
 import { designQuestionsFixture } from "../helpers/design-questions.ts";
 import { plan } from "../helpers/workflow-plan.ts";
 import { transport } from "./fixtures";
@@ -924,22 +924,13 @@ it("the subagent dock count leads with how many listed agents are still active",
       lifecycle,
       outcome: lifecycle === "settled" ? "completed" : null,
     }) as unknown as RunProjection;
-  const active: ActiveRuns = {
-    storeId: randomUUID(),
-    workspaceId: randomUUID(),
-    epoch: randomUUID(),
-    status: "complete",
-    runs: [],
-  };
   const dock = (runs: RunProjection[], locale: "en" | "zh" = "en") =>
     renderToStaticMarkup(
       <LocaleProvider initial={locale}>
         <AgentDock
-          client={new ServiceClient(transport())}
-          active={active}
-          taskId={randomUUID()}
+          kind="task"
           runs={runs}
-          snapshot="1"
+          unavailable={false}
           onOpen={() => {}}
         />
       </LocaleProvider>,
