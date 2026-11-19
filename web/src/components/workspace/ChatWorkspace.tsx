@@ -727,12 +727,18 @@ export function ChatWorkspace({
   // again (opening placeholder → loaded detail), before its resize observer.
   // Match the clamped offset, not the now obsolete distance from the end.
   const followedTop = useRef<number | null>(null);
-  const keepEnd = useCallback(() => {
+  // Observing a row again can deliver a resize even if nothing grew. While
+  // within the follow boundary, move only for a new end or explicit Latest.
+  const previousEnd = useRef<number | null>(null);
+  const keepEnd = useCallback((explicit = false) => {
     const el = scroll.current;
-    if (el && stick.current) {
+    if (!el) return;
+    const end = el.scrollHeight - el.clientHeight;
+    if (stick.current && (explicit || end !== previousEnd.current)) {
       followLatest(el, true);
       followedTop.current = el.scrollTop;
     }
+    previousEnd.current = end;
   }, []);
   // `display: none` drops the scroll offset; restore it when the view returns.
   useLayoutEffect(() => {
@@ -819,9 +825,7 @@ export function ChatWorkspace({
       acts.current.followAnchor();
       onChanged();
     }
-    keepEnd();
   }, [
-    keepEnd,
     summary,
     turns,
     pending,
@@ -924,6 +928,8 @@ export function ChatWorkspace({
       firstOrdinal < previous.ordinal
     )
       el.scrollTop += el.scrollHeight - previous.height;
+    // Include workflow lines, notices and queued inputs outside observed rows.
+    if (!hidden) keepEnd();
     inserted.current = { ordinal: firstOrdinal, height: el.scrollHeight };
   });
   useEffect(() => {
@@ -983,14 +989,6 @@ export function ChatWorkspace({
     () => placeWorkflows(turns, flows.runs.values(), earlier),
     [turns, flows.runs, earlier],
   );
-  // A line that appears or settles (and may gain its reason) keeps a reader at
-  // the end there; a live line's changing activity never moves the reader.
-  const linesKey = [...flows.runs.values()]
-    .map((run) => `${run.id}:${run.status}`)
-    .join();
-  useLayoutEffect(() => {
-    if (linesKey) keepEnd();
-  }, [linesKey, keepEnd]);
   const workflowLine = (run: WorkflowRun) => (
     <WorkflowLine
       key={run.id}
@@ -2177,7 +2175,7 @@ export function ChatWorkspace({
             className="scroll-bottom"
             onClick={() => {
               stick.current = true;
-              keepEnd();
+              keepEnd(true);
               setAway(false);
             }}
           >

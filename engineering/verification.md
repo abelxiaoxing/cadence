@@ -995,6 +995,57 @@ The unsaved attempt paragraph measured 1.60× in both themes; that assertion sto
 These are measurements of the English status labels and synthetic message bodies on those browser bytes, not physical-device, live-service, performance or full-candidate qualification.
 The owner reruns the full checks and independent review on the delivery candidate.
 
+### Code disclosure under the pointer
+
+**Failure.**
+On integration HEAD `52c9f1a4f799`, the owner's `optical-evidence-DywCt6` stopped after 14 dark/320 scenes on canonical build `951e70b63e29`.
+Tab reached the buttons, but the first pointer fold was not observed.
+No later scenes or timing windows in that run qualified.
+
+We repeated reading → composer grip → Tab to fold and copy on those bytes in local Chrome 151.0.7922.34 at 320×820, DPR 1, using only the synthetic loopback fixture.
+Evidence directories below are under the run's `TMPDIR`; each has a `summary.json` with the build identity.
+The probe bound the `reading` route, mounted turn `00000001`, `ts` caption and exact generated `const crystal` line.
+It retained the button and adjacent `pre`, not just a selector to query after input.
+
+- In four rounds per path (`optical-evidence-S9zhi1`), centering an already visible control missed in round 3.
+  The measured button spanned y=322.58–350.58; at pointerdown it spanned 281.58–309.58.
+  All three trusted events at y≈336 hit `span.hljs-keyword`.
+  Both nodes stayed connected, expanded/hidden stayed `true/false`, and the body remained visible.
+  This is evidence of a stale coordinate, **not** a click resetting Markdown state.
+  Natural bottom and real wheel-away pointer pairs each worked 4/4.
+  The diagnostic's separate URL-substring poll counter and Enter dispatch did not establish a completed poll or keyboard activation; those cases are not passes.
+- `optical-evidence-rqf1Fp` matched completed `cadence-conversation` reads by parsed request fields.
+  A forwarding diagnostic setter recorded real writes to the pane's native `scrollTop`.
+  In both rounds a real 48px wheel moved the pane from 1540 to 1492, then the workspace follow effect put it back at 1540 without a change to the 2066px transcript or 526px scrollport.
+  Space after Shift+Tab generated the native button click and toggled both ways.
+  The first repair removed the unconditional poll follow, but a repeated row ResizeObserver delivery still did the same write (`08b4ca041f5e`, `optical-evidence-LLo1EV`); passing at the natural bottom alone would have missed this defect.
+
+**Repair and targeted result.** `ChatWorkspace` now compares the actual scrollable end for both render and resize notifications.
+A changed end still follows reader intent; Latest explicitly jumps even if the extent did not change.
+The 80px boundary and Markdown identity are unchanged.
+`chat-timeline.test.tsx` distinguishes an unchanged poll *and* row observation at 48px from real content growth and scrollport resize.
+Targeted Web tests passed (51 chat-timeline, 22 lazy-window); these controlled dimensions do not prove pointer behavior.
+
+On canonical build `14ddd7a96204cb8300e329b19652a5c469f651a1d4a40785cb0adf1d59a3b5c8` over the same HEAD:
+
+- In `optical-evidence-coGwZr`, four dark/320 rounds each measured at center, natural bottom and after the 48px wheel, held the measured point across a completed unchanged mode read, then dispatched once.
+  All 12 fold/reopen pairs reached the original button.
+  In every wheel round the gap stayed 48px and the button top stayed y=329.58 until activation.
+  The resize from toggling the disclosure then legitimately changed the end.
+- `optical-evidence-MOB2Zo` ran the revised qualification's reading section in both themes at 320×820, 390×820 and 1440×900.
+  It measures without recentering.
+  `codeDisclosures` records before/after connection and disclosure state, button bounds, scroll offset and gap, and capture-phase targets, bounds and trusted flags.
+  All **24 pointer** activations (natural bottom and 180px wheel-away) and **12 keyboard** activations (Tab through Copy, Shift+Tab back, Space) completed on their original block.
+  Collapsing produced `aria-expanded="false"`, `pre.hidden === true` and zero body height; reopening reversed both attributes and the visible opening keyword hit its own text range.
+  At dark/320 the resting fold and copy bounds were x=23–69.89 and x=254.5–287, both y=281.58–309.58.
+  Transcript, clip and hit geometry are in the same report.
+- On those six views the adjacent lazy tool still followed expansion at bottom, kept the reading anchor while away, and resumed follow after Latest and viewport resize.
+  In a separate light/desktop streaming observation, growth followed from top 564→738; after a real wheel it kept top 558 through the next increment, and Latest returned to gap zero.
+
+**Not the full matrix.**
+These are synthetic local Chromium reading/scroll observations, not physical-device, performance, auth or all-surface qualification.
+The owner still runs no-argument `bun run verify`, the full `node scripts/qualify-optical.mjs` matrix (including timing/paint windows) and independent review on the actual delivery candidate before integration.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

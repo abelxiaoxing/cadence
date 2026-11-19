@@ -2076,6 +2076,32 @@ it("registered row resize follows without a new observation, respects the 80px i
   expect(f.frames.size).toBe(0);
 });
 
+it("a fresh poll with unchanged content leaves the visible near-end control in place; content growth still follows", () => {
+  const f = workspaceFixture([loaded("pi-user", "command:user", 0)]);
+  const view = f.draw();
+  const near = f.root.scrollHeight - f.root.clientHeight - 48;
+  f.root.scrollTop = near;
+  view.scroll();
+  // A new observation with the same settled turn, not reader input or growth.
+  f.conversation.turns = [...f.conversation.turns];
+  f.draw();
+  expect(f.root.scrollTop).toBe(near);
+  // The mounted row may be observed again after that render. Its initial
+  // resize delivery isn't evidence that the scrollable extent changed.
+  f.observers[0].resize(f.rowAt("pi-user").el);
+  expect(f.root.scrollTop).toBe(near);
+  // Growth outside the measured turn (e.g. a newly displayed queued input).
+  f.root.scrollHeight += 120;
+  f.draw();
+  expect(f.root.scrollTop).toBe(f.root.scrollHeight);
+  // A real scrollport resize also changes the end, without a taller row.
+  f.root.scrollTop = f.root.scrollHeight - f.root.clientHeight - 48;
+  view.scroll();
+  f.root.clientHeight -= 32;
+  f.observers[0].resize(f.root as unknown as Element);
+  expect(f.root.scrollTop).toBe(f.root.scrollHeight);
+});
+
 it("does not mistake a queued bottom-follow scroll for reader intent when lazy detail replaces its loading row", () => {
   const f = workspaceFixture([loaded("pi-tool", undefined, 0)]);
   const view = f.draw();

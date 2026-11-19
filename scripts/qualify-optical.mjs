@@ -6,6 +6,13 @@ import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { browser } from "./optical-fixtures/browser.mjs";
 import {
+  bindReadingCode,
+  copyButton,
+  foldButton,
+  block as readingBlock,
+  toggleReadingCode,
+} from "./optical-fixtures/code-block.mjs";
+import {
   observeComposerFlow,
   observeComposerGrip,
   observeUnknownMode,
@@ -89,6 +96,7 @@ const report = {
   wingMaterials: [],
   surfaceContrast: [],
   toolCards: [],
+  codeDisclosures: [],
   drawerGestures: [],
   directoryReads: [],
   pickerStates: [],
@@ -899,32 +907,56 @@ try {
         screenshot,
         rows: report.composerGrip,
       });
-      await scrollTo(".code-caption");
+      await bindReadingCode(run, chat("reading"));
+      await wait("opticalProbe.code.state().bottom < 2");
+      const readingPre = `${readingBlock} pre`;
       assert.ok(
         await ev(
-          `(()=>{const p=document.querySelector('.codeblock pre');return p.scrollWidth>p.clientWidth})()`,
+          `(() => { const p=document.querySelector(${q(readingPre)});return p.scrollWidth>p.clientWidth })()`,
         ),
       );
       await audit("reading", [
         ".chat-messages",
         ".chat-turn",
-        ".code-caption",
-        ".codeblock pre",
+        `${readingBlock} .code-caption`,
+        readingPre,
         ".composer-toolbar",
       ]);
-      await observeButton("code fold", ".code-caption button:first-child");
-      await observeButton("code copy", ".code-caption .output-copy");
-      // Tab can scroll the caption as it moves between the two controls.
-      // Position once per activation; dispatch only at a settled, hit-tested
-      // button and require both the disclosure and its own pre to change.
-      for (const hidden of [true, false]) {
-        const selector = ".code-caption button:first-child";
-        const { hit } = await run(controlGeometry, selector);
-        assert.ok(Object.values(hit).every((p) => p.hit));
-        await clickPoint(selector, hit.center);
-        await wait(
-          `(() => { const b=document.querySelector(${q(selector)}); return b.getAttribute('aria-expanded') === '${!hidden}' && b.closest('.codeblock').querySelector('pre').hidden === ${hidden} })()`,
-        );
+      // Both caption controls are already visible at the natural end. Tab and
+      // measure there; centering a visible control creates another scroll.
+      for (const [role, selector, name] of [
+        ["code fold", foldButton, "ts"],
+        ["code copy", copyButton, "Copy displayed text"],
+      ]) {
+        const tabbed = await observeButton(role, selector, name, false);
+        assert.equal(tabbed.keyboardFocus, true);
+      }
+      try {
+        for (const position of ["bottom", "keyboard", "away"]) {
+          if (position === "keyboard") {
+            // The last pointer activation focused the disclosure. Tab through
+            // Copy and back, then activate using the native button keyboard path.
+            await press("Tab", 9);
+            assert.ok(
+              await ev(`document.activeElement.matches(${q(copyButton)})`),
+            );
+            await press("Tab", 9, 8);
+          } else if (position === "away") await wheelAway();
+          for (const hidden of [true, false]) {
+            const row = {
+              width,
+              theme,
+              route: chat("reading"),
+              position,
+              keyboard: position === "keyboard",
+              hidden,
+            };
+            report.codeDisclosures.push(row);
+            await toggleReadingCode({ ev, run, clickPoint, press, wait }, row);
+          }
+        }
+      } finally {
+        await ev("opticalProbe.code.dispose()");
       }
       await expand("reading", "read", "material.ts");
       await scrollTo(".toolcall-output .toolcall-output-label");
