@@ -60,6 +60,14 @@ vi.mock("../src/service/workflow-git.ts", async (original) => ({
     if (tree.head !== expected.head || tree.branch !== expected.branch)
       throw new Error("Target moved");
   },
+  assertTargetPosition: async (
+    cwd: string,
+    expected: { head: string; branch: string },
+  ) => {
+    const tree = seam.trees.get(cwd)!;
+    if (tree.head !== expected.head || tree.branch !== expected.branch)
+      throw new Error("stale");
+  },
   gitHead: async (cwd: string) => {
     if (seam.missing) throw new Error("unreadable");
     return seam.trees.get(cwd)!.head;

@@ -1098,9 +1098,37 @@ export function readableDelivery(binding?: DeliveryBinding): string {
   const t = binding.target;
   return `Target: ${t.branch} @ ${t.head}\nTarget checkout: ${t.checkoutRoot}\nExecution: new cadence/<goal>-<run-id> branch and one stable isolated worktree after approval. Assignments that can run side by side each work in a temporary worktree of their own beside it; the service commits that work and picks it onto the candidate. Independent conversations may use separate candidates concurrently.\nAcceptance: checks and automatic Agent review of the exact candidate. A verified, non-overlapping sibling delivery may be merged into the isolated candidate, followed by fresh checks and review.\nDelivery: serialized fast-forward only into the bound target at its approved, verified-sibling or own last confirmed baseline. Keep the task branch; remove only owned worktrees without any residue, including ignored files. No source/profile/dependency copying, push or deployment.`;
 }
-export function readableDeliveryRun(d?: DeliveryObservation): string {
+/** Display projection only. A missing seal is not proof of missing edits.
+ * In an interrupted run pending facts may simply not have been recorded. */
+export function deliveryLabels(
+  d: DeliveryObservation,
+  status: WorkflowRun["status"],
+) {
+  const finished = status !== "running" && status !== "queued";
+  const settled = finished && status !== "unknown";
+  const beforeWorkspace =
+    settled && d.workspace === null && d.preparation === "pending";
+  const pending = (value: string) =>
+    value !== "pending" || !finished
+      ? value
+      : settled
+        ? "Not executed"
+        : "Not recorded";
+  return {
+    preparation:
+      d.preparation === "pending" && finished && !beforeWorkspace
+        ? "Not recorded"
+        : pending(d.preparation),
+    missingCandidate: beforeWorkspace ? "Not executed" : "Not recorded",
+    integration: pending(d.integration.status),
+    cleanup: pending(d.cleanup.status),
+  } as const;
+}
+export function readableDeliveryRun(run: WorkflowRun): string {
+  const d = run.delivery;
   if (!d) return "";
-  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${d.preparation}\nCandidate: ${d.candidate ?? "not recorded"}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : "not recorded"}\nIntegration: ${d.integration.status}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${d.cleanup.status}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
+  const labels = deliveryLabels(d, run.status);
+  return `Task branch: ${d.taskBranch}\nWorktree: ${d.worktreeRoot}\nTarget: ${d.binding.target.branch} @ ${d.binding.target.head}\nPreparation: ${labels.preparation}\nCandidate: ${d.candidate ?? labels.missingCandidate}\nAcceptance: ${d.acceptance ? `checks + automatic Agent review of ${d.acceptance.candidate}` : labels.missingCandidate}\nIntegration: ${labels.integration}${d.integration.after ? ` @ ${d.integration.after}` : ""}${d.integration.reason ? ` — ${d.integration.reason}` : ""}\nPost-merge checks: ${d.postChecks}\nWorktree cleanup: ${labels.cleanup}${d.cleanup.reason ? ` — ${d.cleanup.reason}` : ""}\nPolicy: keep the task branch; no push or deployment.`;
 }
 export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
   const modern =

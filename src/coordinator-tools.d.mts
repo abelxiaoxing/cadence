@@ -3,6 +3,9 @@ import type { TSchema } from "typebox";
 /** The `cadence_research` and `cadence_plan` parameters, declared once for the
  * native extension and the browser coordinator. */
 export declare const RESEARCH_PARAMETERS: TSchema;
+export declare function knowledgeToolInput(
+  input: unknown,
+): import("./service/contracts/workbench.ts").KnowledgeLookup;
 export declare const KNOWLEDGE_PARAMETERS: TSchema;
 export declare const DESIGN_PARAMETERS: TSchema;
 export declare const PLAN_PARAMETERS: TSchema;
@@ -12,6 +15,7 @@ export declare function createCoordinatorTools(): {
     label: string;
     description: string;
     parameters: TSchema;
+    prepareArguments?: typeof knowledgeToolInput;
     execute(
       callId: string,
       args: unknown,

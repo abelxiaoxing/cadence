@@ -1,6 +1,6 @@
 /** Serialized private child/owner bridge. Never a browser API or shell executor. */
 import { Type } from "typebox";
-import { LIMITS } from "./worker-public.mjs";
+import { closed, knowledgeFields, LIMITS } from "./worker-public.mjs";
 
 /** The parameters of the two tools a coordinator calls, declared once for the
  * native extension and the browser coordinator. They state shape only: counts,
@@ -52,6 +52,75 @@ export const RESEARCH_PARAMETERS = Type.Object({
     ),
   ),
 });
+const lookupExample =
+  'Use {checkout:["node_modules"]}, {checkout:[]}, {path:"docs.md"} with optional section or match, or {investigation:"<retained UUID>"}.';
+/** Only model arguments may contain empty placeholders. Validate before the SDK
+ * coerces scalar types, and again at direct tool entry (no caller is trusted). */
+export function knowledgeToolInput(input) {
+  const bad = (field, why) => {
+    throw new Error(`${field}: ${why}. ${lookupExample}`);
+  };
+  const keys = Object.keys(input ?? {});
+  let raw;
+  try {
+    raw = closed(input, keys);
+  } catch {
+    bad("cadence_knowledge", "expected an object with named lookup fields");
+  }
+  const fields = Object.create(null);
+  for (const key of keys) {
+    if (!Object.hasOwn(knowledgeFields, key))
+      bad(JSON.stringify(key.slice(0, 80)), "unknown field; omit it");
+    if (key !== "checkout" && raw[key] === "") continue;
+    try {
+      fields[key] = knowledgeFields[key](raw[key]);
+    } catch {
+      bad(
+        key,
+        key === "checkout"
+          ? "give an array of up to eight nonempty dependency paths (each at most 1024 bytes)"
+          : key === "investigation"
+            ? "give a retained investigation UUID"
+            : "give a nonblank string within the field limit",
+      );
+    }
+  }
+  const { checkout, path, section, match, investigation } = fields;
+  if ((section || match) && !path)
+    bad(
+      section ? "section/path" : "match/path",
+      "name the source file in path",
+    );
+  if (section && match) bad("section/match", "choose one selector");
+  if (checkout?.length && (path || investigation))
+    bad("checkout", "cannot combine dependencies with path or investigation");
+  if (investigation && path) bad("investigation/path", "choose one source");
+  const relative = (name) =>
+    !/[\\:\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name) &&
+    name
+      .split("/")
+      .every(
+        (part) =>
+          part &&
+          part !== "." &&
+          part !== ".." &&
+          part.toLowerCase() !== ".git",
+      );
+  if (path && !relative(path))
+    bad("path", "give a plain checkout-relative file path");
+  if (
+    checkout?.some(
+      (name) =>
+        !relative(name) || name.split("/").some((part) => part.startsWith(".")),
+    )
+  )
+    bad("checkout", "give plain checkout-relative dependency names");
+  if (investigation) return { investigation };
+  if (path)
+    return match ? { path, match } : section ? { path, section } : { path };
+  if (checkout) return { checkout };
+  bad("path/checkout/investigation", "no lookup selected");
+}
 export const KNOWLEDGE_PARAMETERS = Type.Object({
   checkout: Type.Optional(
     Type.Array(Type.String(), {
@@ -254,6 +323,7 @@ export function createCoordinatorTools() {
       description:
         "Read current checkout preparation facts, a project heading, a literal in one source file, or a retained investigation with its citations rechecked.",
       parameters: KNOWLEDGE_PARAMETERS,
+      prepareArguments: knowledgeToolInput,
     },
     {
       name: "cadence_design",

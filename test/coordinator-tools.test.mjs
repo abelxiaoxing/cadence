@@ -18,6 +18,7 @@ function fixture() {
   const kit = createCoordinatorTools();
   const tool = kit.tools.find((t) => t.name === "cadence_status");
   return {
+    tools: kit.tools,
     send,
     removeListener,
     close: () => kit.close(),
@@ -140,4 +141,26 @@ it("private auth replies can never satisfy or leak into a coordinator tool with 
   f.reply();
   expect((await pending).content[0].text).toBe("observed");
   await f.close();
+});
+
+it("the browser SDK knowledge tool rejects wrong types before SDK coercion", async () => {
+  const f = fixture();
+  try {
+    const tool = f.tools.find((t) => t.name === "cadence_knowledge");
+    expect(
+      tool.prepareArguments({
+        checkout: [],
+        path: "package.json",
+        match: " verify ",
+        section: "",
+        investigation: "",
+      }),
+    ).toEqual({ path: "package.json", match: " verify " });
+    expect(() => tool.prepareArguments({ checkout: "node_modules" })).toThrow(
+      "checkout",
+    );
+    expect(f.send).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
 });

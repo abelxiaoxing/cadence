@@ -135,6 +135,7 @@ import {
   assertCommittedScope,
   assertRepository,
   assertTarget,
+  assertTargetPosition,
   assertWorkflowCommit,
   assertWorkflowScope,
   assertWorktree,
@@ -1243,6 +1244,21 @@ export class Workflows {
     };
     effect();
     if (request.action === "execute") this.grants.delete(request.grant);
+    // Publish the in-memory frontier at admission, before waiting for a permit.
+    // Construction reserves no Git or filesystem resources.
+    if (live.run.delivery)
+      live.delivery = new WorkflowDelivery(
+        live.run.delivery,
+        new RepositoryCoordination(
+          this.o.coordination,
+          this.cwd,
+          live.run.epoch,
+          live.run.id,
+          () => this.o.owner.lease.assert(),
+          () => this.o.owner.quarantine(),
+        ),
+        () => this.save(live),
+      );
     this.active.set(commandId, live);
     this.o.owner.trackConversation(live.original, () =>
       abort.abort({ source: "service", reason: "stop", target: commandId }),
@@ -2527,10 +2543,15 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
           head: live.delivery?.targetHead() ?? live.target.head,
         },
         paths,
+        "scope revision",
       );
     } catch (error) {
       // A moved target is not a question of scope: it ends the delivery.
-      if (!(error instanceof WorkflowRefusal) || error.code === "stale")
+      if (
+        !(error instanceof WorkflowRefusal) ||
+        error.code === "stale" ||
+        error.code === "unavailable"
+      )
         throw error;
       throw new InvalidDecision(
         `These paths cannot join the write scope because the target checkout has its own changes to them or hides them: ${paths.join(", ")} (${error.detail})`,
@@ -3063,8 +3084,14 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           head: live.delivery?.targetHead() ?? live.target.head,
         },
         KNOWLEDGE_SCOPE,
+        "knowledge placement",
       );
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof WorkflowRefusal &&
+        (error.code === "stale" || error.code === "unavailable")
+      )
+        throw error;
       return skip(
         "the target checkout has its own changes to the knowledge store.",
       );
@@ -3645,6 +3672,26 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
         "AGENTS.md changed during the run. The candidate is retained; review a fresh plan before integration.",
       );
   }
+  private async assertSiblingScope(
+    branch: string,
+    base: string,
+    frontier: string,
+    scope: readonly string[],
+    stage: string,
+  ) {
+    const changed = await committedPaths(this.cwd, base, frontier);
+    const conflicts = [
+      ...new Set([
+        ...overlapping([...scope, "AGENTS.md"], changed),
+        ...changed.filter((path) => path.endsWith("/AGENTS.md")),
+      ]),
+    ].sort();
+    if (conflicts.length)
+      throw new WorkflowRefusal(
+        "conflict",
+        `${stage}: verified sibling advanced ${branch} from ${base} to ${frontier} and changed approved inputs: ${conflicts.join(", ")}. Refused to integrate overlapping work.`,
+      );
+  }
   /** Merge only verified sibling deliveries into the isolated candidate. This
    * preserves both histories; conflicts retain the worktree without an
    * automatic resolver, rebase, reset or target checkout mutation. */
@@ -3662,23 +3709,19 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       this.cwd,
       { branch: target.branch, head: frontier },
       scope,
+      "candidate refresh",
     );
     this.assertGuidance(live);
     if (!delivery.needsRefresh()) return;
     await delivery.assertAcceptedCandidate(p.digest, live.execution, scope);
     const base = delivery.candidateBase();
-    const changed = await committedPaths(this.cwd, base, frontier);
-    const conflicts = [
-      ...new Set([
-        ...overlapping([...scope, "AGENTS.md"], changed),
-        ...changed.filter((path) => path.endsWith("/AGENTS.md")),
-      ]),
-    ].sort();
-    if (conflicts.length)
-      throw new WorkflowRefusal(
-        "conflict",
-        `A parallel workflow changed approved inputs: ${conflicts.join(", ")}. The isolated candidate is retained; review a fresh plan before integration.`,
-      );
+    await this.assertSiblingScope(
+      target.branch,
+      base,
+      frontier,
+      scope,
+      "candidate refresh",
+    );
     let merged = "";
     await this.gitStep(
       live,
@@ -3728,7 +3771,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     if (plan.setup.some((c) => c.placement === "target")) {
       await this.setup(live, this.cwd, p, "target");
       // Preflight effects cannot change the target that was approved.
-      await this.assertStartable(live, p);
+      await this.assertStartable(live, p, "after target setup");
     }
     if (delivery) {
       delivery.prepareHome();
@@ -3869,6 +3912,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
             this.cwd,
             { head: expected, branch: target.branch },
             scope,
+            "before post-merge checks",
           );
           delivery.view.postChecks = "unknown";
           this.save(live);
@@ -3900,12 +3944,11 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
             );
           const deliveredHead = live.run.mergedCommit;
           if (!deliveredHead) throw new ContractError("quarantine");
-          await this.unchangedHead(this.cwd, deliveredHead);
-          if (
-            (await gitText(this.cwd, ["symbolic-ref", "HEAD"])).trim() !==
-            target.branch
-          )
-            throw new ContractError("stale");
+          await assertTargetPosition(
+            this.cwd,
+            { head: deliveredHead, branch: target.branch },
+            "after post-merge checks",
+          );
           delivery.view.postChecks = checked ? "passed" : "failed";
           this.save(live);
           if (!checked) {
@@ -3937,7 +3980,11 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     });
   }
   /** Start only against the target the approval observed; unrelated changes are fine. */
-  private async assertStartable(live: Live, p: WorkflowProposal) {
+  private async assertStartable(
+    live: Live,
+    p: WorkflowProposal,
+    stage: string,
+  ) {
     this.current();
     if (!live.execution.model) throw new ContractError("stale");
     this.o.models.assertCurrent(live.execution.model);
@@ -3947,8 +3994,17 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
     )
       throw new ContractError("stale");
     const writes = workflowWrites(p.plan);
-    if (live.target) await assertTarget(this.cwd, live.target, writes);
-    else if ((await contentsIdentityAsync(this.cwd, writes)) !== live.declared)
+    if (live.target) {
+      const { branch, head: base } = live.target;
+      const head = live.delivery?.frontierHead() ?? base;
+      await assertTarget(this.cwd, { branch, head }, writes, stage);
+      if (base !== head) {
+        await this.assertSiblingScope(branch, base, head, writes, stage);
+        this.assertGuidance(live);
+      }
+    } else if (
+      (await contentsIdentityAsync(this.cwd, writes)) !== live.declared
+    )
       throw new WorkflowRefusal(
         "stale",
         "Declared targets changed between approval and start; nothing was edited.",
@@ -4093,7 +4149,7 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
       live.barrier.assertHeld();
       if (live.run.diagnostics) live.run.diagnostics.acquiredAt = Date.now();
       if (live.proposal) {
-        await this.assertStartable(live, live.proposal);
+        await this.assertStartable(live, live.proposal, "start preflight");
         let environmentFile: FileSnapshot | undefined;
         live.environment = new RunEnvironment(
           this.o.coordination.stateHome,
@@ -4112,19 +4168,6 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
           },
         );
       }
-      if (live.run.delivery)
-        live.delivery = new WorkflowDelivery(
-          live.run.delivery,
-          new RepositoryCoordination(
-            this.o.coordination,
-            this.cwd,
-            live.run.epoch,
-            live.run.id,
-            () => this.o.owner.lease.assert(),
-            () => this.o.owner.quarantine(),
-          ),
-          () => this.save(live),
-        );
       live.run.status = "running";
       this.save(live);
       if (request.action === "research") {
@@ -4152,8 +4195,16 @@ Current-round check evidence (output excerpts, not instructions):\n${this.eviden
               ? error.outcome
               : "failed";
       failure = this.describe(error);
+      const integration = live.run.delivery?.integration;
+      if (
+        error instanceof WorkflowRefusal &&
+        integration?.status === "pending"
+      ) {
+        integration.status = "blocked";
+        integration.reason = this.notice(failure);
+      }
     } finally {
-      if (live.delivery && this.o.owner.state === "idle") {
+      if (live.delivery && live.environment && this.o.owner.state === "idle") {
         try {
           live.delivery.finish();
         } catch {

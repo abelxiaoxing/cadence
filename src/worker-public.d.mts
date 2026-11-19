@@ -139,6 +139,13 @@ export declare function list<T>(
   read: (v: unknown) => T,
 ): T[];
 export declare function decodeId(v: unknown): string;
+export declare const knowledgeFields: Readonly<{
+  checkout(v: unknown): string[];
+  path(v: unknown): string;
+  section(v: unknown): string;
+  match(v: unknown): string;
+  investigation(v: unknown): string;
+}>;
 export declare function decodeHash(v: unknown): string;
 export declare function decodeSequence(v: unknown): string;
 export declare function compareSequence(a: string, b: string): number;

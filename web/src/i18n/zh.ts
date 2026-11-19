@@ -211,6 +211,7 @@ export const zh = {
   recovering: "自动诊断与恢复",
   learning: "沉淀项目知识",
   knowledge: "项目知识",
+  "Not executed": "未执行",
   "Not recorded": "未记录",
   "Task branch": "任务分支",
   "Task worktree": "任务工作区",

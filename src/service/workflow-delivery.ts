@@ -412,6 +412,7 @@ export class WorkflowDelivery {
         head: targetHead,
       },
       scope,
+      "integration preflight",
     );
     if (
       (

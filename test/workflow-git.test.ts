@@ -164,17 +164,57 @@ it("integration rechecks only branch, HEAD and declared targets", async () => {
   writeFileSync(join(cwd, "unrelated.txt"), "made during the run\n");
   writeFileSync(join(cwd, "protected.txt"), "user edit during the run\n");
   await expect(
-    assertTarget(cwd, { head: before, branch }, ["allowed.txt", "notes"]),
+    assertTarget(
+      cwd,
+      { head: before, branch },
+      ["allowed.txt", "notes"],
+      "integration preflight",
+    ),
   ).resolves.toBeUndefined();
   writeFileSync(join(cwd, "allowed.txt"), "user edit to a target\n");
   await expect(
-    assertTarget(cwd, { head: before, branch }, ["allowed.txt"]),
+    assertTarget(
+      cwd,
+      { head: before, branch },
+      ["allowed.txt"],
+      "integration preflight",
+    ),
   ).rejects.toMatchObject({ code: "conflict" });
   git("checkout", "-q", "--", "allowed.txt");
   git("commit", "-qam", "moved");
   await expect(
-    assertTarget(cwd, { head: before, branch }, ["allowed.txt"]),
-  ).rejects.toMatchObject({ code: "stale" });
+    assertTarget(
+      cwd,
+      { head: before, branch },
+      ["allowed.txt"],
+      "integration preflight",
+    ),
+  ).rejects.toMatchObject({
+    code: "stale",
+    detail: expect.stringContaining(
+      `integration preflight: target position changed; expected ${branch} at ${before}, observed ${branch} at ${git("rev-parse", "HEAD")}`,
+    ),
+  });
+  git("switch", "--detach", "--quiet", before);
+  await expect(
+    assertTarget(cwd, { head: before, branch }, [], "start preflight"),
+  ).rejects.toMatchObject({
+    code: "stale",
+    detail: expect.stringContaining(`observed (detached HEAD) at ${before}`),
+  });
+  await expect(
+    assertTarget(
+      join(cwd, "missing"),
+      { head: before, branch },
+      [],
+      "after target setup",
+    ),
+  ).rejects.toMatchObject({
+    code: "unavailable",
+    detail: expect.stringContaining(
+      "observed (unreadable ref) at (unreadable HEAD)",
+    ),
+  });
 });
 
 it("generated notes go through the candidate only where a fast-forward can deliver them", async () => {
@@ -266,9 +306,9 @@ it.each(["--assume-unchanged", "--skip-worktree"])(
     writeFileSync(join(cwd, "allowed.txt"), "hidden consumer work");
     expect(git("status", "--porcelain")).toBe("");
     expect(() => workflowObservation(cwd, p)).toThrow("conflict");
-    await expect(assertTarget(cwd, target, ["allowed.txt"])).rejects.toThrow(
-      "conflict",
-    );
+    await expect(
+      assertTarget(cwd, target, ["allowed.txt"], "integration preflight"),
+    ).rejects.toThrow("conflict");
     await expect(assertWorkflowScope(cwd, [])).rejects.toThrow("conflict");
     expect(await worktreeResidue(cwd)).toContain("allowed.txt");
     expect(await documentPlacement(cwd, "allowed.txt")).toBe("direct");

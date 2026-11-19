@@ -116,6 +116,8 @@ Unknown results never trigger replay.
 
 The original approved binding is immutable.
 Before its first delivery, only a verified sibling on the same branch whose own post-checks passed may advance a pending run's in-memory frontier.
+The frontier exists from admission, even while the run is queued before its first checkout permit.
+Start preflight compares the target checkout to that frontier and refuses overlapping writes or changed instructions before setup; candidate creation still uses the original approval commit.
 Under exclusive checkout access, the candidate merges that frontier without rewriting either history, moves its own diff base to the sibling commit, and repeats checks and automatic Agent review before knowledge maintenance and publication.
 Managed knowledge is curated only after refresh under that same exclusive permit: independent implementations must not conflict merely because both deliveries maintain the shared store.
 The candidate scope and Review's fixed-revision evidence therefore exclude incorporated sibling paths; overlapping writes or any changed `AGENTS.md` refuse the refresh.
@@ -130,6 +132,8 @@ Ignored/dirty generated workflow notes retain their separate expected-byte publi
 `DeliveryObservation` separates preparation/workspace state, current candidate acceptance, actual integration, post-checks and cleanup.
 A previously applied merge stays independently visible when a later candidate is not yet accepted or cannot integrate.
 Terminal and WebUI show those owner facts, not model prose.
+A target-position refusal names the detection stage, expected ref/commit and the ref and HEAD read at that check (including detached or unreadable values); no history view fills them in later.
+A settled pre-worktree refusal has no executed candidate or acceptance stage; a missing candidate seal after preparation, or an interrupted run without evidence, is not proof that edits were lost.
 
 Successful delivery keeps the named branch.
 Worktree removal requires successful post-checks, confirmed original settlement, exact ownership/ref/HEAD, delivered ancestry and no uncommitted, untracked, ignored or index-hidden residue anywhere.

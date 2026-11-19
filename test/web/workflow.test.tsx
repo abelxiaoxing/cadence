@@ -851,7 +851,7 @@ it("a check a deviation set aside reads as set aside and failed, never as passed
   // The acceptance line never says the checks passed when one was set aside.
   const facts = renderToStaticMarkup(
     <LocaleProvider initial="en">
-      <DeliveryDetails delivery={delivery} />
+      <DeliveryDetails delivery={delivery} status="completed" />
     </LocaleProvider>,
   );
   expect(facts).toContain(
@@ -995,6 +995,19 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
     randomUUID(),
     "feature",
   );
+  const card = (status: WorkflowRun["status"]) =>
+    renderToStaticMarkup(
+      <LocaleProvider initial="en">
+        <DeliveryDetails delivery={d} status={status} />
+      </LocaleProvider>,
+    );
+  expect(card("failed")).toContain("Not executed");
+  expect(card("failed")).not.toMatch(/pending|Not recorded/);
+  expect(card("unknown")).toContain("Not recorded");
+  expect(card("unknown")).not.toMatch(/pending|Not executed/);
+  expect(card("queued")).toContain("pending");
+  d.preparation = "ready";
+  expect(card("failed")).toContain("Not recorded");
   d.candidate = "b".repeat(40);
   d.acceptance = {
     candidate: d.candidate,
@@ -1009,7 +1022,7 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   d.cleanup = { status: "retained", reason: "Ignored user data remains." };
   const html = renderToStaticMarkup(
     <LocaleProvider initial="en">
-      <DeliveryDetails delivery={d} />
+      <DeliveryDetails delivery={d} status="failed" />
     </LocaleProvider>,
   );
   // The shared dl grid expects direct term/value children. Nested row divs
@@ -1027,7 +1040,7 @@ it("delivery UI distinguishes an accepted candidate from an applied merge and na
   expect(html).not.toContain("Actual local merge commit");
   const zh = renderToStaticMarkup(
     <LocaleProvider initial="zh">
-      <DeliveryDetails delivery={d} />
+      <DeliveryDetails delivery={d} status="failed" />
     </LocaleProvider>,
   );
   expect(zh).toContain("任务分支");

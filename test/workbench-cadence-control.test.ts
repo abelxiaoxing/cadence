@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   ContractError,
   type ErrorCode,
@@ -34,6 +34,7 @@ import { ConversationWorkflow } from "../src/service/conversation-workflow.ts";
 import type { ConversationControl } from "../src/service/conversations.ts";
 import { OwnerModelChoice } from "../src/service/model-choice.ts";
 import { hash, PrivateFiles } from "../src/service/private-files.ts";
+import { Workbench } from "../src/service/workbench.ts";
 import { WorkbenchFiles } from "../src/service/workbench-files.ts";
 import { UnacceptedConversationCommand } from "../src/service/workbench-send-refusal.ts";
 import { workflowResultDetail } from "../src/service/workflow-result.ts";
@@ -158,6 +159,10 @@ function fixture(
       };
     },
     activeRuns: () => ({ kind: "workflow-active" as const, runs: active }),
+    investigationSummary: (investigation: string) => ({
+      investigation,
+      answer: "retained fixture",
+    }),
     investigated: (id: string) => recorded.has(id),
     join: (id: string) => joinResearch(runs.get(id) as WorkflowRun),
     command(
@@ -1412,7 +1417,8 @@ it("observes Git placement and local dependency links without a research worker 
   });
   expect(JSON.stringify(result)).not.toContain(dependency);
   expect(await read(["node_modules/inner"])).toMatchObject({
-    refused: "invalid",
+    refused: "unavailable",
+    notice: expect.stringContaining("linked ancestor"),
   });
   expect(await read(["../secret"])).toMatchObject({ refused: "invalid" });
   expect(await read([".git"])).toMatchObject({ refused: "invalid" });
@@ -1455,4 +1461,64 @@ it("an oversized visible design stays complete and readable after a bounded subm
   expect(Buffer.byteLength(f.instructions(sent))).toBeLessThan(16384);
   expect((await f.tool(sent, "cadence_status", {})).design).toEqual(complete);
   await f.settle(sent);
+});
+
+it("browser model padding selects the actual reader; direct owner requests remain closed", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "lookup-"));
+  writeFileSync(join(cwd, "notes.md"), "## One\nkeep\n## Two\nother\n");
+  writeFileSync(join(cwd, "package.json"), '" verify "\n"verify"\n');
+  mkdirSync(join(cwd, "node_modules"));
+  const f = fixture(undefined, { cwd }),
+    turn = f.send(randomUUID(), "enter");
+  const lookup = vi.spyOn(f.cw, "knowledge");
+  const padded = {
+    checkout: [],
+    path: "",
+    section: "",
+    match: "",
+    investigation: "",
+  };
+  const call = (args: object) =>
+    f.tool(turn, "cadence_knowledge", { ...padded, ...args });
+  expect((await call({ path: "notes.md" })).excerpt).toContain("other");
+  expect(
+    (await call({ path: "notes.md", section: "One" })).excerpt,
+  ).not.toContain("other");
+  expect(await call({ path: "package.json", match: " verify " })).toMatchObject(
+    { matchingLines: 1, match: " verify " },
+  );
+  expect(await call({ checkout: ["node_modules"] })).toMatchObject({
+    entries: [{ path: "node_modules", kind: "directory" }],
+  });
+  expect(await call({ investigation: randomUUID() })).toMatchObject({
+    answer: "retained fixture",
+  });
+  lookup.mockClear();
+  for (const [args, field] of [
+    [{ other: "" }, "other"],
+    [{ match: "x" }, "path"],
+    [{ path: "a", checkout: ["deps"] }, "checkout"],
+    [{ investigation: 5 }, "investigation"],
+  ] as const)
+    expect(await call(args)).toMatchObject({
+      refused: "invalid",
+      notice: expect.stringContaining(field),
+    });
+  expect(lookup).not.toHaveBeenCalled();
+  const owner = Object.assign(Object.create(Workbench.prototype), {
+    cadence: f.cw,
+    o: { owner: f.owner },
+  });
+  const read = (source: object) =>
+    owner.read({ kind: "project-knowledge", source });
+  expect(() =>
+    read({ ...padded, path: "package.json", match: "verify" }),
+  ).toThrow("invalid");
+  expect(() => read({ checkout: [], extra: "" })).toThrow("invalid");
+  expect(lookup).not.toHaveBeenCalled();
+  expect(
+    JSON.parse((await read({ path: "package.json", match: " verify " })).text),
+  ).toMatchObject({ matchingLines: 1 });
+  expect(lookup).toHaveBeenCalledOnce();
+  await f.settle(turn);
 });
