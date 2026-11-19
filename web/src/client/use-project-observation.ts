@@ -6,7 +6,16 @@ import {
   decodeProjectObservation,
   type ProjectObservation,
 } from "../../../src/service/contracts/gateway.ts";
+import {
+  decodeProjectAssociation,
+  PROJECT_ASSOCIATION_HEADER,
+} from "../../../src/service/contracts/workbench.ts";
 import { errorCode, readJson } from "./service";
+
+interface ProjectRead {
+  value: ProjectObservation;
+  association: ReturnType<typeof decodeProjectAssociation>;
+}
 
 export function projectReadiness(
   value?: ProjectObservation,
@@ -20,12 +29,16 @@ export function projectReadiness(
 /** A failed observation keeps history identity, not a claim of live readiness. */
 export function projectObservationResult(
   previous: ProjectObservation | undefined,
-  value?: ProjectObservation,
+  read?: ProjectRead,
   error?: string,
 ) {
-  if (!value || value.status === "unavailable")
-    return { value: previous ?? value, error: error ?? "unavailable" };
-  return { value, error: undefined };
+  if (!read || read.value.status === "unavailable")
+    return {
+      value: previous ?? read?.value,
+      association: "unknown" as const,
+      error: error ?? "unavailable",
+    };
+  return { ...read, error: undefined };
 }
 export function useProjectObservation(
   id?: string,
@@ -37,6 +50,7 @@ export function useProjectObservation(
   const [state, setState] = useState<{
     id?: string;
     value?: ProjectObservation;
+    association?: ProjectRead["association"];
     error?: string;
     revision?: number;
     selectedEpoch?: string | null;
@@ -47,7 +61,7 @@ export function useProjectObservation(
     const abort = new AbortController();
     const current = () => !abort.signal.aborted && serial.current === version;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (observed?: ProjectObservation, error?: string) => {
+    const finish = (read?: ProjectRead, error?: string) => {
       if (!current()) return;
       setState((previous) => ({
         id,
@@ -55,7 +69,7 @@ export function useProjectObservation(
         selectedEpoch,
         ...projectObservationResult(
           previous.id === id ? previous.value : undefined,
-          observed,
+          read,
           error,
         ),
       }));
@@ -80,7 +94,12 @@ export function useProjectObservation(
         const value = await readJson(response);
         if (attempt.signal.aborted) return;
         if (!response.ok) throw new Error(errorCode(value));
-        finish(decodeProjectObservation(value));
+        finish({
+          value: decodeProjectObservation(value),
+          association: decodeProjectAssociation(
+            response.headers.get(PROJECT_ASSOCIATION_HEADER),
+          ),
+        });
       } catch (error) {
         if (!attempt.signal.aborted)
           finish(
@@ -113,6 +132,7 @@ export function useProjectObservation(
       id,
       revision,
       selectedEpoch: epoch,
+      association: "associated",
       value: {
         kind: "project-observation",
         status: "running",
@@ -123,14 +143,12 @@ export function useProjectObservation(
     }));
   };
   const selected = state.id === id ? state : {};
+  const fresh =
+    selected.revision === revision && selected.selectedEpoch === selectedEpoch;
   return {
     ...selected,
-    readiness: projectReadiness(
-      selected.value,
-      selected.error,
-      selected.revision === revision &&
-        selected.selectedEpoch === selectedEpoch,
-    ),
+    association: fresh ? (selected.association ?? "unknown") : "unknown",
+    readiness: projectReadiness(selected.value, selected.error, fresh),
     refresh,
     prepared,
   };

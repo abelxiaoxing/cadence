@@ -4,6 +4,7 @@ import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
 import {
   type ChatItem,
   type ChatTurn,
+  PROJECT_ASSOCIATION_HEADER,
   toolTarget,
 } from "../../src/service/contracts/workbench.ts";
 import { ServiceClient } from "../../src/service-client.ts";
@@ -939,7 +940,11 @@ it("a failed project observation retains identity but not readiness; unavailable
     undefined,
     "offline",
   );
-  expect(failedFirstRead).toEqual({ value: undefined, error: "offline" });
+  expect(failedFirstRead).toEqual({
+    value: undefined,
+    association: "unknown",
+    error: "offline",
+  });
   expect(projectReadiness(failedFirstRead.value, failedFirstRead.error)).toBe(
     "unknown",
   );
@@ -953,11 +958,15 @@ it("a failed project observation retains identity but not readiness; unavailable
   expect(lost.value).toBe(running);
   expect(projectReadiness(lost.value, lost.error)).toBe("stale");
   const unavailable = projectObservationResult(running, {
-    ...running,
-    status: "unavailable",
-    epoch: null,
-    workspaceId: null,
+    value: {
+      ...running,
+      status: "unavailable",
+      epoch: null,
+      workspaceId: null,
+    },
+    association: "associated",
   });
+  expect(unavailable.association).toBe("unknown");
   expect(unavailable.value).toBe(running);
   expect(projectReadiness(unavailable.value, unavailable.error)).toBe("stale");
   expect(projectReadiness(undefined, "offline")).toBe("unknown");
@@ -968,7 +977,10 @@ it("a failed project observation retains identity but not readiness; unavailable
   expect(projectReadiness({ ...running, status: "stopped" }, "offline")).toBe(
     "stale",
   );
-  const restored = projectObservationResult(lost.value, running);
+  const restored = projectObservationResult(lost.value, {
+    value: running,
+    association: "associated",
+  });
   expect(projectReadiness(restored.value, restored.error)).toBe("running");
 });
 
@@ -1049,6 +1061,14 @@ async function projectObservationFixture() {
   return { render, flushEffect, unmount, requests, fetcher, updates };
 }
 
+const projectReply = (value: unknown, association?: string) =>
+  Response.json(value, {
+    headers:
+      association === undefined
+        ? {}
+        : { [PROJECT_ASSOCIATION_HEADER]: association },
+  });
+
 it.each(["cold", "same-epoch", "replacement"])(
   "%s: confirmed preparation is current before its GET; older reads cannot undo it",
   async (scenario) => {
@@ -1068,16 +1088,20 @@ it.each(["cold", "same-epoch", "replacement"])(
     // Resolve the old GET before effect cleanup: synchronous invalidation,
     // not abort timing, must prevent this result overwriting confirmation.
     requests[0].resolve(
-      Response.json({
-        kind: "project-observation",
-        status: "stopped",
-        epoch: null,
-        workspaceId: null,
-      }),
+      projectReply(
+        {
+          kind: "project-observation",
+          status: scenario === "same-epoch" ? "running" : "stopped",
+          epoch: before,
+          workspaceId: null,
+        },
+        "unassociated",
+      ),
     );
     await vi.advanceTimersByTimeAsync(0);
     const confirmed = render(epoch);
     expect(confirmed.readiness).toBe("running");
+    expect(confirmed.association).toBe("associated");
     expect(confirmed.value?.epoch).toBe(epoch);
     expect(confirmed.error).toBeUndefined();
     flushEffect();
@@ -1086,11 +1110,15 @@ it.each(["cold", "same-epoch", "replacement"])(
     await vi.advanceTimersByTimeAsync(0);
     const stale = render(epoch);
     expect(stale.readiness).toBe("stale");
+    expect(stale.association).toBe("unknown");
     expect(stale.value?.epoch).toBe(epoch);
     expect(stale.error).toBe("offline");
     stale.refresh();
     stale.prepared(epoch);
-    expect(render(epoch).readiness).toBe("running");
+    expect(render(epoch)).toMatchObject({
+      readiness: "running",
+      association: "associated",
+    });
     expect(
       fetcher.mock.calls.every(
         ([, init]) => !init?.method || init.method === "GET",
@@ -1106,6 +1134,39 @@ const runningObservation = () => ({
   workspaceId: crypto.randomUUID(),
 });
 
+it.each(["missing header", "invalid header", "invalid body"])(
+  "%s: a running observation and its association must come from the same validated GET",
+  async (scenario) => {
+    const { render, flushEffect, requests } = await projectObservationFixture();
+    render();
+    flushEffect();
+    const first = runningObservation();
+    requests[0].resolve(projectReply(first, "associated"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(render().association).toBe("associated");
+    const next = runningObservation();
+    requests[1].resolve(
+      scenario === "missing header"
+        ? projectReply(next)
+        : scenario === "invalid header"
+          ? projectReply(next, "invalid")
+          : projectReply({ ...next, extra: true }, "associated"),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const observed = render();
+    expect(observed.association).toBe("unknown");
+    if (scenario === "missing header") {
+      expect(observed.value).toEqual(next);
+      expect(observed.readiness).toBe("running");
+      expect(observed.error).toBeUndefined();
+    } else {
+      expect(observed.value).toEqual(first);
+      expect(observed.readiness).toBe("stale");
+      expect(observed.error).toBe("invalid");
+    }
+  },
+);
+
 it.each(["headers", "body"])(
   "a project GET stalled at %s retires at one total deadline; polling recovers before its late reply",
   async (stage) => {
@@ -1114,15 +1175,18 @@ it.each(["headers", "body"])(
     render();
     flushEffect();
     const first = runningObservation();
-    requests[0].resolve(Response.json(first));
+    requests[0].resolve(projectReply(first, "unassociated"));
     await vi.advanceTimersByTimeAsync(5000);
-    expect(render().readiness).toBe("running");
+    expect(render()).toMatchObject({
+      readiness: "running",
+      association: "unassociated",
+    });
     expect(requests).toHaveLength(2);
 
     // Approach the deadline before returning any headers. The partial body
     // deliberately ignores abort, so neither phase can rely on a rejection.
     await vi.advanceTimersByTimeAsync(9000);
-    let late = () => requests[1].resolve(Response.json(first));
+    let late = () => requests[1].resolve(projectReply(first, "associated"));
     if (stage === "body") {
       const bytes = new TextEncoder().encode(JSON.stringify(first));
       const body = new ReadableStream<Uint8Array>({
@@ -1134,9 +1198,14 @@ it.each(["headers", "body"])(
           };
         },
       });
-      requests[1].resolve(new Response(body));
+      requests[1].resolve(
+        new Response(body, {
+          headers: { [PROJECT_ASSOCIATION_HEADER]: "associated" },
+        }),
+      );
       await vi.advanceTimersByTimeAsync(0);
       expect(body.locked).toBe(true);
+      expect(render().association).toBe("unassociated"); // Headers alone cannot admit a viewer.
     }
     await vi.advanceTimersByTimeAsync(999);
     expect(requests[1].signal?.aborted).toBe(false);
@@ -1144,6 +1213,7 @@ it.each(["headers", "body"])(
     expect(requests[1].signal?.aborted).toBe(true);
     expect(render()).toMatchObject({
       readiness: "stale",
+      association: "unknown",
       value: first,
       error: "timeout",
     });
@@ -1151,14 +1221,21 @@ it.each(["headers", "body"])(
     await vi.advanceTimersByTimeAsync(5000);
     const recovered = runningObservation();
     expect(requests).toHaveLength(3);
-    requests[2].resolve(Response.json(recovered));
+    requests[2].resolve(projectReply(recovered, "unassociated"));
     await vi.advanceTimersByTimeAsync(0);
     const current = render();
-    expect(current).toMatchObject({ readiness: "running", value: recovered });
+    expect(current).toMatchObject({
+      readiness: "running",
+      association: "unassociated",
+      value: recovered,
+    });
     expect(current.error).toBeUndefined();
     late();
     await vi.advanceTimersByTimeAsync(0);
-    expect(render().value).toEqual(recovered);
+    expect(render()).toMatchObject({
+      association: "unassociated",
+      value: recovered,
+    });
     expect(vi.getTimerCount()).toBe(1); // One next poll, no retired deadline or second chain.
     expect(
       fetcher.mock.calls.every(
@@ -1178,7 +1255,7 @@ it.each(["project", "epoch", "refresh"])(
     const first = runningObservation();
     render(first.epoch);
     flushEffect();
-    requests[0].resolve(Response.json(first));
+    requests[0].resolve(projectReply(first, "associated"));
     await vi.advanceTimersByTimeAsync(5000);
     expect(requests).toHaveLength(2);
     if (change === "refresh") render(first.epoch).refresh();
@@ -1186,6 +1263,7 @@ it.each(["project", "epoch", "refresh"])(
     const epoch = change === "epoch" ? crypto.randomUUID() : first.epoch;
     const pending = render(epoch, project);
     expect(pending.readiness).toBe(change === "project" ? "unknown" : "stale");
+    expect(pending.association).toBe("unknown");
     if (change === "project") expect(pending.value).toBeUndefined();
     flushEffect();
     expect(requests[1].signal?.aborted).toBe(true);
@@ -1226,7 +1304,11 @@ it.each(["unauthenticated", "forbidden"])(
     );
     await vi.advanceTimersByTimeAsync(20000);
     const revoked = render();
-    expect(revoked).toMatchObject({ error: code, readiness: "unknown" });
+    expect(revoked).toMatchObject({
+      error: code,
+      readiness: "unknown",
+      association: "unknown",
+    });
     expect(requests).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
     revoked.refresh();
