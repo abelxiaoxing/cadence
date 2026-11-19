@@ -121,6 +121,9 @@ export async function observeOtherIdea(probe, row) {
 function panelPixels(panel, control) {
   const el = document.querySelector(panel),
     css = getComputedStyle(el),
+    mention = panel === ".mention-menu",
+    plate = mention ? getComputedStyle(el, "::before") : css,
+    list = mention ? el.querySelector(":scope > .mention-list") : null,
     rect = el.getBoundingClientRect();
   const at = (x, y) => document.elementFromPoint(x, y);
   const midX = rect.left + rect.width / 2,
@@ -133,26 +136,24 @@ function panelPixels(panel, control) {
   ])
     if (!el.contains(at(x, y)))
       throw Error(`Clipped/obstructed ${panel} at ${x},${y}`);
-  const material = Object.fromEntries(
-    [
-      "backgroundColor",
-      "backgroundImage",
-      "backgroundSize",
-      "backdropFilter",
-      "boxShadow",
-      "borderTopColor",
-      "borderRightColor",
-      "borderBottomColor",
-      "borderLeftColor",
-    ].map((k) => [k, css[k]]),
-  );
+  const material = {
+    backgroundColor: plate.backgroundColor,
+    backgroundImage: plate.backgroundImage,
+    backgroundSize: plate.backgroundSize,
+    backdropFilter: plate.backdropFilter,
+    boxShadow: css.boxShadow,
+    borderTopColor: css.borderTopColor,
+    borderRightColor: css.borderRightColor,
+    borderBottomColor: css.borderBottomColor,
+    borderLeftColor: css.borderLeftColor,
+  };
   const alpha = (s) =>
     s.startsWith("rgba(") ? Number(s.slice(s.lastIndexOf(",") + 1, -1)) : 1;
   if (
-    alpha(css.backgroundColor) < 0.95 ||
-    !css.backgroundImage.includes("radial-gradient(") ||
-    css.backgroundSize === "auto" ||
-    !/blur\(.+\) saturate\(/.test(css.backdropFilter) ||
+    alpha(plate.backgroundColor) < 0.95 ||
+    !plate.backgroundImage.includes("radial-gradient(") ||
+    plate.backgroundSize === "auto" ||
+    !/blur\(.+\) saturate\(/.test(plate.backdropFilter) ||
     css.boxShadow === "none" ||
     css.borderTopStyle !== "solid" ||
     ![css.borderRightColor, css.borderBottomColor, css.borderLeftColor].every(
@@ -160,14 +161,29 @@ function panelPixels(panel, control) {
     )
   )
     throw Error(`Missing menu material: ${JSON.stringify(material)}`);
-  for (const content of [el.closest("form"), el.querySelector("img")].filter(
-    Boolean,
-  ))
+  if (
+    mention &&
+    (plate.content === "none" ||
+      plate.pointerEvents !== "none" ||
+      plate.display === "none" ||
+      plate.visibility !== "visible" ||
+      plate.opacity !== "1" ||
+      !list)
+  )
+    throw Error("Missing noninteractive mention plate or scrolling listbox");
+  for (const content of [
+    mention && el,
+    list,
+    el.closest("form"),
+    el.querySelector("img"),
+  ].filter(Boolean))
     if (
       getComputedStyle(content).filter !== "none" ||
       getComputedStyle(content).backdropFilter !== "none"
     )
-      throw Error("Filter on the form/image itself");
+      throw Error(
+        `Filter on foreground: ${content.tagName}.${content.className}`,
+      );
   const points = [];
   const glyph = (selector, text, surface = "button") =>
     points.push({
@@ -176,14 +192,29 @@ function panelPixels(panel, control) {
     });
   const button = el.querySelector(control),
     r = button.getBoundingClientRect();
-  const mention = panel === ".mention-menu",
-    views = panel === ".view-menu-items";
+  const views = panel === ".view-menu-items";
   if (mention) {
     if (
       !document.activeElement.matches("textarea") ||
-      document.activeElement.getAttribute("aria-activedescendant") !== button.id
+      !el.matches('[role="listbox"]') ||
+      document.activeElement.getAttribute("aria-controls") !== el.id ||
+      document.activeElement.getAttribute("aria-activedescendant") !==
+        button.id ||
+      !button.matches('[role="option"][aria-selected="true"]') ||
+      !list.contains(button)
     )
       throw Error("Mention selection left the editor");
+    glyph(
+      ".mention-menu-folder",
+      "Files in the conversation folder",
+      ".mention-menu-hint",
+    );
+    glyph(
+      ".mention-menu-hint > span:last-child",
+      "Enter inserts the path · Esc closes",
+      ".mention-menu-hint",
+    );
+    glyph('[role="option"][aria-selected="false"] .mention-name', "facets");
     glyph(".active .mention-name", "material.ts");
   } else {
     if (!button.matches(":focus-visible"))
@@ -228,7 +259,7 @@ function panelPixels(panel, control) {
       y = Math.floor(b.top + b.height / 2);
     for (const [name, bx, target] of [
       ["row", x + 3, selected],
-      ["menu", x - 3, el],
+      ["menu", x - 3, mention ? list : el],
     ]) {
       if (at(x, y) !== selected || at(bx, y) !== target)
         throw Error("Hidden selected row indicator/backing");
@@ -244,6 +275,33 @@ function panelPixels(panel, control) {
     }
   }
   return { rect: rect.toJSON(), material, points };
+}
+// The fixed gutter point already used for stroke/menu contrast must actually
+// show the plate, not just offer a high ratio on some unrelated backing. Bound
+// its channels over any backdrop, allowing the translucent grain stops.
+function checkMentionBacking({ material, sample }) {
+  const rgba = (s) => s.match(/[\d.]+/g).map(Number);
+  const base = rgba(material.backgroundColor);
+  const grain = [...material.backgroundImage.matchAll(/rgba?\([^)]+\)/g)]
+    .reverse()
+    .map(([s]) => rgba(s));
+  const { bg } = sample.readings.find(
+    (r) => r.name === "Selected stroke on menu",
+  );
+  for (const [i, channel] of bg.entries()) {
+    const opacity = base[3] ?? 1;
+    let lo = base[i] * opacity,
+      hi = lo + 255 * (1 - opacity);
+    for (const stop of grain) {
+      const a = stop[3] ?? 1;
+      lo = Math.min(lo, lo * (1 - a) + stop[i] * a);
+      hi = Math.max(hi, hi * (1 - a) + stop[i] * a);
+    }
+    assert.ok(
+      channel >= Math.floor(lo) && channel <= Math.ceil(hi),
+      `Menu backing ${bg} outside the painted plate range (channel ${i}: ${lo}–${hi})`,
+    );
+  }
 }
 export async function observeOpenMaterial(probe, row, panel) {
   const { run, press, parkPointer, wait } = probe;
@@ -280,6 +338,7 @@ export async function observeOpenMaterial(probe, row, panel) {
   assert.equal(geometry.visible.width, geometry.rect.width);
   assert.equal(geometry.visible.height, geometry.rect.height);
   await painted(probe, row, "keyboard", () => run(panelPixels, panel, control));
+  if (panel === ".mention-menu") checkMentionBacking(row.frames.at(-1));
 }
 
 export async function observeRetainedCopy(

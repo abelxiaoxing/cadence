@@ -720,6 +720,55 @@ These tests are not pixel or clipboard evidence.
 The browser samples are not a physical phone, a platform clipboard, a non-Chromium/no-filter engine or a live workflow executor.
 This targeted run did not repeat the performance windows or the full candidate gate; the owner's final checks and independent review are separate.
 
+### Keyboard paint in the `@` path menu
+
+**Failed frame.**
+The owner's full run `optical-evidence-AL8ylY` on `d5d2f36f` (web build `6764640acb2a`) supersedes the earlier targeted mention result above.
+After the path-suggestions audit, ArrowDown selected `material.ts` in the DOM, but at 390 and 1440px in both schemes the expected stroke pixel was the menu base: RGB(25,26,30) or (253,253,254).
+The original PNGs remain in that directory.
+`mention-negative-hBPwsP/control.json` applies the glyph and stroke probes to those saved bytes, not to a re-rendering.
+The menu bounds, `material.ts` Range and both stroke comparisons match the original recorded geometry exactly; the added hint and `facets` targets use their Ranges from the repaired layout.
+All six comparisons rejected each of the four failed frames; both original 320px frames passed.
+A valid selection and a high computed contrast on the glass did not mean the foreground was painted.
+
+**Repaired build.**
+In the same integration worktree over `d5d2f36f`, `bun run build:web` produced `f1b112df9bbfe454658cf334f4bda6ae3135c7c5b5dc30b6ef7c46deda999fa8`.
+The listbox frame owns the illuminated border and shadow; its pointer-transparent `::before` owns the fill, grain, filter and opaque fallback.
+Only `.mention-list` scrolls.
+The real keyboard probe parks the pointer, moves from `facets` to `material.ts`, and verifies the textarea still controls the listbox and names the selected option.
+It binds one viewport PNG to the same state and geometry on both sides of capture.
+It measures both hint spans and both option names in their text Ranges, plus the original stroke point against the row and menu.
+The menu-side RGB is also checked against the plate's allowed composited range.
+Blur and grain declarations are read from the plate, not inferred from the text pixels.
+
+Installed headless Chrome 151.0.7922.34, Linux, DPR 1, synthetic loopback reads, empty selected conversation, dark/light × 320×820, 390×820 and 1440×900.
+Each directory below is under the inherited `TMPDIR` and retains `summary.json` and the actual keyboard PNGs.
+
+| Targeted comparison                                                                                                                       | Round 1                            | Round 2                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- |
+| Original sequence, including the preceding same-page path-suggestions audit                                                               | `mention-evidence-erVyKn` (6/6)    | `mention-evidence-2bVZZp` (6/6)    |
+| Path-suggestions background measured in a separate document; same `@` → `facets` → ArrowDown on a fresh document with no text suppression | `mention-independent-7nu33P` (6/6) | `mention-independent-u9gHma` (6/6) |
+
+Worst ratios on the 24 keyboard frames (one unmodified PNG for all six comparisons per view):
+
+| Painted ink / backing         |        Obsidian |      Alabaster |
+| ----------------------------- | --------------: | -------------: |
+| Folder hint / keyboard hint   |   5.610 / 5.610 |  5.686 / 5.686 |
+| `facets` / `material.ts` name | 10.626 / 10.282 | 10.113 / 9.515 |
+| Selected stroke on row / menu | 10.157 / 11.221 | 9.430 / 10.558 |
+
+Both paths retained the separate under-text background measurement (worst 5.027:1).
+Neither produced a sampling-only failure on this build; the full collector keeps the preceding audit in place.
+In the separate 50-option fixture `mention-long-list-JRJvcA`, ArrowUp wrapped from the first to the last option.
+At dark/320 and light/1440 the 320px frame did not move; the 318px inner scroller moved to 1252px and 1231px respectively, bringing the full row inside it.
+Enter and Tab inserted the selected path; Escape closed without insertion or sending.
+Without the list's scroll padding, the intermediate light/1440 run (`mention-long-list-VRYv25`) left the last row 0.39px outside its scrollport.
+That intermediate build's two complete menu matrices (`mention-evidence-GdPffZ`, `mention-evidence-6ORen7`) and the partial pilot (`mention-evidence-jsr23t`, stopped before the second folder Hero) are not included in the repaired-build totals.
+
+These are point samples, not continuous paint or physical-phone, hardware-GPU or non-Chromium qualification.
+The no-filter fallback is covered by the stylesheet test, not an engine without filter support.
+No live workspace, performance windows, full candidate check or independent review is claimed by these targeted runs.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

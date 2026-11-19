@@ -3619,11 +3619,20 @@ summary:focus-visible,
   right: 0;
   bottom: calc(100% + 6px);
   z-index: 30;
+  display: flex;
+  flex-direction: column;
   max-height: min(320px, 45vh);
+  border-radius: 14px;
+}
+/* Only the stationary plate samples the backdrop. The list scrolls and
+ * paints its changing keyboard selection above it, without a filter. */
+.mention-list {
+  position: relative;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-block: 6px;
   padding: 6px;
-  border-radius: 14px;
+  border-radius: inherit;
 }
 .mention-menu-hint {
   display: flex;
@@ -5065,7 +5074,8 @@ button.file-item:hover:not(:disabled),
   border-top-color: var(--glass-border-top);
   box-shadow: 0 16px 40px var(--shadow-3);
 }
-.model-popover::before {
+.model-popover::before,
+.mention-menu::before {
   content: "";
   position: absolute;
   z-index: -1;
@@ -5074,7 +5084,7 @@ button.file-item:hover:not(:disabled),
   border-radius: inherit;
 }
 .model-popover::before,
-.mention-menu,
+.mention-menu::before,
 .view-menu-items,
 .more-menu-items,
 .img-lightbox-panel {
@@ -5612,7 +5622,7 @@ button.link:hover:not(:disabled) {
   .chat-composer,
   .action-dialog,
   .model-popover::before,
-  .mention-menu,
+  .mention-menu::before,
   .view-menu-items,
   .more-menu-items,
   .img-lightbox-panel,
