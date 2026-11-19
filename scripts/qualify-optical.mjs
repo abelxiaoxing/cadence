@@ -1030,6 +1030,21 @@ try {
       await scrollTo(".workflow-line-open");
       await click(".workflow-line-open");
       await wait(`document.querySelector('.workflow-board')`);
+      const cardProbe = {
+        run,
+        send,
+        scrollTo,
+        parkPointer,
+        screenshot,
+        width,
+        theme,
+        rows: report.cardMaterials,
+      };
+      await observeCardMaterial(
+        cardProbe,
+        ".workflow-card",
+        "article.workflow-card > header > strong",
+      );
       await scrollTo(".workflow-board");
       await audit("assignments", [
         ".workflow-card",
@@ -1102,16 +1117,6 @@ try {
       await click(".view-menu summary");
       await picker("view-material", observeOpenMaterial, ".view-menu-items");
       await press("Escape", 27);
-      const cardProbe = {
-        run,
-        send,
-        scrollTo,
-        parkPointer,
-        screenshot,
-        width,
-        theme,
-        rows: report.cardMaterials,
-      };
       await observeCardMaterial(cardProbe, ".rtr");
       await scrollTo(".rtr-list");
       await audit("history", [

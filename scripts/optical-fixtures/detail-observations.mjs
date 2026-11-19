@@ -470,10 +470,10 @@ export async function observeOpenMaterial(probe, row, panel) {
   if (panel === ".mention-menu") checkMentionBacking(row.frames.at(-1));
 }
 
-// Read the mounted history/Inspector card, not a swatch or one of its rows.
-function cardMaterial(selector) {
-  const card = document.querySelector(selector),
-    heading = card.querySelector("h2,h3"),
+// Hit-test the heading, but read the material of its mounted card, not a row.
+function cardMaterial(selector, headingSelector) {
+  const heading = document.querySelector(headingSelector),
+    card = heading.closest(selector),
     rect = heading.getBoundingClientRect(),
     x = rect.left + rect.width / 2,
     y = rect.top + rect.height / 2;
@@ -485,6 +485,7 @@ function cardMaterial(selector) {
     point: { x, y },
     hovered: card.matches(":hover"),
     fill: css.backgroundColor,
+    radius: css.borderRadius,
     grain: css.backgroundImage,
     size: css.backgroundSize,
     position: css.backgroundPosition,
@@ -501,18 +502,30 @@ function cardMaterial(selector) {
 export async function observeCardMaterial(
   { run, send, scrollTo, parkPointer, screenshot, width, theme, rows },
   selector,
+  headingSelector = `${selector} :is(h2,h3)`,
 ) {
-  await scrollTo(`${selector} :is(h2,h3)`);
+  await scrollTo(headingSelector);
   await parkPointer();
   const alpha = (s) => Number(s.match(/^rgba\(.*?, ([\d.]+)\)$/)?.[1] ?? 1);
+  const read = () => run(cardMaterial, selector, headingSelector);
   const capture = async (state) => {
-    const material = await run(cardMaterial, selector);
+    const material = await read();
     const file = `${selector.slice(1)}-${theme}-${width}-${state}.png`;
-    rows.push({ width, theme, selector, state, file, ...material });
+    rows.push({
+      width,
+      theme,
+      selector,
+      headingSelector,
+      state,
+      file,
+      ...material,
+    });
     await screenshot(file);
-    assert.deepEqual(await run(cardMaterial, selector), material);
+    assert.deepEqual(await read(), material);
     assert.equal(material.hovered, state === "hover");
     assert.ok(alpha(material.fill) >= 0.9);
+    if (state === "rest") assert.ok(alpha(material.fill) < 1);
+    assert.match(material.radius, /^1[4-6]px$/);
     assert.equal(material.grain.match(/radial-gradient\(/g)?.length, 2);
     assert.match(material.size, /^\d+px \d+px, \d+px \d+px$/);
     assert.deepEqual(material.animations, []);
@@ -521,7 +534,7 @@ export async function observeCardMaterial(
     const [top, right, bottom, left] = material.edges;
     assert.ok(
       material.edges.every(
-        (edge) => edge.style === "solid" && parseFloat(edge.width) > 0,
+        (edge) => edge.style === "solid" && edge.width === "1px",
       ),
     );
     assert.deepEqual(right, bottom);
