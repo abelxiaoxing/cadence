@@ -4242,6 +4242,14 @@ button.file-item:hover:not(:disabled),
   justify-content: space-between;
   flex-wrap: wrap;
 }
+.cwd-footer > button:disabled[aria-busy="true"] {
+  opacity: 1;
+  color: var(--text-primary);
+  background: var(--chip-bg);
+  border-color: var(--border);
+  box-shadow: none;
+  transition: none;
+}
 .cwd-target {
   flex: 1 1 240px;
   min-width: 0;
@@ -4971,6 +4979,7 @@ button.file-item:hover:not(:disabled),
 }
 .chat-attempt-text {
   margin: 0 0 4px;
+  line-height: var(--reading-leading);
   white-space: pre-wrap;
 }
 /* Messages waiting for the running reply (pi-web-ui's queued message row):

@@ -48,6 +48,7 @@ export function fixture(root) {
   const stepReads = [];
   const detailReads = [];
   let directoryGate, fileGate, entryGate;
+  let directEntry = false;
   const snapshot = (scope) => ({
     protocol: 1,
     storeId,
@@ -80,6 +81,22 @@ export function fixture(root) {
     };
     const json = (v) => respond(200, "application/json", JSON.stringify(v));
     const ok = (value) => json({ kind: "ok", value });
+    const invalid = () =>
+      respond(
+        400,
+        "application/json",
+        JSON.stringify({ kind: "error", error: publicError("invalid") }),
+      );
+    const directories = (path, deliver) => {
+      const listing = readRecord({ kind: "directories", path });
+      if (!listing) return refuse();
+      if (directoryGate?.route === p && directoryGate.path === path) {
+        directoryGate.respond = (fail) => (fail ? invalid() : deliver(listing));
+        directoryGate = undefined; // Only hold the next matching GET.
+        return;
+      }
+      return deliver(listing);
+    };
     const refuse = () =>
       respond(
         403,
@@ -123,6 +140,10 @@ export function fixture(root) {
         assets.get(p),
       );
     if (p === "/workbench/v1") {
+      if (directEntry) {
+        directEntry = false;
+        return invalid(); // Direct owner discovery: no gateway entry here.
+      }
       const reply = () =>
         json({
           kind: "workbench",
@@ -162,17 +183,8 @@ export function fixture(root) {
         unavailable: 0,
         projects: [],
       });
-    if (p === "/workbench/v1/directories") {
-      const path = u.searchParams.get("path");
-      const listing = readRecord({ kind: "directories", path });
-      if (!listing) return refuse();
-      if (directoryGate?.path === path) {
-        directoryGate.respond = () => json(listing);
-        directoryGate = undefined; // Only hold the next matching read.
-        return;
-      }
-      return json(listing);
-    }
+    if (p === "/workbench/v1/directories")
+      return directories(u.searchParams.get("path"), json);
     if (p === `/workbench/v1/projects/${project}`)
       return json({
         kind: "project-observation",
@@ -211,6 +223,7 @@ export function fixture(root) {
       return ok({ storeId, workspaceId, epoch, status: "complete", runs: [] });
     if (p.endsWith("/snapshot")) return ok(snapshot(q));
     if (p.endsWith("/workbench/read")) {
+      if (q.kind === "directories") return directories(q.path, ok);
       if (
         q.kind === "conversation-turn" &&
         q.id === "optical-flow" &&
@@ -319,13 +332,16 @@ export function fixture(root) {
         }
       };
     },
-    holdDirectory(path) {
-      const gate = { path, respond: null };
+    nextEntryIsOwner() {
+      directEntry = true;
+    },
+    holdDirectory(path, route = "/workbench/v1/directories") {
+      const gate = { path, route, respond: null };
       directoryGate = gate;
-      return () => {
+      return ({ fail = false } = {}) => {
         if (!gate.respond)
-          throw Error(`No pending directory response: ${path}`);
-        gate.respond();
+          throw Error(`No pending directory response: ${route} ${path}`);
+        gate.respond(fail);
         gate.respond = null;
       };
     },

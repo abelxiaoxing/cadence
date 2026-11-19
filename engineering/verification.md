@@ -971,6 +971,30 @@ No physical device, hardware GPU, non-Chromium filter fallback or live service w
 The opaque fallback is covered by the theme tests.
 Timing/follow measurements, full-candidate verification and independent review remain separate owner checks.
 
+### Folder actions in progress and plain message leading
+
+**Before repair:** The 143-scene report for `a68f69d3` did not measure text inside the disabled directory action or the line height of non-Markdown messages.
+A targeted reproduction on those canonical bytes (`optical-evidence-RFBVsx/summary.json` under the run's temporary root, 320×820) found that the button's 0.45 group opacity also faded its status text.
+Painted **Selecting / Opening** ratios were **1.821 / 1.798** in Obsidian and **1.529 / 1.535** in Alabaster.
+The unsaved attempt paragraph measured 1.60× in both themes; that assertion stopped the pre-repair prose sequence before the pending or undelivered rows.
+
+**After repair:** `bun run build:web` produced `951e70b63e298dffed8a5ffbda8a5dd52604b5a5fd6aff10371860d30433b45a` over pre-commit HEAD `8f6b3497` in the same integration worktree.
+`optical-evidence-KNosEq/summary.json` and its 12 unmodified viewport PNGs record a targeted run in installed headless Chrome 151.0.7922.34, DPR 1, with synthetic loopback data at 320×820, 390×820 and 1440×900 in both system themes.
+
+- **Folder actions (`pickerStates`):** The folder-first gateway and direct owner each received a typed path different from the displayed listing, followed by a click on the enabled footer action.
+  Holding that path's directory GET exposed `Selecting folder…` or `Opening folder…` on the *natively disabled* button.
+  Each button was fully within the viewport and clipping ancestors, with center and four inset edge hits.
+  The minimum sampled glyph-to-adjacent-face ratio across both paths and all widths was **16.569:1** in Obsidian (RGB 242,244,248 on 20,21,25) and **17.813:1** in Alabaster (17,19,24 on 250,250,251), without DOM substitution or text suppression.
+  Releasing the held GET with `invalid` produced the path error and restored the enabled idle label in all 12 cases.
+  Ordinary browsing remained a read, not a busy Open.
+  The fixture rejects unexpected writes; no selection or open command was exercised.
+- **Plain message bodies (`leading`):** The existing unsaved `attempt`, a live conversation with queue and steer inputs, and a separate settled conversation with an undelivered input supplied four real body paragraphs per view.
+  All 24 visible `p.chat-attempt-text` samples measured **23.1px line height at 14px**, within 1/64 CSS px of 1.65×.
+  No withdraw, restore or send action was activated.
+
+These are measurements of the English status labels and synthetic message bodies on those browser bytes, not physical-device, live-service, performance or full-candidate qualification.
+The owner reruns the full checks and independent review on the delivery candidate.
+
 ## Development practice
 
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.

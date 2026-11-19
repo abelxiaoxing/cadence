@@ -36,6 +36,7 @@ import {
   observeSelectedRows,
 } from "./optical-fixtures/panel-observations.mjs";
 import {
+  observeFolderAction,
   observeLockedLevels,
   observeRecentFolders,
   painted,
@@ -51,9 +52,11 @@ import {
   fieldTask,
   firstAttempt,
   fullArtifact,
+  pendingInputs,
   project,
   shellCommand,
   task,
+  undeliveredInput,
   writeContent,
 } from "./optical-fixtures/records.mjs";
 import {
@@ -298,12 +301,14 @@ try {
     });
   };
   let width, theme;
-  const observeLeading = async (surface, selector) => {
+  const observeLeading = async (surface, selector, expectedText) => {
+    const sample = await leading({ run, scrollTo }, selector);
+    if (expectedText !== undefined) assert.equal(sample.text, expectedText);
     report.leading.push({
       width,
       theme,
       surface,
-      ...(await leading({ run, scrollTo }, selector)),
+      ...sample,
     });
   };
   const expand = async (id, tool, path, position) => {
@@ -494,6 +499,7 @@ try {
           chat,
           click,
           wait,
+          send,
           parkPointer,
           press,
           screenshot,
@@ -572,7 +578,7 @@ try {
     );
     assert.ok(
       await ev(
-        `${at(cwd)} && !!document.querySelector('.cwd-footer button:disabled')`,
+        `${at(cwd)} && document.querySelector('.cwd-footer button:disabled:not([aria-busy])')?.textContent === 'Use this folder'`,
       ),
     );
     const reading = {
@@ -738,10 +744,12 @@ try {
       ]);
       await picker("folder-first", observeRecentFolders, false);
       await observeDirectory();
+      await picker("select-folder-action", observeFolderAction, site, false);
       await press("Escape", 27);
       assert.ok(
         await ev(`document.querySelector('[aria-label="Send"]').disabled`),
       );
+      await picker("open-folder-action", observeFolderAction, site, true);
       await go(chat("empty"), ".conversation-header");
       await wait(`document.querySelector('.optical-field[data-scene="hero"]')`);
       if (width <= 900) {
@@ -838,6 +846,24 @@ try {
           attempt.body.includes(firstAttempt.status),
       );
       await audit("unsaved attempt", [".chat-attempt", ".chat-attempt-text"]);
+      await observeLeading(
+        "unsaved attempt",
+        ".chat-attempt > p.chat-attempt-text",
+        firstAttempt.text,
+      );
+      await go(chat("pending"), ".chat-waiting");
+      for (const input of pendingInputs)
+        await observeLeading(
+          `pending ${input.mode}`,
+          `.chat-waiting.${input.mode} > p.chat-attempt-text`,
+          input.text,
+        );
+      await go(chat("undelivered"), ".chat-undelivered");
+      await observeLeading(
+        "undelivered",
+        ".chat-undelivered > p.chat-attempt-text",
+        undeliveredInput.text,
+      );
       if (width > 900)
         await observeLiveFocus({
           go,

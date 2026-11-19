@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { contrastPixels } from "./measure.mjs";
+import { contrastPixels, controlGeometry, glyphSample } from "./measure.mjs";
 import { cwd, lockedReply, recentFolder } from "./records.mjs";
 
 // One unmodified viewport PNG per state. Never discard an inconvenient frame:
@@ -183,6 +183,64 @@ export async function observeRecentFolders(probe, row, project) {
     ),
   );
   await capture("rest", -1);
+}
+
+// Both buttons first observe the typed path. Refuse that read after sampling:
+// neither selecting a project nor opening an owner is part of this fixture.
+export async function observeFolderAction(probe, row, site, owner) {
+  const { go, click, wait, run, send, parkPointer } = probe;
+  if (owner) {
+    site.nextEntryIsOwner();
+    const trigger = `.statusbar .status-cwd[title="${cwd}"]`;
+    await go("/app#chat=empty", trigger);
+    await click(trigger);
+  }
+  const button = "dialog[open] .cwd-footer button";
+  const ready = owner ? "Open this folder" : "Use this folder";
+  const busy = owner ? "Opening folder…" : "Selecting folder…";
+  const path = `${recentFolder}/quartz`;
+  await wait(
+    `document.querySelector('${button}:enabled')?.textContent === '${ready}'`,
+  );
+  const from = await run(
+    () => document.querySelector(".cwd-target code").textContent,
+  );
+  assert.notEqual(from, path);
+  await click('dialog[open] [aria-label="Edit path"]');
+  await send("Input.insertText", { text: path });
+  await wait(
+    `document.querySelector('.cwd-input input')?.value === ${JSON.stringify(path)} && document.querySelector('.cwd-target code')?.textContent === ${JSON.stringify(path)}`,
+  );
+  const route = owner ? "/api/v1/workbench/read" : "/workbench/v1/directories";
+  const release = site.holdDirectory(path, route);
+  await click(`${button}:enabled`, ready);
+  try {
+    await wait(
+      `document.querySelector('${button}:disabled[aria-busy="true"]')?.textContent === '${busy}'`,
+    );
+    await parkPointer();
+    await painted(probe, row, "busy", async () => {
+      const geometry = await run(controlGeometry, button, false);
+      assert.equal(geometry.name, busy);
+      assert.equal(geometry.disabled, true);
+      assert.deepEqual(geometry.rect, geometry.visible);
+      assert.ok(Object.values(geometry.hit).every(({ hit }) => hit));
+      return {
+        from,
+        path,
+        route,
+        ...geometry,
+        points: [{ ...(await run(glyphSample, button, busy)), record: true }],
+      };
+    });
+  } finally {
+    release({ fail: true });
+  }
+  const error = "This folder does not exist. Check the path.";
+  await wait(
+    `document.querySelector('dialog[open] [role="alert"]')?.textContent === '${error}' && document.querySelector('${button}:enabled:not([aria-busy])')?.textContent === '${ready}'`,
+  );
+  row.afterReadFailure = { error, label: ready, disabled: false };
 }
 
 function thinkingPixels() {
